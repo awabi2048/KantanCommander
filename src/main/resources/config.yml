@@ -1,0 +1,14 @@
+# Kantan Commander 設定
+
+# 最大命令数 (1ディスクあたり)
+max-commands-per-disk: 32
+
+# デフォルトのディスク名
+default-disk-name: "&e新しいディスク"
+
+# BlockDisplay 設定
+display:
+  # BlockDisplay の発光の有無
+  glowing: true
+  # 設置ブロックのカスタムネーム表示
+  show-name: true

@@ -1,0 +1,21 @@
+name: KantanCommander
+version: ${project.version}
+main: me.awabi2048.kantancommander.KantanCommanderPlugin
+api-version: '1.21'
+author: awabi2048
+depend:
+  - CC-System
+softdepend:
+  - MyWorldManager
+commands:
+  kankoma:
+    description: Kantan Commander 管理コマンド
+    usage: /kankoma <disk|programs|placed|reload|help>
+    permission: kankoma.use
+permissions:
+  kankoma.admin:
+    description: Kantan Commander 管理権限
+    default: op
+  kankoma.use:
+    description: Kantan Commander 使用権限
+    default: true
