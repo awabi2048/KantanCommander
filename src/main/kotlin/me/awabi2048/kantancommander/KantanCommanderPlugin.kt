@@ -47,8 +47,9 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     private fun registerCommands() {
-        getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this))
-        getCommand("kankoma")?.tabCompleter = KantanCommanderCommand(this)
+        val command = KantanCommanderCommand(this)
+        getCommand("kankoma")?.setExecutor(command)
+        getCommand("kankoma")?.tabCompleter = command
     }
 
     private fun registerListeners() {
