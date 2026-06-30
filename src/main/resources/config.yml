@@ -10,5 +10,3 @@ default-disk-name: "&e新しいディスク"
 display:
   # BlockDisplay の発光の有無
   glowing: true
-  # 設置ブロックのカスタムネーム表示
-  show-name: true

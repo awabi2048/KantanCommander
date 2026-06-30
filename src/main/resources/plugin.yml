@@ -1,7 +1,7 @@
 name: KantanCommander
 version: ${project.version}
 main: me.awabi2048.kantancommander.KantanCommanderPlugin
-api-version: '1.21'
+api-version: '26.1.2'
 author: awabi2048
 depend:
   - CC-System
