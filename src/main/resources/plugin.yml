@@ -14,8 +14,8 @@ commands:
     permission: kankoma.use
 permissions:
   kankoma.admin:
-    description: Kantan Commander 管理権限
+    description: Kantan Commander の管理操作を許可する
     default: op
   kankoma.use:
-    description: Kantan Commander 使用権限
+    description: Kantan Commander の利用を許可する
     default: true

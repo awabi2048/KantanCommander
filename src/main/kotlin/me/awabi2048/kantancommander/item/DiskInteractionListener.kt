@@ -1,144 +1,126 @@
 package me.awabi2048.kantancommander.item
 
-import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.data.DataManager
-import me.awabi2048.kantancommander.data.PlacedDiskManager
-import me.awabi2048.kantancommander.data.model.BlockPlacement
-import me.awabi2048.kantancommander.util.I18nHelper
-import me.awabi2048.kantancommander.util.MwmIntegration
-import org.bukkit.Location
+import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
+import org.bukkit.Bukkit
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.block.Action
 import org.bukkit.event.block.BlockBreakEvent
+import org.bukkit.event.block.BlockDropItemEvent
 import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.EquipmentSlot
 
 class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Listener {
-
-    @EventHandler(priority = EventPriority.HIGH)
-    fun onPlayerInteract(event: PlayerInteractEvent) {
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    fun onInteract(event: PlayerInteractEvent) {
         val player = event.player
-        val item = event.item ?: return
-        if (!DiskItemFactory.isDisk(item)) return
+        val item = event.item
+        val diskId = DiskItemService.diskId(item)
+        val clickedPlacement = event.clickedBlock?.let { plugin.placements.find(it.location) }
+
+        if (diskId == null && clickedPlacement == null) return
         event.isCancelled = true
 
-        val diskUUID = DiskItemFactory.getDiskUUID(item) ?: return
-        val script = DataManager.load(diskUUID) ?: return
+        if (clickedPlacement != null && !player.isSneaking) {
+            val script = plugin.scripts.load(clickedPlacement.scriptId) ?: return
+            if (!plugin.placementAccess.canManage(player, clickedPlacement.world, script.owner)) {
+                player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
+                return
+            }
+            plugin.editorMenu.open(player, script.id)
+            return
+        }
+
+        if (diskId == null) return
+        val script = plugin.scripts.load(diskId) ?: return
+        if (!plugin.placementAccess.canManage(player, player.world.name, script.owner)) {
+            player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
+            return
+        }
 
         when (event.action) {
             Action.RIGHT_CLICK_BLOCK -> {
                 if (player.isSneaking) {
-                    val clickedBlock = event.clickedBlock ?: return
-                    val targetLoc = clickedBlock.getRelative(event.blockFace).location
-                    placeDisk(player, targetLoc, script, event.hand ?: EquipmentSlot.HAND)
+                    val base = event.clickedBlock ?: return
+                    val target = base.getRelative(event.blockFace)
+                    placeDisk(player, target.location, script.id, event.hand ?: EquipmentSlot.HAND)
                 } else {
-                    val clicked = event.clickedBlock ?: return
-                    val placement = PlacedDiskManager.findByLocation(clicked.location)
-                    val checkLoc = placement?.let { clicked.location } ?: player.location
-                    if (!canEdit(player, script, checkLoc)) {
-                        player.sendMessage(I18nHelper.string(player, "message.not_disk_owner"))
-                        return
-                    }
-                    plugin.sequenceEditorMenu.open(player, script)
+                    plugin.editorMenu.open(player, script.id)
                 }
             }
             Action.RIGHT_CLICK_AIR -> {
-                if (!player.isSneaking) {
-                    if (!canEdit(player, script, player.location)) {
-                        player.sendMessage(I18nHelper.string(player, "message.not_disk_owner"))
-                        return
-                    }
-                    plugin.sequenceEditorMenu.open(player, script)
-                }
+                if (!player.isSneaking) plugin.editorMenu.open(player, script.id)
             }
             else -> {}
         }
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST)
-    fun onBlockPlace(event: BlockPlaceEvent) {
-        // 通常のブロック設置経路に流れた場合も、ディスクアイテムは専用の設置処理だけを通す。
-        if (DiskItemFactory.isDisk(event.itemInHand)) {
-            event.isCancelled = true
-        }
-    }
-
     @EventHandler(priority = EventPriority.HIGH)
     fun onBlockBreak(event: BlockBreakEvent) {
+        if (event.isCancelled()) return
         val block = event.block
-        if (block.type != Material.NOTE_BLOCK) return
-
-        val placement = PlacedDiskManager.findByLocation(block.location) ?: return
-        val script = DataManager.load(placement.diskUUID) ?: return
-
-        val player = event.player
-        if (!canEdit(player, script, block.location)) {
+        val placement = plugin.placements.find(block.location) ?: return
+        val script = plugin.scripts.load(placement.scriptId) ?: return
+        if (!plugin.placementAccess.canManage(event.player, placement.world, script.owner)) {
             event.isCancelled = true
-            player.sendMessage(I18nHelper.string(player, "message.not_disk_owner"))
             return
         }
-
-        // 表示エンティティと配置記録を消してから、元のディスクを返却する。
-        PlacedDiskManager.removeDisplay(block.world, placement.displayEntityUUID)
-        PlacedDiskManager.remove(block.world, block.x, block.y, block.z)
-        event.isDropItems = false
-        val diskItem = DiskItemFactory.createDiskForPlayer(player, script)
-        block.world.dropItemNaturally(block.location.add(0.5, 0.5, 0.5), diskItem)
     }
 
-    private fun placeDisk(player: Player, location: Location?, script: me.awabi2048.kantancommander.data.model.DiskScript, hand: EquipmentSlot) {
-        val loc = location ?: return
-        val block = loc.block
+    @EventHandler(ignoreCancelled = true)
+    fun onBlockDrop(event: BlockDropItemEvent) {
+        val block = event.block
+        val placement = plugin.placements.find(block.location) ?: return
+        val script = plugin.scripts.load(placement.scriptId) ?: return
 
-        if (PlacedDiskManager.findByLocation(block.world, block.x, block.y, block.z) != null) {
-            player.sendMessage(I18nHelper.string(player, "message.placement_exists"))
-            return
-        }
-        if (!block.type.isAir) {
-            player.sendMessage(I18nHelper.string(player, "message.placement_blocked"))
-            return
-        }
-
-        if (!canEdit(player, script, loc)) {
-            player.sendMessage(I18nHelper.string(player, "message.not_disk_owner"))
-            return
-        }
-
-        // レッドストーン検知対象として NOTE_BLOCK を置く。
-        block.type = Material.NOTE_BLOCK
-
-        val placement = BlockPlacement(
-            worldName = block.world.name,
-            x = block.x, y = block.y, z = block.z,
-            diskUUID = script.uuid,
-            displayEntityUUID = UUID.randomUUID()
+        event.items.forEach { it.remove() }
+        plugin.placements.removeDisplay(block.world, placement.displayId)
+        plugin.placements.remove(block.world, block.x, block.y, block.z)
+        block.world.dropItemNaturally(
+            block.location.add(0.5, 0.5, 0.5),
+            DiskItemService.create(script, event.player)
         )
-        // BlockDisplay の実UUIDを保存するため、仮UUIDのまま永続化せずスポーン結果で登録する。
-        PlacedDiskManager.spawnDisplay(block.world, placement)
-
-        // 設置に成功したときだけ手元のディスクを1つ消費する。
-        val handItem = if (hand == EquipmentSlot.OFF_HAND) player.inventory.itemInOffHand else player.inventory.itemInMainHand
-        handItem.amount = (handItem.amount - 1).coerceAtLeast(0)
-        if (hand == EquipmentSlot.OFF_HAND) {
-            player.inventory.setItemInOffHand(handItem)
-        } else {
-            player.inventory.setItemInMainHand(handItem)
-        }
-
-        player.sendMessage(I18nHelper.string(player, "message.placement_created"))
     }
 
-    private fun canEdit(player: Player, script: me.awabi2048.kantancommander.data.model.DiskScript, location: Location): Boolean {
-        if (player.uniqueId == script.creator) return true
-        if (player.hasPermission("kankoma.admin")) return true
-        val isMember = MwmIntegration.isWorldMember(player, location)
-        if (isMember == true) return true
-        return false
+    private fun placeDisk(player: Player, location: org.bukkit.Location, scriptId: java.util.UUID, hand: EquipmentSlot) {
+        val block = location.block
+        if (!block.type.isAir) {
+            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            return
+        }
+        if (plugin.placements.find(block.location) != null) {
+            player.sendMessage(KcI18n.text(player, "message.place_exists"))
+            return
+        }
+
+        val placeEvent = BlockPlaceEvent(
+            block,
+            block.state,
+            location.block.getRelative(org.bukkit.block.BlockFace.DOWN),
+            player.inventory.getItem(hand),
+            player,
+            true,
+            hand
+        )
+        Bukkit.getPluginManager().callEvent(placeEvent)
+        if (placeEvent.isCancelled() || !placeEvent.canBuild()) {
+            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            return
+        }
+
+        block.setType(Material.NOTE_BLOCK, false)
+        val placement = DiskPlacement(block.world.name, block.x, block.y, block.z, scriptId)
+        plugin.placements.add(placement)
+        plugin.placements.spawnDisplay(block.world, placement)
+
+        val stack = if (hand == EquipmentSlot.OFF_HAND) player.inventory.itemInOffHand else player.inventory.itemInMainHand
+        stack.amount -= 1
+        player.sendMessage(KcI18n.text(player, "message.place_created"))
     }
 }
