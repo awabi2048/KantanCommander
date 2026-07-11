@@ -1,71 +1,65 @@
 package me.awabi2048.kantancommander
 
 import me.awabi2048.kantancommander.command.KantanCommanderCommand
-import me.awabi2048.kantancommander.data.DataManager
-import me.awabi2048.kantancommander.data.PlacedDiskManager
+import me.awabi2048.kantancommander.data.ScriptStore
+import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
-import me.awabi2048.kantancommander.gui.CommandParamMenu
-import me.awabi2048.kantancommander.gui.CommandTypeSelectionMenu
+import me.awabi2048.kantancommander.execution.SequenceExecutor
+import me.awabi2048.kantancommander.gui.CommandEditMenu
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
 import me.awabi2048.kantancommander.item.DiskInteractionListener
-import me.awabi2048.kantancommander.util.I18nHelper
+import me.awabi2048.kantancommander.security.PlacementAccessPolicy
+import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.plugin.java.JavaPlugin
 
 class KantanCommanderPlugin : JavaPlugin() {
-
-    companion object {
-        lateinit var instance: KantanCommanderPlugin
-            private set
-    }
-
-    val sequenceEditorMenu: SequenceEditorMenu by lazy { SequenceEditorMenu(this) }
-    val commandTypeSelectionMenu: CommandTypeSelectionMenu by lazy { CommandTypeSelectionMenu(this) }
-    val commandParamMenu: CommandParamMenu by lazy { CommandParamMenu(this) }
-    val programListMenu: ProgramListMenu by lazy { ProgramListMenu(this) }
+    lateinit var scripts: ScriptStore
+        private set
+    lateinit var placements: PlacementStore
+        private set
+    lateinit var executor: SequenceExecutor
+        private set
+    lateinit var programListMenu: ProgramListMenu
+        private set
+    lateinit var editorMenu: SequenceEditorMenu
+        private set
+    lateinit var commandEditMenu: CommandEditMenu
+        private set
+    lateinit var placementAccess: PlacementAccessPolicy
+        private set
 
     override fun onEnable() {
-        instance = this
-
         saveDefaultConfig()
 
-        I18nHelper.init(this)
-        DataManager.init(this)
-        PlacedDiskManager.init(this)
-        PlacedDiskManager.rebuildAllDisplays(this)
+        KcI18n.init(this)
+        scripts = ScriptStore(dataFolder.resolve("scripts"), logger)
+        placements = PlacementStore(this, dataFolder.resolve("placements.json"))
+        executor = SequenceExecutor(this)
 
-        registerCommands()
-        registerListeners()
-        registerMenuRoutes()
+        programListMenu = ProgramListMenu(this)
+        editorMenu = SequenceEditorMenu(this)
+        commandEditMenu = CommandEditMenu(this)
+        placementAccess = PlacementAccessPolicy(this)
 
-        logger.info("KantanCommander v${pluginMeta.version} が有効になりました")
+        getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this))
+        registerEvents()
+        placements.restoreDisplays()
     }
 
     override fun onDisable() {
-        I18nHelper.shutdown()
-        logger.info("KantanCommander が無効になりました")
+        if (::placements.isInitialized) {
+            placements.removeAllDisplays()
+        }
+        runCatching { KcI18n.shutdown() }
     }
 
-    private fun registerCommands() {
-        val command = KantanCommanderCommand(this)
-        getCommand("kankoma")?.setExecutor(command)
-        getCommand("kankoma")?.tabCompleter = command
-    }
-
-    private fun registerListeners() {
+    private fun registerEvents() {
         val pm = server.pluginManager
         pm.registerEvents(DiskInteractionListener(this), this)
         pm.registerEvents(RedstoneTriggerListener(this), this)
-        pm.registerEvents(sequenceEditorMenu, this)
-        pm.registerEvents(commandTypeSelectionMenu, this)
-        pm.registerEvents(commandParamMenu, this)
         pm.registerEvents(programListMenu, this)
-    }
-
-    private fun registerMenuRoutes() {
-        sequenceEditorMenu.initialize()
-        commandTypeSelectionMenu.initialize()
-        commandParamMenu.initialize()
-        programListMenu.initialize()
+        pm.registerEvents(editorMenu, this)
+        pm.registerEvents(commandEditMenu, this)
     }
 }
