@@ -26,7 +26,7 @@ object KcGui {
     val sounds get() = CCSystem.getAPI().getMenuSoundService()
 
     fun inventory(player: Player, holder: KcMenuHolder, size: Int, title: String): Inventory {
-        val inv = Bukkit.createInventory(holder, size, elements.component(title))
+        val inv = Bukkit.createInventory(holder, size, elements.title(GuiNameSpec.Text(title, GuiNameStyle.DEFAULT)))
         holder.inv = inv
         return inv
     }
