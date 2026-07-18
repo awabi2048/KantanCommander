@@ -115,7 +115,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         }
 
         block.setType(Material.NOTE_BLOCK, false)
-        val placement = DiskPlacement(block.world.name, block.x, block.y, block.z, scriptId)
+        val placement = DiskPlacement(block.world.name, block.x, block.y, block.z, scriptId, null)
         plugin.placements.add(placement)
         plugin.placements.spawnDisplay(block.world, placement)
 

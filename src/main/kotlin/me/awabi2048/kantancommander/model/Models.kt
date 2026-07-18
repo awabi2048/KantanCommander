@@ -95,7 +95,7 @@ data class DiskPlacement(
     val y: Int,
     val z: Int,
     val scriptId: UUID,
-    var displayId: UUID? = null
+    var displayId: UUID?
 ) {
     val key: String get() = "$world,$x,$y,$z"
 }

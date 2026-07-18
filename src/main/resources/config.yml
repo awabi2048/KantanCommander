@@ -2,3 +2,4 @@ max-commands-per-disk: 32
 default-disk-name: "Kantan Disk"
 display:
   glowing: true
+config_version: 1
