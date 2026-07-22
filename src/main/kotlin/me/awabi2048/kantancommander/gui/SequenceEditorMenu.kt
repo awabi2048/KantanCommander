@@ -1,105 +1,158 @@
 package me.awabi2048.kantancommander.gui
 
+import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.gui.GuiElementRole
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
-import com.awabi2048.ccsystem.api.gui.MenuClickType
+import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
+import com.awabi2048.ccsystem.api.gui.InventoryMenuView
+import com.awabi2048.ccsystem.api.gui.MenuActionResult
+import com.awabi2048.ccsystem.api.gui.MenuActionHandler
+import com.awabi2048.ccsystem.api.gui.MenuElement
+import com.awabi2048.ccsystem.api.gui.MenuRoute
+import com.awabi2048.ccsystem.api.gui.MenuUpdate
+import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
-import org.bukkit.event.EventHandler
-import org.bukkit.event.Listener
-import org.bukkit.event.inventory.InventoryClickEvent
-import org.bukkit.event.inventory.InventoryDragEvent
-import java.util.UUID
 
-class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) : Listener {
-    private val sessions = mutableMapOf<UUID, UUID>()
+class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
+    private val runtime = CCSystem.getAPI().getMenuRuntimeService()
+
+    init {
+        runtime.register(
+            InventoryMenuDefinition(
+                OWNER,
+                MENU_ID,
+                renderer = { context -> render(context.player, context.route) },
+                actions = mapOf(
+                    ACTION_BACK to handle { MenuActionResult.Success(MenuUpdate.Back) },
+                    ACTION_ADD to handle { context ->
+                        val scriptId = scriptId(context.route) ?: return@handle MenuActionResult.Ignored
+                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(scriptId)))
+                    },
+                    ACTION_TEST to handle { context ->
+                        val scriptId = scriptId(context.route) ?: return@handle MenuActionResult.Ignored
+                        plugin.executor.execute(scriptId, context.player.location, context.player)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    ACTION_TRIGGER to handle { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load)
+                            ?: return@handle MenuActionResult.Ignored
+                        script.trigger = script.trigger.next()
+                        plugin.scripts.save(script)
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    ACTION_SAVE to handle { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load)
+                            ?: return@handle MenuActionResult.Ignored
+                        plugin.scripts.save(script)
+                        context.player.sendMessage(KcI18n.text(context.player, "message.saved"))
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    ACTION_COMMAND to handle { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load)
+                            ?: return@handle MenuActionResult.Ignored
+                        val index = context.payload[COMMAND_INDEX]?.toIntOrNull()
+                            ?: return@handle MenuActionResult.Ignored
+                        if (index !in script.commands.indices) return@handle MenuActionResult.Ignored
+                        if (context.click.isRightClick) {
+                            script.commands.removeAt(index)
+                            plugin.scripts.save(script)
+                            MenuActionResult.Success(MenuUpdate.Refresh)
+                        } else {
+                            MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.paramsRoute(script.id, index)))
+                        }
+                    },
+                ),
+            )
+        )
+    }
 
     fun open(player: Player, scriptId: UUID) {
-        val script = plugin.scripts.load(scriptId) ?: return
-        sessions[player.uniqueId] = scriptId
-        val layout = KcGui.layouts.settings54()
-        val holder = KcMenuHolder(player.uniqueId, "editor")
-        val inv = KcGui.inventory(player, holder, layout.size, KcI18n.text(player, "gui.editor.title", mapOf("name" to script.name)))
-        KcGui.frame(inv)
+        runtime.open(player, route(scriptId))
+    }
 
-        // 本文領域だけに編集対象と操作を置き、共有フッターの戻る/情報スロットを侵食しない。
+    private fun render(player: Player, route: MenuRoute): InventoryMenuView {
+        val script = scriptId(route)?.let(plugin.scripts::load)
+            ?: return unavailableView(player)
+        val layout = KcGui.layouts.settings54()
+        val elements = mutableListOf<MenuElement>()
         val commandSlots = (10..16) + (19..25) + (28..34)
         script.commands.take(commandSlots.size).forEachIndexed { index, command ->
-            inv.setItem(commandSlots[index], KcGui.item(
-                command.type.icon,
-                "#${index + 1} ${KcI18n.text(player, command.type.key)}",
-                GuiNameStyle.DEFAULT,
-                listOf(
-                    GuiLoreLine.Data(KcI18n.text(player, "gui.editor.summary"), command.summary(), "§f"),
-                    GuiLoreLine.Spacer,
-                    KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.action_edit")),
-                    KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.editor.action_delete"))
-                )
-            ))
+            elements += MenuElement(
+                commandSlots[index],
+                KcGui.item(
+                    command.type.icon,
+                    "#${index + 1} ${KcI18n.text(player, command.type.key)}",
+                    GuiNameStyle.DEFAULT,
+                    listOf(
+                        GuiLoreLine.Data(KcI18n.text(player, "gui.editor.summary"), command.summary(), "§f"),
+                        GuiLoreLine.Spacer,
+                        KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.action_edit")),
+                        KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.editor.action_delete")),
+                    ),
+                ),
+                GuiElementRole.CONTENT,
+                ACTION_COMMAND,
+                mapOf(COMMAND_INDEX to index.toString()),
+            )
         }
 
-        val actionSlots = listOf(37, 38, 39, 40, 41, 42, 43)
-        val actions = listOf(
-            Material.LIME_WOOL to KcI18n.text(player, "gui.editor.add"),
-            Material.FIREWORK_ROCKET to KcI18n.text(player, "gui.editor.test"),
-            Material.REDSTONE to KcI18n.text(player, "gui.editor.trigger", mapOf("trigger" to KcI18n.text(player, script.trigger.key))),
-            Material.DIAMOND to KcI18n.text(player, "gui.editor.save")
+        elements += action(37, Material.LIME_WOOL, KcI18n.text(player, "gui.editor.add"), ACTION_ADD)
+        elements += action(38, Material.FIREWORK_ROCKET, KcI18n.text(player, "gui.editor.test"), ACTION_TEST)
+        elements += action(
+            39,
+            Material.REDSTONE,
+            KcI18n.text(player, "gui.editor.trigger", mapOf("trigger" to KcI18n.text(player, script.trigger.key))),
+            ACTION_TRIGGER,
         )
-        actions.forEachIndexed { index, (material, name) -> inv.setItem(actionSlots[index], KcGui.item(material, name, GuiNameStyle.PRIMARY)) }
-
-        inv.setItem(layout.backSlot, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")))
-        inv.setItem(layout.infoSlot, KcGui.item(Material.BOOK, "${script.commands.size}", GuiNameStyle.MUTED))
-        player.openInventory(inv)
-        KcGui.sounds.onMenuOpen(player, "kantan_editor")
+        elements += action(40, Material.DIAMOND, KcI18n.text(player, "gui.editor.save"), ACTION_SAVE, GuiElementRole.CONFIRM)
+        elements += MenuElement(layout.backSlot, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, ACTION_BACK)
+        elements += MenuElement(layout.infoSlot, KcGui.item(Material.BOOK, "${script.commands.size}", GuiNameStyle.MUTED), GuiElementRole.DECORATION)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, "gui.editor.title", mapOf("name" to script.name))),
+            elements,
+        )
     }
 
-    @EventHandler
-    fun onClick(event: InventoryClickEvent) {
-        val holder = event.view.topInventory.holder as? KcMenuHolder ?: return
-        if (holder.id != "editor") return
-        event.isCancelled = true
-        val player = event.whoClicked as? Player ?: return
-        val scriptId = sessions[player.uniqueId] ?: return
-        val script = plugin.scripts.load(scriptId) ?: return
+    private fun unavailableView(player: Player): InventoryMenuView {
         val layout = KcGui.layouts.settings54()
-        val commandSlots = (10..16) + (19..25) + (28..34)
-
-        when (event.rawSlot) {
-            layout.backSlot -> plugin.programListMenu.open(player)
-            37 -> plugin.commandEditMenu.openTypePicker(player, script.id)
-            38 -> {
-                plugin.executor.execute(script.id, player.location, player)
-                KcGui.sounds.onMenuClick(player, "kantan_editor", MenuClickType.CONFIRM)
-            }
-            39 -> {
-                script.trigger = script.trigger.next()
-                plugin.scripts.save(script)
-                open(player, script.id)
-            }
-            40 -> {
-                plugin.scripts.save(script)
-                player.sendMessage(KcI18n.text(player, "message.saved"))
-                KcGui.sounds.onMenuClick(player, "kantan_editor", MenuClickType.CONFIRM)
-            }
-            in commandSlots -> {
-                val index = commandSlots.indexOf(event.rawSlot)
-                if (index !in script.commands.indices) return
-                if (event.isRightClick) {
-                    script.commands.removeAt(index)
-                    plugin.scripts.save(script)
-                    open(player, script.id)
-                } else {
-                    plugin.commandEditMenu.openParamEditor(player, script.id, index)
-                }
-            }
-        }
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, "gui.editor.title", mapOf("name" to "-"))),
+            listOf(MenuElement(layout.backSlot, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, ACTION_BACK)),
+        )
     }
 
-    @EventHandler
-    fun onDrag(event: InventoryDragEvent) {
-        if (event.view.topInventory.holder is KcMenuHolder) event.isCancelled = true
+    private fun action(
+        slot: Int,
+        material: Material,
+        name: String,
+        actionId: String,
+        role: GuiElementRole = GuiElementRole.ACTION,
+    ) = MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY), role, actionId)
+
+    private fun handle(block: (com.awabi2048.ccsystem.api.gui.MenuActionContext) -> MenuActionResult) =
+        MenuActionHandler(block)
+
+    companion object {
+        const val OWNER = ProgramListMenu.OWNER
+        const val MENU_ID = "editor"
+        private const val SCRIPT_ID = "scriptId"
+        private const val COMMAND_INDEX = "commandIndex"
+        private const val ACTION_BACK = "back"
+        private const val ACTION_ADD = "add"
+        private const val ACTION_TEST = "test"
+        private const val ACTION_TRIGGER = "trigger"
+        private const val ACTION_SAVE = "save"
+        private const val ACTION_COMMAND = "command"
+
+        fun route(scriptId: UUID) = MenuRoute(OWNER, MENU_ID, mapOf(SCRIPT_ID to scriptId.toString()))
+
+        private fun scriptId(route: MenuRoute): UUID? =
+            route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
     }
 }

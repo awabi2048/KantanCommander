@@ -95,14 +95,12 @@ class KantanCommanderPlugin : JavaPlugin() {
         runCatching { CCSystem.getAPI().getItemGrantService().unregister("kantan") }
         runCatching { CCSystem.getAPI().getConfigSchemaService().unregister("kantan") }
         runCatching { CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan") }
+        runCatching { CCSystem.getAPI().getMenuRuntimeService().unregisterOwner("kantan") }
     }
 
     private fun registerEvents() {
         val pm = server.pluginManager
         pm.registerEvents(DiskInteractionListener(this), this)
         pm.registerEvents(RedstoneTriggerListener(this), this)
-        pm.registerEvents(programListMenu, this)
-        pm.registerEvents(editorMenu, this)
-        pm.registerEvents(commandEditMenu, this)
     }
 }
