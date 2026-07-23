@@ -15,8 +15,9 @@ class ModelsTest {
     }
 
     @Test
-    fun triggerCyclesBetweenSupportedModes() {
-        assertEquals(TriggerMode.REDSTONE_EDGE, TriggerMode.REDSTONE_RISING.next())
-        assertEquals(TriggerMode.REDSTONE_RISING, TriggerMode.REDSTONE_EDGE.next())
+    fun blockModeCyclesLikeCommandBlocks() {
+        assertEquals(BlockMode.CHAIN, BlockMode.IMPULSE.next())
+        assertEquals(BlockMode.REPEAT, BlockMode.CHAIN.next())
+        assertEquals(BlockMode.IMPULSE, BlockMode.REPEAT.next())
     }
 }

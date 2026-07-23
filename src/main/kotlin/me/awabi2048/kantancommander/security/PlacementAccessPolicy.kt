@@ -20,12 +20,9 @@ class PlacementAccessPolicy(private val plugin: KantanCommanderPlugin) {
         } else {
             null
         }
-        return PlacementAccessRules.canManage(
-            player.uniqueId,
-            scriptOwner,
-            worldData?.owner,
-            worldData?.members?.toSet() ?: emptySet(),
-            admin
-        )
+        if (worldData != null) {
+            return MyWorldManagerApi.canBuildInWorld(player, worldData)
+        }
+        return true
     }
 }

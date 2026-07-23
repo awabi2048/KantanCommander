@@ -72,7 +72,7 @@ object DiskItemService {
                     listOf(
                         GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.commands.size, "§f"),
                         GuiLoreLine.Data(KcI18n.text(player, "item.owner"), ownerName, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.trigger.key), "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.blockMode.key), "§f"),
                         GuiLoreLine.Spacer,
                         me.awabi2048.kantancommander.gui.KcGui.action(
                             player,

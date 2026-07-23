@@ -40,9 +40,27 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     ACTION_TRIGGER to handle { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load)
                             ?: return@handle MenuActionResult.Ignored
-                        script.trigger = script.trigger.next()
+                        script.blockMode = script.blockMode.next()
                         plugin.scripts.save(script)
                         MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    ACTION_ACTIVATION to handle { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handle MenuActionResult.Ignored
+                        script.activation = script.activation.next()
+                        plugin.scripts.save(script)
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    ACTION_CONDITIONAL to handle { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handle MenuActionResult.Ignored
+                        script.conditional = !script.conditional
+                        plugin.scripts.save(script)
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    ACTION_COPY_LIBRARY to handle { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handle MenuActionResult.Ignored
+                        plugin.scripts.copyToLibrary(script, context.player.uniqueId)
+                        context.player.sendMessage(KcI18n.text(context.player, "message.copied_to_library"))
+                        MenuActionResult.Success(MenuUpdate.None)
                     },
                     ACTION_SAVE to handle { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load)
@@ -105,10 +123,16 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         elements += action(
             39,
             Material.REDSTONE,
-            KcI18n.text(player, "gui.editor.trigger", mapOf("trigger" to KcI18n.text(player, script.trigger.key))),
+            KcI18n.text(player, "gui.editor.mode"),
             ACTION_TRIGGER,
+            lore = listOf(GuiLoreLine.Data(KcI18n.text(player, "item.mode"), KcI18n.text(player, script.blockMode.key), "§f")),
         )
-        elements += action(40, Material.DIAMOND, KcI18n.text(player, "gui.editor.save"), ACTION_SAVE, GuiElementRole.CONFIRM)
+        elements += action(40, Material.LEVER, KcI18n.text(player, "gui.editor.activation"), ACTION_ACTIVATION,
+            lore = listOf(GuiLoreLine.Data(KcI18n.text(player, "item.activation"), KcI18n.text(player, script.activation.key), "§f")))
+        elements += action(41, Material.TRIPWIRE_HOOK, KcI18n.text(player, "gui.editor.condition"), ACTION_CONDITIONAL,
+            lore = listOf(GuiLoreLine.Data(KcI18n.text(player, "item.condition"), KcI18n.text(player, if (script.conditional) "condition.conditional" else "condition.unconditional"), "§f")))
+        elements += action(42, Material.DIAMOND, KcI18n.text(player, "gui.editor.save"), ACTION_SAVE, GuiElementRole.CONFIRM)
+        elements += action(43, Material.WRITABLE_BOOK, KcI18n.text(player, "gui.editor.copy_library"), ACTION_COPY_LIBRARY)
         elements += MenuElement(layout.backSlot, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, ACTION_BACK)
         elements += MenuElement(layout.infoSlot, KcGui.item(Material.BOOK, "${script.commands.size}", GuiNameStyle.MUTED), GuiElementRole.DECORATION)
         return InventoryMenuView(
@@ -133,7 +157,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         name: String,
         actionId: String,
         role: GuiElementRole = GuiElementRole.ACTION,
-    ) = MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY), role, actionId)
+        lore: List<GuiLoreLine> = emptyList(),
+    ) = MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY, lore), role, actionId)
 
     private fun handle(block: (com.awabi2048.ccsystem.api.gui.MenuActionContext) -> MenuActionResult) =
         MenuActionHandler(block)
@@ -147,6 +172,9 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         private const val ACTION_ADD = "add"
         private const val ACTION_TEST = "test"
         private const val ACTION_TRIGGER = "trigger"
+        private const val ACTION_ACTIVATION = "activation"
+        private const val ACTION_CONDITIONAL = "conditional"
+        private const val ACTION_COPY_LIBRARY = "copy_library"
         private const val ACTION_SAVE = "save"
         private const val ACTION_COMMAND = "command"
 

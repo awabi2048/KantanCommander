@@ -50,6 +50,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
             if (block.type != Material.NOTE_BLOCK) return@forEach
+            removeDisplay(world, placement.displayId)
             placement.displayId = spawnDisplay(world, placement)
         }
         save()
@@ -58,7 +59,8 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     fun spawnDisplay(world: World, placement: DiskPlacement): UUID {
         val loc = Location(world, placement.x + 0.5, placement.y + 0.05, placement.z + 0.5)
         val display = world.spawn(loc, BlockDisplay::class.java) {
-            it.block = Bukkit.createBlockData(Material.COMMAND_BLOCK)
+            val script = plugin.scripts.load(placement.scriptId)
+            it.block = Bukkit.createBlockData(script?.blockMode?.displayMaterial ?: Material.COMMAND_BLOCK)
             it.isGlowing = plugin.config.getBoolean("display.glowing", true)
         }
         placement.displayId = display.uniqueId
@@ -110,13 +112,15 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         val y: Int?,
         val z: Int?,
         val scriptId: String?,
+        val facing: String?,
         val displayId: String?
     ) {
         fun toModel(): DiskPlacement {
             val worldName = world?.takeIf { it.isNotBlank() } ?: error("world is missing")
             val script = parseUuid(scriptId, "scriptId")
             val display = displayId?.let { parseUuid(it, "displayId") }
-            return DiskPlacement(worldName, x ?: error("x is missing"), y ?: error("y is missing"), z ?: error("z is missing"), script, display)
+            val direction = facing?.takeIf { it.isNotBlank() } ?: error("facing is missing")
+            return DiskPlacement(worldName, x ?: error("x is missing"), y ?: error("y is missing"), z ?: error("z is missing"), script, direction, display)
         }
 
         private fun parseUuid(raw: String?, field: String): UUID =
@@ -125,7 +129,9 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     }
 
     private fun save() {
-        file.writeText(gson.toJson(placements.values.toList()), Charsets.UTF_8)
+        val temporary = file.resolveSibling("${file.name}.tmp")
+        temporary.writeText(gson.toJson(placements.values.toList()), Charsets.UTF_8)
+        Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 
     private fun key(world: String, x: Int, y: Int, z: Int): String = "$world,$x,$y,$z"

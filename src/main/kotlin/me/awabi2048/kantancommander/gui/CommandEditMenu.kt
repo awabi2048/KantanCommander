@@ -11,6 +11,10 @@ import com.awabi2048.ccsystem.api.gui.MenuActionHandler
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
+import com.awabi2048.ccsystem.api.gui.MenuDialogInput
+import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
+import com.awabi2048.ccsystem.api.gui.MenuDialogButton
+import com.awabi2048.ccsystem.api.gui.MenuDialogHandler
 import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandParam
@@ -18,6 +22,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
+import net.kyori.adventure.text.Component
 
 class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private val runtime = CCSystem.getAPI().getMenuRuntimeService()
@@ -64,7 +69,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val paramId = context.payload[PARAM_ID] ?: return@handle MenuActionResult.Ignored
                         val param = command.type.params.firstOrNull { it.id == paramId }
                             ?: return@handle MenuActionResult.Ignored
-                        command.params[param.id] = nextValue(param, command.params[param.id] ?: param.defaultValue)
+                        val current = command.params[param.id] ?: param.defaultValue
+                        if (param !is CommandParam.Choice) {
+                            showValueDialog(context.player, script.id, commandIndex, param, current)
+                            return@handle MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        command.params[param.id] = nextValue(param, current)
                         plugin.scripts.save(script)
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
@@ -143,6 +153,36 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         is CommandParam.Choice -> param.options[(param.options.indexOf(current).takeIf { it >= 0 } ?: 0).let { (it + 1) % param.options.size }]
         is CommandParam.Number -> (current.toDoubleOrNull()?.plus(1.0) ?: param.defaultValue.toDouble()).toString().removeSuffix(".0")
         is CommandParam.Text -> current
+    }
+
+    private fun showValueDialog(player: Player, scriptId: UUID, commandIndex: Int, param: CommandParam, current: String) {
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = OWNER,
+                id = "param_value",
+                title = Component.text(KcI18n.text(player, param.key)),
+                body = emptyList(),
+                inputs = listOf(MenuDialogInput.Text("value", Component.text(KcI18n.text(player, param.key)), current, maxLength = 256)),
+                confirm = MenuDialogButton(Component.text(KcI18n.text(player, "gui.params.confirm")), MenuDialogHandler { target, response ->
+                    val value = response.textValue("value").trim()
+                    if (value.isEmpty() || param is CommandParam.Number && (value.toDoubleOrNull()?.isFinite() != true)) {
+                        target.sendMessage(KcI18n.text(target, "message.invalid_value"))
+                        return@MenuDialogHandler MenuActionResult.Rejected()
+                    }
+                    val script = plugin.scripts.load(scriptId) ?: return@MenuDialogHandler MenuActionResult.Rejected()
+                    val command = script.commands.getOrNull(commandIndex) ?: return@MenuDialogHandler MenuActionResult.Rejected()
+                    command.params[param.id] = value
+                    plugin.scripts.save(script)
+                    openParamEditor(target, scriptId, commandIndex)
+                    MenuActionResult.Success(MenuUpdate.None)
+                }),
+                cancel = MenuDialogButton(Component.text(KcI18n.text(player, "gui.common.back")), MenuDialogHandler { target, _ ->
+                    openParamEditor(target, scriptId, commandIndex)
+                    MenuActionResult.Success(MenuUpdate.None)
+                })
+            )
+        )
     }
 
     private fun icon(param: CommandParam): Material = when (param) {

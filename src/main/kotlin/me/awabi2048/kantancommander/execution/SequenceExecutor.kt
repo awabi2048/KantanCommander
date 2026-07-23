@@ -19,11 +19,12 @@ import java.util.UUID
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private val running = mutableSetOf<UUID>()
 
-    fun execute(scriptId: UUID, origin: Location, actor: Player? = null) {
-        if (!running.add(scriptId)) return
-        val script = plugin.scripts.load(scriptId) ?: return running.remove(scriptId).let {}
+    fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
+        if (!running.add(scriptId)) return callback(false)
+        val script = plugin.scripts.load(scriptId) ?: return running.remove(scriptId).let { callback(false) }
         runNext(script.commands.toList(), 0, origin, actor) {
             running.remove(scriptId)
+            callback(true)
         }
     }
 
@@ -59,7 +60,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 origin.world.spawnParticle(
                     particle,
                     origin,
-                    command.int("count", 8),
+                    command.int("count", 8).coerceIn(0, plugin.config.getInt("execution.maximum-particle-count", 256)),
                     command.double("offsetX", 0.5),
                     command.double("offsetY", 0.5),
                     command.double("offsetZ", 0.5),
@@ -98,7 +99,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     private fun targets(origin: Location, actor: Player?, mode: String): List<Player> = when (mode) {
         "self" -> listOfNotNull(actor)
-        else -> origin.world.players.filter { it.location.distanceSquared(origin) <= 32.0 * 32.0 }
+        "world" -> origin.world.players.toList()
+        else -> {
+            val radius = plugin.config.getDouble("execution.nearby-radius", 32.0)
+            origin.world.players.filter { it.location.distanceSquared(origin) <= radius * radius }
+        }
     }
 
     private fun <T : org.bukkit.Keyed> registryValue(registry: Registry<T>, raw: String): T? {

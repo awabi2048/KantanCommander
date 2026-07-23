@@ -34,6 +34,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     lateinit var placementAccess: PlacementAccessPolicy
         private set
+    private lateinit var triggerListener: RedstoneTriggerListener
 
     override fun onEnable() {
         CCSystem.getAPI().getConfigSchemaService().register(
@@ -44,10 +45,22 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 1,
+                    currentVersion = 2,
                     classification = ConfigClassification.MANAGED_CONFIG,
-                    migrations = emptyMap(),
-                    validator = com.awabi2048.ccsystem.api.config.ConfigValidator {},
+                    migrations = mapOf(
+                        1 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            config.set("execution.minimum-repeat-delay-ticks", 1)
+                            config.set("execution.maximum-chain-length", 64)
+                            config.set("execution.maximum-particle-count", 256)
+                            config.set("execution.nearby-radius", 32)
+                        }
+                    ),
+                    validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
+                        require(config.getInt("execution.minimum-repeat-delay-ticks", 1) >= 1)
+                        require(config.getInt("execution.maximum-chain-length", 64) in 1..256)
+                        require(config.getInt("execution.maximum-particle-count", 256) in 1..4096)
+                        require(config.getDouble("execution.nearby-radius", 32.0) > 0.0)
+                    },
                     reloadAction = { reloadConfig() }
                 )
             )
@@ -81,10 +94,12 @@ class KantanCommanderPlugin : JavaPlugin() {
         editorMenu = SequenceEditorMenu(this)
         commandEditMenu = CommandEditMenu(this)
         placementAccess = PlacementAccessPolicy(this)
+        triggerListener = RedstoneTriggerListener(this)
 
         getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this))
         registerEvents()
         placements.restoreDisplays()
+        triggerListener.start()
     }
 
     override fun onDisable() {
@@ -101,6 +116,6 @@ class KantanCommanderPlugin : JavaPlugin() {
     private fun registerEvents() {
         val pm = server.pluginManager
         pm.registerEvents(DiskInteractionListener(this), this)
-        pm.registerEvents(RedstoneTriggerListener(this), this)
+        pm.registerEvents(triggerListener, this)
     }
 }

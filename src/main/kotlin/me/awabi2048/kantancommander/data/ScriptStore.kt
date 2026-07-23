@@ -4,7 +4,8 @@ import com.google.gson.GsonBuilder
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ScriptCommand
-import me.awabi2048.kantancommander.model.TriggerMode
+import me.awabi2048.kantancommander.model.BlockMode
+import me.awabi2048.kantancommander.model.ActivationMode
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -25,6 +26,29 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
         return script
     }
 
+    fun copyForPlacement(source: DiskScript): DiskScript {
+        val copy = source.copy(
+            id = UUID.randomUUID(),
+            listed = false,
+            commands = source.commands.map { it.copy(params = it.params.toMutableMap()) }.toMutableList()
+        )
+        save(copy)
+        return copy
+    }
+
+    fun copyToLibrary(source: DiskScript, owner: UUID, name: String = source.name): DiskScript {
+        val copy = source.copy(
+            id = UUID.randomUUID(),
+            name = name,
+            owner = owner,
+            createdAt = System.currentTimeMillis(),
+            listed = true,
+            commands = source.commands.map { it.copy(params = it.params.toMutableMap()) }.toMutableList()
+        )
+        save(copy)
+        return copy
+    }
+
     fun load(id: UUID): DiskScript? {
         val file = file(id)
         if (!file.isFile) return null
@@ -32,7 +56,7 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
     }
 
     fun save(script: DiskScript) {
-        file(script.id).writeText(gson.toJson(ScriptDto.from(script)), Charsets.UTF_8)
+        atomicWrite(file(script.id), gson.toJson(ScriptDto.from(script)))
     }
 
     fun delete(id: UUID) {
@@ -45,9 +69,15 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
             ?.sortedBy { it.createdAt }
             ?: emptyList()
 
-    fun listOwned(owner: UUID): List<DiskScript> = listAll().filter { it.owner == owner }
+    fun listOwned(owner: UUID): List<DiskScript> = listAll().filter { it.owner == owner && it.listed }
 
     private fun file(id: UUID): File = dir.resolve("$id.json")
+
+    private fun atomicWrite(target: File, content: String) {
+        val temporary = target.resolveSibling("${target.name}.tmp")
+        temporary.writeText(content, Charsets.UTF_8)
+        Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
 
     private fun read(file: File): DiskScript? {
         return try {
@@ -76,7 +106,11 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
         val name: String?,
         val owner: String?,
         val createdAt: Long?,
-        val trigger: String?,
+        val listed: Boolean?,
+        val blockMode: String?,
+        val activation: String?,
+        val conditional: Boolean?,
+        val delayTicks: Int?,
         val commands: List<CommandDto>?
     ) {
         fun toModel(): DiskScript {
@@ -89,7 +123,11 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
                 name = name?.takeIf { it.isNotBlank() } ?: error("name is missing"),
                 owner = ownerId,
                 createdAt = createdAt ?: error("createdAt is missing"),
-                trigger = parseEnum<TriggerMode>(trigger, "trigger"),
+                listed = listed ?: error("listed is missing"),
+                blockMode = parseEnum<BlockMode>(blockMode, "blockMode"),
+                activation = parseEnum<ActivationMode>(activation, "activation"),
+                conditional = conditional ?: error("conditional is missing"),
+                delayTicks = (delayTicks ?: error("delayTicks is missing")).coerceAtLeast(1),
                 commands = parsedCommands
             )
         }
@@ -108,7 +146,11 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
                 name = script.name,
                 owner = script.owner.toString(),
                 createdAt = script.createdAt,
-                trigger = script.trigger.name,
+                listed = script.listed,
+                blockMode = script.blockMode.name,
+                activation = script.activation.name,
+                conditional = script.conditional,
+                delayTicks = script.delayTicks,
                 commands = script.commands.map { CommandDto.from(it) }
             )
         }

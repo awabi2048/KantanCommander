@@ -2,4 +2,9 @@ max-commands-per-disk: 32
 default-disk-name: "Kantan Disk"
 display:
   glowing: true
-config_version: 1
+execution:
+  minimum-repeat-delay-ticks: 1
+  maximum-chain-length: 64
+  maximum-particle-count: 256
+  nearby-radius: 32
+config_version: 2

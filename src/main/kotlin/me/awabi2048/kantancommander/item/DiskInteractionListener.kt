@@ -49,7 +49,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
                 if (player.isSneaking) {
                     val base = event.clickedBlock ?: return
                     val target = base.getRelative(event.blockFace)
-                    placeDisk(player, target.location, script.id, event.hand ?: EquipmentSlot.HAND)
+                    placeDisk(player, target.location, script, event.hand ?: EquipmentSlot.HAND)
                 } else {
                     plugin.editorMenu.open(player, script.id)
                 }
@@ -88,7 +88,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         )
     }
 
-    private fun placeDisk(player: Player, location: org.bukkit.Location, scriptId: java.util.UUID, hand: EquipmentSlot) {
+    private fun placeDisk(player: Player, location: org.bukkit.Location, source: me.awabi2048.kantancommander.model.DiskScript, hand: EquipmentSlot) {
         val block = location.block
         if (!block.type.isAir) {
             player.sendMessage(KcI18n.text(player, "message.place_blocked"))
@@ -114,13 +114,24 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             return
         }
 
+        val placedScript = plugin.scripts.copyForPlacement(source)
         block.setType(Material.NOTE_BLOCK, false)
-        val placement = DiskPlacement(block.world.name, block.x, block.y, block.z, scriptId, null)
-        plugin.placements.add(placement)
-        plugin.placements.spawnDisplay(block.world, placement)
+        val placement = DiskPlacement(
+            block.world.name, block.x, block.y, block.z, placedScript.id,
+            player.facing.name, null
+        )
+        runCatching {
+            plugin.placements.add(placement)
+            plugin.placements.spawnDisplay(block.world, placement)
+        }.onFailure {
+            plugin.placements.remove(block.world, block.x, block.y, block.z)
+            plugin.scripts.delete(placedScript.id)
+            block.setType(Material.AIR, false)
+            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            return
+        }
 
         val stack = if (hand == EquipmentSlot.OFF_HAND) player.inventory.itemInOffHand else player.inventory.itemInMainHand
-        stack.amount -= 1
         player.sendMessage(KcI18n.text(player, "message.place_created"))
     }
 }

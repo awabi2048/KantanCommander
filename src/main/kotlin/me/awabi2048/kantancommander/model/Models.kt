@@ -8,7 +8,11 @@ data class DiskScript(
     var name: String,
     val owner: UUID,
     val createdAt: Long = System.currentTimeMillis(),
-    var trigger: TriggerMode = TriggerMode.REDSTONE_RISING,
+    var listed: Boolean = true,
+    var blockMode: BlockMode = BlockMode.IMPULSE,
+    var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
+    var conditional: Boolean = false,
+    var delayTicks: Int = 1,
     val commands: MutableList<ScriptCommand> = mutableListOf()
 )
 
@@ -31,11 +35,17 @@ data class ScriptCommand(
     }.ifBlank { "-" }
 }
 
-enum class TriggerMode(val key: String) {
-    REDSTONE_RISING("trigger.redstone_rising"),
-    REDSTONE_EDGE("trigger.redstone_edge");
+enum class BlockMode(val key: String, val displayMaterial: Material) {
+    IMPULSE("block_mode.impulse", Material.COMMAND_BLOCK),
+    CHAIN("block_mode.chain", Material.CHAIN_COMMAND_BLOCK),
+    REPEAT("block_mode.repeat", Material.REPEATING_COMMAND_BLOCK);
+    fun next(): BlockMode = entries[(ordinal + 1) % entries.size]
+}
 
-    fun next(): TriggerMode = if (this == REDSTONE_RISING) REDSTONE_EDGE else REDSTONE_RISING
+enum class ActivationMode(val key: String) {
+    NEEDS_REDSTONE("activation.needs_redstone"),
+    ALWAYS_ACTIVE("activation.always_active");
+    fun next(): ActivationMode = entries[(ordinal + 1) % entries.size]
 }
 
 enum class CommandType(
@@ -51,7 +61,7 @@ enum class CommandType(
     )),
     MESSAGE("command.message", Material.PAPER, listOf(
         CommandParam.Text("text", "param.text", "Hello"),
-        CommandParam.Choice("target", "param.target", "nearby", listOf("nearby", "self"))
+        CommandParam.Choice("target", "param.target", "nearby", listOf("nearby", "self", "world"))
     )),
     PARTICLE("command.particle", Material.FIREWORK_STAR, listOf(
         CommandParam.Text("particle", "param.particle", "minecraft:happy_villager"),
@@ -95,6 +105,7 @@ data class DiskPlacement(
     val y: Int,
     val z: Int,
     val scriptId: UUID,
+    val facing: String,
     var displayId: UUID?
 ) {
     val key: String get() = "$world,$x,$y,$z"
