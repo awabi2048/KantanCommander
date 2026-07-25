@@ -130,7 +130,11 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             player.sendMessage(KcI18n.text(player, "message.place_blocked"))
             return
         }
-        if (player.boundingBox.overlaps(block.boundingBox)) {
+        val targetBox = org.bukkit.util.BoundingBox.of(
+            block.location.toVector(),
+            block.location.clone().add(1.0, 1.0, 1.0).toVector(),
+        )
+        if (player.boundingBox.overlaps(targetBox)) {
             player.sendMessage(KcI18n.text(player, "message.place_blocked"))
             return
         }

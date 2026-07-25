@@ -7,6 +7,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskCallMode
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import org.bukkit.Material
 import java.io.File
 import java.util.UUID
@@ -21,15 +22,24 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
 
         val pack = outputRoot.resolve("kantan-${root.id}")
         val functions = pack.resolve("data/kantan/function").also(File::mkdirs)
+        val loadTags = pack.resolve("data/minecraft/tags/function").also(File::mkdirs)
         pack.resolve("pack.mcmeta").writeText("""{"pack":{"pack_format":88,"description":"Kantan Commander export"}}""")
+        functions.resolve("load.mcfunction").writeText("scoreboard objectives add kc_result dummy\n", Charsets.UTF_8)
+        loadTags.resolve("load.json").writeText("""{"values":["kantan:load"]}""", Charsets.UTF_8)
         collected.values.forEach { script ->
-            val compiled = compile(script)
-            compiled.forEach { (name, content) -> functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8) }
+            compile(script).forEach { (name, content) ->
+                functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8)
+            }
         }
         return ExportResult.Success(pack)
     }
 
-    private fun collect(script: DiskScript, all: MutableMap<UUID, DiskScript>, errors: MutableList<String>, active: MutableSet<UUID>) {
+    private fun collect(
+        script: DiskScript,
+        all: MutableMap<UUID, DiskScript>,
+        errors: MutableList<String>,
+        active: MutableSet<UUID>,
+    ) {
         if (!active.add(script.id)) {
             errors += "別ディスク参照が循環しています: ${script.id}"
             return
@@ -62,62 +72,165 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                 CommandType.DISK_CALL -> if (node.string("mode") == DiskCallMode.SNAPSHOT.name && node.snapshot == null) {
                     errors += "${script.id}/${node.id}: コピー内容がありません"
                 }
+                CommandType.CONDITION -> validateCondition(script, node, errors)
+                CommandType.CONTEXT -> validateContext(script, node, contextFrom(node), errors)
                 else -> Unit
+            }
+            node.contextOverride?.let { validateContext(script, node, it, errors) }
+        }
+    }
+
+    private fun validateCondition(script: DiskScript, node: CommandNode, errors: MutableList<String>) {
+        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+        if (kind == null) {
+            errors += "${script.id}/${node.id}: 不明な条件種別です"
+            return
+        }
+        if (kind == ConditionKind.SCORE_COMPARE && node.string("objective").isBlank()) {
+            errors += "${script.id}/${node.id}: スコア条件のobjectiveがありません"
+        }
+        if (kind == ConditionKind.SCORE_COMPARE && node.string("operator", ">=") !in setOf("==", "!=", ">", "<", ">=", "<=")) {
+            errors += "${script.id}/${node.id}: スコア条件の比較演算子が不正です"
+        }
+        if (kind == ConditionKind.COMMAND_RESULT) {
+            val source = runCatching { UUID.fromString(node.string("nodeId")) }.getOrNull()
+            val sourceType = source?.let(script.graph.nodes::get)?.type
+            if (sourceType !in setOf(
+                    CommandType.TELEPORT,
+                    CommandType.GIVE_ITEM,
+                    CommandType.ENTITY_ACTION,
+                    CommandType.DISPLAY_TEXT,
+                    CommandType.DISK_CALL,
+                )
+            ) {
+                errors += "${script.id}/${node.id}: 成否参照先ノードが存在しません"
             }
         }
     }
 
-    private fun compile(script: DiskScript): Map<String, String> {
-        val output = linkedMapOf<String, String>()
-        compileGraph(script.graph, script.id.toString(), output)
-        return output
+    private fun validateContext(script: DiskScript, node: CommandNode, context: ExecutionContextSpec, errors: MutableList<String>) {
+        context.facing?.takeIf(String::isNotBlank)?.let { facing ->
+            val parts = facing.trim().split(Regex("\\s+"))
+            val numeric = parts.size == 2 && parts.all { it.toFloatOrNull() != null }
+            if (!numeric && !facing.startsWith("@")) {
+                errors += "${script.id}/${node.id}: バニラへ変換できない向き指定です: $facing"
+            }
+        }
     }
 
+    private fun compile(script: DiskScript): Map<String, String> =
+        linkedMapOf<String, String>().also { compileGraph(script.graph, script.id.toString(), it) }
+
     private fun compileGraph(graph: CommandGraph, prefix: String, output: MutableMap<String, String>) {
-        val entry = graph.entryNodeId
-        output[prefix] = entry?.let { "function kantan:${prefix}_$it\n" } ?: "# empty\n"
+        output[prefix] = graph.entryNodeId?.let { "function kantan:${prefix}_$it\n" } ?: "# empty\n"
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
-            if (node.type == CommandType.DISK_CALL && node.string("mode") == DiskCallMode.SNAPSHOT.name) {
-                val snapshotPrefix = "${prefix}_snapshot_${node.id}"
-                node.snapshot?.let { compileGraph(it, snapshotPrefix, output) }
-                lines += "function kantan:$snapshotPrefix"
-            } else {
-                lower(node)?.let(lines::add)
+            when {
+                node.type == CommandType.DISK_CALL && node.string("mode") == DiskCallMode.SNAPSHOT.name -> {
+                    val snapshotPrefix = "${prefix}_snapshot_${node.id}"
+                    node.snapshot?.let { compileGraph(it, snapshotPrefix, output) }
+                    lines += storeResult(node, "function kantan:$snapshotPrefix")
+                }
+                node.type == CommandType.CONTEXT -> {
+                    node.next?.let { lines += wrapContext(contextFrom(node), "function kantan:${prefix}_$it") }
+                }
+                else -> lower(node)?.let { command ->
+                    val contextual = node.contextOverride?.let { wrapContext(it, command) } ?: command
+                    lines += storeResult(node, contextual)
+                }
             }
-            if (node.type == CommandType.CONDITION) {
-                val predicate = predicate(node)
-                node.trueNext?.let { lines += "execute if $predicate run function kantan:${prefix}_$it" }
-                node.falseNext?.let { lines += "execute unless $predicate run function kantan:${prefix}_$it" }
-            } else if (node.type == CommandType.WAIT) {
-                node.next?.let { lines += "schedule function kantan:${prefix}_$it ${node.int("ticks", 20).coerceAtLeast(1)}t replace" }
-            } else {
-                node.next?.let { lines += "function kantan:${prefix}_$it" }
+
+            when (node.type) {
+                CommandType.CONDITION -> {
+                    val predicate = predicate(node)
+                    val inverted = node.string("kind") == ConditionKind.SCORE_COMPARE.name &&
+                        node.string("operator") == "!="
+                    node.trueNext?.let {
+                        lines += "execute ${if (inverted) "unless" else "if"} $predicate run function kantan:${prefix}_$it"
+                    }
+                    node.falseNext?.let {
+                        lines += "execute ${if (inverted) "if" else "unless"} $predicate run function kantan:${prefix}_$it"
+                    }
+                }
+                CommandType.WAIT ->
+                    node.next?.let { lines += "schedule function kantan:${prefix}_$it ${node.int("ticks", 20).coerceAtLeast(1)}t replace" }
+                CommandType.CONTEXT -> Unit
+                else -> node.next?.let { lines += "function kantan:${prefix}_$it" }
             }
             output["${prefix}_${node.id}"] = lines.joinToString("\n", postfix = "\n")
         }
     }
 
     private fun lower(node: CommandNode): String? = when (node.type) {
-        CommandType.TELEPORT -> "tp ${node.string("target", "@s")} ${node.string("destination", "~ ~ ~")}"
-        CommandType.GIVE_ITEM -> "give ${node.string("target", "@s")} ${node.string("item")} ${node.int("count", 1)}"
-        CommandType.ENTITY_ACTION -> if (node.string("action") == "dismount") "ride ${node.string("target", "@s")} dismount" else "ride ${node.string("target", "@s")} mount ${node.string("other")}"
+        CommandType.TELEPORT -> "tp ${effectiveTarget(node)} ${node.string("destination", "~ ~ ~")}"
+        CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.int("count", 1)}"
+        CommandType.ENTITY_ACTION ->
+            if (node.string("action") == "dismount") "ride ${effectiveTarget(node)} dismount"
+            else "ride ${effectiveTarget(node)} mount ${node.string("other")}"
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
-            "title" -> "title ${node.string("target", "@s")} title {\"text\":\"${escape(node.string("text"))}\"}"
-            "actionbar" -> "title ${node.string("target", "@s")} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
-            else -> "tellraw ${node.string("target", "@s")} {\"text\":\"${escape(node.string("text"))}\"}"
+            "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text"))}\"}"
+            "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
+            else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text"))}\"}"
         }
-        CommandType.WAIT -> null
-        CommandType.DISK_CALL -> if (node.string("mode") == DiskCallMode.LIVE_REFERENCE.name) "function kantan:${node.string("diskId")}" else "# embedded snapshot"
-        CommandType.CONTEXT -> "# context ${node.params}"
-        CommandType.CONDITION, CommandType.MERGE -> null
+        CommandType.DISK_CALL ->
+            if (node.string("mode") == DiskCallMode.LIVE_REFERENCE.name) "function kantan:${node.string("diskId")}" else null
+        CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE -> null
     }
 
-    private fun predicate(node: CommandNode): String = when (runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrDefault(ConditionKind.TARGET_EXISTS)) {
+    private fun predicate(node: CommandNode): String = when (
+        ConditionKind.valueOf(node.string("kind", ConditionKind.TARGET_EXISTS.name))
+    ) {
         ConditionKind.TARGET_EXISTS -> "entity ${node.string("subject", "@s")}"
-        ConditionKind.BLOCK_STATE -> "block ${node.string("position", "~ ~ ~")} ${node.string("block", "minecraft:air")}"
-        ConditionKind.ITEM_POSSESSION -> "items entity ${node.string("subject", "@s")} inventory.* ${node.string("item", "minecraft:air")}"
-        else -> "entity ${node.string("subject", "@s")}"
+        ConditionKind.ENTITY_STATE -> when (node.string("state", "alive")) {
+            "sneaking" -> "entity ${node.string("subject", "@s")}[nbt={Pose:\"CROUCHING\"}]"
+            "on_ground" -> "entity ${node.string("subject", "@s")}[nbt={OnGround:1b}]"
+            else -> "entity ${node.string("subject", "@s")}"
+        }
+        ConditionKind.SCORE_COMPARE ->
+            "score ${node.string("subject", "@s")} ${node.string("objective")} matches ${scoreRange(node.string("operator", ">="), node.int("value"))}"
+        ConditionKind.BLOCK_STATE ->
+            "block ${node.string("position", "~ ~ ~")} ${node.string("block", "minecraft:air")}"
+        ConditionKind.ITEM_POSSESSION ->
+            "items entity ${node.string("subject", "@s")} inventory.* ${node.string("item", "minecraft:air")}"
+        ConditionKind.COMMAND_RESULT -> {
+            val source = UUID.fromString(node.string("nodeId"))
+            "score ${scoreHolder(source)} kc_result matches ${if (node.string("expected", "success") == "success") "1" else "0"}"
+        }
+    }
+
+    private fun effectiveTarget(node: CommandNode): String =
+        node.contextOverride?.target ?: node.string("target", "@s")
+
+    private fun contextFrom(node: CommandNode) = ExecutionContextSpec(
+        executor = node.string("executor").ifBlank { null },
+        target = node.string("target").ifBlank { null },
+        position = node.string("position").ifBlank { null },
+        facing = node.string("facing").ifBlank { null },
+    )
+
+    private fun wrapContext(context: ExecutionContextSpec, command: String): String {
+        val clauses = buildList {
+            (context.target ?: context.executor)?.let { add("as $it") }
+            context.position?.let { add("positioned $it") }
+            context.facing?.let { facing ->
+                if (facing.startsWith("@")) add("facing entity $facing eyes") else add("rotated $facing")
+            }
+        }
+        return if (clauses.isEmpty()) command else "execute ${clauses.joinToString(" ")} run $command"
+    }
+
+    private fun storeResult(node: CommandNode, command: String): String =
+        "execute store success score ${scoreHolder(node.id)} kc_result run $command"
+
+    private fun scoreHolder(id: UUID) = "#n_${id.toString().replace("-", "")}"
+
+    private fun scoreRange(operator: String, value: Int): String = when (operator) {
+        "==" -> value.toString()
+        "!=" -> value.toString()
+        ">" -> "${value + 1}.."
+        "<" -> "..${value - 1}"
+        "<=" -> "..$value"
+        else -> "$value.."
     }
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")

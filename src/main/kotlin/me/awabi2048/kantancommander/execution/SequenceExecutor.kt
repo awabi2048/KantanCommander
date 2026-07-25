@@ -136,7 +136,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.ENTITY_ACTION -> {
                 val entity = target ?: return false
                 when (node.string("action", "ride")) {
-                    "ride" -> session.actor?.let(entity::addPassenger) ?: false
+                    "ride" -> {
+                        val vehicle = resolveSelector(node.string("other"), session) ?: return false
+                        vehicle.addPassenger(entity)
+                    }
                     "dismount" -> entity.leaveVehicle()
                     else -> false
                 }
@@ -201,6 +204,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     private fun resolveTarget(context: ExecutionContextSpec?, selector: String, session: ExecutionSession): Entity? {
         val selected = context?.target ?: if (selector == "@s") context?.executor ?: selector else selector
+        return resolveSelector(selected, session)
+    }
+
+    private fun resolveSelector(selected: String, session: ExecutionSession): Entity? {
         return when (selected) {
             "@s", "actor" -> session.actor
             "@p" -> session.origin.world.players.minByOrNull { it.location.distanceSquared(session.origin) }

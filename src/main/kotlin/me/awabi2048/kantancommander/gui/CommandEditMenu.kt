@@ -14,6 +14,7 @@ import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -34,7 +35,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@MenuActionHandler MenuActionResult.Ignored
                         val type = context.payload["type"]?.let { runCatching { CommandType.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        append(script.graph, type, context.route.payload["lane"]?.toIntOrNull() ?: 0)
+                        val lane = context.route.payload["lane"]?.toIntOrNull() ?: 0
+                        val branchCondition = script.graph.nodes.values
+                            .filter { it.type == CommandType.CONDITION }
+                            .getOrNull(lane - 1)
+                            ?.id
+                        GraphEditor.append(script.graph, type, branchCondition)
                         plugin.scripts.save(script)
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
@@ -61,38 +67,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }.toMutableList()
         elements += MenuElement(36, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, "back")
         return InventoryMenuView(45, KcGui.title("コマンドを追加"), elements)
-    }
-
-    private fun append(graph: me.awabi2048.kantancommander.model.CommandGraph, type: CommandType, lane: Int) {
-        val node = type.newNode()
-        val tailBefore = graph.nodes.values.lastOrNull { it.next == null && it.type != CommandType.CONDITION }
-        val conditionBefore = graph.nodes.values.lastOrNull { it.type == CommandType.CONDITION }
-        if (type == CommandType.CONDITION) {
-            val merge = CommandType.MERGE.newNode()
-            node.trueNext = merge.id
-            node.falseNext = merge.id
-            node.pairedNodeId = merge.id
-            merge.pairedNodeId = node.id
-            graph.nodes[node.id] = node
-            graph.nodes[merge.id] = merge
-        } else {
-            graph.nodes[node.id] = node
-        }
-        if (lane > 0 && conditionBefore != null) {
-            val oldFirst = conditionBefore.falseNext
-            conditionBefore.falseNext = node.id
-            if (type == CommandType.CONDITION) {
-                node.pairedNodeId?.let(graph.nodes::get)?.next = oldFirst
-            } else {
-                node.next = oldFirst
-            }
-            return
-        }
-        if (graph.entryNodeId == null) {
-            graph.entryNodeId = node.id
-            return
-        }
-        if (tailBefore != null) tailBefore.next = node.id
     }
 
     companion object {
