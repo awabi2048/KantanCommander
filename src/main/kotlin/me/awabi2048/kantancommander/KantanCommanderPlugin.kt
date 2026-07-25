@@ -48,20 +48,25 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 3,
+                    currentVersion = 4,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            removeLegacyConfig(config)
                             config.set("execution.maximum-command-count", 1024)
                             config.set("execution.maximum-disk-call-depth", 3)
                             config.set("timer.minimum-units", 1)
                             config.set("timer.maximum-units", 86400)
                         },
                         2 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            removeLegacyConfig(config)
                             config.set("execution.maximum-command-count", 1024)
                             config.set("execution.maximum-disk-call-depth", 3)
                             config.set("timer.minimum-units", 1)
                             config.set("timer.maximum-units", 86400)
+                        },
+                        3 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            removeLegacyConfig(config)
                         }
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
@@ -127,5 +132,13 @@ class KantanCommanderPlugin : JavaPlugin() {
         val pm = server.pluginManager
         pm.registerEvents(DiskInteractionListener(this), this)
         pm.registerEvents(triggerListener, this)
+    }
+
+    private fun removeLegacyConfig(config: org.bukkit.configuration.file.YamlConfiguration) {
+        config.set("max-commands-per-disk", null)
+        config.set("execution.minimum-repeat-delay-ticks", null)
+        config.set("execution.maximum-chain-length", null)
+        config.set("execution.maximum-particle-count", null)
+        config.set("execution.nearby-radius", null)
     }
 }
