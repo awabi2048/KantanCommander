@@ -70,6 +70,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val node = graph.nodes[nodeId] ?: return stop(session, script, nodeId, "missing_node", done)
         if (session.executed >= session.budget) return stop(session, script, nodeId, "command_limit", done)
         session.executed++
+        plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
 
         val next: (UUID?, Boolean) -> Unit = { target, success ->
             session.results[node.id] = success

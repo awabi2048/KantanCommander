@@ -57,6 +57,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             script.timer.enabled = false
                             script.activation = ActivationMode.NEEDS_REDSTONE
                             plugin.scripts.save(script)
+                            plugin.placements.refreshDisplaysForScript(script.id)
                             MenuActionResult.Success(MenuUpdate.Refresh)
                         } else {
                             showTimerDialog(context.player, context.route, script.id, script.timer.intervalUnits)
@@ -220,6 +221,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     script.timer.enabled = true
                     script.timer.intervalUnits = value
                     plugin.scripts.save(script)
+                    plugin.placements.refreshDisplaysForScript(script.id)
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
                 cancel = MenuDialogButton(Component.text("戻る"), MenuDialogHandler { target, _ ->

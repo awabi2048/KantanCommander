@@ -46,6 +46,14 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun findByScript(id: UUID): List<DiskPlacement> = placements.values.filter { it.scriptId == id }
 
+    fun refreshDisplaysForScript(id: UUID) {
+        findByScript(id).forEach { placement ->
+            val world = Bukkit.getWorld(placement.world) ?: return@forEach
+            removeDisplay(world, placement.displayId)
+            spawnDisplay(world, placement)
+        }
+    }
+
     fun all(): List<DiskPlacement> = placements.values.toList()
 
     fun restoreDisplays() {
