@@ -10,6 +10,7 @@ import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.SequenceExecutor
+import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.gui.CommandEditMenu
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
@@ -34,6 +35,8 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     lateinit var placementAccess: PlacementAccessPolicy
         private set
+    lateinit var exporter: VanillaDatapackExporter
+        private set
     private lateinit var triggerListener: RedstoneTriggerListener
 
     override fun onEnable() {
@@ -45,21 +48,27 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 2,
+                    currentVersion = 3,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
-                            config.set("execution.minimum-repeat-delay-ticks", 1)
-                            config.set("execution.maximum-chain-length", 64)
-                            config.set("execution.maximum-particle-count", 256)
-                            config.set("execution.nearby-radius", 32)
+                            config.set("execution.maximum-command-count", 1024)
+                            config.set("execution.maximum-disk-call-depth", 3)
+                            config.set("timer.minimum-units", 1)
+                            config.set("timer.maximum-units", 86400)
+                        },
+                        2 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            config.set("execution.maximum-command-count", 1024)
+                            config.set("execution.maximum-disk-call-depth", 3)
+                            config.set("timer.minimum-units", 1)
+                            config.set("timer.maximum-units", 86400)
                         }
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
-                        require(config.getInt("execution.minimum-repeat-delay-ticks", 1) >= 1)
-                        require(config.getInt("execution.maximum-chain-length", 64) in 1..256)
-                        require(config.getInt("execution.maximum-particle-count", 256) in 1..4096)
-                        require(config.getDouble("execution.nearby-radius", 32.0) > 0.0)
+                        require(config.getInt("execution.maximum-command-count", 1024) >= 1)
+                        require(config.getInt("execution.maximum-disk-call-depth", 3) >= 0)
+                        require(config.getInt("timer.minimum-units", 1) == 1)
+                        require(config.getInt("timer.maximum-units", 86400) == 86400)
                     },
                     reloadAction = { reloadConfig() }
                 )
@@ -71,10 +80,11 @@ class KantanCommanderPlugin : JavaPlugin() {
         reloadConfig()
 
         KcI18n.init(this)
-        scripts = ScriptStore(dataFolder.resolve("scripts"), logger)
+        scripts = ScriptStore(dataFolder.resolve("structured-disks"), logger)
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         executor = SequenceExecutor(this)
+        exporter = VanillaDatapackExporter(scripts, dataFolder.resolve("exports"))
 
         programListMenu = ProgramListMenu(this)
         CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan")

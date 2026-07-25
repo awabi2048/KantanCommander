@@ -73,8 +73,8 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                     script.name,
                     GuiNameStyle.PRIMARY,
                     listOf(
-                        GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.commands.size, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.blockMode.key), "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
                         GuiLoreLine.Spacer,
                         KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.programs.action_get")),
                         KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.programs.action_edit")),

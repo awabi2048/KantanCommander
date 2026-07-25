@@ -1,17 +1,17 @@
 package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
+import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.ScriptCommand
-import me.awabi2048.kantancommander.model.BlockMode
-import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.UUID
 import java.util.logging.Level
 import java.util.logging.Logger
-import java.util.UUID
 
 class ScriptStore(private val dir: File, private val logger: Logger) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -20,43 +20,29 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
         dir.mkdirs()
     }
 
-    fun create(owner: UUID, name: String): DiskScript {
-        val script = DiskScript(name = name, owner = owner)
-        save(script)
-        return script
-    }
+    fun create(owner: UUID, name: String): DiskScript =
+        DiskScript(name = name, owner = owner).also(::save)
 
-    fun copyForPlacement(source: DiskScript): DiskScript {
-        val copy = source.copy(
-            id = UUID.randomUUID(),
-            listed = false,
-            commands = source.commands.map { it.copy(params = it.params.toMutableMap()) }.toMutableList()
-        )
-        save(copy)
-        return copy
-    }
+    fun copyForPlacement(source: DiskScript): DiskScript =
+        source.copy(id = UUID.randomUUID(), listed = false, graph = source.graph.deepCopy()).also(::save)
 
-    fun copyToLibrary(source: DiskScript, owner: UUID, name: String = source.name): DiskScript {
-        val copy = source.copy(
+    fun copyToLibrary(source: DiskScript, owner: UUID, name: String = source.name): DiskScript =
+        source.copy(
             id = UUID.randomUUID(),
             name = name,
             owner = owner,
             createdAt = System.currentTimeMillis(),
             listed = true,
-            commands = source.commands.map { it.copy(params = it.params.toMutableMap()) }.toMutableList()
-        )
-        save(copy)
-        return copy
-    }
+            graph = source.graph.deepCopy(),
+        ).also(::save)
 
-    fun load(id: UUID): DiskScript? {
-        val file = file(id)
-        if (!file.isFile) return null
-        return read(file)
-    }
+    fun load(id: UUID): DiskScript? = file(id).takeIf(File::isFile)?.let(::read)
 
     fun save(script: DiskScript) {
-        atomicWrite(file(script.id), gson.toJson(ScriptDto.from(script)))
+        require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
+        val validation = GraphValidator.validate(script.graph)
+        require(validation.isEmpty()) { validation.joinToString("; ") }
+        atomicWrite(file(script.id), gson.toJson(script))
     }
 
     fun delete(id: UUID) {
@@ -64,14 +50,14 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
     }
 
     fun listAll(): List<DiskScript> =
-        dir.listFiles { f -> f.isFile && f.extension.equals("json", ignoreCase = true) }
-            ?.mapNotNull { read(it) }
-            ?.sortedBy { it.createdAt }
+        dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
+            ?.mapNotNull(::read)
+            ?.sortedBy(DiskScript::createdAt)
             ?: emptyList()
 
     fun listOwned(owner: UUID): List<DiskScript> = listAll().filter { it.owner == owner && it.listed }
 
-    private fun file(id: UUID): File = dir.resolve("$id.json")
+    private fun file(id: UUID) = dir.resolve("$id.json")
 
     private fun atomicWrite(target: File, content: String) {
         val temporary = target.resolveSibling("${target.name}.tmp")
@@ -79,96 +65,73 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
         Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 
-    private fun read(file: File): DiskScript? {
-        return try {
-            val dto = gson.fromJson(file.readText(Charsets.UTF_8), ScriptDto::class.java)
-                ?: error("JSON root is null")
-            dto.toModel()
-        } catch (error: Exception) {
-            quarantine(file, error)
-            null
-        }
+    private fun read(file: File): DiskScript? = try {
+        gson.fromJson(file.readText(Charsets.UTF_8), DiskScript::class.java)
+            ?.takeIf { it.formatVersion == STRUCTURED_FORMAT_VERSION }
+            ?.also { require(GraphValidator.validate(it.graph).isEmpty()) }
+    } catch (error: Exception) {
+        quarantine(file, error)
+        null
     }
 
     private fun quarantine(file: File, error: Exception) {
-        val quarantineDir = dir.resolve("corrupt")
-        quarantineDir.mkdirs()
-        val target = quarantineDir.resolve("${file.nameWithoutExtension}-${System.currentTimeMillis()}.json")
+        val quarantine = dir.resolve("corrupt").also(File::mkdirs)
+        val target = quarantine.resolve("${file.nameWithoutExtension}-${System.currentTimeMillis()}.json")
         runCatching { Files.move(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-            .onFailure { moveError ->
-                logger.log(Level.WARNING, "不正なスクリプトを隔離できませんでした: ${file.absolutePath}", moveError)
+        logger.log(Level.WARNING, "構造化コマンドディスクを隔離しました: ${file.absolutePath}", error)
+    }
+}
+
+object GraphValidator {
+    fun validate(graph: CommandGraph): List<String> {
+        val errors = mutableListOf<String>()
+        val entry = graph.entryNodeId
+        if (entry == null) {
+            if (graph.nodes.isNotEmpty()) errors += "entryNodeIdがありません"
+            return errors
+        }
+        if (entry !in graph.nodes) errors += "開始ノードが存在しません"
+        graph.nodes.values.forEach { node ->
+            node.outgoing().forEach { target ->
+                if (target !in graph.nodes) errors += "${node.id}から存在しないノードを参照しています"
             }
-        logger.log(Level.WARNING, "不正なスクリプトを隔離しました: ${file.absolutePath} (${error.message})", error)
-    }
-
-    private data class ScriptDto(
-        val id: String?,
-        val name: String?,
-        val owner: String?,
-        val createdAt: Long?,
-        val listed: Boolean?,
-        val blockMode: String?,
-        val activation: String?,
-        val conditional: Boolean?,
-        val delayTicks: Int?,
-        val commands: List<CommandDto>?
-    ) {
-        fun toModel(): DiskScript {
-            val uuid = parseUuid(id, "id")
-            val ownerId = parseUuid(owner, "owner")
-            val parsedCommands = commands?.map { it.toModel() }?.toMutableList()
-                ?: error("commands is missing")
-            return DiskScript(
-                id = uuid,
-                name = name?.takeIf { it.isNotBlank() } ?: error("name is missing"),
-                owner = ownerId,
-                createdAt = createdAt ?: error("createdAt is missing"),
-                listed = listed ?: error("listed is missing"),
-                blockMode = parseEnum<BlockMode>(blockMode, "blockMode"),
-                activation = parseEnum<ActivationMode>(activation, "activation"),
-                conditional = conditional ?: error("conditional is missing"),
-                delayTicks = (delayTicks ?: error("delayTicks is missing")).coerceAtLeast(1),
-                commands = parsedCommands
-            )
-        }
-
-        private fun parseUuid(raw: String?, field: String): UUID =
-            runCatching { UUID.fromString(raw ?: error("$field is missing")) }
-                .getOrElse { error("invalid UUID in $field: $raw") }
-
-        private inline fun <reified T : Enum<T>> parseEnum(raw: String?, field: String): T =
-            runCatching { enumValueOf<T>(raw ?: error("$field is missing")) }
-                .getOrElse { error("invalid enum in $field: $raw") }
-
-        companion object {
-            fun from(script: DiskScript): ScriptDto = ScriptDto(
-                id = script.id.toString(),
-                name = script.name,
-                owner = script.owner.toString(),
-                createdAt = script.createdAt,
-                listed = script.listed,
-                blockMode = script.blockMode.name,
-                activation = script.activation.name,
-                conditional = script.conditional,
-                delayTicks = script.delayTicks,
-                commands = script.commands.map { CommandDto.from(it) }
-            )
-        }
-    }
-
-    private data class CommandDto(val type: String?, val params: Map<String, String>?) {
-        fun toModel(): ScriptCommand {
-            val commandType = runCatching { CommandType.valueOf(type ?: error("command type is missing")) }
-                .getOrElse { error("invalid command type: $type") }
-            val commandParams = params ?: error("params is missing for command $type")
-            if (commandParams.keys.any { it.isBlank() || commandParams[it] == null }) {
-                error("invalid command params for $type")
+            if (node.type == CommandType.CONDITION) {
+                if (node.trueNext == null || node.falseNext == null || node.pairedNodeId == null) {
+                    errors += "条件分岐${node.id}の枝または合流が未設定です"
+                }
+                val merge = node.pairedNodeId?.let(graph.nodes::get)
+                if (merge?.type != CommandType.MERGE || merge.pairedNodeId != node.id) {
+                    errors += "条件分岐${node.id}の対応合流が不正です"
+                }
             }
-            return ScriptCommand(commandType, commandParams.toMutableMap())
+            if (node.type == CommandType.MERGE) {
+                val condition = node.pairedNodeId?.let(graph.nodes::get)
+                if (condition?.type != CommandType.CONDITION || condition.pairedNodeId != node.id) {
+                    errors += "合流${node.id}の対応条件が不正です"
+                }
+            }
         }
-
-        companion object {
-            fun from(command: ScriptCommand): CommandDto = CommandDto(command.type.name, command.params.toMap())
+        if (entry in graph.nodes) {
+            val visited = mutableSetOf<UUID>()
+            val active = mutableSetOf<UUID>()
+            fun visit(id: UUID) {
+                if (!active.add(id)) {
+                    errors += "循環があります: $id"
+                    return
+                }
+                if (!visited.add(id)) {
+                    active.remove(id)
+                    return
+                }
+                graph.nodes[id]?.outgoing()?.forEach(::visit)
+                active.remove(id)
+            }
+            visit(entry)
+            (graph.nodes.keys - visited).forEach { errors += "到達不能ノードがあります: $it" }
         }
+        return errors.distinct()
     }
+
+    private fun CommandNode.outgoing(): List<UUID> =
+        if (type == CommandType.CONDITION) listOfNotNull(trueNext, falseNext) else listOfNotNull(next)
 }

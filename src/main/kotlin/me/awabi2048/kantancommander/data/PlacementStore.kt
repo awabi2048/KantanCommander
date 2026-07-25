@@ -14,6 +14,9 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.logging.Level
+import org.bukkit.util.Transformation
+import org.joml.AxisAngle4f
+import org.joml.Vector3f
 
 class PlacementStore(private val plugin: KantanCommanderPlugin, private val file: File) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -60,8 +63,15 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         val loc = Location(world, placement.x + 0.5, placement.y + 0.05, placement.z + 0.5)
         val display = world.spawn(loc, BlockDisplay::class.java) {
             val script = plugin.scripts.load(placement.scriptId)
-            it.block = Bukkit.createBlockData(script?.blockMode?.displayMaterial ?: Material.COMMAND_BLOCK)
+            val displayMaterial = if (script?.timer?.enabled == true) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
+            it.block = Bukkit.createBlockData(displayMaterial)
             it.isGlowing = plugin.config.getBoolean("display.glowing", true)
+            it.transformation = Transformation(
+                Vector3f(-0.375f, 0.125f, -0.375f),
+                AxisAngle4f(),
+                Vector3f(0.75f, 0.75f, 0.75f),
+                AxisAngle4f(),
+            )
         }
         placement.displayId = display.uniqueId
         save()

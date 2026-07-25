@@ -15,14 +15,8 @@ class PlacementAccessPolicy(private val plugin: KantanCommanderPlugin) {
         val admin = player.hasPermission("kankoma.admin")
         if (admin) return true
 
-        val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
-            MyWorldManagerApi.getWorldRepository()?.findByWorldName(worldName)
-        } else {
-            null
-        }
-        if (worldData != null) {
-            return MyWorldManagerApi.canBuildInWorld(player, worldData)
-        }
-        return true
+        if (!plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) return false
+        val worldData = MyWorldManagerApi.getWorldRepository()?.findByWorldName(worldName) ?: return false
+        return MyWorldManagerApi.canBuildInWorld(player, worldData)
     }
 }

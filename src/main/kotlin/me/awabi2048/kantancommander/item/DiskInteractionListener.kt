@@ -130,8 +130,13 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             player.sendMessage(KcI18n.text(player, "message.place_blocked"))
             return
         }
+        if (player.boundingBox.overlaps(block.boundingBox)) {
+            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            return
+        }
 
         val stack = if (hand == EquipmentSlot.OFF_HAND) player.inventory.itemInOffHand else player.inventory.itemInMainHand
+        if (player.gameMode != org.bukkit.GameMode.CREATIVE) stack.amount = (stack.amount - 1).coerceAtLeast(0)
         player.sendMessage(KcI18n.text(player, "message.place_created"))
     }
 }

@@ -6,16 +6,24 @@ import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
-import com.awabi2048.ccsystem.api.gui.MenuActionResult
 import com.awabi2048.ccsystem.api.gui.MenuActionHandler
+import com.awabi2048.ccsystem.api.gui.MenuActionResult
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
+import com.awabi2048.ccsystem.api.gui.MenuSoundPolicy
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
-import java.util.UUID
+import com.awabi2048.ccsystem.api.gui.MenuDialogButton
+import com.awabi2048.ccsystem.api.gui.MenuDialogHandler
+import com.awabi2048.ccsystem.api.gui.MenuDialogInput
+import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
+import net.kyori.adventure.text.Component
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
+import java.util.UUID
 
 class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private val runtime = CCSystem.getAPI().getMenuRuntimeService()
@@ -23,164 +31,210 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     init {
         runtime.register(
             InventoryMenuDefinition(
-                OWNER,
-                MENU_ID,
-                renderer = { context -> render(context.player, context.route) },
+                OWNER, MENU_ID, renderer = { render(it.player, it.route) },
                 actions = mapOf(
-                    ACTION_BACK to handle { MenuActionResult.Success(MenuUpdate.Back) },
-                    ACTION_ADD to handle { context ->
-                        val scriptId = scriptId(context.route) ?: return@handle MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(scriptId)))
+                    "back" to handler { MenuActionResult.Success(MenuUpdate.Back) },
+                    "add" to handler { context ->
+                        val id = scriptId(context.route) ?: return@handler MenuActionResult.Ignored
+                        val lane = context.route.payload["lane"]?.toIntOrNull() ?: 0
+                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(id, lane)))
                     },
-                    ACTION_TEST to handle { context ->
-                        val scriptId = scriptId(context.route) ?: return@handle MenuActionResult.Ignored
-                        plugin.executor.execute(scriptId, context.player.location, context.player)
+                    "test" to handler { context ->
+                        val id = scriptId(context.route) ?: return@handler MenuActionResult.Ignored
+                        plugin.executor.execute(id, context.player.location, context.player)
                         MenuActionResult.Success(MenuUpdate.None)
                     },
-                    ACTION_TRIGGER to handle { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load)
-                            ?: return@handle MenuActionResult.Ignored
-                        script.blockMode = script.blockMode.next()
+                    "activation" to handler { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handler MenuActionResult.Ignored
+                        if (!script.timer.enabled) return@handler MenuActionResult.Ignored
+                        script.activation = script.activation.toggled(true)
                         plugin.scripts.save(script)
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
-                    ACTION_ACTIVATION to handle { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handle MenuActionResult.Ignored
-                        script.activation = script.activation.next()
-                        plugin.scripts.save(script)
-                        MenuActionResult.Success(MenuUpdate.Refresh)
-                    },
-                    ACTION_CONDITIONAL to handle { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handle MenuActionResult.Ignored
-                        script.conditional = !script.conditional
-                        plugin.scripts.save(script)
-                        MenuActionResult.Success(MenuUpdate.Refresh)
-                    },
-                    ACTION_COPY_LIBRARY to handle { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handle MenuActionResult.Ignored
-                        plugin.scripts.copyToLibrary(script, context.player.uniqueId)
-                        context.player.sendMessage(KcI18n.text(context.player, "message.copied_to_library"))
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
-                    ACTION_SAVE to handle { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load)
-                            ?: return@handle MenuActionResult.Ignored
-                        plugin.scripts.save(script)
-                        context.player.sendMessage(KcI18n.text(context.player, "message.saved"))
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
-                    ACTION_COMMAND to handle { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load)
-                            ?: return@handle MenuActionResult.Ignored
-                        val index = context.payload[COMMAND_INDEX]?.toIntOrNull()
-                            ?: return@handle MenuActionResult.Ignored
-                        if (index !in script.commands.indices) return@handle MenuActionResult.Ignored
+                    "timer" to handler { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handler MenuActionResult.Ignored
                         if (context.click.isRightClick) {
-                            script.commands.removeAt(index)
+                            script.timer.enabled = false
+                            script.activation = ActivationMode.NEEDS_REDSTONE
                             plugin.scripts.save(script)
                             MenuActionResult.Success(MenuUpdate.Refresh)
                         } else {
-                            MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.paramsRoute(script.id, index)))
+                            showTimerDialog(context.player, context.route, script.id, script.timer.intervalUnits)
+                            MenuActionResult.Success(MenuUpdate.None)
                         }
+                    },
+                    "navigate" to handler { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handler MenuActionResult.Ignored
+                        val offset = context.route.payload["offset"]?.toIntOrNull() ?: 0
+                        val lane = context.route.payload["lane"]?.toIntOrNull() ?: 0
+                        val maximumLane = script.graph.nodes.values.count { it.type == me.awabi2048.kantancommander.model.CommandType.CONDITION }
+                        val maximumOffset = (lanePath(script.graph, lane).size - 7).coerceAtLeast(0)
+                        val changed = when {
+                            context.click.isShiftClick && context.click.isLeftClick && lane > 0 -> route(context.route, offset, lane - 1)
+                            context.click.isShiftClick && context.click.isRightClick && lane < maximumLane -> route(context.route, 0, lane + 1)
+                            !context.click.isShiftClick && context.click.isLeftClick && offset > 0 -> route(context.route, offset - 1, lane)
+                            !context.click.isShiftClick && context.click.isRightClick && offset < maximumOffset -> route(context.route, offset + 1, lane)
+                            else -> null
+                        } ?: return@handler MenuActionResult.Ignored
+                        MenuActionResult.Success(MenuUpdate.Replace(changed), MenuSoundPolicy.Silent)
+                    },
+                    "command" to handler { context ->
+                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handler MenuActionResult.Ignored
+                        val nodeId = context.payload["nodeId"]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                            ?: return@handler MenuActionResult.Ignored
+                        val node = script.graph.nodes[nodeId] ?: return@handler MenuActionResult.Ignored
+                        showNodeDialog(context.player, context.route, script.id, node)
+                        MenuActionResult.Success(MenuUpdate.None)
                     },
                 ),
             )
         )
     }
 
-    fun open(player: Player, scriptId: UUID) {
-        runtime.open(player, route(scriptId))
-    }
+    fun open(player: Player, scriptId: UUID) = runtime.open(player, route(scriptId))
 
     private fun render(player: Player, route: MenuRoute): InventoryMenuView {
-        val script = scriptId(route)?.let(plugin.scripts::load)
-            ?: return unavailableView(player)
-        val layout = KcGui.layouts.settings54()
+        val script = scriptId(route)?.let(plugin.scripts::load) ?: return InventoryMenuView(54, KcGui.title("コマンドディスク"), emptyList())
+        val offset = route.payload["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+        val lane = route.payload["lane"]?.toIntOrNull()?.coerceIn(0, 2) ?: 0
         val elements = mutableListOf<MenuElement>()
-        val commandSlots = (10..16) + (19..25) + (28..34)
-        script.commands.take(commandSlots.size).forEachIndexed { index, command ->
+        val ordered = lanePath(script.graph, lane).drop(offset)
+        ordered.take(7).forEachIndexed { index, node ->
             elements += MenuElement(
-                commandSlots[index],
-                KcGui.item(
-                    command.type.icon,
-                    "#${index + 1} ${KcI18n.text(player, command.type.key)}",
-                    GuiNameStyle.DEFAULT,
-                    listOf(
-                        GuiLoreLine.Data(KcI18n.text(player, "gui.editor.summary"), command.summary(), "§f"),
-                        GuiLoreLine.Spacer,
-                        KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.action_edit")),
-                        KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.editor.action_delete")),
-                    ),
-                ),
+                19 + index,
+                KcGui.item(node.type.icon, KcI18n.text(player, node.type.key), GuiNameStyle.DEFAULT,
+                    listOf(GuiLoreLine.Data("設定", node.summary(), "§f"))),
                 GuiElementRole.CONTENT,
-                ACTION_COMMAND,
-                mapOf(COMMAND_INDEX to index.toString()),
+                "command",
+                mapOf("nodeId" to node.id.toString()),
             )
         }
+        val addSlot = if (ordered.size < 7) 19 + ordered.size else 25
+        elements.removeAll { it.slot == addSlot }
+        elements += MenuElement(addSlot, KcGui.item(Material.YELLOW_WOOL, "コマンドを追加", GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "add")
+        elements += action(45, Material.LEVER, "起動条件", "activation",
+            listOf(GuiLoreLine.Data("現在", KcI18n.text(player, script.activation.key), "§f")))
+        elements += action(46, Material.CLOCK, "タイマー設定", "timer",
+            listOf(GuiLoreLine.Data("現在", if (script.timer.enabled) "${script.timer.intervalUnits}単位" else "オフ", "§f")))
+        elements += MenuElement(47, KcGui.item(Material.COMPASS, "全体情報", GuiNameStyle.PRIMARY,
+            listOf(GuiLoreLine.Text(graphDiagram(script.graph.nodes.values.count { it.type == me.awabi2048.kantancommander.model.CommandType.CONDITION }, offset, lane)))), GuiElementRole.DECORATION)
+        elements += action(52, Material.RECOVERY_COMPASS, "表示位置を移動", "navigate",
+            listOf(
+                KcGui.action(player, "lore.click.left", "左へ移動"),
+                KcGui.action(player, "lore.click.right", "右へ移動"),
+                KcGui.action(player, "lore.click.shift_left", "上へ移動"),
+                KcGui.action(player, "lore.click.shift_right", "下へ移動"),
+            ))
+        elements += action(53, Material.FIREWORK_ROCKET, "テスト実行", "test")
+        elements += MenuElement(49, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, "back")
+        return InventoryMenuView(54, KcGui.title("コマンドディスク"), elements)
+    }
 
-        elements += action(37, Material.LIME_WOOL, KcI18n.text(player, "gui.editor.add"), ACTION_ADD)
-        elements += action(38, Material.FIREWORK_ROCKET, KcI18n.text(player, "gui.editor.test"), ACTION_TEST)
-        elements += action(
-            39,
-            Material.REDSTONE,
-            KcI18n.text(player, "gui.editor.mode"),
-            ACTION_TRIGGER,
-            lore = listOf(GuiLoreLine.Data(KcI18n.text(player, "item.mode"), KcI18n.text(player, script.blockMode.key), "§f")),
+    private fun graphDiagram(branches: Int, offset: Int, lane: Int): String {
+        val marker = if (lane == 0) "§e◆§7" else "◆"
+        val falseMarker = if (lane > 0) "§e○§7" else "○"
+        return if (branches == 0) "§7…─$marker─○─…" else "§7…─○─$marker─○─◇─…\n      └─$falseMarker─○─┘\n§8表示開始: ${offset + 1}"
+    }
+
+    private fun lanePath(graph: me.awabi2048.kantancommander.model.CommandGraph, lane: Int): List<me.awabi2048.kantancommander.model.CommandNode> {
+        val conditions = graph.nodes.values.filter { it.type == me.awabi2048.kantancommander.model.CommandType.CONDITION }
+        val start = if (lane == 0) graph.entryNodeId else conditions.getOrNull(lane - 1)?.falseNext
+        val stop = if (lane == 0) null else conditions.getOrNull(lane - 1)?.pairedNodeId
+        val result = mutableListOf<me.awabi2048.kantancommander.model.CommandNode>()
+        val visited = mutableSetOf<UUID>()
+        var current = start
+        while (current != null && current != stop && visited.add(current)) {
+            val node = graph.nodes[current] ?: break
+            result += node
+            current = if (node.type == me.awabi2048.kantancommander.model.CommandType.CONDITION) node.trueNext else node.next
+        }
+        return result
+    }
+
+    private fun action(slot: Int, material: Material, name: String, id: String, lore: List<GuiLoreLine> = emptyList()) =
+        MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY, lore), GuiElementRole.ACTION, id)
+
+    private fun handler(block: (com.awabi2048.ccsystem.api.gui.MenuActionContext) -> MenuActionResult) = MenuActionHandler(block)
+
+    private fun showNodeDialog(player: Player, route: MenuRoute, scriptId: UUID, node: me.awabi2048.kantancommander.model.CommandNode) {
+        val inputs = node.params.map { (key, value) ->
+            MenuDialogInput.Text(key, Component.text(key), value, maxLength = 512)
+        } + listOf(
+            MenuDialogInput.Text("_ctx_executor", Component.text("個別実行者"), node.contextOverride?.executor.orEmpty()),
+            MenuDialogInput.Text("_ctx_target", Component.text("個別対象"), node.contextOverride?.target.orEmpty()),
+            MenuDialogInput.Text("_ctx_position", Component.text("個別位置"), node.contextOverride?.position.orEmpty()),
+            MenuDialogInput.Text("_ctx_facing", Component.text("個別向き"), node.contextOverride?.facing.orEmpty()),
         )
-        elements += action(40, Material.LEVER, KcI18n.text(player, "gui.editor.activation"), ACTION_ACTIVATION,
-            lore = listOf(GuiLoreLine.Data(KcI18n.text(player, "item.activation"), KcI18n.text(player, script.activation.key), "§f")))
-        elements += action(41, Material.TRIPWIRE_HOOK, KcI18n.text(player, "gui.editor.condition"), ACTION_CONDITIONAL,
-            lore = listOf(GuiLoreLine.Data(KcI18n.text(player, "item.condition"), KcI18n.text(player, if (script.conditional) "condition.conditional" else "condition.unconditional"), "§f")))
-        elements += action(42, Material.DIAMOND, KcI18n.text(player, "gui.editor.save"), ACTION_SAVE, GuiElementRole.CONFIRM)
-        elements += action(43, Material.WRITABLE_BOOK, KcI18n.text(player, "gui.editor.copy_library"), ACTION_COPY_LIBRARY)
-        elements += MenuElement(layout.backSlot, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, ACTION_BACK)
-        elements += MenuElement(layout.infoSlot, KcGui.item(Material.BOOK, "${script.commands.size}", GuiNameStyle.MUTED), GuiElementRole.DECORATION)
-        return InventoryMenuView(
-            layout.size,
-            KcGui.title(KcI18n.text(player, "gui.editor.title", mapOf("name" to script.name))),
-            elements,
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = OWNER,
+                id = "node-edit",
+                title = Component.text("コマンドの詳細"),
+                body = listOf(Component.text("値を設定してください。個別コンテキストはexecutor / target / position / facingで指定します。")),
+                inputs = inputs,
+                confirm = MenuDialogButton(Component.text("保存"), MenuDialogHandler { target, response ->
+                    val script = plugin.scripts.load(scriptId) ?: return@MenuDialogHandler MenuActionResult.Ignored
+                    val current = script.graph.nodes[node.id] ?: return@MenuDialogHandler MenuActionResult.Ignored
+                    current.params.keys.toList().forEach { current.params[it] = response.textValue(it) }
+                    val override = me.awabi2048.kantancommander.model.ExecutionContextSpec(
+                        response.textValue("_ctx_executor").ifBlank { null },
+                        response.textValue("_ctx_target").ifBlank { null },
+                        response.textValue("_ctx_position").ifBlank { null },
+                        response.textValue("_ctx_facing").ifBlank { null },
+                    )
+                    current.contextOverride = override.takeUnless {
+                        it.executor == null && it.target == null && it.position == null && it.facing == null
+                    }
+                    if (current.type == me.awabi2048.kantancommander.model.CommandType.DISK_CALL &&
+                        current.string("mode") == me.awabi2048.kantancommander.model.DiskCallMode.SNAPSHOT.name
+                    ) {
+                        current.snapshot = runCatching { UUID.fromString(current.string("diskId")) }.getOrNull()
+                            ?.let(plugin.scripts::load)?.graph?.deepCopy()
+                    }
+                    plugin.scripts.save(script)
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = MenuDialogButton(Component.text("戻る"), MenuDialogHandler { target, _ ->
+                    MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
+                }),
+            )
         )
     }
 
-    private fun unavailableView(player: Player): InventoryMenuView {
-        val layout = KcGui.layouts.settings54()
-        return InventoryMenuView(
-            layout.size,
-            KcGui.title(KcI18n.text(player, "gui.editor.title", mapOf("name" to "-"))),
-            listOf(MenuElement(layout.backSlot, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, ACTION_BACK)),
+    private fun showTimerDialog(player: Player, route: MenuRoute, scriptId: UUID, units: Int) {
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = OWNER,
+                id = "timer-edit",
+                title = Component.text("タイマー設定"),
+                body = listOf(Component.text("10 tick（0.5秒）を1単位として、1～86400を指定してください。")),
+                inputs = listOf(MenuDialogInput.Text("units", Component.text("実行間隔"), units.toString(), maxLength = 5)),
+                confirm = MenuDialogButton(Component.text("オンにする"), MenuDialogHandler { target, response ->
+                    val value = response.textValue("units").toIntOrNull()
+                    if (value == null || value !in 1..MAX_TIMER_UNITS) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("1～86400で指定してください。"))
+                    }
+                    val script = plugin.scripts.load(scriptId) ?: return@MenuDialogHandler MenuActionResult.Ignored
+                    script.timer.enabled = true
+                    script.timer.intervalUnits = value
+                    plugin.scripts.save(script)
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = MenuDialogButton(Component.text("戻る"), MenuDialogHandler { target, _ ->
+                    MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
+                }),
+            )
         )
     }
-
-    private fun action(
-        slot: Int,
-        material: Material,
-        name: String,
-        actionId: String,
-        role: GuiElementRole = GuiElementRole.ACTION,
-        lore: List<GuiLoreLine> = emptyList(),
-    ) = MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY, lore), role, actionId)
-
-    private fun handle(block: (com.awabi2048.ccsystem.api.gui.MenuActionContext) -> MenuActionResult) =
-        MenuActionHandler(block)
 
     companion object {
         const val OWNER = ProgramListMenu.OWNER
-        const val MENU_ID = "editor"
+        private const val MENU_ID = "editor"
         private const val SCRIPT_ID = "scriptId"
-        private const val COMMAND_INDEX = "commandIndex"
-        private const val ACTION_BACK = "back"
-        private const val ACTION_ADD = "add"
-        private const val ACTION_TEST = "test"
-        private const val ACTION_TRIGGER = "trigger"
-        private const val ACTION_ACTIVATION = "activation"
-        private const val ACTION_CONDITIONAL = "conditional"
-        private const val ACTION_COPY_LIBRARY = "copy_library"
-        private const val ACTION_SAVE = "save"
-        private const val ACTION_COMMAND = "command"
-
-        fun route(scriptId: UUID) = MenuRoute(OWNER, MENU_ID, mapOf(SCRIPT_ID to scriptId.toString()))
-
-        private fun scriptId(route: MenuRoute): UUID? =
-            route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        fun route(scriptId: UUID) = MenuRoute(OWNER, MENU_ID, mapOf(SCRIPT_ID to scriptId.toString(), "offset" to "0", "lane" to "0"))
+        private fun route(current: MenuRoute, offset: Int, lane: Int) = current.copy(payload = current.payload + ("offset" to offset.toString()) + ("lane" to lane.toString()))
+        private fun scriptId(route: MenuRoute) = route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
     }
 }

@@ -10,7 +10,7 @@ softdepend:
 commands:
   kankoma:
     description: Kantan Commander 管理コマンド
-    usage: /kankoma <programs|placed|reload|help>
+    usage: /kankoma <programs|placed|export|reload|help>
     permission: kankoma.use
 permissions:
   kankoma.admin:
