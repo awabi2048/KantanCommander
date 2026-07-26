@@ -12,14 +12,8 @@ import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuSoundPolicy
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
-import com.awabi2048.ccsystem.api.gui.MenuDialogButton
-import com.awabi2048.ccsystem.api.gui.MenuDialogHandler
-import com.awabi2048.ccsystem.api.gui.MenuDialogInput
-import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
-import net.kyori.adventure.text.Component
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.ActivationMode
-import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -147,72 +141,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY, lore), GuiElementRole.ACTION, id)
 
     private fun handler(block: (com.awabi2048.ccsystem.api.gui.MenuActionContext) -> MenuActionResult) = MenuActionHandler(block)
-
-    private fun showNodeDialog(player: Player, route: MenuRoute, scriptId: UUID, node: me.awabi2048.kantancommander.model.CommandNode) {
-        val inputs = node.params.map { (key, value) ->
-            MenuDialogInput.Text(key, Component.text(key), value, maxLength = 512)
-        } + listOf(
-            MenuDialogInput.Text("_ctx_executor", Component.text("個別実行者"), ""),
-            MenuDialogInput.Text("_ctx_target", Component.text("個別対象"), ""),
-            MenuDialogInput.Text("_ctx_position", Component.text("個別位置"), ""),
-            MenuDialogInput.Text("_ctx_facing", Component.text("個別向き"), ""),
-        )
-        CCSystem.getAPI().getMenuDialogService().show(
-            player,
-            MenuDialogRequest(
-                owner = OWNER,
-                id = "node-edit",
-                title = Component.text("コマンドの詳細"),
-                body = listOf(Component.text("値を設定してください。個別コンテキストはexecutor / target / position / facingで指定します。")),
-                inputs = inputs,
-                confirm = MenuDialogButton(Component.text("保存"), MenuDialogHandler { target, response ->
-                    val script = plugin.scripts.load(scriptId) ?: return@MenuDialogHandler MenuActionResult.Ignored
-                    val current = script.graph.nodes[node.id] ?: return@MenuDialogHandler MenuActionResult.Ignored
-                    current.params.keys.toList().forEach { current.params[it] = response.textValue(it) }
-                    current.contextOverride = null
-                    if (current.type == me.awabi2048.kantancommander.model.CommandType.DISK_CALL &&
-                        current.string("mode") == me.awabi2048.kantancommander.model.DiskCallMode.SNAPSHOT.name
-                    ) {
-                        current.snapshot = runCatching { UUID.fromString(current.string("diskId")) }.getOrNull()
-                            ?.let(plugin.scripts::load)?.graph?.deepCopy()
-                    }
-                    plugin.scripts.save(script)
-                    MenuActionResult.Success(MenuUpdate.Replace(route))
-                }),
-                cancel = MenuDialogButton(Component.text("戻る"), MenuDialogHandler { target, _ ->
-                    MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
-                }),
-            )
-        )
-    }
-
-    private fun showTimerDialog(player: Player, route: MenuRoute, scriptId: UUID, units: Int) {
-        CCSystem.getAPI().getMenuDialogService().show(
-            player,
-            MenuDialogRequest(
-                owner = OWNER,
-                id = "timer-edit",
-                title = Component.text("タイマー設定"),
-                body = listOf(Component.text("10 tick（0.5秒）を1単位として、1～86400を指定してください。")),
-                inputs = listOf(MenuDialogInput.Text("units", Component.text("実行間隔"), units.toString(), maxLength = 5)),
-                confirm = MenuDialogButton(Component.text("オンにする"), MenuDialogHandler { target, response ->
-                    val value = response.textValue("units").toIntOrNull()
-                    if (value == null || value !in 1..MAX_TIMER_UNITS) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("1～86400で指定してください。"))
-                    }
-                    val script = plugin.scripts.load(scriptId) ?: return@MenuDialogHandler MenuActionResult.Ignored
-                    script.timer.enabled = true
-                    script.timer.intervalUnits = value
-                    plugin.scripts.save(script)
-                    plugin.placements.refreshDisplaysForScript(script.id)
-                    MenuActionResult.Success(MenuUpdate.Replace(route))
-                }),
-                cancel = MenuDialogButton(Component.text("戻る"), MenuDialogHandler { target, _ ->
-                    MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
-                }),
-            )
-        )
-    }
 
     companion object {
         const val OWNER = ProgramListMenu.OWNER

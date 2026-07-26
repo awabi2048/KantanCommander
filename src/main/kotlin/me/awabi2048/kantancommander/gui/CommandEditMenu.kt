@@ -8,9 +8,15 @@ import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
 import com.awabi2048.ccsystem.api.gui.MenuActionHandler
 import com.awabi2048.ccsystem.api.gui.MenuActionResult
+import com.awabi2048.ccsystem.api.gui.MenuDialogButton
+import com.awabi2048.ccsystem.api.gui.MenuDialogHandler
+import com.awabi2048.ccsystem.api.gui.MenuDialogInput
+import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
+import com.awabi2048.ccsystem.api.gui.MenuSoundPolicy
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
+import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.ActivationMode
@@ -24,6 +30,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.util.KcI18n
+import net.kyori.adventure.text.Component
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import java.util.UUID
@@ -185,7 +192,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         plugin.placements.refreshDisplaysForScript(script.id)
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
-                    "on" to MenuActionHandler { MenuActionResult.Success(MenuUpdate.Refresh) },
+                    "on" to MenuActionHandler { context ->
+                        val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        showTimerDialog(context.player, context.route, script.id, script.timer.intervalUnits)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
                 ),
             )
         )
@@ -353,6 +364,44 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             MenuElement(24, KcGui.item(Material.RED_CONCRETE, "コマンドを削除", GuiNameStyle.DANGER), GuiElementRole.ACTION, "delete"),
         )
         return InventoryMenuView(45, KcGui.title("コマンド削除の確認"), elements)
+    }
+
+    private fun showTimerDialog(player: Player, route: MenuRoute, scriptId: UUID, units: Int) {
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = "timer-edit",
+                title = Component.text("タイマー設定"),
+                body = listOf(Component.text("10 tick（0.5秒）を1単位として、1～86400単位で指定してください。")),
+                inputs = listOf(
+                    MenuDialogInput.Text(
+                        "units",
+                        Component.text("実行間隔"),
+                        units.toString(),
+                        maxLength = 5,
+                    )
+                ),
+                confirm = MenuDialogButton(Component.text("オンにする"), MenuDialogHandler { _, response ->
+                    val value = response.textValue("units").toIntOrNull()
+                    if (value == null || value !in 1..MAX_TIMER_UNITS) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(
+                            Component.text("1～86400の整数で指定してください。")
+                        )
+                    }
+                    val script = plugin.scripts.load(scriptId)
+                        ?: return@MenuDialogHandler MenuActionResult.Ignored
+                    script.timer.enabled = true
+                    script.timer.intervalUnits = value
+                    plugin.scripts.save(script)
+                    plugin.placements.refreshDisplaysForScript(script.id)
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = MenuDialogButton(Component.text("戻る"), MenuDialogHandler { _, _ ->
+                    MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
+                }),
+            )
+        )
     }
 
     private fun back() = MenuActionHandler { MenuActionResult.Success(MenuUpdate.Back) }
