@@ -108,6 +108,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "select" to MenuActionHandler { context ->
                         val kind = context.payload["kind"]?.let { runCatching { PositionKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (kind == PositionKind.COORDINATES) {
+                            showPositionDialog(context.player, context.route)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
                         val location = context.player.location
                         val spec = if (kind == PositionKind.CAPTURED) {
                             PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
@@ -138,6 +142,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "select" to MenuActionHandler { context ->
                         val kind = context.payload["kind"]?.let { runCatching { FacingKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (kind == FacingKind.COORDINATES) {
+                            showFacingCoordinatesDialog(context.player, context.route)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        if (kind == FacingKind.ROTATION) {
+                            showRotationDialog(context.player, context.route)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
                         val location = context.player.location
                         val spec = if (kind == FacingKind.CAPTURED) {
                             FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
@@ -575,6 +587,128 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
         )
     }
+
+    private fun showPositionDialog(player: Player, route: MenuRoute) {
+        val current = node(route)?.let { selectedPosition(it, route.payload[ROLE]) }
+        val location = player.location
+        showCoordinateDialog(
+            player = player,
+            route = route,
+            id = "position-coordinates",
+            title = "座標を指定して設定",
+            currentX = current?.x ?: location.x,
+            currentY = current?.y ?: location.y,
+            currentZ = current?.z ?: location.z,
+        ) { x, y, z ->
+            updateNode(route) { command ->
+                val spec = PositionSpec(PositionKind.COORDINATES, x, y, z)
+                if (route.payload[ROLE] == "destination") {
+                    command.destinationSpec = spec
+                    command.destinationTargetSpec = null
+                } else {
+                    command.contextOverride =
+                        (command.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
+                }
+            }
+        }
+    }
+
+    private fun showFacingCoordinatesDialog(player: Player, route: MenuRoute) {
+        val current = node(route)?.contextOverride?.facing
+        val location = player.location
+        showCoordinateDialog(
+            player = player,
+            route = route,
+            id = "facing-coordinates",
+            title = "見る座標を指定",
+            currentX = current?.x ?: location.x,
+            currentY = current?.y ?: location.y,
+            currentZ = current?.z ?: location.z,
+        ) { x, y, z ->
+            updateNode(route) { command ->
+                command.contextOverride = (command.contextOverride ?: ExecutionContextSpec()).copy(
+                    facing = FacingSpec(FacingKind.COORDINATES, x = x, y = y, z = z)
+                )
+            }
+        }
+    }
+
+    private fun showRotationDialog(player: Player, route: MenuRoute) {
+        val current = node(route)?.contextOverride?.facing
+        val location = player.location
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = "facing-rotation",
+                title = Component.text("向きを数値で指定"),
+                body = listOf(Component.text("yawとpitchを数値で指定してください。")),
+                inputs = listOf(
+                    MenuDialogInput.Text("yaw", Component.text("yaw"), (current?.yaw ?: location.yaw).toString()),
+                    MenuDialogInput.Text("pitch", Component.text("pitch"), (current?.pitch ?: location.pitch).toString()),
+                ),
+                confirm = MenuDialogButton(Component.text("設定"), MenuDialogHandler { _, response ->
+                    val yaw = response.textValue("yaw").toFloatOrNull()
+                    val pitch = response.textValue("pitch").toFloatOrNull()
+                    if (yaw == null || pitch == null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("yawとpitchを数値で指定してください。"))
+                    }
+                    updateNode(route) { command ->
+                        command.contextOverride = (command.contextOverride ?: ExecutionContextSpec()).copy(
+                            facing = FacingSpec(FacingKind.ROTATION, yaw = yaw, pitch = pitch)
+                        )
+                    }
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = dialogCancel(route),
+            )
+        )
+    }
+
+    private fun showCoordinateDialog(
+        player: Player,
+        route: MenuRoute,
+        id: String,
+        title: String,
+        currentX: Double,
+        currentY: Double,
+        currentZ: Double,
+        save: (Double, Double, Double) -> Unit,
+    ) {
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = id,
+                title = Component.text(title),
+                body = listOf(Component.text("X・Y・Z座標を数値で指定してください。")),
+                inputs = listOf(
+                    MenuDialogInput.Text("x", Component.text("X"), currentX.toString()),
+                    MenuDialogInput.Text("y", Component.text("Y"), currentY.toString()),
+                    MenuDialogInput.Text("z", Component.text("Z"), currentZ.toString()),
+                ),
+                confirm = MenuDialogButton(Component.text("設定"), MenuDialogHandler { _, response ->
+                    val x = response.textValue("x").toDoubleOrNull()
+                    val y = response.textValue("y").toDoubleOrNull()
+                    val z = response.textValue("z").toDoubleOrNull()
+                    if (x == null || y == null || z == null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("X・Y・Zを数値で指定してください。"))
+                    }
+                    save(x, y, z)
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = dialogCancel(route),
+            )
+        )
+    }
+
+    private fun dialogCancel(route: MenuRoute) =
+        MenuDialogButton(Component.text("戻る"), MenuDialogHandler { _, _ ->
+            MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
+        })
+
+    private fun selectedPosition(node: CommandNode, role: String?): PositionSpec? =
+        if (role == "destination") node.destinationSpec else node.contextOverride?.position
 
     private fun back() = MenuActionHandler { MenuActionResult.Success(MenuUpdate.Back) }
 
