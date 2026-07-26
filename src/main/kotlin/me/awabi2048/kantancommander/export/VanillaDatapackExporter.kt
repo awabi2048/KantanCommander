@@ -68,6 +68,9 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                     if (!item.startsWith("minecraft:") || Material.matchMaterial(item) == null) {
                         errors += "${script.id}/${node.id}: バニラに存在しないアイテムです: $item"
                     }
+                    if (node.string("itemData").isNotBlank()) {
+                        errors += "${script.id}/${node.id}: 保存されたItemStackメタデータは完全バニラ出力に未対応です"
+                    }
                 }
                 CommandType.ENTITY_ACTION -> if (node.string("action") !in setOf("ride", "dismount")) {
                     errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"

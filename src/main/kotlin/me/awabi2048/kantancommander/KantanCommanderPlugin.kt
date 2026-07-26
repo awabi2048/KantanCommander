@@ -17,6 +17,7 @@ import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
 import me.awabi2048.kantancommander.item.DiskInteractionListener
 import me.awabi2048.kantancommander.item.KantanItemGrantProvider
+import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.plugin.java.JavaPlugin
@@ -35,6 +36,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var editorMenu: SequenceEditorMenu
         private set
     lateinit var commandEditMenu: CommandEditMenu
+        private set
+    lateinit var itemSelection: ItemSelectionListener
         private set
     lateinit var placementAccess: PlacementAccessPolicy
         private set
@@ -110,6 +113,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                 }
             )
         )
+        itemSelection = ItemSelectionListener(this)
         editorMenu = SequenceEditorMenu(this)
         commandEditMenu = CommandEditMenu(this)
         placementAccess = PlacementAccessPolicy(this)
@@ -136,6 +140,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         val pm = server.pluginManager
         pm.registerEvents(DiskInteractionListener(this), this)
         pm.registerEvents(triggerListener, this)
+        pm.registerEvents(itemSelection, this)
     }
 
     private fun removeLegacyConfig(config: org.bukkit.configuration.file.YamlConfiguration) {

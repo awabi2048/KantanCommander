@@ -51,6 +51,8 @@ data class CommandGraph(
                 params = node.params.toMutableMap(),
                 contextOverride = node.contextOverride?.copy(),
                 targetSpec = node.targetSpec?.copy(),
+                destinationSpec = node.destinationSpec?.copy(),
+                destinationTargetSpec = node.destinationTargetSpec?.copy(),
                 snapshot = node.snapshot?.deepCopy(),
             )
         }
@@ -67,6 +69,8 @@ data class CommandNode(
     var falseNext: UUID? = null,
     var pairedNodeId: UUID? = null,
     var targetSpec: TargetSpec? = null,
+    var destinationSpec: PositionSpec? = null,
+    var destinationTargetSpec: TargetSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
     var snapshot: CommandGraph? = null,
 ) {

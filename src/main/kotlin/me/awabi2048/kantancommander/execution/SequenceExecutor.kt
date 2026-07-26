@@ -29,6 +29,7 @@ import java.time.Duration
 import java.util.UUID
 import java.util.logging.Level
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
+import me.awabi2048.kantancommander.item.ItemStackCodec
 
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private val running = mutableSetOf<UUID>()
@@ -131,7 +132,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         when (node.type) {
             CommandType.TELEPORT -> {
                 val entity = target ?: return false
-                val destination = parseLocation(node.string("destination", "~ ~ ~"), effectiveOrigin)
+                val destination = node.destinationTargetSpec
+                    ?.let { resolveTargetSpec(it, session)?.location }
+                    ?: node.destinationSpec?.let { resolvePosition(it, session) }
+                    ?: effectiveOrigin.clone()
                 effectiveContext?.facing?.let { facing ->
                     if (facing.kind == FacingKind.ROTATION || facing.kind == FacingKind.CAPTURED) {
                         destination.yaw = facing.yaw ?: destination.yaw
@@ -143,7 +147,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.GIVE_ITEM -> {
                 val player = target as? Player ?: return false
                 val material = Material.matchMaterial(node.string("item", "minecraft:stone")) ?: return false
-                val leftovers = player.inventory.addItem(ItemStack(material, node.int("count", 1).coerceIn(1, material.maxStackSize)))
+                val stack = ItemStackCodec.decode(node.string("itemData"))
+                    ?: ItemStack(material)
+                stack.amount = node.int("count", 1).coerceIn(1, stack.maxStackSize)
+                val leftovers = player.inventory.addItem(stack)
                 leftovers.isEmpty()
             }
             CommandType.ENTITY_ACTION -> {

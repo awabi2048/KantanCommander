@@ -16,6 +16,13 @@ import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -55,11 +62,111 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         runtime.register(
             InventoryMenuDefinition(
                 SequenceEditorMenu.OWNER,
+                TARGET_ID,
+                renderer = { renderTarget(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val kind = context.payload["kind"]?.let { runCatching { TargetKind.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        updateNode(context.route) { node ->
+                            val spec = TargetSpec(kind)
+                            when (context.route.payload[ROLE]) {
+                                "destination" -> {
+                                    node.destinationTargetSpec = spec
+                                    node.destinationSpec = null
+                                }
+                                "context_executor" -> node.contextOverride =
+                                    (node.contextOverride ?: ExecutionContextSpec()).copy(executor = spec)
+                                "context_target" -> node.contextOverride =
+                                    (node.contextOverride ?: ExecutionContextSpec()).copy(target = spec)
+                                else -> node.targetSpec = spec
+                            }
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                POSITION_ID,
+                renderer = { renderPosition(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val kind = context.payload["kind"]?.let { runCatching { PositionKind.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val location = context.player.location
+                        val spec = if (kind == PositionKind.CAPTURED) {
+                            PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
+                        } else PositionSpec(kind)
+                        updateNode(context.route) { node ->
+                            if (context.route.payload[ROLE] == "destination") {
+                                node.destinationSpec = spec
+                                node.destinationTargetSpec = null
+                            } else {
+                                node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
+                            }
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                    "target" to MenuActionHandler { context ->
+                        MenuActionResult.Success(MenuUpdate.Navigate(targetRoute(context.route, "destination")))
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                FACING_ID,
+                renderer = { renderFacing(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val kind = context.payload["kind"]?.let { runCatching { FacingKind.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val location = context.player.location
+                        val spec = if (kind == FacingKind.CAPTURED) {
+                            FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
+                        } else FacingSpec(kind)
+                        updateNode(context.route) { node ->
+                            node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
                 SETTINGS_ID,
                 renderer = { renderSettings(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
-                    "field" to MenuActionHandler { MenuActionResult.Success(MenuUpdate.Refresh) },
+                    "field" to MenuActionHandler { context ->
+                        val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (field == "item" && node.type == CommandType.GIVE_ITEM) {
+                            val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                            plugin.itemSelection.begin(context.player, scriptId, node.id, context.route)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        val target = when {
+                            field == "destination" -> positionRoute(context.route, "destination")
+                            field == "executor" -> targetRoute(context.route, "context_executor")
+                            field == "target" && node.type == CommandType.CONTEXT -> targetRoute(context.route, "context_target")
+                            field == "target" || field == "subject" -> targetRoute(context.route, "node_target")
+                            field == "position" -> positionRoute(context.route, "context_position")
+                            field == "facing" -> facingRoute(context.route)
+                            field == "context" -> targetRoute(context.route, "context_target")
+                            else -> null
+                        } ?: return@MenuActionHandler MenuActionResult.Ignored
+                        MenuActionResult.Success(MenuUpdate.Navigate(target))
+                    },
                 ),
             )
         )
@@ -89,7 +196,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderDelete(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
-                    "delete" to MenuActionHandler { MenuActionResult.Success(MenuUpdate.Back) },
+                    "delete" to MenuActionHandler { MenuActionResult.Ignored },
                 ),
             )
         )
@@ -141,6 +248,85 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(45, KcGui.title("${KcI18n.text(player, node.type.key)}の設定"), elements)
     }
 
+    private fun renderTarget(player: Player, route: MenuRoute): InventoryMenuView {
+        val options = listOf(
+            Triple(TargetKind.EXECUTOR, Material.PLAYER_HEAD, "実行者"),
+            Triple(TargetKind.ACTIVATOR, Material.LEVER, "起動したプレイヤー"),
+            Triple(TargetKind.INHERITED_TARGET, Material.TARGET, "現在の対象"),
+            Triple(TargetKind.NEAREST_PLAYER, Material.COMPASS, "最も近いプレイヤー"),
+            Triple(TargetKind.NEARBY_PLAYERS, Material.FILLED_MAP, "周囲のプレイヤー"),
+            Triple(TargetKind.RANDOM_PLAYER, Material.ENDER_EYE, "ランダムなプレイヤー"),
+            Triple(TargetKind.NEAREST_ENTITY, Material.ARMOR_STAND, "最も近いエンティティ"),
+            Triple(TargetKind.NEARBY_ENTITIES, Material.LEAD, "周囲のエンティティ"),
+        )
+        val elements = options.mapIndexed { index, option ->
+            MenuElement(
+                EditorMenuLayout.centeredSlots(options.size)[index],
+                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
+                GuiElementRole.ACTION,
+                "select",
+                mapOf("kind" to option.first.name),
+            )
+        }.toMutableList()
+        elements += backElement(player)
+        return InventoryMenuView(45, KcGui.title("対象を設定"), elements)
+    }
+
+    private fun renderPosition(player: Player, route: MenuRoute): InventoryMenuView {
+        val destination = route.payload[ROLE] == "destination"
+        val elements = if (destination) {
+            mutableListOf(
+                MenuElement(20, KcGui.item(Material.COMPASS, "座標を指定して設定", GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "select", mapOf("kind" to PositionKind.COORDINATES.name)),
+                MenuElement(22, KcGui.item(Material.ENDER_PEARL, "ほかのエンティティに移動", GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "target"),
+                MenuElement(24, KcGui.item(Material.RECOVERY_COMPASS, "現在位置に設定", GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "select", mapOf("kind" to PositionKind.CAPTURED.name)),
+            )
+        } else {
+            val options = listOf(
+                Triple(PositionKind.CAPTURED, Material.RECOVERY_COMPASS, "現在位置"),
+                Triple(PositionKind.DISK, Material.COMMAND_BLOCK, "ディスクの位置"),
+                Triple(PositionKind.EXECUTOR, Material.PLAYER_HEAD, "実行者の位置"),
+                Triple(PositionKind.TARGET, Material.TARGET, "対象の位置"),
+                Triple(PositionKind.MYWORLD_SPAWN, Material.RESPAWN_ANCHOR, "MyWorldスポーン"),
+                Triple(PositionKind.COORDINATES, Material.COMPASS, "座標を指定"),
+                Triple(PositionKind.VARIABLE, Material.REDSTONE, "一時変数"),
+            )
+            options.mapIndexed { index, option ->
+                MenuElement(
+                    EditorMenuLayout.centeredSlots(options.size)[index],
+                    KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
+                    GuiElementRole.ACTION,
+                    "select",
+                    mapOf("kind" to option.first.name),
+                )
+            }.toMutableList()
+        }
+        elements += backElement(player)
+        return InventoryMenuView(45, KcGui.title(if (destination) "移動先の設定方法" else "実行位置を設定"), elements)
+    }
+
+    private fun renderFacing(player: Player, route: MenuRoute): InventoryMenuView {
+        val options = listOf(
+            Triple(FacingKind.INHERITED, Material.GRAY_DYE, "変更しない"),
+            Triple(FacingKind.CAPTURED, Material.SPYGLASS, "現在の向き"),
+            Triple(FacingKind.EXECUTOR, Material.PLAYER_HEAD, "実行者と同じ向き"),
+            Triple(FacingKind.TARGET, Material.TARGET, "対象を見る"),
+            Triple(FacingKind.COORDINATES, Material.COMPASS, "座標を見る"),
+            Triple(FacingKind.MYWORLD_SPAWN, Material.RESPAWN_ANCHOR, "MyWorldスポーン"),
+            Triple(FacingKind.ROTATION, Material.REPEATER, "数値で指定"),
+        )
+        val elements = options.mapIndexed { index, option ->
+            MenuElement(
+                EditorMenuLayout.centeredSlots(options.size)[index],
+                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
+                GuiElementRole.ACTION,
+                "select",
+                mapOf("kind" to option.first.name),
+            )
+        }.toMutableList()
+        elements += backElement(player)
+        return InventoryMenuView(45, KcGui.title("向きを設定"), elements)
+    }
+
     private fun renderTimer(player: Player, route: MenuRoute): InventoryMenuView {
         val script = script(route)
         val elements = mutableListOf(
@@ -182,14 +368,27 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return script.graph.nodes[id]
     }
 
+    private fun updateNode(route: MenuRoute, change: (CommandNode) -> Unit) {
+        val script = script(route) ?: return
+        val id = route.payload[NODE_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: return
+        val node = script.graph.nodes[id] ?: return
+        change(node)
+        plugin.scripts.save(script)
+        plugin.placements.refreshDisplaysForScript(script.id)
+    }
+
     companion object {
         private const val PICKER_ID = "command_type"
         private const val SETTINGS_ID = "command_settings"
         private const val TIMER_ID = "timer_settings"
         private const val DELETE_ID = "delete_command"
+        private const val TARGET_ID = "target_settings"
+        private const val POSITION_ID = "position_settings"
+        private const val FACING_ID = "facing_settings"
         private const val SCRIPT_ID = "scriptId"
         private const val NODE_ID = "nodeId"
         private const val LANE = "lane"
+        private const val ROLE = "role"
 
         fun typeRoute(scriptId: UUID, lane: Int = 0) =
             MenuRoute(SequenceEditorMenu.OWNER, PICKER_ID, mapOf(SCRIPT_ID to scriptId.toString(), LANE to lane.toString()))
@@ -202,6 +401,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
         fun timerRoute(scriptId: UUID) =
             MenuRoute(SequenceEditorMenu.OWNER, TIMER_ID, mapOf(SCRIPT_ID to scriptId.toString()))
+
+        private fun targetRoute(route: MenuRoute, role: String) =
+            route.copy(id = TARGET_ID, payload = route.payload + (ROLE to role))
+
+        private fun positionRoute(route: MenuRoute, role: String) =
+            route.copy(id = POSITION_ID, payload = route.payload + (ROLE to role))
+
+        private fun facingRoute(route: MenuRoute) = route.copy(id = FACING_ID)
 
         private fun scriptId(route: MenuRoute) =
             route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
