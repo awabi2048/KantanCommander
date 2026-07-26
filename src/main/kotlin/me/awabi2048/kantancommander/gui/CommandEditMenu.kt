@@ -212,7 +212,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "target" || field == "subject" -> targetRoute(context.route, "node_target")
                             field == "position" -> positionRoute(context.route, "context_position")
                             field == "facing" -> facingRoute(context.route)
-                            field == "context" -> targetRoute(context.route, "context_target")
+                            field == "context" -> choiceRoute(context.route, CONTEXT_OVERRIDE_ID)
                             else -> null
                         } ?: return@MenuActionHandler MenuActionResult.Ignored
                         MenuActionResult.Success(MenuUpdate.Navigate(target))
@@ -232,6 +232,38 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?.let { runCatching { ConditionKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         updateNode(context.route) { it.params["kind"] = kind.name }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                CONTEXT_OVERRIDE_ID,
+                renderer = { renderContextOverride(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "executor" to MenuActionHandler { context ->
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(targetRoute(context.route, "context_executor"))
+                        )
+                    },
+                    "target" to MenuActionHandler { context ->
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(targetRoute(context.route, "context_target"))
+                        )
+                    },
+                    "position" to MenuActionHandler { context ->
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(positionRoute(context.route, "context_position"))
+                        )
+                    },
+                    "facing" to MenuActionHandler { context ->
+                        MenuActionResult.Success(MenuUpdate.Navigate(facingRoute(context.route)))
+                    },
+                    "inherit" to MenuActionHandler { context ->
+                        updateNode(context.route) { it.contextOverride = null }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
                 ),
@@ -554,6 +586,32 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(45, KcGui.title("表示方式"), elements)
     }
 
+    private fun renderContextOverride(player: Player, route: MenuRoute): InventoryMenuView {
+        val context = node(route)?.contextOverride
+        val options = listOf(
+            ContextOption(20, Material.PLAYER_HEAD, "実行者", "executor", if (context?.executor == null) "継承" else "設定済み"),
+            ContextOption(21, Material.TARGET, "対象", "target", if (context?.target == null) "継承" else "設定済み"),
+            ContextOption(22, Material.COMPASS, "実行位置", "position", if (context?.position == null) "継承" else "設定済み"),
+            ContextOption(23, Material.SPYGLASS, "向き", "facing", if (context?.facing == null) "継承" else "設定済み"),
+            ContextOption(24, Material.GRAY_DYE, "すべて継承", "inherit", "個別設定を解除"),
+        )
+        val elements = options.map { option ->
+            MenuElement(
+                option.slot,
+                KcGui.item(
+                    option.material,
+                    option.name,
+                    GuiNameStyle.PRIMARY,
+                    listOf(GuiLoreLine.Data("現在", option.value, "§f")),
+                ),
+                GuiElementRole.ACTION,
+                option.action,
+            )
+        }.toMutableList()
+        elements += backElement(player)
+        return InventoryMenuView(45, KcGui.title("個別コンテキスト"), elements)
+    }
+
     private fun renderDelete(player: Player, route: MenuRoute): InventoryMenuView {
         val elements = listOf(
             MenuElement(20, KcGui.item(Material.BARRIER, "削除を中止", GuiNameStyle.PRIMARY), GuiElementRole.CANCEL, "back"),
@@ -857,6 +915,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val VARIABLE_TYPE_ID = "variable_type"
         private const val VARIABLE_OPERATION_ID = "variable_operation"
         private const val DISPLAY_MODE_ID = "display_mode"
+        private const val CONTEXT_OVERRIDE_ID = "context_override"
         private const val DELETE_ID = "delete_command"
         private const val TARGET_ID = "target_settings"
         private const val POSITION_ID = "position_settings"
@@ -898,6 +957,14 @@ private data class FieldDialogDefinition(
     val description: String,
     val defaultValue: String,
     val positiveInteger: Boolean,
+)
+
+private data class ContextOption(
+    val slot: Int,
+    val material: Material,
+    val name: String,
+    val action: String,
+    val value: String,
 )
 
 data class EditorField(
