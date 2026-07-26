@@ -23,6 +23,7 @@ import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.DiskCallMode
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
@@ -110,6 +111,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (kind == PositionKind.COORDINATES) {
                             showPositionDialog(context.player, context.route)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        if (kind == PositionKind.VARIABLE) {
+                            showPositionVariableDialog(context.player, context.route)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         val location = context.player.location
@@ -201,6 +206,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(choiceRoute(context.route, DISPLAY_MODE_ID))
                             )
                         }
+                        if (field == "mode" && node.type == CommandType.DISK_CALL) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, DISK_MODE_ID))
+                            )
+                        }
                         if (field in setOf("count", "ticks", "text", "stay", "value")) {
                             showFieldDialog(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
@@ -232,6 +242,36 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?.let { runCatching { ConditionKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         updateNode(context.route) { it.params["kind"] = kind.name }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                DISK_MODE_ID,
+                renderer = { renderDiskModes(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val mode = context.payload["mode"]
+                            ?.let { runCatching { DiskCallMode.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val script = script(context.route)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val node = node(context.route)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        node.params["mode"] = mode.name
+                        node.snapshot = if (mode == DiskCallMode.SNAPSHOT) {
+                            runCatching { UUID.fromString(node.string("diskId")) }.getOrNull()
+                                ?.let(plugin.scripts::load)
+                                ?.graph
+                                ?.deepCopy()
+                        } else {
+                            null
+                        }
+                        plugin.scripts.save(script)
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
                 ),
@@ -612,6 +652,24 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(45, KcGui.title("個別コンテキスト"), elements)
     }
 
+    private fun renderDiskModes(player: Player): InventoryMenuView {
+        val options = listOf(
+            Triple(DiskCallMode.LIVE_REFERENCE, Material.ENDER_EYE, "リアルタイム参照"),
+            Triple(DiskCallMode.SNAPSHOT, Material.MAP, "現在内容をコピー"),
+        )
+        val elements = options.mapIndexed { index, option ->
+            MenuElement(
+                EditorMenuLayout.centeredSlots(options.size)[index],
+                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
+                GuiElementRole.ACTION,
+                "select",
+                mapOf("mode" to option.first.name),
+            )
+        }.toMutableList()
+        elements += backElement(player)
+        return InventoryMenuView(45, KcGui.title("別ディスクの参照方式"), elements)
+    }
+
     private fun renderDelete(player: Player, route: MenuRoute): InventoryMenuView {
         val elements = listOf(
             MenuElement(20, KcGui.item(Material.BARRIER, "削除を中止", GuiNameStyle.PRIMARY), GuiElementRole.CANCEL, "back"),
@@ -788,6 +846,42 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
     }
 
+    private fun showPositionVariableDialog(player: Player, route: MenuRoute) {
+        val current = node(route)?.let { selectedPosition(it, route.payload[ROLE]) }?.variable.orEmpty()
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = "position-variable",
+                title = Component.text("一時変数から選択"),
+                body = listOf(Component.text("位置型の一時変数名を指定してください。")),
+                inputs = listOf(
+                    MenuDialogInput.Text("name", Component.text("変数名"), current, maxLength = 64)
+                ),
+                confirm = MenuDialogButton(Component.text("設定"), MenuDialogHandler { _, response ->
+                    val name = response.textValue("name").trim().lowercase()
+                    if (!name.matches(Regex("[a-z0-9_.-]{1,64}"))) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(
+                            Component.text("半角英小文字・数字・_ . - を1～64文字で指定してください。")
+                        )
+                    }
+                    updateNode(route) { command ->
+                        val spec = PositionSpec(PositionKind.VARIABLE, variable = name)
+                        if (route.payload[ROLE] == "destination") {
+                            command.destinationSpec = spec
+                            command.destinationTargetSpec = null
+                        } else {
+                            command.contextOverride =
+                                (command.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
+                        }
+                    }
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = dialogCancel(route),
+            )
+        )
+    }
+
     private fun showFacingCoordinatesDialog(player: Player, route: MenuRoute) {
         val current = node(route)?.contextOverride?.facing
         val location = player.location
@@ -916,6 +1010,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val VARIABLE_OPERATION_ID = "variable_operation"
         private const val DISPLAY_MODE_ID = "display_mode"
         private const val CONTEXT_OVERRIDE_ID = "context_override"
+        private const val DISK_MODE_ID = "disk_mode"
         private const val DELETE_ID = "delete_command"
         private const val TARGET_ID = "target_settings"
         private const val POSITION_ID = "position_settings"
