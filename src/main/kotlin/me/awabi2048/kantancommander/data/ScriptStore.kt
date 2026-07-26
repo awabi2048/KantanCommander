@@ -23,8 +23,24 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
     fun create(owner: UUID, name: String): DiskScript =
         DiskScript(name = name, owner = owner).also(::save)
 
+    fun createPlacement(owner: UUID, name: String): DiskScript =
+        DiskScript(name = name, owner = owner, listed = false).also(::save)
+
     fun copyForPlacement(source: DiskScript): DiskScript =
-        source.copy(id = UUID.randomUUID(), listed = false, graph = source.graph.deepCopy()).also(::save)
+        source.copy(
+            id = UUID.randomUUID(),
+            createdAt = System.currentTimeMillis(),
+            listed = false,
+            graph = source.graph.deepCopy(),
+        ).also(::save)
+
+    fun copyForItem(source: DiskScript): DiskScript =
+        source.copy(
+            id = UUID.randomUUID(),
+            createdAt = System.currentTimeMillis(),
+            listed = false,
+            graph = source.graph.deepCopy(),
+        ).also(::save)
 
     fun copyToLibrary(source: DiskScript, owner: UUID, name: String = source.name): DiskScript =
         source.copy(

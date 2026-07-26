@@ -16,7 +16,11 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
     private val selections = mutableMapOf<UUID, Selection>()
 
     fun begin(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
-        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute)
+        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.ITEM)
+    }
+
+    fun beginDisk(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
+        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.DISK)
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
@@ -28,8 +32,18 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         val selected = event.currentItem?.takeUnless { it.type == Material.AIR } ?: return
         val script = plugin.scripts.load(selection.scriptId) ?: return cancel(player)
         val node = script.graph.nodes[selection.nodeId] ?: return cancel(player)
-        node.params["item"] = selected.type.key.toString()
-        node.params["itemData"] = ItemStackCodec.encode(selected)
+        when (selection.kind) {
+            SelectionKind.ITEM -> {
+                node.params["item"] = selected.type.key.toString()
+                node.params["itemData"] = ItemStackCodec.encode(selected)
+            }
+            SelectionKind.DISK -> {
+                val selectedId = DiskItemService.diskId(selected) ?: return
+                val selectedScript = plugin.scripts.load(selectedId) ?: return
+                node.params["diskId"] = selectedId.toString()
+                node.snapshot = selectedScript.graph.deepCopy()
+            }
+        }
         plugin.scripts.save(script)
         selections.remove(player.uniqueId)
         CCSystem.getAPI().getMenuRuntimeService().open(player, selection.returnRoute)
@@ -45,5 +59,12 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         selections.remove(player.uniqueId)
     }
 
-    private data class Selection(val scriptId: UUID, val nodeId: UUID, val returnRoute: MenuRoute)
+    private enum class SelectionKind { ITEM, DISK }
+
+    private data class Selection(
+        val scriptId: UUID,
+        val nodeId: UUID,
+        val returnRoute: MenuRoute,
+        val kind: SelectionKind,
+    )
 }

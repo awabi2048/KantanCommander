@@ -44,7 +44,8 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                         if (context.click.isRightClick) {
                             MenuActionResult.Success(MenuUpdate.Navigate(SequenceEditorMenu.route(script.id)))
                         } else {
-                            context.player.inventory.addItem(DiskItemService.create(script, context.player)).values
+                            val copy = plugin.scripts.copyForItem(script)
+                            context.player.inventory.addItem(DiskItemService.create(copy, context.player)).values
                                 .forEach { context.player.world.dropItem(context.player.location, it) }
                             MenuActionResult.Success(MenuUpdate.None)
                         }

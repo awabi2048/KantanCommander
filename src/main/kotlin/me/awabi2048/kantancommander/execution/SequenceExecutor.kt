@@ -5,7 +5,6 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
-import me.awabi2048.kantancommander.model.DiskCallMode
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.SavedPosition
@@ -114,15 +113,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             plugin.logger.warning("[KantanCommander] disk-call-depth root=${session.rootId} node=${node.id} depth=$depth max=${session.maxDepth}")
             return done(false)
         }
-        val mode = runCatching { DiskCallMode.valueOf(node.string("mode")) }.getOrDefault(DiskCallMode.LIVE_REFERENCE)
-        if (mode == DiskCallMode.SNAPSHOT) {
-            val snapshot = node.snapshot ?: return done(false)
-            val synthetic = DiskScript(name = "snapshot", owner = session.actor?.uniqueId ?: UUID(0, 0), graph = snapshot)
-            return runGraph(synthetic, snapshot, session, depth + 1, done)
-        }
-        val targetId = runCatching { UUID.fromString(node.string("diskId")) }.getOrNull() ?: return done(false)
-        val target = plugin.scripts.load(targetId) ?: return done(false)
-        runGraph(target, target.graph, session, depth + 1, done)
+        val snapshot = node.snapshot ?: return done(false)
+        val synthetic = DiskScript(name = "snapshot", owner = session.actor?.uniqueId ?: UUID(0, 0), graph = snapshot)
+        runGraph(synthetic, snapshot, session, depth + 1, done)
     }
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {

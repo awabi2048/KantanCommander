@@ -5,7 +5,6 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
-import me.awabi2048.kantancommander.model.DiskCallMode
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -20,10 +19,8 @@ import java.util.UUID
 
 class VanillaDatapackExporter(private val scripts: ScriptStore, private val outputRoot: File) {
     fun export(root: DiskScript): ExportResult {
-        val collected = linkedMapOf(root.id to root)
         val errors = mutableListOf<String>()
-        collect(root, collected, errors, mutableSetOf())
-        collected.values.forEach { validate(it, errors) }
+        validate(root, errors)
         if (errors.isNotEmpty()) return ExportResult.Failure(errors.distinct())
 
         val pack = outputRoot.resolve("kantan-${root.id}")
@@ -32,32 +29,10 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         pack.resolve("pack.mcmeta").writeText("""{"pack":{"pack_format":88,"description":"Kantan Commander export"}}""")
         functions.resolve("load.mcfunction").writeText("scoreboard objectives add kc_result dummy\nscoreboard objectives add kc_vars dummy\n", Charsets.UTF_8)
         loadTags.resolve("load.json").writeText("""{"values":["kantan:load"]}""", Charsets.UTF_8)
-        collected.values.forEach { script ->
-            compile(script).forEach { (name, content) ->
-                functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8)
-            }
+        compile(root).forEach { (name, content) ->
+            functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8)
         }
         return ExportResult.Success(pack)
-    }
-
-    private fun collect(
-        script: DiskScript,
-        all: MutableMap<UUID, DiskScript>,
-        errors: MutableList<String>,
-        active: MutableSet<UUID>,
-    ) {
-        if (!active.add(script.id)) {
-            errors += "別ディスク参照が循環しています: ${script.id}"
-            return
-        }
-        script.graph.nodes.values.filter { it.type == CommandType.DISK_CALL }.forEach { node ->
-            if (node.string("mode") == DiskCallMode.SNAPSHOT.name) return@forEach
-            val id = runCatching { UUID.fromString(node.string("diskId")) }.getOrNull()
-            val target = id?.let(scripts::load)
-            if (target == null) errors += "参照ディスクが存在しません: ${node.string("diskId")}"
-            else if (all.putIfAbsent(target.id, target) == null) collect(target, all, errors, active)
-        }
-        active.remove(script.id)
     }
 
     private fun validate(script: DiskScript, errors: MutableList<String>) {
@@ -78,7 +53,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                 CommandType.TELEPORT -> if (node.string("world").isNotBlank()) {
                     errors += "${script.id}/${node.id}: 出力先ワールドを検証できない固定ワールド参照です"
                 }
-                CommandType.DISK_CALL -> if (node.string("mode") == DiskCallMode.SNAPSHOT.name && node.snapshot == null) {
+                CommandType.DISK_CALL -> if (node.snapshot == null) {
                     errors += "${script.id}/${node.id}: コピー内容がありません"
                 }
                 CommandType.CONDITION -> validateCondition(script, node, errors)
@@ -120,7 +95,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
             when {
-                node.type == CommandType.DISK_CALL && node.string("mode") == DiskCallMode.SNAPSHOT.name -> {
+                node.type == CommandType.DISK_CALL -> {
                     val snapshotPrefix = "${prefix}_snapshot_${node.id}"
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output) }
                     lines += storeResult(node, "function kantan:$snapshotPrefix")
@@ -164,8 +139,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
             "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
             else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text"))}\"}"
         }
-        CommandType.DISK_CALL ->
-            if (node.string("mode") == DiskCallMode.LIVE_REFERENCE.name) "function kantan:${node.string("diskId")}" else null
+        CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node)
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE -> null
     }

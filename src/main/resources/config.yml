@@ -1,10 +1,8 @@
 default-disk-name: "Kantan Disk"
-display:
-  glowing: true
 execution:
   maximum-command-count: 1024
   maximum-disk-call-depth: 3
 timer:
   minimum-units: 1
   maximum-units: 86400
-config_version: 4
+config_version: 5

@@ -54,7 +54,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 4,
+                    currentVersion = 5,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
@@ -73,6 +73,9 @@ class KantanCommanderPlugin : JavaPlugin() {
                         },
                         3 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
                             removeLegacyConfig(config)
+                        },
+                        4 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            config.set("display.glowing", null)
                         }
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->

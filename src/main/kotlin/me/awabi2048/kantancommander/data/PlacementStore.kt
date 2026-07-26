@@ -78,7 +78,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val script = plugin.scripts.load(placement.scriptId)
             val displayMaterial = if (script?.timer?.enabled == true) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
             it.block = Bukkit.createBlockData(displayMaterial)
-            it.isGlowing = plugin.config.getBoolean("display.glowing", true)
+            it.isGlowing = false
             it.transformation = Transformation(
                 Vector3f(-0.375f, 0.125f, -0.375f),
                 AxisAngle4f(),

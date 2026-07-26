@@ -3,7 +3,7 @@ package me.awabi2048.kantancommander.model
 import org.bukkit.Material
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 3
+const val STRUCTURED_FORMAT_VERSION = 4
 const val TIMER_UNIT_TICKS = 10
 const val MIN_TIMER_UNITS = 1
 const val MAX_TIMER_UNITS = 86_400
@@ -159,11 +159,6 @@ data class SavedPosition(
     val pitch: Float = 0f,
 )
 
-enum class DiskCallMode {
-    LIVE_REFERENCE,
-    SNAPSHOT,
-}
-
 enum class CommandType(
     val key: String,
     val icon: Material,
@@ -191,7 +186,7 @@ enum class CommandType(
     CONTEXT("command.context", Material.RECOVERY_COMPASS, mapOf(
         "executor" to "", "target" to "", "position" to "", "facing" to ""
     )),
-    DISK_CALL("command.disk_call", Material.MUSIC_DISC_13, mapOf("mode" to DiskCallMode.LIVE_REFERENCE.name, "diskId" to "")),
+    DISK_CALL("command.disk_call", Material.MUSIC_DISC_13, mapOf("diskId" to "")),
     VARIABLE("command.variable", Material.REDSTONE, mapOf(
         "name" to "", "type" to VariableType.BOOLEAN.name, "operation" to VariableOperation.SET.name, "value" to "false"
     )),

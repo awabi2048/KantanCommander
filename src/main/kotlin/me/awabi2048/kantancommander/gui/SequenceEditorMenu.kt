@@ -14,6 +14,8 @@ import com.awabi2048.ccsystem.api.gui.MenuSoundPolicy
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.item.DiskItemService
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -73,12 +75,27 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.settingsRoute(script.id, node.id)))
                         }
                     },
+                    "output" to handler { context ->
+                        val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
+                        if (!outputDisk(context.player, placement, removeBlock = false)) {
+                            return@handler MenuActionResult.Ignored
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    "remove" to handler { context ->
+                        val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
+                        if (!outputDisk(context.player, placement, removeBlock = true)) {
+                            return@handler MenuActionResult.Ignored
+                        }
+                        MenuActionResult.Success(MenuUpdate.Close)
+                    },
                 ),
             )
         )
     }
 
     fun open(player: Player, scriptId: UUID) = runtime.open(player, route(scriptId))
+    fun open(player: Player, placement: DiskPlacement) = runtime.open(player, route(placement))
 
     private fun render(player: Player, route: MenuRoute): InventoryMenuView {
         val script = scriptId(route)?.let(plugin.scripts::load) ?: return InventoryMenuView(45, KcGui.title("コマンドディスク"), emptyList())
@@ -106,6 +123,31 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         elements += action(38, Material.COMPASS, "中心に合わせる", "center")
         elements += MenuElement(39, KcGui.item(Material.MAP, "全体情報", GuiNameStyle.PRIMARY,
             listOf(GuiLoreLine.Text(graphDiagram(script.graph.nodes.values.count { it.type == me.awabi2048.kantancommander.model.CommandType.CONDITION }, offset, lane)))), GuiElementRole.DECORATION)
+        if (placement(route) != null) {
+            elements += action(
+                40,
+                Material.MUSIC_DISC_13,
+                KcI18n.text(player, "gui.editor.output"),
+                "output",
+                listOf(
+                    KcGui.action(
+                        player,
+                        "lore.click.left",
+                        KcI18n.text(player, "gui.editor.output_copy"),
+                    )
+                ),
+            )
+            elements += action(
+                41,
+                Material.RED_CONCRETE,
+                KcI18n.text(player, "gui.editor.remove"),
+                "remove",
+                listOf(
+                    GuiLoreLine.Warning(KcI18n.text(player, "gui.editor.remove_warning")),
+                    KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.remove")),
+                ),
+            )
+        }
         elements += action(44, Material.RECOVERY_COMPASS, "表示位置を移動", "navigate",
             listOf(
                 KcGui.action(player, "lore.click.left", "左へ移動"),
@@ -140,13 +182,68 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun action(slot: Int, material: Material, name: String, id: String, lore: List<GuiLoreLine> = emptyList()) =
         MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY, lore), GuiElementRole.ACTION, id)
 
+    private fun placement(route: MenuRoute): DiskPlacement? {
+        val world = route.payload[WORLD] ?: return null
+        val x = route.payload[X]?.toIntOrNull() ?: return null
+        val y = route.payload[Y]?.toIntOrNull() ?: return null
+        val z = route.payload[Z]?.toIntOrNull() ?: return null
+        return plugin.placements.find(plugin.server.getWorld(world), x, y, z)
+    }
+
     private fun handler(block: (com.awabi2048.ccsystem.api.gui.MenuActionContext) -> MenuActionResult) = MenuActionHandler(block)
+
+    private fun outputDisk(player: Player, placement: DiskPlacement, removeBlock: Boolean): Boolean {
+        val source = plugin.scripts.load(placement.scriptId) ?: return false
+        if (!plugin.placementAccess.canManage(player, placement.world, source.owner)) {
+            player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
+            return false
+        }
+        val world = plugin.server.getWorld(placement.world) ?: return false
+        val block = world.getBlockAt(placement.x, placement.y, placement.z)
+        if (plugin.placements.find(block.location)?.scriptId != source.id) return false
+
+        val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull() ?: return false
+        val item = runCatching { DiskItemService.create(output, player) }.getOrElse {
+            plugin.scripts.delete(output.id)
+            return false
+        }
+        player.inventory.addItem(item).values.forEach {
+            world.dropItemNaturally(player.location, it)
+        }
+        player.sendMessage(KcI18n.text(player, "message.disk_output"))
+
+        if (removeBlock) {
+            plugin.placements.removeDisplay(world, placement.displayId)
+            plugin.placements.remove(world, placement.x, placement.y, placement.z)
+            block.setType(Material.AIR, false)
+            plugin.scripts.delete(source.id)
+            player.sendMessage(KcI18n.text(player, "message.placement_removed"))
+        }
+        return true
+    }
 
     companion object {
         const val OWNER = ProgramListMenu.OWNER
         private const val MENU_ID = "editor"
         private const val SCRIPT_ID = "scriptId"
+        private const val WORLD = "world"
+        private const val X = "x"
+        private const val Y = "y"
+        private const val Z = "z"
         fun route(scriptId: UUID) = MenuRoute(OWNER, MENU_ID, mapOf(SCRIPT_ID to scriptId.toString(), "offset" to "0", "lane" to "0"))
+        fun route(placement: DiskPlacement) = MenuRoute(
+            OWNER,
+            MENU_ID,
+            mapOf(
+                SCRIPT_ID to placement.scriptId.toString(),
+                "offset" to "0",
+                "lane" to "0",
+                WORLD to placement.world,
+                X to placement.x.toString(),
+                Y to placement.y.toString(),
+                Z to placement.z.toString(),
+            ),
+        )
         private fun route(current: MenuRoute, offset: Int, lane: Int) = current.copy(payload = current.payload + ("offset" to offset.toString()) + ("lane" to lane.toString()))
         private fun scriptId(route: MenuRoute) = route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
     }

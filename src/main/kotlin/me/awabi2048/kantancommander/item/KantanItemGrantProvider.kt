@@ -25,9 +25,8 @@ class KantanItemGrantProvider(
         val name = request.arguments.joinToString(" ").ifBlank {
             plugin.config.getString("default-disk-name", "Kantan Disk") ?: "Kantan Disk"
         }
-        val script = plugin.scripts.create(request.target.uniqueId, name)
         return runCatching {
-            val item = DiskItemService.create(script, request.target)
+            val item = DiskItemService.createUnset(name, request.target)
             var dropped = 0
             request.target.inventory.addItem(item).values.forEach { overflow ->
                 dropped += overflow.amount
@@ -39,9 +38,6 @@ class KantanItemGrantProvider(
                 droppedAmount = dropped,
                 message = null
             )
-        }.getOrElse { failure ->
-            plugin.scripts.delete(script.id)
-            ItemGrantResult(false, 0, 0, failure.message ?: "disk creation failed")
-        }
+        }.getOrElse { failure -> ItemGrantResult(false, 0, 0, failure.message ?: "disk creation failed") }
     }
 }

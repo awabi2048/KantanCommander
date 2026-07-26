@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.export
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -51,5 +52,24 @@ class VanillaDatapackExporterTest {
             ExportResult.Failure::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
         )
+    }
+
+    @Test
+    fun `disk call exports only its stored snapshot`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "snapshot")
+        val call = GraphEditor.append(script.graph, CommandType.DISK_CALL)
+        val nested = CommandType.DISPLAY_TEXT.newNode().also { it.params["text"] = "copied" }
+        call.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        call.params["diskId"] = UUID.randomUUID().toString()
+        store.save(script)
+
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val success = assertInstanceOf(ExportResult.Success::class.java, result)
+        val text = success.directory.walkTopDown()
+            .filter(File::isFile)
+            .joinToString("\n") { it.readText() }
+        assertTrue(text.contains("copied"))
+        assertFalse(text.contains("function kantan:${call.params["diskId"]}"))
     }
 }

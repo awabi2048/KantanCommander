@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -36,5 +37,26 @@ class ScriptStoreTest {
         dir.resolve("${UUID.randomUUID()}.json").writeText("""{"formatVersion":1}""")
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         assertTrue(store.listAll().isEmpty())
+    }
+
+    @Test
+    fun `unset placement and written output use independent unlisted scripts`() {
+        val store = ScriptStore(temp.resolve("structured"), Logger.getAnonymousLogger())
+        val placement = store.createPlacement(UUID.randomUUID(), "unset")
+        assertFalse(placement.listed)
+
+        val node = CommandType.DISPLAY_TEXT.newNode()
+        node.params["text"] = "before"
+        placement.graph = CommandGraph(node.id, linkedMapOf(node.id to node))
+        store.save(placement)
+
+        val output = store.copyForItem(placement)
+        placement.graph.nodes[node.id]?.params?.set("text", "after")
+        store.save(placement)
+
+        assertFalse(output.listed)
+        assertNotEquals(placement.id, output.id)
+        assertEquals("before", requireNotNull(store.load(output.id)).graph.nodes[node.id]?.string("text"))
+        assertEquals("after", requireNotNull(store.load(placement.id)).graph.nodes[node.id]?.string("text"))
     }
 }
