@@ -196,6 +196,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             showVariableNameDialog(context.player, context.route, node.string("name"))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
+                        if (field == "mode" && node.type == CommandType.DISPLAY_TEXT) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, DISPLAY_MODE_ID))
+                            )
+                        }
+                        if (field in setOf("count", "ticks", "text", "stay", "value")) {
+                            showFieldDialog(context.player, context.route, field, node)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
                         val target = when {
                             field == "destination" -> positionRoute(context.route, "destination")
                             field == "executor" -> targetRoute(context.route, "context_executor")
@@ -223,6 +232,23 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?.let { runCatching { ConditionKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         updateNode(context.route) { it.params["kind"] = kind.name }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                DISPLAY_MODE_ID,
+                renderer = { renderDisplayModes(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val mode = context.payload["mode"]
+                            ?.takeIf { it in setOf("tellraw", "title", "actionbar") }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        updateNode(context.route) { it.params["mode"] = mode }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
                 ),
@@ -509,6 +535,25 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(45, KcGui.title("一時変数の操作"), elements)
     }
 
+    private fun renderDisplayModes(player: Player): InventoryMenuView {
+        val options = listOf(
+            Triple("tellraw", Material.WRITABLE_BOOK, "チャット"),
+            Triple("title", Material.OAK_SIGN, "タイトル"),
+            Triple("actionbar", Material.NAME_TAG, "アクションバー"),
+        )
+        val elements = options.mapIndexed { index, option ->
+            MenuElement(
+                EditorMenuLayout.centeredSlots(options.size)[index],
+                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
+                GuiElementRole.ACTION,
+                "select",
+                mapOf("mode" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player)
+        return InventoryMenuView(45, KcGui.title("表示方式"), elements)
+    }
+
     private fun renderDelete(player: Player, route: MenuRoute): InventoryMenuView {
         val elements = listOf(
             MenuElement(20, KcGui.item(Material.BARRIER, "削除を中止", GuiNameStyle.PRIMARY), GuiElementRole.CANCEL, "back"),
@@ -584,6 +629,78 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 cancel = MenuDialogButton(Component.text("戻る"), MenuDialogHandler { _, _ ->
                     MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
                 }),
+            )
+        )
+    }
+
+    private fun showFieldDialog(player: Player, route: MenuRoute, field: String, node: CommandNode) {
+        if (field == "stay" && node.type == CommandType.DISPLAY_TEXT) {
+            showDisplayTimingDialog(player, route, node)
+            return
+        }
+        val definition = when (field) {
+            "count" -> FieldDialogDefinition("個数", "付与する個数を指定してください。", "1", true)
+            "ticks" -> FieldDialogDefinition("待機時間", "待機するtick数を指定してください。", "20", true)
+            "text" -> FieldDialogDefinition("表示内容", "表示する文章を入力してください。", "", false)
+            "value" -> FieldDialogDefinition("値", "一時変数へ設定する値を入力してください。", "", false)
+            else -> return
+        }
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = "field-$field",
+                title = Component.text(definition.title),
+                body = listOf(Component.text(definition.description)),
+                inputs = listOf(
+                    MenuDialogInput.Text(
+                        field,
+                        Component.text(definition.title),
+                        node.string(field, definition.defaultValue),
+                        maxLength = if (field == "text" || field == "value") 512 else 10,
+                    )
+                ),
+                confirm = MenuDialogButton(Component.text("設定"), MenuDialogHandler { _, response ->
+                    val value = response.textValue(field)
+                    if (definition.positiveInteger && (value.toIntOrNull() ?: 0) < 1) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(
+                            Component.text("${definition.title}は1以上の整数で指定してください。")
+                        )
+                    }
+                    updateNode(route) { it.params[field] = value }
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = dialogCancel(route),
+            )
+        )
+    }
+
+    private fun showDisplayTimingDialog(player: Player, route: MenuRoute, node: CommandNode) {
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = "display-timing",
+                title = Component.text("表示時間"),
+                body = listOf(Component.text("タイトル表示の各時間をtickで指定してください。")),
+                inputs = listOf(
+                    MenuDialogInput.Text("fadeIn", Component.text("フェードイン"), node.string("fadeIn", "10")),
+                    MenuDialogInput.Text("stay", Component.text("表示"), node.string("stay", "60")),
+                    MenuDialogInput.Text("fadeOut", Component.text("フェードアウト"), node.string("fadeOut", "10")),
+                ),
+                confirm = MenuDialogButton(Component.text("設定"), MenuDialogHandler { _, response ->
+                    val values = listOf("fadeIn", "stay", "fadeOut").associateWith { response.textValue(it).toIntOrNull() }
+                    if (values.values.any { it == null || it < 0 }) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(
+                            Component.text("各時間は0以上の整数で指定してください。")
+                        )
+                    }
+                    updateNode(route) { command ->
+                        values.forEach { (key, value) -> command.params[key] = value.toString() }
+                    }
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                }),
+                cancel = dialogCancel(route),
             )
         )
     }
@@ -739,6 +856,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val CONDITION_KIND_ID = "condition_kind"
         private const val VARIABLE_TYPE_ID = "variable_type"
         private const val VARIABLE_OPERATION_ID = "variable_operation"
+        private const val DISPLAY_MODE_ID = "display_mode"
         private const val DELETE_ID = "delete_command"
         private const val TARGET_ID = "target_settings"
         private const val POSITION_ID = "position_settings"
@@ -774,6 +892,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
     }
 }
+
+private data class FieldDialogDefinition(
+    val title: String,
+    val description: String,
+    val defaultValue: String,
+    val positiveInteger: Boolean,
+)
 
 data class EditorField(
     val key: String,
