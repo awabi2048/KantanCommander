@@ -152,10 +152,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val inputs = node.params.map { (key, value) ->
             MenuDialogInput.Text(key, Component.text(key), value, maxLength = 512)
         } + listOf(
-            MenuDialogInput.Text("_ctx_executor", Component.text("個別実行者"), node.contextOverride?.executor.orEmpty()),
-            MenuDialogInput.Text("_ctx_target", Component.text("個別対象"), node.contextOverride?.target.orEmpty()),
-            MenuDialogInput.Text("_ctx_position", Component.text("個別位置"), node.contextOverride?.position.orEmpty()),
-            MenuDialogInput.Text("_ctx_facing", Component.text("個別向き"), node.contextOverride?.facing.orEmpty()),
+            MenuDialogInput.Text("_ctx_executor", Component.text("個別実行者"), ""),
+            MenuDialogInput.Text("_ctx_target", Component.text("個別対象"), ""),
+            MenuDialogInput.Text("_ctx_position", Component.text("個別位置"), ""),
+            MenuDialogInput.Text("_ctx_facing", Component.text("個別向き"), ""),
         )
         CCSystem.getAPI().getMenuDialogService().show(
             player,
@@ -169,15 +169,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     val script = plugin.scripts.load(scriptId) ?: return@MenuDialogHandler MenuActionResult.Ignored
                     val current = script.graph.nodes[node.id] ?: return@MenuDialogHandler MenuActionResult.Ignored
                     current.params.keys.toList().forEach { current.params[it] = response.textValue(it) }
-                    val override = me.awabi2048.kantancommander.model.ExecutionContextSpec(
-                        response.textValue("_ctx_executor").ifBlank { null },
-                        response.textValue("_ctx_target").ifBlank { null },
-                        response.textValue("_ctx_position").ifBlank { null },
-                        response.textValue("_ctx_facing").ifBlank { null },
-                    )
-                    current.contextOverride = override.takeUnless {
-                        it.executor == null && it.target == null && it.position == null && it.facing == null
-                    }
+                    current.contextOverride = null
                     if (current.type == me.awabi2048.kantancommander.model.CommandType.DISK_CALL &&
                         current.string("mode") == me.awabi2048.kantancommander.model.DiskCallMode.SNAPSHOT.name
                     ) {

@@ -3,7 +3,7 @@ package me.awabi2048.kantancommander.model
 import org.bukkit.Material
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 2
+const val STRUCTURED_FORMAT_VERSION = 3
 const val TIMER_UNIT_TICKS = 10
 const val MIN_TIMER_UNITS = 1
 const val MAX_TIMER_UNITS = 86_400
@@ -50,6 +50,7 @@ data class CommandGraph(
             copied[id] = node.copy(
                 params = node.params.toMutableMap(),
                 contextOverride = node.contextOverride?.copy(),
+                targetSpec = node.targetSpec?.copy(),
                 snapshot = node.snapshot?.deepCopy(),
             )
         }
@@ -65,6 +66,7 @@ data class CommandNode(
     var trueNext: UUID? = null,
     var falseNext: UUID? = null,
     var pairedNodeId: UUID? = null,
+    var targetSpec: TargetSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
     var snapshot: CommandGraph? = null,
 ) {
@@ -74,11 +76,54 @@ data class CommandNode(
     fun summary(): String = type.summary(this)
 }
 
+enum class TargetKind {
+    EXECUTOR, ACTIVATOR, INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
+    RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY,
+}
+
+enum class TargetSort { NEAREST, FURTHEST, RANDOM }
+
+data class TargetSpec(
+    val kind: TargetKind,
+    val entityType: String? = null,
+    val minimumDistance: Double? = null,
+    val maximumDistance: Double? = null,
+    val limit: Int? = null,
+    val sort: TargetSort = TargetSort.NEAREST,
+    val gameMode: String? = null,
+    val tag: String? = null,
+    val name: String? = null,
+    val excludeExecutor: Boolean = false,
+    val excludeActivator: Boolean = false,
+    val fixedEntityId: UUID? = null,
+)
+
+enum class PositionKind { CAPTURED, DISK, EXECUTOR, TARGET, MYWORLD_SPAWN, COORDINATES, VARIABLE }
+data class PositionSpec(
+    val kind: PositionKind,
+    val x: Double? = null,
+    val y: Double? = null,
+    val z: Double? = null,
+    val yaw: Float? = null,
+    val pitch: Float? = null,
+    val variable: String? = null,
+)
+
+enum class FacingKind { INHERITED, CAPTURED, EXECUTOR, TARGET, COORDINATES, MYWORLD_SPAWN, ROTATION }
+data class FacingSpec(
+    val kind: FacingKind,
+    val x: Double? = null,
+    val y: Double? = null,
+    val z: Double? = null,
+    val yaw: Float? = null,
+    val pitch: Float? = null,
+)
+
 data class ExecutionContextSpec(
-    val executor: String? = null,
-    val target: String? = null,
-    val position: String? = null,
-    val facing: String? = null,
+    val executor: TargetSpec? = null,
+    val target: TargetSpec? = null,
+    val position: PositionSpec? = null,
+    val facing: FacingSpec? = null,
 )
 
 enum class ConditionKind(val key: String) {

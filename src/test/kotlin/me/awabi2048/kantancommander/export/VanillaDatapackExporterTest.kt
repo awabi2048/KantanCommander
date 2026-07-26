@@ -3,6 +3,11 @@ package me.awabi2048.kantancommander.export
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -21,8 +26,10 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "export")
         val context = GraphEditor.append(script.graph, CommandType.CONTEXT)
-        context.params["target"] = "@p"
-        context.params["position"] = "~ ~1 ~"
+        context.contextOverride = ExecutionContextSpec(
+            target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            position = PositionSpec(PositionKind.COORDINATES, 0.0, 1.0, 0.0),
+        )
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).params["text"] = "hello"
         store.save(script)
 
@@ -30,7 +37,7 @@ class VanillaDatapackExporterTest {
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val files = success.directory.walkTopDown().filter(File::isFile).toList()
         val text = files.joinToString("\n") { it.readText() }
-        assertTrue(text.contains("execute as @p positioned ~ ~1 ~ run function"))
+        assertTrue(text.contains("execute as @p positioned 0.0 1.0 0.0 run function"))
         assertFalse(text.contains("# context"))
     }
 

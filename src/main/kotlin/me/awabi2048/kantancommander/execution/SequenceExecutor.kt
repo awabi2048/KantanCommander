@@ -12,6 +12,11 @@ import me.awabi2048.kantancommander.model.SavedPosition
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.FacingKind
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
@@ -120,16 +125,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
-        val target = resolveTarget(node.contextOverride ?: session.context, node.string("target", "@s"), session)
+        val target = resolveTarget(node.contextOverride ?: session.context, node.targetSpec, session)
         val effectiveContext = node.contextOverride ?: session.context
-        val effectiveOrigin = effectiveContext?.position?.let { parseLocation(it, session.origin) } ?: session.origin
+        val effectiveOrigin = effectiveContext?.position?.let { resolvePosition(it, session) } ?: session.origin
         when (node.type) {
             CommandType.TELEPORT -> {
                 val entity = target ?: return false
                 val destination = parseLocation(node.string("destination", "~ ~ ~"), effectiveOrigin)
-                effectiveContext?.facing?.trim()?.split(Regex("\\s+"))?.let { facing ->
-                    destination.yaw = facing.getOrNull(0)?.toFloatOrNull() ?: destination.yaw
-                    destination.pitch = facing.getOrNull(1)?.toFloatOrNull() ?: destination.pitch
+                effectiveContext?.facing?.let { facing ->
+                    if (facing.kind == FacingKind.ROTATION || facing.kind == FacingKind.CAPTURED) {
+                        destination.yaw = facing.yaw ?: destination.yaw
+                        destination.pitch = facing.pitch ?: destination.pitch
+                    }
                 }
                 entity.teleport(destination)
             }
@@ -176,7 +183,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     private fun evaluateCondition(node: CommandNode, session: ExecutionSession): Boolean {
         val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrDefault(ConditionKind.TARGET_EXISTS)
-        val target = resolveTarget(session.context, node.string("subject", "@s"), session)
+        val target = resolveTarget(session.context, node.targetSpec, session)
         return when (kind) {
             ConditionKind.TARGET_EXISTS -> target != null
             ConditionKind.ENTITY_STATE -> when (node.string("state")) {
@@ -224,7 +231,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
             VariableOperation.STORE_TARGET -> WorldVariableValue(
                 VariableType.ENTITY,
-                entityId = resolveTarget(session.context, node.string("target", "@s"), session)?.uniqueId ?: return false,
+                entityId = resolveTarget(session.context, node.targetSpec, session)?.uniqueId ?: return false,
             )
             VariableOperation.CLEAR -> return false
         }
@@ -265,9 +272,30 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    private fun resolveTarget(context: ExecutionContextSpec?, selector: String, session: ExecutionSession): Entity? {
-        val selected = context?.target ?: if (selector == "@s") context?.executor ?: selector else selector
-        return resolveSelector(selected, session)
+    private fun resolveTarget(context: ExecutionContextSpec?, nodeTarget: TargetSpec?, session: ExecutionSession): Entity? =
+        resolveTargetSpec(nodeTarget ?: context?.target ?: context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session)
+
+    private fun resolveTargetSpec(spec: TargetSpec, session: ExecutionSession): Entity? = when (spec.kind) {
+        TargetKind.EXECUTOR -> session.context?.executor?.let { resolveTargetSpec(it, session) } ?: session.actor
+        TargetKind.ACTIVATOR -> session.actor
+        TargetKind.INHERITED_TARGET -> session.context?.target?.takeUnless { it == spec }?.let { resolveTargetSpec(it, session) }
+        TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS ->
+            session.origin.world.players.filter { matches(it, spec, session) }.minByOrNull { it.location.distanceSquared(session.origin) }
+        TargetKind.RANDOM_PLAYER -> session.origin.world.players.filter { matches(it, spec, session) }.randomOrNull()
+        TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES ->
+            session.origin.world.entities.filter { matches(it, spec, session) }.minByOrNull { it.location.distanceSquared(session.origin) }
+        TargetKind.FIXED_ENTITY -> spec.fixedEntityId?.let(session.origin.world::getEntity)
+    }
+
+    private fun matches(entity: Entity, spec: TargetSpec, session: ExecutionSession): Boolean {
+        if (spec.excludeActivator && entity == session.actor) return false
+        if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
+        if (spec.name != null && entity.name != spec.name) return false
+        if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
+        val distance = entity.location.distance(session.origin)
+        if (spec.minimumDistance != null && distance < spec.minimumDistance) return false
+        if (spec.maximumDistance != null && distance > spec.maximumDistance) return false
+        return spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
     }
 
     private fun resolveSelector(selected: String, session: ExecutionSession): Entity? {
@@ -279,12 +307,25 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    private fun contextFrom(node: CommandNode) = ExecutionContextSpec(
-        executor = node.string("executor").ifBlank { null },
-        target = node.string("target").ifBlank { null },
-        position = node.string("position").ifBlank { null },
-        facing = node.string("facing").ifBlank { null },
-    )
+    private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
+
+    private fun resolvePosition(spec: PositionSpec, session: ExecutionSession): Location = when (spec.kind) {
+        PositionKind.CAPTURED, PositionKind.COORDINATES -> Location(
+            session.origin.world,
+            spec.x ?: session.origin.x,
+            spec.y ?: session.origin.y,
+            spec.z ?: session.origin.z,
+            spec.yaw ?: session.origin.yaw,
+            spec.pitch ?: session.origin.pitch,
+        )
+        PositionKind.DISK -> session.origin.clone()
+        PositionKind.EXECUTOR -> resolveTargetSpec(session.context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session)?.location ?: session.origin
+        PositionKind.TARGET -> resolveTargetSpec(session.context?.target ?: TargetSpec(TargetKind.ACTIVATOR), session)?.location ?: session.origin
+        PositionKind.MYWORLD_SPAWN -> session.origin.world.spawnLocation
+        PositionKind.VARIABLE -> plugin.variables.get(session.worldId, spec.variable.orEmpty())?.position?.let {
+            Location(session.origin.world, it.x, it.y, it.z, it.yaw, it.pitch)
+        } ?: session.origin
+    }
 
     private fun parseLocation(raw: String, origin: Location): Location {
         val parts = raw.trim().split(Regex("\\s+"))

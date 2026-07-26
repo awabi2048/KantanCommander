@@ -10,6 +10,10 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.FacingKind
 import org.bukkit.Material
 import java.io.File
 import java.util.UUID
@@ -100,12 +104,8 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
     }
 
     private fun validateContext(script: DiskScript, node: CommandNode, context: ExecutionContextSpec, errors: MutableList<String>) {
-        context.facing?.takeIf(String::isNotBlank)?.let { facing ->
-            val parts = facing.trim().split(Regex("\\s+"))
-            val numeric = parts.size == 2 && parts.all { it.toFloatOrNull() != null }
-            if (!numeric && !facing.startsWith("@")) {
-                errors += "${script.id}/${node.id}: バニラへ変換できない向き指定です: $facing"
-            }
+        if (context.target?.kind == TargetKind.FIXED_ENTITY || context.executor?.kind == TargetKind.FIXED_ENTITY) {
+            errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
         }
     }
 
@@ -199,21 +199,28 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         "#v_${name.lowercase().replace(Regex("[^a-z0-9_.-]"), "_").take(32)}"
 
     private fun effectiveTarget(node: CommandNode): String =
-        node.contextOverride?.target ?: node.string("target", "@s")
+        selector(node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.EXECUTOR))
 
-    private fun contextFrom(node: CommandNode) = ExecutionContextSpec(
-        executor = node.string("executor").ifBlank { null },
-        target = node.string("target").ifBlank { null },
-        position = node.string("position").ifBlank { null },
-        facing = node.string("facing").ifBlank { null },
-    )
+    private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
 
     private fun wrapContext(context: ExecutionContextSpec, command: String): String {
         val clauses = buildList {
-            (context.target ?: context.executor)?.let { add("as $it") }
-            context.position?.let { add("positioned $it") }
+            (context.target ?: context.executor)?.let { add("as ${selector(it)}") }
+            context.position?.let {
+                when (it.kind) {
+                    PositionKind.COORDINATES, PositionKind.CAPTURED -> add("positioned ${it.x} ${it.y} ${it.z}")
+                    PositionKind.EXECUTOR -> add("at @s")
+                    PositionKind.TARGET -> context.target?.let { target -> add("at ${selector(target)}") }
+                    else -> Unit
+                }
+            }
             context.facing?.let { facing ->
-                if (facing.startsWith("@")) add("facing entity $facing eyes") else add("rotated $facing")
+                when (facing.kind) {
+                    FacingKind.TARGET -> context.target?.let { add("facing entity ${selector(it)} eyes") }
+                    FacingKind.COORDINATES -> add("facing ${facing.x} ${facing.y} ${facing.z}")
+                    FacingKind.ROTATION, FacingKind.CAPTURED -> add("rotated ${facing.yaw} ${facing.pitch}")
+                    else -> Unit
+                }
             }
         }
         return if (clauses.isEmpty()) command else "execute ${clauses.joinToString(" ")} run $command"
@@ -223,6 +230,17 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         "execute store success score ${scoreHolder(node.id)} kc_result run $command"
 
     private fun scoreHolder(id: UUID) = "#n_${id.toString().replace("-", "")}"
+
+    private fun selector(spec: TargetSpec): String = when (spec.kind) {
+        TargetKind.EXECUTOR, TargetKind.ACTIVATOR -> "@s"
+        TargetKind.INHERITED_TARGET -> "@s"
+        TargetKind.NEAREST_PLAYER -> "@p"
+        TargetKind.NEARBY_PLAYERS -> "@a"
+        TargetKind.RANDOM_PLAYER -> "@r"
+        TargetKind.NEAREST_ENTITY -> "@e[limit=1,sort=nearest]"
+        TargetKind.NEARBY_ENTITIES -> "@e"
+        TargetKind.FIXED_ENTITY -> "@e[limit=0]"
+    }
 
     private fun scoreRange(operator: String, value: Int): String = when (operator) {
         "==" -> value.toString()
