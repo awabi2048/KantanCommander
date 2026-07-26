@@ -6,6 +6,15 @@ import me.awabi2048.kantancommander.model.CommandType
 import java.util.UUID
 
 object GraphEditor {
+    fun canAppendMerge(graph: CommandGraph?, lane: Int): Boolean {
+        if (graph == null || lane <= 0) return false
+        val condition = graph.nodes.values
+            .filter { it.type == CommandType.CONDITION }
+            .getOrNull(lane - 1)
+            ?: return false
+        return condition.pairedNodeId == null
+    }
+
     fun append(graph: CommandGraph, type: CommandType, branchConditionId: UUID? = null): CommandNode {
         val inserted = createBundle(graph, type)
         if (graph.entryNodeId == null) {

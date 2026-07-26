@@ -39,11 +39,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         val lane = context.route.payload["lane"]?.toIntOrNull() ?: 0
                         MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(id, lane)))
                     },
-                    "test" to handler { context ->
-                        val id = scriptId(context.route) ?: return@handler MenuActionResult.Ignored
-                        plugin.executor.execute(id, context.player.location, context.player)
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
                     "activation" to handler { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handler MenuActionResult.Ignored
                         if (!script.timer.enabled) return@handler MenuActionResult.Ignored
@@ -52,17 +47,11 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "timer" to handler { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handler MenuActionResult.Ignored
-                        if (context.click.isRightClick) {
-                            script.timer.enabled = false
-                            script.activation = ActivationMode.NEEDS_REDSTONE
-                            plugin.scripts.save(script)
-                            plugin.placements.refreshDisplaysForScript(script.id)
-                            MenuActionResult.Success(MenuUpdate.Refresh)
-                        } else {
-                            showTimerDialog(context.player, context.route, script.id, script.timer.intervalUnits)
-                            MenuActionResult.Success(MenuUpdate.None)
-                        }
+                        val id = scriptId(context.route) ?: return@handler MenuActionResult.Ignored
+                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.timerRoute(id)))
+                    },
+                    "center" to handler { context ->
+                        MenuActionResult.Success(MenuUpdate.Replace(route(context.route, 0, 0)), MenuSoundPolicy.Silent)
                     },
                     "navigate" to handler { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return@handler MenuActionResult.Ignored
@@ -84,8 +73,11 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         val nodeId = context.payload["nodeId"]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                             ?: return@handler MenuActionResult.Ignored
                         val node = script.graph.nodes[nodeId] ?: return@handler MenuActionResult.Ignored
-                        showNodeDialog(context.player, context.route, script.id, node)
-                        MenuActionResult.Success(MenuUpdate.None)
+                        if (context.click.isRightClick) {
+                            MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.deleteRoute(script.id, node.id)))
+                        } else {
+                            MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.settingsRoute(script.id, node.id)))
+                        }
                     },
                 ),
             )
@@ -95,7 +87,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     fun open(player: Player, scriptId: UUID) = runtime.open(player, route(scriptId))
 
     private fun render(player: Player, route: MenuRoute): InventoryMenuView {
-        val script = scriptId(route)?.let(plugin.scripts::load) ?: return InventoryMenuView(54, KcGui.title("コマンドディスク"), emptyList())
+        val script = scriptId(route)?.let(plugin.scripts::load) ?: return InventoryMenuView(45, KcGui.title("コマンドディスク"), emptyList())
         val offset = route.payload["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
         val lane = route.payload["lane"]?.toIntOrNull()?.coerceIn(0, 2) ?: 0
         val elements = mutableListOf<MenuElement>()
@@ -113,22 +105,21 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val addSlot = if (ordered.size < 7) 19 + ordered.size else 25
         elements.removeAll { it.slot == addSlot }
         elements += MenuElement(addSlot, KcGui.item(Material.YELLOW_WOOL, "コマンドを追加", GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "add")
-        elements += action(45, Material.LEVER, "起動条件", "activation",
+        elements += action(36, Material.LEVER, "起動条件", "activation",
             listOf(GuiLoreLine.Data("現在", KcI18n.text(player, script.activation.key), "§f")))
-        elements += action(46, Material.CLOCK, "タイマー設定", "timer",
+        elements += action(37, Material.CLOCK, "タイマー設定", "timer",
             listOf(GuiLoreLine.Data("現在", if (script.timer.enabled) "${script.timer.intervalUnits}単位" else "オフ", "§f")))
-        elements += MenuElement(47, KcGui.item(Material.COMPASS, "全体情報", GuiNameStyle.PRIMARY,
+        elements += action(38, Material.COMPASS, "中心に合わせる", "center")
+        elements += MenuElement(39, KcGui.item(Material.MAP, "全体情報", GuiNameStyle.PRIMARY,
             listOf(GuiLoreLine.Text(graphDiagram(script.graph.nodes.values.count { it.type == me.awabi2048.kantancommander.model.CommandType.CONDITION }, offset, lane)))), GuiElementRole.DECORATION)
-        elements += action(52, Material.RECOVERY_COMPASS, "表示位置を移動", "navigate",
+        elements += action(44, Material.RECOVERY_COMPASS, "表示位置を移動", "navigate",
             listOf(
                 KcGui.action(player, "lore.click.left", "左へ移動"),
                 KcGui.action(player, "lore.click.right", "右へ移動"),
                 KcGui.action(player, "lore.click.shift_left", "上へ移動"),
                 KcGui.action(player, "lore.click.shift_right", "下へ移動"),
             ))
-        elements += action(53, Material.FIREWORK_ROCKET, "テスト実行", "test")
-        elements += MenuElement(49, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, "back")
-        return InventoryMenuView(54, KcGui.title("コマンドディスク"), elements)
+        return InventoryMenuView(45, KcGui.title("コマンドディスク"), elements)
     }
 
     private fun graphDiagram(branches: Int, offset: Int, lane: Int): String {
