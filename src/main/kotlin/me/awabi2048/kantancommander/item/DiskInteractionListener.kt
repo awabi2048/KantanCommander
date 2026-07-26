@@ -15,6 +15,7 @@ import org.bukkit.event.block.BlockDropItemEvent
 import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.EquipmentSlot
+import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
 
 class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -114,8 +115,17 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             return
         }
 
+        val targetBox = org.bukkit.util.BoundingBox.of(
+            block.location.toVector(),
+            block.location.clone().add(1.0, 1.0, 1.0).toVector(),
+        )
+        if (player.boundingBox.overlaps(targetBox)) {
+            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            return
+        }
+
         val placedScript = plugin.scripts.copyForPlacement(source)
-        block.setType(Material.NOTE_BLOCK, false)
+        block.setType(PlacedDiskMaterials.forTimer(placedScript.timer.enabled), false)
         val placement = DiskPlacement(
             block.world.name, block.x, block.y, block.z, placedScript.id,
             player.facing.name, null
@@ -130,15 +140,6 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             player.sendMessage(KcI18n.text(player, "message.place_blocked"))
             return
         }
-        val targetBox = org.bukkit.util.BoundingBox.of(
-            block.location.toVector(),
-            block.location.clone().add(1.0, 1.0, 1.0).toVector(),
-        )
-        if (player.boundingBox.overlaps(targetBox)) {
-            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
-            return
-        }
-
         val stack = if (hand == EquipmentSlot.OFF_HAND) player.inventory.itemInOffHand else player.inventory.itemInMainHand
         if (player.gameMode != org.bukkit.GameMode.CREATIVE) stack.amount = (stack.amount - 1).coerceAtLeast(0)
         player.sendMessage(KcI18n.text(player, "message.place_created"))

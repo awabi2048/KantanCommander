@@ -8,6 +8,7 @@ import com.awabi2048.ccsystem.api.gui.PublicMenuDefinition
 import me.awabi2048.kantancommander.command.KantanCommanderCommand
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.PlacementStore
+import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
@@ -24,6 +25,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
         private set
     lateinit var placements: PlacementStore
+        private set
+    lateinit var variables: WorldVariableStore
         private set
     lateinit var executor: SequenceExecutor
         private set
@@ -88,6 +91,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         scripts = ScriptStore(dataFolder.resolve("structured-disks"), logger)
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
+        variables = WorldVariableStore(dataFolder.resolve("world-variables"))
         executor = SequenceExecutor(this)
         exporter = VanillaDatapackExporter(scripts, dataFolder.resolve("exports"))
 

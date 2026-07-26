@@ -84,11 +84,31 @@ data class ExecutionContextSpec(
 enum class ConditionKind(val key: String) {
     TARGET_EXISTS("condition.target_exists"),
     ENTITY_STATE("condition.entity_state"),
-    SCORE_COMPARE("condition.score_compare"),
+    VARIABLE_STATE("condition.variable_state"),
     BLOCK_STATE("condition.block_state"),
     ITEM_POSSESSION("condition.item_possession"),
-    COMMAND_RESULT("condition.command_result"),
 }
+
+enum class VariableType { BOOLEAN, INTEGER, DECIMAL, TEXT, POSITION, ENTITY }
+enum class VariableOperation { SET, ADD, SUBTRACT, TOGGLE, STORE_POSITION, STORE_TARGET, CLEAR }
+
+data class WorldVariableValue(
+    val type: VariableType,
+    val booleanValue: Boolean? = null,
+    val integerValue: Long? = null,
+    val decimalValue: Double? = null,
+    val textValue: String? = null,
+    val position: SavedPosition? = null,
+    val entityId: UUID? = null,
+)
+
+data class SavedPosition(
+    val x: Double,
+    val y: Double,
+    val z: Double,
+    val yaw: Float = 0f,
+    val pitch: Float = 0f,
+)
 
 enum class DiskCallMode {
     LIVE_REFERENCE,
@@ -110,21 +130,22 @@ enum class CommandType(
     CONDITION("command.condition", Material.COMPARATOR, mapOf(
         "kind" to ConditionKind.TARGET_EXISTS.name,
         "subject" to "@s",
-        "state" to "alive",
-        "objective" to "",
+        "state" to "sneaking",
+        "variable" to "",
         "operator" to ">=",
         "value" to "0",
         "position" to "~ ~ ~",
         "block" to "minecraft:air",
         "item" to "minecraft:stone",
         "count" to "1",
-        "nodeId" to "",
-        "expected" to "success",
     )),
     CONTEXT("command.context", Material.RECOVERY_COMPASS, mapOf(
         "executor" to "", "target" to "", "position" to "", "facing" to ""
     )),
     DISK_CALL("command.disk_call", Material.MUSIC_DISC_13, mapOf("mode" to DiskCallMode.LIVE_REFERENCE.name, "diskId" to "")),
+    VARIABLE("command.variable", Material.REDSTONE, mapOf(
+        "name" to "", "type" to VariableType.BOOLEAN.name, "operation" to VariableOperation.SET.name, "value" to "false"
+    )),
     MERGE("command.merge", Material.HOPPER, emptyMap());
 
     fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
@@ -138,6 +159,7 @@ enum class CommandType(
         CONDITION -> node.string("kind", ConditionKind.TARGET_EXISTS.name)
         CONTEXT -> "execute context"
         DISK_CALL -> node.string("diskId").ifBlank { "-" }
+        VARIABLE -> node.string("name").ifBlank { "-" }
         MERGE -> "merge"
     }
 }

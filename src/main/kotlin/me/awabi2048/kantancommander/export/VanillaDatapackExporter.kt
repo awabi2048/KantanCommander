@@ -8,6 +8,8 @@ import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskCallMode
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableType
 import org.bukkit.Material
 import java.io.File
 import java.util.UUID
@@ -24,7 +26,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         val functions = pack.resolve("data/kantan/function").also(File::mkdirs)
         val loadTags = pack.resolve("data/minecraft/tags/function").also(File::mkdirs)
         pack.resolve("pack.mcmeta").writeText("""{"pack":{"pack_format":88,"description":"Kantan Commander export"}}""")
-        functions.resolve("load.mcfunction").writeText("scoreboard objectives add kc_result dummy\n", Charsets.UTF_8)
+        functions.resolve("load.mcfunction").writeText("scoreboard objectives add kc_result dummy\nscoreboard objectives add kc_vars dummy\n", Charsets.UTF_8)
         loadTags.resolve("load.json").writeText("""{"values":["kantan:load"]}""", Charsets.UTF_8)
         collected.values.forEach { script ->
             compile(script).forEach { (name, content) ->
@@ -74,6 +76,12 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                 }
                 CommandType.CONDITION -> validateCondition(script, node, errors)
                 CommandType.CONTEXT -> validateContext(script, node, contextFrom(node), errors)
+                CommandType.VARIABLE -> {
+                    if (node.string("name").isBlank()) errors += "${script.id}/${node.id}: variable name is missing"
+                    if (runCatching { VariableType.valueOf(node.string("type")) }.getOrNull() !in
+                        setOf(VariableType.BOOLEAN, VariableType.INTEGER)
+                    ) errors += "${script.id}/${node.id}: variable type is not vanilla-exportable"
+                }
                 else -> Unit
             }
             node.contextOverride?.let { validateContext(script, node, it, errors) }
@@ -86,25 +94,8 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
             errors += "${script.id}/${node.id}: 不明な条件種別です"
             return
         }
-        if (kind == ConditionKind.SCORE_COMPARE && node.string("objective").isBlank()) {
-            errors += "${script.id}/${node.id}: スコア条件のobjectiveがありません"
-        }
-        if (kind == ConditionKind.SCORE_COMPARE && node.string("operator", ">=") !in setOf("==", "!=", ">", "<", ">=", "<=")) {
-            errors += "${script.id}/${node.id}: スコア条件の比較演算子が不正です"
-        }
-        if (kind == ConditionKind.COMMAND_RESULT) {
-            val source = runCatching { UUID.fromString(node.string("nodeId")) }.getOrNull()
-            val sourceType = source?.let(script.graph.nodes::get)?.type
-            if (sourceType !in setOf(
-                    CommandType.TELEPORT,
-                    CommandType.GIVE_ITEM,
-                    CommandType.ENTITY_ACTION,
-                    CommandType.DISPLAY_TEXT,
-                    CommandType.DISK_CALL,
-                )
-            ) {
-                errors += "${script.id}/${node.id}: 成否参照先ノードが存在しません"
-            }
+        if (kind == ConditionKind.VARIABLE_STATE && node.string("variable").isBlank()) {
+            errors += "${script.id}/${node.id}: 一時変数名がありません"
         }
     }
 
@@ -143,13 +134,11 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
             when (node.type) {
                 CommandType.CONDITION -> {
                     val predicate = predicate(node)
-                    val inverted = node.string("kind") == ConditionKind.SCORE_COMPARE.name &&
-                        node.string("operator") == "!="
                     node.trueNext?.let {
-                        lines += "execute ${if (inverted) "unless" else "if"} $predicate run function kantan:${prefix}_$it"
+                        lines += "execute if $predicate run function kantan:${prefix}_$it"
                     }
                     node.falseNext?.let {
-                        lines += "execute ${if (inverted) "if" else "unless"} $predicate run function kantan:${prefix}_$it"
+                        lines += "execute unless $predicate run function kantan:${prefix}_$it"
                     }
                 }
                 CommandType.WAIT ->
@@ -174,6 +163,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         }
         CommandType.DISK_CALL ->
             if (node.string("mode") == DiskCallMode.LIVE_REFERENCE.name) "function kantan:${node.string("diskId")}" else null
+        CommandType.VARIABLE -> lowerVariable(node)
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE -> null
     }
 
@@ -181,22 +171,32 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         ConditionKind.valueOf(node.string("kind", ConditionKind.TARGET_EXISTS.name))
     ) {
         ConditionKind.TARGET_EXISTS -> "entity ${node.string("subject", "@s")}"
-        ConditionKind.ENTITY_STATE -> when (node.string("state", "alive")) {
+        ConditionKind.ENTITY_STATE -> when (node.string("state", "sneaking")) {
             "sneaking" -> "entity ${node.string("subject", "@s")}[nbt={Pose:\"CROUCHING\"}]"
             "on_ground" -> "entity ${node.string("subject", "@s")}[nbt={OnGround:1b}]"
             else -> "entity ${node.string("subject", "@s")}"
         }
-        ConditionKind.SCORE_COMPARE ->
-            "score ${node.string("subject", "@s")} ${node.string("objective")} matches ${scoreRange(node.string("operator", ">="), node.int("value"))}"
+        ConditionKind.VARIABLE_STATE ->
+            "score ${variableHolder(node.string("variable"))} kc_vars matches ${scoreRange(node.string("operator", ">="), node.int("value"))}"
         ConditionKind.BLOCK_STATE ->
             "block ${node.string("position", "~ ~ ~")} ${node.string("block", "minecraft:air")}"
         ConditionKind.ITEM_POSSESSION ->
             "items entity ${node.string("subject", "@s")} inventory.* ${node.string("item", "minecraft:air")}"
-        ConditionKind.COMMAND_RESULT -> {
-            val source = UUID.fromString(node.string("nodeId"))
-            "score ${scoreHolder(source)} kc_result matches ${if (node.string("expected", "success") == "success") "1" else "0"}"
+    }
+
+    private fun lowerVariable(node: CommandNode): String? {
+        val holder = variableHolder(node.string("name"))
+        return when (VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))) {
+            VariableOperation.SET -> "scoreboard players set $holder kc_vars ${node.int("value")}"
+            VariableOperation.ADD -> "scoreboard players add $holder kc_vars ${node.int("value")}"
+            VariableOperation.SUBTRACT -> "scoreboard players remove $holder kc_vars ${node.int("value")}"
+            VariableOperation.CLEAR -> "scoreboard players reset $holder kc_vars"
+            VariableOperation.TOGGLE, VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET -> null
         }
     }
+
+    private fun variableHolder(name: String) =
+        "#v_${name.lowercase().replace(Regex("[^a-z0-9_.-]"), "_").take(32)}"
 
     private fun effectiveTarget(node: CommandNode): String =
         node.contextOverride?.target ?: node.string("target", "@s")

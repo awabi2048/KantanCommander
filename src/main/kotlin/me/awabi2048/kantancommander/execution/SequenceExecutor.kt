@@ -8,6 +8,10 @@ import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskCallMode
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.SavedPosition
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.WorldVariableValue
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
@@ -40,6 +44,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             actor = actor,
             budget = plugin.config.getInt("execution.maximum-command-count", 1024).coerceAtLeast(1),
             maxDepth = plugin.config.getInt("execution.maximum-disk-call-depth", 3).coerceAtLeast(0),
+            worldId = worldData.uuid,
         )
         plugin.logger.info("[KantanCommander] start disk=$scriptId world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
         runGraph(script, script.graph, session, 0) { success ->
@@ -92,6 +97,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 next(node.next, true)
             }
             CommandType.DISK_CALL -> runDiskCall(node, session, depth) { success -> next(node.next, success) }
+            CommandType.VARIABLE -> next(node.next, executeVariable(node, session))
             CommandType.MERGE -> next(node.next, true)
             else -> next(node.next, executeImmediate(node, session))
         }
@@ -174,17 +180,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return when (kind) {
             ConditionKind.TARGET_EXISTS -> target != null
             ConditionKind.ENTITY_STATE -> when (node.string("state")) {
-                "alive" -> target is LivingEntity && !target.isDead
                 "sneaking" -> target is Player && target.isSneaking
                 "on_ground" -> target?.isOnGround == true
                 else -> false
             }
-            ConditionKind.SCORE_COMPARE -> {
-                val player = target as? Player ?: return false
-                val objective = plugin.server.scoreboardManager.mainScoreboard.getObjective(node.string("objective")) ?: return false
-                val value = objective.getScore(player.name).score
-                compare(value, node.int("value"), node.string("operator", ">="))
-            }
+            ConditionKind.VARIABLE_STATE -> compareVariable(
+                plugin.variables.get(session.worldId, node.string("variable")),
+                node.string("value"),
+                node.string("operator", "=="),
+            )
             ConditionKind.BLOCK_STATE -> {
                 val location = parseLocation(node.string("position", "~ ~ ~"), session.origin)
                 location.world == session.origin.world && location.block.type == Material.matchMaterial(node.string("block"))
@@ -194,11 +198,70 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val material = Material.matchMaterial(node.string("item")) ?: return false
                 player.inventory.contains(material, node.int("count", 1).coerceAtLeast(1))
             }
-            ConditionKind.COMMAND_RESULT -> {
-                val resultId = runCatching { UUID.fromString(node.string("nodeId")) }.getOrNull()
-                val expected = node.string("expected", "success") == "success"
-                resultId != null && session.results[resultId] == expected
+        }
+    }
+
+    private fun executeVariable(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
+        val name = node.string("name")
+        val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
+        if (operation == VariableOperation.CLEAR) return plugin.variables.remove(session.worldId, name)
+        val current = plugin.variables.get(session.worldId, name)
+        val type = VariableType.valueOf(node.string("type", current?.type?.name ?: VariableType.BOOLEAN.name))
+        val value = when (operation) {
+            VariableOperation.SET -> parseVariable(type, node.string("value"), session)
+            VariableOperation.ADD, VariableOperation.SUBTRACT -> {
+                val sign = if (operation == VariableOperation.ADD) 1 else -1
+                when (type) {
+                    VariableType.INTEGER -> WorldVariableValue(type, integerValue = (current?.integerValue ?: 0) + sign * node.string("value", "0").toLong())
+                    VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = (current?.decimalValue ?: 0.0) + sign * node.string("value", "0").toDouble())
+                    else -> return false
+                }
             }
+            VariableOperation.TOGGLE -> WorldVariableValue(VariableType.BOOLEAN, booleanValue = !(current?.booleanValue ?: false))
+            VariableOperation.STORE_POSITION -> WorldVariableValue(
+                VariableType.POSITION,
+                position = SavedPosition(session.origin.x, session.origin.y, session.origin.z, session.origin.yaw, session.origin.pitch),
+            )
+            VariableOperation.STORE_TARGET -> WorldVariableValue(
+                VariableType.ENTITY,
+                entityId = resolveTarget(session.context, node.string("target", "@s"), session)?.uniqueId ?: return false,
+            )
+            VariableOperation.CLEAR -> return false
+        }
+        plugin.variables.set(session.worldId, name, value)
+        true
+    }.getOrDefault(false)
+
+    private fun parseVariable(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue = when (type) {
+        VariableType.BOOLEAN -> WorldVariableValue(type, booleanValue = raw.toBooleanStrict())
+        VariableType.INTEGER -> WorldVariableValue(type, integerValue = raw.toLong())
+        VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = raw.toDouble())
+        VariableType.TEXT -> WorldVariableValue(type, textValue = raw)
+        VariableType.POSITION -> parseLocation(raw, session.origin).let {
+            WorldVariableValue(type, position = SavedPosition(it.x, it.y, it.z, it.yaw, it.pitch))
+        }
+        VariableType.ENTITY -> WorldVariableValue(type, entityId = UUID.fromString(raw))
+    }
+
+    private fun compareVariable(value: WorldVariableValue?, raw: String, operator: String): Boolean {
+        if (operator == "unset") return value == null
+        if (operator == "set") return value != null
+        value ?: return false
+        val comparison = when (value.type) {
+            VariableType.BOOLEAN -> (value.booleanValue ?: false).compareTo(raw.toBooleanStrictOrNull() ?: return false)
+            VariableType.INTEGER -> (value.integerValue ?: 0).compareTo(raw.toLongOrNull() ?: return false)
+            VariableType.DECIMAL -> (value.decimalValue ?: 0.0).compareTo(raw.toDoubleOrNull() ?: return false)
+            VariableType.TEXT -> (value.textValue ?: "").compareTo(raw)
+            VariableType.POSITION, VariableType.ENTITY -> return false
+        }
+        return when (operator) {
+            "==" -> comparison == 0
+            "!=" -> comparison != 0
+            ">" -> comparison > 0
+            "<" -> comparison < 0
+            ">=" -> comparison >= 0
+            "<=" -> comparison <= 0
+            else -> false
         }
     }
 
@@ -256,6 +319,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val actor: Player?,
         val budget: Int,
         val maxDepth: Int,
+        val worldId: UUID,
         var executed: Int = 0,
         var context: ExecutionContextSpec? = null,
         val results: MutableMap<UUID, Boolean> = mutableMapOf(),

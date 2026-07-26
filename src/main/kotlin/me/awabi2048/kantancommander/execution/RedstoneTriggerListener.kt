@@ -3,11 +3,11 @@ package me.awabi2048.kantancommander.execution
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.ActivationMode
 import org.bukkit.Bukkit
-import org.bukkit.Material
+import org.bukkit.block.BlockFace
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
-import org.bukkit.event.block.NotePlayEvent
 import java.util.UUID
+import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
 
 class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Listener {
     private val powered = mutableMapOf<String, Boolean>()
@@ -22,9 +22,12 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         plugin.placements.all().forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
-            if (block.type != Material.NOTE_BLOCK) return@forEach
+            if (!PlacedDiskMaterials.isPlacedDisk(block.type)) return@forEach
             val script = plugin.scripts.load(placement.scriptId) ?: return@forEach
-            val hasPower = block.isBlockPowered || block.isBlockIndirectlyPowered
+            val hasPower = POWER_FACES.any { face ->
+                val adjacent = block.getRelative(face)
+                adjacent.blockPower > 0 || adjacent.isBlockPowered || adjacent.isBlockIndirectlyPowered
+            }
             val previous = powered.put(placement.key, hasPower) ?: false
             val shouldRun = when {
                 !script.timer.enabled -> script.activation == ActivationMode.NEEDS_REDSTONE && !previous && hasPower
@@ -39,8 +42,14 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         }
     }
 
-    @EventHandler
-    fun onNote(event: NotePlayEvent) {
-        if (plugin.placements.find(event.block.location) != null) event.isCancelled = true
+    companion object {
+        private val POWER_FACES = listOf(
+            BlockFace.UP,
+            BlockFace.DOWN,
+            BlockFace.NORTH,
+            BlockFace.SOUTH,
+            BlockFace.EAST,
+            BlockFace.WEST,
+        )
     }
 }

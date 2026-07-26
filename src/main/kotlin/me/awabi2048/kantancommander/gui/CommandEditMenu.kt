@@ -266,6 +266,11 @@ object EditorMenuLayout {
             field("mode", "参照方式", Material.ENDER_EYE),
             field("context", "個別コンテキスト", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
+        CommandType.VARIABLE -> listOf(
+            field("name", "一時変数", Material.NAME_TAG),
+            field("operation", "操作", Material.REDSTONE),
+            field("value", "値", Material.COMPARATOR),
+        )
         CommandType.MERGE -> emptyList()
     }
 
