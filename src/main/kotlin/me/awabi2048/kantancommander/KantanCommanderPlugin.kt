@@ -54,7 +54,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 5,
+                    currentVersion = 6,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
@@ -76,13 +76,23 @@ class KantanCommanderPlugin : JavaPlugin() {
                         },
                         4 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
                             config.set("display.glowing", null)
-                        }
+                        },
+                        5 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            config.set("graph.maximum-node-count", 512)
+                            config.set("graph.maximum-map-width", 1024)
+                            config.set("graph.maximum-map-height", 256)
+                            config.set("graph.maximum-branch-depth", 32)
+                        },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.maximum-command-count", 1024) >= 1)
                         require(config.getInt("execution.maximum-disk-call-depth", 3) >= 0)
                         require(config.getInt("timer.minimum-units", 1) == 1)
                         require(config.getInt("timer.maximum-units", 86400) == 86400)
+                        require(config.getInt("graph.maximum-node-count", 512) >= 1)
+                        require(config.getInt("graph.maximum-map-width", 1024) >= 9)
+                        require(config.getInt("graph.maximum-map-height", 256) >= 3)
+                        require(config.getInt("graph.maximum-branch-depth", 32) >= 1)
                     },
                     reloadAction = { reloadConfig() }
                 )
