@@ -9,6 +9,8 @@ import java.util.UUID
  * 構造だけを永続化し、描画座標を保持しないグラフ編集器です。
  */
 object GraphEditor {
+    enum class Edge { ENTRY, NEXT, TRUE, FALSE, FOR_BODY }
+
     fun canAppendMerge(graph: CommandGraph?, conditionId: UUID?): Boolean {
         val condition = conditionId?.let { graph?.nodes?.get(it) } ?: return false
         return condition.type == CommandType.CONDITION && condition.pairedNodeId == null
@@ -74,6 +76,30 @@ object GraphEditor {
             connectBundleTail(graph, inserted, endId)
         }
         return inserted
+    }
+
+    fun insert(graph: CommandGraph, sourceId: UUID?, edge: Edge, type: CommandType): CommandNode {
+        require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) { "$type はこの経路へ挿入できません" }
+        val target = edgeTarget(graph, sourceId, edge)
+        val inserted = createBundle(graph, type)
+        setEdge(graph, sourceId, edge, inserted.id)
+        connectBundleTail(graph, inserted, target)
+        if (inserted.type == CommandType.CONDITION) {
+            inserted.next = null
+            inserted.trueNext = target
+            inserted.falseNext = target
+        }
+        return inserted
+    }
+
+    fun delete(graph: CommandGraph, nodeId: UUID): Boolean {
+        val node = graph.nodes[nodeId] ?: return false
+        return when (node.type) {
+            CommandType.CONDITION -> deleteCondition(graph, node)
+            CommandType.MERGE -> deleteMerge(graph, node)
+            CommandType.FOR_START, CommandType.FOR_END -> deleteFor(graph, node)
+            else -> deleteSimple(graph, node)
+        }
     }
 
     private fun createBundle(graph: CommandGraph, type: CommandType): CommandNode {
@@ -163,4 +189,127 @@ object GraphEditor {
             source.next = target
         }
     }
+
+    private fun deleteSimple(graph: CommandGraph, node: CommandNode): Boolean {
+        replaceIncoming(graph, node.id, node.next)
+        graph.nodes.remove(node.id)
+        return true
+    }
+
+    private fun deleteCondition(graph: CommandGraph, condition: CommandNode): Boolean {
+        val merge = condition.pairedNodeId?.let(graph.nodes::get)
+        val stop = merge?.id
+        if (containsExecutionBefore(graph, condition.falseNext, stop)) return false
+        val promoted = if (condition.trueNext == stop) merge?.next else condition.trueNext
+        replaceIncoming(graph, condition.id, promoted)
+        if (merge != null) {
+            replaceIncoming(graph, merge.id, merge.next, excluded = setOf(condition.id))
+            graph.nodes.remove(merge.id)
+        }
+        graph.nodes.remove(condition.id)
+        return true
+    }
+
+    private fun deleteMerge(graph: CommandGraph, merge: CommandNode): Boolean {
+        val condition = merge.pairedNodeId?.let(graph.nodes::get) ?: return false
+        val after = merge.next
+        val trueTail = branchTail(graph, condition.trueNext, merge.id)
+        disconnectIncoming(graph, merge.id)
+        condition.pairedNodeId = null
+        condition.trueNext = condition.trueNext.takeUnless { it == merge.id } ?: after
+        condition.falseNext = condition.falseNext.takeUnless { it == merge.id }
+        if (trueTail != null && trueTail.id != condition.id) trueTail.next = after
+        graph.nodes.remove(merge.id)
+        return true
+    }
+
+    private fun deleteFor(graph: CommandGraph, node: CommandNode): Boolean {
+        val start = if (node.type == CommandType.FOR_START) node else node.pairedNodeId?.let(graph.nodes::get)
+            ?: return false
+        val end = start.pairedNodeId?.let(graph.nodes::get) ?: return false
+        if (start.trueNext != end.id) return false
+        replaceIncoming(graph, start.id, end.next)
+        graph.nodes.remove(start.id)
+        graph.nodes.remove(end.id)
+        return true
+    }
+
+    private fun containsExecutionBefore(graph: CommandGraph, start: UUID?, stop: UUID?): Boolean {
+        if (start == null || start == stop) return false
+        val visited = mutableSetOf<UUID>()
+        fun visit(id: UUID?): Boolean {
+            if (id == null || id == stop || !visited.add(id)) return false
+            val node = graph.nodes[id] ?: return false
+            return node.type != CommandType.MERGE || node.outgoingIds().any(::visit)
+        }
+        return visit(start)
+    }
+
+    private fun branchTail(graph: CommandGraph, start: UUID?, stop: UUID): CommandNode? {
+        var current = start ?: return null
+        var previous: CommandNode? = null
+        val visited = mutableSetOf<UUID>()
+        while (current != stop && visited.add(current)) {
+            previous = graph.nodes[current] ?: return previous
+            current = if (previous.type == CommandType.CONDITION) previous.trueNext ?: return previous
+            else previous.next ?: return previous
+        }
+        return previous
+    }
+
+    private fun replaceIncoming(
+        graph: CommandGraph,
+        target: UUID,
+        replacement: UUID?,
+        excluded: Set<UUID> = emptySet(),
+    ) {
+        if (graph.entryNodeId == target) graph.entryNodeId = replacement
+        graph.nodes.values.filterNot { it.id in excluded }.forEach { node ->
+            if (node.next == target) node.next = replacement
+            if (node.trueNext == target) node.trueNext = replacement
+            if (node.falseNext == target) node.falseNext = replacement
+        }
+    }
+
+    private fun disconnectIncoming(graph: CommandGraph, target: UUID) {
+        graph.nodes.values.forEach { node ->
+            if (node.next == target) node.next = null
+            if (node.trueNext == target) node.trueNext = null
+            if (node.falseNext == target) node.falseNext = null
+        }
+    }
+
+    private fun edgeTarget(graph: CommandGraph, sourceId: UUID?, edge: Edge): UUID? {
+        if (edge == Edge.ENTRY) return graph.entryNodeId
+        val source = sourceId?.let(graph.nodes::get) ?: error("挿入元ノードが存在しません")
+        return when (edge) {
+            Edge.NEXT -> source.next
+            Edge.TRUE -> source.trueNext
+            Edge.FALSE -> source.falseNext
+            Edge.FOR_BODY -> source.trueNext
+            Edge.ENTRY -> graph.entryNodeId
+        }
+    }
+
+    private fun setEdge(graph: CommandGraph, sourceId: UUID?, edge: Edge, target: UUID?) {
+        if (edge == Edge.ENTRY) {
+            graph.entryNodeId = target
+            return
+        }
+        val source = sourceId?.let(graph.nodes::get) ?: error("挿入元ノードが存在しません")
+        when (edge) {
+            Edge.NEXT -> source.next = target
+            Edge.TRUE -> source.trueNext = target
+            Edge.FALSE -> source.falseNext = target
+            Edge.FOR_BODY -> source.trueNext = target
+            Edge.ENTRY -> Unit
+        }
+    }
+
+    private fun CommandNode.outgoingIds() =
+        when (type) {
+            CommandType.CONDITION -> listOfNotNull(trueNext, falseNext)
+            CommandType.FOR_START -> listOfNotNull(trueNext, pairedNodeId)
+            else -> listOfNotNull(next)
+        }
 }

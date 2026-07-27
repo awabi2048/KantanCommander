@@ -50,4 +50,43 @@ class GraphEditorTest {
         assertEquals(start.id, end?.pairedNodeId)
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
+
+    @Test
+    fun `condition deletion is refused while false branch has an execution node`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        GraphEditor.appendMerge(graph, condition.id)
+
+        assertEquals(false, GraphEditor.delete(graph, condition.id))
+        assertTrue(condition.id in graph.nodes)
+    }
+
+    @Test
+    fun `empty condition deletion also removes matching merge and promotes true path`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueNode = GraphEditor.append(graph, CommandType.WAIT)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val after = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+
+        assertTrue(GraphEditor.delete(graph, condition.id))
+        assertEquals(trueNode.id, graph.entryNodeId)
+        assertEquals(after.id, trueNode.next)
+        assertTrue(merge.id !in graph.nodes)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `for pair deletion is allowed only while body is empty`() {
+        val empty = CommandGraph.empty()
+        val emptyStart = GraphEditor.append(empty, CommandType.FOR_START)
+        assertTrue(GraphEditor.delete(empty, emptyStart.id))
+
+        val occupied = CommandGraph.empty()
+        val occupiedStart = GraphEditor.append(occupied, CommandType.FOR_START)
+        GraphEditor.appendToForBody(occupied, occupiedStart.id, CommandType.WAIT)
+        assertEquals(false, GraphEditor.delete(occupied, occupiedStart.id))
+    }
 }
