@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.gui
 
+import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -12,12 +13,16 @@ enum class MapCellKind {
     PATH,
     BRANCH_PATH,
     LOOP_RETURN_PATH,
+    ADD,
 }
 
 data class MapCell(
     val point: MapPoint,
     val kind: MapCellKind,
     val nodeId: UUID? = null,
+    val sourceId: UUID? = null,
+    val edge: GraphEditor.Edge? = null,
+    val mergeConditionId: UUID? = null,
 )
 
 data class GraphLayout(
@@ -78,6 +83,13 @@ object GraphLayoutEngine {
                     if (currentId != null) putPath(cursorX - 1, y)
                     continue
                 }
+                if (node.type == CommandType.CONDITION) {
+                    val branch = renderOpenCondition(node, cursorX, y)
+                    cursorX = branch.nextX
+                    maximumY = maxOf(maximumY, branch.maxY)
+                    currentId = null
+                    continue
+                }
                 if (node.type == CommandType.FOR_START && node.pairedNodeId != null) {
                     val loop = renderFor(node, cursorX, y)
                     cursorX = loop.nextX
@@ -125,6 +137,32 @@ object GraphLayoutEngine {
             return Segment(mergeX + 2, maxOf(falseSegment.maxY, falseY), merge.id)
         }
 
+        private fun renderOpenCondition(condition: CommandNode, x: Int, y: Int): Segment {
+            putNode(x, y, condition)
+            putPath(x + 1, y, MapCellKind.BRANCH_PATH)
+            val trueStart = condition.trueNext
+            val trueSegment = if (trueStart != null) renderSequence(trueStart, null, x + 2, y)
+            else {
+                putAdd(x + 2, y, condition.id, GraphEditor.Edge.TRUE, condition.id)
+                Segment(x + 4, y, null)
+            }
+            if (trueSegment.tail != null) {
+                putAdd(trueSegment.nextX, y, trueSegment.tail, GraphEditor.Edge.NEXT, condition.id)
+            }
+            val falseY = trueSegment.maxY + 2
+            for (verticalY in y..falseY) putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH)
+            val falseStart = condition.falseNext
+            val falseSegment = if (falseStart != null) renderSequence(falseStart, null, x + 2, falseY)
+            else {
+                putAdd(x + 2, falseY, condition.id, GraphEditor.Edge.FALSE, condition.id)
+                Segment(x + 4, falseY, null)
+            }
+            if (falseSegment.tail != null) {
+                putAdd(falseSegment.nextX, falseY, falseSegment.tail, GraphEditor.Edge.NEXT, condition.id)
+            }
+            return Segment(maxOf(trueSegment.nextX, falseSegment.nextX), falseSegment.maxY, condition.id)
+        }
+
         private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
             putNode(x, y, start)
             val endId = start.pairedNodeId ?: return Segment(x + 2, y, start.id)
@@ -163,6 +201,23 @@ object GraphLayoutEngine {
         private fun putPath(x: Int, y: Int, kind: MapCellKind = MapCellKind.PATH) {
             val point = MapPoint(x, y)
             if (cells[point]?.kind != MapCellKind.NODE) cells[point] = MapCell(point, kind)
+        }
+
+        private fun putAdd(
+            x: Int,
+            y: Int,
+            sourceId: UUID?,
+            edge: GraphEditor.Edge,
+            mergeConditionId: UUID? = null,
+        ) {
+            val point = MapPoint(x, y)
+            cells[point] = MapCell(
+                point,
+                MapCellKind.ADD,
+                sourceId = sourceId,
+                edge = edge,
+                mergeConditionId = mergeConditionId,
+            )
         }
     }
 

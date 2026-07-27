@@ -37,7 +37,15 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     "back" to handler { MenuActionResult.Success(MenuUpdate.Back) },
                     "add" to handler { context ->
                         val id = scriptId(context.route) ?: return@handler MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(id, 0)))
+                        val source = context.payload["sourceId"]?.takeIf(String::isNotBlank)
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        val edge = context.payload["edge"]?.let {
+                            runCatching { me.awabi2048.kantancommander.data.GraphEditor.Edge.valueOf(it) }.getOrNull()
+                        } ?: if (source == null) me.awabi2048.kantancommander.data.GraphEditor.Edge.ENTRY
+                        else me.awabi2048.kantancommander.data.GraphEditor.Edge.NEXT
+                        val mergeCondition = context.payload["mergeConditionId"]?.takeIf(String::isNotBlank)
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(id, source, edge, mergeCondition)))
                     },
                     "activation" to handler { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load)
@@ -119,9 +127,9 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         layout.viewport(origin, VIEWPORT_WIDTH, VIEWPORT_HEIGHT).forEach { (point, cell) ->
             val slot = (point.y + 1) * 9 + point.x
             val node = cell.nodeId?.let(script.graph.nodes::get)
-            elements += if (node != null) commandElement(player, slot, node) else pathElement(slot, cell.kind)
+            elements += if (node != null) commandElement(player, slot, node) else pathElement(slot, cell)
         }
-        addPoint(script.graph, layout)?.let { point ->
+        addPoint(script.graph, layout)?.let { (point, sourceId) ->
             val local = MapPoint(point.x - origin.x, point.y - origin.y)
             if (local.x in 0 until VIEWPORT_WIDTH && local.y in 0 until VIEWPORT_HEIGHT) {
                 val slot = (local.y + 1) * 9 + local.x
@@ -131,6 +139,11 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     KcGui.item(Material.YELLOW_WOOL, "コマンドを追加", GuiNameStyle.PRIMARY),
                     GuiElementRole.ACTION,
                     "add",
+                    mapOf(
+                        "sourceId" to sourceId?.toString().orEmpty(),
+                        "edge" to if (sourceId == null) me.awabi2048.kantancommander.data.GraphEditor.Edge.ENTRY.name
+                        else me.awabi2048.kantancommander.data.GraphEditor.Edge.NEXT.name,
+                    ),
                 )
             }
         }
@@ -207,8 +220,21 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         mapOf("nodeId" to node.id.toString()),
     )
 
-    private fun pathElement(slot: Int, kind: MapCellKind): MenuElement {
-        val material = when (kind) {
+    private fun pathElement(slot: Int, cell: MapCell): MenuElement {
+        if (cell.kind == MapCellKind.ADD) {
+            return MenuElement(
+                slot,
+                KcGui.item(Material.YELLOW_WOOL, "コマンドを追加", GuiNameStyle.PRIMARY),
+                GuiElementRole.ACTION,
+                "add",
+                mapOf(
+                    "sourceId" to cell.sourceId?.toString().orEmpty(),
+                    "edge" to (cell.edge ?: me.awabi2048.kantancommander.data.GraphEditor.Edge.ENTRY).name,
+                    "mergeConditionId" to cell.mergeConditionId?.toString().orEmpty(),
+                ),
+            )
+        }
+        val material = when (cell.kind) {
             MapCellKind.LOOP_RETURN_PATH -> Material.LIGHT_BLUE_STAINED_GLASS_PANE
             MapCellKind.BRANCH_PATH -> Material.CYAN_STAINED_GLASS_PANE
             else -> Material.GRAY_STAINED_GLASS_PANE
@@ -230,6 +256,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     MapCellKind.LOOP_RETURN_PATH -> "═"
                     MapCellKind.BRANCH_PATH -> "─"
                     MapCellKind.PATH -> "─"
+                    MapCellKind.ADD -> "+"
                     null -> " "
                 }
                 (if (selected) "§e" else "§7") + symbol
@@ -238,8 +265,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    private fun addPoint(graph: CommandGraph, layout: GraphLayout): MapPoint? {
-        if (graph.entryNodeId == null) return MapPoint(1, 1)
+    private fun addPoint(graph: CommandGraph, layout: GraphLayout): Pair<MapPoint, UUID?>? {
+        if (graph.entryNodeId == null) return MapPoint(1, 1) to null
         var current = graph.entryNodeId
         val visited = mutableSetOf<UUID>()
         var tail: CommandNode? = null
@@ -247,8 +274,9 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             tail = graph.nodes[current] ?: break
             current = if (tail.type == CommandType.CONDITION) tail.trueNext else tail.next
         }
-        val point = tail?.id?.let(layout.nodePoints::get) ?: return null
-        return MapPoint(point.x + 2, point.y)
+        val sourceId = tail?.id ?: return null
+        val point = layout.nodePoints[sourceId] ?: return null
+        return MapPoint(point.x + 2, point.y) to sourceId
     }
 
     private fun action(

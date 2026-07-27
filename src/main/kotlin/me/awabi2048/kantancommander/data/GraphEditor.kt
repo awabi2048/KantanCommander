@@ -16,16 +16,6 @@ object GraphEditor {
         return condition.type == CommandType.CONDITION && condition.pairedNodeId == null
     }
 
-    @Deprecated("レーン式GUIの置換完了後に削除します")
-    fun canAppendMerge(graph: CommandGraph?, legacyLane: Int): Boolean {
-        if (legacyLane <= 0) return false
-        val conditionId = graph?.nodes?.values
-            ?.filter { it.type == CommandType.CONDITION }
-            ?.getOrNull(legacyLane - 1)
-            ?.id
-        return canAppendMerge(graph, conditionId)
-    }
-
     /**
      * 既存GUIとの互換入口です。branchConditionId指定時はfalse枝、未指定時は主経路末尾へ追加します。
      * MERGEは必ずbranchConditionIdで対応条件を明示します。
@@ -87,7 +77,7 @@ object GraphEditor {
         if (inserted.type == CommandType.CONDITION) {
             inserted.next = null
             inserted.trueNext = target
-            inserted.falseNext = target
+            inserted.falseNext = null
         }
         return inserted
     }

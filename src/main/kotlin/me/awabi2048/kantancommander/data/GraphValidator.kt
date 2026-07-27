@@ -50,9 +50,6 @@ object GraphValidator {
     }
 
     private fun validateCondition(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
-        if (node.trueNext == null || node.falseNext == null) {
-            errors += "条件分岐 ${node.id} のtrueまたはfalse枝が未設定です"
-        }
         if (node.pairedNodeId != null) validatePair(graph, node, CommandType.MERGE, errors)
     }
 

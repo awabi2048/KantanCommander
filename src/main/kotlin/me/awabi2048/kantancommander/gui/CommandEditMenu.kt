@@ -53,12 +53,18 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         val type = context.payload["type"]?.let { runCatching { CommandType.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        val lane = context.route.payload[LANE]?.toIntOrNull() ?: 0
-                        val branchCondition = script.graph.nodes.values
-                            .filter { it.type == CommandType.CONDITION }
-                            .getOrNull(lane - 1)
-                            ?.id
-                        val node = GraphEditor.append(script.graph, type, branchCondition)
+                        val sourceId = context.route.payload[SOURCE_ID]?.takeIf(String::isNotBlank)
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        val edge = context.route.payload[EDGE]?.let {
+                            runCatching { GraphEditor.Edge.valueOf(it) }.getOrNull()
+                        } ?: GraphEditor.Edge.ENTRY
+                        val mergeConditionId = context.route.payload[MERGE_CONDITION_ID]?.takeIf(String::isNotBlank)
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        val node = if (type == CommandType.MERGE) {
+                            GraphEditor.appendMerge(script.graph, requireNotNull(mergeConditionId))
+                        } else {
+                            GraphEditor.insert(script.graph, sourceId, edge, type)
+                        }
                         plugin.scripts.save(script)
                         if (type == CommandType.MERGE) {
                             MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.route(script.id)))
@@ -359,7 +365,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderDelete(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
-                    "delete" to MenuActionHandler { MenuActionResult.Ignored },
+                    "delete" to MenuActionHandler { context ->
+                        val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val nodeId = context.route.payload[NODE_ID]
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!GraphEditor.delete(script.graph, nodeId)) return@MenuActionHandler MenuActionResult.Ignored
+                        plugin.scripts.save(script)
+                        MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.route(script.id)))
+                    },
                 ),
             )
         )
@@ -367,13 +381,21 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun renderPicker(player: Player, route: MenuRoute): InventoryMenuView {
         val script = script(route)
-        val lane = route.payload[LANE]?.toIntOrNull() ?: 0
+        val sourceId = route.payload[SOURCE_ID]?.takeIf(String::isNotBlank)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val edge = route.payload[EDGE]?.let { runCatching { GraphEditor.Edge.valueOf(it) }.getOrNull() }
+        val mergeConditionId = route.payload[MERGE_CONDITION_ID]?.takeIf(String::isNotBlank)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
         val types = CommandType.entries.filter { type ->
-            type != CommandType.MERGE || GraphEditor.canAppendMerge(script?.graph, lane)
+            when (type) {
+                CommandType.FOR_END -> false
+                CommandType.MERGE -> GraphEditor.canAppendMerge(script?.graph, mergeConditionId)
+                else -> true
+            }
         }
         val elements = types.mapIndexed { index, type ->
             MenuElement(
-                EditorMenuLayout.centeredSlots(types.size)[index],
+                pickerSlots(types.size)[index],
                 KcGui.item(
                     type.icon,
                     KcI18n.text(player, type.key),
@@ -387,6 +409,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title("コマンドを選択"), elements)
+    }
+
+    private fun pickerSlots(count: Int): List<Int> {
+        require(count in 1..27)
+        return (0 until count).chunked(9).flatMapIndexed { row, chunk ->
+            val first = 9 + row * 9 + (9 - chunk.size) / 2
+            (first until first + chunk.size).toList()
+        }
     }
 
     private fun renderSettings(player: Player, route: MenuRoute): InventoryMenuView {
@@ -967,11 +997,27 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val FACING_ID = "facing_settings"
         private const val SCRIPT_ID = "scriptId"
         private const val NODE_ID = "nodeId"
-        private const val LANE = "lane"
+        private const val SOURCE_ID = "sourceId"
+        private const val EDGE = "edge"
+        private const val MERGE_CONDITION_ID = "mergeConditionId"
         private const val ROLE = "role"
 
-        fun typeRoute(scriptId: UUID, lane: Int = 0) =
-            MenuRoute(SequenceEditorMenu.OWNER, PICKER_ID, mapOf(SCRIPT_ID to scriptId.toString(), LANE to lane.toString()))
+        fun typeRoute(
+            scriptId: UUID,
+            sourceId: UUID?,
+            edge: GraphEditor.Edge,
+            mergeConditionId: UUID? = null,
+        ) =
+            MenuRoute(
+                SequenceEditorMenu.OWNER,
+                PICKER_ID,
+                mapOf(
+                    SCRIPT_ID to scriptId.toString(),
+                    SOURCE_ID to sourceId?.toString().orEmpty(),
+                    EDGE to edge.name,
+                    MERGE_CONDITION_ID to mergeConditionId?.toString().orEmpty(),
+                ),
+            )
 
         fun settingsRoute(scriptId: UUID, nodeId: UUID) =
             MenuRoute(SequenceEditorMenu.OWNER, SETTINGS_ID, mapOf(SCRIPT_ID to scriptId.toString(), NODE_ID to nodeId.toString()))
