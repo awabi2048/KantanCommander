@@ -120,6 +120,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                     val start = node.pairedNodeId?.let(graph.nodes::get)
                     if (start != null) {
                         val loop = loopName(start.id)
+                        lines += assignLoopValue(loop, "step", start, "step")
                         lines += "scoreboard players operation #${loop}_value kc_vars += #${loop}_step kc_vars"
                         lines += "scoreboard players add #${loop}_count kc_vars 1"
                         lines += "function kantan:${prefix}_${start.id}_check"
@@ -237,6 +238,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         val after = end?.let(graph.nodes::get)?.next
         val bodyFunction = body?.takeUnless { it == end }?.let { "function kantan:${prefix}_$it" }
         val lines = mutableListOf<String>()
+        lines += assignLoopValue(loop, "end", start, "end")
         lines += "scoreboard players set #${loop}_run kc_vars 0"
         if (bodyFunction != null) {
             lines += "execute if score #${loop}_step kc_vars matches 1.. if score #${loop}_value kc_vars <= #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"

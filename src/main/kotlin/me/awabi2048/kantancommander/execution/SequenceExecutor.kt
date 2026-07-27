@@ -150,19 +150,27 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ) {
         val frame = session.loops.lastOrNull { it.endId == node.id }
             ?: return stop(session, script, node.id, "for_frame_missing", done)
+        val startNode = graph.nodes[frame.startId]
+            ?: return stop(session, script, node.id, "for_start_missing", done)
+        val currentEnd = resolveForValue(startNode, "end", session)
+            ?: return stop(session, script, node.id, "invalid_for_end", done)
+        val currentStep = resolveForValue(startNode, "step", session)
+            ?: return stop(session, script, node.id, "invalid_for_step", done)
+        if (currentStep == 0L) return stop(session, script, node.id, "zero_for_step", done)
         val nextValue = try {
-            Math.addExact(frame.value, frame.step)
+            Math.addExact(frame.value, currentStep)
         } catch (_: ArithmeticException) {
             return stop(session, script, node.id, "for_overflow", done)
         }
         session.context = frame.startContext
-        if (withinForRange(nextValue, frame.end, frame.step)) {
+        if (withinForRange(nextValue, currentEnd, currentStep)) {
             frame.value = nextValue
+            frame.end = currentEnd
+            frame.step = currentStep
             frame.count++
             session.currentIterationValue = frame.value
             session.currentLoopCount = frame.count
-            val start = graph.nodes[frame.startId] ?: return stop(session, script, node.id, "for_start_missing", done)
-            runNode(script, graph, start.trueNext, session, depth, done)
+            runNode(script, graph, startNode.trueNext, session, depth, done)
         } else {
             session.loops.remove(frame)
             session.currentIterationValue = session.loops.lastOrNull()?.value
@@ -498,8 +506,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val startId: UUID,
         val endId: UUID,
         var value: Long,
-        val end: Long,
-        val step: Long,
+        var end: Long,
+        var step: Long,
         var count: Long,
         val startContext: ExecutionContextSpec?,
     )
