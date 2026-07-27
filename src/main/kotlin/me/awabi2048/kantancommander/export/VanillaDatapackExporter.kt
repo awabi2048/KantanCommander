@@ -141,7 +141,8 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         }
         CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node)
-        CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE -> null
+        CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
+        CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
     }
 
     private fun predicate(node: CommandNode): String = when (

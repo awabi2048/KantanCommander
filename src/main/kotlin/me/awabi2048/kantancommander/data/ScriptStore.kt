@@ -98,7 +98,7 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
     }
 }
 
-object GraphValidator {
+private object LegacyGraphValidator {
     fun validate(graph: CommandGraph): List<String> {
         val errors = mutableListOf<String>()
         val entry = graph.entryNodeId

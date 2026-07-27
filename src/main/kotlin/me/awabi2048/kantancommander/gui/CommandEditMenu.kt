@@ -1075,7 +1075,12 @@ object EditorMenuLayout {
             field("operation", "操作", Material.REDSTONE),
             field("value", "値", Material.COMPARATOR),
         )
-        CommandType.MERGE -> emptyList()
+        CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
+        CommandType.FOR_START -> listOf(
+            field("startValue", "開始値", Material.LIME_DYE),
+            field("endValue", "終了値", Material.RED_DYE),
+            field("stepValue", "増分", Material.ARROW),
+        )
     }
 
     private fun field(key: String, label: String, material: Material, value: (CommandNode) -> String = { it.string(key, "未設定") }) =

@@ -11,12 +11,15 @@ class GraphEditorTest {
     fun `false branch keeps insertion order`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueCommand = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
         val first = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
         val second = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
 
         assertEquals(first.id, condition.falseNext)
         assertEquals(second.id, first.next)
-        assertEquals(condition.pairedNodeId, second.next)
+        assertEquals(merge.id, second.next)
+        assertEquals(merge.id, trueCommand.next)
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 
@@ -24,13 +27,27 @@ class GraphEditorTest {
     fun `nested condition is appended to selected false branch`() {
         val graph = CommandGraph.empty()
         val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
         val inner = GraphEditor.append(graph, CommandType.CONDITION, outer.id)
+        GraphEditor.append(graph, CommandType.WAIT, inner.id)
+        GraphEditor.appendMerge(graph, inner.id)
         val outerCommand = GraphEditor.append(graph, CommandType.GIVE_ITEM, outer.id)
-        val innerCommand = GraphEditor.append(graph, CommandType.TELEPORT, inner.id)
+        GraphEditor.appendMerge(graph, outer.id)
 
         assertEquals(inner.id, outer.falseNext)
         assertEquals(outerCommand.id, inner.pairedNodeId?.let(graph.nodes::get)?.next)
-        assertEquals(innerCommand.id, inner.falseNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `for start creates a paired end node`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = start.pairedNodeId?.let(graph.nodes::get)
+
+        assertEquals(CommandType.FOR_END, end?.type)
+        assertEquals(end?.id, start.next)
+        assertEquals(start.id, end?.pairedNodeId)
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 }

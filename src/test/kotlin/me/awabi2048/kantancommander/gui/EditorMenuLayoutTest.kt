@@ -15,9 +15,9 @@ class EditorMenuLayoutTest {
     }
 
     @Test
-    fun `every editable command has at most five setting icons`() {
+    fun `every configurable command has centered setting icons`() {
         CommandType.entries
-            .filterNot { it == CommandType.MERGE }
+            .filter { EditorMenuLayout.fields(it).isNotEmpty() }
             .forEach { type ->
                 val slots = EditorMenuLayout.centeredSlots(EditorMenuLayout.fields(type).size)
                 assertFalse(slots.isEmpty(), type.name)

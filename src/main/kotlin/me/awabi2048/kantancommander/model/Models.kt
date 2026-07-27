@@ -3,7 +3,7 @@ package me.awabi2048.kantancommander.model
 import org.bukkit.Material
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 4
+const val STRUCTURED_FORMAT_VERSION = 5
 const val TIMER_UNIT_TICKS = 10
 const val MIN_TIMER_UNITS = 1
 const val MAX_TIMER_UNITS = 86_400
@@ -173,6 +173,7 @@ enum class CommandType(
     WAIT("command.wait", Material.CLOCK, mapOf("ticks" to "20")),
     CONDITION("command.condition", Material.COMPARATOR, mapOf(
         "kind" to ConditionKind.TARGET_EXISTS.name,
+        "inverted" to "false",
         "subject" to "@s",
         "state" to "sneaking",
         "variable" to "",
@@ -190,7 +191,18 @@ enum class CommandType(
     VARIABLE("command.variable", Material.REDSTONE, mapOf(
         "name" to "", "type" to VariableType.BOOLEAN.name, "operation" to VariableOperation.SET.name, "value" to "false"
     )),
-    MERGE("command.merge", Material.HOPPER, emptyMap());
+    MERGE("command.merge", Material.HOPPER, emptyMap()),
+    FOR_START("command.for_start", Material.REPEATER, mapOf(
+        "startSource" to "FIXED",
+        "startValue" to "0",
+        "endSource" to "FIXED",
+        "endValue" to "0",
+        "stepSource" to "FIXED",
+        "stepValue" to "1",
+    )),
+    FOR_END("command.for_end", Material.COMPARATOR, emptyMap()),
+    BREAK("command.break", Material.BARRIER, emptyMap()),
+    CONTINUE("command.continue", Material.ARROW, emptyMap());
 
     fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
 
@@ -205,6 +217,10 @@ enum class CommandType(
         DISK_CALL -> node.string("diskId").ifBlank { "-" }
         VARIABLE -> node.string("name").ifBlank { "-" }
         MERGE -> "merge"
+        FOR_START -> "${node.string("startValue", "0")}..${node.string("endValue", "0")} step ${node.string("stepValue", "1")}"
+        FOR_END -> "for end"
+        BREAK -> "break"
+        CONTINUE -> "continue"
     }
 }
 
