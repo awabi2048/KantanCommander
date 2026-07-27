@@ -64,6 +64,18 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                         setOf(VariableType.BOOLEAN, VariableType.INTEGER)
                     ) errors += "${script.id}/${node.id}: variable type is not vanilla-exportable"
                 }
+                CommandType.FOR_START -> {
+                    listOf("start", "end", "step").forEach { field ->
+                        if (node.string("${field}Source", "FIXED") == "FIXED" &&
+                            node.string("${field}Value").toIntOrNull() == null
+                        ) {
+                            errors += "${script.id}/${node.id}: forの${field}値はバニラの32bit整数範囲で指定してください"
+                        }
+                    }
+                    if (node.string("stepSource", "FIXED") == "FIXED" && node.string("stepValue").toIntOrNull() == 0) {
+                        errors += "${script.id}/${node.id}: forの増分に0は指定できません"
+                    }
+                }
                 else -> Unit
             }
             node.contextOverride?.let { validateContext(script, node, it, errors) }
@@ -95,6 +107,34 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
             when {
+                node.type == CommandType.FOR_START -> {
+                    val loop = loopName(node.id)
+                    lines += assignLoopValue(loop, "value", node, "start")
+                    lines += assignLoopValue(loop, "end", node, "end")
+                    lines += assignLoopValue(loop, "step", node, "step")
+                    lines += "scoreboard players set #${loop}_count kc_vars 1"
+                    lines += "function kantan:${prefix}_${node.id}_check"
+                    output["${prefix}_${node.id}_check"] = loopCheck(graph, prefix, node)
+                }
+                node.type == CommandType.FOR_END -> {
+                    val start = node.pairedNodeId?.let(graph.nodes::get)
+                    if (start != null) {
+                        val loop = loopName(start.id)
+                        lines += "scoreboard players operation #${loop}_value kc_vars += #${loop}_step kc_vars"
+                        lines += "scoreboard players add #${loop}_count kc_vars 1"
+                        lines += "function kantan:${prefix}_${start.id}_check"
+                    }
+                }
+                node.type == CommandType.BREAK -> {
+                    enclosingFor(graph, node.id)?.pairedNodeId?.let(graph.nodes::get)?.next?.let {
+                        lines += "function kantan:${prefix}_$it"
+                    }
+                }
+                node.type == CommandType.CONTINUE -> {
+                    enclosingFor(graph, node.id)?.pairedNodeId?.let {
+                        lines += "function kantan:${prefix}_$it"
+                    }
+                }
                 node.type == CommandType.DISK_CALL -> {
                     val snapshotPrefix = "${prefix}_snapshot_${node.id}"
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output) }
@@ -112,16 +152,19 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
             when (node.type) {
                 CommandType.CONDITION -> {
                     val predicate = predicate(node)
+                    val trueCheck = if (node.boolean("inverted")) "unless" else "if"
+                    val falseCheck = if (node.boolean("inverted")) "if" else "unless"
                     node.trueNext?.let {
-                        lines += "execute if $predicate run function kantan:${prefix}_$it"
+                        lines += "execute $trueCheck $predicate run function kantan:${prefix}_$it"
                     }
                     node.falseNext?.let {
-                        lines += "execute unless $predicate run function kantan:${prefix}_$it"
+                        lines += "execute $falseCheck $predicate run function kantan:${prefix}_$it"
                     }
                 }
                 CommandType.WAIT ->
                     node.next?.let { lines += "schedule function kantan:${prefix}_$it ${node.int("ticks", 20).coerceAtLeast(1)}t replace" }
                 CommandType.CONTEXT -> Unit
+                CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
                 else -> node.next?.let { lines += "function kantan:${prefix}_$it" }
             }
             output["${prefix}_${node.id}"] = lines.joinToString("\n", postfix = "\n")
@@ -175,6 +218,55 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
 
     private fun variableHolder(name: String) =
         "#v_${name.lowercase().replace(Regex("[^a-z0-9_.-]"), "_").take(32)}"
+
+    private fun loopName(id: UUID) = "for_${id.toString().replace("-", "").take(12)}"
+
+    private fun assignLoopValue(loop: String, target: String, node: CommandNode, field: String): String {
+        val destination = "#${loop}_$target"
+        return if (node.string("${field}Source", "FIXED") == "TEMPORARY") {
+            "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"))} kc_vars"
+        } else {
+            "scoreboard players set $destination kc_vars ${node.string("${field}Value", if (field == "step") "1" else "0")}"
+        }
+    }
+
+    private fun loopCheck(graph: CommandGraph, prefix: String, start: CommandNode): String {
+        val loop = loopName(start.id)
+        val body = start.trueNext
+        val end = start.pairedNodeId
+        val after = end?.let(graph.nodes::get)?.next
+        val bodyFunction = body?.takeUnless { it == end }?.let { "function kantan:${prefix}_$it" }
+        val lines = mutableListOf<String>()
+        lines += "scoreboard players set #${loop}_run kc_vars 0"
+        if (bodyFunction != null) {
+            lines += "execute if score #${loop}_step kc_vars matches 1.. if score #${loop}_value kc_vars <= #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
+            lines += "execute if score #${loop}_step kc_vars matches ..-1 if score #${loop}_value kc_vars >= #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
+            lines += "execute if score #${loop}_run kc_vars matches 1 run $bodyFunction"
+        }
+        after?.let { lines += "execute if score #${loop}_run kc_vars matches 0 run function kantan:${prefix}_$it" }
+        return lines.joinToString("\n", postfix = "\n")
+    }
+
+    private fun enclosingFor(graph: CommandGraph, target: UUID): CommandNode? =
+        graph.nodes.values.firstOrNull { start ->
+            start.type == CommandType.FOR_START &&
+                reachableBefore(graph, start.trueNext, start.pairedNodeId, target)
+        }
+
+    private fun reachableBefore(graph: CommandGraph, start: UUID?, stop: UUID?, target: UUID): Boolean {
+        val visited = mutableSetOf<UUID>()
+        fun visit(id: UUID?): Boolean {
+            if (id == null || id == stop || !visited.add(id)) return false
+            if (id == target) return true
+            val node = graph.nodes[id] ?: return false
+            return when (node.type) {
+                CommandType.CONDITION -> visit(node.trueNext) || visit(node.falseNext)
+                CommandType.FOR_START -> visit(node.trueNext) || visit(node.pairedNodeId)
+                else -> visit(node.next)
+            }
+        }
+        return visit(start)
+    }
 
     private fun effectiveTarget(node: CommandNode): String =
         selector(node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.EXECUTOR))

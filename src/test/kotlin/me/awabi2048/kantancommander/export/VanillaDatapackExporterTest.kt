@@ -72,4 +72,44 @@ class VanillaDatapackExporterTest {
         assertTrue(text.contains("copied"))
         assertFalse(text.contains("function kantan:${call.params["diskId"]}"))
     }
+
+    @Test
+    fun `for loop and its control commands are compiled to scoreboard functions`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "for")
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        start.params["startValue"] = "1"
+        start.params["endValue"] = "3"
+        start.params["stepValue"] = "1"
+        GraphEditor.appendToForBody(script.graph, start.id, CommandType.CONTINUE)
+        store.save(script)
+
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val success = assertInstanceOf(ExportResult.Success::class.java, result)
+        val text = success.directory.walkTopDown()
+            .filter(File::isFile)
+            .joinToString("\n") { it.readText() }
+        assertTrue(text.contains("_check"))
+        assertTrue(text.contains("scoreboard players operation"))
+        assertTrue(text.contains("matches 1.."))
+    }
+
+    @Test
+    fun `inverted condition swaps vanilla predicates`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "condition")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.params["inverted"] = "true"
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val success = assertInstanceOf(ExportResult.Success::class.java, result)
+        val text = success.directory.walkTopDown()
+            .filter(File::isFile)
+            .joinToString("\n") { it.readText() }
+        assertTrue(text.contains("execute unless entity"))
+        assertTrue(text.contains("execute if entity"))
+    }
 }
