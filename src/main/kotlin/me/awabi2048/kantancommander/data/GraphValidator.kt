@@ -57,9 +57,47 @@ object GraphValidator {
                 active.remove(id)
             }
             visit(entry, 0)
+            validateStructuredControl(graph, entry, errors)
             (graph.nodes.keys - visited).forEach { errors += "到達不能ノードがあります: $it" }
         }
         return errors.distinct()
+    }
+
+    private fun validateStructuredControl(
+        graph: CommandGraph,
+        entry: UUID,
+        errors: MutableList<String>,
+    ) {
+        val visited = mutableSetOf<Pair<UUID, List<UUID>>>()
+        fun visit(id: UUID?, forStack: List<UUID>) {
+            if (id == null || !visited.add(id to forStack)) return
+            val node = graph.nodes[id] ?: return
+            when (node.type) {
+                CommandType.BREAK, CommandType.CONTINUE -> {
+                    if (forStack.isEmpty()) {
+                        errors += "${node.type} ${node.id} はfor本体の外では使用できません"
+                    }
+                }
+                CommandType.FOR_START -> {
+                    val endId = node.pairedNodeId ?: return
+                    visit(node.trueNext, forStack + node.id)
+                    visit(graph.nodes[endId]?.next, forStack)
+                }
+                CommandType.FOR_END -> {
+                    val expectedStart = forStack.lastOrNull()
+                    if (node.pairedNodeId != expectedStart) {
+                        errors += "FOR_END ${node.id} の所属forが実行経路と一致しません"
+                    }
+                    visit(node.next, if (forStack.isEmpty()) forStack else forStack.dropLast(1))
+                }
+                CommandType.CONDITION -> {
+                    visit(node.trueNext, forStack)
+                    visit(node.falseNext, forStack)
+                }
+                else -> visit(node.next, forStack)
+            }
+        }
+        visit(entry, emptyList())
     }
 
     private fun validateCondition(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {

@@ -61,13 +61,15 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
         val id = rawId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
         val script = id?.let(plugin.scripts::load)
         if (script == null) {
-            sender.sendMessage("§cディスクUUIDが不正、または存在しません。")
+            sender.sendMessage("§c${KcI18n.text(sender as? Player, "message.export_invalid_disk")}")
             return
         }
         when (val result = plugin.exporter.export(script)) {
-            is ExportResult.Success -> sender.sendMessage("§aデータパックを出力しました: ${result.directory.absolutePath}")
+            is ExportResult.Success -> sender.sendMessage(
+                "§a${KcI18n.text(sender as? Player, "message.export_success", mapOf("path" to result.directory.absolutePath))}"
+            )
             is ExportResult.Failure -> {
-                sender.sendMessage("§c出力前検証に失敗しました。")
+                sender.sendMessage("§c${KcI18n.text(sender as? Player, "message.export_failed")}")
                 result.errors.forEach { sender.sendMessage("§c- $it") }
             }
         }

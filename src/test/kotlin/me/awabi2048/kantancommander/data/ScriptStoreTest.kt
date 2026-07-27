@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -58,5 +59,17 @@ class ScriptStoreTest {
         assertNotEquals(placement.id, output.id)
         assertEquals("before", requireNotNull(store.load(output.id)).graph.nodes[node.id]?.string("text"))
         assertEquals("after", requireNotNull(store.load(placement.id)).graph.nodes[node.id]?.string("text"))
+    }
+
+    @Test
+    fun `invalid copied disk graph is rejected recursively`() {
+        val store = ScriptStore(temp.resolve("structured"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "nested")
+        val call = CommandType.DISK_CALL.newNode()
+        val missing = UUID.randomUUID()
+        call.snapshot = CommandGraph(missing, linkedMapOf())
+        script.graph = CommandGraph(call.id, linkedMapOf(call.id to call))
+
+        assertThrows(IllegalArgumentException::class.java) { store.save(script) }
     }
 }

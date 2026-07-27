@@ -23,4 +23,34 @@ class GraphValidatorTest {
         ))
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
+
+    @Test
+    fun `break and continue outside for body are rejected`() {
+        listOf(CommandType.BREAK, CommandType.CONTINUE).forEach { type ->
+            val node = type.newNode()
+            val graph = CommandGraph(node.id, linkedMapOf(node.id to node))
+            assertTrue(GraphValidator.validate(graph).any { it.contains("for本体の外") })
+        }
+    }
+
+    @Test
+    fun `break inside for body is valid`() {
+        val graph = CommandGraph()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        GraphEditor.appendToForBody(graph, start.id, CommandType.BREAK)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `configured node and branch depth limits are enforced`() {
+        val graph = CommandGraph()
+        GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.CONDITION)
+        val errors = GraphValidator.validate(
+            graph,
+            GraphLimits(maximumNodeCount = 1, maximumBranchDepth = 0),
+        )
+        assertTrue(errors.any { it.contains("ノード数") })
+        assertTrue(errors.any { it.contains("構造の深さ") })
+    }
 }

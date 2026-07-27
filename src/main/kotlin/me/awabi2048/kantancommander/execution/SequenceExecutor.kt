@@ -98,7 +98,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.int("ticks", 20).coerceAtLeast(1).toLong(),
             )
             CommandType.CONDITION -> {
-                val rawResult = evaluateCondition(node, session)
+                val rawResult = evaluateCondition(node, session, node.contextOverride ?: session.context)
                 val result = if (node.boolean("inverted")) !rawResult else rawResult
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, true)
@@ -233,12 +233,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
-        val target = resolveTarget(node.contextOverride ?: session.context, node.targetSpec, session)
-        val effectiveContext = node.contextOverride ?: session.context
-        val effectiveOrigin = effectiveContext?.position?.let { resolvePosition(it, session) } ?: session.origin
+                val effectiveContext = node.contextOverride ?: session.context
+                val targets = resolveTargets(effectiveContext, node.targetSpec, session)
+                val effectiveOrigin = effectiveContext?.position?.let { resolvePosition(it, session, effectiveContext) } ?: session.origin
         when (node.type) {
             CommandType.TELEPORT -> {
-                val entity = target ?: return false
+                if (targets.isEmpty()) return false
                 val destination = node.destinationTargetSpec
                     ?.let { resolveTargetSpec(it, session)?.location }
                     ?: node.destinationSpec?.let { resolvePosition(it, session) }
@@ -249,43 +249,47 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         destination.pitch = facing.pitch ?: destination.pitch
                     }
                 }
-                entity.teleport(destination)
+                targets.all { it.teleport(destination.clone()) }
             }
             CommandType.GIVE_ITEM -> {
-                val player = target as? Player ?: return false
+                val players = targets.filterIsInstance<Player>()
+                if (players.isEmpty()) return false
                 val material = Material.matchMaterial(node.string("item", "minecraft:stone")) ?: return false
                 val stack = ItemStackCodec.decode(node.string("itemData"))
                     ?: ItemStack(material)
                 stack.amount = node.int("count", 1).coerceIn(1, stack.maxStackSize)
-                val leftovers = player.inventory.addItem(stack)
-                leftovers.isEmpty()
+                players.all { player -> player.inventory.addItem(stack.clone()).isEmpty() }
             }
             CommandType.ENTITY_ACTION -> {
-                val entity = target ?: return false
+                if (targets.isEmpty()) return false
                 when (node.string("action", "ride")) {
                     "ride" -> {
-                        val vehicle = resolveSelector(node.string("other"), session) ?: return false
-                        vehicle.addPassenger(entity)
+                        val vehicle = resolveTarget(effectiveContext, node.secondaryTargetSpec, session)
+                            ?: resolveSelector(node.string("other"), session)
+                            ?: return false
+                        targets.all(vehicle::addPassenger)
                     }
-                    "dismount" -> entity.leaveVehicle()
+                    "dismount" -> targets.all(Entity::leaveVehicle)
                     else -> false
                 }
             }
             CommandType.DISPLAY_TEXT -> {
-                val player = target as? Player ?: return false
+                val players = targets.filterIsInstance<Player>()
+                if (players.isEmpty()) return false
                 val text = Component.text(node.string("text"))
                 when (node.string("mode", "tellraw")) {
-                    "title" -> player.showTitle(Title.title(
-                        text,
-                        Component.empty(),
-                        Title.Times.times(
-                            Duration.ofMillis(node.int("fadeIn", 10).coerceAtLeast(0) * 50L),
-                            Duration.ofMillis(node.int("stay", 60).coerceAtLeast(0) * 50L),
-                            Duration.ofMillis(node.int("fadeOut", 10).coerceAtLeast(0) * 50L),
-                        ),
-                    ))
-                    "actionbar" -> player.sendActionBar(text)
-                    else -> player.sendMessage(text)
+                    "title" -> players.forEach { player -> player.showTitle(Title.title(
+                            text,
+                            Component.empty(),
+                            Title.Times.times(
+                                Duration.ofMillis(node.int("fadeIn", 10).coerceAtLeast(0) * 50L),
+                                Duration.ofMillis(node.int("stay", 60).coerceAtLeast(0) * 50L),
+                                Duration.ofMillis(node.int("fadeOut", 10).coerceAtLeast(0) * 50L),
+                            ),
+                        ))
+                    }
+                    "actionbar" -> players.forEach { it.sendActionBar(text) }
+                    else -> players.forEach { it.sendMessage(text) }
                 }
                 true
             }
@@ -295,9 +299,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", it)
     }.getOrDefault(false)
 
-    private fun evaluateCondition(node: CommandNode, session: ExecutionSession): Boolean {
+    private fun evaluateCondition(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): Boolean {
         val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrDefault(ConditionKind.TARGET_EXISTS)
-        val target = resolveTarget(session.context, node.targetSpec, session)
+        val target = resolveTarget(context, node.targetSpec, session)
         return when (kind) {
             ConditionKind.TARGET_EXISTS -> target != null
             ConditionKind.ENTITY_STATE -> when (node.string("state")) {
@@ -316,7 +324,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.string("operator", "=="),
             )
             ConditionKind.BLOCK_STATE -> {
-                val location = parseLocation(node.string("position", "~ ~ ~"), session.origin)
+                val origin = context?.position?.let { resolvePosition(it, session, context) } ?: session.origin
+                val location = parseLocation(node.string("position", "~ ~ ~"), origin)
                 location.world == session.origin.world && location.block.type == Material.matchMaterial(node.string("block"))
             }
             ConditionKind.ITEM_POSSESSION -> {
@@ -371,15 +380,24 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (scope == VariableScope.WORLD) plugin.variables.remove(session.worldId, name)
         else session.temporaryVariables.remove(name) != null
 
-    private fun parseVariable(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue = when (type) {
-        VariableType.BOOLEAN -> WorldVariableValue(type, booleanValue = raw.toBooleanStrict())
-        VariableType.INTEGER -> WorldVariableValue(type, integerValue = raw.toLong())
-        VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = raw.toDouble())
-        VariableType.TEXT -> WorldVariableValue(type, textValue = raw)
-        VariableType.POSITION -> parseLocation(raw, session.origin).let {
+    private fun parseVariable(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue {
+        val resolved = when (raw) {
+            "\$current_iteration_value" -> session.currentIterationValue?.toString()
+                ?: error("current iteration value is unavailable")
+            "\$current_loop_count" -> session.currentLoopCount?.toString()
+                ?: error("current loop count is unavailable")
+            else -> raw
+        }
+        return when (type) {
+        VariableType.BOOLEAN -> WorldVariableValue(type, booleanValue = resolved.toBooleanStrict())
+        VariableType.INTEGER -> WorldVariableValue(type, integerValue = resolved.toLong())
+        VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = resolved.toDouble())
+        VariableType.TEXT -> WorldVariableValue(type, textValue = resolved)
+        VariableType.POSITION -> parseLocation(resolved, session.origin).let {
             WorldVariableValue(type, position = SavedPosition(it.x, it.y, it.z, it.yaw, it.pitch))
         }
-        VariableType.ENTITY -> WorldVariableValue(type, entityId = UUID.fromString(raw))
+        VariableType.ENTITY -> WorldVariableValue(type, entityId = UUID.fromString(resolved))
+        }
     }
 
     private fun compareVariable(value: WorldVariableValue?, raw: String, operator: String): Boolean {
@@ -405,22 +423,71 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun resolveTarget(context: ExecutionContextSpec?, nodeTarget: TargetSpec?, session: ExecutionSession): Entity? =
-        resolveTargetSpec(nodeTarget ?: context?.target ?: context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session)
+        resolveTargets(context, nodeTarget, session).firstOrNull()
 
-    private fun resolveTargetSpec(spec: TargetSpec, session: ExecutionSession): Entity? = when (spec.kind) {
-        TargetKind.EXECUTOR -> session.context?.executor?.let { resolveTargetSpec(it, session) } ?: session.actor
-        TargetKind.ACTIVATOR -> session.actor
-        TargetKind.INHERITED_TARGET -> session.context?.target?.takeUnless { it == spec }?.let { resolveTargetSpec(it, session) }
-        TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS ->
-            session.origin.world.players.filter { matches(it, spec, session) }.minByOrNull { it.location.distanceSquared(session.origin) }
-        TargetKind.RANDOM_PLAYER -> session.origin.world.players.filter { matches(it, spec, session) }.randomOrNull()
-        TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES ->
-            session.origin.world.entities.filter { matches(it, spec, session) }.minByOrNull { it.location.distanceSquared(session.origin) }
-        TargetKind.FIXED_ENTITY -> spec.fixedEntityId?.let(session.origin.world::getEntity)
+    private fun resolveTargets(
+        context: ExecutionContextSpec?,
+        nodeTarget: TargetSpec?,
+        session: ExecutionSession,
+    ): List<Entity> = resolveTargetSpecs(
+        nodeTarget ?: context?.target ?: context?.executor ?: TargetSpec(TargetKind.ACTIVATOR),
+        session,
+        context,
+    )
+
+    private fun resolveTargetSpec(
+        spec: TargetSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec? = session.context,
+    ): Entity? = resolveTargetSpecs(spec, session, context).firstOrNull()
+
+    private fun resolveTargetSpecs(
+        spec: TargetSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec? = session.context,
+    ): List<Entity> {
+        val candidates: List<Entity> = when (spec.kind) {
+            TargetKind.EXECUTOR -> listOfNotNull(
+                context?.executor
+                    ?.takeUnless { it.kind == TargetKind.EXECUTOR }
+                    ?.let { resolveTargetSpec(it, session, context) }
+                    ?: session.actor
+            )
+            TargetKind.ACTIVATOR -> listOfNotNull(session.actor)
+            TargetKind.INHERITED_TARGET -> listOfNotNull(
+                context?.target
+                    ?.takeUnless { it.kind == TargetKind.INHERITED_TARGET }
+                    ?.let { resolveTargetSpec(it, session, context) }
+            )
+            TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER ->
+                session.origin.world.players.filter { matches(it, spec, session, context) }
+            TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES ->
+                session.origin.world.entities.filter { matches(it, spec, session, context) }
+            TargetKind.FIXED_ENTITY -> listOfNotNull(spec.fixedEntityId?.let(session.origin.world::getEntity))
+        }
+        val sorted = when {
+            spec.kind == TargetKind.RANDOM_PLAYER || spec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
+                candidates.shuffled()
+            spec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
+                candidates.sortedByDescending { it.location.distanceSquared(session.origin) }
+            else -> candidates.sortedBy { it.location.distanceSquared(session.origin) }
+        }
+        val defaultLimit = when (spec.kind) {
+            TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY,
+            TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET, TargetKind.FIXED_ENTITY -> 1
+            else -> Int.MAX_VALUE
+        }
+        return sorted.take((spec.limit ?: defaultLimit).coerceAtLeast(1))
     }
 
-    private fun matches(entity: Entity, spec: TargetSpec, session: ExecutionSession): Boolean {
+    private fun matches(
+        entity: Entity,
+        spec: TargetSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): Boolean {
         if (spec.excludeActivator && entity == session.actor) return false
+        if (spec.excludeExecutor && entity == context?.executor?.let { resolveTargetSpec(it, session, context) }) return false
         if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
         if (spec.name != null && entity.name != spec.name) return false
         if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
@@ -441,7 +508,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
 
-    private fun resolvePosition(spec: PositionSpec, session: ExecutionSession): Location = when (spec.kind) {
+    private fun resolvePosition(
+        spec: PositionSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec? = session.context,
+    ): Location = when (spec.kind) {
         PositionKind.CAPTURED, PositionKind.COORDINATES -> Location(
             session.origin.world,
             spec.x ?: session.origin.x,
@@ -451,10 +522,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             spec.pitch ?: session.origin.pitch,
         )
         PositionKind.DISK -> session.origin.clone()
-        PositionKind.EXECUTOR -> resolveTargetSpec(session.context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session)?.location ?: session.origin
-        PositionKind.TARGET -> resolveTargetSpec(session.context?.target ?: TargetSpec(TargetKind.ACTIVATOR), session)?.location ?: session.origin
+        PositionKind.EXECUTOR -> resolveTargetSpec(context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location ?: session.origin
+        PositionKind.TARGET -> resolveTargetSpec(context?.target ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location ?: session.origin
         PositionKind.MYWORLD_SPAWN -> session.origin.world.spawnLocation
-        PositionKind.VARIABLE -> plugin.variables.get(session.worldId, spec.variable.orEmpty())?.position?.let {
+        PositionKind.TEMPORARY_VARIABLE -> session.temporaryVariables[spec.variable.orEmpty()]?.position?.let {
+            Location(session.origin.world, it.x, it.y, it.z, it.yaw, it.pitch)
+        } ?: session.origin
+        PositionKind.WORLD_VARIABLE -> plugin.variables.get(session.worldId, spec.variable.orEmpty())?.position?.let {
             Location(session.origin.world, it.x, it.y, it.z, it.yaw, it.pitch)
         } ?: session.origin
     }

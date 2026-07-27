@@ -15,19 +15,28 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.FacingKind
 import org.bukkit.Material
 import java.io.File
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.UUID
 
-class VanillaDatapackExporter(private val scripts: ScriptStore, private val outputRoot: File) {
+class VanillaDatapackExporter(
+    private val scripts: ScriptStore,
+    private val outputRoot: File,
+    private val maximumCommandCount: Int = 1024,
+) {
     fun export(root: DiskScript): ExportResult {
         val errors = mutableListOf<String>()
-        validate(root, errors)
+        validate(root, errors, Collections.newSetFromMap(IdentityHashMap()))
         if (errors.isNotEmpty()) return ExportResult.Failure(errors.distinct())
 
         val pack = outputRoot.resolve("kantan-${root.id}")
         val functions = pack.resolve("data/kantan/function").also(File::mkdirs)
         val loadTags = pack.resolve("data/minecraft/tags/function").also(File::mkdirs)
         pack.resolve("pack.mcmeta").writeText("""{"pack":{"pack_format":88,"description":"Kantan Commander export"}}""")
-        functions.resolve("load.mcfunction").writeText("scoreboard objectives add kc_result dummy\nscoreboard objectives add kc_vars dummy\n", Charsets.UTF_8)
+        functions.resolve("load.mcfunction").writeText(
+            "scoreboard objectives add kc_result dummy\nscoreboard objectives add kc_vars dummy\nscoreboard objectives add kc_runtime dummy\n",
+            Charsets.UTF_8,
+        )
         loadTags.resolve("load.json").writeText("""{"values":["kantan:load"]}""", Charsets.UTF_8)
         compile(root).forEach { (name, content) ->
             functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8)
@@ -35,7 +44,18 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         return ExportResult.Success(pack)
     }
 
-    private fun validate(script: DiskScript, errors: MutableList<String>) {
+    private fun validate(
+        script: DiskScript,
+        errors: MutableList<String>,
+        visited: MutableSet<CommandGraph>,
+    ) {
+        if (!visited.add(script.graph)) {
+            errors += "${script.id}: 別ディスクのコピー内容が循環参照しています"
+            return
+        }
+        me.awabi2048.kantancommander.data.GraphValidator.validate(script.graph).forEach {
+            errors += "${script.id}: $it"
+        }
         script.graph.nodes.values.forEach { node ->
             when (node.type) {
                 CommandType.GIVE_ITEM -> {
@@ -55,6 +75,8 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                 }
                 CommandType.DISK_CALL -> if (node.snapshot == null) {
                     errors += "${script.id}/${node.id}: コピー内容がありません"
+                } else {
+                    validate(script.copy(graph = node.snapshot!!), errors, visited)
                 }
                 CommandType.CONDITION -> validateCondition(script, node, errors)
                 CommandType.CONTEXT -> validateContext(script, node, contextFrom(node), errors)
@@ -63,6 +85,14 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                     if (runCatching { VariableType.valueOf(node.string("type")) }.getOrNull() !in
                         setOf(VariableType.BOOLEAN, VariableType.INTEGER)
                     ) errors += "${script.id}/${node.id}: variable type is not vanilla-exportable"
+                    if (node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")) {
+                        if (node.string("type") != VariableType.INTEGER.name) {
+                            errors += "${script.id}/${node.id}: ループ値は整数変数だけへ保存できます"
+                        }
+                        if (enclosingFor(script.graph, node.id) == null) {
+                            errors += "${script.id}/${node.id}: ループ値はfor本体内だけで参照できます"
+                        }
+                    }
                 }
                 CommandType.FOR_START -> {
                     listOf("start", "end", "step").forEach { field ->
@@ -76,10 +106,22 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                         errors += "${script.id}/${node.id}: forの増分に0は指定できません"
                     }
                 }
+                CommandType.WAIT -> {
+                    errors += "${script.id}/${node.id}: 待機は実行者と実行位置を保持できないため完全バニラ出力できません"
+                }
                 else -> Unit
             }
             node.contextOverride?.let { validateContext(script, node, it, errors) }
+            if (node.secondaryTargetSpec?.kind == TargetKind.FIXED_ENTITY) {
+                errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
+            }
+            listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach { spec ->
+                if (spec.excludeActivator || spec.excludeExecutor) {
+                    errors += "${script.id}/${node.id}: 実行者・起動者の動的除外は完全バニラ出力できません"
+                }
+            }
         }
+        visited.remove(script.graph)
     }
 
     private fun validateCondition(script: DiskScript, node: CommandNode, errors: MutableList<String>) {
@@ -97,16 +139,42 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         if (context.target?.kind == TargetKind.FIXED_ENTITY || context.executor?.kind == TargetKind.FIXED_ENTITY) {
             errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
         }
+        if (listOfNotNull(context.target, context.executor).any { it.excludeActivator || it.excludeExecutor }) {
+            errors += "${script.id}/${node.id}: 実行者・起動者の動的除外は完全バニラ出力できません"
+        }
+        if (context.position?.kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
+            errors += "${script.id}/${node.id}: 変数による実行位置は完全バニラ出力できません"
+        }
     }
 
     private fun compile(script: DiskScript): Map<String, String> =
-        linkedMapOf<String, String>().also { compileGraph(script.graph, script.id.toString(), it) }
+        linkedMapOf<String, String>().also { compileGraph(script.graph, script.id.toString(), it, resetBudget = true) }
 
-    private fun compileGraph(graph: CommandGraph, prefix: String, output: MutableMap<String, String>) {
-        output[prefix] = graph.entryNodeId?.let { "function kantan:${prefix}_$it\n" } ?: "# empty\n"
+    private fun compileGraph(
+        graph: CommandGraph,
+        prefix: String,
+        output: MutableMap<String, String>,
+        resetBudget: Boolean = false,
+    ) {
+        val entryCall = graph.entryNodeId?.let { "function kantan:${prefix}_$it\n" } ?: "# empty\n"
+        output[prefix] = if (resetBudget) {
+            buildString {
+                appendLine("scoreboard players set #executed kc_runtime 0")
+                temporaryNames(graph).forEach { appendLine("scoreboard players reset ${variableHolder(it, temporary = true)} kc_vars") }
+                append(entryCall)
+            }
+        } else entryCall
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
+            val emptyFor = node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId
+            if (!emptyFor) {
+                lines += "execute if score #executed kc_runtime matches ${maximumCommandCount.coerceAtLeast(1)}.. run return 0"
+                lines += "scoreboard players add #executed kc_runtime 1"
+            }
             when {
+                emptyFor -> node.pairedNodeId?.let(graph.nodes::get)?.next?.let {
+                    lines += "function kantan:${prefix}_$it"
+                }
                 node.type == CommandType.FOR_START -> {
                     val loop = loopName(node.id)
                     lines += assignLoopValue(loop, "value", node, "start")
@@ -138,13 +206,13 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                 }
                 node.type == CommandType.DISK_CALL -> {
                     val snapshotPrefix = "${prefix}_snapshot_${node.id}"
-                    node.snapshot?.let { compileGraph(it, snapshotPrefix, output) }
+                    node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
                     lines += storeResult(node, "function kantan:$snapshotPrefix")
                 }
                 node.type == CommandType.CONTEXT -> {
                     node.next?.let { lines += wrapContext(contextFrom(node), "function kantan:${prefix}_$it") }
                 }
-                else -> lower(node)?.let { command ->
+                else -> lower(node, graph)?.let { command ->
                     val contextual = node.contextOverride?.let { wrapContext(it, command) } ?: command
                     lines += storeResult(node, contextual)
                 }
@@ -172,19 +240,19 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         }
     }
 
-    private fun lower(node: CommandNode): String? = when (node.type) {
+    private fun lower(node: CommandNode, graph: CommandGraph): String? = when (node.type) {
         CommandType.TELEPORT -> "tp ${effectiveTarget(node)} ${node.string("destination", "~ ~ ~")}"
         CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.int("count", 1)}"
         CommandType.ENTITY_ACTION ->
             if (node.string("action") == "dismount") "ride ${effectiveTarget(node)} dismount"
-            else "ride ${effectiveTarget(node)} mount ${node.string("other")}"
+            else "ride ${effectiveTarget(node)} mount ${selector(node.secondaryTargetSpec ?: TargetSpec(TargetKind.NEAREST_ENTITY))}"
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
             "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text"))}\"}"
             "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
             else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text"))}\"}"
         }
         CommandType.DISK_CALL -> null
-        CommandType.VARIABLE -> lowerVariable(node)
+        CommandType.VARIABLE -> lowerVariable(node, graph)
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
     }
@@ -199,16 +267,32 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
             else -> "entity ${node.string("subject", "@s")}"
         }
         ConditionKind.VARIABLE_STATE ->
-            "score ${variableHolder(node.string("variable"))} kc_vars matches ${scoreRange(node.string("operator", ">="), node.int("value"))}"
+            "score ${variableHolder(
+                node.string("variable"),
+                node.string("variableScope", "TEMPORARY") != "WORLD",
+            )} kc_vars matches ${scoreRange(node.string("operator", ">="), node.int("value"))}"
         ConditionKind.BLOCK_STATE ->
             "block ${node.string("position", "~ ~ ~")} ${node.string("block", "minecraft:air")}"
         ConditionKind.ITEM_POSSESSION ->
             "items entity ${node.string("subject", "@s")} inventory.* ${node.string("item", "minecraft:air")}"
     }
 
-    private fun lowerVariable(node: CommandNode): String? {
-        val holder = variableHolder(node.string("name"))
-        return when (VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))) {
+    private fun lowerVariable(node: CommandNode, graph: CommandGraph): String? {
+        val holder = variableHolder(node.string("name"), node.string("scope", "TEMPORARY") != "WORLD")
+        val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
+        val special = node.string("value").takeIf { it in setOf("\$current_iteration_value", "\$current_loop_count") }
+        if (special != null) {
+            val loop = enclosingFor(graph, node.id) ?: return null
+            val source = "#${loopName(loop.id)}_${if (special == "\$current_loop_count") "count" else "value"}"
+            val operator = when (operation) {
+                VariableOperation.SET -> "="
+                VariableOperation.ADD -> "+="
+                VariableOperation.SUBTRACT -> "-="
+                else -> return null
+            }
+            return "scoreboard players operation $holder kc_vars $operator $source kc_vars"
+        }
+        return when (operation) {
             VariableOperation.SET -> "scoreboard players set $holder kc_vars ${node.int("value")}"
             VariableOperation.ADD -> "scoreboard players add $holder kc_vars ${node.int("value")}"
             VariableOperation.SUBTRACT -> "scoreboard players remove $holder kc_vars ${node.int("value")}"
@@ -217,15 +301,15 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         }
     }
 
-    private fun variableHolder(name: String) =
-        "#v_${name.lowercase().replace(Regex("[^a-z0-9_.-]"), "_").take(32)}"
+    private fun variableHolder(name: String, temporary: Boolean) =
+        "#${if (temporary) "t" else "w"}_${name.lowercase().replace(Regex("[^a-z0-9_.-]"), "_").take(30)}"
 
     private fun loopName(id: UUID) = "for_${id.toString().replace("-", "").take(12)}"
 
     private fun assignLoopValue(loop: String, target: String, node: CommandNode, field: String): String {
         val destination = "#${loop}_$target"
         return if (node.string("${field}Source", "FIXED") == "TEMPORARY") {
-            "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"))} kc_vars"
+            "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"), temporary = true)} kc_vars"
         } else {
             "scoreboard players set $destination kc_vars ${node.string("${field}Value", if (field == "step") "1" else "0")}"
         }
@@ -270,6 +354,28 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
         return visit(start)
     }
 
+    private fun temporaryNames(graph: CommandGraph): Set<String> = buildSet {
+        graph.nodes.values.forEach { node ->
+            if (node.type == CommandType.VARIABLE && node.string("scope", "TEMPORARY") != "WORLD") {
+                node.string("name").takeIf(String::isNotBlank)?.let(::add)
+            }
+            if (node.type == CommandType.CONDITION &&
+                node.string("kind") == ConditionKind.VARIABLE_STATE.name &&
+                node.string("variableScope", "TEMPORARY") != "WORLD"
+            ) {
+                node.string("variable").takeIf(String::isNotBlank)?.let(::add)
+            }
+            if (node.type == CommandType.FOR_START) {
+                listOf("start", "end", "step").forEach { field ->
+                    if (node.string("${field}Source", "FIXED") == "TEMPORARY") {
+                        node.string("${field}Value").takeIf(String::isNotBlank)?.let(::add)
+                    }
+                }
+            }
+            node.snapshot?.let { addAll(temporaryNames(it)) }
+        }
+    }
+
     private fun effectiveTarget(node: CommandNode): String =
         selector(node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.EXECUTOR))
 
@@ -283,6 +389,7 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
                     PositionKind.COORDINATES, PositionKind.CAPTURED -> add("positioned ${it.x} ${it.y} ${it.z}")
                     PositionKind.EXECUTOR -> add("at @s")
                     PositionKind.TARGET -> context.target?.let { target -> add("at ${selector(target)}") }
+                    PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE -> Unit
                     else -> Unit
                 }
             }
@@ -303,15 +410,36 @@ class VanillaDatapackExporter(private val scripts: ScriptStore, private val outp
 
     private fun scoreHolder(id: UUID) = "#n_${id.toString().replace("-", "")}"
 
-    private fun selector(spec: TargetSpec): String = when (spec.kind) {
-        TargetKind.EXECUTOR, TargetKind.ACTIVATOR -> "@s"
-        TargetKind.INHERITED_TARGET -> "@s"
-        TargetKind.NEAREST_PLAYER -> "@p"
-        TargetKind.NEARBY_PLAYERS -> "@a"
-        TargetKind.RANDOM_PLAYER -> "@r"
-        TargetKind.NEAREST_ENTITY -> "@e[limit=1,sort=nearest]"
-        TargetKind.NEARBY_ENTITIES -> "@e"
-        TargetKind.FIXED_ENTITY -> "@e[limit=0]"
+    private fun selector(spec: TargetSpec): String {
+        if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) return "@s"
+        if (spec.kind == TargetKind.FIXED_ENTITY) return "@e[limit=0]"
+        val base = when (spec.kind) {
+            TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER -> "@a"
+            else -> "@e"
+        }
+        val arguments = buildList {
+            spec.entityType?.let { add("type=$it") }
+            if (spec.minimumDistance != null || spec.maximumDistance != null) {
+                add("distance=${spec.minimumDistance ?: ""}..${spec.maximumDistance ?: ""}")
+            }
+            spec.gameMode?.let { add("gamemode=${it.lowercase()}") }
+            spec.tag?.let { add("tag=$it") }
+            spec.name?.let { add("name=$it") }
+            val limit = spec.limit ?: when (spec.kind) {
+                TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY -> 1
+                else -> null
+            }
+            limit?.let { add("limit=$it") }
+            val sort = when {
+                spec.kind == TargetKind.RANDOM_PLAYER -> "random"
+                spec.sort.name == "FURTHEST" -> "furthest"
+                spec.sort.name == "RANDOM" -> "random"
+                spec.kind in setOf(TargetKind.NEAREST_PLAYER, TargetKind.NEAREST_ENTITY) -> "nearest"
+                else -> null
+            }
+            sort?.let { add("sort=$it") }
+        }
+        return if (arguments.isEmpty()) base else "$base[${arguments.joinToString(",")}]"
     }
 
     private fun scoreRange(operator: String, value: Int): String = when (operator) {

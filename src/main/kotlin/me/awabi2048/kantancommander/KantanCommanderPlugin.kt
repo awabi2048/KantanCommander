@@ -118,7 +118,11 @@ class KantanCommanderPlugin : JavaPlugin() {
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"))
         executor = SequenceExecutor(this)
-        exporter = VanillaDatapackExporter(scripts, dataFolder.resolve("exports"))
+        exporter = VanillaDatapackExporter(
+            scripts,
+            dataFolder.resolve("exports"),
+            config.getInt("execution.maximum-command-count", 1024).coerceAtLeast(1),
+        )
 
         programListMenu = ProgramListMenu(this)
         CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan")

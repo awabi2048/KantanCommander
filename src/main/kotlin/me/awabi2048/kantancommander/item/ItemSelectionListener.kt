@@ -23,6 +23,16 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.DISK)
     }
 
+    fun beginMaterial(
+        player: Player,
+        scriptId: UUID,
+        nodeId: UUID,
+        returnRoute: MenuRoute,
+        parameter: String,
+    ) {
+        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.MATERIAL, parameter)
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
     fun onClick(event: InventoryClickEvent) {
         val player = event.whoClicked as? Player ?: return
@@ -43,6 +53,7 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
                 node.params["diskId"] = selectedId.toString()
                 node.snapshot = selectedScript.graph.deepCopy()
             }
+            SelectionKind.MATERIAL -> node.params[selection.parameter ?: return] = selected.type.key.toString()
         }
         plugin.scripts.save(script)
         selections.remove(player.uniqueId)
@@ -59,12 +70,13 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         selections.remove(player.uniqueId)
     }
 
-    private enum class SelectionKind { ITEM, DISK }
+    private enum class SelectionKind { ITEM, DISK, MATERIAL }
 
     private data class Selection(
         val scriptId: UUID,
         val nodeId: UUID,
         val returnRoute: MenuRoute,
         val kind: SelectionKind,
+        val parameter: String? = null,
     )
 }

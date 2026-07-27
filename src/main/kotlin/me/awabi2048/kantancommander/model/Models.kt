@@ -69,6 +69,7 @@ data class CommandNode(
     var falseNext: UUID? = null,
     var pairedNodeId: UUID? = null,
     var targetSpec: TargetSpec? = null,
+    var secondaryTargetSpec: TargetSpec? = null,
     var destinationSpec: PositionSpec? = null,
     var destinationTargetSpec: TargetSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
@@ -83,7 +84,7 @@ data class CommandNode(
 
 enum class TargetKind {
     EXECUTOR, ACTIVATOR, INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
-    RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY,
+    ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY,
 }
 
 enum class TargetSort { NEAREST, FURTHEST, RANDOM }
@@ -103,7 +104,10 @@ data class TargetSpec(
     val fixedEntityId: UUID? = null,
 )
 
-enum class PositionKind { CAPTURED, DISK, EXECUTOR, TARGET, MYWORLD_SPAWN, COORDINATES, VARIABLE }
+enum class PositionKind {
+    CAPTURED, DISK, EXECUTOR, TARGET, MYWORLD_SPAWN, COORDINATES,
+    TEMPORARY_VARIABLE, WORLD_VARIABLE,
+}
 data class PositionSpec(
     val kind: PositionKind,
     val x: Double? = null,

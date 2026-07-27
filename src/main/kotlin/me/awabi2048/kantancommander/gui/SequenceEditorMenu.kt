@@ -103,13 +103,11 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return MenuActionResult.Ignored
         val layout = GraphLayoutEngine.layout(script.graph)
         val origin = origin(context.route)
-        val delta = when {
-            context.click.isShiftClick && context.click.isLeftClick -> MapPoint(0, -1)
-            context.click.isShiftClick && context.click.isRightClick -> MapPoint(0, 1)
-            !context.click.isShiftClick && context.click.isLeftClick -> MapPoint(-1, 0)
-            !context.click.isShiftClick && context.click.isRightClick -> MapPoint(1, 0)
-            else -> return MenuActionResult.Ignored
-        }
+        val delta = ViewportNavigation.delta(
+            context.click.isLeftClick,
+            context.click.isRightClick,
+            context.click.isShiftClick,
+        ) ?: return MenuActionResult.Ignored
         if (!layout.canMove(origin, delta.x, delta.y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
             return MenuActionResult.Ignored
         }
@@ -119,7 +117,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun render(player: Player, route: MenuRoute): InventoryMenuView {
         val script = scriptId(route)?.let(plugin.scripts::load)
-            ?: return InventoryMenuView(45, KcGui.title("コマンドディスク"), emptyList())
+            ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.title")), emptyList())
         val origin = origin(route)
         val layout = GraphLayoutEngine.layout(script.graph)
         val elements = mutableListOf<MenuElement>()
@@ -127,7 +125,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         layout.viewport(origin, VIEWPORT_WIDTH, VIEWPORT_HEIGHT).forEach { (point, cell) ->
             val slot = (point.y + 1) * 9 + point.x
             val node = cell.nodeId?.let(script.graph.nodes::get)
-            elements += if (node != null) commandElement(player, slot, node) else pathElement(slot, cell)
+            elements += if (node != null) commandElement(player, slot, node) else pathElement(player, slot, cell)
         }
         addPoint(script.graph, layout)?.let { (point, sourceId) ->
             val local = MapPoint(point.x - origin.x, point.y - origin.y)
@@ -136,7 +134,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 elements.removeAll { it.slot == slot }
                 elements += MenuElement(
                     slot,
-                    KcGui.item(Material.YELLOW_WOOL, "コマンドを追加", GuiNameStyle.PRIMARY),
+                    KcGui.item(Material.YELLOW_WOOL, KcI18n.text(player, "gui.editor.add"), GuiNameStyle.PRIMARY),
                     GuiElementRole.ACTION,
                     "add",
                     mapOf(
@@ -151,23 +149,29 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         elements += action(
             36,
             if (script.activation == me.awabi2048.kantancommander.model.ActivationMode.NEEDS_REDSTONE) Material.LEVER else Material.REDSTONE_TORCH,
-            "起動条件",
+            KcI18n.text(player, "gui.editor.activation"),
             "activation",
-            listOf(GuiLoreLine.Data("現在", KcI18n.text(player, script.activation.key), "§f")),
+            listOf(GuiLoreLine.Data(KcI18n.text(player, "gui.editor.current"), KcI18n.text(player, script.activation.key), "§f")),
         )
         elements += action(
             37,
             Material.CLOCK,
-            "タイマー設定",
+            KcI18n.text(player, "gui.editor.timer"),
             "timer",
-            listOf(GuiLoreLine.Data("現在", if (script.timer.enabled) "${script.timer.intervalUnits}単位" else "オフ", "§f")),
+            listOf(GuiLoreLine.Data(
+                KcI18n.text(player, "gui.editor.current"),
+                if (script.timer.enabled) {
+                    KcI18n.text(player, "gui.editor.interval_units", mapOf("value" to script.timer.intervalUnits))
+                } else KcI18n.text(player, "gui.editor.disabled"),
+                "§f",
+            )),
         )
-        elements += action(38, Material.COMPASS, "中心に合わせる", "center")
+        elements += action(38, Material.COMPASS, KcI18n.text(player, "gui.editor.center"), "center")
         elements += MenuElement(
             39,
             KcGui.item(
                 Material.MAP,
-                "全体情報",
+                KcI18n.text(player, "gui.editor.info"),
                 GuiNameStyle.PRIMARY,
                 listOf(GuiLoreLine.Text(graphDiagram(layout, origin))),
             ),
@@ -195,16 +199,16 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         elements += action(
             44,
             Material.RECOVERY_COMPASS,
-            "表示位置を移動",
+            KcI18n.text(player, "gui.editor.navigate"),
             "navigate",
             listOf(
-                KcGui.action(player, "lore.click.left", "左へ移動"),
-                KcGui.action(player, "lore.click.right", "右へ移動"),
-                KcGui.action(player, "lore.click.shift_left", "上へ移動"),
-                KcGui.action(player, "lore.click.shift_right", "下へ移動"),
+                KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.move_left")),
+                KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.editor.move_right")),
+                KcGui.action(player, "lore.click.shift_left", KcI18n.text(player, "gui.editor.move_up")),
+                KcGui.action(player, "lore.click.shift_right", KcI18n.text(player, "gui.editor.move_down")),
             ),
         )
-        return InventoryMenuView(45, KcGui.title("コマンドディスク"), elements)
+        return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.title")), elements)
     }
 
     private fun commandElement(player: Player, slot: Int, node: CommandNode) = MenuElement(
@@ -213,14 +217,14 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             node.type.icon,
             KcI18n.text(player, node.type.key),
             GuiNameStyle.DEFAULT,
-            listOf(GuiLoreLine.Data("設定", node.summary(), "§f")),
+            listOf(GuiLoreLine.Data(KcI18n.text(player, "gui.editor.setting"), node.summary(), "§f")),
         ),
         GuiElementRole.CONTENT,
         "command",
         mapOf("nodeId" to node.id.toString()),
     )
 
-    private fun pathElement(slot: Int, cell: MapCell): MenuElement {
+    private fun pathElement(player: Player, slot: Int, cell: MapCell): MenuElement {
         if (cell.kind == MapCellKind.ADD || (cell.kind != MapCellKind.LOOP_RETURN_PATH && cell.edge != null)) {
             return MenuElement(
                 slot,
@@ -230,7 +234,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         cell.kind == MapCellKind.BRANCH_PATH -> Material.CYAN_STAINED_GLASS_PANE
                         else -> Material.GRAY_STAINED_GLASS_PANE
                     },
-                    if (cell.kind == MapCellKind.ADD) "コマンドを追加" else "コマンドを挿入",
+                    KcI18n.text(player, if (cell.kind == MapCellKind.ADD) "gui.editor.add" else "gui.editor.insert"),
                     GuiNameStyle.PRIMARY,
                 ),
                 GuiElementRole.ACTION,
@@ -375,5 +379,15 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
         private fun scriptId(route: MenuRoute) =
             route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+    }
+}
+
+object ViewportNavigation {
+    fun delta(left: Boolean, right: Boolean, shift: Boolean): MapPoint? = when {
+        shift && left && !right -> MapPoint(0, -1)
+        shift && right && !left -> MapPoint(0, 1)
+        !shift && left && !right -> MapPoint(-1, 0)
+        !shift && right && !left -> MapPoint(1, 0)
+        else -> null
     }
 }

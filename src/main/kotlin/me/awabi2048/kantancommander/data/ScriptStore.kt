@@ -1,15 +1,14 @@
 package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
-import me.awabi2048.kantancommander.model.CommandGraph
-import me.awabi2048.kantancommander.model.CommandNode
-import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -61,10 +60,7 @@ class ScriptStore(
 
     fun save(script: DiskScript) {
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
-        val validation = GraphValidator.validate(script.graph, limits).toMutableList()
-        val layout = GraphLayoutEngine.layout(script.graph)
-        if (layout.width > limits.maximumMapWidth) validation += "描画幅が上限 ${limits.maximumMapWidth} を超えています"
-        if (layout.height > limits.maximumMapHeight) validation += "描画高さが上限 ${limits.maximumMapHeight} を超えています"
+        val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
         atomicWrite(file(script.id), gson.toJson(script))
     }
@@ -92,7 +88,7 @@ class ScriptStore(
     private fun read(file: File): DiskScript? = try {
         gson.fromJson(file.readText(Charsets.UTF_8), DiskScript::class.java)
             ?.takeIf { it.formatVersion == STRUCTURED_FORMAT_VERSION }
-            ?.also { require(GraphValidator.validate(it.graph, limits).isEmpty()) }
+            ?.also { require(validateRecursively(it.graph).isEmpty()) }
     } catch (error: Exception) {
         quarantine(file, error)
         null
@@ -104,58 +100,31 @@ class ScriptStore(
         runCatching { Files.move(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
         logger.log(Level.WARNING, "構造化コマンドディスクを隔離しました: ${file.absolutePath}", error)
     }
-}
 
-private object LegacyGraphValidator {
-    fun validate(graph: CommandGraph): List<String> {
+    private fun validateRecursively(root: me.awabi2048.kantancommander.model.CommandGraph): List<String> {
         val errors = mutableListOf<String>()
-        val entry = graph.entryNodeId
-        if (entry == null) {
-            if (graph.nodes.isNotEmpty()) errors += "entryNodeIdがありません"
-            return errors
+        val visited = Collections.newSetFromMap(
+            IdentityHashMap<me.awabi2048.kantancommander.model.CommandGraph, Boolean>()
+        )
+        fun validate(graph: me.awabi2048.kantancommander.model.CommandGraph, path: String) {
+            if (!visited.add(graph)) {
+                errors += "$path: 別ディスクのコピー内容が循環参照しています"
+                return
+            }
+            GraphValidator.validate(graph, limits).forEach { errors += "$path: $it" }
+            val layout = GraphLayoutEngine.layout(graph)
+            if (layout.width > limits.maximumMapWidth) {
+                errors += "$path: 描画幅が上限 ${limits.maximumMapWidth} を超えています"
+            }
+            if (layout.height > limits.maximumMapHeight) {
+                errors += "$path: 描画高さが上限 ${limits.maximumMapHeight} を超えています"
+            }
+            graph.nodes.values.forEach { node ->
+                node.snapshot?.let { validate(it, "$path/${node.id}") }
+            }
+            visited.remove(graph)
         }
-        if (entry !in graph.nodes) errors += "開始ノードが存在しません"
-        graph.nodes.values.forEach { node ->
-            node.outgoing().forEach { target ->
-                if (target !in graph.nodes) errors += "${node.id}から存在しないノードを参照しています"
-            }
-            if (node.type == CommandType.CONDITION) {
-                if (node.trueNext == null || node.falseNext == null || node.pairedNodeId == null) {
-                    errors += "条件分岐${node.id}の枝または合流が未設定です"
-                }
-                val merge = node.pairedNodeId?.let(graph.nodes::get)
-                if (merge?.type != CommandType.MERGE || merge.pairedNodeId != node.id) {
-                    errors += "条件分岐${node.id}の対応合流が不正です"
-                }
-            }
-            if (node.type == CommandType.MERGE) {
-                val condition = node.pairedNodeId?.let(graph.nodes::get)
-                if (condition?.type != CommandType.CONDITION || condition.pairedNodeId != node.id) {
-                    errors += "合流${node.id}の対応条件が不正です"
-                }
-            }
-        }
-        if (entry in graph.nodes) {
-            val visited = mutableSetOf<UUID>()
-            val active = mutableSetOf<UUID>()
-            fun visit(id: UUID) {
-                if (!active.add(id)) {
-                    errors += "循環があります: $id"
-                    return
-                }
-                if (!visited.add(id)) {
-                    active.remove(id)
-                    return
-                }
-                graph.nodes[id]?.outgoing()?.forEach(::visit)
-                active.remove(id)
-            }
-            visit(entry)
-            (graph.nodes.keys - visited).forEach { errors += "到達不能ノードがあります: $it" }
-        }
-        return errors.distinct()
+        validate(root, "root")
+        return errors
     }
-
-    private fun CommandNode.outgoing(): List<UUID> =
-        if (type == CommandType.CONDITION) listOfNotNull(trueNext, falseNext) else listOfNotNull(next)
 }
