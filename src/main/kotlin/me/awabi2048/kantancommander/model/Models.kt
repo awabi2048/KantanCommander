@@ -77,6 +77,7 @@ data class CommandNode(
     fun string(key: String, default: String = "") = params[key]?.takeIf(String::isNotBlank) ?: default
     fun int(key: String, default: Int = 0) = params[key]?.toIntOrNull() ?: default
     fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
+    fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
     fun summary(): String = type.summary(this)
 }
 
@@ -139,6 +140,7 @@ enum class ConditionKind(val key: String) {
 }
 
 enum class VariableType { BOOLEAN, INTEGER, DECIMAL, TEXT, POSITION, ENTITY }
+enum class VariableScope { TEMPORARY, WORLD }
 enum class VariableOperation { SET, ADD, SUBTRACT, TOGGLE, STORE_POSITION, STORE_TARGET, CLEAR }
 
 data class WorldVariableValue(
@@ -177,6 +179,7 @@ enum class CommandType(
         "subject" to "@s",
         "state" to "sneaking",
         "variable" to "",
+        "variableScope" to VariableScope.TEMPORARY.name,
         "operator" to ">=",
         "value" to "0",
         "position" to "~ ~ ~",
@@ -189,7 +192,11 @@ enum class CommandType(
     )),
     DISK_CALL("command.disk_call", Material.MUSIC_DISC_13, mapOf("diskId" to "")),
     VARIABLE("command.variable", Material.REDSTONE, mapOf(
-        "name" to "", "type" to VariableType.BOOLEAN.name, "operation" to VariableOperation.SET.name, "value" to "false"
+        "name" to "",
+        "scope" to VariableScope.TEMPORARY.name,
+        "type" to VariableType.BOOLEAN.name,
+        "operation" to VariableOperation.SET.name,
+        "value" to "false",
     )),
     MERGE("command.merge", Material.HOPPER, emptyMap()),
     FOR_START("command.for_start", Material.REPEATER, mapOf(

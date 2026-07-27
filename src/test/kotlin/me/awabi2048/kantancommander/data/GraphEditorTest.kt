@@ -46,7 +46,7 @@ class GraphEditorTest {
         val end = start.pairedNodeId?.let(graph.nodes::get)
 
         assertEquals(CommandType.FOR_END, end?.type)
-        assertEquals(end?.id, start.next)
+        assertEquals(end?.id, start.trueNext)
         assertEquals(start.id, end?.pairedNodeId)
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }

@@ -69,5 +69,9 @@ object GraphValidator {
     }
 
     private fun CommandNode.outgoing(): List<UUID> =
-        if (type == CommandType.CONDITION) listOfNotNull(trueNext, falseNext) else listOfNotNull(next)
+        when (type) {
+            CommandType.CONDITION -> listOfNotNull(trueNext, falseNext)
+            CommandType.FOR_START -> listOfNotNull(trueNext, pairedNodeId)
+            else -> listOfNotNull(next)
+        }
 }

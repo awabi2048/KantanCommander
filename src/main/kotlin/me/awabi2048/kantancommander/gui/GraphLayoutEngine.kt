@@ -78,6 +78,14 @@ object GraphLayoutEngine {
                     if (currentId != null) putPath(cursorX - 1, y)
                     continue
                 }
+                if (node.type == CommandType.FOR_START && node.pairedNodeId != null) {
+                    val loop = renderFor(node, cursorX, y)
+                    cursorX = loop.nextX
+                    maximumY = maxOf(maximumY, loop.maxY)
+                    currentId = graph.nodes[node.pairedNodeId]?.next
+                    if (currentId != null) putPath(cursorX - 1, y)
+                    continue
+                }
                 putNode(cursorX, y, node)
                 maximumY = maxOf(maximumY, y)
                 val next = node.next
@@ -115,6 +123,30 @@ object GraphLayoutEngine {
             val merge = graph.nodes[mergeId] ?: return Segment(mergeX, falseSegment.maxY, condition.id)
             putNode(mergeX, y, merge)
             return Segment(mergeX + 2, maxOf(falseSegment.maxY, falseY), merge.id)
+        }
+
+        private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
+            putNode(x, y, start)
+            val endId = start.pairedNodeId ?: return Segment(x + 2, y, start.id)
+            putPath(x + 1, y)
+            val bodyStart = start.trueNext
+            val body = if (bodyStart != null && bodyStart != endId) {
+                renderSequence(bodyStart, endId, x + 2, y)
+            } else {
+                Segment(x + 2, y, null)
+            }
+            val endX = body.nextX
+            fillHorizontal(body.nextX - 1, endX - 1, y, MapCellKind.PATH)
+            val end = graph.nodes[endId] ?: return Segment(endX, body.maxY, start.id)
+            putNode(endX, y, end)
+
+            val returnY = body.maxY + 2
+            for (verticalY in y + 1..returnY) {
+                putPath(endX, verticalY, MapCellKind.LOOP_RETURN_PATH)
+                putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH)
+            }
+            fillHorizontal(x, endX, returnY, MapCellKind.LOOP_RETURN_PATH)
+            return Segment(endX + 2, returnY, end.id)
         }
 
         private fun fillHorizontal(from: Int, to: Int, y: Int, kind: MapCellKind) {

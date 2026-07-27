@@ -58,6 +58,24 @@ object GraphEditor {
         return merge
     }
 
+    fun appendToForBody(graph: CommandGraph, forStartId: UUID, type: CommandType): CommandNode {
+        val start = graph.nodes[forStartId]
+            ?.takeIf { it.type == CommandType.FOR_START }
+            ?: error("対象のfor開始が存在しません")
+        val endId = start.pairedNodeId ?: error("対応するfor終了がありません")
+        val inserted = createBundle(graph, type)
+        val body = start.trueNext
+        if (body == null || body == endId) {
+            start.trueNext = inserted.id
+            connectBundleTail(graph, inserted, endId)
+        } else {
+            val tail = findOpenTail(graph, body, preferTrue = true, stop = endId)
+            connect(tail, inserted.id, preferTrue = true)
+            connectBundleTail(graph, inserted, endId)
+        }
+        return inserted
+    }
+
     private fun createBundle(graph: CommandGraph, type: CommandType): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) {
             "$type は単独追加できません"
@@ -68,7 +86,7 @@ object GraphEditor {
             val end = CommandType.FOR_END.newNode()
             node.pairedNodeId = end.id
             end.pairedNodeId = node.id
-            node.next = end.id
+            node.trueNext = end.id
             graph.nodes[end.id] = end
         }
         return node
@@ -122,6 +140,7 @@ object GraphEditor {
             val current = graph.nodes[currentId] ?: error("存在しないノードです: $currentId")
             val next = when (current.type) {
                 CommandType.CONDITION -> if (preferTrue) current.trueNext else current.falseNext
+                CommandType.FOR_START -> current.pairedNodeId
                 else -> current.next
             }
             if (next == null || next == stop) return current

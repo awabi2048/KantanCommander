@@ -65,4 +65,17 @@ class GraphLayoutEngineTest {
             layout.viewport(MapPoint(1, 0), 9, 5)[MapPoint(2, 1)]?.nodeId,
         )
     }
+
+    @Test
+    fun `for start body end and return path are rendered as one structure`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val body = GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+        val end = start.pairedNodeId?.let(graph.nodes::get)!!
+        val layout = GraphLayoutEngine.layout(graph)
+
+        assertEquals(layout.nodePoints[start.id]?.y, layout.nodePoints[body.id]?.y)
+        assertEquals(layout.nodePoints[start.id]?.y, layout.nodePoints[end.id]?.y)
+        assertTrue(layout.cells.values.any { it.kind == MapCellKind.LOOP_RETURN_PATH })
+    }
 }

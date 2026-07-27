@@ -9,6 +9,7 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.SavedPosition
 import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.TargetKind
@@ -78,6 +79,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ) {
         if (nodeId == null) return done(true)
         val node = graph.nodes[nodeId] ?: return stop(session, script, nodeId, "missing_node", done)
+        if (node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId) {
+            val after = node.pairedNodeId?.let(graph.nodes::get)?.next
+            return runNode(script, graph, after, session, depth, done)
+        }
         if (session.executed >= session.budget) return stop(session, script, nodeId, "command_limit", done)
         session.executed++
         plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
@@ -93,7 +98,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.int("ticks", 20).coerceAtLeast(1).toLong(),
             )
             CommandType.CONDITION -> {
-                val result = evaluateCondition(node, session)
+                val rawResult = evaluateCondition(node, session)
+                val result = if (node.boolean("inverted")) !rawResult else rawResult
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, true)
             }
@@ -104,9 +110,109 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.DISK_CALL -> runDiskCall(node, session, depth) { success -> next(node.next, success) }
             CommandType.VARIABLE -> next(node.next, executeVariable(node, session))
             CommandType.MERGE -> next(node.next, true)
+            CommandType.FOR_START -> beginFor(script, graph, node, session, depth, done)
+            CommandType.FOR_END -> finishForIteration(script, graph, node, session, depth, done)
+            CommandType.BREAK -> breakFor(script, graph, node, session, depth, done)
+            CommandType.CONTINUE -> continueFor(script, graph, node, session, depth, done)
             else -> next(node.next, executeImmediate(node, session))
         }
     }
+
+    private fun beginFor(
+        script: DiskScript,
+        graph: CommandGraph,
+        node: CommandNode,
+        session: ExecutionSession,
+        depth: Int,
+        done: (Boolean) -> Unit,
+    ) {
+        val endId = node.pairedNodeId ?: return stop(session, script, node.id, "missing_for_end", done)
+        val start = resolveForValue(node, "start", session) ?: return stop(session, script, node.id, "invalid_for_start", done)
+        val end = resolveForValue(node, "end", session) ?: return stop(session, script, node.id, "invalid_for_end", done)
+        val step = resolveForValue(node, "step", session) ?: return stop(session, script, node.id, "invalid_for_step", done)
+        if (step == 0L) return stop(session, script, node.id, "zero_for_step", done)
+        if (!withinForRange(start, end, step)) {
+            return runNode(script, graph, graph.nodes[endId]?.next, session, depth, done)
+        }
+        session.loops += LoopFrame(node.id, endId, start, end, step, 1, session.context)
+        session.currentIterationValue = start
+        session.currentLoopCount = 1
+        runNode(script, graph, node.trueNext, session, depth, done)
+    }
+
+    private fun finishForIteration(
+        script: DiskScript,
+        graph: CommandGraph,
+        node: CommandNode,
+        session: ExecutionSession,
+        depth: Int,
+        done: (Boolean) -> Unit,
+    ) {
+        val frame = session.loops.lastOrNull { it.endId == node.id }
+            ?: return stop(session, script, node.id, "for_frame_missing", done)
+        val nextValue = try {
+            Math.addExact(frame.value, frame.step)
+        } catch (_: ArithmeticException) {
+            return stop(session, script, node.id, "for_overflow", done)
+        }
+        session.context = frame.startContext
+        if (withinForRange(nextValue, frame.end, frame.step)) {
+            frame.value = nextValue
+            frame.count++
+            session.currentIterationValue = frame.value
+            session.currentLoopCount = frame.count
+            val start = graph.nodes[frame.startId] ?: return stop(session, script, node.id, "for_start_missing", done)
+            runNode(script, graph, start.trueNext, session, depth, done)
+        } else {
+            session.loops.remove(frame)
+            session.currentIterationValue = session.loops.lastOrNull()?.value
+            session.currentLoopCount = session.loops.lastOrNull()?.count
+            runNode(script, graph, node.next, session, depth, done)
+        }
+    }
+
+    private fun breakFor(
+        script: DiskScript,
+        graph: CommandGraph,
+        node: CommandNode,
+        session: ExecutionSession,
+        depth: Int,
+        done: (Boolean) -> Unit,
+    ) {
+        val frame = session.loops.removeLastOrNull()
+            ?: return stop(session, script, node.id, "break_outside_for", done)
+        session.context = frame.startContext
+        session.currentIterationValue = session.loops.lastOrNull()?.value
+        session.currentLoopCount = session.loops.lastOrNull()?.count
+        runNode(script, graph, graph.nodes[frame.endId]?.next, session, depth, done)
+    }
+
+    private fun continueFor(
+        script: DiskScript,
+        graph: CommandGraph,
+        node: CommandNode,
+        session: ExecutionSession,
+        depth: Int,
+        done: (Boolean) -> Unit,
+    ) {
+        val frame = session.loops.lastOrNull()
+            ?: return stop(session, script, node.id, "continue_outside_for", done)
+        session.context = frame.startContext
+        runNode(script, graph, frame.endId, session, depth, done)
+    }
+
+    private fun resolveForValue(node: CommandNode, prefix: String, session: ExecutionSession): Long? {
+        val source = node.string("${prefix}Source", "FIXED")
+        val value = node.string("${prefix}Value", if (prefix == "step") "1" else "0")
+        return when (source) {
+            "FIXED" -> value.toLongOrNull()
+            "TEMPORARY" -> session.temporaryVariables[value]?.integerValue
+            else -> null
+        }
+    }
+
+    private fun withinForRange(value: Long, end: Long, step: Long) =
+        if (step > 0) value <= end else value >= end
 
     private fun runDiskCall(node: CommandNode, session: ExecutionSession, depth: Int, done: (Boolean) -> Unit) {
         if (depth >= session.maxDepth) {
@@ -192,7 +298,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 else -> false
             }
             ConditionKind.VARIABLE_STATE -> compareVariable(
-                plugin.variables.get(session.worldId, node.string("variable")),
+                getVariable(
+                    session,
+                    node.string("variable"),
+                    runCatching { VariableScope.valueOf(node.string("variableScope", VariableScope.TEMPORARY.name)) }
+                        .getOrDefault(VariableScope.TEMPORARY),
+                ),
                 node.string("value"),
                 node.string("operator", "=="),
             )
@@ -211,8 +322,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun executeVariable(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
         val name = node.string("name")
         val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
-        if (operation == VariableOperation.CLEAR) return plugin.variables.remove(session.worldId, name)
-        val current = plugin.variables.get(session.worldId, name)
+        val scope = VariableScope.valueOf(node.string("scope", VariableScope.TEMPORARY.name))
+        if (operation == VariableOperation.CLEAR) return removeVariable(session, name, scope)
+        val current = getVariable(session, name, scope)
         val type = VariableType.valueOf(node.string("type", current?.type?.name ?: VariableType.BOOLEAN.name))
         val value = when (operation) {
             VariableOperation.SET -> parseVariable(type, node.string("value"), session)
@@ -235,9 +347,21 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
             VariableOperation.CLEAR -> return false
         }
-        plugin.variables.set(session.worldId, name, value)
+        setVariable(session, name, scope, value)
         true
     }.getOrDefault(false)
+
+    private fun getVariable(session: ExecutionSession, name: String, scope: VariableScope): WorldVariableValue? =
+        if (scope == VariableScope.WORLD) plugin.variables.get(session.worldId, name) else session.temporaryVariables[name]
+
+    private fun setVariable(session: ExecutionSession, name: String, scope: VariableScope, value: WorldVariableValue) {
+        if (scope == VariableScope.WORLD) plugin.variables.set(session.worldId, name, value)
+        else session.temporaryVariables[name] = value
+    }
+
+    private fun removeVariable(session: ExecutionSession, name: String, scope: VariableScope): Boolean =
+        if (scope == VariableScope.WORLD) plugin.variables.remove(session.worldId, name)
+        else session.temporaryVariables.remove(name) != null
 
     private fun parseVariable(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue = when (type) {
         VariableType.BOOLEAN -> WorldVariableValue(type, booleanValue = raw.toBooleanStrict())
@@ -364,5 +488,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var executed: Int = 0,
         var context: ExecutionContextSpec? = null,
         val results: MutableMap<UUID, Boolean> = mutableMapOf(),
+        val temporaryVariables: MutableMap<String, WorldVariableValue> = mutableMapOf(),
+        val loops: MutableList<LoopFrame> = mutableListOf(),
+        var currentIterationValue: Long? = null,
+        var currentLoopCount: Long? = null,
+    )
+
+    private data class LoopFrame(
+        val startId: UUID,
+        val endId: UUID,
+        var value: Long,
+        val end: Long,
+        val step: Long,
+        var count: Long,
+        val startContext: ExecutionContextSpec?,
     )
 }
