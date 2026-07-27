@@ -94,7 +94,16 @@ class KantanCommanderPlugin : JavaPlugin() {
         reloadConfig()
 
         KcI18n.init(this)
-        scripts = ScriptStore(dataFolder.resolve("structured-disks"), logger)
+        scripts = ScriptStore(
+            dataFolder.resolve("structured-disks"),
+            logger,
+            me.awabi2048.kantancommander.data.GraphLimits(
+                maximumNodeCount = config.getInt("graph.maximum-node-count", 512).coerceAtLeast(1),
+                maximumMapWidth = config.getInt("graph.maximum-map-width", 1024).coerceAtLeast(9),
+                maximumMapHeight = config.getInt("graph.maximum-map-height", 256).coerceAtLeast(3),
+                maximumBranchDepth = config.getInt("graph.maximum-branch-depth", 32).coerceAtLeast(1),
+            ),
+        )
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"))

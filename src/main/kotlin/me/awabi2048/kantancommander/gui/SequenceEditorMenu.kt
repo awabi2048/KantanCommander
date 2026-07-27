@@ -221,10 +221,18 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     )
 
     private fun pathElement(slot: Int, cell: MapCell): MenuElement {
-        if (cell.kind == MapCellKind.ADD) {
+        if (cell.kind == MapCellKind.ADD || (cell.kind != MapCellKind.LOOP_RETURN_PATH && cell.edge != null)) {
             return MenuElement(
                 slot,
-                KcGui.item(Material.YELLOW_WOOL, "コマンドを追加", GuiNameStyle.PRIMARY),
+                KcGui.item(
+                    when {
+                        cell.kind == MapCellKind.ADD -> Material.YELLOW_WOOL
+                        cell.kind == MapCellKind.BRANCH_PATH -> Material.CYAN_STAINED_GLASS_PANE
+                        else -> Material.GRAY_STAINED_GLASS_PANE
+                    },
+                    if (cell.kind == MapCellKind.ADD) "コマンドを追加" else "コマンドを挿入",
+                    GuiNameStyle.PRIMARY,
+                ),
                 GuiElementRole.ACTION,
                 "add",
                 mapOf(

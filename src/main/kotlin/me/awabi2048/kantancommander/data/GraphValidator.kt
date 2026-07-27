@@ -6,8 +6,11 @@ import me.awabi2048.kantancommander.model.CommandType
 import java.util.UUID
 
 object GraphValidator {
-    fun validate(graph: CommandGraph): List<String> {
+    fun validate(graph: CommandGraph, limits: GraphLimits = GraphLimits()): List<String> {
         val errors = mutableListOf<String>()
+        if (graph.nodes.size > limits.maximumNodeCount) {
+            errors += "ノード数が上限 ${limits.maximumNodeCount} を超えています"
+        }
         val entry = graph.entryNodeId
         if (entry == null) {
             if (graph.nodes.isNotEmpty()) errors += "開始ノードがありません"
@@ -31,7 +34,11 @@ object GraphValidator {
         if (entry in graph.nodes) {
             val visited = mutableSetOf<UUID>()
             val active = mutableSetOf<UUID>()
-            fun visit(id: UUID) {
+            fun visit(id: UUID, depth: Int) {
+                if (depth > limits.maximumBranchDepth) {
+                    errors += "構造の深さが上限 ${limits.maximumBranchDepth} を超えています"
+                    return
+                }
                 if (!active.add(id)) {
                     errors += "実行グラフに循環があります: $id"
                     return
@@ -40,10 +47,16 @@ object GraphValidator {
                     active.remove(id)
                     return
                 }
-                graph.nodes[id]?.outgoing()?.forEach(::visit)
+                val node = graph.nodes[id]
+                val nextDepth = when (node?.type) {
+                    CommandType.CONDITION, CommandType.FOR_START -> depth + 1
+                    CommandType.MERGE, CommandType.FOR_END -> (depth - 1).coerceAtLeast(0)
+                    else -> depth
+                }
+                node?.outgoing()?.forEach { visit(it, nextDepth) }
                 active.remove(id)
             }
-            visit(entry)
+            visit(entry, 0)
             (graph.nodes.keys - visited).forEach { errors += "到達不能ノードがあります: $it" }
         }
         return errors.distinct()
@@ -72,3 +85,10 @@ object GraphValidator {
             else -> listOfNotNull(next)
         }
 }
+
+data class GraphLimits(
+    val maximumNodeCount: Int = 512,
+    val maximumMapWidth: Int = 1024,
+    val maximumMapHeight: Int = 256,
+    val maximumBranchDepth: Int = 32,
+)

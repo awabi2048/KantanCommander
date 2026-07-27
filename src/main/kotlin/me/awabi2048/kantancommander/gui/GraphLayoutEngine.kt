@@ -102,7 +102,7 @@ object GraphLayoutEngine {
                 maximumY = maxOf(maximumY, y)
                 val next = node.next
                 if (next == null || next == stop) return Segment(cursorX + 2, maximumY, node.id)
-                putPath(cursorX + 1, y)
+                putPath(cursorX + 1, y, sourceId = node.id, edge = GraphEditor.Edge.NEXT)
                 cursorX += 2
                 currentId = next
             }
@@ -115,13 +115,15 @@ object GraphLayoutEngine {
 
             val trueStart = condition.trueNext
             val trueSegment = if (trueStart != null && trueStart != mergeId) {
-                putPath(x + 1, y, MapCellKind.BRANCH_PATH)
+                putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
                 renderSequence(trueStart, mergeId, x + 2, y)
             } else Segment(x + 2, y, null)
 
             val falseY = trueSegment.maxY + 2
-            putPath(x + 1, y, MapCellKind.BRANCH_PATH)
-            for (verticalY in y + 1..falseY) putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH)
+            putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
+            for (verticalY in y + 1..falseY) {
+                putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
+            }
             val falseStart = condition.falseNext
             val falseSegment = if (falseStart != null && falseStart != mergeId) {
                 renderSequence(falseStart, mergeId, x + 2, falseY)
@@ -139,7 +141,7 @@ object GraphLayoutEngine {
 
         private fun renderOpenCondition(condition: CommandNode, x: Int, y: Int): Segment {
             putNode(x, y, condition)
-            putPath(x + 1, y, MapCellKind.BRANCH_PATH)
+            putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
             val trueStart = condition.trueNext
             val trueSegment = if (trueStart != null) renderSequence(trueStart, null, x + 2, y)
             else {
@@ -150,7 +152,9 @@ object GraphLayoutEngine {
                 putAdd(trueSegment.nextX, y, trueSegment.tail, GraphEditor.Edge.NEXT, condition.id)
             }
             val falseY = trueSegment.maxY + 2
-            for (verticalY in y..falseY) putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH)
+            for (verticalY in y..falseY) {
+                putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
+            }
             val falseStart = condition.falseNext
             val falseSegment = if (falseStart != null) renderSequence(falseStart, null, x + 2, falseY)
             else {
@@ -166,7 +170,7 @@ object GraphLayoutEngine {
         private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
             putNode(x, y, start)
             val endId = start.pairedNodeId ?: return Segment(x + 2, y, start.id)
-            putPath(x + 1, y)
+            putPath(x + 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
             val bodyStart = start.trueNext
             val body = if (bodyStart != null && bodyStart != endId) {
                 renderSequence(bodyStart, endId, x + 2, y)
@@ -198,9 +202,18 @@ object GraphLayoutEngine {
             nodePoints[node.id] = point
         }
 
-        private fun putPath(x: Int, y: Int, kind: MapCellKind = MapCellKind.PATH) {
+        private fun putPath(
+            x: Int,
+            y: Int,
+            kind: MapCellKind = MapCellKind.PATH,
+            sourceId: UUID? = null,
+            edge: GraphEditor.Edge? = null,
+            mergeConditionId: UUID? = null,
+        ) {
             val point = MapPoint(x, y)
-            if (cells[point]?.kind != MapCellKind.NODE) cells[point] = MapCell(point, kind)
+            if (cells[point]?.kind != MapCellKind.NODE) {
+                cells[point] = MapCell(point, kind, sourceId = sourceId, edge = edge, mergeConditionId = mergeConditionId)
+            }
         }
 
         private fun putAdd(

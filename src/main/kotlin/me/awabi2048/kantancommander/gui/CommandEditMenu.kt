@@ -66,7 +66,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             GraphEditor.insert(script.graph, sourceId, edge, type)
                         }
                         plugin.scripts.save(script)
-                        if (type == CommandType.MERGE) {
+                        if (type in setOf(CommandType.MERGE, CommandType.BREAK, CommandType.CONTINUE)) {
                             MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.route(script.id)))
                         } else {
                             MenuActionResult.Success(MenuUpdate.Navigate(settingsRoute(script.id, node.id)))
@@ -197,6 +197,22 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(choiceRoute(context.route, CONDITION_KIND_ID))
                             )
                         }
+                        if (field == "inverted" && node.type == CommandType.CONDITION) {
+                            updateNode(context.route) { it.params["inverted"] = (!it.boolean("inverted")).toString() }
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field == "scope" && node.type == CommandType.VARIABLE) {
+                            updateNode(context.route) {
+                                it.params["scope"] = if (it.string("scope") == "WORLD") "TEMPORARY" else "WORLD"
+                            }
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field.endsWith("Source") && node.type == CommandType.FOR_START) {
+                            updateNode(context.route) {
+                                it.params[field] = if (it.string(field) == "TEMPORARY") "FIXED" else "TEMPORARY"
+                            }
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
                         if (field == "type" && node.type == CommandType.VARIABLE) {
                             return@MenuActionHandler MenuActionResult.Success(
                                 MenuUpdate.Navigate(choiceRoute(context.route, VARIABLE_TYPE_ID))
@@ -216,7 +232,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(choiceRoute(context.route, DISPLAY_MODE_ID))
                             )
                         }
-                        if (field in setOf("count", "ticks", "text", "stay", "value")) {
+                        if (field in setOf("count", "ticks", "text", "stay", "value", "startValue", "endValue", "stepValue")) {
                             showFieldDialog(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -386,10 +402,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val edge = route.payload[EDGE]?.let { runCatching { GraphEditor.Edge.valueOf(it) }.getOrNull() }
         val mergeConditionId = route.payload[MERGE_CONDITION_ID]?.takeIf(String::isNotBlank)
             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val insideFor = script?.graph?.let {
+            GraphEditor.isInsideFor(it, sourceId, edge ?: GraphEditor.Edge.ENTRY)
+        } == true
         val types = CommandType.entries.filter { type ->
             when (type) {
                 CommandType.FOR_END -> false
                 CommandType.MERGE -> GraphEditor.canAppendMerge(script?.graph, mergeConditionId)
+                CommandType.BREAK, CommandType.CONTINUE -> insideFor
                 else -> true
             }
         }
@@ -740,6 +760,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "ticks" -> FieldDialogDefinition("待機時間", "待機するtick数を指定してください。", "20", true)
             "text" -> FieldDialogDefinition("表示内容", "表示する文章を入力してください。", "", false)
             "value" -> FieldDialogDefinition("値", "一時変数へ設定する値を入力してください。", "", false)
+            "startValue" -> FieldDialogDefinition("開始値", "固定数値または一時変数名を指定してください。", "0", false)
+            "endValue" -> FieldDialogDefinition("終了値", "固定数値または一時変数名を指定してください。", "0", false)
+            "stepValue" -> FieldDialogDefinition("増分", "0以外の固定数値または一時変数名を指定してください。", "1", false)
             else -> return
         }
         CCSystem.getAPI().getMenuDialogService().show(
@@ -763,6 +786,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         return@MenuDialogHandler MenuActionResult.Rejected(
                             Component.text("${definition.title}は1以上の整数で指定してください。")
                         )
+                    }
+                    if (field in setOf("startValue", "endValue", "stepValue")) {
+                        val source = node.string(field.removeSuffix("Value") + "Source", "FIXED")
+                        if (source == "FIXED" && value.toLongOrNull() == null) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(Component.text("符号付き整数で指定してください。"))
+                        }
+                        if (field == "stepValue" && source == "FIXED" && value.toLongOrNull() == 0L) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(Component.text("増分に0は指定できません。"))
+                        }
                     }
                     updateNode(route) { it.params[field] = value }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
@@ -1101,6 +1133,7 @@ object EditorMenuLayout {
         )
         CommandType.WAIT -> listOf(field("ticks", "待機時間", Material.CLOCK))
         CommandType.CONDITION -> listOf(
+            field("inverted", "反転", Material.REDSTONE_TORCH) { if (it.boolean("inverted")) "オン" else "オフ" },
             field("kind", "条件種別", Material.COMPARATOR),
             field("condition", "条件値", Material.TARGET) { it.summary() },
             field("context", "個別コンテキスト", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
@@ -1116,6 +1149,7 @@ object EditorMenuLayout {
             field("context", "個別コンテキスト", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.VARIABLE -> listOf(
+            field("scope", "変数の範囲", Material.ENDER_CHEST) { if (it.string("scope") == "WORLD") "ワールド内変数" else "一時変数" },
             field("name", "一時変数", Material.NAME_TAG),
             field("type", "型", Material.STRUCTURE_VOID),
             field("operation", "操作", Material.REDSTONE),
@@ -1123,6 +1157,9 @@ object EditorMenuLayout {
         )
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
         CommandType.FOR_START -> listOf(
+            field("startSource", "開始値の参照元", Material.LIME_DYE),
+            field("endSource", "終了値の参照元", Material.RED_DYE),
+            field("stepSource", "増分の参照元", Material.ARROW),
             field("startValue", "開始値", Material.LIME_DYE),
             field("endValue", "終了値", Material.RED_DYE),
             field("stepValue", "増分", Material.ARROW),

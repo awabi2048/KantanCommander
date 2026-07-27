@@ -2,7 +2,12 @@ default-disk-name: "Kantan Disk"
 execution:
   maximum-command-count: 1024
   maximum-disk-call-depth: 3
+graph:
+  maximum-node-count: 512
+  maximum-map-width: 1024
+  maximum-map-height: 256
+  maximum-branch-depth: 32
 timer:
   minimum-units: 1
   maximum-units: 86400
-config_version: 5
+config_version: 6

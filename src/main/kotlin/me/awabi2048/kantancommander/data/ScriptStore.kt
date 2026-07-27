@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
+import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -13,7 +14,11 @@ import java.util.UUID
 import java.util.logging.Level
 import java.util.logging.Logger
 
-class ScriptStore(private val dir: File, private val logger: Logger) {
+class ScriptStore(
+    private val dir: File,
+    private val logger: Logger,
+    private val limits: GraphLimits = GraphLimits(),
+) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
 
     init {
@@ -56,7 +61,10 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
 
     fun save(script: DiskScript) {
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
-        val validation = GraphValidator.validate(script.graph)
+        val validation = GraphValidator.validate(script.graph, limits).toMutableList()
+        val layout = GraphLayoutEngine.layout(script.graph)
+        if (layout.width > limits.maximumMapWidth) validation += "描画幅が上限 ${limits.maximumMapWidth} を超えています"
+        if (layout.height > limits.maximumMapHeight) validation += "描画高さが上限 ${limits.maximumMapHeight} を超えています"
         require(validation.isEmpty()) { validation.joinToString("; ") }
         atomicWrite(file(script.id), gson.toJson(script))
     }
@@ -84,7 +92,7 @@ class ScriptStore(private val dir: File, private val logger: Logger) {
     private fun read(file: File): DiskScript? = try {
         gson.fromJson(file.readText(Charsets.UTF_8), DiskScript::class.java)
             ?.takeIf { it.formatVersion == STRUCTURED_FORMAT_VERSION }
-            ?.also { require(GraphValidator.validate(it.graph).isEmpty()) }
+            ?.also { require(GraphValidator.validate(it.graph, limits).isEmpty()) }
     } catch (error: Exception) {
         quarantine(file, error)
         null

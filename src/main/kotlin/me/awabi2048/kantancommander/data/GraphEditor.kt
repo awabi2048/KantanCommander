@@ -16,6 +16,15 @@ object GraphEditor {
         return condition.type == CommandType.CONDITION && condition.pairedNodeId == null
     }
 
+    fun isInsideFor(graph: CommandGraph, sourceId: UUID?, edge: Edge): Boolean {
+        if (sourceId == null) return false
+        if (edge == Edge.FOR_BODY && graph.nodes[sourceId]?.type == CommandType.FOR_START) return true
+        return graph.nodes.values
+            .asSequence()
+            .filter { it.type == CommandType.FOR_START && it.pairedNodeId != null }
+            .any { start -> containsNodeBefore(graph, start.trueNext, start.pairedNodeId, sourceId) }
+    }
+
     /**
      * 既存GUIとの互換入口です。branchConditionId指定時はfalse枝、未指定時は主経路末尾へ追加します。
      * MERGEは必ずbranchConditionIdで対応条件を明示します。
@@ -231,6 +240,16 @@ object GraphEditor {
             if (id == null || id == stop || !visited.add(id)) return false
             val node = graph.nodes[id] ?: return false
             return node.type != CommandType.MERGE || node.outgoingIds().any(::visit)
+        }
+        return visit(start)
+    }
+
+    private fun containsNodeBefore(graph: CommandGraph, start: UUID?, stop: UUID?, target: UUID): Boolean {
+        val visited = mutableSetOf<UUID>()
+        fun visit(id: UUID?): Boolean {
+            if (id == null || id == stop || !visited.add(id)) return false
+            if (id == target) return true
+            return graph.nodes[id]?.outgoingIds()?.any(::visit) == true
         }
         return visit(start)
     }
