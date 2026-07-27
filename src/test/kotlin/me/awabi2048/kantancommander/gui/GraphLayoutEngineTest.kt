@@ -1,0 +1,68 @@
+package me.awabi2048.kantancommander.gui
+
+import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandType
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+
+class GraphLayoutEngineTest {
+    @Test
+    fun `commands always have one path cell between them`() {
+        val graph = CommandGraph.empty()
+        val first = GraphEditor.append(graph, CommandType.WAIT)
+        val second = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val layout = GraphLayoutEngine.layout(graph)
+
+        assertEquals(MapPoint(1, 1), layout.nodePoints[first.id])
+        assertEquals(MapPoint(3, 1), layout.nodePoints[second.id])
+        assertEquals(MapCellKind.PATH, layout.cells[MapPoint(2, 1)]?.kind)
+    }
+
+    @Test
+    fun `true continues straight and false bends downward before matching merge`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueNode = GraphEditor.append(graph, CommandType.WAIT)
+        val falseNode = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val layout = GraphLayoutEngine.layout(graph)
+
+        assertEquals(1, layout.nodePoints[condition.id]?.y)
+        assertEquals(1, layout.nodePoints[trueNode.id]?.y)
+        assertTrue(layout.nodePoints[falseNode.id]!!.y > 1)
+        assertEquals(1, layout.nodePoints[merge.id]?.y)
+    }
+
+    @Test
+    fun `nested true branch moves outer false branch below its occupied area`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val inner = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.WAIT, inner.id)
+        GraphEditor.appendMerge(graph, inner.id)
+        val outerFalse = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, outer.id)
+        GraphEditor.appendMerge(graph, outer.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val innerFalseY = layout.nodePoints.values.maxOf(MapPoint::y)
+        assertTrue(layout.nodePoints[outerFalse.id]!!.y >= innerFalseY)
+    }
+
+    @Test
+    fun `viewport is a literal crop and navigation is one cell within margin bounds`() {
+        val graph = CommandGraph.empty()
+        repeat(6) { GraphEditor.append(graph, CommandType.WAIT) }
+        val layout = GraphLayoutEngine.layout(graph)
+
+        assertTrue(layout.canMove(MapPoint(0, 0), 1, 0, 9, 5))
+        assertFalse(layout.canMove(MapPoint(0, 0), -1, 0, 9, 5))
+        assertEquals(
+            layout.cells[MapPoint(3, 1)]?.nodeId,
+            layout.viewport(MapPoint(1, 0), 9, 5)[MapPoint(2, 1)]?.nodeId,
+        )
+    }
+}
