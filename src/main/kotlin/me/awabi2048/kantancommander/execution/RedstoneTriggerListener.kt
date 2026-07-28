@@ -29,12 +29,15 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
                 adjacent.blockPower > 0 || adjacent.isBlockPowered || adjacent.isBlockIndirectlyPowered
             }
             val previous = powered.put(placement.key, hasPower) ?: false
-            val shouldRun = when {
-                !script.timer.enabled -> script.activation == ActivationMode.NEEDS_REDSTONE && !previous && hasPower
-                script.activation == ActivationMode.ALWAYS_ACTIVE ->
-                    now - (lastRun[script.id] ?: Long.MIN_VALUE / 2) >= script.timer.intervalTicks
-                else -> hasPower && now - (lastRun[script.id] ?: Long.MIN_VALUE / 2) >= script.timer.intervalTicks
-            }
+            val shouldRun = RedstoneActivationPolicy.shouldRun(
+                activation = script.activation,
+                timerEnabled = script.timer.enabled,
+                intervalTicks = script.timer.intervalTicks,
+                wasPowered = previous,
+                isPowered = hasPower,
+                currentTick = now,
+                lastRunTick = lastRun[script.id],
+            )
             if (shouldRun) {
                 lastRun[script.id] = now
                 plugin.executor.execute(script.id, block.location.add(0.5, 0.5, 0.5))
@@ -51,5 +54,26 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
             BlockFace.EAST,
             BlockFace.WEST,
         )
+    }
+}
+
+internal object RedstoneActivationPolicy {
+    fun shouldRun(
+        activation: ActivationMode,
+        timerEnabled: Boolean,
+        intervalTicks: Long,
+        wasPowered: Boolean,
+        isPowered: Boolean,
+        currentTick: Long,
+        lastRunTick: Long?,
+    ): Boolean {
+        if (!timerEnabled) {
+            return activation == ActivationMode.NEEDS_REDSTONE && !wasPowered && isPowered
+        }
+        val intervalElapsed = lastRunTick == null || currentTick - lastRunTick >= intervalTicks
+        return intervalElapsed && (
+            activation == ActivationMode.ALWAYS_ACTIVE ||
+                activation == ActivationMode.NEEDS_REDSTONE && isPowered
+            )
     }
 }
