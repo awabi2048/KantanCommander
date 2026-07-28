@@ -342,4 +342,25 @@ class VanillaDatapackExporterTest {
         val failure = assertInstanceOf(ExportResult.Failure::class.java, result)
         assertTrue(failure.errors.any { it.contains("バニラに存在しないアイテム") })
     }
+
+    @Test
+    fun `title export preserves configured durations`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "title")
+        val title = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        title.params.putAll(
+            mapOf("mode" to "title", "text" to "hello", "fadeIn" to "3", "stay" to "17", "fadeOut" to "4")
+        )
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+        )
+        val function = success.directory
+            .resolve("data/kantan/function/${script.id}_${title.id}.mcfunction")
+            .readText()
+
+        assertTrue(function.contains("title @s times 3 17 4"))
+        assertTrue(function.contains("title @s title"))
+    }
 }

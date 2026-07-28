@@ -328,12 +328,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }.getOrDefault(false)
 
     private fun giveItem(player: Player, template: ItemStack, count: Int): Boolean {
+        val original = player.inventory.storageContents.map { it?.clone() }.toTypedArray()
         var remaining = count
         while (remaining > 0) {
             val stack = template.clone()
             val batch = minOf(remaining, stack.maxStackSize)
             stack.amount = batch
-            if (player.inventory.addItem(stack).isNotEmpty()) return false
+            if (player.inventory.addItem(stack).isNotEmpty()) {
+                player.inventory.storageContents = original
+                return false
+            }
             remaining -= batch
         }
         return true

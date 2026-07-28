@@ -56,10 +56,16 @@ object ExecutableScriptValidator {
                     errors += "$path: 乗り物となる対象が未設定です"
                 }
             }
-            CommandType.DISPLAY_TEXT ->
+            CommandType.DISPLAY_TEXT -> {
                 if (node.string("mode") !in setOf("tellraw", "title", "actionbar")) {
                     errors += "$path: 不明な文字列表示方式です"
                 }
+                if (node.string("mode") == "title" &&
+                    listOf("fadeIn", "stay", "fadeOut").any { node.int(it, -1) < 0 }
+                ) {
+                    errors += "$path: タイトルの表示時間は0tick以上である必要があります"
+                }
+            }
             CommandType.WAIT ->
                 if (node.int("ticks", 0) < 1) errors += "$path: 待機時間は1tick以上である必要があります"
             CommandType.CONDITION -> validateCondition(node, path, errors)

@@ -260,6 +260,11 @@ class VanillaDatapackExporter(
                     } ?: run { lines += "return 1" }
                 }
                 else -> lower(node, graph)?.let { command ->
+                    if (node.type == CommandType.DISPLAY_TEXT && node.string("mode", "tellraw") == "title") {
+                        val times = "title ${effectiveTarget(node)} times ${node.int("fadeIn", 10)} " +
+                            "${node.int("stay", 60)} ${node.int("fadeOut", 10)}"
+                        lines += node.contextOverride?.let { wrapContext(it, times) } ?: times
+                    }
                     val contextual = node.contextOverride?.let { wrapContext(it, command) } ?: command
                     lines += storeResult(node, contextual)
                 }
