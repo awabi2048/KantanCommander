@@ -53,7 +53,7 @@ data class GraphLayout(
 object GraphLayoutEngine {
     fun layout(graph: CommandGraph): GraphLayout {
         val builder = Builder(graph)
-        graph.entryNodeId?.let { builder.renderSequence(it, null, 1, 1) }
+        builder.renderRoot()
         val maxX = builder.cells.keys.maxOfOrNull(MapPoint::x) ?: 0
         val maxY = builder.cells.keys.maxOfOrNull(MapPoint::y) ?: 0
         return GraphLayout(
@@ -68,6 +68,18 @@ object GraphLayoutEngine {
         val cells = linkedMapOf<MapPoint, MapCell>()
         val nodePoints = linkedMapOf<UUID, MapPoint>()
 
+        fun renderRoot() {
+            val entry = graph.entryNodeId
+            if (entry == null) {
+                putAdd(1, 1, null, GraphEditor.Edge.ENTRY)
+                return
+            }
+            val segment = renderSequence(entry, null, 1, 1)
+            segment.tail?.let { tail ->
+                putAdd(segment.nextX, nodePoints[tail]?.y ?: 1, tail, GraphEditor.Edge.NEXT)
+            }
+        }
+
         fun renderSequence(start: UUID, stop: UUID?, x: Int, y: Int): Segment {
             var currentId: UUID? = start
             var cursorX = x
@@ -81,6 +93,7 @@ object GraphLayoutEngine {
                     maximumY = maxOf(maximumY, branch.maxY)
                     currentId = graph.nodes[node.pairedNodeId]?.next
                     if (currentId != null) putPath(cursorX - 1, y)
+                    else return Segment(cursorX, maximumY, branch.tail)
                     continue
                 }
                 if (node.type == CommandType.CONDITION) {
@@ -96,6 +109,7 @@ object GraphLayoutEngine {
                     maximumY = maxOf(maximumY, loop.maxY)
                     currentId = graph.nodes[node.pairedNodeId]?.next
                     if (currentId != null) putPath(cursorX - 1, y)
+                    else return Segment(cursorX, maximumY, loop.tail)
                     continue
                 }
                 putNode(cursorX, y, node)
@@ -193,7 +207,7 @@ object GraphLayoutEngine {
             if (falseSegment.tail != null) {
                 putAdd(falseSegment.nextX, falseY, falseSegment.tail, GraphEditor.Edge.NEXT, condition.id)
             }
-            return Segment(maxOf(trueSegment.nextX, falseSegment.nextX), falseSegment.maxY, condition.id)
+            return Segment(maxOf(trueSegment.nextX, falseSegment.nextX), falseSegment.maxY, null)
         }
 
         private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {

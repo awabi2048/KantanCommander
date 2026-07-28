@@ -128,25 +128,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             val node = cell.nodeId?.let(script.graph.nodes::get)
             elements += if (node != null) commandElement(player, slot, node) else pathElement(player, slot, cell)
         }
-        addPoint(script.graph, layout)?.let { (point, sourceId) ->
-            val local = MapPoint(point.x - origin.x, point.y - origin.y)
-            if (local.x in 0 until VIEWPORT_WIDTH && local.y in 0 until VIEWPORT_HEIGHT) {
-                val slot = (local.y + 1) * 9 + local.x
-                elements.removeAll { it.slot == slot }
-                elements += MenuElement(
-                    slot,
-                    KcGui.item(Material.YELLOW_WOOL, KcI18n.text(player, "gui.editor.add"), GuiNameStyle.PRIMARY),
-                    GuiElementRole.ACTION,
-                    "add",
-                    mapOf(
-                        "sourceId" to sourceId?.toString().orEmpty(),
-                        "edge" to if (sourceId == null) me.awabi2048.kantancommander.data.GraphEditor.Edge.ENTRY.name
-                        else me.awabi2048.kantancommander.data.GraphEditor.Edge.NEXT.name,
-                    ),
-                )
-            }
-        }
-
         elements += action(
             36,
             if (script.activation == me.awabi2048.kantancommander.model.ActivationMode.NEEDS_REDSTONE) Material.LEVER else Material.REDSTONE_TORCH,
@@ -306,20 +287,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             else -> Material.GRAY_STAINED_GLASS_PANE
         }
         return MenuElement(slot, KcGui.elements.decoration(material), GuiElementRole.DECORATION)
-    }
-
-    private fun addPoint(graph: CommandGraph, layout: GraphLayout): Pair<MapPoint, UUID?>? {
-        if (graph.entryNodeId == null) return MapPoint(1, 1) to null
-        var current = graph.entryNodeId
-        val visited = mutableSetOf<UUID>()
-        var tail: CommandNode? = null
-        while (current != null && visited.add(current)) {
-            tail = graph.nodes[current] ?: break
-            current = if (tail.type == CommandType.CONDITION) tail.trueNext else tail.next
-        }
-        val sourceId = tail?.id ?: return null
-        val point = layout.nodePoints[sourceId] ?: return null
-        return MapPoint(point.x + 2, point.y) to sourceId
     }
 
     private fun action(

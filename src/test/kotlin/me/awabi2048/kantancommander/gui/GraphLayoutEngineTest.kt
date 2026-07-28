@@ -156,4 +156,46 @@ class GraphLayoutEngineTest {
         assertTrue(diagram.any { it in "│┌┐└┘├┤┬┴┼" })
         assertTrue(diagram.contains("⋮"))
     }
+
+    @Test
+    fun `linear tail add is part of map bounds and reachable after four commands`() {
+        val graph = CommandGraph.empty()
+        repeat(4) {
+            GraphEditor.append(graph, CommandType.WAIT)
+        }
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val add = layout.cells.values.single { it.kind == MapCellKind.ADD }
+
+        assertEquals(MapPoint(9, 1), add.point)
+        assertEquals(11, layout.width)
+        assertTrue(layout.canMove(MapPoint(0, 0), 1, 0, 9, 3))
+        assertTrue(layout.viewport(MapPoint(1, 0), 9, 3).values.any { it.kind == MapCellKind.ADD })
+    }
+
+    @Test
+    fun `empty graph add is a bounded map element`() {
+        val layout = GraphLayoutEngine.layout(CommandGraph.empty())
+
+        assertEquals(MapCellKind.ADD, layout.cells[MapPoint(1, 1)]?.kind)
+        assertEquals(3, layout.width)
+        assertEquals(3, layout.height)
+    }
+
+    @Test
+    fun `closed for adds after for end and info does not expose legacy LP markers`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val end = requireNotNull(start.pairedNodeId)
+        val endPoint = requireNotNull(layout.nodePoints[end])
+        val add = layout.cells.values.single { it.kind == MapCellKind.ADD }
+        val diagram = GraphDiagramRenderer.render(layout, MapPoint(0, 0))
+
+        assertEquals(MapPoint(endPoint.x + 2, endPoint.y), add.point)
+        assertFalse(diagram.contains("L"))
+        assertFalse(diagram.contains("P"))
+        assertEquals(2, diagram.count { it == '○' })
+    }
 }

@@ -10,6 +10,7 @@ import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockPlaceEvent
+import org.bukkit.event.block.Action
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.EquipmentSlot
 import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
@@ -23,10 +24,12 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         val diskId = DiskItemService.diskId(item)
         val clickedPlacement = event.clickedBlock?.let { plugin.placements.find(it.location) }
 
-        if (itemState == DiskItemState.NOT_DISK && clickedPlacement == null) return
-        event.isCancelled = true
-
-        if (clickedPlacement != null && !player.isSneaking) {
+        if (
+            clickedPlacement != null &&
+            event.action == Action.RIGHT_CLICK_BLOCK &&
+            !player.isSneaking
+        ) {
+            event.isCancelled = true
             val script = plugin.scripts.load(clickedPlacement.scriptId) ?: return
             if (!plugin.placementAccess.canManage(player, clickedPlacement.world)) {
                 player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
@@ -36,19 +39,28 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             return
         }
 
-        if (DiskInteractionPolicy.itemAction(itemState, event.action, player.isSneaking) == DiskItemAction.PLACE) {
-            val script = when (itemState) {
-                DiskItemState.UNSET -> null
-                DiskItemState.WRITTEN -> diskId?.let(plugin.scripts::load) ?: return
-                DiskItemState.NOT_DISK -> return
+        when (DiskInteractionPolicy.itemAction(itemState, event.action, player.isSneaking)) {
+            DiskItemAction.NONE -> return
+            DiskItemAction.OPEN -> {
+                val script = diskId?.let(plugin.scripts::load) ?: return
+                event.isCancelled = true
+                plugin.editorMenu.open(player, script.id)
             }
-            if (script != null && !plugin.placementAccess.canManage(player, player.world.name)) {
-                player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
-                return
+            DiskItemAction.PLACE -> {
+                event.isCancelled = true
+                val script = when (itemState) {
+                    DiskItemState.UNSET -> null
+                    DiskItemState.WRITTEN -> diskId?.let(plugin.scripts::load) ?: return
+                    DiskItemState.NOT_DISK -> return
+                }
+                if (script != null && !plugin.placementAccess.canManage(player, player.world.name)) {
+                    player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
+                    return
+                }
+                val base = event.clickedBlock ?: return
+                val target = if (base.isReplaceable) base else base.getRelative(event.blockFace)
+                placeDisk(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND)
             }
-            val base = event.clickedBlock ?: return
-            val target = if (base.isReplaceable) base else base.getRelative(event.blockFace)
-            placeDisk(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND)
         }
     }
 
