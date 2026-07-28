@@ -130,9 +130,38 @@ object GraphLayoutEngine {
             } else Segment(x + 2, falseY, null)
 
             val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
-            fillHorizontal(trueSegment.nextX - 1, mergeX - 1, y, MapCellKind.BRANCH_PATH)
-            fillHorizontal(falseSegment.nextX - 1, mergeX - 1, falseY, MapCellKind.BRANCH_PATH)
-            for (verticalY in y..falseY) putPath(mergeX - 1, verticalY, MapCellKind.BRANCH_PATH)
+            val trueSource = trueSegment.tail ?: condition.id
+            val trueEdge = if (trueSegment.tail == null) GraphEditor.Edge.TRUE else GraphEditor.Edge.NEXT
+            val falseSource = falseSegment.tail ?: condition.id
+            val falseEdge = if (falseSegment.tail == null) GraphEditor.Edge.FALSE else GraphEditor.Edge.NEXT
+            fillHorizontal(
+                trueSegment.nextX - 1,
+                mergeX - 1,
+                y,
+                MapCellKind.BRANCH_PATH,
+                trueSource,
+                trueEdge,
+                condition.id,
+            )
+            fillHorizontal(
+                falseSegment.nextX - 1,
+                mergeX - 1,
+                falseY,
+                MapCellKind.BRANCH_PATH,
+                falseSource,
+                falseEdge,
+                condition.id,
+            )
+            for (verticalY in y + 1..falseY) {
+                putPath(
+                    mergeX - 1,
+                    verticalY,
+                    MapCellKind.BRANCH_PATH,
+                    falseSource,
+                    falseEdge,
+                    condition.id,
+                )
+            }
 
             val merge = graph.nodes[mergeId] ?: return Segment(mergeX, falseSegment.maxY, condition.id)
             putNode(mergeX, y, merge)
@@ -191,9 +220,17 @@ object GraphLayoutEngine {
             return Segment(endX + 2, returnY, end.id)
         }
 
-        private fun fillHorizontal(from: Int, to: Int, y: Int, kind: MapCellKind) {
+        private fun fillHorizontal(
+            from: Int,
+            to: Int,
+            y: Int,
+            kind: MapCellKind,
+            sourceId: UUID? = null,
+            edge: GraphEditor.Edge? = null,
+            mergeConditionId: UUID? = null,
+        ) {
             if (from > to) return
-            for (x in from..to) putPath(x, y, kind)
+            for (x in from..to) putPath(x, y, kind, sourceId, edge, mergeConditionId)
         }
 
         private fun putNode(x: Int, y: Int, node: CommandNode) {

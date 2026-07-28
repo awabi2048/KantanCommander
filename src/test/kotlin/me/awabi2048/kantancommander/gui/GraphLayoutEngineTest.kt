@@ -78,4 +78,40 @@ class GraphLayoutEngineTest {
         assertEquals(layout.nodePoints[start.id]?.y, layout.nodePoints[end.id]?.y)
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.LOOP_RETURN_PATH })
     }
+
+    @Test
+    fun `merge side path inserts at the false branch tail`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val falseTail = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val layout = GraphLayoutEngine.layout(graph)
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val falseY = requireNotNull(layout.nodePoints[falseTail.id]).y
+
+        val mergeSide = layout.cells[MapPoint(mergePoint.x - 1, falseY)]
+        assertEquals(falseTail.id, mergeSide?.sourceId)
+        assertEquals(GraphEditor.Edge.NEXT, mergeSide?.edge)
+        assertEquals(condition.id, mergeSide?.mergeConditionId)
+    }
+
+    @Test
+    fun `info diagram uses directional lines and truncates tall maps`() {
+        val graph = CommandGraph.empty()
+        val conditions = mutableListOf<me.awabi2048.kantancommander.model.CommandNode>()
+        repeat(5) {
+            conditions += GraphEditor.append(graph, CommandType.CONDITION)
+        }
+        GraphEditor.append(graph, CommandType.WAIT)
+        conditions.asReversed().forEach { condition ->
+            GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+            GraphEditor.appendMerge(graph, condition.id)
+        }
+        val layout = GraphLayoutEngine.layout(graph)
+        val diagram = GraphDiagramRenderer.render(layout, MapPoint(0, 0))
+
+        assertTrue(diagram.any { it in "│┌┐└┘├┤┬┴┼" })
+        assertTrue(diagram.contains("⋮"))
+    }
 }

@@ -60,12 +60,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.timerRoute(id)))
                     },
                     "center" to handler { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load)
-                            ?: return@handler MenuActionResult.Ignored
-                        val layout = GraphLayoutEngine.layout(script.graph)
-                        val x = ((layout.width - VIEWPORT_WIDTH) / 2).coerceAtLeast(0)
-                        val y = ((layout.height - VIEWPORT_HEIGHT) / 2).coerceAtLeast(0)
-                        MenuActionResult.Success(MenuUpdate.Replace(route(context.route, x, y)), MenuSoundPolicy.Silent)
+                        if (scriptId(context.route)?.let(plugin.scripts::load) == null) {
+                            return@handler MenuActionResult.Ignored
+                        }
+                        MenuActionResult.Success(MenuUpdate.Replace(route(context.route, 0, 0)), MenuSoundPolicy.Silent)
                     },
                     "navigate" to handler { context -> navigate(context) },
                     "command" to handler { context ->
@@ -173,7 +171,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 Material.MAP,
                 KcI18n.text(player, "gui.editor.info"),
                 GuiNameStyle.PRIMARY,
-                listOf(GuiLoreLine.Text(graphDiagram(layout, origin))),
+                listOf(GuiLoreLine.Text(GraphDiagramRenderer.render(layout, origin))),
             ),
             GuiElementRole.DECORATION,
         )
@@ -252,29 +250,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             else -> Material.GRAY_STAINED_GLASS_PANE
         }
         return MenuElement(slot, KcGui.elements.decoration(material), GuiElementRole.DECORATION)
-    }
-
-    private fun graphDiagram(layout: GraphLayout, origin: MapPoint): String {
-        val fromX = (origin.x - 4).coerceAtLeast(0)
-        val toX = (fromX + 20).coerceAtMost(layout.width - 1)
-        val prefix = if (fromX > 0) "…" else ""
-        val suffix = if (toX < layout.width - 1) "…" else ""
-        return (0 until layout.height).joinToString("\n") { y ->
-            val body = (fromX..toX).joinToString("") { x ->
-                val selected = x in origin.x until origin.x + VIEWPORT_WIDTH &&
-                    y in origin.y until origin.y + VIEWPORT_HEIGHT
-                val symbol = when (layout.cells[MapPoint(x, y)]?.kind) {
-                    MapCellKind.NODE -> "○"
-                    MapCellKind.LOOP_RETURN_PATH -> "═"
-                    MapCellKind.BRANCH_PATH -> "─"
-                    MapCellKind.PATH -> "─"
-                    MapCellKind.ADD -> "+"
-                    null -> " "
-                }
-                (if (selected) "§e" else "§7") + symbol
-            }
-            "§7$prefix$body§7$suffix"
-        }
     }
 
     private fun addPoint(graph: CommandGraph, layout: GraphLayout): Pair<MapPoint, UUID?>? {
@@ -379,6 +354,79 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
         private fun scriptId(route: MenuRoute) =
             route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+    }
+}
+
+internal object GraphDiagramRenderer {
+    private const val MAX_WIDTH = 21
+    private const val MAX_HEIGHT = 9
+
+    fun render(layout: GraphLayout, origin: MapPoint): String {
+        val fromX = (origin.x - 4).coerceAtLeast(0)
+            .coerceAtMost((layout.width - MAX_WIDTH).coerceAtLeast(0))
+        val toX = (fromX + MAX_WIDTH - 1).coerceAtMost(layout.width - 1)
+        val fromY = (origin.y - 3).coerceAtLeast(0)
+            .coerceAtMost((layout.height - MAX_HEIGHT).coerceAtLeast(0))
+        val toY = (fromY + MAX_HEIGHT - 1).coerceAtMost(layout.height - 1)
+        val lines = mutableListOf<String>()
+        if (fromY > 0) lines += "§7⋮"
+        for (y in fromY..toY) {
+            val body = (fromX..toX).joinToString("") { x ->
+                val selected = x in origin.x until origin.x + 9 &&
+                    y in origin.y until origin.y + 3
+                val symbol = symbol(layout, MapPoint(x, y))
+                (if (selected) "§e" else "§7") + symbol
+            }
+            val prefix = if (fromX > 0) "…" else ""
+            val suffix = if (toX < layout.width - 1) "…" else ""
+            lines += "§7$prefix$body§7$suffix"
+        }
+        if (toY < layout.height - 1) lines += "§7⋮"
+        return lines.joinToString("\n")
+    }
+
+    private fun symbol(layout: GraphLayout, point: MapPoint): String {
+        val cell = layout.cells[point] ?: return " "
+        if (cell.kind == MapCellKind.NODE) return "○"
+        if (cell.kind == MapCellKind.ADD) return "+"
+        val loop = cell.kind == MapCellKind.LOOP_RETURN_PATH
+        val left = connects(layout, cell, MapPoint(point.x - 1, point.y))
+        val right = connects(layout, cell, MapPoint(point.x + 1, point.y))
+        val up = connects(layout, cell, MapPoint(point.x, point.y - 1))
+        val down = connects(layout, cell, MapPoint(point.x, point.y + 1))
+        return if (loop) doubleLine(left, right, up, down) else singleLine(left, right, up, down)
+    }
+
+    private fun connects(layout: GraphLayout, source: MapCell, targetPoint: MapPoint): Boolean {
+        val target = layout.cells[targetPoint] ?: return false
+        return if (source.kind == MapCellKind.LOOP_RETURN_PATH) {
+            target.kind in setOf(MapCellKind.LOOP_RETURN_PATH, MapCellKind.NODE)
+        } else {
+            target.kind != MapCellKind.LOOP_RETURN_PATH
+        }
+    }
+
+    private fun singleLine(left: Boolean, right: Boolean, up: Boolean, down: Boolean): String = when {
+        left && right && up && down -> "┼"
+        left && right && down -> "┬"
+        left && right && up -> "┴"
+        up && down && right -> "├"
+        up && down && left -> "┤"
+        right && down -> "┌"
+        left && down -> "┐"
+        right && up -> "└"
+        left && up -> "┘"
+        up || down -> "│"
+        else -> "─"
+    }
+
+    private fun doubleLine(left: Boolean, right: Boolean, up: Boolean, down: Boolean): String = when {
+        right && down -> "╔"
+        left && down -> "╗"
+        right && up -> "╚"
+        left && up -> "╝"
+        up || down -> "║"
+        else -> "═"
     }
 }
 
