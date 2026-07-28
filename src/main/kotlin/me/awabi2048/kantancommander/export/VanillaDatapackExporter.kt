@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.export
 
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
+import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -27,6 +28,7 @@ class VanillaDatapackExporter(
     private val outputRoot: File,
     private val maximumCommandCount: Int = 1024,
     private val maximumDiskCallDepth: Int = 3,
+    private val graphLimits: GraphLimits = GraphLimits(),
 ) {
     fun compileForStandalone(
         root: DiskScript,
@@ -34,7 +36,7 @@ class VanillaDatapackExporter(
     ): StandaloneCompilation {
         val exportRoot = root.copy(graph = root.graph.deepCopy())
         val errors = mutableListOf<String>()
-        errors += ExecutableScriptValidator.validate(exportRoot)
+        errors += ExecutableScriptValidator.validate(exportRoot, graphLimits)
         annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
         validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0)
         return if (errors.isEmpty()) {
@@ -76,7 +78,7 @@ class VanillaDatapackExporter(
             errors += "${script.id}: 別ディスクのコピー内容が循環参照しています"
             return
         }
-        me.awabi2048.kantancommander.data.GraphValidator.validate(script.graph).forEach {
+        me.awabi2048.kantancommander.data.GraphValidator.validate(script.graph, graphLimits).forEach {
             errors += "${script.id}: $it"
         }
         script.graph.nodes.values.forEach { node ->

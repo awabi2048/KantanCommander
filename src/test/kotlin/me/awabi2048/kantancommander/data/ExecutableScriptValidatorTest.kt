@@ -6,6 +6,9 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.TimerSetting
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.UUID
@@ -68,5 +71,27 @@ class ExecutableScriptValidatorTest {
 
         assertTrue(errors.any { it.contains("対象が未設定") })
         assertTrue(errors.any { it.contains("移動先が未設定") })
+    }
+
+    @Test
+    fun `execution preflight uses configured graph limits`() {
+        val script = DiskScript(name = "limits", owner = UUID.randomUUID())
+        val first = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        first.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        val second = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        second.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+
+        assertTrue(
+            ExecutableScriptValidator.validate(
+                script,
+                GraphLimits(maximumNodeCount = 1),
+            ).any { it.contains("上限 1") }
+        )
+        assertFalse(
+            ExecutableScriptValidator.validate(
+                script,
+                GraphLimits(maximumNodeCount = 2),
+            ).any { it.contains("ノード数が上限") }
+        )
     }
 }

@@ -16,7 +16,7 @@ import java.util.Collections
 import java.util.IdentityHashMap
 
 object ExecutableScriptValidator {
-    fun validate(script: DiskScript): List<String> {
+    fun validate(script: DiskScript, limits: GraphLimits = GraphLimits()): List<String> {
         val errors = mutableListOf<String>()
         if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
             errors += "root: タイマーオフでは常時実行を使用できません"
@@ -24,7 +24,7 @@ object ExecutableScriptValidator {
         if (script.timer.enabled && script.timer.intervalUnits !in MIN_TIMER_UNITS..MAX_TIMER_UNITS) {
             errors += "root: タイマー間隔は${MIN_TIMER_UNITS}から${MAX_TIMER_UNITS}単位で指定してください"
         }
-        validateGraph(script.graph, "root", errors, Collections.newSetFromMap(IdentityHashMap()))
+        validateGraph(script.graph, "root", errors, Collections.newSetFromMap(IdentityHashMap()), limits)
         return errors
     }
 
@@ -33,15 +33,16 @@ object ExecutableScriptValidator {
         path: String,
         errors: MutableList<String>,
         visited: MutableSet<CommandGraph>,
+        limits: GraphLimits,
     ) {
         if (!visited.add(graph)) {
             errors += "$path: 別ディスクのコピー内容が循環参照しています"
             return
         }
-        GraphValidator.validate(graph).forEach { errors += "$path: $it" }
+        GraphValidator.validate(graph, limits).forEach { errors += "$path: $it" }
         graph.nodes.values.forEach { node ->
             validateNode(node, "$path/${node.id}", errors)
-            node.snapshot?.let { validateGraph(it, "$path/${node.id}/snapshot", errors, visited) }
+            node.snapshot?.let { validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits) }
         }
         visited.remove(graph)
     }

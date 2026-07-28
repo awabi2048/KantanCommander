@@ -1,6 +1,7 @@
 ﻿package me.awabi2048.kantancommander.export
 
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandGraph
@@ -585,6 +586,26 @@ class VanillaDatapackExporterTest {
             .toList()
         assertTrue(functionFiles.isNotEmpty())
         assertTrue(functionFiles.all { it.name.length < 100 })
+    }
+
+    @Test
+    fun `standalone preflight uses configured disk graph limits`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "limits")
+        val first = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        first.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        val second = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        second.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(
+                store,
+                temp.resolve("exports"),
+                graphLimits = GraphLimits(maximumNodeCount = 1),
+            ).compileForStandalone(script),
+        )
+        assertTrue(failure.errors.any { it.contains("上限 1") })
     }
 
     @Test

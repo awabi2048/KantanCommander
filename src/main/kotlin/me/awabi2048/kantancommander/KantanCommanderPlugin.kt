@@ -7,6 +7,7 @@ import com.awabi2048.ccsystem.api.gui.MenuTargetPolicy
 import com.awabi2048.ccsystem.api.gui.PublicMenuDefinition
 import me.awabi2048.kantancommander.command.KantanCommanderCommand
 import me.awabi2048.kantancommander.data.ScriptStore
+import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
@@ -157,22 +158,26 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     private fun rebuildConfiguredServices() {
+        val graphLimits = graphLimits()
         scripts = ScriptStore(
             dataFolder.resolve("structured-disks"),
             logger,
-            me.awabi2048.kantancommander.data.GraphLimits(
-                maximumNodeCount = config.getInt("limits.max-nodes-per-disk"),
-                maximumMapWidth = config.getInt("limits.max-map-width"),
-                maximumMapHeight = config.getInt("limits.max-map-height"),
-                maximumBranchDepth = config.getInt("limits.max-branch-depth"),
-            ),
+            graphLimits,
         )
         exporter = VanillaDatapackExporter(
             scripts,
             dataFolder.resolve("exports"),
             config.getInt("execution.max-nodes-per-activation"),
             config.getInt("execution.max-disk-call-depth"),
+            graphLimits,
         )
     }
+
+    internal fun graphLimits() = GraphLimits(
+        maximumNodeCount = config.getInt("limits.max-nodes-per-disk"),
+        maximumMapWidth = config.getInt("limits.max-map-width"),
+        maximumMapHeight = config.getInt("limits.max-map-height"),
+        maximumBranchDepth = config.getInt("limits.max-branch-depth"),
+    )
 
 }
