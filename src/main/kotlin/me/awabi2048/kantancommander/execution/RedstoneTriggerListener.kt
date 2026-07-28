@@ -10,8 +10,7 @@ import java.util.UUID
 import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
 
 class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Listener {
-    private val powered = mutableMapOf<String, Boolean>()
-    private val lastRun = mutableMapOf<UUID, Long>()
+    private val runtimeState = RedstoneRuntimeState()
 
     fun start() {
         Bukkit.getScheduler().runTaskTimer(plugin, Runnable(::tick), 1L, 1L)
@@ -28,12 +27,8 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
                 val adjacent = block.getRelative(face)
                 adjacent.blockPower > 0 || adjacent.isBlockPowered || adjacent.isBlockIndirectlyPowered
             }
-            val previous = powered.put(placement.key, hasPower) ?: false
-            val previousRun = if (script.timer.enabled) {
-                lastRun.getOrPut(script.id) { now }
-            } else {
-                lastRun[script.id]
-            }
+            val previous = runtimeState.observePower(placement.key, hasPower)
+            val previousRun = runtimeState.timerAnchor(script.id, script.timer.enabled, now)
             val shouldRun = RedstoneActivationPolicy.shouldRun(
                 activation = script.activation,
                 timerEnabled = script.timer.enabled,
@@ -44,10 +39,18 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
                 lastRunTick = previousRun,
             )
             if (shouldRun) {
-                lastRun[script.id] = now
+                runtimeState.markRun(script.id, now)
                 plugin.executor.execute(script.id, block.location.add(0.5, 0.5, 0.5))
             }
         }
+    }
+
+    fun resetTiming(scriptId: UUID) {
+        runtimeState.resetTiming(scriptId)
+    }
+
+    fun forget(placementKey: String, scriptId: UUID) {
+        runtimeState.forget(placementKey, scriptId)
     }
 
     companion object {
@@ -59,6 +62,35 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
             BlockFace.EAST,
             BlockFace.WEST,
         )
+    }
+}
+
+internal class RedstoneRuntimeState {
+    private val powered = mutableMapOf<String, Boolean>()
+    private val lastRun = mutableMapOf<UUID, Long>()
+
+    fun observePower(placementKey: String, current: Boolean): Boolean =
+        powered.put(placementKey, current) ?: false
+
+    fun timerAnchor(scriptId: UUID, timerEnabled: Boolean, currentTick: Long): Long? {
+        if (!timerEnabled) {
+            lastRun.remove(scriptId)
+            return null
+        }
+        return lastRun.getOrPut(scriptId) { currentTick }
+    }
+
+    fun markRun(scriptId: UUID, currentTick: Long) {
+        lastRun[scriptId] = currentTick
+    }
+
+    fun resetTiming(scriptId: UUID) {
+        lastRun.remove(scriptId)
+    }
+
+    fun forget(placementKey: String, scriptId: UUID) {
+        powered.remove(placementKey)
+        lastRun.remove(scriptId)
     }
 }
 

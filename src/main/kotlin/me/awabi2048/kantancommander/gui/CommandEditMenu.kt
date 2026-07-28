@@ -537,6 +537,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         script.timer.enabled = false
                         script.activation = ActivationMode.NEEDS_REDSTONE
                         plugin.scripts.save(script)
+                        plugin.triggerListener.resetTiming(script.id)
                         plugin.placements.refreshDisplaysForScript(script.id)
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
@@ -1040,6 +1041,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     script.timer.enabled = true
                     script.timer.intervalUnits = value
                     plugin.scripts.save(script)
+                    plugin.triggerListener.resetTiming(script.id)
                     plugin.placements.refreshDisplaysForScript(script.id)
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),

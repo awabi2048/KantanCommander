@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.model.ActivationMode
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.UUID
 
 class RedstoneActivationPolicyTest {
     @Test
@@ -63,6 +64,23 @@ class RedstoneActivationPolicyTest {
                 last = 100,
             )
         )
+    }
+
+    @Test
+    fun `timer anchor and power edge reset when configuration or placement is removed`() {
+        val state = RedstoneRuntimeState()
+        val id = UUID.randomUUID()
+
+        assertFalse(state.observePower("world,1,2,3", true))
+        assertEquals(100L, state.timerAnchor(id, true, 100L))
+        state.markRun(id, 120L)
+        assertEquals(120L, state.timerAnchor(id, true, 130L))
+
+        state.resetTiming(id)
+        assertEquals(140L, state.timerAnchor(id, true, 140L))
+        state.forget("world,1,2,3", id)
+        assertFalse(state.observePower("world,1,2,3", true))
+        assertEquals(null, state.timerAnchor(id, false, 150L))
     }
 
     private fun decide(

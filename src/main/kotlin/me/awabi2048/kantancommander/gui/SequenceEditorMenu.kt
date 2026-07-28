@@ -357,6 +357,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         player.sendMessage(KcI18n.text(player, "message.disk_output"))
 
         if (removeBlock) {
+            plugin.triggerListener.forget(placement.key, placement.scriptId)
             plugin.placements.removeDisplay(world, placement.displayId)
             plugin.placements.remove(world, placement.x, placement.y, placement.z)
             block.setType(Material.AIR, false)
