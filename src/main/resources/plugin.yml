@@ -6,6 +6,8 @@ author: awabi2048
 depend:
   - CC-System
   - MyWorldManager
+softdepend:
+  - MWMChanpon
 commands:
   kankoma:
     description: Kantan Commander 管理コマンド

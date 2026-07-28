@@ -42,6 +42,10 @@ class WorldVariableStore(private val directory: File) {
     fun list(worldId: UUID): Map<String, WorldVariableValue> = state(worldId).values.toMap()
 
     @Synchronized
+    fun definitions(worldId: UUID): Map<String, WorldVariableValue> =
+        state(worldId).definitions.mapValues { (_, value) -> value.copy() }
+
+    @Synchronized
     fun copyDefinitions(sourceWorldId: UUID, targetWorldId: UUID) {
         require(sourceWorldId != targetWorldId) { "source and target MyWorld must differ" }
         val initialValues = state(sourceWorldId).definitions.mapValues { (_, value) -> value.copy() }

@@ -13,6 +13,8 @@ import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
+import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
+import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
 import me.awabi2048.kantancommander.gui.CommandEditMenu
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
@@ -45,6 +47,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var exporter: VanillaDatapackExporter
         private set
     private lateinit var triggerListener: RedstoneTriggerListener
+    private var standaloneExportContributor: KantanStandaloneExportContributor? = null
 
     override fun onEnable() {
         CCSystem.getAPI().getConfigSchemaService().register(
@@ -158,9 +161,17 @@ class KantanCommanderPlugin : JavaPlugin() {
         registerEvents()
         placements.restoreDisplays()
         triggerListener.start()
+        if (server.pluginManager.isPluginEnabled("MWMChanpon")) {
+            KantanStandaloneExportContributor(this).also {
+                StandaloneExportContributors.register(it)
+                standaloneExportContributor = it
+            }
+        }
     }
 
     override fun onDisable() {
+        standaloneExportContributor?.let(StandaloneExportContributors::unregister)
+        standaloneExportContributor = null
         if (::placements.isInitialized) {
             placements.removeAllDisplays()
         }

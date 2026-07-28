@@ -86,6 +86,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val displayMaterial = if (script?.timer?.enabled == true) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
             it.block = Bukkit.createBlockData(displayMaterial)
             it.isGlowing = false
+            it.addScoreboardTag(DISPLAY_TAG)
             it.transformation = Transformation(
                 Vector3f(-0.375f, 0.125f, -0.375f),
                 AxisAngle4f(),
@@ -165,4 +166,8 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     }
 
     private fun key(world: String, x: Int, y: Int, z: Int): String = "$world,$x,$y,$z"
+
+    companion object {
+        const val DISPLAY_TAG = "kantan_commander_display"
+    }
 }

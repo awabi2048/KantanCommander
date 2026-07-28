@@ -26,11 +26,20 @@ class VanillaDatapackExporter(
     private val outputRoot: File,
     private val maximumCommandCount: Int = 1024,
 ) {
-    fun export(root: DiskScript): ExportResult {
+    fun compileForStandalone(root: DiskScript): StandaloneCompilation {
         val errors = mutableListOf<String>()
         errors += ExecutableScriptValidator.validate(root)
         validate(root, errors, Collections.newSetFromMap(IdentityHashMap()))
-        if (errors.isNotEmpty()) return ExportResult.Failure(errors.distinct())
+        return if (errors.isEmpty()) {
+            StandaloneCompilation.Success(compile(root))
+        } else {
+            StandaloneCompilation.Failure(errors.distinct())
+        }
+    }
+
+    fun export(root: DiskScript): ExportResult {
+        val compilation = compileForStandalone(root)
+        if (compilation is StandaloneCompilation.Failure) return ExportResult.Failure(compilation.errors)
 
         val pack = outputRoot.resolve("kantan-${root.id}")
         val functions = pack.resolve("data/kantan/function").also(File::mkdirs)
@@ -44,7 +53,7 @@ class VanillaDatapackExporter(
             Charsets.UTF_8,
         )
         loadTags.resolve("load.json").writeText("""{"values":["kantan:load"]}""", Charsets.UTF_8)
-        compile(root).forEach { (name, content) ->
+        (compilation as StandaloneCompilation.Success).functions.forEach { (name, content) ->
             functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8)
         }
         return ExportResult.Success(pack)
@@ -589,4 +598,9 @@ class VanillaDatapackExporter(
 sealed interface ExportResult {
     data class Success(val directory: File) : ExportResult
     data class Failure(val errors: List<String>) : ExportResult
+}
+
+sealed interface StandaloneCompilation {
+    data class Success(val functions: Map<String, String>) : StandaloneCompilation
+    data class Failure(val errors: List<String>) : StandaloneCompilation
 }
