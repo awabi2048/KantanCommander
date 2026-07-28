@@ -3,29 +3,22 @@ package me.awabi2048.kantancommander.security
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import org.bukkit.entity.Player
-import java.util.UUID
 
 object PlacementAccessRules {
-    fun canManage(playerId: UUID, scriptOwner: UUID, worldOwner: UUID?, members: Set<UUID>, admin: Boolean): Boolean =
-        admin || playerId == scriptOwner || (worldOwner != null && (playerId == worldOwner || playerId in members))
+    fun canManage(admin: Boolean, canBuildInWorld: Boolean): Boolean =
+        admin || canBuildInWorld
 }
 
 class PlacementAccessPolicy(private val plugin: KantanCommanderPlugin) {
-    fun canManage(player: Player, worldName: String, scriptOwner: UUID): Boolean {
+    fun canManage(player: Player, worldName: String): Boolean {
         val admin = player.hasPermission("kankoma.admin")
-        if (admin) return true
+        if (admin) return PlacementAccessRules.canManage(admin = true, canBuildInWorld = false)
 
-        val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
-            MyWorldManagerApi.getWorldRepository()?.findByWorldName(worldName)
-        } else {
-            null
-        }
+        if (!plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) return false
+        val worldData = MyWorldManagerApi.getWorldRepository()?.findByWorldName(worldName) ?: return false
         return PlacementAccessRules.canManage(
-            player.uniqueId,
-            scriptOwner,
-            worldData?.owner,
-            worldData?.members?.toSet() ?: emptySet(),
-            admin
+            admin = false,
+            canBuildInWorld = MyWorldManagerApi.canBuildInWorld(player, worldData),
         )
     }
 }

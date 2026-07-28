@@ -18,19 +18,64 @@ import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import org.bukkit.persistence.PersistentDataType
 import java.util.UUID
+import java.util.concurrent.ThreadLocalRandom
+
+enum class DiskItemState {
+    NOT_DISK,
+    UNSET,
+    WRITTEN,
+}
 
 object DiskItemService {
     private const val CUSTOM_ITEM_ID = "kantan.disk"
     private val customItemIdKey = NamespacedKey("kantancommander", "custom_item_id")
     private val diskIdKey = NamespacedKey("kantancommander", "disk_id")
-    private val modelKey = NamespacedKey("minecraft", "music_disc_13")
+    private val musicDiscModels = listOf(
+        "music_disc_13", "music_disc_cat", "music_disc_blocks", "music_disc_chirp",
+        "music_disc_far", "music_disc_mall", "music_disc_mellohi", "music_disc_stal",
+        "music_disc_strad", "music_disc_ward", "music_disc_wait", "music_disc_pigstep",
+        "music_disc_otherside", "music_disc_relic", "music_disc_creator", "music_disc_precipice",
+    )
     private val baseMaterial = Material.POISONOUS_POTATO
+
+    fun createUnset(name: String, player: Player): ItemStack {
+        val item = ItemStack(baseMaterial, 1)
+        item.editMeta { meta ->
+            meta.displayName(Component.text(name, NamedTextColor.YELLOW))
+            meta.setItemModel(
+                NamespacedKey(
+                    "minecraft",
+                    musicDiscModels[ThreadLocalRandom.current().nextInt(musicDiscModels.size)],
+                )
+            )
+            meta.setMaxStackSize(1)
+            meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, CUSTOM_ITEM_ID)
+        }
+        applyCustomItemComponents(item)
+        item.editMeta { meta ->
+            meta.lore(
+                CCSystem.getAPI().getLoreService().render(
+                    GuiLoreSpec.Rich(
+                        listOf(
+                            me.awabi2048.kantancommander.gui.KcGui.action(
+                                player,
+                                "lore.click.shift_right",
+                                KcI18n.text(player, "item.action_place"),
+                            )
+                        ),
+                        GuiLoreFrame.BOTH,
+                    )
+                )
+            )
+        }
+        return item
+    }
 
     fun create(script: DiskScript, player: Player): ItemStack {
         val item = ItemStack(baseMaterial, 1)
         item.editMeta { meta ->
             meta.displayName(Component.text(script.name, NamedTextColor.YELLOW))
-            meta.setItemModel(modelKey)
+            meta.setItemModel(NamespacedKey("minecraft", musicDiscModels[Math.floorMod(script.id.hashCode(), musicDiscModels.size)]))
             meta.setMaxStackSize(1)
             meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, CUSTOM_ITEM_ID)
             meta.persistentDataContainer.set(diskIdKey, PersistentDataType.STRING, script.id.toString())
@@ -41,19 +86,27 @@ object DiskItemService {
     }
 
     fun diskId(item: ItemStack?): UUID? {
-        if (item?.type != baseMaterial) {
-            return null
-        }
+        item ?: return null
+        if (state(item) != DiskItemState.WRITTEN) return null
         val meta = item.itemMeta ?: return null
-        val customItemId = meta.persistentDataContainer.get(customItemIdKey, PersistentDataType.STRING)
-        if (customItemId != CUSTOM_ITEM_ID) {
-            return null
-        }
         val raw = meta.persistentDataContainer.get(diskIdKey, PersistentDataType.STRING) ?: return null
         return runCatching { UUID.fromString(raw) }.getOrNull()
     }
 
-    fun isDisk(item: ItemStack?): Boolean = diskId(item) != null
+    fun state(item: ItemStack?): DiskItemState {
+        if (item?.type != baseMaterial) return DiskItemState.NOT_DISK
+        val meta = item.itemMeta ?: return DiskItemState.NOT_DISK
+        if (meta.persistentDataContainer.get(customItemIdKey, PersistentDataType.STRING) != CUSTOM_ITEM_ID) {
+            return DiskItemState.NOT_DISK
+        }
+        return if (meta.persistentDataContainer.has(diskIdKey, PersistentDataType.STRING)) {
+            DiskItemState.WRITTEN
+        } else {
+            DiskItemState.UNSET
+        }
+    }
+
+    fun isDisk(item: ItemStack?): Boolean = state(item) != DiskItemState.NOT_DISK
 
     private fun applyCustomItemComponents(item: ItemStack) {
         item.setData(DataComponentTypes.TOOL, Tool.tool().build())
@@ -70,9 +123,9 @@ object DiskItemService {
             val lore = CCSystem.getAPI().getLoreService().render(
                 GuiLoreSpec.Rich(
                     listOf(
-                        GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.commands.size, "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
                         GuiLoreLine.Data(KcI18n.text(player, "item.owner"), ownerName, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.trigger.key), "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
                         GuiLoreLine.Spacer,
                         me.awabi2048.kantancommander.gui.KcGui.action(
                             player,

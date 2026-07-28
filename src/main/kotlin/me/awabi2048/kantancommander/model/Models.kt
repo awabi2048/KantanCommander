@@ -3,90 +3,219 @@ package me.awabi2048.kantancommander.model
 import org.bukkit.Material
 import java.util.UUID
 
+const val STRUCTURED_FORMAT_VERSION = 6
+const val TIMER_UNIT_TICKS = 10
+const val MIN_TIMER_UNITS = 1
+const val MAX_TIMER_UNITS = 86_400
+
 data class DiskScript(
+    val formatVersion: Int = STRUCTURED_FORMAT_VERSION,
     val id: UUID = UUID.randomUUID(),
     var name: String,
     val owner: UUID,
     val createdAt: Long = System.currentTimeMillis(),
-    var trigger: TriggerMode = TriggerMode.REDSTONE_RISING,
-    val commands: MutableList<ScriptCommand> = mutableListOf()
+    var listed: Boolean = true,
+    var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
+    var timer: TimerSetting = TimerSetting(),
+    var graph: CommandGraph = CommandGraph.empty(),
 )
 
-data class ScriptCommand(
-    val type: CommandType,
-    val params: MutableMap<String, String> = linkedMapOf()
+data class TimerSetting(
+    var enabled: Boolean = false,
+    var intervalUnits: Int = MIN_TIMER_UNITS,
 ) {
-    fun string(key: String, default: String = ""): String = params[key]?.takeIf { it.isNotBlank() } ?: default
-    fun int(key: String, default: Int = 0): Int = params[key]?.toIntOrNull() ?: default
-    fun double(key: String, default: Double = 0.0): Double = params[key]?.toDoubleOrNull() ?: default
-
-    fun summary(): String = when (type) {
-        CommandType.SOUND -> string("sound", "minecraft:block.note_block.pling")
-        CommandType.MESSAGE -> string("text", "")
-        CommandType.PARTICLE -> string("particle", "minecraft:happy_villager")
-        CommandType.WAIT -> "${int("ticks", 20)} ticks"
-        CommandType.TITLE -> string("title", "")
-        CommandType.ACTIONBAR -> string("text", "")
-        CommandType.EFFECT -> string("effect", "SPEED")
-    }.ifBlank { "-" }
+    fun normalized() = copy(intervalUnits = intervalUnits.coerceIn(MIN_TIMER_UNITS, MAX_TIMER_UNITS))
+    val intervalTicks: Long get() = intervalUnits.coerceIn(MIN_TIMER_UNITS, MAX_TIMER_UNITS) * TIMER_UNIT_TICKS.toLong()
 }
 
-enum class TriggerMode(val key: String) {
-    REDSTONE_RISING("trigger.redstone_rising"),
-    REDSTONE_EDGE("trigger.redstone_edge");
+enum class ActivationMode(val key: String) {
+    NEEDS_REDSTONE("activation.needs_redstone"),
+    ALWAYS_ACTIVE("activation.always_active");
 
-    fun next(): TriggerMode = if (this == REDSTONE_RISING) REDSTONE_EDGE else REDSTONE_RISING
+    fun toggled(timerEnabled: Boolean): ActivationMode =
+        if (!timerEnabled) NEEDS_REDSTONE else if (this == NEEDS_REDSTONE) ALWAYS_ACTIVE else NEEDS_REDSTONE
 }
+
+data class CommandGraph(
+    var entryNodeId: UUID? = null,
+    val nodes: LinkedHashMap<UUID, CommandNode> = linkedMapOf(),
+) {
+    companion object {
+        fun empty() = CommandGraph()
+    }
+
+    fun deepCopy(): CommandGraph {
+        val copied = linkedMapOf<UUID, CommandNode>()
+        nodes.forEach { (id, node) ->
+            copied[id] = node.copy(
+                params = node.params.toMutableMap(),
+                contextOverride = node.contextOverride?.copy(),
+                targetSpec = node.targetSpec?.copy(),
+                secondaryTargetSpec = node.secondaryTargetSpec?.copy(),
+                destinationSpec = node.destinationSpec?.copy(),
+                destinationTargetSpec = node.destinationTargetSpec?.copy(),
+                conditionPositionSpec = node.conditionPositionSpec?.copy(),
+                snapshot = node.snapshot?.deepCopy(),
+            )
+        }
+        return CommandGraph(entryNodeId, copied)
+    }
+}
+
+data class CommandNode(
+    val id: UUID = UUID.randomUUID(),
+    val type: CommandType,
+    val params: MutableMap<String, String> = linkedMapOf(),
+    var next: UUID? = null,
+    var trueNext: UUID? = null,
+    var falseNext: UUID? = null,
+    var pairedNodeId: UUID? = null,
+    var targetSpec: TargetSpec? = null,
+    var secondaryTargetSpec: TargetSpec? = null,
+    var destinationSpec: PositionSpec? = null,
+    var destinationTargetSpec: TargetSpec? = null,
+    var conditionPositionSpec: PositionSpec? = null,
+    var contextOverride: ExecutionContextSpec? = null,
+    var snapshot: CommandGraph? = null,
+) {
+    fun string(key: String, default: String = "") = params[key]?.takeIf(String::isNotBlank) ?: default
+    fun int(key: String, default: Int = 0) = params[key]?.toIntOrNull() ?: default
+    fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
+    fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
+}
+
+enum class TargetKind {
+    EXECUTOR, ACTIVATOR, INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
+    ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY,
+}
+
+enum class TargetSort { NEAREST, FURTHEST, RANDOM }
+
+data class TargetSpec(
+    val kind: TargetKind,
+    val entityType: String? = null,
+    val minimumDistance: Double? = null,
+    val maximumDistance: Double? = null,
+    val limit: Int? = null,
+    val sort: TargetSort = TargetSort.NEAREST,
+    val gameMode: String? = null,
+    val tag: String? = null,
+    val name: String? = null,
+    val excludeExecutor: Boolean = false,
+    val excludeActivator: Boolean = false,
+    val fixedEntityId: UUID? = null,
+)
+
+enum class PositionKind {
+    CAPTURED, DISK, EXECUTOR, TARGET, MYWORLD_SPAWN, COORDINATES,
+    TEMPORARY_VARIABLE, WORLD_VARIABLE,
+}
+data class PositionSpec(
+    val kind: PositionKind,
+    val x: Double? = null,
+    val y: Double? = null,
+    val z: Double? = null,
+    val yaw: Float? = null,
+    val pitch: Float? = null,
+    val variable: String? = null,
+)
+
+enum class FacingKind { INHERITED, CAPTURED, EXECUTOR, TARGET, COORDINATES, MYWORLD_SPAWN, ROTATION }
+data class FacingSpec(
+    val kind: FacingKind,
+    val x: Double? = null,
+    val y: Double? = null,
+    val z: Double? = null,
+    val yaw: Float? = null,
+    val pitch: Float? = null,
+)
+
+data class ExecutionContextSpec(
+    val executor: TargetSpec? = null,
+    val target: TargetSpec? = null,
+    val position: PositionSpec? = null,
+    val facing: FacingSpec? = null,
+)
+
+enum class ConditionKind(val key: String) {
+    TARGET_EXISTS("condition.target_exists"),
+    ENTITY_STATE("condition.entity_state"),
+    VARIABLE_STATE("condition.variable_state"),
+    BLOCK_STATE("condition.block_state"),
+    ITEM_POSSESSION("condition.item_possession"),
+}
+
+enum class VariableType { BOOLEAN, INTEGER, DECIMAL, TEXT, POSITION, ENTITY }
+enum class VariableScope { TEMPORARY, WORLD }
+enum class VariableOperation { SET, ADD, SUBTRACT, TOGGLE, STORE_POSITION, STORE_TARGET, CLEAR }
+
+data class WorldVariableValue(
+    val type: VariableType,
+    val booleanValue: Boolean? = null,
+    val integerValue: Long? = null,
+    val decimalValue: Double? = null,
+    val textValue: String? = null,
+    val position: SavedPosition? = null,
+    val entityId: UUID? = null,
+)
+
+data class SavedPosition(
+    val x: Double,
+    val y: Double,
+    val z: Double,
+    val yaw: Float = 0f,
+    val pitch: Float = 0f,
+)
 
 enum class CommandType(
     val key: String,
     val icon: Material,
-    val params: List<CommandParam>
+    val defaults: Map<String, String>,
 ) {
-    SOUND("command.sound", Material.NOTE_BLOCK, listOf(
-        CommandParam.Text("sound", "param.sound", "minecraft:block.note_block.pling"),
-        CommandParam.Number("volume", "param.volume", "1.0"),
-        CommandParam.Number("pitch", "param.pitch", "1.0"),
-        CommandParam.Choice("category", "param.category", "MASTER", listOf("MASTER", "PLAYERS", "BLOCKS", "AMBIENT"))
+    TELEPORT("command.teleport", Material.ENDER_PEARL, emptyMap()),
+    GIVE_ITEM("command.give_item", Material.CHEST, mapOf("count" to "1")),
+    ENTITY_ACTION("command.entity_action", Material.SADDLE, mapOf("action" to "ride")),
+    DISPLAY_TEXT("command.display_text", Material.WRITABLE_BOOK, mapOf(
+        "mode" to "tellraw", "text" to "", "fadeIn" to "10", "stay" to "60", "fadeOut" to "10"
     )),
-    MESSAGE("command.message", Material.PAPER, listOf(
-        CommandParam.Text("text", "param.text", "Hello"),
-        CommandParam.Choice("target", "param.target", "nearby", listOf("nearby", "self"))
+    WAIT("command.wait", Material.CLOCK, mapOf("ticks" to "20")),
+    CONDITION("command.condition", Material.COMPARATOR, mapOf(
+        "kind" to ConditionKind.TARGET_EXISTS.name,
+        "inverted" to "false",
+        "state" to "sneaking",
+        "variable" to "",
+        "variableScope" to VariableScope.TEMPORARY.name,
+        "operator" to ">=",
+        "value" to "0",
+        "block" to "minecraft:air",
+        "count" to "1",
     )),
-    PARTICLE("command.particle", Material.FIREWORK_STAR, listOf(
-        CommandParam.Text("particle", "param.particle", "minecraft:happy_villager"),
-        CommandParam.Number("count", "param.count", "8"),
-        CommandParam.Number("speed", "param.speed", "0.0"),
-        CommandParam.Number("offsetX", "param.offset_x", "0.5"),
-        CommandParam.Number("offsetY", "param.offset_y", "0.5"),
-        CommandParam.Number("offsetZ", "param.offset_z", "0.5")
+    CONTEXT("command.context", Material.RECOVERY_COMPASS, mapOf(
+        "executor" to "", "target" to "", "position" to "", "facing" to ""
     )),
-    WAIT("command.wait", Material.CLOCK, listOf(
-        CommandParam.Number("ticks", "param.ticks", "20")
+    DISK_CALL("command.disk_call", Material.MUSIC_DISC_13, mapOf("diskId" to "")),
+    VARIABLE("command.variable", Material.REDSTONE, mapOf(
+        "name" to "",
+        "scope" to VariableScope.TEMPORARY.name,
+        "type" to VariableType.BOOLEAN.name,
+        "operation" to VariableOperation.SET.name,
+        "value" to "false",
     )),
-    TITLE("command.title", Material.NAME_TAG, listOf(
-        CommandParam.Text("title", "param.title", "Title"),
-        CommandParam.Text("subtitle", "param.subtitle", ""),
-        CommandParam.Number("fadeIn", "param.fade_in", "10"),
-        CommandParam.Number("stay", "param.stay", "60"),
-        CommandParam.Number("fadeOut", "param.fade_out", "10")
+    MERGE("command.merge", Material.HOPPER, emptyMap()),
+    FOR_START("command.for_start", Material.REPEATER, mapOf(
+        "startSource" to "FIXED",
+        "startValue" to "0",
+        "endSource" to "FIXED",
+        "endValue" to "0",
+        "stepSource" to "FIXED",
+        "stepValue" to "1",
+        "inclusiveEnd" to "true",
     )),
-    ACTIONBAR("command.actionbar", Material.WRITABLE_BOOK, listOf(
-        CommandParam.Text("text", "param.text", "Hello")
-    )),
-    EFFECT("command.effect", Material.POTION, listOf(
-        CommandParam.Choice("effect", "param.effect", "SPEED", listOf("SPEED", "HASTE", "JUMP_BOOST", "REGENERATION", "RESISTANCE", "GLOWING")),
-        CommandParam.Number("duration", "param.duration", "100"),
-        CommandParam.Number("amplifier", "param.amplifier", "0")
-    ));
+    FOR_END("command.for_end", Material.COMPARATOR, emptyMap()),
+    BREAK("command.break", Material.BARRIER, emptyMap()),
+    CONTINUE("command.continue", Material.ARROW, emptyMap());
 
-    fun newCommand(): ScriptCommand = ScriptCommand(this, params.associate { it.id to it.defaultValue }.toMutableMap())
-}
-
-sealed class CommandParam(val id: String, val key: String, val defaultValue: String) {
-    class Text(id: String, key: String, defaultValue: String) : CommandParam(id, key, defaultValue)
-    class Number(id: String, key: String, defaultValue: String) : CommandParam(id, key, defaultValue)
-    class Choice(id: String, key: String, defaultValue: String, val options: List<String>) : CommandParam(id, key, defaultValue)
+    fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
 }
 
 data class DiskPlacement(
@@ -95,7 +224,8 @@ data class DiskPlacement(
     val y: Int,
     val z: Int,
     val scriptId: UUID,
-    var displayId: UUID? = null
+    val facing: String,
+    var displayId: UUID?,
 ) {
     val key: String get() = "$world,$x,$y,$z"
 }

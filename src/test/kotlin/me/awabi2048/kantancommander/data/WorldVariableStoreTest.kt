@@ -1,0 +1,78 @@
+package me.awabi2048.kantancommander.data
+
+import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.WorldVariableValue
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.io.TempDir
+import java.io.File
+import java.util.UUID
+
+class WorldVariableStoreTest {
+    @TempDir
+    lateinit var directory: File
+
+    @Test
+    fun `variables are isolated by MyWorld and survive store reload`() {
+        val firstWorld = UUID.randomUUID()
+        val secondWorld = UUID.randomUUID()
+        WorldVariableStore(directory).apply {
+            set(firstWorld, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 3))
+            set(secondWorld, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 8))
+        }
+
+        val reloaded = WorldVariableStore(directory)
+        assertEquals(3, reloaded.get(firstWorld, "wave")?.integerValue)
+        assertEquals(8, reloaded.get(secondWorld, "wave")?.integerValue)
+    }
+
+    @Test
+    fun `removing a variable is persisted`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+        store.set(world, "open", WorldVariableValue(VariableType.BOOLEAN, booleanValue = true))
+        store.remove(world, "open")
+
+        assertNull(WorldVariableStore(directory).get(world, "open"))
+    }
+
+    @Test
+    fun `deleting a MyWorld removes cached and persisted values`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+        store.set(world, "shared", WorldVariableValue(VariableType.INTEGER, integerValue = 7))
+
+        assertTrue(store.deleteWorld(world))
+        assertTrue(store.list(world).isEmpty())
+        assertTrue(WorldVariableStore(directory).list(world).isEmpty())
+    }
+
+    @Test
+    fun `MyWorld copy receives definitions and initial values but not runtime values`() {
+        val source = UUID.randomUUID()
+        val target = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+        store.set(source, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 1))
+        store.set(source, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 9))
+
+        store.copyDefinitions(source, target)
+
+        assertEquals(9, store.get(source, "wave")?.integerValue)
+        assertEquals(1, store.get(target, "wave")?.integerValue)
+        assertEquals(1, WorldVariableStore(directory).get(target, "wave")?.integerValue)
+    }
+
+    @Test
+    fun `non finite and incomplete values are rejected before cache mutation`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.set(world, "broken", WorldVariableValue(VariableType.DECIMAL, decimalValue = Double.NaN))
+        }
+        assertNull(store.get(world, "broken"))
+    }
+}

@@ -25,6 +25,8 @@ object KcGui {
     val layouts get() = CCSystem.getAPI().getGuiLayoutService()
     val sounds get() = CCSystem.getAPI().getMenuSoundService()
 
+    fun title(raw: String) = elements.title(GuiNameSpec.Text(raw, GuiNameStyle.DEFAULT))
+
     fun inventory(player: Player, holder: KcMenuHolder, size: Int, title: String): Inventory {
         val inv = Bukkit.createInventory(holder, size, elements.title(GuiNameSpec.Text(title, GuiNameStyle.DEFAULT)))
         holder.inv = inv
@@ -35,12 +37,18 @@ object KcGui {
         layouts.applyStandardFrame(inv)
     }
 
-    fun item(material: Material, name: String, style: GuiNameStyle = GuiNameStyle.DEFAULT, lines: List<GuiLoreLine> = emptyList()) =
+    fun item(
+        material: Material,
+        name: String,
+        style: GuiNameStyle = GuiNameStyle.DEFAULT,
+        lines: List<GuiLoreLine> = emptyList(),
+        role: GuiElementRole = GuiElementRole.ACTION,
+    ) =
         elements.item(GuiItemSpec(
             material,
             GuiNameSpec.Text(name, style),
             if (lines.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(lines, GuiLoreFrame.BOTH),
-            GuiElementRole.CONTENT,
+            role,
             1
         ))
 

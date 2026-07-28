@@ -14,6 +14,10 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
 import java.util.logging.Level
+import org.bukkit.util.Transformation
+import org.joml.AxisAngle4f
+import org.joml.Vector3f
+import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
 
 class PlacementStore(private val plugin: KantanCommanderPlugin, private val file: File) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -32,25 +36,71 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun remove(world: World, x: Int, y: Int, z: Int): DiskPlacement? {
         val removed = placements.remove(key(world.name, x, y, z))
+        removed?.let { plugin.forgetActivationState(it.key, it.scriptId) }
         save()
         return removed
     }
 
     fun find(location: Location): DiskPlacement? = find(location.world, location.blockX, location.blockY, location.blockZ)
 
-    fun find(world: World?, x: Int, y: Int, z: Int): DiskPlacement? =
-        world?.let { placements[key(it.name, x, y, z)] }
+    fun find(world: World?, x: Int, y: Int, z: Int): DiskPlacement? {
+        world ?: return null
+        val placementKey = key(world.name, x, y, z)
+        val placement = placements[placementKey] ?: return null
+        if (plugin.scripts.load(placement.scriptId) != null) return placement
+        removeDisplay(world, placement.displayId)
+        placements.remove(placementKey)
+        plugin.forgetActivationState(placement.key, placement.scriptId)
+        save()
+        return null
+    }
 
     fun findByScript(id: UUID): List<DiskPlacement> = placements.values.filter { it.scriptId == id }
 
+    fun refreshDisplaysForScript(id: UUID) {
+        findByScript(id).forEach { placement ->
+            val world = Bukkit.getWorld(placement.world) ?: return@forEach
+            plugin.scripts.load(id)?.let { script ->
+                world.getBlockAt(placement.x, placement.y, placement.z)
+                    .setType(PlacedDiskMaterials.forTimer(script.timer.enabled), false)
+            }
+            removeDisplay(world, placement.displayId)
+            spawnDisplay(world, placement)
+        }
+    }
+
     fun all(): List<DiskPlacement> = placements.values.toList()
 
+    fun removeWorld(worldName: String): List<DiskPlacement> {
+        val removed = placements.values.filter { it.world == worldName }
+        removed.forEach {
+            placements.remove(it.key)
+            plugin.forgetActivationState(it.key, it.scriptId)
+        }
+        if (removed.isNotEmpty()) save()
+        return removed
+    }
+
     fun restoreDisplays() {
-        placements.values.forEach { placement ->
+        val stale = mutableListOf<String>()
+        placements.values.toList().forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
+            if (plugin.scripts.load(placement.scriptId) == null) {
+                removeDisplay(world, placement.displayId)
+                stale += placement.key
+                return@forEach
+            }
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
-            if (block.type != Material.NOTE_BLOCK) return@forEach
+            if (!PlacedDiskMaterials.isPlacedDisk(block.type)) {
+                removeDisplay(world, placement.displayId)
+                stale += placement.key
+                return@forEach
+            }
+            removeDisplay(world, placement.displayId)
             placement.displayId = spawnDisplay(world, placement)
+        }
+        stale.forEach { key ->
+            placements.remove(key)?.let { plugin.forgetActivationState(it.key, it.scriptId) }
         }
         save()
     }
@@ -58,8 +108,17 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     fun spawnDisplay(world: World, placement: DiskPlacement): UUID {
         val loc = Location(world, placement.x + 0.5, placement.y + 0.05, placement.z + 0.5)
         val display = world.spawn(loc, BlockDisplay::class.java) {
-            it.block = Bukkit.createBlockData(Material.COMMAND_BLOCK)
-            it.isGlowing = plugin.config.getBoolean("display.glowing", true)
+            val script = plugin.scripts.load(placement.scriptId)
+            val displayMaterial = if (script?.timer?.enabled == true) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
+            it.block = Bukkit.createBlockData(displayMaterial)
+            it.isGlowing = false
+            it.addScoreboardTag(DISPLAY_TAG)
+            it.transformation = Transformation(
+                Vector3f(-0.375f, 0.125f, -0.375f),
+                AxisAngle4f(),
+                Vector3f(0.75f, 0.75f, 0.75f),
+                AxisAngle4f(),
+            )
         }
         placement.displayId = display.uniqueId
         save()
@@ -110,13 +169,15 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         val y: Int?,
         val z: Int?,
         val scriptId: String?,
+        val facing: String?,
         val displayId: String?
     ) {
         fun toModel(): DiskPlacement {
             val worldName = world?.takeIf { it.isNotBlank() } ?: error("world is missing")
             val script = parseUuid(scriptId, "scriptId")
             val display = displayId?.let { parseUuid(it, "displayId") }
-            return DiskPlacement(worldName, x ?: error("x is missing"), y ?: error("y is missing"), z ?: error("z is missing"), script, display)
+            val direction = facing?.takeIf { it.isNotBlank() } ?: error("facing is missing")
+            return DiskPlacement(worldName, x ?: error("x is missing"), y ?: error("y is missing"), z ?: error("z is missing"), script, direction, display)
         }
 
         private fun parseUuid(raw: String?, field: String): UUID =
@@ -125,8 +186,14 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     }
 
     private fun save() {
-        file.writeText(gson.toJson(placements.values.toList()), Charsets.UTF_8)
+        val temporary = file.resolveSibling("${file.name}.tmp")
+        temporary.writeText(gson.toJson(placements.values.toList()), Charsets.UTF_8)
+        Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 
     private fun key(world: String, x: Int, y: Int, z: Int): String = "$world,$x,$y,$z"
+
+    companion object {
+        const val DISPLAY_TAG = "kantan_commander_display"
+    }
 }

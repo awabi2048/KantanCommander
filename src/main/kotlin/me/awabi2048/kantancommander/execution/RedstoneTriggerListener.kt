@@ -1,30 +1,116 @@
 package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.model.TriggerMode
-import org.bukkit.Material
+import me.awabi2048.kantancommander.model.ActivationMode
+import org.bukkit.Bukkit
+import org.bukkit.block.BlockFace
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
-import org.bukkit.event.block.BlockRedstoneEvent
-import org.bukkit.event.block.NotePlayEvent
+import java.util.UUID
+import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
 
 class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Listener {
-    @EventHandler
-    fun onRedstone(event: BlockRedstoneEvent) {
-        if (event.block.type != Material.NOTE_BLOCK) return
-        val placement = plugin.placements.find(event.block.location) ?: return
-        val script = plugin.scripts.load(placement.scriptId) ?: return
-        val shouldRun = when (script.trigger) {
-            TriggerMode.REDSTONE_RISING -> event.oldCurrent <= 0 && event.newCurrent > 0
-            TriggerMode.REDSTONE_EDGE -> event.oldCurrent != event.newCurrent && event.newCurrent > 0
-        }
-        if (shouldRun) plugin.executor.execute(script.id, event.block.location.add(0.5, 0.5, 0.5))
+    private val runtimeState = RedstoneRuntimeState()
+
+    fun start() {
+        Bukkit.getScheduler().runTaskTimer(plugin, Runnable(::tick), 1L, 1L)
     }
 
-    @EventHandler
-    fun onNote(event: NotePlayEvent) {
-        if (plugin.placements.find(event.block.location) != null) {
-            event.isCancelled = true
+    private fun tick() {
+        val now = plugin.server.currentTick.toLong()
+        plugin.placements.all().forEach { placement ->
+            val world = Bukkit.getWorld(placement.world) ?: return@forEach
+            val block = world.getBlockAt(placement.x, placement.y, placement.z)
+            if (!PlacedDiskMaterials.isPlacedDisk(block.type)) return@forEach
+            val script = plugin.scripts.load(placement.scriptId) ?: return@forEach
+            val hasPower = POWER_FACES.any { face ->
+                val adjacent = block.getRelative(face)
+                adjacent.blockPower > 0 || adjacent.isBlockPowered || adjacent.isBlockIndirectlyPowered
+            }
+            val previous = runtimeState.observePower(placement.key, hasPower)
+            val previousRun = runtimeState.timerAnchor(script.id, script.timer.enabled, now)
+            val shouldRun = RedstoneActivationPolicy.shouldRun(
+                activation = script.activation,
+                timerEnabled = script.timer.enabled,
+                intervalTicks = script.timer.intervalTicks,
+                wasPowered = previous,
+                isPowered = hasPower,
+                currentTick = now,
+                lastRunTick = previousRun,
+            )
+            if (shouldRun) {
+                runtimeState.markRun(script.id, now)
+                plugin.executor.execute(script.id, block.location.add(0.5, 0.5, 0.5))
+            }
         }
+    }
+
+    fun resetTiming(scriptId: UUID) {
+        runtimeState.resetTiming(scriptId)
+    }
+
+    fun forget(placementKey: String, scriptId: UUID) {
+        runtimeState.forget(placementKey, scriptId)
+    }
+
+    companion object {
+        private val POWER_FACES = listOf(
+            BlockFace.UP,
+            BlockFace.DOWN,
+            BlockFace.NORTH,
+            BlockFace.SOUTH,
+            BlockFace.EAST,
+            BlockFace.WEST,
+        )
+    }
+}
+
+internal class RedstoneRuntimeState {
+    private val powered = mutableMapOf<String, Boolean>()
+    private val lastRun = mutableMapOf<UUID, Long>()
+
+    fun observePower(placementKey: String, current: Boolean): Boolean =
+        powered.put(placementKey, current) ?: false
+
+    fun timerAnchor(scriptId: UUID, timerEnabled: Boolean, currentTick: Long): Long? {
+        if (!timerEnabled) {
+            lastRun.remove(scriptId)
+            return null
+        }
+        return lastRun.getOrPut(scriptId) { currentTick }
+    }
+
+    fun markRun(scriptId: UUID, currentTick: Long) {
+        lastRun[scriptId] = currentTick
+    }
+
+    fun resetTiming(scriptId: UUID) {
+        lastRun.remove(scriptId)
+    }
+
+    fun forget(placementKey: String, scriptId: UUID) {
+        powered.remove(placementKey)
+        lastRun.remove(scriptId)
+    }
+}
+
+internal object RedstoneActivationPolicy {
+    fun shouldRun(
+        activation: ActivationMode,
+        timerEnabled: Boolean,
+        intervalTicks: Long,
+        wasPowered: Boolean,
+        isPowered: Boolean,
+        currentTick: Long,
+        lastRunTick: Long?,
+    ): Boolean {
+        if (!timerEnabled) {
+            return activation == ActivationMode.NEEDS_REDSTONE && !wasPowered && isPowered
+        }
+        val intervalElapsed = lastRunTick != null && currentTick - lastRunTick >= intervalTicks
+        return intervalElapsed && (
+            activation == ActivationMode.ALWAYS_ACTIVE ||
+                activation == ActivationMode.NEEDS_REDSTONE && isPowered
+            )
     }
 }
