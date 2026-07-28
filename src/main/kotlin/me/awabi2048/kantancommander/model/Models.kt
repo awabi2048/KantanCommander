@@ -54,6 +54,7 @@ data class CommandGraph(
                 secondaryTargetSpec = node.secondaryTargetSpec?.copy(),
                 destinationSpec = node.destinationSpec?.copy(),
                 destinationTargetSpec = node.destinationTargetSpec?.copy(),
+                conditionPositionSpec = node.conditionPositionSpec?.copy(),
                 snapshot = node.snapshot?.deepCopy(),
             )
         }
@@ -73,6 +74,7 @@ data class CommandNode(
     var secondaryTargetSpec: TargetSpec? = null,
     var destinationSpec: PositionSpec? = null,
     var destinationTargetSpec: TargetSpec? = null,
+    var conditionPositionSpec: PositionSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
     var snapshot: CommandGraph? = null,
 ) {

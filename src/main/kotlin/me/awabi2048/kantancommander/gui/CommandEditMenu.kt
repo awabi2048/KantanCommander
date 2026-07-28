@@ -174,11 +174,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
                         } else PositionSpec(kind)
                         updateNode(context.route) { node ->
-                            if (context.route.payload[ROLE] == "destination") {
-                                node.destinationSpec = spec
-                                node.destinationTargetSpec = null
-                            } else {
-                                node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
+                            when (context.route.payload[ROLE]) {
+                                "destination" -> {
+                                    node.destinationSpec = spec
+                                    node.destinationTargetSpec = null
+                                }
+                                "condition_position" -> node.conditionPositionSpec = spec
+                                else -> node.contextOverride =
+                                    (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
                             }
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
@@ -358,7 +361,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "operator" to MenuActionHandler { context ->
-                        val operators = listOf("==", "!=", ">", ">=", "<", "<=")
+                        val operators = listOf("set", "unset", "==", "!=", ">", ">=", "<", "<=")
                         updateNode(context.route) {
                             val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                             it.params["operator"] = operators[(current + 1) % operators.size]
@@ -377,8 +380,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.None)
                     },
                     "position" to MenuActionHandler { context ->
-                        showConditionPositionDialog(context.player, context.route)
-                        MenuActionResult.Success(MenuUpdate.None)
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(positionRoute(context.route, "condition_position"))
+                        )
                     },
                     "block" to materialSelection("block"),
                     "item" to materialSelection("item"),
@@ -484,7 +488,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val type = context.payload["type"]
                             ?.let { runCatching { VariableType.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        updateNode(context.route) { it.params["type"] = type.name }
+                        updateNode(context.route) {
+                            it.params["type"] = type.name
+                            val current = runCatching {
+                                VariableOperation.valueOf(it.string("operation"))
+                            }.getOrNull()
+                            if (current !in allowedVariableOperations(type)) {
+                                it.params["operation"] = allowedVariableOperations(type).first().name
+                            }
+                        }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
                 ),
@@ -494,13 +506,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             InventoryMenuDefinition(
                 SequenceEditorMenu.OWNER,
                 VARIABLE_OPERATION_ID,
-                renderer = { renderVariableOperations(it.player) },
+                renderer = { renderVariableOperations(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
                     "select" to MenuActionHandler { context ->
                         val operation = context.payload["operation"]
                             ?.let { runCatching { VariableOperation.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val type = node(context.route)?.string("type")
+                            ?.let { runCatching { VariableType.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (operation !in allowedVariableOperations(type)) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
                         updateNode(context.route) { it.params["operation"] = operation.name }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
@@ -598,7 +616,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderSettings(player: Player, route: MenuRoute): InventoryMenuView {
         val node = node(route)
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.command_settings")), listOf(backElement(player)))
-        val fields = EditorMenuLayout.fields(node.type)
+        val fields = settingsFields(node)
         val elements = fields.mapIndexed { index, field ->
             MenuElement(
                 EditorMenuLayout.centeredSlots(fields.size)[index],
@@ -803,7 +821,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 DetailOption(Material.REPEATER, "gui.field.value", "value", node.string("value", "0")),
             )
             ConditionKind.BLOCK_STATE -> listOf(
-                DetailOption(Material.COMPASS, "gui.field.position", "position", node.string("position", "~ ~ ~")),
+                DetailOption(
+                    Material.COMPASS,
+                    "gui.field.position",
+                    "position",
+                    node.conditionPositionSpec?.kind?.name ?: "DISK",
+                ),
                 DetailOption(Material.GRASS_BLOCK, "gui.field.block", "block", node.string("block", "minecraft:air")),
             )
             ConditionKind.ITEM_POSSESSION -> listOf(
@@ -889,7 +912,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.variable_type_title")), elements)
     }
 
-    private fun renderVariableOperations(player: Player): InventoryMenuView {
+    private fun renderVariableOperations(player: Player, route: MenuRoute): InventoryMenuView {
+        val type = node(route)?.string("type")
+            ?.let { runCatching { VariableType.valueOf(it) }.getOrNull() }
+            ?: VariableType.BOOLEAN
         val options = listOf(
             Triple(VariableOperation.SET, Material.LIME_DYE, KcI18n.text(player, "gui.option.set")),
             Triple(VariableOperation.ADD, Material.SLIME_BALL, KcI18n.text(player, "gui.option.add")),
@@ -898,7 +924,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(VariableOperation.STORE_POSITION, Material.COMPASS, KcI18n.text(player, "gui.option.store_position")),
             Triple(VariableOperation.STORE_TARGET, Material.PLAYER_HEAD, KcI18n.text(player, "gui.option.store_target")),
             Triple(VariableOperation.CLEAR, Material.BARRIER, KcI18n.text(player, "gui.option.clear")),
-        )
+        ).filter { it.first in allowedVariableOperations(type) }
         val elements = options.mapIndexed { index, option ->
             MenuElement(
                 EditorMenuLayout.centeredSlots(options.size)[index],
@@ -910,6 +936,27 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.variable_operation_title")), elements)
+    }
+
+    private fun settingsFields(node: CommandNode): List<EditorField> {
+        val fields = EditorMenuLayout.fields(node.type)
+        if (node.type != CommandType.VARIABLE) return fields
+        val operation = runCatching {
+            VariableOperation.valueOf(node.string("operation"))
+        }.getOrDefault(VariableOperation.SET)
+        return fields.filterNot { field ->
+            field.key == "value" &&
+                operation !in setOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT)
+        }
+    }
+
+    private fun allowedVariableOperations(type: VariableType): List<VariableOperation> = when (type) {
+        VariableType.BOOLEAN -> listOf(VariableOperation.SET, VariableOperation.TOGGLE, VariableOperation.CLEAR)
+        VariableType.INTEGER, VariableType.DECIMAL ->
+            listOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT, VariableOperation.CLEAR)
+        VariableType.TEXT -> listOf(VariableOperation.SET, VariableOperation.CLEAR)
+        VariableType.POSITION -> listOf(VariableOperation.STORE_POSITION, VariableOperation.CLEAR)
+        VariableType.ENTITY -> listOf(VariableOperation.STORE_TARGET, VariableOperation.CLEAR)
     }
 
     private fun renderDisplayModes(player: Player): InventoryMenuView {
@@ -1151,33 +1198,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    private fun showConditionPositionDialog(player: Player, route: MenuRoute) {
-        val current = node(route)?.string("position", "~ ~ ~")?.split(" ").orEmpty()
-        CCSystem.getAPI().getMenuDialogService().show(
-            player,
-            MenuDialogRequest(
-                owner = SequenceEditorMenu.OWNER,
-                id = "condition-position",
-                title = KcI18n.component(player, "gui.dialog.condition_position_title"),
-                body = listOf(KcI18n.component(player, "gui.dialog.coordinates_body")),
-                inputs = listOf(
-                    MenuDialogInput.Text("x", Component.text("X"), current.getOrNull(0) ?: "~"),
-                    MenuDialogInput.Text("y", Component.text("Y"), current.getOrNull(1) ?: "~"),
-                    MenuDialogInput.Text("z", Component.text("Z"), current.getOrNull(2) ?: "~"),
-                ),
-                confirm = MenuDialogButton(KcI18n.component(player, "gui.dialog.confirm"), MenuDialogHandler { _, response ->
-                    val values = listOf(response.textValue("x"), response.textValue("y"), response.textValue("z"))
-                    if (values.any { it != "~" && it.toDoubleOrNull() == null }) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, "gui.dialog.coordinates_invalid"))
-                    }
-                    updateNode(route) { it.params["position"] = values.joinToString(" ") }
-                    MenuActionResult.Success(MenuUpdate.Replace(route))
-                }),
-                cancel = dialogCancel(player, route),
-            )
-        )
-    }
-
     private fun showPositionDialog(player: Player, route: MenuRoute) {
         val current = node(route)?.let { selectedPosition(it, route.payload[ROLE]) }
         val location = player.location
@@ -1192,11 +1212,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         ) { x, y, z ->
             updateNode(route) { command ->
                 val spec = PositionSpec(PositionKind.COORDINATES, x, y, z)
-                if (route.payload[ROLE] == "destination") {
-                    command.destinationSpec = spec
-                    command.destinationTargetSpec = null
-                } else {
-                    command.contextOverride =
+                when (route.payload[ROLE]) {
+                    "destination" -> {
+                        command.destinationSpec = spec
+                        command.destinationTargetSpec = null
+                    }
+                    "condition_position" -> command.conditionPositionSpec = spec
+                    else -> command.contextOverride =
                         (command.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
                 }
             }
@@ -1224,11 +1246,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     }
                     updateNode(route) { command ->
                         val spec = PositionSpec(kind, variable = name)
-                        if (route.payload[ROLE] == "destination") {
-                            command.destinationSpec = spec
-                            command.destinationTargetSpec = null
-                        } else {
-                            command.contextOverride =
+                        when (route.payload[ROLE]) {
+                            "destination" -> {
+                                command.destinationSpec = spec
+                                command.destinationTargetSpec = null
+                            }
+                            "condition_position" -> command.conditionPositionSpec = spec
+                            else -> command.contextOverride =
                                 (command.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
                         }
                     }
@@ -1334,7 +1358,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         })
 
     private fun selectedPosition(node: CommandNode, role: String?): PositionSpec? =
-        if (role == "destination") node.destinationSpec else node.contextOverride?.position
+        when (role) {
+            "destination" -> node.destinationSpec
+            "condition_position" -> node.conditionPositionSpec
+            else -> node.contextOverride?.position
+        }
 
     private fun back() = MenuActionHandler { MenuActionResult.Success(MenuUpdate.Back) }
 

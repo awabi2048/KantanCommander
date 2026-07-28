@@ -35,7 +35,10 @@ class VanillaDatapackExporter(
         val pack = outputRoot.resolve("kantan-${root.id}")
         val functions = pack.resolve("data/kantan/function").also(File::mkdirs)
         val loadTags = pack.resolve("data/minecraft/tags/function").also(File::mkdirs)
-        pack.resolve("pack.mcmeta").writeText("""{"pack":{"pack_format":88,"description":"Kantan Commander export"}}""")
+        pack.resolve("pack.mcmeta").writeText(
+            """{"pack":{"pack_format":101,"description":"Kantan Commander export"}}""",
+            Charsets.UTF_8,
+        )
         functions.resolve("load.mcfunction").writeText(
             "scoreboard objectives add kc_result dummy\nscoreboard objectives add kc_vars dummy\nscoreboard objectives add kc_runtime dummy\n",
             Charsets.UTF_8,
@@ -125,6 +128,7 @@ class VanillaDatapackExporter(
                 else -> Unit
             }
             node.contextOverride?.let { validateContext(script, node, it, errors) }
+            validatePosition(script, node, node.conditionPositionSpec, errors)
             if (node.secondaryTargetSpec?.kind == TargetKind.FIXED_ENTITY) {
                 errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
             }
@@ -187,7 +191,7 @@ class VanillaDatapackExporter(
         output: MutableMap<String, String>,
         resetBudget: Boolean = false,
     ) {
-        val entryCall = graph.entryNodeId?.let { "function kantan:${prefix}_$it\n" } ?: "# empty\n"
+        val entryCall = graph.entryNodeId?.let { "return run function kantan:${prefix}_$it\n" } ?: "return 1\n"
         output[prefix] = if (resetBudget) {
             buildString {
                 appendLine("scoreboard players set #executed kc_runtime 0")
@@ -204,15 +208,15 @@ class VanillaDatapackExporter(
             }
             when {
                 emptyFor -> node.pairedNodeId?.let(graph.nodes::get)?.next?.let {
-                    lines += "function kantan:${prefix}_$it"
-                }
+                    lines += "return run function kantan:${prefix}_$it"
+                } ?: run { lines += "return 1" }
                 node.type == CommandType.FOR_START -> {
                     val loop = loopName(node.id)
                     lines += assignLoopValue(loop, "value", node, "start")
                     lines += assignLoopValue(loop, "end", node, "end")
                     lines += assignLoopValue(loop, "step", node, "step")
                     lines += "scoreboard players set #${loop}_count kc_vars 1"
-                    lines += "function kantan:${prefix}_${node.id}_check"
+                    lines += "return run function kantan:${prefix}_${node.id}_check"
                     output["${prefix}_${node.id}_check"] = loopCheck(graph, prefix, node)
                 }
                 node.type == CommandType.FOR_END -> {
@@ -222,27 +226,29 @@ class VanillaDatapackExporter(
                         lines += assignLoopValue(loop, "step", start, "step")
                         lines += "scoreboard players operation #${loop}_value kc_vars += #${loop}_step kc_vars"
                         lines += "scoreboard players add #${loop}_count kc_vars 1"
-                        lines += "function kantan:${prefix}_${start.id}_check"
+                        lines += "return run function kantan:${prefix}_${start.id}_check"
                     }
                 }
                 node.type == CommandType.BREAK -> {
                     enclosingFor(graph, node.id)?.pairedNodeId?.let(graph.nodes::get)?.next?.let {
-                        lines += "function kantan:${prefix}_$it"
-                    }
+                        lines += "return run function kantan:${prefix}_$it"
+                    } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.CONTINUE -> {
                     enclosingFor(graph, node.id)?.pairedNodeId?.let {
-                        lines += "function kantan:${prefix}_$it"
-                    }
+                        lines += "return run function kantan:${prefix}_$it"
+                    } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.DISK_CALL -> {
                     val snapshotPrefix = "${prefix}_snapshot_${node.id}"
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
                     val call = "function kantan:$snapshotPrefix"
-                    lines += storeResult(node, node.contextOverride?.let { wrapContext(it, call) } ?: call)
+                    lines += storeFunctionResult(node, node.contextOverride?.let { wrapContext(it, call) } ?: call)
                 }
                 node.type == CommandType.CONTEXT -> {
-                    node.next?.let { lines += wrapContext(contextFrom(node), "function kantan:${prefix}_$it") }
+                    node.next?.let {
+                        lines += "return run ${wrapContext(contextFrom(node), "function kantan:${prefix}_$it")}"
+                    } ?: run { lines += "return 1" }
                 }
                 else -> lower(node, graph)?.let { command ->
                     val contextual = node.contextOverride?.let { wrapContext(it, command) } ?: command
@@ -252,8 +258,9 @@ class VanillaDatapackExporter(
 
             when (node.type) {
                 CommandType.CONDITION -> {
+                    val conditionContext = conditionContext(node)
                     conditionPreparation(node)?.let { preparation ->
-                        lines += node.contextOverride?.let { context -> wrapContext(context, preparation) } ?: preparation
+                        lines += conditionContext?.let { context -> wrapContext(context, preparation) } ?: preparation
                     }
                     val predicate = predicate(node)
                     val inequality = node.string("kind") == ConditionKind.VARIABLE_STATE.name &&
@@ -261,20 +268,32 @@ class VanillaDatapackExporter(
                     val inverted = node.boolean("inverted") xor inequality
                     val trueCheck = if (inverted) "unless" else "if"
                     val falseCheck = if (inverted) "if" else "unless"
-                    node.trueNext?.let {
-                        val branch = "execute $trueCheck $predicate run function kantan:${prefix}_$it"
-                        lines += node.contextOverride?.let { context -> wrapContext(context, branch) } ?: branch
-                    }
-                    node.falseNext?.let {
-                        val branch = "execute $falseCheck $predicate run function kantan:${prefix}_$it"
-                        lines += node.contextOverride?.let { context -> wrapContext(context, branch) } ?: branch
-                    }
+                    val trueBranch = node.trueNext?.let {
+                        "execute $trueCheck $predicate run return run function kantan:${prefix}_$it"
+                    } ?: "execute $trueCheck $predicate run return 1"
+                    val falseBranch = node.falseNext?.let {
+                        "execute $falseCheck $predicate run return run function kantan:${prefix}_$it"
+                    } ?: "execute $falseCheck $predicate run return 1"
+                    lines += conditionContext?.let { context -> wrapContext(context, trueBranch) } ?: trueBranch
+                    lines += conditionContext?.let { context -> wrapContext(context, falseBranch) } ?: falseBranch
+                    lines += "return 0"
                 }
                 CommandType.WAIT ->
                     node.next?.let { lines += "schedule function kantan:${prefix}_$it ${node.int("ticks", 20).coerceAtLeast(1)}t replace" }
                 CommandType.CONTEXT -> Unit
                 CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
-                else -> node.next?.let { lines += "function kantan:${prefix}_$it" }
+                CommandType.MERGE -> node.next?.let {
+                    lines += "return run function kantan:${prefix}_$it"
+                } ?: run { lines += "return 1" }
+                else -> {
+                    val result = scoreHolder(node.id)
+                    node.next?.let {
+                        lines += "execute if score $result kc_result matches 1 run return run function kantan:${prefix}_$it"
+                    } ?: run {
+                        lines += "execute if score $result kc_result matches 1 run return 1"
+                    }
+                    lines += "return 0"
+                }
             }
             output["${prefix}_${node.id}"] = lines.joinToString("\n", postfix = "\n")
         }
@@ -318,7 +337,9 @@ class VanillaDatapackExporter(
                 }
             }"
         ConditionKind.BLOCK_STATE ->
-            "block ${node.string("position", "~ ~ ~")} ${node.string("block", "minecraft:air")}"
+            "block ${
+                if (node.conditionPositionSpec == null) node.string("position", "~ ~ ~") else "~ ~ ~"
+            } ${node.string("block", "minecraft:air")}"
         ConditionKind.ITEM_POSSESSION ->
             "score ${conditionCountHolder(node)} kc_result matches ${node.int("count", 1).coerceAtLeast(1)}.."
     }
@@ -395,9 +416,14 @@ class VanillaDatapackExporter(
             val negativeComparison = if (start.boolean("inclusiveEnd", true)) ">=" else ">"
             lines += "execute if score #${loop}_step kc_vars matches 1.. if score #${loop}_value kc_vars $positiveComparison #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
             lines += "execute if score #${loop}_step kc_vars matches ..-1 if score #${loop}_value kc_vars $negativeComparison #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
-            lines += "execute if score #${loop}_run kc_vars matches 1 run $bodyFunction"
+            lines += "execute if score #${loop}_run kc_vars matches 1 run return run $bodyFunction"
         }
-        after?.let { lines += "execute if score #${loop}_run kc_vars matches 0 run function kantan:${prefix}_$it" }
+        after?.let {
+            lines += "execute if score #${loop}_run kc_vars matches 0 run return run function kantan:${prefix}_$it"
+        } ?: run {
+            lines += "execute if score #${loop}_run kc_vars matches 0 run return 1"
+        }
+        lines += "return 0"
         return lines.joinToString("\n", postfix = "\n")
     }
 
@@ -474,6 +500,12 @@ class VanillaDatapackExporter(
 
     private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
 
+    private fun conditionContext(node: CommandNode): ExecutionContextSpec? {
+        val inherited = node.contextOverride
+        val position = node.conditionPositionSpec ?: return inherited
+        return (inherited ?: ExecutionContextSpec()).copy(position = position)
+    }
+
     private fun wrapContext(context: ExecutionContextSpec, command: String): String {
         val clauses = buildList {
             (context.target ?: context.executor)?.let { add("as ${selector(it)}") }
@@ -500,6 +532,9 @@ class VanillaDatapackExporter(
 
     private fun storeResult(node: CommandNode, command: String): String =
         "execute store success score ${scoreHolder(node.id)} kc_result run $command"
+
+    private fun storeFunctionResult(node: CommandNode, command: String): String =
+        "execute store result score ${scoreHolder(node.id)} kc_result run $command"
 
     private fun scoreHolder(id: UUID) = "#n_${id.toString().replace("-", "")}"
 

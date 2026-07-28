@@ -211,8 +211,8 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("execute unless score #t_value kc_vars matches 4 run function"))
-        assertTrue(text.contains("execute if score #t_value kc_vars matches 4 run function"))
+        assertTrue(text.contains("execute unless score #t_value kc_vars matches 4 run return run function"))
+        assertTrue(text.contains("execute if score #t_value kc_vars matches 4 run return run function"))
     }
 
     @Test
@@ -306,6 +306,27 @@ class VanillaDatapackExporterTest {
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("positioned 2.0 70.0 3.0 run function kantan:${script.id}_snapshot_${call.id}"))
+    }
+
+    @Test
+    fun `failed vanilla command does not execute its successor`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "failure")
+        val give = GraphEditor.append(script.graph, CommandType.GIVE_ITEM)
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+        )
+        val function = success.directory
+            .resolve("data/kantan/function/${script.id}_${give.id}.mcfunction")
+            .readText()
+        assertTrue(function.contains("execute store success score"))
+        assertTrue(function.contains("matches 1 run return run function"))
+        assertTrue(function.endsWith("return 0\n"))
+        assertTrue(success.directory.resolve("pack.mcmeta").readText().contains("\"pack_format\":101"))
     }
 
     @Test

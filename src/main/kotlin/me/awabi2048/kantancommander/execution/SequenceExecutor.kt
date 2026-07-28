@@ -351,7 +351,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.string("operator", "=="),
             )
             ConditionKind.BLOCK_STATE -> {
-                val origin = context?.position?.let { resolvePosition(it, session, context) } ?: session.origin
+                val origin = node.conditionPositionSpec?.let { resolvePosition(it, session, context) }
+                    ?: context?.position?.let { resolvePosition(it, session, context) }
+                    ?: session.origin
                 val location = parseLocation(node.string("position", "~ ~ ~"), origin)
                 location.world == session.origin.world && location.block.type == Material.matchMaterial(node.string("block"))
             }
