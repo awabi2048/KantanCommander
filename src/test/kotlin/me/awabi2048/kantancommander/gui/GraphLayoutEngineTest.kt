@@ -22,6 +22,48 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `layout is deterministic and keeps one cell margin`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val nested = GraphEditor.append(graph, CommandType.FOR_START, condition.id)
+        GraphEditor.appendToForBody(graph, nested.id, CommandType.DISPLAY_TEXT)
+        GraphEditor.appendMerge(graph, condition.id)
+
+        val first = GraphLayoutEngine.layout(graph)
+        val second = GraphLayoutEngine.layout(graph)
+
+        assertEquals(first, second)
+        assertTrue(first.cells.keys.all { it.x in 1 until first.width - 1 })
+        assertTrue(first.cells.keys.all { it.y in 1 until first.height - 1 })
+        assertEquals(graph.nodes.keys, first.nodePoints.keys)
+    }
+
+    @Test
+    fun `generated nested branch and loop structures never cross`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueLoop = GraphEditor.append(graph, CommandType.FOR_START)
+        val bodyCondition = GraphEditor.appendToForBody(graph, trueLoop.id, CommandType.CONDITION)
+        GraphEditor.appendToForBody(graph, trueLoop.id, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, bodyCondition.id)
+        GraphEditor.appendMerge(graph, bodyCondition.id)
+
+        val falseCondition = GraphEditor.append(graph, CommandType.CONDITION, outer.id)
+        GraphEditor.append(graph, CommandType.WAIT, outer.id)
+        val falseLoop = GraphEditor.append(graph, CommandType.FOR_START, falseCondition.id)
+        GraphEditor.appendToForBody(graph, falseLoop.id, CommandType.DISPLAY_TEXT)
+        GraphEditor.appendMerge(graph, falseCondition.id)
+        GraphEditor.appendMerge(graph, outer.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        assertEquals(graph.nodes.keys, layout.nodePoints.keys)
+        assertTrue(layout.nodePoints.values.all { it.x % 2 == 1 && it.y % 2 == 1 })
+        assertTrue(layout.cells.values.any { it.kind == MapCellKind.LOOP_RETURN_PATH })
+        assertTrue(layout.cells.values.any { it.kind == MapCellKind.BRANCH_PATH })
+    }
+
+    @Test
     fun `true continues straight and false bends downward before matching merge`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)

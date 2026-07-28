@@ -28,7 +28,7 @@ class RedstoneActivationPolicyTest {
 
     @Test
     fun `timer with redstone repeats only while powered and interval elapsed`() {
-        assertTrue(decide(timer = true, powered = true, now = 100, last = null))
+        assertFalse(decide(timer = true, powered = true, now = 100, last = null))
         assertFalse(decide(timer = true, powered = true, now = 109, last = 100))
         assertTrue(decide(timer = true, powered = true, now = 110, last = 100))
         assertFalse(decide(timer = true, powered = false, now = 110, last = 100))
@@ -36,7 +36,7 @@ class RedstoneActivationPolicyTest {
 
     @Test
     fun `always active timer ignores redstone but observes interval`() {
-        assertTrue(
+        assertFalse(
             decide(
                 activation = ActivationMode.ALWAYS_ACTIVE,
                 timer = true,

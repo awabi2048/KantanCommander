@@ -248,9 +248,21 @@ object GraphLayoutEngine {
             mergeConditionId: UUID? = null,
         ) {
             val point = MapPoint(x, y)
-            if (cells[point]?.kind != MapCellKind.NODE) {
-                cells[point] = MapCell(point, kind, sourceId = sourceId, edge = edge, mergeConditionId = mergeConditionId)
+            val existing = cells[point]
+            if (existing?.kind == MapCellKind.NODE) return
+            check(
+                existing == null ||
+                    existing.kind == MapCellKind.PATH &&
+                    existing.sourceId == null &&
+                    existing.edge == null &&
+                    existing.mergeConditionId == null ||
+                    existing.kind == kind &&
+                    (existing.mergeConditionId == null || mergeConditionId == null ||
+                        existing.mergeConditionId == mergeConditionId)
+            ) {
+                "生成経路が交差しています: point=$point existing=$existing incoming=$kind/$mergeConditionId"
             }
+            cells[point] = MapCell(point, kind, sourceId = sourceId, edge = edge, mergeConditionId = mergeConditionId)
         }
 
         private fun putAdd(

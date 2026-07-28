@@ -29,6 +29,11 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
                 adjacent.blockPower > 0 || adjacent.isBlockPowered || adjacent.isBlockIndirectlyPowered
             }
             val previous = powered.put(placement.key, hasPower) ?: false
+            val previousRun = if (script.timer.enabled) {
+                lastRun.getOrPut(script.id) { now }
+            } else {
+                lastRun[script.id]
+            }
             val shouldRun = RedstoneActivationPolicy.shouldRun(
                 activation = script.activation,
                 timerEnabled = script.timer.enabled,
@@ -36,7 +41,7 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
                 wasPowered = previous,
                 isPowered = hasPower,
                 currentTick = now,
-                lastRunTick = lastRun[script.id],
+                lastRunTick = previousRun,
             )
             if (shouldRun) {
                 lastRun[script.id] = now
@@ -70,7 +75,7 @@ internal object RedstoneActivationPolicy {
         if (!timerEnabled) {
             return activation == ActivationMode.NEEDS_REDSTONE && !wasPowered && isPowered
         }
-        val intervalElapsed = lastRunTick == null || currentTick - lastRunTick >= intervalTicks
+        val intervalElapsed = lastRunTick != null && currentTick - lastRunTick >= intervalTicks
         return intervalElapsed && (
             activation == ActivationMode.ALWAYS_ACTIVE ||
                 activation == ActivationMode.NEEDS_REDSTONE && isPowered
