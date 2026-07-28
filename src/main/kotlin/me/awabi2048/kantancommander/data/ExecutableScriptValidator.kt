@@ -49,23 +49,26 @@ object ExecutableScriptValidator {
     private fun validateNode(node: CommandNode, path: String, errors: MutableList<String>) {
         when (node.type) {
             CommandType.TELEPORT -> {
-                if (node.targetSpec == null && node.string("target").isBlank()) errors += "$path: 対象が未設定です"
-                if (node.destinationSpec == null && node.destinationTargetSpec == null &&
-                    node.string("destination").isBlank()
-                ) errors += "$path: 移動先が未設定です"
+                if (node.targetSpec == null) errors += "$path: 対象が未設定です"
+                if (node.destinationSpec == null && node.destinationTargetSpec == null) {
+                    errors += "$path: 移動先が未設定です"
+                }
             }
             CommandType.GIVE_ITEM -> {
+                if (node.targetSpec == null) errors += "$path: 対象が未設定です"
                 if (Material.matchMaterial(node.string("item")) == null) errors += "$path: アイテムが未設定です"
                 if (node.int("count", 0) < 1) errors += "$path: 個数は1以上である必要があります"
             }
             CommandType.ENTITY_ACTION -> {
+                if (node.targetSpec == null) errors += "$path: 対象が未設定です"
                 val action = node.string("action")
                 if (action !in setOf("ride", "dismount")) errors += "$path: 不明なエンティティ操作です"
-                if (action == "ride" && node.secondaryTargetSpec == null && node.string("other").isBlank()) {
+                if (action == "ride" && node.secondaryTargetSpec == null) {
                     errors += "$path: 乗り物となる対象が未設定です"
                 }
             }
             CommandType.DISPLAY_TEXT -> {
+                if (node.targetSpec == null) errors += "$path: 対象が未設定です"
                 if (node.string("mode") !in setOf("tellraw", "title", "actionbar")) {
                     errors += "$path: 不明な文字列表示方式です"
                 }
@@ -93,9 +96,12 @@ object ExecutableScriptValidator {
             return
         }
         when (kind) {
-            ConditionKind.TARGET_EXISTS -> Unit
-            ConditionKind.ENTITY_STATE ->
+            ConditionKind.TARGET_EXISTS ->
+                if (node.targetSpec == null) errors += "$path: 条件の対象が未設定です"
+            ConditionKind.ENTITY_STATE -> {
+                if (node.targetSpec == null) errors += "$path: 条件の対象が未設定です"
                 if (node.string("state") !in setOf("sneaking", "on_ground")) errors += "$path: 状態が未設定です"
+            }
             ConditionKind.VARIABLE_STATE -> {
                 if (node.string("variable").isBlank()) errors += "$path: 変数名が未設定です"
                 if (runCatching { VariableScope.valueOf(node.string("variableScope")) }.isFailure) {
@@ -108,6 +114,7 @@ object ExecutableScriptValidator {
             ConditionKind.BLOCK_STATE ->
                 if (Material.matchMaterial(node.string("block")) == null) errors += "$path: ブロックが未設定です"
             ConditionKind.ITEM_POSSESSION -> {
+                if (node.targetSpec == null) errors += "$path: 条件の対象が未設定です"
                 if (Material.matchMaterial(node.string("item")) == null) errors += "$path: アイテムが未設定です"
                 if (node.int("count", 0) < 1) errors += "$path: 必要個数は1以上である必要があります"
             }

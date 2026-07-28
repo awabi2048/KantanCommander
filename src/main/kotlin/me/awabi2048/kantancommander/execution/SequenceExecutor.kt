@@ -177,8 +177,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ?: return stop(session, script, node.id, depth, "for_frame_missing", done)
         val startNode = graph.nodes[frame.startId]
             ?: return stop(session, script, node.id, depth, "for_start_missing", done)
-        val currentEnd = frame.end
-        val currentStep = frame.step
+        val currentEnd = resolveForValue(startNode, "end", session)
+            ?: return stop(session, script, node.id, depth, "invalid_for_end", done)
+        val currentStep = resolveForValue(startNode, "step", session)
+            ?: return stop(session, script, node.id, depth, "invalid_for_step", done)
         if (currentStep == 0L) return stop(session, script, node.id, depth, "zero_for_step", done)
         val nextValue = try {
             Math.addExact(frame.value, currentStep)
@@ -194,6 +196,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         ) {
             frame.value = nextValue
+            frame.end = currentEnd
+            frame.step = currentStep
             frame.count++
             session.currentIterationValue = frame.value
             session.currentLoopCount = frame.count
@@ -289,7 +293,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 when (node.string("action", "ride")) {
                     "ride" -> {
                         val vehicle = resolveTarget(effectiveContext, node.secondaryTargetSpec, session)
-                            ?: resolveSelector(node.string("other"), session)
                             ?: return false
                         targets.all(vehicle::addPassenger)
                     }
@@ -553,15 +556,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (spec.minimumDistance != null && distance < spec.minimumDistance) return false
         if (spec.maximumDistance != null && distance > spec.maximumDistance) return false
         return spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
-    }
-
-    private fun resolveSelector(selected: String, session: ExecutionSession): Entity? {
-        return when (selected) {
-            "@s", "actor" -> session.actor
-            "@p" -> session.origin.world.players.minByOrNull { it.location.distanceSquared(session.origin) }
-            else -> runCatching { UUID.fromString(selected) }.getOrNull()
-                ?.let(session.origin.world::getEntity)
-        }
     }
 
     private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location =

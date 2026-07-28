@@ -3,7 +3,7 @@ package me.awabi2048.kantancommander.model
 import org.bukkit.Material
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 5
+const val STRUCTURED_FORMAT_VERSION = 6
 const val TIMER_UNIT_TICKS = 10
 const val MIN_TIMER_UNITS = 1
 const val MAX_TIMER_UNITS = 86_400
@@ -173,17 +173,16 @@ enum class CommandType(
     val icon: Material,
     val defaults: Map<String, String>,
 ) {
-    TELEPORT("command.teleport", Material.ENDER_PEARL, mapOf("target" to "@s", "destination" to "~ ~ ~")),
-    GIVE_ITEM("command.give_item", Material.CHEST, mapOf("target" to "@s", "item" to "minecraft:stone", "count" to "1")),
-    ENTITY_ACTION("command.entity_action", Material.SADDLE, mapOf("target" to "@s", "action" to "ride", "other" to "")),
+    TELEPORT("command.teleport", Material.ENDER_PEARL, emptyMap()),
+    GIVE_ITEM("command.give_item", Material.CHEST, mapOf("item" to "minecraft:stone", "count" to "1")),
+    ENTITY_ACTION("command.entity_action", Material.SADDLE, mapOf("action" to "ride")),
     DISPLAY_TEXT("command.display_text", Material.WRITABLE_BOOK, mapOf(
-        "target" to "@s", "mode" to "tellraw", "text" to "", "fadeIn" to "10", "stay" to "60", "fadeOut" to "10"
+        "mode" to "tellraw", "text" to "", "fadeIn" to "10", "stay" to "60", "fadeOut" to "10"
     )),
     WAIT("command.wait", Material.CLOCK, mapOf("ticks" to "20")),
     CONDITION("command.condition", Material.COMPARATOR, mapOf(
         "kind" to ConditionKind.TARGET_EXISTS.name,
         "inverted" to "false",
-        "subject" to "@s",
         "state" to "sneaking",
         "variable" to "",
         "variableScope" to VariableScope.TEMPORARY.name,

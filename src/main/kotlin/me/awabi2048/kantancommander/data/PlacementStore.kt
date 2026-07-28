@@ -42,8 +42,16 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun find(location: Location): DiskPlacement? = find(location.world, location.blockX, location.blockY, location.blockZ)
 
-    fun find(world: World?, x: Int, y: Int, z: Int): DiskPlacement? =
-        world?.let { placements[key(it.name, x, y, z)] }
+    fun find(world: World?, x: Int, y: Int, z: Int): DiskPlacement? {
+        world ?: return null
+        val placementKey = key(world.name, x, y, z)
+        val placement = placements[placementKey] ?: return null
+        if (plugin.scripts.load(placement.scriptId) != null) return placement
+        removeDisplay(world, placement.displayId)
+        placements.remove(placementKey)
+        save()
+        return null
+    }
 
     fun findByScript(id: UUID): List<DiskPlacement> = placements.values.filter { it.scriptId == id }
 
@@ -69,13 +77,24 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     }
 
     fun restoreDisplays() {
-        placements.values.forEach { placement ->
+        val stale = mutableListOf<String>()
+        placements.values.toList().forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
+            if (plugin.scripts.load(placement.scriptId) == null) {
+                removeDisplay(world, placement.displayId)
+                stale += placement.key
+                return@forEach
+            }
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
-            if (!PlacedDiskMaterials.isPlacedDisk(block.type)) return@forEach
+            if (!PlacedDiskMaterials.isPlacedDisk(block.type)) {
+                removeDisplay(world, placement.displayId)
+                stale += placement.key
+                return@forEach
+            }
             removeDisplay(world, placement.displayId)
             placement.displayId = spawnDisplay(world, placement)
         }
+        stale.forEach(placements::remove)
         save()
     }
 

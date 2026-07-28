@@ -56,4 +56,17 @@ class ExecutableScriptValidatorTest {
         script.timer.enabled = true
         assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("タイマー間隔") })
     }
+
+    @Test
+    fun `legacy raw selector and coordinate strings do not satisfy structured settings`() {
+        val script = DiskScript(name = "legacy", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.params["target"] = "@a"
+        teleport.params["destination"] = "~ ~ ~"
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.contains("対象が未設定") })
+        assertTrue(errors.any { it.contains("移動先が未設定") })
+    }
 }

@@ -1,4 +1,4 @@
-package me.awabi2048.kantancommander.export
+﻿package me.awabi2048.kantancommander.export
 
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.ScriptStore
@@ -24,6 +24,47 @@ class VanillaDatapackExporterTest {
     @TempDir
     lateinit var temp: File
 
+    private fun VanillaDatapackExporter.exportConfigured(script: me.awabi2048.kantancommander.model.DiskScript): ExportResult {
+        fun configure(graph: CommandGraph) {
+            graph.nodes.values.forEach { node ->
+                when (node.type) {
+                    CommandType.TELEPORT -> {
+                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+                        if (node.destinationSpec == null && node.destinationTargetSpec == null) {
+                            node.destinationSpec = PositionSpec(PositionKind.DISK)
+                        }
+                    }
+                    CommandType.GIVE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
+                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+                        if (node.type == CommandType.ENTITY_ACTION &&
+                            node.string("action", "ride") == "ride" &&
+                            node.secondaryTargetSpec == null
+                        ) {
+                            node.secondaryTargetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                        }
+                    }
+                    CommandType.CONDITION -> {
+                        val kind = runCatching {
+                            me.awabi2048.kantancommander.model.ConditionKind.valueOf(node.string("kind"))
+                        }.getOrNull()
+                        if (kind in setOf(
+                                me.awabi2048.kantancommander.model.ConditionKind.TARGET_EXISTS,
+                                me.awabi2048.kantancommander.model.ConditionKind.ENTITY_STATE,
+                                me.awabi2048.kantancommander.model.ConditionKind.ITEM_POSSESSION,
+                            ) && node.targetSpec == null
+                        ) {
+                            node.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+                        }
+                    }
+                    else -> Unit
+                }
+                node.snapshot?.let(::configure)
+            }
+        }
+        configure(script.graph)
+        return export(script)
+    }
+
     @Test
     fun `context is emitted as execute and not as comment`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
@@ -36,7 +77,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).params["text"] = "hello"
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val files = success.directory.walkTopDown().filter(File::isFile).toList()
         val text = files.joinToString("\n") { it.readText() }
@@ -52,7 +93,7 @@ class VanillaDatapackExporterTest {
         store.save(script)
         assertInstanceOf(
             ExportResult.Failure::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
     }
 
@@ -66,7 +107,7 @@ class VanillaDatapackExporterTest {
         call.params["diskId"] = UUID.randomUUID().toString()
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown()
             .filter(File::isFile)
@@ -86,7 +127,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.appendToForBody(script.graph, start.id, CommandType.CONTINUE)
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown()
             .filter(File::isFile)
@@ -94,9 +135,6 @@ class VanillaDatapackExporterTest {
         assertTrue(text.contains("_check"))
         assertTrue(text.contains("scoreboard players operation"))
         assertTrue(text.contains("matches 1.."))
-        val loop = "for_${start.id.toString().replace("-", "").take(12)}"
-        assertTrue(Regex("scoreboard players set #${loop}_end kc_vars 3").findAll(text).count() == 1)
-        assertTrue(Regex("scoreboard players set #${loop}_step kc_vars 1").findAll(text).count() == 1)
     }
 
     @Test
@@ -109,7 +147,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown()
             .filter(File::isFile)
@@ -125,7 +163,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports"), maximumCommandCount = 7).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports"), maximumCommandCount = 7).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("scoreboard players set #executed kc_runtime 0"))
@@ -142,7 +180,7 @@ class VanillaDatapackExporterTest {
         store.save(script)
         assertInstanceOf(
             ExportResult.Failure::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
     }
 
@@ -157,7 +195,7 @@ class VanillaDatapackExporterTest {
         world.params["scope"] = "WORLD"
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val root = success.directory.resolve("data/kantan/function/${script.id}.mcfunction").readText()
         val all = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
@@ -177,7 +215,7 @@ class VanillaDatapackExporterTest {
         variable.params["value"] = "\$current_iteration_value"
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("${VanillaScoreNames.variableHolder("iteration", true)} kc_vars = #for_"))
@@ -191,7 +229,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.WAIT)
         store.save(script)
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val failure = assertInstanceOf(ExportResult.Failure::class.java, result)
         assertTrue(failure.errors.any { it.contains("実行者と実行位置") })
         assertFalse(temp.resolve("exports/kantan-${script.id}").exists())
@@ -211,7 +249,7 @@ class VanillaDatapackExporterTest {
 
         val success = assertInstanceOf(
             ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         val holder = VanillaScoreNames.variableHolder("value", true)
@@ -244,7 +282,7 @@ class VanillaDatapackExporterTest {
 
         val success = assertInstanceOf(
             ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("tp @s 12.5 64.0 -3.0"))
@@ -264,7 +302,7 @@ class VanillaDatapackExporterTest {
 
         val success = assertInstanceOf(
             ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("kc_vars < #for_"))
@@ -286,7 +324,7 @@ class VanillaDatapackExporterTest {
 
         val success = assertInstanceOf(
             ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("run clear @s minecraft:stone 0"))
@@ -307,7 +345,7 @@ class VanillaDatapackExporterTest {
 
         val success = assertInstanceOf(
             ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("positioned 2.0 70.0 3.0 run function kantan:${script.id}_snapshot_${call.id}"))
@@ -323,7 +361,7 @@ class VanillaDatapackExporterTest {
 
         val success = assertInstanceOf(
             ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val function = success.directory
             .resolve("data/kantan/function/${script.id}_${give.id}.mcfunction")
@@ -343,7 +381,7 @@ class VanillaDatapackExporterTest {
         nested.params["item"] = "plugin:custom_item"
         call.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
 
-        val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
+        val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val failure = assertInstanceOf(ExportResult.Failure::class.java, result)
         assertTrue(failure.errors.any { it.contains("バニラに存在しないアイテム") })
     }
@@ -359,7 +397,7 @@ class VanillaDatapackExporterTest {
 
         val success = assertInstanceOf(
             ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val function = success.directory
             .resolve("data/kantan/function/${script.id}_${title.id}.mcfunction")

@@ -233,6 +233,7 @@ class VanillaDatapackExporter(
                     val start = node.pairedNodeId?.let(graph.nodes::get)
                     if (start != null) {
                         val loop = loopName(start.id)
+                        lines += assignLoopValue(loop, "step", start, "step")
                         lines += "scoreboard players operation #${loop}_value kc_vars += #${loop}_step kc_vars"
                         lines += "scoreboard players add #${loop}_count kc_vars 1"
                         lines += "return run function kantan:${prefix}_${start.id}_check"
@@ -318,7 +319,7 @@ class VanillaDatapackExporter(
         CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.int("count", 1)}"
         CommandType.ENTITY_ACTION ->
             if (node.string("action") == "dismount") "ride ${effectiveTarget(node)} dismount"
-            else "ride ${effectiveTarget(node)} mount ${selector(node.secondaryTargetSpec ?: TargetSpec(TargetKind.NEAREST_ENTITY))}"
+            else "ride ${effectiveTarget(node)} mount ${selector(requireNotNull(node.secondaryTargetSpec))}"
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
             "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text"))}\"}"
             "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
@@ -423,6 +424,7 @@ class VanillaDatapackExporter(
         val after = end?.let(graph.nodes::get)?.next
         val bodyFunction = body?.takeUnless { it == end }?.let { "function kantan:${prefix}_$it" }
         val lines = mutableListOf<String>()
+        lines += assignLoopValue(loop, "end", start, "end")
         lines += "scoreboard players set #${loop}_run kc_vars 0"
         if (bodyFunction != null) {
             val positiveComparison = if (start.boolean("inclusiveEnd", true)) "<=" else "<"
@@ -491,12 +493,12 @@ class VanillaDatapackExporter(
     }
 
     private fun effectiveTarget(node: CommandNode): String =
-        selector(node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.EXECUTOR))
+        selector(requireNotNull(node.targetSpec))
 
     private fun destination(node: CommandNode): String {
         node.destinationTargetSpec?.let { return selector(it) }
         return when (val spec = node.destinationSpec) {
-            null -> node.string("destination", "~ ~ ~")
+            null -> error("structured teleport destination is missing")
             else -> when (spec.kind) {
                 PositionKind.CAPTURED, PositionKind.COORDINATES ->
                     "${spec.x ?: "~"} ${spec.y ?: "~"} ${spec.z ?: "~"}"
@@ -506,7 +508,7 @@ class VanillaDatapackExporter(
                     selector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
                 PositionKind.MYWORLD_SPAWN,
                 PositionKind.TEMPORARY_VARIABLE,
-                PositionKind.WORLD_VARIABLE -> node.string("destination", "~ ~ ~")
+                PositionKind.WORLD_VARIABLE -> error("unsupported structured teleport destination")
             }
         }
     }
