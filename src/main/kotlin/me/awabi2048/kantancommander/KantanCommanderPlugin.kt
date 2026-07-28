@@ -72,7 +72,10 @@ class KantanCommanderPlugin : JavaPlugin() {
                         require(config.getInt("limits.max-map-height") >= 3)
                         require(config.getInt("limits.max-branch-depth") >= 1)
                     },
-                    reloadAction = { reloadConfig() }
+                    reloadAction = {
+                        reloadConfig()
+                        if (::scripts.isInitialized) rebuildConfiguredServices()
+                    }
                 )
             )
         )
@@ -150,11 +153,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     fun reloadManagedSettings(): Boolean {
-        val result = CCSystem.getAPI().getConfigSchemaService().prepare("kantan")
-        if (!result.successful) return false
-        reloadConfig()
-        rebuildConfiguredServices()
-        return true
+        return CCSystem.getAPI().getConfigSchemaService().reload("kantan").successful
     }
 
     private fun rebuildConfiguredServices() {

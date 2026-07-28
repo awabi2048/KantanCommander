@@ -72,4 +72,35 @@ class ScriptStoreTest {
 
         assertThrows(IllegalArgumentException::class.java) { store.save(script) }
     }
+
+    @Test
+    fun `configured map width rejects save without replacing stored script`() {
+        val store = ScriptStore(
+            temp.resolve("width"),
+            Logger.getAnonymousLogger(),
+            GraphLimits(maximumMapWidth = 3),
+        )
+        val script = store.create(UUID.randomUUID(), "width")
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+
+        assertThrows(IllegalArgumentException::class.java) { store.save(script) }
+        assertTrue(requireNotNull(store.load(script.id)).graph.nodes.isEmpty())
+    }
+
+    @Test
+    fun `configured map height rejects branched save without replacing stored script`() {
+        val store = ScriptStore(
+            temp.resolve("height"),
+            Logger.getAnonymousLogger(),
+            GraphLimits(maximumMapHeight = 3),
+        )
+        val script = store.create(UUID.randomUUID(), "height")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
+
+        assertThrows(IllegalArgumentException::class.java) { store.save(script) }
+        assertTrue(requireNotNull(store.load(script.id)).graph.nodes.isEmpty())
+    }
 }
