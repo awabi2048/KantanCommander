@@ -69,9 +69,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }
                         plugin.scripts.save(script)
                         if (type in setOf(CommandType.MERGE, CommandType.BREAK, CommandType.CONTINUE)) {
-                            MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.route(script.id)))
+                            MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.editorRoute(context.route)))
                         } else {
-                            MenuActionResult.Success(MenuUpdate.Navigate(settingsRoute(script.id, node.id)))
+                            MenuActionResult.Success(MenuUpdate.Replace(settingsRoute(context.route, node.id)))
                         }
                     },
                 ),
@@ -563,7 +563,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!GraphEditor.delete(script.graph, nodeId)) return@MenuActionHandler MenuActionResult.Ignored
                         plugin.scripts.save(script)
-                        MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.route(script.id)))
+                        MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.editorRoute(context.route)))
                     },
                 ),
             )
@@ -1573,30 +1573,37 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val CURRENT_LOOP_COUNT = "\$current_loop_count"
 
         fun typeRoute(
-            scriptId: UUID,
+            current: MenuRoute,
             sourceId: UUID?,
             edge: GraphEditor.Edge,
             mergeConditionId: UUID? = null,
         ) =
-            MenuRoute(
+            requireNotNull(EditorSession.from(current)).route(
                 SequenceEditorMenu.OWNER,
                 PICKER_ID,
                 mapOf(
-                    SCRIPT_ID to scriptId.toString(),
                     SOURCE_ID to sourceId?.toString().orEmpty(),
                     EDGE to edge.name,
                     MERGE_CONDITION_ID to mergeConditionId?.toString().orEmpty(),
                 ),
             )
 
-        fun settingsRoute(scriptId: UUID, nodeId: UUID) =
-            MenuRoute(SequenceEditorMenu.OWNER, SETTINGS_ID, mapOf(SCRIPT_ID to scriptId.toString(), NODE_ID to nodeId.toString()))
+        fun settingsRoute(current: MenuRoute, nodeId: UUID) =
+            requireNotNull(EditorSession.from(current)).route(
+                SequenceEditorMenu.OWNER,
+                SETTINGS_ID,
+                mapOf(NODE_ID to nodeId.toString()),
+            )
 
-        fun deleteRoute(scriptId: UUID, nodeId: UUID) =
-            MenuRoute(SequenceEditorMenu.OWNER, DELETE_ID, mapOf(SCRIPT_ID to scriptId.toString(), NODE_ID to nodeId.toString()))
+        fun deleteRoute(current: MenuRoute, nodeId: UUID) =
+            requireNotNull(EditorSession.from(current)).route(
+                SequenceEditorMenu.OWNER,
+                DELETE_ID,
+                mapOf(NODE_ID to nodeId.toString()),
+            )
 
-        fun timerRoute(scriptId: UUID) =
-            MenuRoute(SequenceEditorMenu.OWNER, TIMER_ID, mapOf(SCRIPT_ID to scriptId.toString()))
+        fun timerRoute(current: MenuRoute) =
+            requireNotNull(EditorSession.from(current)).route(SequenceEditorMenu.OWNER, TIMER_ID)
 
         private fun targetRoute(route: MenuRoute, role: String) =
             route.copy(id = TARGET_ID, payload = route.payload + (ROLE to role))
@@ -1608,8 +1615,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
         private fun choiceRoute(route: MenuRoute, id: String) = route.copy(id = id)
 
-        private fun scriptId(route: MenuRoute) =
-            route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        private fun scriptId(route: MenuRoute) = EditorSession.from(route)?.scriptId
     }
 }
 

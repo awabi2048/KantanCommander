@@ -48,7 +48,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         else me.awabi2048.kantancommander.data.GraphEditor.Edge.NEXT
                         val mergeCondition = context.payload["mergeConditionId"]?.takeIf(String::isNotBlank)
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(id, source, edge, mergeCondition)))
+                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(context.route, source, edge, mergeCondition)))
                     },
                     "activation" to handler { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load)
@@ -60,7 +60,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     },
                     "timer" to handler { context ->
                         val id = scriptId(context.route) ?: return@handler MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.timerRoute(id)))
+                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.timerRoute(context.route)))
                     },
                     "center" to handler { context ->
                         if (scriptId(context.route)?.let(plugin.scripts::load) == null) {
@@ -76,9 +76,9 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@handler MenuActionResult.Ignored
                         val node = script.graph.nodes[nodeId] ?: return@handler MenuActionResult.Ignored
                         val target = if (context.click.isRightClick) {
-                            CommandEditMenu.deleteRoute(script.id, node.id)
+                            CommandEditMenu.deleteRoute(context.route, node.id)
                         } else {
-                            CommandEditMenu.settingsRoute(script.id, node.id)
+                            CommandEditMenu.settingsRoute(context.route, node.id)
                         }
                         MenuActionResult.Success(MenuUpdate.Navigate(target))
                     },
@@ -299,11 +299,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     ) = MenuElement(slot, KcGui.item(material, name, GuiNameStyle.PRIMARY, lore), GuiElementRole.ACTION, id)
 
     private fun placement(route: MenuRoute): DiskPlacement? {
-        val world = route.payload[WORLD] ?: return null
-        val x = route.payload[X]?.toIntOrNull() ?: return null
-        val y = route.payload[Y]?.toIntOrNull() ?: return null
-        val z = route.payload[Z]?.toIntOrNull() ?: return null
-        return plugin.placements.find(plugin.server.getWorld(world), x, y, z)
+        val placement = EditorSession.from(route)?.placement ?: return null
+        return plugin.placements.find(
+            plugin.server.getWorld(placement.world),
+            placement.x,
+            placement.y,
+            placement.z,
+        )
     }
 
     private fun outputDisk(player: Player, placement: DiskPlacement, removeBlock: Boolean): Boolean {
@@ -339,45 +341,23 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     companion object {
         const val OWNER = ProgramListMenu.OWNER
         private const val MENU_ID = "editor"
-        private const val SCRIPT_ID = "scriptId"
-        private const val WORLD = "world"
-        private const val X = "x"
-        private const val Y = "y"
-        private const val Z = "z"
         private const val VIEWPORT_WIDTH = 9
         private const val VIEWPORT_HEIGHT = 3
 
-        fun route(scriptId: UUID) = MenuRoute(
-            OWNER,
-            MENU_ID,
-            mapOf(SCRIPT_ID to scriptId.toString(), "originX" to "0", "originY" to "0"),
-        )
+        fun route(scriptId: UUID) = EditorSession.forScript(scriptId).route(OWNER, MENU_ID)
 
-        fun route(placement: DiskPlacement) = MenuRoute(
-            OWNER,
-            MENU_ID,
-            mapOf(
-                SCRIPT_ID to placement.scriptId.toString(),
-                "originX" to "0",
-                "originY" to "0",
-                WORLD to placement.world,
-                X to placement.x.toString(),
-                Y to placement.y.toString(),
-                Z to placement.z.toString(),
-            ),
-        )
+        fun route(placement: DiskPlacement) = EditorSession.forPlacement(placement).route(OWNER, MENU_ID)
 
-        private fun route(current: MenuRoute, x: Int, y: Int) = current.copy(
-            payload = current.payload + ("originX" to x.toString()) + ("originY" to y.toString()),
-        )
+        fun editorRoute(current: MenuRoute) =
+            EditorSession.from(current)?.route(OWNER, MENU_ID) ?: current.copy(id = MENU_ID)
 
-        private fun origin(route: MenuRoute) = MapPoint(
-            route.payload["originX"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
-            route.payload["originY"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0,
-        )
+        private fun route(current: MenuRoute, x: Int, y: Int) =
+            EditorSession.from(current)?.withOrigin(MapPoint(x, y))?.route(OWNER, MENU_ID)
+                ?: current.copy(id = MENU_ID)
 
-        private fun scriptId(route: MenuRoute) =
-            route.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        private fun origin(route: MenuRoute) = EditorSession.from(route)?.origin ?: MapPoint(0, 0)
+
+        private fun scriptId(route: MenuRoute) = EditorSession.from(route)?.scriptId
     }
 }
 
