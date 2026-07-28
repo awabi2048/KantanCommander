@@ -92,6 +92,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         if (!outputDisk(context.player, placement, true)) return@handler MenuActionResult.Ignored
                         MenuActionResult.Success(MenuUpdate.Close)
                     },
+                    "save_library" to handler { context ->
+                        val source = scriptId(context.route)?.let(plugin.scripts::load)
+                            ?: return@handler MenuActionResult.Ignored
+                        plugin.scripts.copyToLibrary(source, context.player.uniqueId)
+                        context.player.sendMessage(KcI18n.text(context.player, "message.saved"))
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
                 ),
             ),
         )
@@ -204,6 +211,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 ),
             )
         }
+        elements += action(
+            42,
+            Material.BOOK,
+            KcI18n.text(player, "gui.editor.save"),
+            "save_library",
+            listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.save"))),
+        )
         elements += action(
             44,
             Material.RECOVERY_COMPASS,
