@@ -27,12 +27,17 @@ class VanillaDatapackExporter(
     private val outputRoot: File,
     private val maximumCommandCount: Int = 1024,
 ) {
-    fun compileForStandalone(root: DiskScript): StandaloneCompilation {
+    fun compileForStandalone(
+        root: DiskScript,
+        worldVariableTypes: Map<String, VariableType> = emptyMap(),
+    ): StandaloneCompilation {
+        val exportRoot = root.copy(graph = root.graph.deepCopy())
         val errors = mutableListOf<String>()
-        errors += ExecutableScriptValidator.validate(root)
-        validate(root, errors, Collections.newSetFromMap(IdentityHashMap()))
+        errors += ExecutableScriptValidator.validate(exportRoot)
+        annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
+        validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()))
         return if (errors.isEmpty()) {
-            StandaloneCompilation.Success(compile(root))
+            StandaloneCompilation.Success(compile(exportRoot))
         } else {
             StandaloneCompilation.Failure(errors.distinct())
         }
@@ -105,8 +110,20 @@ class VanillaDatapackExporter(
                     val operation = runCatching {
                         VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
                     }.getOrNull()
-                    if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER)) {
+                    val storageOperationSupported =
+                        type in setOf(VariableType.DECIMAL, VariableType.TEXT) &&
+                            operation in setOf(VariableOperation.SET, VariableOperation.CLEAR) ||
+                            type in setOf(VariableType.POSITION, VariableType.ENTITY) &&
+                            operation == VariableOperation.CLEAR
+                    if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER) && !storageOperationSupported) {
                         errors += "${script.id}/${node.id}: ${type ?: "不明"}型の変数は完全バニラ出力に未対応です"
+                    }
+                    if (type == VariableType.INTEGER &&
+                        node.string("value") !in setOf("\$current_iteration_value", "\$current_loop_count") &&
+                        operation in setOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT) &&
+                        node.string("value").toLongOrNull()?.let { it !in VANILLA_INTEGER_RANGE } != false
+                    ) {
+                        errors += "${script.id}/${node.id}: 整数値はバニラscoreboardの範囲外です"
                     }
                     if (operation in setOf(VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET)) {
                         errors += "${script.id}/${node.id}: $operation は完全バニラ出力に未対応です"
@@ -122,10 +139,13 @@ class VanillaDatapackExporter(
                 }
                 CommandType.FOR_START -> {
                     listOf("start", "end", "step").forEach { field ->
-                        if (node.string("${field}Source", "FIXED") == "FIXED" &&
-                            node.string("${field}Value").toLongOrNull() == null
-                        ) {
-                            errors += "${script.id}/${node.id}: forの${field}値は64bit符号付き整数で指定してください"
+                        if (node.string("${field}Source", "FIXED") == "FIXED") {
+                            val value = node.string("${field}Value").toLongOrNull()
+                            if (value == null) {
+                                errors += "${script.id}/${node.id}: forの${field}値は64bit符号付き整数で指定してください"
+                            } else if (value !in VANILLA_INTEGER_RANGE) {
+                                errors += "${script.id}/${node.id}: forの${field}値はバニラscoreboardの範囲外です"
+                            }
                         }
                     }
                     if (node.string("stepSource", "FIXED") == "FIXED" && node.string("stepValue").toLongOrNull() == 0L) {
@@ -160,6 +180,53 @@ class VanillaDatapackExporter(
         if (kind == ConditionKind.VARIABLE_STATE && node.string("variable").isBlank()) {
             errors += "${script.id}/${node.id}: 一時変数名がありません"
         }
+        if (kind == ConditionKind.VARIABLE_STATE && node.params[EXPORT_VARIABLE_TYPE] == null) {
+            errors += "${script.id}/${node.id}: 変数の型を一意に解決できません"
+        }
+    }
+
+    private fun annotateVariableTypes(
+        graph: CommandGraph,
+        worldVariableTypes: Map<String, VariableType>,
+        errors: MutableList<String>,
+    ) {
+        val temporaryTypes = mutableMapOf<String, MutableSet<VariableType>>()
+        fun collect(current: CommandGraph) {
+            current.nodes.values.forEach { node ->
+                if (node.type == CommandType.VARIABLE &&
+                    node.string("scope", "TEMPORARY") != "WORLD"
+                ) {
+                    runCatching { VariableType.valueOf(node.string("type")) }.getOrNull()?.let {
+                        temporaryTypes.getOrPut(node.string("name")) { linkedSetOf() } += it
+                    }
+                }
+                node.snapshot?.let(::collect)
+            }
+        }
+        collect(graph)
+
+        fun annotate(current: CommandGraph) {
+            current.nodes.values.forEach { node ->
+                if (node.type == CommandType.CONDITION &&
+                    node.string("kind") == ConditionKind.VARIABLE_STATE.name
+                ) {
+                    val name = node.string("variable")
+                    val type = if (node.string("variableScope", "TEMPORARY") == "WORLD") {
+                        worldVariableTypes[name]
+                    } else {
+                        temporaryTypes[name]?.singleOrNull()
+                    }
+                    val storageExistenceCheck = node.string("operator") in setOf("set", "unset")
+                    if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER) && !storageExistenceCheck) {
+                        errors += "${node.id}: ${type ?: "不明"}型の変数条件は完全バニラ出力に未対応です"
+                    } else if (type != null) {
+                        node.params[EXPORT_VARIABLE_TYPE] = requireNotNull(type).name
+                    }
+                }
+                node.snapshot?.let(::annotate)
+            }
+        }
+        annotate(graph)
     }
 
     private fun validateContext(script: DiskScript, node: CommandNode, context: ExecutionContextSpec, errors: MutableList<String>) {
@@ -205,7 +272,10 @@ class VanillaDatapackExporter(
         output[prefix] = if (resetBudget) {
             buildString {
                 appendLine("scoreboard players set #executed kc_runtime 0")
-                temporaryNames(graph).forEach { appendLine("scoreboard players reset ${variableHolder(it, temporary = true)} kc_vars") }
+                temporaryNames(graph).forEach {
+                    appendLine("scoreboard players reset ${variableHolder(it, temporary = true)} kc_vars")
+                    appendLine("data remove storage kantan:variables ${VanillaStorageNames.variablePath(it, temporary = true)}")
+                }
                 append(entryCall)
             }
         } else entryCall
@@ -340,17 +410,32 @@ class VanillaDatapackExporter(
             "on_ground" -> "entity ${appendSelectorArguments(conditionTarget(node), "nbt={OnGround:1b}")}"
             else -> "entity ${conditionTarget(node)}"
         }
-        ConditionKind.VARIABLE_STATE ->
-            "score ${variableHolder(
-                node.string("variable"),
-                node.string("variableScope", "TEMPORARY") != "WORLD",
-            )} kc_vars matches ${
-                if (node.string("operator") in setOf("set", "unset")) {
-                    "${Int.MIN_VALUE}..${Int.MAX_VALUE}"
+        ConditionKind.VARIABLE_STATE -> {
+            val temporary = node.string("variableScope", "TEMPORARY") != "WORLD"
+            val type = VariableType.valueOf(node.string(EXPORT_VARIABLE_TYPE))
+            if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER)) {
+                "data storage kantan:variables ${VanillaStorageNames.variablePath(node.string("variable"), temporary)}"
+            } else {
+                val holder = variableHolder(node.string("variable"), temporary)
+                val operator = node.string("operator")
+                if (operator in setOf("set", "unset")) {
+                    "score $holder kc_vars matches ${Int.MIN_VALUE}..${Int.MAX_VALUE}"
                 } else {
-                    scoreRange(node.string("operator", ">="), node.string("value").toLongOrNull() ?: 0L)
+                    val value = if (type == VariableType.BOOLEAN) {
+                        if (node.string("value").toBooleanStrictOrNull() == true) 1L else 0L
+                    } else node.string("value").toLong()
+                    when {
+                        operator == ">" && value == Int.MAX_VALUE.toLong() ||
+                            operator == "<" && value == Int.MIN_VALUE.toLong() ->
+                            "score #never_set kc_runtime matches 1"
+                        operator == "<=" && value == Int.MAX_VALUE.toLong() ||
+                            operator == ">=" && value == Int.MIN_VALUE.toLong() ->
+                            "score $holder kc_vars matches ${Int.MIN_VALUE}..${Int.MAX_VALUE}"
+                        else -> "score $holder kc_vars matches ${scoreRange(operator, value)}"
+                    }
                 }
-            }"
+            }
+        }
         ConditionKind.BLOCK_STATE ->
             "block ${
                 if (node.conditionPositionSpec == null) node.string("position", "~ ~ ~") else "~ ~ ~"
@@ -374,7 +459,10 @@ class VanillaDatapackExporter(
     }
 
     private fun lowerVariable(node: CommandNode, graph: CommandGraph): String? {
-        val holder = variableHolder(node.string("name"), node.string("scope", "TEMPORARY") != "WORLD")
+        val temporary = node.string("scope", "TEMPORARY") != "WORLD"
+        val holder = variableHolder(node.string("name"), temporary)
+        val storagePath = VanillaStorageNames.variablePath(node.string("name"), temporary)
+        val type = VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name))
         val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
         val special = node.string("value").takeIf { it in setOf("\$current_iteration_value", "\$current_loop_count") }
         if (special != null) {
@@ -389,14 +477,23 @@ class VanillaDatapackExporter(
             return "scoreboard players operation $holder kc_vars $operator $source kc_vars"
         }
         return when (operation) {
-            VariableOperation.SET -> when (VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name))) {
+            VariableOperation.SET -> when (type) {
                 VariableType.BOOLEAN -> "scoreboard players set $holder kc_vars ${if (node.boolean("value")) 1 else 0}"
                 VariableType.INTEGER -> "scoreboard players set $holder kc_vars ${node.string("value").toLong()}"
-                else -> null
+                VariableType.DECIMAL ->
+                    "data modify storage kantan:variables $storagePath set value ${node.string("value").toDouble()}d"
+                VariableType.TEXT ->
+                    "data modify storage kantan:variables $storagePath set value \"${escape(node.string("value"))}\""
+                VariableType.POSITION, VariableType.ENTITY -> null
             }
             VariableOperation.ADD -> "scoreboard players add $holder kc_vars ${node.string("value").toLong()}"
             VariableOperation.SUBTRACT -> "scoreboard players remove $holder kc_vars ${node.string("value").toLong()}"
-            VariableOperation.CLEAR -> "scoreboard players reset $holder kc_vars"
+            VariableOperation.CLEAR ->
+                if (type in setOf(VariableType.BOOLEAN, VariableType.INTEGER)) {
+                    "scoreboard players reset $holder kc_vars"
+                } else {
+                    "data remove storage kantan:variables $storagePath"
+                }
             VariableOperation.TOGGLE ->
                 "execute store success score $holder kc_vars run execute unless score $holder kc_vars matches 1"
             VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET -> null
@@ -602,6 +699,11 @@ class VanillaDatapackExporter(
     }
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+    private companion object {
+        const val EXPORT_VARIABLE_TYPE = "_exportVariableType"
+        val VANILLA_INTEGER_RANGE = Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()
+    }
 }
 
 sealed interface ExportResult {
@@ -622,5 +724,15 @@ internal object VanillaScoreNames {
             .take(6)
             .joinToString("") { "%02x".format(it) }
         return "#${if (temporary) "t" else "w"}_${normalized.take(20)}_$digest"
+    }
+}
+
+internal object VanillaStorageNames {
+    fun variablePath(name: String, temporary: Boolean): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(name.toByteArray(Charsets.UTF_8))
+            .take(12)
+            .joinToString("") { "%02x".format(it) }
+        return "variables.${if (temporary) "temporary" else "world"}.v_$digest"
     }
 }

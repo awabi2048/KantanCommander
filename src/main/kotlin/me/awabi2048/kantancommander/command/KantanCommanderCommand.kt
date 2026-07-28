@@ -8,8 +8,6 @@ import org.bukkit.command.CommandExecutor
 import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
-import java.util.UUID
-import me.awabi2048.kantancommander.export.ExportResult
 
 class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
@@ -24,7 +22,6 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
                 )
             }
             "placed" -> listPlaced(sender)
-            "export" -> export(sender, args.getOrNull(1))
             "reload" -> {
                 if (!sender.hasPermission("kankoma.admin")) return true
                 val key = if (plugin.reloadManagedSettings()) "message.reloaded" else "message.reload_failed"
@@ -56,28 +53,9 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
         }
     }
 
-    private fun export(sender: CommandSender, rawId: String?) {
-        if (!sender.hasPermission("kankoma.admin")) return
-        val id = rawId?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-        val script = id?.let(plugin.scripts::load)
-        if (script == null) {
-            sender.sendMessage("§c${KcI18n.text(sender as? Player, "message.export_invalid_disk")}")
-            return
-        }
-        when (val result = plugin.exporter.export(script)) {
-            is ExportResult.Success -> sender.sendMessage(
-                "§a${KcI18n.text(sender as? Player, "message.export_success", mapOf("path" to result.directory.absolutePath))}"
-            )
-            is ExportResult.Failure -> {
-                sender.sendMessage("§c${KcI18n.text(sender as? Player, "message.export_failed")}")
-                result.errors.forEach { sender.sendMessage("§c- $it") }
-            }
-        }
-    }
-
     override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): List<String> {
         return when (args.size) {
-            1 -> listOf("programs", "placed", "export", "reload", "help").filter { it.startsWith(args[0], true) }
+            1 -> listOf("programs", "placed", "reload", "help").filter { it.startsWith(args[0], true) }
             else -> emptyList()
         }
     }

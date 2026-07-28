@@ -40,7 +40,10 @@ class KantanStandaloneExportTest {
             mapOf(
                 "mwm_export:world_a" to PreparedVariables(
                     "abc",
-                    mapOf("enabled" to WorldVariableValue(VariableType.BOOLEAN, booleanValue = true)),
+                    mapOf(
+                        "enabled" to WorldVariableValue(VariableType.BOOLEAN, booleanValue = true),
+                        "message" to WorldVariableValue(VariableType.TEXT, textValue = "hello"),
+                    ),
                 )
             ),
         ).writeTo(root)
@@ -51,6 +54,7 @@ class KantanStandaloneExportTest {
         ).toFile().readText()
 
         assertTrue(load.contains("scoreboard players set ${VanillaScoreNames.variableHolder("abc_enabled", false)} kc_vars 1"))
+        assertTrue(load.contains("${VanillaStorageNames.variablePath("abc_message", false)} set value \"hello\""))
         assertTrue(load.contains("repeating_command_block[facing=east]"))
         assertTrue(load.contains("auto:1b"))
         assertTrue(load.contains("tag=kantan_commander_display"))

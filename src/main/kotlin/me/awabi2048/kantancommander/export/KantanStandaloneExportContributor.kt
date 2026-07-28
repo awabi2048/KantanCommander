@@ -23,6 +23,15 @@ class KantanStandaloneExportContributor(
         val worldsByName = context.worlds.associateBy { it.sourceWorldName }
         val selected = plugin.placements.all().filter { it.world in worldsByName }
         val errors = mutableListOf<String>()
+        context.worlds.forEach { world ->
+            plugin.variables.definitions(world.uuid).forEach { (name, value) ->
+                if (value.type == VariableType.INTEGER &&
+                    value.integerValue?.let { it !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() } != false
+                ) {
+                    errors += "${world.sourceWorldName}/$name: 整数初期値はバニラscoreboardの範囲外です"
+                }
+            }
+        }
         val programs = selected.mapNotNull { placement ->
             val sourceScript = plugin.scripts.load(placement.scriptId)
             if (sourceScript == null) {
@@ -32,7 +41,10 @@ class KantanStandaloneExportContributor(
             val world = worldsByName.getValue(placement.world)
             val namespace = world.uuid.toString().replace("-", "")
             val script = namespaceWorldVariables(sourceScript, namespace)
-            when (val compilation = plugin.exporter.compileForStandalone(script)) {
+            val worldVariableTypes = plugin.variables.definitions(world.uuid)
+                .mapKeys { (name, _) -> "${namespace}_$name" }
+                .mapValues { (_, value) -> value.type }
+            when (val compilation = plugin.exporter.compileForStandalone(script, worldVariableTypes)) {
                 is StandaloneCompilation.Failure -> {
                     compilation.errors.forEach { errors += "${placement.key}: $it" }
                     null
@@ -182,27 +194,23 @@ internal class PreparedKantanExport(
                 "scoreboard players set $holder kc_vars $number"
             }
             VariableType.DECIMAL ->
-                storageSet(dimension, name, "${value.decimalValue ?: 0.0}d")
+                storageSet(name, "${value.decimalValue ?: 0.0}d")
             VariableType.TEXT ->
-                storageSet(dimension, name, "\"${escapeNbt(value.textValue.orEmpty())}\"")
+                storageSet(name, "\"${escapeNbt(value.textValue.orEmpty())}\"")
             VariableType.POSITION -> {
                 val position = requireNotNull(value.position) { "world variable $name has no position" }
                 storageSet(
-                    dimension,
                     name,
                     "{x:${position.x}d,y:${position.y}d,z:${position.z}d,yaw:${position.yaw}f,pitch:${position.pitch}f}",
                 )
             }
             VariableType.ENTITY ->
-                storageSet(dimension, name, "\"${value.entityId ?: UUID(0L, 0L)}\"")
+                storageSet(name, "\"${value.entityId ?: UUID(0L, 0L)}\"")
         }
     }
 
-    private fun storageSet(dimension: String, name: String, snbt: String): String =
-        "data modify storage kantan:variables ${storagePath(dimension, name)} set value $snbt"
-
-    private fun storagePath(dimension: String, name: String): String =
-        "${dimension.replace(Regex("[^a-zA-Z0-9_]"), "_")}.${name.replace(Regex("[^a-zA-Z0-9_]"), "_")}"
+    private fun storageSet(name: String, snbt: String): String =
+        "data modify storage kantan:variables ${VanillaStorageNames.variablePath(name, temporary = false)} set value $snbt"
 
     private fun escapeNbt(value: String): String =
         value.replace("\\", "\\\\").replace("\"", "\\\"")

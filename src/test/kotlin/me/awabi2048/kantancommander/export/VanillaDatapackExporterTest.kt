@@ -144,6 +144,7 @@ class VanillaDatapackExporterTest {
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params["inverted"] = "true"
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
+            .targetSpec = TargetSpec(TargetKind.EXECUTOR)
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
         store.save(script)
 
@@ -239,6 +240,15 @@ class VanillaDatapackExporterTest {
     fun `not equal condition reverses the equality predicate`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "not-equal")
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "value",
+                "scope" to "TEMPORARY",
+                "type" to "INTEGER",
+                "operation" to "SET",
+                "value" to "4",
+            )
+        )
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params.putAll(
             mapOf("kind" to "VARIABLE_STATE", "variable" to "value", "operator" to "!=", "value" to "4")
@@ -255,6 +265,114 @@ class VanillaDatapackExporterTest {
         val holder = VanillaScoreNames.variableHolder("value", true)
         assertTrue(text.contains("execute unless score $holder kc_vars matches 4 run return run function"))
         assertTrue(text.contains("execute if score $holder kc_vars matches 4 run return run function"))
+    }
+
+    @Test
+    fun `boolean variable condition uses scoreboard boolean values`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "boolean-condition")
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "enabled",
+                "scope" to "TEMPORARY",
+                "type" to "BOOLEAN",
+                "operation" to "SET",
+                "value" to "true",
+            )
+        )
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.params.putAll(
+            mapOf(
+                "kind" to "VARIABLE_STATE",
+                "variable" to "enabled",
+                "operator" to "==",
+                "value" to "true",
+            )
+        )
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
+            .targetSpec = TargetSpec(TargetKind.EXECUTOR)
+
+        val compilation = VanillaDatapackExporter(store, temp.resolve("exports"))
+            .compileForStandalone(script)
+        val success = assertInstanceOf(StandaloneCompilation.Success::class.java, compilation)
+        assertTrue(success.functions.values.any { it.contains("kc_vars matches 1") })
+    }
+
+    @Test
+    fun `unresolved variable condition and out of range integers fail preflight`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val unresolved = store.create(UUID.randomUUID(), "unresolved")
+        GraphEditor.append(unresolved.graph, CommandType.CONDITION).params.putAll(
+            mapOf(
+                "kind" to "VARIABLE_STATE",
+                "variable" to "missing",
+                "operator" to "==",
+                "value" to "1",
+            )
+        )
+        val unresolvedFailure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(unresolved),
+        )
+        assertTrue(unresolvedFailure.errors.any { it.contains("型を一意に解決できません") })
+
+        val oversized = store.create(UUID.randomUUID(), "oversized")
+        GraphEditor.append(oversized.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "large",
+                "scope" to "TEMPORARY",
+                "type" to "INTEGER",
+                "operation" to "SET",
+                "value" to (Int.MAX_VALUE.toLong() + 1).toString(),
+            )
+        )
+        val oversizedFailure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(oversized),
+        )
+        assertTrue(oversizedFailure.errors.any { it.contains("scoreboardの範囲外") })
+    }
+
+    @Test
+    fun `text and decimal variables use storage and support existence checks`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "storage")
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "message",
+                "scope" to "TEMPORARY",
+                "type" to "TEXT",
+                "operation" to "SET",
+                "value" to "hello",
+            )
+        )
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "ratio",
+                "scope" to "TEMPORARY",
+                "type" to "DECIMAL",
+                "operation" to "SET",
+                "value" to "1.25",
+            )
+        )
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.params.putAll(
+            mapOf(
+                "kind" to "VARIABLE_STATE",
+                "variable" to "message",
+                "variableScope" to "TEMPORARY",
+                "operator" to "set",
+            )
+        )
+
+        val compilation = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val text = compilation.functions.values.joinToString("\n")
+        assertTrue(text.contains("set value \"hello\""))
+        assertTrue(text.contains("set value 1.25d"))
+        assertTrue(text.contains("data storage kantan:variables ${VanillaStorageNames.variablePath("message", true)}"))
     }
 
     @Test
