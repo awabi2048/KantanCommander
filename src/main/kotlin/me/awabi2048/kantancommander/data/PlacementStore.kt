@@ -36,6 +36,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun remove(world: World, x: Int, y: Int, z: Int): DiskPlacement? {
         val removed = placements.remove(key(world.name, x, y, z))
+        removed?.let { plugin.forgetActivationState(it.key, it.scriptId) }
         save()
         return removed
     }
@@ -49,6 +50,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         if (plugin.scripts.load(placement.scriptId) != null) return placement
         removeDisplay(world, placement.displayId)
         placements.remove(placementKey)
+        plugin.forgetActivationState(placement.key, placement.scriptId)
         save()
         return null
     }
@@ -71,7 +73,10 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun removeWorld(worldName: String): List<DiskPlacement> {
         val removed = placements.values.filter { it.world == worldName }
-        removed.forEach { placements.remove(it.key) }
+        removed.forEach {
+            placements.remove(it.key)
+            plugin.forgetActivationState(it.key, it.scriptId)
+        }
         if (removed.isNotEmpty()) save()
         return removed
     }
@@ -94,7 +99,9 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             removeDisplay(world, placement.displayId)
             placement.displayId = spawnDisplay(world, placement)
         }
-        stale.forEach(placements::remove)
+        stale.forEach { key ->
+            placements.remove(key)?.let { plugin.forgetActivationState(it.key, it.scriptId) }
+        }
         save()
     }
 

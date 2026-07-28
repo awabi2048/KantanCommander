@@ -52,6 +52,9 @@ class KantanStandaloneExportTest {
         val timer = root.resolve(
             "datapacks/kantan-commander/data/kantan/function/placed/${scriptId}_timer.mcfunction"
         ).toFile().readText()
+        val tick = root.resolve(
+            "datapacks/kantan-commander/data/kantan/function/tick.mcfunction"
+        ).toFile().readText()
 
         assertTrue(load.contains("scoreboard players set ${VanillaScoreNames.variableHolder("abc_enabled", false)} kc_vars 1"))
         assertTrue(load.contains("${VanillaStorageNames.variablePath("abc_message", false)} set value \"hello\""))
@@ -59,6 +62,9 @@ class KantanStandaloneExportTest {
         assertTrue(load.contains("auto:1b"))
         assertTrue(load.contains("tag=kantan_commander_display"))
         assertTrue(timer.contains("matches 30.."))
+        assertTrue(tick.contains("matches 30.."))
+        assertTrue(tick.contains("scoreboard players add #timer_"))
+        assertTrue(root.resolve("datapacks/kantan-commander/data/minecraft/tags/function/tick.json").toFile().isFile)
         assertTrue(timer.contains("return run function kantan:$scriptId"))
     }
 

@@ -129,6 +129,7 @@ internal class PreparedKantanExport(
             "scoreboard objectives add kc_runtime dummy",
             "scoreboard objectives add kc_timer dummy",
         )
+        val tick = mutableListOf<String>()
         variableDefinitions.forEach { (dimension, variables) ->
             variables.values.forEach { (name, value) ->
                 load += initializeVariable(dimension, "${variables.namespace}_$name", value)
@@ -144,11 +145,15 @@ internal class PreparedKantanExport(
             val entry = program.script.id.toString()
             val command = if (program.script.timer.enabled) {
                 val wrapper = "placed/${entry}_timer"
+                val holder = timerHolder(entry)
                 Files.createDirectories(functions.resolve("placed"))
                 Files.writeString(
                     functions.resolve("$wrapper.mcfunction"),
                     timerFunction(entry, program.script.timer.intervalTicks),
                 )
+                load += "scoreboard players set $holder kc_timer 0"
+                tick += "execute unless score $holder kc_timer matches ${program.script.timer.intervalTicks}.. " +
+                    "run scoreboard players add $holder kc_timer 1"
                 "function kantan:$wrapper"
             } else {
                 "function kantan:$entry"
@@ -157,6 +162,10 @@ internal class PreparedKantanExport(
         }
         Files.writeString(functions.resolve("load.mcfunction"), load.distinct().joinToString("\n", postfix = "\n"))
         Files.writeString(tags.resolve("load.json"), """{"values":["kantan:load"]}""")
+        if (tick.isNotEmpty()) {
+            Files.writeString(functions.resolve("tick.mcfunction"), tick.distinct().joinToString("\n", postfix = "\n"))
+            Files.writeString(tags.resolve("tick.json"), """{"values":["kantan:tick"]}""")
+        }
     }
 
     private fun setBlockCommand(program: PreparedProgram, command: String): String {
@@ -172,14 +181,16 @@ internal class PreparedKantanExport(
     }
 
     private fun timerFunction(scriptId: String, intervalTicks: Long): String {
-        val holder = "#timer_${scriptId.replace("-", "")}"
+        val holder = timerHolder(scriptId)
         return buildString {
-            appendLine("scoreboard players add $holder kc_timer 1")
             appendLine("execute unless score $holder kc_timer matches $intervalTicks.. run return 1")
             appendLine("scoreboard players set $holder kc_timer 0")
             appendLine("return run function kantan:$scriptId")
         }
     }
+
+    private fun timerHolder(scriptId: String) =
+        "#timer_${scriptId.replace("-", "")}"
 
     private fun initializeVariable(dimension: String, name: String, value: WorldVariableValue): String {
         val holder = VanillaScoreNames.variableHolder(name, temporary = false)
