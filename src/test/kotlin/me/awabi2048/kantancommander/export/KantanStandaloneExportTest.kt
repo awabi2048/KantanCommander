@@ -50,11 +50,21 @@ class KantanStandaloneExportTest {
             "datapacks/kantan-commander/data/kantan/function/placed/${scriptId}_timer.mcfunction"
         ).toFile().readText()
 
-        assertTrue(load.contains("scoreboard players set #w_abc_enabled kc_vars 1"))
+        assertTrue(load.contains("scoreboard players set ${VanillaScoreNames.variableHolder("abc_enabled", false)} kc_vars 1"))
         assertTrue(load.contains("repeating_command_block[facing=east]"))
         assertTrue(load.contains("auto:1b"))
         assertTrue(load.contains("tag=kantan_commander_display"))
         assertTrue(timer.contains("matches 30.."))
         assertTrue(timer.contains("return run function kantan:$scriptId"))
+    }
+
+    @Test
+    fun `long variable names remain distinct and valid scoreboard holders`() {
+        val first = VanillaScoreNames.variableHolder("world_namespace_1234567890_variable_first", false)
+        val second = VanillaScoreNames.variableHolder("world_namespace_1234567890_variable_second", false)
+
+        assertTrue(first != second)
+        assertTrue(first.length <= 40)
+        assertTrue(second.length <= 40)
     }
 }

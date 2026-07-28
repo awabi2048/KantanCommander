@@ -20,6 +20,7 @@ import java.io.File
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.UUID
+import java.security.MessageDigest
 
 class VanillaDatapackExporter(
     private val scripts: ScriptStore,
@@ -232,7 +233,6 @@ class VanillaDatapackExporter(
                     val start = node.pairedNodeId?.let(graph.nodes::get)
                     if (start != null) {
                         val loop = loopName(start.id)
-                        lines += assignLoopValue(loop, "step", start, "step")
                         lines += "scoreboard players operation #${loop}_value kc_vars += #${loop}_step kc_vars"
                         lines += "scoreboard players add #${loop}_count kc_vars 1"
                         lines += "return run function kantan:${prefix}_${start.id}_check"
@@ -403,7 +403,7 @@ class VanillaDatapackExporter(
     }
 
     private fun variableHolder(name: String, temporary: Boolean) =
-        "#${if (temporary) "t" else "w"}_${name.lowercase().replace(Regex("[^a-z0-9_.-]"), "_").take(30)}"
+        VanillaScoreNames.variableHolder(name, temporary)
 
     private fun loopName(id: UUID) = "for_${id.toString().replace("-", "").take(12)}"
 
@@ -423,7 +423,6 @@ class VanillaDatapackExporter(
         val after = end?.let(graph.nodes::get)?.next
         val bodyFunction = body?.takeUnless { it == end }?.let { "function kantan:${prefix}_$it" }
         val lines = mutableListOf<String>()
-        lines += assignLoopValue(loop, "end", start, "end")
         lines += "scoreboard players set #${loop}_run kc_vars 0"
         if (bodyFunction != null) {
             val positiveComparison = if (start.boolean("inclusiveEnd", true)) "<=" else "<"
@@ -563,6 +562,9 @@ class VanillaDatapackExporter(
             spec.entityType?.let { add("type=$it") }
             if (spec.minimumDistance != null || spec.maximumDistance != null) {
                 add("distance=${spec.minimumDistance ?: ""}..${spec.maximumDistance ?: ""}")
+            } else {
+                // A non-empty distance predicate keeps @a selectors in the current dimension.
+                add("distance=0..")
             }
             spec.gameMode?.let { add("gamemode=${it.lowercase()}") }
             spec.tag?.let { add("tag=$it") }
@@ -608,4 +610,15 @@ sealed interface ExportResult {
 sealed interface StandaloneCompilation {
     data class Success(val functions: Map<String, String>) : StandaloneCompilation
     data class Failure(val errors: List<String>) : StandaloneCompilation
+}
+
+internal object VanillaScoreNames {
+    fun variableHolder(name: String, temporary: Boolean): String {
+        val normalized = name.lowercase().replace(Regex("[^a-z0-9_.-]"), "_")
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(normalized.toByteArray(Charsets.UTF_8))
+            .take(6)
+            .joinToString("") { "%02x".format(it) }
+        return "#${if (temporary) "t" else "w"}_${normalized.take(20)}_$digest"
+    }
 }

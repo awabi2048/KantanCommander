@@ -40,7 +40,7 @@ class VanillaDatapackExporterTest {
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val files = success.directory.walkTopDown().filter(File::isFile).toList()
         val text = files.joinToString("\n") { it.readText() }
-        assertTrue(text.contains("execute as @a[limit=1,sort=nearest] positioned 0.0 1.0 0.0 run function"))
+        assertTrue(text.contains("execute as @a[distance=0..,limit=1,sort=nearest] positioned 0.0 1.0 0.0 run function"))
         assertFalse(text.contains("# context"))
     }
 
@@ -94,6 +94,9 @@ class VanillaDatapackExporterTest {
         assertTrue(text.contains("_check"))
         assertTrue(text.contains("scoreboard players operation"))
         assertTrue(text.contains("matches 1.."))
+        val loop = "for_${start.id.toString().replace("-", "").take(12)}"
+        assertTrue(Regex("scoreboard players set #${loop}_end kc_vars 3").findAll(text).count() == 1)
+        assertTrue(Regex("scoreboard players set #${loop}_step kc_vars 1").findAll(text).count() == 1)
     }
 
     @Test
@@ -158,9 +161,9 @@ class VanillaDatapackExporterTest {
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val root = success.directory.resolve("data/kantan/function/${script.id}.mcfunction").readText()
         val all = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(root.contains("reset #t_local kc_vars"))
-        assertFalse(root.contains("reset #w_shared kc_vars"))
-        assertTrue(all.contains("#w_shared kc_vars"))
+        assertTrue(root.contains("reset ${VanillaScoreNames.variableHolder("local", true)} kc_vars"))
+        assertFalse(root.contains("reset ${VanillaScoreNames.variableHolder("shared", false)} kc_vars"))
+        assertTrue(all.contains("${VanillaScoreNames.variableHolder("shared", false)} kc_vars"))
     }
 
     @Test
@@ -177,7 +180,7 @@ class VanillaDatapackExporterTest {
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).export(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("#t_iteration kc_vars = #for_"))
+        assertTrue(text.contains("${VanillaScoreNames.variableHolder("iteration", true)} kc_vars = #for_"))
         assertTrue(text.contains("_value kc_vars"))
     }
 
@@ -211,8 +214,9 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("execute unless score #t_value kc_vars matches 4 run return run function"))
-        assertTrue(text.contains("execute if score #t_value kc_vars matches 4 run return run function"))
+        val holder = VanillaScoreNames.variableHolder("value", true)
+        assertTrue(text.contains("execute unless score $holder kc_vars matches 4 run return run function"))
+        assertTrue(text.contains("execute if score $holder kc_vars matches 4 run return run function"))
     }
 
     @Test
@@ -244,8 +248,9 @@ class VanillaDatapackExporterTest {
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("tp @s 12.5 64.0 -3.0"))
-        assertTrue(text.contains("scoreboard players set #t_flag kc_vars 1"))
-        assertTrue(text.contains("execute store success score #t_flag kc_vars"))
+        val holder = VanillaScoreNames.variableHolder("flag", true)
+        assertTrue(text.contains("scoreboard players set $holder kc_vars 1"))
+        assertTrue(text.contains("execute store success score $holder kc_vars"))
     }
 
     @Test

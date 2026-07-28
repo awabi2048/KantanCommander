@@ -170,7 +170,7 @@ internal class PreparedKantanExport(
     }
 
     private fun initializeVariable(dimension: String, name: String, value: WorldVariableValue): String {
-        val holder = "#w_${name.replace(Regex("[^a-z0-9_.-]"), "_")}"
+        val holder = VanillaScoreNames.variableHolder(name, temporary = false)
         return when (value.type) {
             VariableType.BOOLEAN ->
                 "scoreboard players set $holder kc_vars ${if (value.booleanValue == true) 1 else 0}"

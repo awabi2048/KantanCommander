@@ -177,10 +177,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ?: return stop(session, script, node.id, depth, "for_frame_missing", done)
         val startNode = graph.nodes[frame.startId]
             ?: return stop(session, script, node.id, depth, "for_start_missing", done)
-        val currentEnd = resolveForValue(startNode, "end", session)
-            ?: return stop(session, script, node.id, depth, "invalid_for_end", done)
-        val currentStep = resolveForValue(startNode, "step", session)
-            ?: return stop(session, script, node.id, depth, "invalid_for_step", done)
+        val currentEnd = frame.end
+        val currentStep = frame.step
         if (currentStep == 0L) return stop(session, script, node.id, depth, "zero_for_step", done)
         val nextValue = try {
             Math.addExact(frame.value, currentStep)
@@ -196,8 +194,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         ) {
             frame.value = nextValue
-            frame.end = currentEnd
-            frame.step = currentStep
             frame.count++
             session.currentIterationValue = frame.value
             session.currentLoopCount = frame.count
@@ -526,12 +522,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 session.origin.world.entities.filter { matches(it, spec, session, context) }
             TargetKind.FIXED_ENTITY -> listOfNotNull(spec.fixedEntityId?.let(session.origin.world::getEntity))
         }
+        val inMyWorld = candidates.filter { it.world == session.origin.world }
         val sorted = when {
             spec.kind == TargetKind.RANDOM_PLAYER || spec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
-                candidates.shuffled()
+                inMyWorld.shuffled()
             spec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
-                candidates.sortedByDescending { it.location.distanceSquared(selectionOrigin) }
-            else -> candidates.sortedBy { it.location.distanceSquared(selectionOrigin) }
+                inMyWorld.sortedByDescending { it.location.distanceSquared(selectionOrigin) }
+            else -> inMyWorld.sortedBy { it.location.distanceSquared(selectionOrigin) }
         }
         val defaultLimit = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY,
@@ -575,7 +572,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 PositionKind.DISK, PositionKind.MYWORLD_SPAWN,
                 PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE ->
                     resolvePosition(position, session, context)
-                PositionKind.EXECUTOR -> session.actor?.location ?: session.origin
+                PositionKind.EXECUTOR ->
+                    session.actor?.takeIf { it.world == session.origin.world }?.location ?: session.origin
                 PositionKind.TARGET -> session.origin
             }
         }
