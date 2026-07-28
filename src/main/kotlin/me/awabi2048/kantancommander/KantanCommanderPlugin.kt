@@ -171,6 +171,7 @@ class KantanCommanderPlugin : JavaPlugin() {
             scripts,
             dataFolder.resolve("exports"),
             config.getInt("execution.max-nodes-per-activation"),
+            config.getInt("execution.max-disk-call-depth"),
         )
     }
 

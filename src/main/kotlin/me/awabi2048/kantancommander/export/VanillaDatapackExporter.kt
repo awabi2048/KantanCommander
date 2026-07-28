@@ -26,6 +26,7 @@ class VanillaDatapackExporter(
     private val scripts: ScriptStore,
     private val outputRoot: File,
     private val maximumCommandCount: Int = 1024,
+    private val maximumDiskCallDepth: Int = 3,
 ) {
     fun compileForStandalone(
         root: DiskScript,
@@ -35,7 +36,7 @@ class VanillaDatapackExporter(
         val errors = mutableListOf<String>()
         errors += ExecutableScriptValidator.validate(exportRoot)
         annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
-        validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()))
+        validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0)
         return if (errors.isEmpty()) {
             StandaloneCompilation.Success(compile(exportRoot))
         } else {
@@ -69,6 +70,7 @@ class VanillaDatapackExporter(
         script: DiskScript,
         errors: MutableList<String>,
         visited: MutableSet<CommandGraph>,
+        callDepth: Int,
     ) {
         if (!visited.add(script.graph)) {
             errors += "${script.id}: 別ディスクのコピー内容が循環参照しています"
@@ -97,10 +99,13 @@ class VanillaDatapackExporter(
                 } else {
                     validatePosition(script, node, node.destinationSpec, errors)
                 }
-                CommandType.DISK_CALL -> if (node.snapshot == null) {
-                    errors += "${script.id}/${node.id}: コピー内容がありません"
-                } else {
-                    validate(script.copy(graph = node.snapshot!!), errors, visited)
+                CommandType.DISK_CALL -> when {
+                    node.snapshot == null ->
+                        errors += "${script.id}/${node.id}: コピー内容がありません"
+                    callDepth >= maximumDiskCallDepth ->
+                        errors += "${script.id}/${node.id}: 別ディスク呼出深度が上限 $maximumDiskCallDepth を超えます"
+                    else ->
+                        validate(script.copy(graph = node.snapshot!!), errors, visited, callDepth + 1)
                 }
                 CommandType.CONDITION -> validateCondition(script, node, errors)
                 CommandType.CONTEXT -> validateContext(script, node, contextFrom(node), errors)
@@ -342,7 +347,7 @@ class VanillaDatapackExporter(
                     } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.DISK_CALL -> {
-                    val snapshotPrefix = "${prefix}_snapshot_${node.id}"
+                    val snapshotPrefix = snapshotPrefix(prefix, node.id)
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
                     val call = "function kantan:$snapshotPrefix"
                     lines += storeFunctionResult(node, node.contextOverride?.let { wrapContext(it, call) } ?: call)
@@ -743,6 +748,13 @@ class VanillaDatapackExporter(
         "execute store result score ${scoreHolder(node.id)} kc_result run $command"
 
     private fun scoreHolder(id: UUID) = "#n_${id.toString().replace("-", "")}"
+
+    private fun snapshotPrefix(parentPrefix: String, nodeId: UUID): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("$parentPrefix/$nodeId".toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return "snapshot_${digest.take(24)}"
+    }
 
     private fun selector(spec: TargetSpec): String {
         if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) return "@s"

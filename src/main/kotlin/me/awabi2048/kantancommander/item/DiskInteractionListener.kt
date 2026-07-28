@@ -28,7 +28,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
 
         if (clickedPlacement != null && !player.isSneaking) {
             val script = plugin.scripts.load(clickedPlacement.scriptId) ?: return
-            if (!plugin.placementAccess.canManage(player, clickedPlacement.world, script.owner)) {
+            if (!plugin.placementAccess.canManage(player, clickedPlacement.world)) {
                 player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
                 return
             }
@@ -42,7 +42,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
                 DiskItemState.WRITTEN -> diskId?.let(plugin.scripts::load) ?: return
                 DiskItemState.NOT_DISK -> return
             }
-            if (script != null && !plugin.placementAccess.canManage(player, player.world.name, script.owner)) {
+            if (script != null && !plugin.placementAccess.canManage(player, player.world.name)) {
                 player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
                 return
             }
@@ -59,7 +59,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         val placement = plugin.placements.find(block.location) ?: return
         event.isCancelled = true
         val script = plugin.scripts.load(placement.scriptId) ?: return
-        if (!plugin.placementAccess.canManage(event.player, placement.world, script.owner)) return
+        if (!plugin.placementAccess.canManage(event.player, placement.world)) return
         event.player.sendMessage(KcI18n.text(event.player, "message.remove_from_menu"))
     }
 

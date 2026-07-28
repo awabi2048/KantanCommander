@@ -503,7 +503,10 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("positioned 2.0 70.0 3.0 run function kantan:${script.id}_snapshot_${call.id}"))
+        assertTrue(
+            Regex("""positioned 2\.0 70\.0 3\.0 run function kantan:snapshot_[0-9a-f]{24}""")
+                .containsMatchIn(text)
+        )
     }
 
     @Test
@@ -539,6 +542,49 @@ class VanillaDatapackExporterTest {
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val failure = assertInstanceOf(ExportResult.Failure::class.java, result)
         assertTrue(failure.errors.any { it.contains("バニラに存在しないアイテム") })
+    }
+
+    @Test
+    fun `standalone export enforces the same copied disk call depth`() {
+        fun nestedCalls(remaining: Int): CommandGraph {
+            val node = if (remaining == 0) {
+                CommandType.DISPLAY_TEXT.newNode()
+            } else {
+                CommandType.DISK_CALL.newNode().also { it.snapshot = nestedCalls(remaining - 1) }
+            }
+            return CommandGraph(node.id, linkedMapOf(node.id to node))
+        }
+
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "depth")
+        val rootCall = GraphEditor.append(script.graph, CommandType.DISK_CALL)
+        rootCall.snapshot = nestedCalls(3)
+
+        val failure = assertInstanceOf(
+            ExportResult.Failure::class.java,
+            VanillaDatapackExporter(
+                store,
+                temp.resolve("exports"),
+                maximumDiskCallDepth = 3,
+            ).exportConfigured(script),
+        )
+        assertTrue(failure.errors.any { it.contains("別ディスク呼出深度") })
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(
+            store,
+            temp.resolve("exports-allowed"),
+            maximumDiskCallDepth = 4,
+            ).exportConfigured(script),
+        )
+        val functionFiles = success.directory
+            .resolve("data/kantan/function")
+            .walkTopDown()
+            .filter(File::isFile)
+            .toList()
+        assertTrue(functionFiles.isNotEmpty())
+        assertTrue(functionFiles.all { it.name.length < 100 })
     }
 
     @Test

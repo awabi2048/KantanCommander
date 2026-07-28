@@ -340,7 +340,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun outputDisk(player: Player, placement: DiskPlacement, removeBlock: Boolean): Boolean {
         val source = plugin.scripts.load(placement.scriptId) ?: return false
-        if (!plugin.placementAccess.canManage(player, placement.world, source.owner)) {
+        if (!plugin.placementAccess.canManage(player, placement.world)) {
             player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
             return false
         }
