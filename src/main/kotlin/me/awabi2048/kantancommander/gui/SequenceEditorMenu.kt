@@ -18,7 +18,10 @@ import me.awabi2048.kantancommander.item.DiskItemService
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -215,11 +218,64 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             node.type.icon,
             KcI18n.text(player, node.type.key),
             GuiNameStyle.DEFAULT,
-            listOf(GuiLoreLine.Data(KcI18n.text(player, "gui.editor.setting"), node.summary(), "§f")),
+            listOf(GuiLoreLine.Data(KcI18n.text(player, "gui.editor.setting"), commandSummary(player, node), "§f")),
         ),
         GuiElementRole.CONTENT,
         "command",
         mapOf("nodeId" to node.id.toString()),
+    )
+
+    private fun commandSummary(player: Player, node: CommandNode): String = when (node.type) {
+        CommandType.TELEPORT -> {
+            val target = node.targetSpec?.kind?.let { localizedTarget(player, it) }
+                ?: KcI18n.text(player, "gui.field.unset")
+            val destination = node.destinationTargetSpec?.kind?.let { localizedTarget(player, it) }
+                ?: node.destinationSpec?.kind?.let { localizedPosition(player, it) }
+                ?: KcI18n.text(player, "gui.field.unset")
+            "$target → $destination"
+        }
+        CommandType.GIVE_ITEM -> "${node.string("item")} ×${node.int("count", 1)}"
+        CommandType.DISPLAY_TEXT -> node.string("text").ifBlank { KcI18n.text(player, "gui.field.unset") }
+        CommandType.WAIT -> "${node.int("ticks", 20)} tick"
+        CommandType.CONDITION -> runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+            ?.let { KcI18n.text(player, it.key) }
+            ?: KcI18n.text(player, "gui.field.unset")
+        CommandType.DISK_CALL ->
+            KcI18n.text(player, if (node.snapshot == null) "gui.field.unset" else "gui.option.configured")
+        CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, "gui.field.unset") }
+        CommandType.FOR_START ->
+            "${node.string("startValue")}..${node.string("endValue")} / ${node.string("stepValue")}"
+        else -> KcI18n.text(player, node.type.key)
+    }
+
+    private fun localizedTarget(player: Player, kind: TargetKind): String = KcI18n.text(
+        player,
+        when (kind) {
+            TargetKind.EXECUTOR -> "gui.option.executor"
+            TargetKind.ACTIVATOR -> "gui.option.activator"
+            TargetKind.INHERITED_TARGET -> "gui.option.inherited_target"
+            TargetKind.NEAREST_PLAYER -> "gui.option.nearest_player"
+            TargetKind.NEARBY_PLAYERS -> "gui.option.nearby_players"
+            TargetKind.ALL_PLAYERS -> "gui.option.all_players"
+            TargetKind.RANDOM_PLAYER -> "gui.option.random_player"
+            TargetKind.NEAREST_ENTITY -> "gui.option.nearest_entity"
+            TargetKind.NEARBY_ENTITIES -> "gui.option.nearby_entities"
+            TargetKind.FIXED_ENTITY -> "gui.option.fixed_entity"
+        }
+    )
+
+    private fun localizedPosition(player: Player, kind: PositionKind): String = KcI18n.text(
+        player,
+        when (kind) {
+            PositionKind.CAPTURED -> "gui.option.current_position"
+            PositionKind.DISK -> "gui.option.disk_position"
+            PositionKind.EXECUTOR -> "gui.option.executor_position"
+            PositionKind.TARGET -> "gui.option.target_position"
+            PositionKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
+            PositionKind.COORDINATES -> "gui.option.coordinates"
+            PositionKind.TEMPORARY_VARIABLE -> "gui.option.temporary_variable"
+            PositionKind.WORLD_VARIABLE -> "gui.field.world_variable"
+        }
     )
 
     private fun pathElement(player: Player, slot: Int, cell: MapCell): MenuElement {

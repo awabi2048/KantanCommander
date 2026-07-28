@@ -1467,7 +1467,65 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         "未設定" -> KcI18n.text(player, "gui.field.unset")
         "true" -> KcI18n.text(player, "gui.editor.enabled")
         "false" -> KcI18n.text(player, "gui.editor.disabled")
-        else -> value
+        else -> enumValueKey(value)?.let { KcI18n.text(player, it) } ?: value
+    }
+
+    private fun enumValueKey(value: String): String? {
+        runCatching { TargetKind.valueOf(value) }.getOrNull()?.let {
+            return when (it) {
+                TargetKind.EXECUTOR -> "gui.option.executor"
+                TargetKind.ACTIVATOR -> "gui.option.activator"
+                TargetKind.INHERITED_TARGET -> "gui.option.inherited_target"
+                TargetKind.NEAREST_PLAYER -> "gui.option.nearest_player"
+                TargetKind.NEARBY_PLAYERS -> "gui.option.nearby_players"
+                TargetKind.ALL_PLAYERS -> "gui.option.all_players"
+                TargetKind.RANDOM_PLAYER -> "gui.option.random_player"
+                TargetKind.NEAREST_ENTITY -> "gui.option.nearest_entity"
+                TargetKind.NEARBY_ENTITIES -> "gui.option.nearby_entities"
+                TargetKind.FIXED_ENTITY -> "gui.option.fixed_entity"
+            }
+        }
+        runCatching { PositionKind.valueOf(value) }.getOrNull()?.let {
+            return when (it) {
+                PositionKind.CAPTURED -> "gui.option.current_position"
+                PositionKind.DISK -> "gui.option.disk_position"
+                PositionKind.EXECUTOR -> "gui.option.executor_position"
+                PositionKind.TARGET -> "gui.option.target_position"
+                PositionKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
+                PositionKind.COORDINATES -> "gui.option.coordinates"
+                PositionKind.TEMPORARY_VARIABLE -> "gui.option.temporary_variable"
+                PositionKind.WORLD_VARIABLE -> "gui.field.world_variable"
+            }
+        }
+        runCatching { FacingKind.valueOf(value) }.getOrNull()?.let {
+            return when (it) {
+                FacingKind.INHERITED -> "gui.option.unchanged"
+                FacingKind.CAPTURED -> "gui.option.current_facing"
+                FacingKind.EXECUTOR -> "gui.option.executor_facing"
+                FacingKind.TARGET -> "gui.option.face_target"
+                FacingKind.COORDINATES -> "gui.option.face_coordinates"
+                FacingKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
+                FacingKind.ROTATION -> "gui.option.numeric"
+            }
+        }
+        runCatching { ConditionKind.valueOf(value) }.getOrNull()?.let { return it.key }
+        runCatching { VariableType.valueOf(value) }.getOrNull()?.let {
+            return when (it) {
+                VariableType.BOOLEAN -> "gui.option.true_false"
+                VariableType.INTEGER -> "gui.option.integer"
+                VariableType.DECIMAL -> "gui.option.decimal"
+                VariableType.TEXT -> "gui.option.text"
+                VariableType.POSITION -> "gui.option.position"
+                VariableType.ENTITY -> "gui.option.entity_reference"
+            }
+        }
+        runCatching { VariableOperation.valueOf(value) }.getOrNull()?.let {
+            return "gui.option.${it.name.lowercase()}"
+        }
+        runCatching { TargetSort.valueOf(value) }.getOrNull()?.let {
+            return "gui.option.sort_${it.name.lowercase()}"
+        }
+        return null
     }
 
     private fun script(route: MenuRoute) = scriptId(route)?.let(plugin.scripts::load)
@@ -1592,24 +1650,36 @@ object EditorMenuLayout {
 
     fun fields(type: CommandType): List<EditorField> = when (type) {
         CommandType.TELEPORT -> listOf(
-            field("target", "gui.field.target", Material.PLAYER_HEAD),
-            field("destination", "gui.field.destination", Material.COMPASS),
+            field("target", "gui.field.target", Material.PLAYER_HEAD) {
+                it.targetSpec?.kind?.name ?: "未設定"
+            },
+            field("destination", "gui.field.destination", Material.COMPASS) {
+                it.destinationTargetSpec?.kind?.name ?: it.destinationSpec?.kind?.name ?: "未設定"
+            },
             field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.GIVE_ITEM -> listOf(
-            field("target", "gui.field.give_target", Material.PLAYER_HEAD),
+            field("target", "gui.field.give_target", Material.PLAYER_HEAD) {
+                it.targetSpec?.kind?.name ?: "未設定"
+            },
             field("item", "gui.field.item", Material.CHEST),
             field("count", "gui.field.count", Material.DIAMOND),
             field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.ENTITY_ACTION -> listOf(
-            field("target", "gui.field.target", Material.PLAYER_HEAD),
+            field("target", "gui.field.target", Material.PLAYER_HEAD) {
+                it.targetSpec?.kind?.name ?: "未設定"
+            },
             field("action", "gui.field.action", Material.SADDLE),
-            field("other", "gui.field.other", Material.ANVIL),
+            field("other", "gui.field.other", Material.ANVIL) {
+                it.secondaryTargetSpec?.kind?.name ?: "未設定"
+            },
             field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.DISPLAY_TEXT -> listOf(
-            field("target", "gui.field.display_target", Material.PLAYER_HEAD),
+            field("target", "gui.field.display_target", Material.PLAYER_HEAD) {
+                it.targetSpec?.kind?.name ?: "未設定"
+            },
             field("mode", "gui.field.mode", Material.OAK_SIGN),
             field("text", "gui.field.text", Material.WRITTEN_BOOK),
             field("stay", "gui.field.duration", Material.CLOCK),
@@ -1619,14 +1689,22 @@ object EditorMenuLayout {
         CommandType.CONDITION -> listOf(
             field("inverted", "gui.field.inverted", Material.REDSTONE_TORCH) { if (it.boolean("inverted")) "オン" else "オフ" },
             field("kind", "gui.field.condition_kind", Material.COMPARATOR),
-            field("condition", "gui.field.condition_value", Material.TARGET) { it.summary() },
+            field("condition", "gui.field.condition_value", Material.TARGET) { it.string("kind") },
             field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.CONTEXT -> listOf(
-            field("executor", "gui.field.executor", Material.PLAYER_HEAD),
-            field("target", "gui.field.target", Material.TARGET),
-            field("position", "gui.field.position", Material.COMPASS),
-            field("facing", "gui.field.facing", Material.SPYGLASS),
+            field("executor", "gui.field.executor", Material.PLAYER_HEAD) {
+                it.contextOverride?.executor?.kind?.name ?: "未設定"
+            },
+            field("target", "gui.field.target", Material.TARGET) {
+                it.contextOverride?.target?.kind?.name ?: "未設定"
+            },
+            field("position", "gui.field.position", Material.COMPASS) {
+                it.contextOverride?.position?.kind?.name ?: "未設定"
+            },
+            field("facing", "gui.field.facing", Material.SPYGLASS) {
+                it.contextOverride?.facing?.kind?.name ?: "未設定"
+            },
         )
         CommandType.DISK_CALL -> listOf(
             field("diskId", "gui.field.disk", Material.MUSIC_DISC_13),
