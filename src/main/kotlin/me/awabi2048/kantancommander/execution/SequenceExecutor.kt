@@ -282,10 +282,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val players = targets.filterIsInstance<Player>()
                 if (players.isEmpty()) return false
                 val material = Material.matchMaterial(node.string("item", "minecraft:stone")) ?: return false
-                val stack = ItemStackCodec.decode(node.string("itemData"))
+                val template = ItemStackCodec.decode(node.string("itemData"))
                     ?: ItemStack(material)
-                stack.amount = node.int("count", 1).coerceIn(1, stack.maxStackSize)
-                players.all { player -> player.inventory.addItem(stack.clone()).isEmpty() }
+                val count = node.int("count", 1)
+                if (count < 1) return false
+                players.all { player -> giveItem(player, template, count) }
             }
             CommandType.ENTITY_ACTION -> {
                 if (targets.isEmpty()) return false
@@ -325,6 +326,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }.onFailure {
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", it)
     }.getOrDefault(false)
+
+    private fun giveItem(player: Player, template: ItemStack, count: Int): Boolean {
+        var remaining = count
+        while (remaining > 0) {
+            val stack = template.clone()
+            val batch = minOf(remaining, stack.maxStackSize)
+            stack.amount = batch
+            if (player.inventory.addItem(stack).isNotEmpty()) return false
+            remaining -= batch
+        }
+        return true
+    }
 
     private fun evaluateCondition(
         node: CommandNode,

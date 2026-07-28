@@ -48,7 +48,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
                 return
             }
             val base = event.clickedBlock ?: return
-            val target = base.getRelative(event.blockFace)
+            val target = if (base.isReplaceable) base else base.getRelative(event.blockFace)
             placeDisk(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND)
         }
     }
@@ -72,7 +72,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         hand: EquipmentSlot,
     ) {
         val block = location.block
-        if (!block.type.isAir) {
+        if (!block.isReplaceable) {
             player.sendMessage(KcI18n.text(player, "message.place_blocked"))
             return
         }
@@ -110,7 +110,13 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
                 player.uniqueId,
                 plugin.config.getString("default-disk-name", "Kantan Disk") ?: "Kantan Disk",
             )
-        block.setType(PlacedDiskMaterials.forTimer(placedScript.timer.enabled), false)
+        val material = PlacedDiskMaterials.forTimer(placedScript.timer.enabled)
+        if (!block.canPlace(Bukkit.createBlockData(material))) {
+            plugin.scripts.delete(placedScript.id)
+            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            return
+        }
+        block.setType(material, false)
         val placement = DiskPlacement(
             block.world.name, block.x, block.y, block.z, placedScript.id,
             player.facing.name, null
