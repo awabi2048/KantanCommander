@@ -8,6 +8,12 @@ import java.util.UUID
 
 data class MapPoint(val x: Int, val y: Int)
 
+data class InsertionTarget(
+    val sourceId: UUID?,
+    val edge: GraphEditor.Edge,
+    val mergeConditionId: UUID? = null,
+)
+
 enum class MapCellKind {
     NODE,
     PATH,
@@ -20,9 +26,7 @@ data class MapCell(
     val point: MapPoint,
     val kind: MapCellKind,
     val nodeId: UUID? = null,
-    val sourceId: UUID? = null,
-    val edge: GraphEditor.Edge? = null,
-    val mergeConditionId: UUID? = null,
+    val insertionTarget: InsertionTarget? = null,
 )
 
 data class GraphLayout(
@@ -195,7 +199,7 @@ object GraphLayoutEngine {
                 putAdd(trueSegment.nextX, y, trueSegment.tail, GraphEditor.Edge.NEXT, condition.id)
             }
             val falseY = trueSegment.maxY + 2
-            for (verticalY in y..falseY) {
+            for (verticalY in y + 1..falseY) {
                 putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
             }
             val falseStart = condition.falseNext
@@ -213,15 +217,19 @@ object GraphLayoutEngine {
         private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
             putNode(x, y, start)
             val endId = start.pairedNodeId ?: return Segment(x + 2, y, start.id)
-            putPath(x + 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
             val bodyStart = start.trueNext
             val body = if (bodyStart != null && bodyStart != endId) {
+                putPath(x + 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
                 renderSequence(bodyStart, endId, x + 2, y)
             } else {
                 Segment(x + 2, y, null)
             }
             val endX = body.nextX
-            fillHorizontal(body.nextX - 1, endX - 1, y, MapCellKind.PATH)
+            if (body.tail == null) {
+                putPath(endX - 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
+            } else {
+                putPath(endX - 1, y, sourceId = body.tail, edge = GraphEditor.Edge.NEXT)
+            }
             val end = graph.nodes[endId] ?: return Segment(endX, body.maxY, start.id)
             putNode(endX, y, end)
 
@@ -263,20 +271,13 @@ object GraphLayoutEngine {
         ) {
             val point = MapPoint(x, y)
             val existing = cells[point]
-            if (existing?.kind == MapCellKind.NODE) return
-            check(
-                existing == null ||
-                    existing.kind == MapCellKind.PATH &&
-                    existing.sourceId == null &&
-                    existing.edge == null &&
-                    existing.mergeConditionId == null ||
-                    existing.kind == kind &&
-                    (existing.mergeConditionId == null || mergeConditionId == null ||
-                        existing.mergeConditionId == mergeConditionId)
-            ) {
-                "生成経路が交差しています: point=$point existing=$existing incoming=$kind/$mergeConditionId"
+            check(existing?.kind != MapCellKind.NODE && existing?.kind != MapCellKind.ADD) {
+                "生成経路が実行要素と衝突しています: point=$point existing=$existing"
             }
-            cells[point] = MapCell(point, kind, sourceId = sourceId, edge = edge, mergeConditionId = mergeConditionId)
+            val incomingTarget = edge?.let { InsertionTarget(sourceId, it, mergeConditionId) }
+            val resolvedKind = mergePathKind(existing?.kind, kind)
+            val resolvedTarget = mergeInsertionTarget(point, existing?.insertionTarget, incomingTarget)
+            cells[point] = MapCell(point, resolvedKind, insertionTarget = resolvedTarget)
         }
 
         private fun putAdd(
@@ -287,13 +288,31 @@ object GraphLayoutEngine {
             mergeConditionId: UUID? = null,
         ) {
             val point = MapPoint(x, y)
+            check(cells[point] == null) {
+                "追加位置が既存要素と衝突しています: point=$point existing=${cells[point]}"
+            }
             cells[point] = MapCell(
                 point,
                 MapCellKind.ADD,
-                sourceId = sourceId,
-                edge = edge,
-                mergeConditionId = mergeConditionId,
+                insertionTarget = InsertionTarget(sourceId, edge, mergeConditionId),
             )
+        }
+
+        private fun mergePathKind(existing: MapCellKind?, incoming: MapCellKind): MapCellKind = when {
+            existing == null || existing == incoming -> incoming
+            existing == MapCellKind.PATH -> incoming
+            incoming == MapCellKind.PATH -> existing
+            else -> error("異なる種類の生成経路が交差しています: existing=$existing incoming=$incoming")
+        }
+
+        private fun mergeInsertionTarget(
+            point: MapPoint,
+            existing: InsertionTarget?,
+            incoming: InsertionTarget?,
+        ): InsertionTarget? = when {
+            existing == null -> incoming
+            incoming == null || existing == incoming -> existing
+            else -> error("異なる挿入位置が同じセルを共有しています: point=$point existing=$existing incoming=$incoming")
         }
     }
 

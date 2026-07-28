@@ -260,7 +260,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     )
 
     private fun pathElement(player: Player, slot: Int, cell: MapCell): MenuElement {
-        if (cell.kind == MapCellKind.ADD || (cell.kind != MapCellKind.LOOP_RETURN_PATH && cell.edge != null)) {
+        val insertionTarget = cell.insertionTarget
+        if (insertionTarget != null) {
             return MenuElement(
                 slot,
                 KcGui.item(
@@ -275,9 +276,9 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 GuiElementRole.ACTION,
                 "add",
                 mapOf(
-                    "sourceId" to cell.sourceId?.toString().orEmpty(),
-                    "edge" to (cell.edge ?: me.awabi2048.kantancommander.data.GraphEditor.Edge.ENTRY).name,
-                    "mergeConditionId" to cell.mergeConditionId?.toString().orEmpty(),
+                    "sourceId" to insertionTarget.sourceId?.toString().orEmpty(),
+                    "edge" to insertionTarget.edge.name,
+                    "mergeConditionId" to insertionTarget.mergeConditionId?.toString().orEmpty(),
                 ),
             )
         }

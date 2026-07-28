@@ -79,6 +79,17 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `open condition keeps true and false insertion targets distinct`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+
+        val layout = GraphLayoutEngine.layout(graph)
+
+        assertEquals(GraphEditor.Edge.TRUE, layout.cells[MapPoint(2, 1)]?.insertionTarget?.edge)
+        assertEquals(GraphEditor.Edge.FALSE, layout.cells[MapPoint(2, 2)]?.insertionTarget?.edge)
+    }
+
+    @Test
     fun `nested true branch moves outer false branch below its occupied area`() {
         val graph = CommandGraph.empty()
         val outer = GraphEditor.append(graph, CommandType.CONDITION)
@@ -122,6 +133,27 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `for body paths remain insertion targets`() {
+        val emptyGraph = CommandGraph.empty()
+        val emptyStart = GraphEditor.append(emptyGraph, CommandType.FOR_START)
+        val emptyLayout = GraphLayoutEngine.layout(emptyGraph)
+        assertEquals(
+            InsertionTarget(emptyStart.id, GraphEditor.Edge.FOR_BODY),
+            emptyLayout.cells[MapPoint(2, 1)]?.insertionTarget,
+        )
+
+        val populatedGraph = CommandGraph.empty()
+        val populatedStart = GraphEditor.append(populatedGraph, CommandType.FOR_START)
+        val body = GraphEditor.appendToForBody(populatedGraph, populatedStart.id, CommandType.WAIT)
+        val populatedLayout = GraphLayoutEngine.layout(populatedGraph)
+        val endPoint = requireNotNull(populatedLayout.nodePoints[requireNotNull(populatedStart.pairedNodeId)])
+        assertEquals(
+            InsertionTarget(body.id, GraphEditor.Edge.NEXT),
+            populatedLayout.cells[MapPoint(endPoint.x - 1, endPoint.y)]?.insertionTarget,
+        )
+    }
+
+    @Test
     fun `merge side path inserts at the false branch tail`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
@@ -133,9 +165,9 @@ class GraphLayoutEngineTest {
         val falseY = requireNotNull(layout.nodePoints[falseTail.id]).y
 
         val mergeSide = layout.cells[MapPoint(mergePoint.x - 1, falseY)]
-        assertEquals(falseTail.id, mergeSide?.sourceId)
-        assertEquals(GraphEditor.Edge.NEXT, mergeSide?.edge)
-        assertEquals(condition.id, mergeSide?.mergeConditionId)
+        assertEquals(falseTail.id, mergeSide?.insertionTarget?.sourceId)
+        assertEquals(GraphEditor.Edge.NEXT, mergeSide?.insertionTarget?.edge)
+        assertEquals(condition.id, mergeSide?.insertionTarget?.mergeConditionId)
     }
 
     @Test
