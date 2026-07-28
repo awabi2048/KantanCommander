@@ -376,6 +376,43 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `position and entity references are captured into storage`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "captured-storage")
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "place",
+                "scope" to "TEMPORARY",
+                "type" to "POSITION",
+                "operation" to "STORE_POSITION",
+            )
+        )
+        GraphEditor.append(script.graph, CommandType.VARIABLE).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "entity",
+                    "scope" to "TEMPORARY",
+                    "type" to "ENTITY",
+                    "operation" to "STORE_TARGET",
+                )
+            )
+            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+        }
+
+        val compilation = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val text = compilation.functions.values.joinToString("\n")
+        val positionPath = VanillaStorageNames.variablePath("place", true)
+        val entityPath = VanillaStorageNames.variablePath("entity", true)
+        assertTrue(text.contains("$positionPath.position set from entity @s Pos"))
+        assertTrue(text.contains("$positionPath.rotation set from entity @s Rotation"))
+        assertTrue(text.contains("execute summon minecraft:marker run function kantan:"))
+        assertTrue(text.contains("$entityPath set from entity @s UUID"))
+    }
+
+    @Test
     fun `structured teleport destination and boolean variables are lowered`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "structured")

@@ -113,8 +113,10 @@ class VanillaDatapackExporter(
                     val storageOperationSupported =
                         type in setOf(VariableType.DECIMAL, VariableType.TEXT) &&
                             operation in setOf(VariableOperation.SET, VariableOperation.CLEAR) ||
-                            type in setOf(VariableType.POSITION, VariableType.ENTITY) &&
-                            operation == VariableOperation.CLEAR
+                            type == VariableType.POSITION &&
+                            operation in setOf(VariableOperation.STORE_POSITION, VariableOperation.CLEAR) ||
+                            type == VariableType.ENTITY &&
+                            operation in setOf(VariableOperation.STORE_TARGET, VariableOperation.CLEAR)
                     if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER) && !storageOperationSupported) {
                         errors += "${script.id}/${node.id}: ${type ?: "不明"}型の変数は完全バニラ出力に未対応です"
                     }
@@ -124,9 +126,6 @@ class VanillaDatapackExporter(
                         node.string("value").toLongOrNull()?.let { it !in VANILLA_INTEGER_RANGE } != false
                     ) {
                         errors += "${script.id}/${node.id}: 整数値はバニラscoreboardの範囲外です"
-                    }
-                    if (operation in setOf(VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET)) {
-                        errors += "${script.id}/${node.id}: $operation は完全バニラ出力に未対応です"
                     }
                     if (node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")) {
                         if (node.string("type") != VariableType.INTEGER.name) {
@@ -281,6 +280,20 @@ class VanillaDatapackExporter(
         } else entryCall
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
+            if (node.type == CommandType.VARIABLE &&
+                node.string("operation") == VariableOperation.STORE_POSITION.name
+            ) {
+                val helper = "${prefix}_${node.id}_capture_position"
+                node.params[EXPORT_CAPTURE_FUNCTION] = helper
+                val temporary = node.string("scope", "TEMPORARY") != "WORLD"
+                val path = VanillaStorageNames.variablePath(node.string("name"), temporary)
+                output[helper] = buildString {
+                    appendLine("data modify storage kantan:variables $path set value {}")
+                    appendLine("data modify storage kantan:variables $path.position set from entity @s Pos")
+                    appendLine("data modify storage kantan:variables $path.rotation set from entity @s Rotation")
+                    appendLine("kill @s")
+                }
+            }
             val emptyFor = node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId
             if (!emptyFor) {
                 lines += "execute if score #executed kc_runtime matches ${maximumCommandCount.coerceAtLeast(1)}.. run return 0"
@@ -496,7 +509,11 @@ class VanillaDatapackExporter(
                 }
             VariableOperation.TOGGLE ->
                 "execute store success score $holder kc_vars run execute unless score $holder kc_vars matches 1"
-            VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET -> null
+            VariableOperation.STORE_POSITION ->
+                "execute summon minecraft:marker run function kantan:${node.string(EXPORT_CAPTURE_FUNCTION)}"
+            VariableOperation.STORE_TARGET ->
+                "execute as ${selector(requireNotNull(node.targetSpec))} run data modify storage kantan:variables " +
+                    "$storagePath set from entity @s UUID"
         }
     }
 
@@ -702,6 +719,7 @@ class VanillaDatapackExporter(
 
     private companion object {
         const val EXPORT_VARIABLE_TYPE = "_exportVariableType"
+        const val EXPORT_CAPTURE_FUNCTION = "_exportCaptureFunction"
         val VANILLA_INTEGER_RANGE = Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()
     }
 }

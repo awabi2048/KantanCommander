@@ -201,11 +201,12 @@ internal class PreparedKantanExport(
                 val position = requireNotNull(value.position) { "world variable $name has no position" }
                 storageSet(
                     name,
-                    "{x:${position.x}d,y:${position.y}d,z:${position.z}d,yaw:${position.yaw}f,pitch:${position.pitch}f}",
+                    "{position:[${position.x}d,${position.y}d,${position.z}d]," +
+                        "rotation:[${position.yaw}f,${position.pitch}f]}",
                 )
             }
             VariableType.ENTITY ->
-                storageSet(name, "\"${value.entityId ?: UUID(0L, 0L)}\"")
+                storageSet(name, uuidSnbt(value.entityId ?: UUID(0L, 0L)))
         }
     }
 
@@ -214,4 +215,10 @@ internal class PreparedKantanExport(
 
     private fun escapeNbt(value: String): String =
         value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+    private fun uuidSnbt(uuid: UUID): String {
+        val most = uuid.mostSignificantBits
+        val least = uuid.leastSignificantBits
+        return "[I;${(most shr 32).toInt()},${most.toInt()},${(least shr 32).toInt()},${least.toInt()}]"
+    }
 }
