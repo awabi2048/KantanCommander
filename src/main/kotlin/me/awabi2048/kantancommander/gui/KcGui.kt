@@ -37,12 +37,18 @@ object KcGui {
         layouts.applyStandardFrame(inv)
     }
 
-    fun item(material: Material, name: String, style: GuiNameStyle = GuiNameStyle.DEFAULT, lines: List<GuiLoreLine> = emptyList()) =
+    fun item(
+        material: Material,
+        name: String,
+        style: GuiNameStyle = GuiNameStyle.DEFAULT,
+        lines: List<GuiLoreLine> = emptyList(),
+        role: GuiElementRole = GuiElementRole.CONTENT,
+    ) =
         elements.item(GuiItemSpec(
             material,
             GuiNameSpec.Text(name, style),
             if (lines.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(lines, GuiLoreFrame.BOTH),
-            GuiElementRole.CONTENT,
+            role,
             1
         ))
 

@@ -37,6 +37,9 @@ class VanillaDatapackExporterTest {
                     }
                     CommandType.GIVE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
                         if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+                        if (node.type == CommandType.GIVE_ITEM && node.string("item").isBlank()) {
+                            node.params["item"] = "minecraft:stone"
+                        }
                         if (node.type == CommandType.ENTITY_ACTION &&
                             node.string("action", "ride") == "ride" &&
                             node.secondaryTargetSpec == null

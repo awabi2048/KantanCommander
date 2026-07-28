@@ -21,20 +21,25 @@ class WorldVariableStore(private val directory: File) {
 
     @Synchronized
     fun set(worldId: UUID, name: String, value: WorldVariableValue) {
+        require(valid(value)) { "invalid variable value" }
         val normalized = normalizedName(name)
-        val state = state(worldId)
-        state.definitions.putIfAbsent(normalized, value)
-        state.values[normalized] = value
-        save(worldId)
+        val candidate = state(worldId).deepCopy()
+        candidate.definitions.putIfAbsent(normalized, value.copy())
+        candidate.values[normalized] = value.copy()
+        persist(worldId, candidate)
+        cache[worldId] = candidate
     }
 
     @Synchronized
     fun remove(worldId: UUID, name: String): Boolean {
         val normalized = normalizedName(name)
-        val state = state(worldId)
-        val removed = state.values.remove(normalized) != null
-        state.definitions.remove(normalized)
-        if (removed) save(worldId)
+        val candidate = state(worldId).deepCopy()
+        val removed = candidate.values.remove(normalized) != null
+        candidate.definitions.remove(normalized)
+        if (removed) {
+            persist(worldId, candidate)
+            cache[worldId] = candidate
+        }
         return removed
     }
 
@@ -49,11 +54,12 @@ class WorldVariableStore(private val directory: File) {
     fun copyDefinitions(sourceWorldId: UUID, targetWorldId: UUID) {
         require(sourceWorldId != targetWorldId) { "source and target MyWorld must differ" }
         val initialValues = state(sourceWorldId).definitions.mapValues { (_, value) -> value.copy() }
-        cache[targetWorldId] = WorldVariables(
+        val candidate = WorldVariables(
             definitions = initialValues.toMutableMap(),
             values = initialValues.toMutableMap(),
         )
-        save(targetWorldId)
+        persist(targetWorldId, candidate)
+        cache[targetWorldId] = candidate
     }
 
     @Synchronized
@@ -75,11 +81,22 @@ class WorldVariableStore(private val directory: File) {
             }.getOrNull() ?: WorldVariables()
         }
 
-    private fun save(worldId: UUID) {
+    private fun persist(worldId: UUID, state: WorldVariables) {
         val target = file(worldId)
         val temporary = target.resolveSibling("${target.name}.tmp")
-        temporary.writeText(gson.toJson(state(worldId)), Charsets.UTF_8)
+        temporary.writeText(gson.toJson(state), Charsets.UTF_8)
         Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+    }
+
+    private fun valid(value: WorldVariableValue): Boolean = when (value.type) {
+        me.awabi2048.kantancommander.model.VariableType.BOOLEAN -> value.booleanValue != null
+        me.awabi2048.kantancommander.model.VariableType.INTEGER -> value.integerValue != null
+        me.awabi2048.kantancommander.model.VariableType.DECIMAL -> value.decimalValue?.isFinite() == true
+        me.awabi2048.kantancommander.model.VariableType.TEXT -> value.textValue != null
+        me.awabi2048.kantancommander.model.VariableType.POSITION -> value.position?.let {
+            it.x.isFinite() && it.y.isFinite() && it.z.isFinite() && it.yaw.isFinite() && it.pitch.isFinite()
+        } == true
+        me.awabi2048.kantancommander.model.VariableType.ENTITY -> value.entityId != null
     }
 
     private fun file(worldId: UUID) = directory.resolve("$worldId.json")
@@ -93,5 +110,10 @@ class WorldVariableStore(private val directory: File) {
     private data class WorldVariables(
         val definitions: MutableMap<String, WorldVariableValue> = linkedMapOf(),
         val values: MutableMap<String, WorldVariableValue> = linkedMapOf(),
-    )
+    ) {
+        fun deepCopy() = WorldVariables(
+            definitions.mapValuesTo(linkedMapOf()) { (_, value) -> value.copy() },
+            values.mapValuesTo(linkedMapOf()) { (_, value) -> value.copy() },
+        )
+    }
 }

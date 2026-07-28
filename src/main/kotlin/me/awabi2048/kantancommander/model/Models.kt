@@ -173,7 +173,7 @@ enum class CommandType(
     val defaults: Map<String, String>,
 ) {
     TELEPORT("command.teleport", Material.ENDER_PEARL, emptyMap()),
-    GIVE_ITEM("command.give_item", Material.CHEST, mapOf("item" to "minecraft:stone", "count" to "1")),
+    GIVE_ITEM("command.give_item", Material.CHEST, mapOf("count" to "1")),
     ENTITY_ACTION("command.entity_action", Material.SADDLE, mapOf("action" to "ride")),
     DISPLAY_TEXT("command.display_text", Material.WRITABLE_BOOK, mapOf(
         "mode" to "tellraw", "text" to "", "fadeIn" to "10", "stay" to "60", "fadeOut" to "10"
@@ -188,7 +188,6 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0",
         "block" to "minecraft:air",
-        "item" to "minecraft:stone",
         "count" to "1",
     )),
     CONTEXT("command.context", Material.RECOVERY_COMPASS, mapOf(

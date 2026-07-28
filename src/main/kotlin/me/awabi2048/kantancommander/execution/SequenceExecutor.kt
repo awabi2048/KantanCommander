@@ -33,6 +33,8 @@ import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.item.ItemStackCodec
 
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
+    private val activeRoots = mutableSetOf<UUID>()
+
     fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
         val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
             MyWorldManagerApi.getWorldRepository()?.findByWorldName(origin.world.name)
@@ -49,6 +51,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
             return callback(false)
         }
+        if (!activeRoots.add(scriptId)) {
+            plugin.logger.warning("[KantanCommander] rejected disk=$scriptId reason=already_running")
+            return callback(false)
+        }
         val session = ExecutionSession(
             rootId = scriptId,
             origin = origin.clone(),
@@ -59,6 +65,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         )
         plugin.logger.info("[KantanCommander] start disk=$scriptId world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
         runGraph(script, script.graph, session, 0) { success ->
+            activeRoots.remove(scriptId)
             plugin.logger.info("[KantanCommander] finish disk=$scriptId success=$success executed=${session.executed}/${session.budget}")
             callback(success)
         }
@@ -264,23 +271,25 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
         val effectiveContext = ExecutionSemantics.mergeContexts(session.context, node.contextOverride)
         val targets = resolveTargets(effectiveContext, node.targetSpec, session)
-        val effectiveOrigin = effectiveContext?.position?.let {
-            resolvePosition(it, session, effectiveContext)
-        } ?: session.origin
+        val effectiveOrigin = if (effectiveContext?.position != null) {
+            resolvePosition(effectiveContext.position, session, effectiveContext) ?: return false
+        } else {
+            session.origin
+        }
         when (node.type) {
             CommandType.TELEPORT -> {
                 if (targets.isEmpty()) return false
                 val destination = node.destinationTargetSpec
                     ?.let { resolveTargetSpec(it, session, effectiveContext)?.location }
                     ?: node.destinationSpec?.let { resolvePosition(it, session, effectiveContext) }
-                    ?: effectiveOrigin.clone()
+                    ?: return false
                 effectiveContext?.facing?.let { applyFacing(destination, it, effectiveContext, session) }
                 targets.all { it.teleport(destination.clone()) }
             }
             CommandType.GIVE_ITEM -> {
                 val players = targets.filterIsInstance<Player>()
                 if (players.isEmpty()) return false
-                val material = Material.matchMaterial(node.string("item", "minecraft:stone")) ?: return false
+                val material = Material.matchMaterial(node.string("item")) ?: return false
                 val template = ItemStackCodec.decode(node.string("itemData"))
                     ?: ItemStack(material)
                 val count = node.int("count", 1)
@@ -366,9 +375,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.string("operator", "=="),
             )
             ConditionKind.BLOCK_STATE -> {
-                val location = node.conditionPositionSpec?.let { resolvePosition(it, session, context) }
-                    ?: context?.position?.let { resolvePosition(it, session, context) }
-                    ?: session.origin
+                val conditionPosition = node.conditionPositionSpec
+                val location = when {
+                    conditionPosition != null ->
+                        resolvePosition(conditionPosition, session, context) ?: return false
+                    context?.position != null ->
+                        resolvePosition(context.position, session, context) ?: return false
+                    else -> session.origin
+                }
                 location.world == session.origin.world && location.block.type == Material.matchMaterial(node.string("block"))
             }
             ConditionKind.ITEM_POSSESSION -> {
@@ -402,7 +416,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                             integerValue = Math.addExact(current?.integerValue ?: 0, delta),
                         )
                     }
-                    VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = (current?.decimalValue ?: 0.0) + sign * node.string("value", "0").toDouble())
+                    VariableType.DECIMAL -> {
+                        val result = (current?.decimalValue ?: 0.0) + sign * node.string("value", "0").toDouble()
+                        if (!result.isFinite()) return false
+                        WorldVariableValue(type, decimalValue = result)
+                    }
                     else -> return false
                 }
             }
@@ -411,7 +429,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 VariableType.POSITION,
                 position = (effectiveContext?.position?.let {
                     resolvePosition(it, session, effectiveContext)
-                } ?: session.origin).let {
+                } ?: if (effectiveContext?.position == null) session.origin else return false).let {
                     SavedPosition(it.x, it.y, it.z, it.yaw, it.pitch)
                 },
             )
@@ -433,9 +451,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         else session.temporaryVariables[name] = value
     }
 
-    private fun removeVariable(session: ExecutionSession, name: String, scope: VariableScope): Boolean =
+    private fun removeVariable(session: ExecutionSession, name: String, scope: VariableScope): Boolean {
         if (scope == VariableScope.WORLD) plugin.variables.remove(session.worldId, name)
-        else session.temporaryVariables.remove(name) != null
+        else session.temporaryVariables.remove(name)
+        return true
+    }
 
     private fun parseVariable(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue {
         val resolved = when (raw) {
@@ -448,7 +468,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return when (type) {
         VariableType.BOOLEAN -> WorldVariableValue(type, booleanValue = resolved.toBooleanStrict())
         VariableType.INTEGER -> WorldVariableValue(type, integerValue = resolved.toLong())
-        VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = resolved.toDouble())
+        VariableType.DECIMAL -> WorldVariableValue(
+            type,
+            decimalValue = resolved.toDouble().takeIf(Double::isFinite) ?: error("decimal must be finite"),
+        )
         VariableType.TEXT -> WorldVariableValue(type, textValue = resolved)
         VariableType.POSITION, VariableType.ENTITY ->
             error("$type cannot be assigned from text")
@@ -501,7 +524,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
     ): List<Entity> {
-        val selectionOrigin = selectionOrigin(context, session)
+        val selectionOrigin = selectionOrigin(context, session) ?: return emptyList()
         val candidates: List<Entity> = when (spec.kind) {
             TargetKind.EXECUTOR -> listOfNotNull(
                 context?.executor
@@ -548,13 +571,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
         if (spec.name != null && entity.name != spec.name) return false
         if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
-        val distance = entity.location.distance(selectionOrigin(context, session))
+        val origin = selectionOrigin(context, session) ?: return false
+        val distance = entity.location.distance(origin)
         if (spec.minimumDistance != null && distance < spec.minimumDistance) return false
         if (spec.maximumDistance != null && distance > spec.maximumDistance) return false
         return spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
     }
 
-    private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location =
+    private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location? =
         when (val position = context?.position) {
             null -> session.origin
             else -> when (position.kind) {
@@ -564,7 +588,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     resolvePosition(position, session, context)
                 PositionKind.EXECUTOR ->
                     session.actor?.takeIf { it.world == session.origin.world }?.location ?: session.origin
-                PositionKind.TARGET -> session.origin
+                PositionKind.TARGET ->
+                    resolveTargetSpec(context.target ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
             }
         }
 
@@ -574,7 +599,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         spec: PositionSpec,
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
-    ): Location = when (spec.kind) {
+    ): Location? = when (spec.kind) {
         PositionKind.CAPTURED, PositionKind.COORDINATES -> Location(
             session.origin.world,
             spec.x ?: session.origin.x,
@@ -584,15 +609,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             spec.pitch ?: session.origin.pitch,
         )
         PositionKind.DISK -> session.origin.clone()
-        PositionKind.EXECUTOR -> resolveTargetSpec(context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location ?: session.origin
-        PositionKind.TARGET -> resolveTargetSpec(context?.target ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location ?: session.origin
+        PositionKind.EXECUTOR -> resolveTargetSpec(context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
+        PositionKind.TARGET -> resolveTargetSpec(context?.target ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
         PositionKind.MYWORLD_SPAWN -> session.origin.world.spawnLocation
         PositionKind.TEMPORARY_VARIABLE -> session.temporaryVariables[spec.variable.orEmpty()]?.position?.let {
             Location(session.origin.world, it.x, it.y, it.z, it.yaw, it.pitch)
-        } ?: session.origin
+        }
         PositionKind.WORLD_VARIABLE -> plugin.variables.get(session.worldId, spec.variable.orEmpty())?.position?.let {
             Location(session.origin.world, it.x, it.y, it.z, it.yaw, it.pitch)
-        } ?: session.origin
+        }
     }
 
     private fun applyFacing(

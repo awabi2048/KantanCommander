@@ -10,6 +10,7 @@ import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.mwmchanpon.api.PreparedStandaloneExport
@@ -25,6 +26,7 @@ class KantanStandaloneExportContributor(
         val errors = mutableListOf<String>()
         context.worlds.forEach { world ->
             plugin.variables.definitions(world.uuid).forEach { (name, value) ->
+                validateVariable(world.sourceWorldName, name, value)?.let(errors::add)
                 if (value.type == VariableType.INTEGER &&
                     value.integerValue?.let { it !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() } != false
                 ) {
@@ -33,6 +35,12 @@ class KantanStandaloneExportContributor(
             }
         }
         val programs = selected.mapNotNull { placement ->
+            val liveWorld = plugin.server.getWorld(placement.world)
+            val liveBlock = liveWorld?.getBlockAt(placement.x, placement.y, placement.z)
+            if (liveBlock == null || !PlacedDiskMaterials.isPlacedDisk(liveBlock.type)) {
+                errors += "${placement.key}: 配置ブロックの実体が存在しないか、別のブロックへ変更されています"
+                return@mapNotNull null
+            }
             val sourceScript = plugin.scripts.load(placement.scriptId)
             if (sourceScript == null) {
                 errors += "${placement.key}: script ${placement.scriptId} is missing"
@@ -70,6 +78,21 @@ class KantanStandaloneExportContributor(
             )
         }
         return PreparedKantanExport(programs, variableDefinitions)
+    }
+
+    private fun validateVariable(world: String, name: String, value: WorldVariableValue): String? {
+        val valid = when (value.type) {
+            VariableType.BOOLEAN -> value.booleanValue != null
+            VariableType.INTEGER -> value.integerValue != null
+            VariableType.DECIMAL -> value.decimalValue?.isFinite() == true
+            VariableType.TEXT -> value.textValue != null
+            VariableType.POSITION -> value.position?.let {
+                it.x.isFinite() && it.y.isFinite() && it.z.isFinite() &&
+                    it.yaw.isFinite() && it.pitch.isFinite()
+            } == true
+            VariableType.ENTITY -> value.entityId != null
+        }
+        return if (valid) null else "$world/$name: 変数初期値が不完全または有限値ではありません"
     }
 
     private fun namespaceWorldVariables(script: DiskScript, namespace: String): DiskScript {

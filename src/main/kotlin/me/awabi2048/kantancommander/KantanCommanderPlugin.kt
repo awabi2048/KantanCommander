@@ -20,6 +20,7 @@ import me.awabi2048.kantancommander.gui.CommandEditMenu
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
 import me.awabi2048.kantancommander.item.DiskInteractionListener
+import me.awabi2048.kantancommander.placement.PlacementProtectionListener
 import me.awabi2048.kantancommander.item.KantanItemGrantProvider
 import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
@@ -139,6 +140,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     private fun registerEvents() {
         val pm = server.pluginManager
         pm.registerEvents(DiskInteractionListener(this), this)
+        pm.registerEvents(PlacementProtectionListener(this), this)
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)

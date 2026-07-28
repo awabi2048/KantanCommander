@@ -432,7 +432,7 @@ class VanillaDatapackExporter(
         CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.int("count", 1)}"
         CommandType.ENTITY_ACTION ->
             if (node.string("action") == "dismount") "ride ${effectiveTarget(node)} dismount"
-            else "ride ${effectiveTarget(node)} mount ${selector(requireNotNull(node.secondaryTargetSpec))}"
+            else "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
             "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text"))}\"}"
             "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
@@ -694,7 +694,7 @@ class VanillaDatapackExporter(
         selector(requireNotNull(node.targetSpec))
 
     private fun destination(node: CommandNode): String {
-        node.destinationTargetSpec?.let { return selector(it) }
+        node.destinationTargetSpec?.let { return singleSelector(it) }
         return when (val spec = node.destinationSpec) {
             null -> error("structured teleport destination is missing")
             else -> when (spec.kind) {
@@ -792,6 +792,13 @@ class VanillaDatapackExporter(
         }
         return if (arguments.isEmpty()) base else "$base[${arguments.joinToString(",")}]"
     }
+
+    private fun singleSelector(spec: TargetSpec): String =
+        if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) {
+            selector(spec)
+        } else {
+            selector(spec.copy(limit = 1))
+        }
 
     private fun appendSelectorArguments(selector: String, argument: String): String =
         if (selector.endsWith("]")) selector.dropLast(1) + ",$argument]"

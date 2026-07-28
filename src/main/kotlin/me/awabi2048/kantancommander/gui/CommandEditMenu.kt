@@ -625,11 +625,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     field.material,
                     KcI18n.text(player, field.label),
                     GuiNameStyle.PRIMARY,
-                    listOf(GuiLoreLine.Data(
-                        KcI18n.text(player, "gui.editor.current"),
-                        localizedValue(player, field.value(node)),
-                        "§f",
-                    )),
+                    listOf(
+                        GuiLoreLine.Data(
+                            KcI18n.text(player, "gui.editor.current"),
+                            localizedValue(player, field.value(node)),
+                            "§f",
+                        ),
+                        KcGui.action(player, "lore.click.left", KcI18n.text(player, field.label)),
+                    ),
+                    GuiElementRole.ACTION,
                 ),
                 GuiElementRole.ACTION,
                 "field",
@@ -832,7 +836,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             ConditionKind.ITEM_POSSESSION -> listOf(
                 DetailOption(Material.TARGET, "gui.field.target", "target", node.targetSpec?.kind?.name ?: "EXECUTOR"),
-                DetailOption(Material.CHEST, "gui.field.item_condition", "item", node.string("item", "minecraft:stone")),
+                DetailOption(
+                    Material.CHEST,
+                    "gui.field.item_condition",
+                    "item",
+                    node.string("item").ifBlank { KcI18n.text(player, "gui.field.unset") },
+                ),
                 DetailOption(Material.DIAMOND, "gui.field.count", "count", node.string("count", "1")),
             )
         }
@@ -941,6 +950,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun settingsFields(node: CommandNode): List<EditorField> {
         val fields = EditorMenuLayout.fields(node.type)
+        if (node.type == CommandType.ENTITY_ACTION && node.string("action") != "ride") {
+            return fields.filterNot { it.key == "other" }
+        }
+        if (node.type == CommandType.DISPLAY_TEXT && node.string("mode") != "title") {
+            return fields.filterNot { it.key == "stay" }
+        }
         if (node.type != CommandType.VARIABLE) return fields
         val operation = runCatching {
             VariableOperation.valueOf(node.string("operation"))

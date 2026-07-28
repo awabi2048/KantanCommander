@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.model.WorldVariableValue
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -62,5 +63,16 @@ class WorldVariableStoreTest {
         assertEquals(9, store.get(source, "wave")?.integerValue)
         assertEquals(1, store.get(target, "wave")?.integerValue)
         assertEquals(1, WorldVariableStore(directory).get(target, "wave")?.integerValue)
+    }
+
+    @Test
+    fun `non finite and incomplete values are rejected before cache mutation`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.set(world, "broken", WorldVariableValue(VariableType.DECIMAL, decimalValue = Double.NaN))
+        }
+        assertNull(store.get(world, "broken"))
     }
 }
