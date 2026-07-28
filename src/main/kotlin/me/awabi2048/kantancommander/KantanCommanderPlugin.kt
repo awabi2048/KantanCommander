@@ -125,28 +125,13 @@ class KantanCommanderPlugin : JavaPlugin() {
         check(CCSystem.getAPI().getConfigSchemaService().prepare("kantan").successful) {
             "Kantan Commander Config preparation failed"
         }
-        reloadConfig()
-
         KcI18n.init(this)
-        scripts = ScriptStore(
-            dataFolder.resolve("structured-disks"),
-            logger,
-            me.awabi2048.kantancommander.data.GraphLimits(
-                maximumNodeCount = config.getInt("limits.max-nodes-per-disk"),
-                maximumMapWidth = config.getInt("limits.max-map-width"),
-                maximumMapHeight = config.getInt("limits.max-map-height"),
-                maximumBranchDepth = config.getInt("limits.max-branch-depth"),
-            ),
-        )
+        reloadConfig()
+        rebuildConfiguredServices()
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"))
         executor = SequenceExecutor(this)
-        exporter = VanillaDatapackExporter(
-            scripts,
-            dataFolder.resolve("exports"),
-            config.getInt("execution.max-nodes-per-activation"),
-        )
 
         programListMenu = ProgramListMenu(this)
         CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan")
@@ -192,6 +177,32 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
+    }
+
+    fun reloadManagedSettings(): Boolean {
+        val result = CCSystem.getAPI().getConfigSchemaService().prepare("kantan")
+        if (!result.successful) return false
+        reloadConfig()
+        rebuildConfiguredServices()
+        return true
+    }
+
+    private fun rebuildConfiguredServices() {
+        scripts = ScriptStore(
+            dataFolder.resolve("structured-disks"),
+            logger,
+            me.awabi2048.kantancommander.data.GraphLimits(
+                maximumNodeCount = config.getInt("limits.max-nodes-per-disk"),
+                maximumMapWidth = config.getInt("limits.max-map-width"),
+                maximumMapHeight = config.getInt("limits.max-map-height"),
+                maximumBranchDepth = config.getInt("limits.max-branch-depth"),
+            ),
+        )
+        exporter = VanillaDatapackExporter(
+            scripts,
+            dataFolder.resolve("exports"),
+            config.getInt("execution.max-nodes-per-activation"),
+        )
     }
 
     private fun removeLegacyConfig(config: org.bukkit.configuration.file.YamlConfiguration) {

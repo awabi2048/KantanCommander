@@ -27,8 +27,8 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
             "export" -> export(sender, args.getOrNull(1))
             "reload" -> {
                 if (!sender.hasPermission("kankoma.admin")) return true
-                plugin.reloadConfig()
-                sender.sendMessage(KcI18n.text(sender as? Player, "message.reloaded"))
+                val key = if (plugin.reloadManagedSettings()) "message.reloaded" else "message.reload_failed"
+                sender.sendMessage(KcI18n.text(sender as? Player, key))
             }
             else -> help(sender)
         }
