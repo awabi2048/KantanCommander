@@ -9,6 +9,7 @@ import me.awabi2048.kantancommander.command.KantanCommanderCommand
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.data.WorldVariableStore
+import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
@@ -54,7 +55,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 6,
+                    currentVersion = 7,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
@@ -83,16 +84,39 @@ class KantanCommanderPlugin : JavaPlugin() {
                             config.set("graph.maximum-map-height", 256)
                             config.set("graph.maximum-branch-depth", 32)
                         },
+                        6 to com.awabi2048.ccsystem.api.config.ConfigMigration { config ->
+                            config.set(
+                                "execution.max-nodes-per-activation",
+                                config.getInt("execution.maximum-command-count", 1024),
+                            )
+                            config.set(
+                                "execution.max-disk-call-depth",
+                                config.getInt("execution.maximum-disk-call-depth", 3),
+                            )
+                            config.set(
+                                "limits.max-nodes-per-disk",
+                                config.getInt("graph.maximum-node-count", 512),
+                            )
+                            config.set("limits.max-map-width", config.getInt("graph.maximum-map-width", 1024))
+                            config.set("limits.max-map-height", config.getInt("graph.maximum-map-height", 256))
+                            config.set(
+                                "limits.max-branch-depth",
+                                config.getInt("graph.maximum-branch-depth", 32),
+                            )
+                            config.set("execution.maximum-command-count", null)
+                            config.set("execution.maximum-disk-call-depth", null)
+                            config.set("graph", null)
+                        },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
-                        require(config.getInt("execution.maximum-command-count", 1024) >= 1)
-                        require(config.getInt("execution.maximum-disk-call-depth", 3) >= 0)
+                        require(config.getInt("execution.max-nodes-per-activation") >= 1)
+                        require(config.getInt("execution.max-disk-call-depth") >= 0)
                         require(config.getInt("timer.minimum-units", 1) == 1)
                         require(config.getInt("timer.maximum-units", 86400) == 86400)
-                        require(config.getInt("graph.maximum-node-count", 512) >= 1)
-                        require(config.getInt("graph.maximum-map-width", 1024) >= 9)
-                        require(config.getInt("graph.maximum-map-height", 256) >= 3)
-                        require(config.getInt("graph.maximum-branch-depth", 32) >= 1)
+                        require(config.getInt("limits.max-nodes-per-disk") >= 1)
+                        require(config.getInt("limits.max-map-width") >= 9)
+                        require(config.getInt("limits.max-map-height") >= 3)
+                        require(config.getInt("limits.max-branch-depth") >= 1)
                     },
                     reloadAction = { reloadConfig() }
                 )
@@ -108,10 +132,10 @@ class KantanCommanderPlugin : JavaPlugin() {
             dataFolder.resolve("structured-disks"),
             logger,
             me.awabi2048.kantancommander.data.GraphLimits(
-                maximumNodeCount = config.getInt("graph.maximum-node-count", 512).coerceAtLeast(1),
-                maximumMapWidth = config.getInt("graph.maximum-map-width", 1024).coerceAtLeast(9),
-                maximumMapHeight = config.getInt("graph.maximum-map-height", 256).coerceAtLeast(3),
-                maximumBranchDepth = config.getInt("graph.maximum-branch-depth", 32).coerceAtLeast(1),
+                maximumNodeCount = config.getInt("limits.max-nodes-per-disk"),
+                maximumMapWidth = config.getInt("limits.max-map-width"),
+                maximumMapHeight = config.getInt("limits.max-map-height"),
+                maximumBranchDepth = config.getInt("limits.max-branch-depth"),
             ),
         )
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
@@ -121,7 +145,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         exporter = VanillaDatapackExporter(
             scripts,
             dataFolder.resolve("exports"),
-            config.getInt("execution.maximum-command-count", 1024).coerceAtLeast(1),
+            config.getInt("execution.max-nodes-per-activation"),
         )
 
         programListMenu = ProgramListMenu(this)
@@ -167,6 +191,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(DiskInteractionListener(this), this)
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
+        pm.registerEvents(WorldVariableLifecycleListener(variables), this)
     }
 
     private fun removeLegacyConfig(config: org.bukkit.configuration.file.YamlConfiguration) {

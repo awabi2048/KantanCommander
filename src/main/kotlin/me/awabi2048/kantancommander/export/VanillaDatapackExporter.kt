@@ -13,6 +13,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.Material
 import java.io.File
 import java.util.Collections
@@ -63,7 +64,8 @@ class VanillaDatapackExporter(
                     if (!item.startsWith("minecraft:") || Material.matchMaterial(item) == null) {
                         errors += "${script.id}/${node.id}: バニラに存在しないアイテムです: $item"
                     }
-                    if (node.string("itemData").isNotBlank()) {
+                    val itemData = node.string("itemData")
+                    if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
                         errors += "${script.id}/${node.id}: 保存されたItemStackメタデータは完全バニラ出力に未対応です"
                     }
                 }
@@ -72,6 +74,8 @@ class VanillaDatapackExporter(
                 }
                 CommandType.TELEPORT -> if (node.string("world").isNotBlank()) {
                     errors += "${script.id}/${node.id}: 出力先ワールドを検証できない固定ワールド参照です"
+                } else {
+                    validatePosition(script, node, node.destinationSpec, errors)
                 }
                 CommandType.DISK_CALL -> if (node.snapshot == null) {
                     errors += "${script.id}/${node.id}: コピー内容がありません"
@@ -82,9 +86,16 @@ class VanillaDatapackExporter(
                 CommandType.CONTEXT -> validateContext(script, node, contextFrom(node), errors)
                 CommandType.VARIABLE -> {
                     if (node.string("name").isBlank()) errors += "${script.id}/${node.id}: variable name is missing"
-                    if (runCatching { VariableType.valueOf(node.string("type")) }.getOrNull() !in
-                        setOf(VariableType.BOOLEAN, VariableType.INTEGER)
-                    ) errors += "${script.id}/${node.id}: variable type is not vanilla-exportable"
+                    val type = runCatching { VariableType.valueOf(node.string("type")) }.getOrNull()
+                    val operation = runCatching {
+                        VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
+                    }.getOrNull()
+                    if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER)) {
+                        errors += "${script.id}/${node.id}: ${type ?: "不明"}型の変数は完全バニラ出力に未対応です"
+                    }
+                    if (operation in setOf(VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET)) {
+                        errors += "${script.id}/${node.id}: $operation は完全バニラ出力に未対応です"
+                    }
                     if (node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")) {
                         if (node.string("type") != VariableType.INTEGER.name) {
                             errors += "${script.id}/${node.id}: ループ値は整数変数だけへ保存できます"
@@ -97,12 +108,12 @@ class VanillaDatapackExporter(
                 CommandType.FOR_START -> {
                     listOf("start", "end", "step").forEach { field ->
                         if (node.string("${field}Source", "FIXED") == "FIXED" &&
-                            node.string("${field}Value").toIntOrNull() == null
+                            node.string("${field}Value").toLongOrNull() == null
                         ) {
-                            errors += "${script.id}/${node.id}: forの${field}値はバニラの32bit整数範囲で指定してください"
+                            errors += "${script.id}/${node.id}: forの${field}値は64bit符号付き整数で指定してください"
                         }
                     }
-                    if (node.string("stepSource", "FIXED") == "FIXED" && node.string("stepValue").toIntOrNull() == 0) {
+                    if (node.string("stepSource", "FIXED") == "FIXED" && node.string("stepValue").toLongOrNull() == 0L) {
                         errors += "${script.id}/${node.id}: forの増分に0は指定できません"
                     }
                 }
@@ -142,8 +153,26 @@ class VanillaDatapackExporter(
         if (listOfNotNull(context.target, context.executor).any { it.excludeActivator || it.excludeExecutor }) {
             errors += "${script.id}/${node.id}: 実行者・起動者の動的除外は完全バニラ出力できません"
         }
-        if (context.position?.kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
-            errors += "${script.id}/${node.id}: 変数による実行位置は完全バニラ出力できません"
+        validatePosition(script, node, context.position, errors)
+        if (context.facing?.kind == FacingKind.MYWORLD_SPAWN) {
+            errors += "${script.id}/${node.id}: 出力先のMyWorldスポーンを検証できません"
+        }
+    }
+
+    private fun validatePosition(
+        script: DiskScript,
+        node: CommandNode,
+        position: me.awabi2048.kantancommander.model.PositionSpec?,
+        errors: MutableList<String>,
+    ) {
+        val kind = position?.kind
+        if (kind in setOf(
+                PositionKind.MYWORLD_SPAWN,
+                PositionKind.TEMPORARY_VARIABLE,
+                PositionKind.WORLD_VARIABLE,
+            )
+        ) {
+            errors += "${script.id}/${node.id}: ${kind}の位置は完全バニラ出力に未対応です"
         }
     }
 
@@ -221,8 +250,11 @@ class VanillaDatapackExporter(
             when (node.type) {
                 CommandType.CONDITION -> {
                     val predicate = predicate(node)
-                    val trueCheck = if (node.boolean("inverted")) "unless" else "if"
-                    val falseCheck = if (node.boolean("inverted")) "if" else "unless"
+                    val inequality = node.string("kind") == ConditionKind.VARIABLE_STATE.name &&
+                        node.string("operator") == "!="
+                    val inverted = node.boolean("inverted") xor inequality
+                    val trueCheck = if (inverted) "unless" else "if"
+                    val falseCheck = if (inverted) "if" else "unless"
                     node.trueNext?.let {
                         lines += "execute $trueCheck $predicate run function kantan:${prefix}_$it"
                     }
@@ -241,7 +273,7 @@ class VanillaDatapackExporter(
     }
 
     private fun lower(node: CommandNode, graph: CommandGraph): String? = when (node.type) {
-        CommandType.TELEPORT -> "tp ${effectiveTarget(node)} ${node.string("destination", "~ ~ ~")}"
+        CommandType.TELEPORT -> "tp ${effectiveTarget(node)} ${destination(node)}"
         CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.int("count", 1)}"
         CommandType.ENTITY_ACTION ->
             if (node.string("action") == "dismount") "ride ${effectiveTarget(node)} dismount"
@@ -270,7 +302,7 @@ class VanillaDatapackExporter(
             "score ${variableHolder(
                 node.string("variable"),
                 node.string("variableScope", "TEMPORARY") != "WORLD",
-            )} kc_vars matches ${scoreRange(node.string("operator", ">="), node.int("value"))}"
+            )} kc_vars matches ${scoreRange(node.string("operator", ">="), node.string("value").toLongOrNull() ?: 0L)}"
         ConditionKind.BLOCK_STATE ->
             "block ${node.string("position", "~ ~ ~")} ${node.string("block", "minecraft:air")}"
         ConditionKind.ITEM_POSSESSION ->
@@ -293,11 +325,17 @@ class VanillaDatapackExporter(
             return "scoreboard players operation $holder kc_vars $operator $source kc_vars"
         }
         return when (operation) {
-            VariableOperation.SET -> "scoreboard players set $holder kc_vars ${node.int("value")}"
-            VariableOperation.ADD -> "scoreboard players add $holder kc_vars ${node.int("value")}"
-            VariableOperation.SUBTRACT -> "scoreboard players remove $holder kc_vars ${node.int("value")}"
+            VariableOperation.SET -> when (VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name))) {
+                VariableType.BOOLEAN -> "scoreboard players set $holder kc_vars ${if (node.boolean("value")) 1 else 0}"
+                VariableType.INTEGER -> "scoreboard players set $holder kc_vars ${node.string("value").toLong()}"
+                else -> null
+            }
+            VariableOperation.ADD -> "scoreboard players add $holder kc_vars ${node.string("value").toLong()}"
+            VariableOperation.SUBTRACT -> "scoreboard players remove $holder kc_vars ${node.string("value").toLong()}"
             VariableOperation.CLEAR -> "scoreboard players reset $holder kc_vars"
-            VariableOperation.TOGGLE, VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET -> null
+            VariableOperation.TOGGLE ->
+                "execute store success score $holder kc_vars run execute unless score $holder kc_vars matches 1"
+            VariableOperation.STORE_POSITION, VariableOperation.STORE_TARGET -> null
         }
     }
 
@@ -325,8 +363,10 @@ class VanillaDatapackExporter(
         lines += assignLoopValue(loop, "end", start, "end")
         lines += "scoreboard players set #${loop}_run kc_vars 0"
         if (bodyFunction != null) {
-            lines += "execute if score #${loop}_step kc_vars matches 1.. if score #${loop}_value kc_vars <= #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
-            lines += "execute if score #${loop}_step kc_vars matches ..-1 if score #${loop}_value kc_vars >= #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
+            val positiveComparison = if (start.boolean("inclusiveEnd", true)) "<=" else "<"
+            val negativeComparison = if (start.boolean("inclusiveEnd", true)) ">=" else ">"
+            lines += "execute if score #${loop}_step kc_vars matches 1.. if score #${loop}_value kc_vars $positiveComparison #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
+            lines += "execute if score #${loop}_step kc_vars matches ..-1 if score #${loop}_value kc_vars $negativeComparison #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
             lines += "execute if score #${loop}_run kc_vars matches 1 run $bodyFunction"
         }
         after?.let { lines += "execute if score #${loop}_run kc_vars matches 0 run function kantan:${prefix}_$it" }
@@ -334,10 +374,17 @@ class VanillaDatapackExporter(
     }
 
     private fun enclosingFor(graph: CommandGraph, target: UUID): CommandNode? =
-        graph.nodes.values.firstOrNull { start ->
-            start.type == CommandType.FOR_START &&
-                reachableBefore(graph, start.trueNext, start.pairedNodeId, target)
-        }
+        graph.nodes.values
+            .filter { start ->
+                start.type == CommandType.FOR_START &&
+                    reachableBefore(graph, start.trueNext, start.pairedNodeId, target)
+            }
+            .minByOrNull { candidate ->
+                graph.nodes.values.count { nested ->
+                    nested.type == CommandType.FOR_START &&
+                        reachableBefore(graph, candidate.trueNext, candidate.pairedNodeId, nested.id)
+                }
+            }
 
     private fun reachableBefore(graph: CommandGraph, start: UUID?, stop: UUID?, target: UUID): Boolean {
         val visited = mutableSetOf<UUID>()
@@ -378,6 +425,24 @@ class VanillaDatapackExporter(
 
     private fun effectiveTarget(node: CommandNode): String =
         selector(node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.EXECUTOR))
+
+    private fun destination(node: CommandNode): String {
+        node.destinationTargetSpec?.let { return selector(it) }
+        return when (val spec = node.destinationSpec) {
+            null -> node.string("destination", "~ ~ ~")
+            else -> when (spec.kind) {
+                PositionKind.CAPTURED, PositionKind.COORDINATES ->
+                    "${spec.x ?: "~"} ${spec.y ?: "~"} ${spec.z ?: "~"}"
+                PositionKind.DISK -> "~ ~ ~"
+                PositionKind.EXECUTOR -> "@s"
+                PositionKind.TARGET ->
+                    selector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
+                PositionKind.MYWORLD_SPAWN,
+                PositionKind.TEMPORARY_VARIABLE,
+                PositionKind.WORLD_VARIABLE -> node.string("destination", "~ ~ ~")
+            }
+        }
+    }
 
     private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
 
@@ -442,11 +507,11 @@ class VanillaDatapackExporter(
         return if (arguments.isEmpty()) base else "$base[${arguments.joinToString(",")}]"
     }
 
-    private fun scoreRange(operator: String, value: Int): String = when (operator) {
+    private fun scoreRange(operator: String, value: Long): String = when (operator) {
         "==" -> value.toString()
         "!=" -> value.toString()
-        ">" -> "${value + 1}.."
-        "<" -> "..${value - 1}"
+        ">" -> "${Math.addExact(value, 1)}.."
+        "<" -> "..${Math.subtractExact(value, 1)}"
         "<=" -> "..$value"
         else -> "$value.."
     }

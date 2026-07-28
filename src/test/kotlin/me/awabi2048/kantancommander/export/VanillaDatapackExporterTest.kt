@@ -9,6 +9,8 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableType
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -190,6 +192,79 @@ class VanillaDatapackExporterTest {
         val failure = assertInstanceOf(ExportResult.Failure::class.java, result)
         assertTrue(failure.errors.any { it.contains("実行者と実行位置") })
         assertFalse(temp.resolve("exports/kantan-${script.id}").exists())
+    }
+
+    @Test
+    fun `not equal condition reverses the equality predicate`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "not-equal")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.params.putAll(
+            mapOf("kind" to "VARIABLE_STATE", "variable" to "value", "operator" to "!=", "value" to "4")
+        )
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+        )
+        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
+        assertTrue(text.contains("execute unless score #t_value kc_vars matches 4 run function"))
+        assertTrue(text.contains("execute if score #t_value kc_vars matches 4 run function"))
+    }
+
+    @Test
+    fun `structured teleport destination and boolean variables are lowered`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "structured")
+        GraphEditor.append(script.graph, CommandType.TELEPORT).destinationSpec =
+            PositionSpec(PositionKind.COORDINATES, 12.5, 64.0, -3.0)
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "flag",
+                "type" to VariableType.BOOLEAN.name,
+                "operation" to VariableOperation.SET.name,
+                "value" to "true",
+            )
+        )
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "flag",
+                "type" to VariableType.BOOLEAN.name,
+                "operation" to VariableOperation.TOGGLE.name,
+            )
+        )
+        store.save(script)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+        )
+        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
+        assertTrue(text.contains("tp @s 12.5 64.0 -3.0"))
+        assertTrue(text.contains("scoreboard players set #t_flag kc_vars 1"))
+        assertTrue(text.contains("execute store success score #t_flag kc_vars"))
+    }
+
+    @Test
+    fun `exclusive for end uses strict scoreboard comparisons`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "exclusive-for")
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        start.params["inclusiveEnd"] = "false"
+        GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+        )
+        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
+        assertTrue(text.contains("kc_vars < #for_"))
+        assertTrue(text.contains("kc_vars > #for_"))
+        assertFalse(text.contains("kc_vars <= #for_"))
     }
 
     @Test

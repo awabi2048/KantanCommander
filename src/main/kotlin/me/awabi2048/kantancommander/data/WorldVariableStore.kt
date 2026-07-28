@@ -36,6 +36,16 @@ class WorldVariableStore(private val directory: File) {
     @Synchronized
     fun list(worldId: UUID): Map<String, WorldVariableValue> = values(worldId).toMap()
 
+    @Synchronized
+    fun deleteWorld(worldId: UUID): Boolean {
+        cache.remove(worldId)
+        val target = file(worldId)
+        val temporary = target.resolveSibling("${target.name}.tmp")
+        val deleted = !target.exists() || target.delete()
+        if (temporary.exists()) temporary.delete()
+        return deleted
+    }
+
     private fun values(worldId: UUID): MutableMap<String, WorldVariableValue> =
         cache.getOrPut(worldId) {
             val file = file(worldId)

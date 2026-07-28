@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
@@ -35,5 +36,16 @@ class WorldVariableStoreTest {
         store.remove(world, "open")
 
         assertNull(WorldVariableStore(directory).get(world, "open"))
+    }
+
+    @Test
+    fun `deleting a MyWorld removes cached and persisted values`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+        store.set(world, "shared", WorldVariableValue(VariableType.INTEGER, integerValue = 7))
+
+        assertTrue(store.deleteWorld(world))
+        assertTrue(store.list(world).isEmpty())
+        assertTrue(WorldVariableStore(directory).list(world).isEmpty())
     }
 }

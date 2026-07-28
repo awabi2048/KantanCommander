@@ -48,8 +48,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             rootId = scriptId,
             origin = origin.clone(),
             actor = actor,
-            budget = plugin.config.getInt("execution.maximum-command-count", 1024).coerceAtLeast(1),
-            maxDepth = plugin.config.getInt("execution.maximum-disk-call-depth", 3).coerceAtLeast(0),
+            budget = plugin.config.getInt("execution.max-nodes-per-activation"),
+            maxDepth = plugin.config.getInt("execution.max-disk-call-depth"),
             worldId = worldData.uuid,
         )
         plugin.logger.info("[KantanCommander] start disk=$scriptId world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
