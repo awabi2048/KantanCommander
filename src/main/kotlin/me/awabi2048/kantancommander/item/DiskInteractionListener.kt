@@ -49,7 +49,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             }
             val base = event.clickedBlock ?: return
             val target = base.getRelative(event.blockFace)
-            placeDisk(player, target.location, script, event.hand ?: EquipmentSlot.HAND)
+            placeDisk(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND)
         }
     }
 
@@ -67,6 +67,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
     private fun placeDisk(
         player: Player,
         location: org.bukkit.Location,
+        blockAgainst: org.bukkit.block.Block,
         source: me.awabi2048.kantancommander.model.DiskScript?,
         hand: EquipmentSlot,
     ) {
@@ -83,7 +84,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         val placeEvent = BlockPlaceEvent(
             block,
             block.state,
-            location.block.getRelative(org.bukkit.block.BlockFace.DOWN),
+            blockAgainst,
             player.inventory.getItem(hand),
             player,
             true,

@@ -191,7 +191,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(DiskInteractionListener(this), this)
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
-        pm.registerEvents(WorldVariableLifecycleListener(variables), this)
+        pm.registerEvents(WorldVariableLifecycleListener(this), this)
     }
 
     private fun removeLegacyConfig(config: org.bukkit.configuration.file.YamlConfiguration) {

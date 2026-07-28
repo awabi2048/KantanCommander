@@ -1,7 +1,6 @@
 package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
-import com.google.gson.reflect.TypeToken
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import java.io.File
 import java.nio.file.Files
@@ -10,7 +9,7 @@ import java.util.UUID
 
 class WorldVariableStore(private val directory: File) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
-    private val cache = mutableMapOf<UUID, MutableMap<String, WorldVariableValue>>()
+    private val cache = mutableMapOf<UUID, WorldVariables>()
 
     init {
         directory.mkdirs()
@@ -18,23 +17,40 @@ class WorldVariableStore(private val directory: File) {
 
     @Synchronized
     fun get(worldId: UUID, name: String): WorldVariableValue? =
-        values(worldId)[normalizedName(name)]
+        state(worldId).values[normalizedName(name)]
 
     @Synchronized
     fun set(worldId: UUID, name: String, value: WorldVariableValue) {
-        values(worldId)[normalizedName(name)] = value
+        val normalized = normalizedName(name)
+        val state = state(worldId)
+        state.definitions.putIfAbsent(normalized, value)
+        state.values[normalized] = value
         save(worldId)
     }
 
     @Synchronized
     fun remove(worldId: UUID, name: String): Boolean {
-        val removed = values(worldId).remove(normalizedName(name)) != null
+        val normalized = normalizedName(name)
+        val state = state(worldId)
+        val removed = state.values.remove(normalized) != null
+        state.definitions.remove(normalized)
         if (removed) save(worldId)
         return removed
     }
 
     @Synchronized
-    fun list(worldId: UUID): Map<String, WorldVariableValue> = values(worldId).toMap()
+    fun list(worldId: UUID): Map<String, WorldVariableValue> = state(worldId).values.toMap()
+
+    @Synchronized
+    fun copyDefinitions(sourceWorldId: UUID, targetWorldId: UUID) {
+        require(sourceWorldId != targetWorldId) { "source and target MyWorld must differ" }
+        val initialValues = state(sourceWorldId).definitions.mapValues { (_, value) -> value.copy() }
+        cache[targetWorldId] = WorldVariables(
+            definitions = initialValues.toMutableMap(),
+            values = initialValues.toMutableMap(),
+        )
+        save(targetWorldId)
+    }
 
     @Synchronized
     fun deleteWorld(worldId: UUID): Boolean {
@@ -46,20 +62,19 @@ class WorldVariableStore(private val directory: File) {
         return deleted
     }
 
-    private fun values(worldId: UUID): MutableMap<String, WorldVariableValue> =
+    private fun state(worldId: UUID): WorldVariables =
         cache.getOrPut(worldId) {
             val file = file(worldId)
-            if (!file.isFile) linkedMapOf()
+            if (!file.isFile) WorldVariables()
             else runCatching {
-                val type = object : TypeToken<LinkedHashMap<String, WorldVariableValue>>() {}.type
-                gson.fromJson<LinkedHashMap<String, WorldVariableValue>>(file.readText(Charsets.UTF_8), type)
-            }.getOrNull() ?: linkedMapOf()
+                gson.fromJson(file.readText(Charsets.UTF_8), WorldVariables::class.java)
+            }.getOrNull() ?: WorldVariables()
         }
 
     private fun save(worldId: UUID) {
         val target = file(worldId)
         val temporary = target.resolveSibling("${target.name}.tmp")
-        temporary.writeText(gson.toJson(values(worldId)), Charsets.UTF_8)
+        temporary.writeText(gson.toJson(state(worldId)), Charsets.UTF_8)
         Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     }
 
@@ -70,4 +85,9 @@ class WorldVariableStore(private val directory: File) {
         require(value.matches(Regex("[a-z0-9_.-]{1,64}"))) { "invalid variable name" }
         return value
     }
+
+    private data class WorldVariables(
+        val definitions: MutableMap<String, WorldVariableValue> = linkedMapOf(),
+        val values: MutableMap<String, WorldVariableValue> = linkedMapOf(),
+    )
 }

@@ -33,8 +33,6 @@ import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.item.ItemStackCodec
 
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
-    private val running = mutableSetOf<UUID>()
-
     fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
         val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
             MyWorldManagerApi.getWorldRepository()?.findByWorldName(origin.world.name)
@@ -43,14 +41,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             plugin.logger.warning("[KantanCommander] rejected disk=$scriptId reason=outside_myworld world=${origin.world.name}")
             return callback(false)
         }
-        if (!running.add(scriptId)) return callback(false)
-        val script = plugin.scripts.load(scriptId) ?: return finish(scriptId, false, callback)
+        val script = plugin.scripts.load(scriptId) ?: return callback(false)
         val validationErrors = ExecutableScriptValidator.validate(script)
         if (validationErrors.isNotEmpty()) {
             plugin.logger.warning(
                 "[KantanCommander] rejected disk=$scriptId reason=invalid_script errors=${validationErrors.joinToString(" | ")}"
             )
-            return finish(scriptId, false, callback)
+            return callback(false)
         }
         val session = ExecutionSession(
             rootId = scriptId,
@@ -63,7 +60,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         plugin.logger.info("[KantanCommander] start disk=$scriptId world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
         runGraph(script, script.graph, session, 0) { success ->
             plugin.logger.info("[KantanCommander] finish disk=$scriptId success=$success executed=${session.executed}/${session.budget}")
-            finish(scriptId, success, callback)
+            callback(success)
         }
     }
 
@@ -649,11 +646,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 "location=${session.origin.blockX},${session.origin.blockY},${session.origin.blockZ}"
         )
         done(false)
-    }
-
-    private fun finish(scriptId: UUID, success: Boolean, callback: (Boolean) -> Unit) {
-        running.remove(scriptId)
-        callback(success)
     }
 
     private data class ExecutionSession(

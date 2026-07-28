@@ -61,6 +61,13 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun all(): List<DiskPlacement> = placements.values.toList()
 
+    fun removeWorld(worldName: String): List<DiskPlacement> {
+        val removed = placements.values.filter { it.world == worldName }
+        removed.forEach { placements.remove(it.key) }
+        if (removed.isNotEmpty()) save()
+        return removed
+    }
+
     fun restoreDisplays() {
         placements.values.forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
