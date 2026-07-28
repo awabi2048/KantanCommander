@@ -587,7 +587,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE ->
                     resolvePosition(position, session, context)
                 PositionKind.EXECUTOR ->
-                    session.actor?.takeIf { it.world == session.origin.world }?.location ?: session.origin
+                    resolveTargetSpec(context.executor ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
                 PositionKind.TARGET ->
                     resolveTargetSpec(context.target ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
             }

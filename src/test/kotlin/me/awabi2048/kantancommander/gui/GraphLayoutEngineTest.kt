@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
 
 class GraphLayoutEngineTest {
     @Test
@@ -171,7 +172,7 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `info diagram uses directional lines and truncates tall maps`() {
+    fun `info diagram uses uniform squares and truncates tall maps`() {
         val graph = CommandGraph.empty()
         val conditions = mutableListOf<me.awabi2048.kantancommander.model.CommandNode>()
         repeat(5) {
@@ -183,9 +184,12 @@ class GraphLayoutEngineTest {
             GraphEditor.appendMerge(graph, condition.id)
         }
         val layout = GraphLayoutEngine.layout(graph)
-        val diagram = GraphDiagramRenderer.render(layout, MapPoint(0, 0))
+        val diagram = PlainTextComponentSerializer.plainText().serialize(
+            GraphDiagramRenderer.render(layout, MapPoint(0, 0))
+        )
 
-        assertTrue(diagram.any { it in "│┌┐└┘├┤┬┴┼" })
+        assertTrue(diagram.contains("■"))
+        assertFalse(diagram.any { it in "○+┌┐└┘├┤┬┴┼│─╔╗╚╝║═LP" })
         assertTrue(diagram.contains("⋮"))
     }
 
@@ -223,11 +227,12 @@ class GraphLayoutEngineTest {
         val end = requireNotNull(start.pairedNodeId)
         val endPoint = requireNotNull(layout.nodePoints[end])
         val add = layout.cells.values.single { it.kind == MapCellKind.ADD }
-        val diagram = GraphDiagramRenderer.render(layout, MapPoint(0, 0))
+        val diagram = PlainTextComponentSerializer.plainText().serialize(
+            GraphDiagramRenderer.render(layout, MapPoint(0, 0))
+        )
 
         assertEquals(MapPoint(endPoint.x + 2, endPoint.y), add.point)
-        assertFalse(diagram.contains("L"))
-        assertFalse(diagram.contains("P"))
-        assertEquals(2, diagram.count { it == '○' })
+        assertFalse(diagram.any { it in "○+LP" })
+        assertTrue(diagram.count { it == '■' } >= 3)
     }
 }

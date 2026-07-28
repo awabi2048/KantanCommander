@@ -8,6 +8,8 @@ import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.TimerSetting
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -93,5 +95,23 @@ class ExecutableScriptValidatorTest {
                 GraphLimits(maximumNodeCount = 2),
             ).any { it.contains("ノード数が上限") }
         )
+    }
+
+    @Test
+    fun `non finite selectors and incomplete positions fail preflight`() {
+        val script = DiskScript(name = "unsafe", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(
+            TargetKind.NEAREST_PLAYER,
+            minimumDistance = Double.NaN,
+            limit = 0,
+        )
+        teleport.destinationSpec = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = null, z = 3.0)
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.contains("対象距離は有限値") })
+        assertTrue(errors.any { it.contains("対象数は1以上") })
+        assertTrue(errors.any { it.contains("座標が未設定") })
     }
 }

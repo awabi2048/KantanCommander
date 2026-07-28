@@ -11,6 +11,11 @@ import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.MIN_TIMER_UNITS
 import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.TargetSpec
 import org.bukkit.Material
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -48,6 +53,16 @@ object ExecutableScriptValidator {
     }
 
     private fun validateNode(node: CommandNode, path: String, errors: MutableList<String>) {
+        listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach {
+            validateTarget(it, path, errors)
+        }
+        listOfNotNull(node.destinationSpec, node.conditionPositionSpec, node.contextOverride?.position).forEach {
+            validatePosition(it, path, errors)
+        }
+        node.contextOverride?.let { context ->
+            listOfNotNull(context.executor, context.target).forEach { validateTarget(it, path, errors) }
+            context.facing?.let { validateFacing(it, path, errors) }
+        }
         when (node.type) {
             CommandType.TELEPORT -> {
                 if (node.targetSpec == null) errors += "$path: 対象が未設定です"
@@ -88,6 +103,37 @@ object ExecutableScriptValidator {
             CommandType.FOR_START -> validateFor(node, path, errors)
             CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
         }
+    }
+
+    private fun validateTarget(spec: TargetSpec, path: String, errors: MutableList<String>) {
+        if (spec.minimumDistance?.isFinite() == false || spec.maximumDistance?.isFinite() == false) {
+            errors += "$path: 対象距離は有限値で指定してください"
+        }
+        if (spec.minimumDistance?.let { it < 0.0 } == true ||
+            spec.maximumDistance?.let { it < 0.0 } == true
+        ) errors += "$path: 対象距離は0以上で指定してください"
+        if (spec.minimumDistance != null && spec.maximumDistance != null &&
+            spec.minimumDistance > spec.maximumDistance
+        ) errors += "$path: 最小距離が最大距離を超えています"
+        if (spec.limit?.let { it < 1 } == true) errors += "$path: 対象数は1以上で指定してください"
+    }
+
+    private fun validatePosition(spec: PositionSpec, path: String, errors: MutableList<String>) {
+        if (spec.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES) &&
+            listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }
+        ) errors += "$path: 座標が未設定または有限値ではありません"
+        if (spec.kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE) &&
+            !spec.variable.orEmpty().matches(Regex("[a-z0-9_.-]{1,64}"))
+        ) errors += "$path: 位置変数名が不正です"
+    }
+
+    private fun validateFacing(spec: FacingSpec, path: String, errors: MutableList<String>) {
+        if (spec.kind == FacingKind.COORDINATES &&
+            listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }
+        ) errors += "$path: 向く座標が未設定または有限値ではありません"
+        if (spec.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION) &&
+            (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)
+        ) errors += "$path: 向きが未設定または有限値ではありません"
     }
 
     private fun validateCondition(node: CommandNode, path: String, errors: MutableList<String>) {

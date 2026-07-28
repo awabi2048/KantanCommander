@@ -99,14 +99,19 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
         elements += MenuElement(
             layout.infoSlot,
             KcGui.item(Material.BOOK, "${page + 1}/$total", GuiNameStyle.MUTED, role = GuiElementRole.CONTENT),
-            GuiElementRole.DECORATION,
+            GuiElementRole.CONTENT,
         )
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, "gui.programs.title")), elements)
     }
 
     private fun navigationElement(slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {
         return if (enabled) {
-            MenuElement(slot, KcGui.item(Material.ARROW, name), GuiElementRole.NAVIGATION, actionId)
+            MenuElement(
+                slot,
+                KcGui.item(Material.ARROW, name, role = GuiElementRole.NAVIGATION),
+                GuiElementRole.NAVIGATION,
+                actionId,
+            )
         } else {
             MenuElement(slot, KcGui.elements.decoration(Material.BARRIER), GuiElementRole.DECORATION)
         }

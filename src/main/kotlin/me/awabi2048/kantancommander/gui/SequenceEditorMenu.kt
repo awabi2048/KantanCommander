@@ -11,7 +11,6 @@ import com.awabi2048.ccsystem.api.gui.MenuActionHandler
 import com.awabi2048.ccsystem.api.gui.MenuActionResult
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
-import com.awabi2048.ccsystem.api.gui.MenuSoundPolicy
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.item.DiskItemService
@@ -23,6 +22,8 @@ import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.util.KcI18n
+import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import java.util.UUID
@@ -189,7 +190,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 Material.MAP,
                 KcI18n.text(player, "gui.editor.info"),
                 GuiNameStyle.PRIMARY,
-                listOf(GuiLoreLine.Text(GraphDiagramRenderer.render(layout, origin))),
+                listOf(GuiLoreLine.Component(GraphDiagramRenderer.render(layout, origin))),
                 GuiElementRole.CONTENT,
             ),
             GuiElementRole.CONTENT,
@@ -419,72 +420,42 @@ internal object GraphDiagramRenderer {
     private const val MAX_WIDTH = 21
     private const val MAX_HEIGHT = 9
 
-    fun render(layout: GraphLayout, origin: MapPoint): String {
+    fun render(layout: GraphLayout, origin: MapPoint): Component {
         val fromX = (origin.x - 4).coerceAtLeast(0)
             .coerceAtMost((layout.width - MAX_WIDTH).coerceAtLeast(0))
         val toX = (fromX + MAX_WIDTH - 1).coerceAtMost(layout.width - 1)
         val fromY = (origin.y - 3).coerceAtLeast(0)
             .coerceAtMost((layout.height - MAX_HEIGHT).coerceAtLeast(0))
         val toY = (fromY + MAX_HEIGHT - 1).coerceAtMost(layout.height - 1)
-        val lines = mutableListOf<String>()
-        if (fromY > 0) lines += "§7⋮"
+        val result = Component.text()
+        var hasLine = false
+        fun nextLine() {
+            if (hasLine) result.append(Component.newline())
+            hasLine = true
+        }
+        if (fromY > 0) {
+            nextLine()
+            result.append(Component.text("⋮", NamedTextColor.GRAY))
+        }
         for (y in fromY..toY) {
-            val body = (fromX..toX).joinToString("") { x ->
+            nextLine()
+            if (fromX > 0) result.append(Component.text("…", NamedTextColor.GRAY))
+            for (x in fromX..toX) {
                 val selected = x in origin.x until origin.x + 9 &&
                     y in origin.y until origin.y + 3
-                val symbol = symbol(layout, MapPoint(x, y))
-                (if (selected) "§e" else "§7") + symbol
+                val occupied = layout.cells.containsKey(MapPoint(x, y))
+                result.append(Component.text(
+                    if (occupied) "■" else " ",
+                    if (selected && occupied) NamedTextColor.YELLOW else NamedTextColor.GRAY,
+                ))
             }
-            val prefix = if (fromX > 0) "…" else ""
-            val suffix = if (toX < layout.width - 1) "…" else ""
-            lines += "§7$prefix$body§7$suffix"
+            if (toX < layout.width - 1) result.append(Component.text("…", NamedTextColor.GRAY))
         }
-        if (toY < layout.height - 1) lines += "§7⋮"
-        return lines.joinToString("\n")
-    }
-
-    private fun symbol(layout: GraphLayout, point: MapPoint): String {
-        val cell = layout.cells[point] ?: return " "
-        if (cell.kind == MapCellKind.NODE) return "○"
-        if (cell.kind == MapCellKind.ADD) return "+"
-        val loop = cell.kind == MapCellKind.LOOP_RETURN_PATH
-        val left = connects(layout, cell, MapPoint(point.x - 1, point.y))
-        val right = connects(layout, cell, MapPoint(point.x + 1, point.y))
-        val up = connects(layout, cell, MapPoint(point.x, point.y - 1))
-        val down = connects(layout, cell, MapPoint(point.x, point.y + 1))
-        return if (loop) doubleLine(left, right, up, down) else singleLine(left, right, up, down)
-    }
-
-    private fun connects(layout: GraphLayout, source: MapCell, targetPoint: MapPoint): Boolean {
-        val target = layout.cells[targetPoint] ?: return false
-        return if (source.kind == MapCellKind.LOOP_RETURN_PATH) {
-            target.kind in setOf(MapCellKind.LOOP_RETURN_PATH, MapCellKind.NODE)
-        } else {
-            target.kind != MapCellKind.LOOP_RETURN_PATH
+        if (toY < layout.height - 1) {
+            nextLine()
+            result.append(Component.text("⋮", NamedTextColor.GRAY))
         }
-    }
-
-    private fun singleLine(left: Boolean, right: Boolean, up: Boolean, down: Boolean): String = when {
-        left && right && up && down -> "┼"
-        left && right && down -> "┬"
-        left && right && up -> "┴"
-        up && down && right -> "├"
-        up && down && left -> "┤"
-        right && down -> "┌"
-        left && down -> "┐"
-        right && up -> "└"
-        left && up -> "┘"
-        up || down -> "│"
-        else -> "─"
-    }
-
-    private fun doubleLine(left: Boolean, right: Boolean, up: Boolean, down: Boolean): String = when {
-        right && down -> "╔"
-        left && down -> "╗"
-        right && up -> "╚"
-        left && up -> "╝"
-        up || down -> "║"
-        else -> "═"
+        return result.build()
     }
 }
 

@@ -14,7 +14,6 @@ import com.awabi2048.ccsystem.api.gui.MenuDialogInput
 import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
-import com.awabi2048.ccsystem.api.gui.MenuSoundPolicy
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
 import me.awabi2048.kantancommander.KantanCommanderPlugin
@@ -1061,7 +1060,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
                 cancel = MenuDialogButton(KcI18n.component(player, "gui.dialog.back"), MenuDialogHandler { _, _ ->
-                    MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
             )
         )
@@ -1094,7 +1093,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
                 cancel = MenuDialogButton(KcI18n.component(player, "gui.dialog.back"), MenuDialogHandler { _, _ ->
-                    MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
             )
         )
@@ -1371,7 +1370,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun dialogCancel(player: Player, route: MenuRoute) =
         MenuDialogButton(KcI18n.component(player, "gui.dialog.back"), MenuDialogHandler { _, _ ->
-            MenuActionResult.Success(MenuUpdate.Replace(route), MenuSoundPolicy.Silent)
+            MenuActionResult.Success(MenuUpdate.Replace(route))
         })
 
     private fun selectedPosition(node: CommandNode, role: String?): PositionSpec? =
