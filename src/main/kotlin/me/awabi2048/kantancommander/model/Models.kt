@@ -82,7 +82,6 @@ data class CommandNode(
     fun int(key: String, default: Int = 0) = params[key]?.toIntOrNull() ?: default
     fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
     fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
-    fun summary(): String = type.summary(this)
 }
 
 enum class TargetKind {
@@ -188,7 +187,6 @@ enum class CommandType(
         "variableScope" to VariableScope.TEMPORARY.name,
         "operator" to ">=",
         "value" to "0",
-        "position" to "~ ~ ~",
         "block" to "minecraft:air",
         "item" to "minecraft:stone",
         "count" to "1",
@@ -219,23 +217,6 @@ enum class CommandType(
     CONTINUE("command.continue", Material.ARROW, emptyMap());
 
     fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
-
-    fun summary(node: CommandNode): String = when (this) {
-        TELEPORT -> "${node.string("target", "@s")} → ${node.string("destination", "~ ~ ~")}"
-        GIVE_ITEM -> "${node.string("item", "minecraft:stone")} ×${node.int("count", 1)}"
-        ENTITY_ACTION -> node.string("action", "ride")
-        DISPLAY_TEXT -> node.string("text").ifBlank { "-" }
-        WAIT -> "${node.int("ticks", 20)} ticks"
-        CONDITION -> node.string("kind", ConditionKind.TARGET_EXISTS.name)
-        CONTEXT -> "execute context"
-        DISK_CALL -> node.string("diskId").ifBlank { "-" }
-        VARIABLE -> node.string("name").ifBlank { "-" }
-        MERGE -> "merge"
-        FOR_START -> "${node.string("startValue", "0")}..${node.string("endValue", "0")} step ${node.string("stepValue", "1")}"
-        FOR_END -> "for end"
-        BREAK -> "break"
-        CONTINUE -> "continue"
-    }
 }
 
 data class DiskPlacement(

@@ -88,7 +88,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             val after = node.pairedNodeId?.let(graph.nodes::get)?.next
             return runNode(script, graph, after, session, depth, done)
         }
-        if (session.executed >= session.budget) return stop(session, script, nodeId, depth, "command_limit", done)
+        if (!ExecutionSemantics.withinBudget(session.executed, session.budget)) {
+            return stop(session, script, nodeId, depth, "command_limit", done)
+        }
         session.executed++
         plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
 
@@ -109,7 +111,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     session,
                     ExecutionSemantics.mergeContexts(session.context, node.contextOverride),
                 )
-                val result = if (node.boolean("inverted")) !rawResult else rawResult
+                val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, true)
             }
@@ -182,11 +184,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val currentStep = resolveForValue(startNode, "step", session)
             ?: return stop(session, script, node.id, depth, "invalid_for_step", done)
         if (currentStep == 0L) return stop(session, script, node.id, depth, "zero_for_step", done)
-        val nextValue = try {
-            Math.addExact(frame.value, currentStep)
-        } catch (_: ArithmeticException) {
-            return stop(session, script, node.id, depth, "for_overflow", done)
-        }
+        val nextValue = ExecutionSemantics.nextForValue(frame.value, currentStep)
+            ?: return stop(session, script, node.id, depth, "for_overflow", done)
         session.context = frame.startContext
         if (ExecutionSemantics.withinForRange(
                 nextValue,
@@ -253,7 +252,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun runDiskCall(node: CommandNode, session: ExecutionSession, depth: Int, done: (Boolean) -> Unit) {
-        if (depth >= session.maxDepth) {
+        if (!ExecutionSemantics.withinCallDepth(depth, session.maxDepth)) {
             plugin.logger.warning("[KantanCommander] disk-call-depth root=${session.rootId} node=${node.id} depth=$depth max=${session.maxDepth}")
             return done(false)
         }
@@ -367,10 +366,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.string("operator", "=="),
             )
             ConditionKind.BLOCK_STATE -> {
-                val origin = node.conditionPositionSpec?.let { resolvePosition(it, session, context) }
+                val location = node.conditionPositionSpec?.let { resolvePosition(it, session, context) }
                     ?: context?.position?.let { resolvePosition(it, session, context) }
                     ?: session.origin
-                val location = parseLocation(node.string("position", "~ ~ ~"), origin)
                 location.world == session.origin.world && location.block.type == Material.matchMaterial(node.string("block"))
             }
             ConditionKind.ITEM_POSSESSION -> {
@@ -452,10 +450,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         VariableType.INTEGER -> WorldVariableValue(type, integerValue = resolved.toLong())
         VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = resolved.toDouble())
         VariableType.TEXT -> WorldVariableValue(type, textValue = resolved)
-        VariableType.POSITION -> parseLocation(resolved, session.origin).let {
-            WorldVariableValue(type, position = SavedPosition(it.x, it.y, it.z, it.yaw, it.pitch))
-        }
-        VariableType.ENTITY -> WorldVariableValue(type, entityId = UUID.fromString(resolved))
+        VariableType.POSITION, VariableType.ENTITY ->
+            error("$type cannot be assigned from text")
         }
     }
 
@@ -647,14 +643,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (direction.lengthSquared() > 0.0) destination.direction = direction
     }
 
-    private fun parseLocation(raw: String, origin: Location): Location {
-        val parts = raw.trim().split(Regex("\\s+"))
-        fun coordinate(part: String?, base: Double): Double =
-            if (part == null || part == "~") base else if (part.startsWith("~")) base + part.drop(1).toDoubleOrNull().orZero() else part.toDoubleOrNull() ?: base
-        return Location(origin.world, coordinate(parts.getOrNull(0), origin.x), coordinate(parts.getOrNull(1), origin.y), coordinate(parts.getOrNull(2), origin.z))
-    }
-
-    private fun Double?.orZero() = this ?: 0.0
     private fun compare(left: Int, right: Int, operator: String) = when (operator) {
         "==" -> left == right
         "!=" -> left != right
@@ -709,6 +697,22 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 }
 
 internal object ExecutionSemantics {
+    fun conditionResult(rawResult: Boolean, inverted: Boolean): Boolean =
+        rawResult xor inverted
+
+    fun withinBudget(executed: Int, budget: Int): Boolean =
+        executed < budget
+
+    fun withinCallDepth(currentDepth: Int, maximumDepth: Int): Boolean =
+        currentDepth < maximumDepth
+
+    fun nextForValue(current: Long, step: Long): Long? =
+        try {
+            Math.addExact(current, step)
+        } catch (_: ArithmeticException) {
+            null
+        }
+
     fun mergeContexts(
         inherited: ExecutionContextSpec?,
         override: ExecutionContextSpec?,

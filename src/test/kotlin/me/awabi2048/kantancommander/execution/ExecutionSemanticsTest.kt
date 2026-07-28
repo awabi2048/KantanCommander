@@ -40,4 +40,27 @@ class ExecutionSemanticsTest {
         assertFalse(ExecutionSemantics.withinForRange(-2, -2, -1, false))
         assertFalse(ExecutionSemantics.withinForRange(0, 10, 0, true))
     }
+
+    @Test
+    fun `condition inversion is applied exactly once`() {
+        assertTrue(ExecutionSemantics.conditionResult(true, false))
+        assertFalse(ExecutionSemantics.conditionResult(false, false))
+        assertFalse(ExecutionSemantics.conditionResult(true, true))
+        assertTrue(ExecutionSemantics.conditionResult(false, true))
+    }
+
+    @Test
+    fun `budget and disk depth stop before the next unit`() {
+        assertTrue(ExecutionSemantics.withinBudget(1023, 1024))
+        assertFalse(ExecutionSemantics.withinBudget(1024, 1024))
+        assertTrue(ExecutionSemantics.withinCallDepth(2, 3))
+        assertFalse(ExecutionSemantics.withinCallDepth(3, 3))
+    }
+
+    @Test
+    fun `for increment detects signed 64 bit overflow`() {
+        assertEquals(3L, ExecutionSemantics.nextForValue(1, 2))
+        assertEquals(null, ExecutionSemantics.nextForValue(Long.MAX_VALUE, 1))
+        assertEquals(null, ExecutionSemantics.nextForValue(Long.MIN_VALUE, -1))
+    }
 }

@@ -127,6 +127,12 @@ class VanillaDatapackExporter(
                     ) {
                         errors += "${script.id}/${node.id}: 整数値はバニラscoreboardの範囲外です"
                     }
+                    if (type == VariableType.INTEGER &&
+                        operation == VariableOperation.SUBTRACT &&
+                        node.string("value").toLongOrNull() == Int.MIN_VALUE.toLong()
+                    ) {
+                        errors += "${script.id}/${node.id}: Int最小値の減算はバニラscoreboard命令へ安全に変換できません"
+                    }
                     if (node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")) {
                         if (node.string("type") != VariableType.INTEGER.name) {
                             errors += "${script.id}/${node.id}: ループ値は整数変数だけへ保存できます"
@@ -317,7 +323,10 @@ class VanillaDatapackExporter(
                     if (start != null) {
                         val loop = loopName(start.id)
                         lines += assignLoopValue(loop, "step", start, "step")
-                        lines += "scoreboard players operation #${loop}_value kc_vars += #${loop}_step kc_vars"
+                        lines += guardedScoreOperation(
+                            target = "#${loop}_value",
+                            source = "#${loop}_step",
+                        )
                         lines += "scoreboard players add #${loop}_count kc_vars 1"
                         lines += "return run function kantan:${prefix}_${start.id}_check"
                     }
@@ -342,6 +351,20 @@ class VanillaDatapackExporter(
                     node.next?.let {
                         lines += "return run ${wrapContext(contextFrom(node), "function kantan:${prefix}_$it")}"
                     } ?: run { lines += "return 1" }
+                }
+                node.type == CommandType.VARIABLE &&
+                    node.string("operation") in setOf(
+                        VariableOperation.ADD.name,
+                        VariableOperation.SUBTRACT.name,
+                    ) -> {
+                    val helper = "${prefix}_${node.id}_arithmetic"
+                    output[helper] = lowerArithmeticVariable(node, graph)
+                        .joinToString("\n", postfix = "\n")
+                    val command = "function kantan:$helper"
+                    lines += storeFunctionResult(
+                        node,
+                        node.contextOverride?.let { wrapContext(it, command) } ?: command,
+                    )
                 }
                 else -> lower(node, graph)?.let { command ->
                     if (node.type == CommandType.DISPLAY_TEXT && node.string("mode", "tellraw") == "title") {
@@ -450,9 +473,7 @@ class VanillaDatapackExporter(
             }
         }
         ConditionKind.BLOCK_STATE ->
-            "block ${
-                if (node.conditionPositionSpec == null) node.string("position", "~ ~ ~") else "~ ~ ~"
-            } ${node.string("block", "minecraft:air")}"
+            "block ~ ~ ~ ${node.string("block", "minecraft:air")}"
         ConditionKind.ITEM_POSSESSION ->
             "score ${conditionCountHolder(node)} kc_result matches ${node.int("count", 1).coerceAtLeast(1)}.."
     }
@@ -481,12 +502,7 @@ class VanillaDatapackExporter(
         if (special != null) {
             val loop = enclosingFor(graph, node.id) ?: return null
             val source = "#${loopName(loop.id)}_${if (special == "\$current_loop_count") "count" else "value"}"
-            val operator = when (operation) {
-                VariableOperation.SET -> "="
-                VariableOperation.ADD -> "+="
-                VariableOperation.SUBTRACT -> "-="
-                else -> return null
-            }
+            val operator = if (operation == VariableOperation.SET) "=" else return null
             return "scoreboard players operation $holder kc_vars $operator $source kc_vars"
         }
         return when (operation) {
@@ -499,8 +515,7 @@ class VanillaDatapackExporter(
                     "data modify storage kantan:variables $storagePath set value \"${escape(node.string("value"))}\""
                 VariableType.POSITION, VariableType.ENTITY -> null
             }
-            VariableOperation.ADD -> "scoreboard players add $holder kc_vars ${node.string("value").toLong()}"
-            VariableOperation.SUBTRACT -> "scoreboard players remove $holder kc_vars ${node.string("value").toLong()}"
+            VariableOperation.ADD, VariableOperation.SUBTRACT -> null
             VariableOperation.CLEAR ->
                 if (type in setOf(VariableType.BOOLEAN, VariableType.INTEGER)) {
                     "scoreboard players reset $holder kc_vars"
@@ -516,6 +531,68 @@ class VanillaDatapackExporter(
                     "$storagePath set from entity @s UUID"
         }
     }
+
+    private fun lowerArithmeticVariable(node: CommandNode, graph: CommandGraph): List<String> {
+        val holder = variableHolder(
+            node.string("name"),
+            temporary = node.string("scope", "TEMPORARY") != "WORLD",
+        )
+        val subtract = node.string("operation") == VariableOperation.SUBTRACT.name
+        val special = node.string("value").takeIf {
+            it in setOf("\$current_iteration_value", "\$current_loop_count")
+        }
+        if (special != null) {
+            val loop = requireNotNull(enclosingFor(graph, node.id))
+            val source = "#${loopName(loop.id)}_${if (special == "\$current_loop_count") "count" else "value"}"
+            return guardedScoreOperation(holder, source, subtract)
+        }
+        val raw = node.string("value").toLong()
+        val delta = if (subtract) Math.negateExact(raw) else raw
+        return guardedScoreConstant(holder, delta)
+    }
+
+    private fun guardedScoreConstant(target: String, delta: Long): List<String> {
+        if (delta == 0L) return listOf("return 1")
+        val guard = if (delta > 0) {
+            val firstOverflowing = Int.MAX_VALUE.toLong() - delta + 1
+            "execute if score $target kc_vars matches $firstOverflowing.. run return 0"
+        } else {
+            val lastOverflowing = Int.MIN_VALUE.toLong() - delta - 1
+            "execute if score $target kc_vars matches ..$lastOverflowing run return 0"
+        }
+        val operation = if (delta > 0) {
+            "scoreboard players add $target kc_vars $delta"
+        } else {
+            "scoreboard players remove $target kc_vars ${-delta}"
+        }
+        return listOf(guard, operation, "return 1")
+    }
+
+    private fun guardedScoreOperation(
+        target: String,
+        source: String,
+        subtract: Boolean = false,
+    ): List<String> =
+        buildList {
+            if (subtract) {
+                add("scoreboard players set #kc_limit kc_runtime ${Int.MIN_VALUE}")
+                add("scoreboard players operation #kc_limit kc_runtime += $source kc_vars")
+                add("execute if score $source kc_vars matches 1.. if score $target kc_vars < #kc_limit kc_runtime run return 0")
+                add("scoreboard players set #kc_limit kc_runtime ${Int.MAX_VALUE}")
+                add("scoreboard players operation #kc_limit kc_runtime += $source kc_vars")
+                add("execute if score $source kc_vars matches ..-1 if score $target kc_vars > #kc_limit kc_runtime run return 0")
+                add("scoreboard players operation $target kc_vars -= $source kc_vars")
+            } else {
+                add("scoreboard players set #kc_limit kc_runtime ${Int.MAX_VALUE}")
+                add("scoreboard players operation #kc_limit kc_runtime -= $source kc_vars")
+                add("execute if score $source kc_vars matches 1.. if score $target kc_vars > #kc_limit kc_runtime run return 0")
+                add("scoreboard players set #kc_limit kc_runtime ${Int.MIN_VALUE}")
+                add("scoreboard players operation #kc_limit kc_runtime -= $source kc_vars")
+                add("execute if score $source kc_vars matches ..-1 if score $target kc_vars < #kc_limit kc_runtime run return 0")
+                add("scoreboard players operation $target kc_vars += $source kc_vars")
+            }
+            add("return 1")
+        }
 
     private fun variableHolder(name: String, temporary: Boolean) =
         VanillaScoreNames.variableHolder(name, temporary)

@@ -102,4 +102,32 @@ class GraphEditorTest {
             GraphEditor.appendMerge(graph, outer.id)
         }
     }
+
+    @Test
+    fun `last false command may be deleted while branches remain merged`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val falseCommand = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        assertTrue(GraphEditor.delete(graph, falseCommand.id))
+        assertEquals(merge.id, condition.falseNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `deleting merge reopens branches and keeps successor on true path`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueCommand = GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val after = GraphEditor.append(graph, CommandType.GIVE_ITEM)
+
+        assertTrue(GraphEditor.delete(graph, merge.id))
+        assertEquals(null, condition.pairedNodeId)
+        assertEquals(after.id, trueCommand.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
 }

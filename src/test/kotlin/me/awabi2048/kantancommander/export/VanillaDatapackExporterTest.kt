@@ -561,4 +561,62 @@ class VanillaDatapackExporterTest {
         assertTrue(function.contains("title @s times 3 17 4"))
         assertTrue(function.contains("title @s title"))
     }
+
+    @Test
+    fun `integer arithmetic and for increments stop before scoreboard overflow`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "overflow-guards")
+        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
+        variable.params.putAll(
+            mapOf(
+                "name" to "counter",
+                "type" to VariableType.INTEGER.name,
+                "operation" to VariableOperation.ADD.name,
+                "value" to "10",
+            )
+        )
+        val loop = GraphEditor.append(script.graph, CommandType.FOR_START)
+        loop.params.putAll(mapOf("startValue" to "0", "endValue" to "10", "stepValue" to "1"))
+        GraphEditor.appendToForBody(script.graph, loop.id, CommandType.DISPLAY_TEXT)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        val arithmetic = success.directory
+            .resolve("data/kantan/function/${script.id}_${variable.id}_arithmetic.mcfunction")
+            .readText()
+        val loopEnd = requireNotNull(script.graph.nodes[loop.pairedNodeId])
+        val endFunction = success.directory
+            .resolve("data/kantan/function/${script.id}_${loopEnd.id}.mcfunction")
+            .readText()
+
+        assertTrue(arithmetic.contains("matches 2147483638.. run return 0"))
+        assertTrue(arithmetic.contains("scoreboard players add "))
+        assertTrue(arithmetic.contains(" kc_vars 10"))
+        assertTrue(endFunction.contains("if score #for_"))
+        assertTrue(endFunction.contains("run return 0"))
+        assertTrue(endFunction.contains("scoreboard players operation #for_"))
+    }
+
+    @Test
+    fun `unrepresentable minimum integer subtraction fails preflight`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "minimum-subtraction")
+        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
+        variable.params.putAll(
+            mapOf(
+                "name" to "counter",
+                "type" to VariableType.INTEGER.name,
+                "operation" to VariableOperation.SUBTRACT.name,
+                "value" to Int.MIN_VALUE.toString(),
+            )
+        )
+
+        val failure = assertInstanceOf(
+            ExportResult.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        assertTrue(failure.errors.any { it.contains("安全に変換できません") })
+    }
 }
