@@ -4,6 +4,8 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.TimerSetting
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.UUID
@@ -39,5 +41,19 @@ class ExecutableScriptValidatorTest {
         assertTrue(
             ExecutableScriptValidator.validate(script).any { it.contains("切替は真偽値だけ") }
         )
+    }
+
+    @Test
+    fun `always active and interval require an enabled valid timer`() {
+        val script = DiskScript(
+            name = "timer",
+            owner = UUID.randomUUID(),
+            activation = ActivationMode.ALWAYS_ACTIVE,
+            timer = TimerSetting(enabled = false, intervalUnits = 0),
+        )
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("タイマーオフ") })
+
+        script.timer.enabled = true
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("タイマー間隔") })
     }
 }

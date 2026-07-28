@@ -8,6 +8,9 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.MIN_TIMER_UNITS
+import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
 import org.bukkit.Material
 import java.util.Collections
 import java.util.IdentityHashMap
@@ -15,6 +18,12 @@ import java.util.IdentityHashMap
 object ExecutableScriptValidator {
     fun validate(script: DiskScript): List<String> {
         val errors = mutableListOf<String>()
+        if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
+            errors += "root: タイマーオフでは常時実行を使用できません"
+        }
+        if (script.timer.enabled && script.timer.intervalUnits !in MIN_TIMER_UNITS..MAX_TIMER_UNITS) {
+            errors += "root: タイマー間隔は${MIN_TIMER_UNITS}から${MAX_TIMER_UNITS}単位で指定してください"
+        }
         validateGraph(script.graph, "root", errors, Collections.newSetFromMap(IdentityHashMap()))
         return errors
     }
