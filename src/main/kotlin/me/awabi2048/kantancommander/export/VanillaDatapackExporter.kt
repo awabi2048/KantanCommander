@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.export
 
 import me.awabi2048.kantancommander.data.ScriptStore
+import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -27,6 +28,7 @@ class VanillaDatapackExporter(
 ) {
     fun export(root: DiskScript): ExportResult {
         val errors = mutableListOf<String>()
+        errors += ExecutableScriptValidator.validate(root)
         validate(root, errors, Collections.newSetFromMap(IdentityHashMap()))
         if (errors.isNotEmpty()) return ExportResult.Failure(errors.distinct())
 

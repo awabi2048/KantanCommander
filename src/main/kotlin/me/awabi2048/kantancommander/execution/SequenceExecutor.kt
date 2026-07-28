@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.execution
 
+import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -44,6 +45,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         if (!running.add(scriptId)) return callback(false)
         val script = plugin.scripts.load(scriptId) ?: return finish(scriptId, false, callback)
+        val validationErrors = ExecutableScriptValidator.validate(script)
+        if (validationErrors.isNotEmpty()) {
+            plugin.logger.warning(
+                "[KantanCommander] rejected disk=$scriptId reason=invalid_script errors=${validationErrors.joinToString(" | ")}"
+            )
+            return finish(scriptId, false, callback)
+        }
         val session = ExecutionSession(
             rootId = scriptId,
             origin = origin.clone(),
@@ -460,6 +468,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
     ): List<Entity> {
+        val selectionOrigin = selectionOrigin(context, session)
         val candidates: List<Entity> = when (spec.kind) {
             TargetKind.EXECUTOR -> listOfNotNull(
                 context?.executor
@@ -483,8 +492,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             spec.kind == TargetKind.RANDOM_PLAYER || spec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
                 candidates.shuffled()
             spec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
-                candidates.sortedByDescending { it.location.distanceSquared(session.origin) }
-            else -> candidates.sortedBy { it.location.distanceSquared(session.origin) }
+                candidates.sortedByDescending { it.location.distanceSquared(selectionOrigin) }
+            else -> candidates.sortedBy { it.location.distanceSquared(selectionOrigin) }
         }
         val defaultLimit = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY,
@@ -505,7 +514,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
         if (spec.name != null && entity.name != spec.name) return false
         if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
-        val distance = entity.location.distance(session.origin)
+        val distance = entity.location.distance(selectionOrigin(context, session))
         if (spec.minimumDistance != null && distance < spec.minimumDistance) return false
         if (spec.maximumDistance != null && distance > spec.maximumDistance) return false
         return spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
@@ -519,6 +528,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 ?.let(session.origin.world::getEntity)
         }
     }
+
+    private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location =
+        when (val position = context?.position) {
+            null -> session.origin
+            else -> when (position.kind) {
+                PositionKind.CAPTURED, PositionKind.COORDINATES,
+                PositionKind.DISK, PositionKind.MYWORLD_SPAWN,
+                PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE ->
+                    resolvePosition(position, session, context)
+                PositionKind.EXECUTOR -> session.actor?.location ?: session.origin
+                PositionKind.TARGET -> session.origin
+            }
+        }
 
     private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
 
