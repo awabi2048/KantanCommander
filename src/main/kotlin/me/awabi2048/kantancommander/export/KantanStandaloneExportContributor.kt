@@ -82,7 +82,7 @@ class KantanStandaloneExportContributor(
     }
 }
 
-private data class PreparedProgram(
+internal data class PreparedProgram(
     val placement: DiskPlacement,
     val script: DiskScript,
     val dimensionKey: String,
@@ -90,12 +90,12 @@ private data class PreparedProgram(
     val functions: Map<String, String>,
 )
 
-private data class PreparedVariables(
+internal data class PreparedVariables(
     val namespace: String,
     val values: Map<String, WorldVariableValue>,
 )
 
-private class PreparedKantanExport(
+internal class PreparedKantanExport(
     private val programs: List<PreparedProgram>,
     private val variableDefinitions: Map<String, PreparedVariables>,
 ) : PreparedStandaloneExport {
