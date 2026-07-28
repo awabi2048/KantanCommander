@@ -1610,6 +1610,7 @@ object EditorMenuLayout {
             field("type", "gui.field.type", Material.STRUCTURE_VOID),
             field("operation", "gui.field.operation", Material.REDSTONE),
             field("value", "gui.field.value", Material.COMPARATOR),
+            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
         CommandType.FOR_START -> listOf(

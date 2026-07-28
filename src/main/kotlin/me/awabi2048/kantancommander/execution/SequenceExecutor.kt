@@ -117,8 +117,22 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 session.context = ExecutionSemantics.mergeContexts(session.context, contextFrom(node))
                 next(node.next, true)
             }
-            CommandType.DISK_CALL -> runDiskCall(node, session, depth) { success -> next(node.next, success) }
-            CommandType.VARIABLE -> next(node.next, executeVariable(node, session))
+            CommandType.DISK_CALL -> {
+                val callerContext = session.context
+                session.context = ExecutionSemantics.mergeContexts(callerContext, node.contextOverride)
+                runDiskCall(node, session, depth) { success ->
+                    session.context = callerContext
+                    next(node.next, success)
+                }
+            }
+            CommandType.VARIABLE -> next(
+                node.next,
+                executeVariable(
+                    node,
+                    session,
+                    ExecutionSemantics.mergeContexts(session.context, node.contextOverride),
+                ),
+            )
             CommandType.MERGE -> next(node.next, true)
             CommandType.FOR_START -> beginFor(script, graph, node, session, depth, done)
             CommandType.FOR_END -> finishForIteration(script, graph, node, session, depth, done)
@@ -349,7 +363,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    private fun executeVariable(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
+    private fun executeVariable(
+        node: CommandNode,
+        session: ExecutionSession,
+        effectiveContext: ExecutionContextSpec?,
+    ): Boolean = runCatching {
         val name = node.string("name")
         val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
         val scope = VariableScope.valueOf(node.string("scope", VariableScope.TEMPORARY.name))
@@ -375,11 +393,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             VariableOperation.TOGGLE -> WorldVariableValue(VariableType.BOOLEAN, booleanValue = !(current?.booleanValue ?: false))
             VariableOperation.STORE_POSITION -> WorldVariableValue(
                 VariableType.POSITION,
-                position = SavedPosition(session.origin.x, session.origin.y, session.origin.z, session.origin.yaw, session.origin.pitch),
+                position = (effectiveContext?.position?.let {
+                    resolvePosition(it, session, effectiveContext)
+                } ?: session.origin).let {
+                    SavedPosition(it.x, it.y, it.z, it.yaw, it.pitch)
+                },
             )
             VariableOperation.STORE_TARGET -> WorldVariableValue(
                 VariableType.ENTITY,
-                entityId = resolveTarget(session.context, node.targetSpec, session)?.uniqueId ?: return false,
+                entityId = resolveTarget(effectiveContext, node.targetSpec, session)?.uniqueId ?: return false,
             )
             VariableOperation.CLEAR -> return false
         }

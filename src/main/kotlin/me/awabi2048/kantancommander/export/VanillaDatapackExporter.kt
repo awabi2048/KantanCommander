@@ -238,7 +238,8 @@ class VanillaDatapackExporter(
                 node.type == CommandType.DISK_CALL -> {
                     val snapshotPrefix = "${prefix}_snapshot_${node.id}"
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
-                    lines += storeResult(node, "function kantan:$snapshotPrefix")
+                    val call = "function kantan:$snapshotPrefix"
+                    lines += storeResult(node, node.contextOverride?.let { wrapContext(it, call) } ?: call)
                 }
                 node.type == CommandType.CONTEXT -> {
                     node.next?.let { lines += wrapContext(contextFrom(node), "function kantan:${prefix}_$it") }
@@ -251,17 +252,22 @@ class VanillaDatapackExporter(
 
             when (node.type) {
                 CommandType.CONDITION -> {
+                    conditionPreparation(node)?.let { preparation ->
+                        lines += node.contextOverride?.let { context -> wrapContext(context, preparation) } ?: preparation
+                    }
                     val predicate = predicate(node)
                     val inequality = node.string("kind") == ConditionKind.VARIABLE_STATE.name &&
-                        node.string("operator") == "!="
+                        node.string("operator") in setOf("!=", "unset")
                     val inverted = node.boolean("inverted") xor inequality
                     val trueCheck = if (inverted) "unless" else "if"
                     val falseCheck = if (inverted) "if" else "unless"
                     node.trueNext?.let {
-                        lines += "execute $trueCheck $predicate run function kantan:${prefix}_$it"
+                        val branch = "execute $trueCheck $predicate run function kantan:${prefix}_$it"
+                        lines += node.contextOverride?.let { context -> wrapContext(context, branch) } ?: branch
                     }
                     node.falseNext?.let {
-                        lines += "execute $falseCheck $predicate run function kantan:${prefix}_$it"
+                        val branch = "execute $falseCheck $predicate run function kantan:${prefix}_$it"
+                        lines += node.contextOverride?.let { context -> wrapContext(context, branch) } ?: branch
                     }
                 }
                 CommandType.WAIT ->
@@ -294,21 +300,41 @@ class VanillaDatapackExporter(
     private fun predicate(node: CommandNode): String = when (
         ConditionKind.valueOf(node.string("kind", ConditionKind.TARGET_EXISTS.name))
     ) {
-        ConditionKind.TARGET_EXISTS -> "entity ${node.string("subject", "@s")}"
+        ConditionKind.TARGET_EXISTS -> "entity ${conditionTarget(node)}"
         ConditionKind.ENTITY_STATE -> when (node.string("state", "sneaking")) {
-            "sneaking" -> "entity ${node.string("subject", "@s")}[nbt={Pose:\"CROUCHING\"}]"
-            "on_ground" -> "entity ${node.string("subject", "@s")}[nbt={OnGround:1b}]"
-            else -> "entity ${node.string("subject", "@s")}"
+            "sneaking" -> "entity ${appendSelectorArguments(conditionTarget(node), "nbt={Pose:\\\"CROUCHING\\\"}")}"
+            "on_ground" -> "entity ${appendSelectorArguments(conditionTarget(node), "nbt={OnGround:1b}")}"
+            else -> "entity ${conditionTarget(node)}"
         }
         ConditionKind.VARIABLE_STATE ->
             "score ${variableHolder(
                 node.string("variable"),
                 node.string("variableScope", "TEMPORARY") != "WORLD",
-            )} kc_vars matches ${scoreRange(node.string("operator", ">="), node.string("value").toLongOrNull() ?: 0L)}"
+            )} kc_vars matches ${
+                if (node.string("operator") in setOf("set", "unset")) {
+                    "${Int.MIN_VALUE}..${Int.MAX_VALUE}"
+                } else {
+                    scoreRange(node.string("operator", ">="), node.string("value").toLongOrNull() ?: 0L)
+                }
+            }"
         ConditionKind.BLOCK_STATE ->
             "block ${node.string("position", "~ ~ ~")} ${node.string("block", "minecraft:air")}"
         ConditionKind.ITEM_POSSESSION ->
-            "items entity ${node.string("subject", "@s")} inventory.* ${node.string("item", "minecraft:air")}"
+            "score ${conditionCountHolder(node)} kc_result matches ${node.int("count", 1).coerceAtLeast(1)}.."
+    }
+
+    private fun conditionPreparation(node: CommandNode): String? =
+        if (ConditionKind.valueOf(node.string("kind")) == ConditionKind.ITEM_POSSESSION) {
+            "execute store result score ${conditionCountHolder(node)} kc_result run clear " +
+                "${conditionTarget(node)} ${node.string("item", "minecraft:air")} 0"
+        } else null
+
+    private fun conditionCountHolder(node: CommandNode) =
+        "#c_${node.id.toString().replace("-", "")}"
+
+    private fun conditionTarget(node: CommandNode): String {
+        val spec = node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.EXECUTOR)
+        return selector(if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) spec else spec.copy(limit = 1))
     }
 
     private fun lowerVariable(node: CommandNode, graph: CommandGraph): String? {
@@ -508,6 +534,10 @@ class VanillaDatapackExporter(
         }
         return if (arguments.isEmpty()) base else "$base[${arguments.joinToString(",")}]"
     }
+
+    private fun appendSelectorArguments(selector: String, argument: String): String =
+        if (selector.endsWith("]")) selector.dropLast(1) + ",$argument]"
+        else "$selector[$argument]"
 
     private fun scoreRange(operator: String, value: Long): String = when (operator) {
         "==" -> value.toString()

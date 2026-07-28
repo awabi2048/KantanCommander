@@ -268,6 +268,47 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `item possession condition checks the configured count`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "item-count")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.params.putAll(
+            mapOf("kind" to "ITEM_POSSESSION", "item" to "minecraft:stone", "count" to "5")
+        )
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+        )
+        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
+        assertTrue(text.contains("run clear @s minecraft:stone 0"))
+        assertTrue(text.contains("kc_result matches 5.."))
+    }
+
+    @Test
+    fun `disk call context wraps only the copied function call`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "call-context")
+        val call = GraphEditor.append(script.graph, CommandType.DISK_CALL)
+        val nested = CommandType.DISPLAY_TEXT.newNode()
+        call.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        call.contextOverride = ExecutionContextSpec(
+            position = PositionSpec(PositionKind.COORDINATES, 2.0, 70.0, 3.0)
+        )
+        store.save(script)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).export(script),
+        )
+        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
+        assertTrue(text.contains("positioned 2.0 70.0 3.0 run function kantan:${script.id}_snapshot_${call.id}"))
+    }
+
+    @Test
     fun `nested copied disk is included in preflight validation`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "nested")
