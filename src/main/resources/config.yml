@@ -10,4 +10,4 @@ limits:
 timer:
   minimum-units: 1
   maximum-units: 86400
-config_version: 7
+config_version: 1
