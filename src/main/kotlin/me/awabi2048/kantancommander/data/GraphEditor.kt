@@ -12,8 +12,12 @@ object GraphEditor {
     enum class Edge { ENTRY, NEXT, TRUE, FALSE, FOR_BODY }
 
     fun canAppendMerge(graph: CommandGraph?, conditionId: UUID?): Boolean {
-        val condition = conditionId?.let { graph?.nodes?.get(it) } ?: return false
-        return condition.type == CommandType.CONDITION && condition.pairedNodeId == null
+        val currentGraph = graph ?: return false
+        val condition = conditionId?.let { currentGraph.nodes[it] } ?: return false
+        return condition.type == CommandType.CONDITION &&
+            condition.pairedNodeId == null &&
+            !containsUnmergedCondition(currentGraph, condition.trueNext, condition.id) &&
+            !containsUnmergedCondition(currentGraph, condition.falseNext, condition.id)
     }
 
     fun isInsideFor(graph: CommandGraph, sourceId: UUID?, edge: Edge): Boolean {
@@ -49,6 +53,9 @@ object GraphEditor {
             ?.takeIf { it.type == CommandType.CONDITION }
             ?: error("対象の条件分岐が存在しません")
         require(condition.pairedNodeId == null) { "条件分岐には既に対応する合流があります" }
+        require(canAppendMerge(graph, conditionId)) {
+            "内側の条件分岐を先に合流してください"
+        }
 
         val merge = CommandType.MERGE.newNode()
         graph.nodes[merge.id] = merge
@@ -250,6 +257,19 @@ object GraphEditor {
             if (id == null || id == stop || !visited.add(id)) return false
             if (id == target) return true
             return graph.nodes[id]?.outgoingIds()?.any(::visit) == true
+        }
+        return visit(start)
+    }
+
+    private fun containsUnmergedCondition(graph: CommandGraph, start: UUID?, rootConditionId: UUID): Boolean {
+        val visited = mutableSetOf<UUID>()
+        fun visit(id: UUID?): Boolean {
+            if (id == null || !visited.add(id)) return false
+            val node = graph.nodes[id] ?: return false
+            if (node.id != rootConditionId && node.type == CommandType.CONDITION && node.pairedNodeId == null) {
+                return true
+            }
+            return node.outgoingIds().any(::visit)
         }
         return visit(start)
     }

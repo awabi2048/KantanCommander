@@ -265,6 +265,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
+                        if (field == "inclusiveEnd" && node.type == CommandType.FOR_START) {
+                            updateNode(context.route) {
+                                it.params["inclusiveEnd"] = (!it.boolean("inclusiveEnd", true)).toString()
+                            }
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
                         if (field == "type" && node.type == CommandType.VARIABLE) {
                             return@MenuActionHandler MenuActionResult.Success(
                                 MenuUpdate.Navigate(choiceRoute(context.route, VARIABLE_TYPE_ID))
@@ -1613,6 +1619,9 @@ object EditorMenuLayout {
             field("startValue", "gui.field.start", Material.LIME_DYE),
             field("endValue", "gui.field.end", Material.RED_DYE),
             field("stepValue", "gui.field.step", Material.ARROW),
+            field("inclusiveEnd", "gui.field.inclusive_end", Material.COMPARATOR) {
+                it.boolean("inclusiveEnd", true).toString()
+            },
         )
     }
 

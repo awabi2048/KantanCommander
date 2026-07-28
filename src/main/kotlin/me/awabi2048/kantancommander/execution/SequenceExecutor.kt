@@ -78,18 +78,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         if (nodeId == null) return done(true)
-        val node = graph.nodes[nodeId] ?: return stop(session, script, nodeId, "missing_node", done)
+        val node = graph.nodes[nodeId] ?: return stop(session, script, nodeId, depth, "missing_node", done)
         if (node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId) {
             val after = node.pairedNodeId?.let(graph.nodes::get)?.next
             return runNode(script, graph, after, session, depth, done)
         }
-        if (session.executed >= session.budget) return stop(session, script, nodeId, "command_limit", done)
+        if (session.executed >= session.budget) return stop(session, script, nodeId, depth, "command_limit", done)
         session.executed++
         plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
 
         val next: (UUID?, Boolean) -> Unit = { target, success ->
             session.results[node.id] = success
-            runNode(script, graph, target, session, depth, done)
+            if (success) runNode(script, graph, target, session, depth, done)
+            else stop(session, script, node.id, depth, "node_failed", done)
         }
         when (node.type) {
             CommandType.WAIT -> plugin.server.scheduler.runTaskLater(
@@ -98,13 +99,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.int("ticks", 20).coerceAtLeast(1).toLong(),
             )
             CommandType.CONDITION -> {
-                val rawResult = evaluateCondition(node, session, node.contextOverride ?: session.context)
+                val rawResult = evaluateCondition(
+                    node,
+                    session,
+                    ExecutionSemantics.mergeContexts(session.context, node.contextOverride),
+                )
                 val result = if (node.boolean("inverted")) !rawResult else rawResult
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, true)
             }
             CommandType.CONTEXT -> {
-                session.context = contextFrom(node)
+                session.context = ExecutionSemantics.mergeContexts(session.context, contextFrom(node))
                 next(node.next, true)
             }
             CommandType.DISK_CALL -> runDiskCall(node, session, depth) { success -> next(node.next, success) }
@@ -126,12 +131,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         depth: Int,
         done: (Boolean) -> Unit,
     ) {
-        val endId = node.pairedNodeId ?: return stop(session, script, node.id, "missing_for_end", done)
-        val start = resolveForValue(node, "start", session) ?: return stop(session, script, node.id, "invalid_for_start", done)
-        val end = resolveForValue(node, "end", session) ?: return stop(session, script, node.id, "invalid_for_end", done)
-        val step = resolveForValue(node, "step", session) ?: return stop(session, script, node.id, "invalid_for_step", done)
-        if (step == 0L) return stop(session, script, node.id, "zero_for_step", done)
-        if (!withinForRange(start, end, step)) {
+        val endId = node.pairedNodeId ?: return stop(session, script, node.id, depth, "missing_for_end", done)
+        val start = resolveForValue(node, "start", session) ?: return stop(session, script, node.id, depth, "invalid_for_start", done)
+        val end = resolveForValue(node, "end", session) ?: return stop(session, script, node.id, depth, "invalid_for_end", done)
+        val step = resolveForValue(node, "step", session) ?: return stop(session, script, node.id, depth, "invalid_for_step", done)
+        if (step == 0L) return stop(session, script, node.id, depth, "zero_for_step", done)
+        if (!ExecutionSemantics.withinForRange(start, end, step, node.boolean("inclusiveEnd", true))) {
+            plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${node.id} reason=zero_iterations")
             return runNode(script, graph, graph.nodes[endId]?.next, session, depth, done)
         }
         session.loops += LoopFrame(node.id, endId, start, end, step, 1, session.context)
@@ -149,21 +155,27 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         val frame = session.loops.lastOrNull { it.endId == node.id }
-            ?: return stop(session, script, node.id, "for_frame_missing", done)
+            ?: return stop(session, script, node.id, depth, "for_frame_missing", done)
         val startNode = graph.nodes[frame.startId]
-            ?: return stop(session, script, node.id, "for_start_missing", done)
+            ?: return stop(session, script, node.id, depth, "for_start_missing", done)
         val currentEnd = resolveForValue(startNode, "end", session)
-            ?: return stop(session, script, node.id, "invalid_for_end", done)
+            ?: return stop(session, script, node.id, depth, "invalid_for_end", done)
         val currentStep = resolveForValue(startNode, "step", session)
-            ?: return stop(session, script, node.id, "invalid_for_step", done)
-        if (currentStep == 0L) return stop(session, script, node.id, "zero_for_step", done)
+            ?: return stop(session, script, node.id, depth, "invalid_for_step", done)
+        if (currentStep == 0L) return stop(session, script, node.id, depth, "zero_for_step", done)
         val nextValue = try {
             Math.addExact(frame.value, currentStep)
         } catch (_: ArithmeticException) {
-            return stop(session, script, node.id, "for_overflow", done)
+            return stop(session, script, node.id, depth, "for_overflow", done)
         }
         session.context = frame.startContext
-        if (withinForRange(nextValue, currentEnd, currentStep)) {
+        if (ExecutionSemantics.withinForRange(
+                nextValue,
+                currentEnd,
+                currentStep,
+                startNode.boolean("inclusiveEnd", true),
+            )
+        ) {
             frame.value = nextValue
             frame.end = currentEnd
             frame.step = currentStep
@@ -172,6 +184,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             session.currentLoopCount = frame.count
             runNode(script, graph, startNode.trueNext, session, depth, done)
         } else {
+            plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=range_complete iterations=${frame.count}")
             session.loops.remove(frame)
             session.currentIterationValue = session.loops.lastOrNull()?.value
             session.currentLoopCount = session.loops.lastOrNull()?.count
@@ -188,7 +201,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         val frame = session.loops.removeLastOrNull()
-            ?: return stop(session, script, node.id, "break_outside_for", done)
+            ?: return stop(session, script, node.id, depth, "break_outside_for", done)
+        plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=break iterations=${frame.count}")
         session.context = frame.startContext
         session.currentIterationValue = session.loops.lastOrNull()?.value
         session.currentLoopCount = session.loops.lastOrNull()?.count
@@ -204,7 +218,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         val frame = session.loops.lastOrNull()
-            ?: return stop(session, script, node.id, "continue_outside_for", done)
+            ?: return stop(session, script, node.id, depth, "continue_outside_for", done)
         session.context = frame.startContext
         runNode(script, graph, frame.endId, session, depth, done)
     }
@@ -219,9 +233,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    private fun withinForRange(value: Long, end: Long, step: Long) =
-        if (step > 0) value <= end else value >= end
-
     private fun runDiskCall(node: CommandNode, session: ExecutionSession, depth: Int, done: (Boolean) -> Unit) {
         if (depth >= session.maxDepth) {
             plugin.logger.warning("[KantanCommander] disk-call-depth root=${session.rootId} node=${node.id} depth=$depth max=${session.maxDepth}")
@@ -233,22 +244,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
-                val effectiveContext = node.contextOverride ?: session.context
-                val targets = resolveTargets(effectiveContext, node.targetSpec, session)
-                val effectiveOrigin = effectiveContext?.position?.let { resolvePosition(it, session, effectiveContext) } ?: session.origin
+        val effectiveContext = ExecutionSemantics.mergeContexts(session.context, node.contextOverride)
+        val targets = resolveTargets(effectiveContext, node.targetSpec, session)
+        val effectiveOrigin = effectiveContext?.position?.let {
+            resolvePosition(it, session, effectiveContext)
+        } ?: session.origin
         when (node.type) {
             CommandType.TELEPORT -> {
                 if (targets.isEmpty()) return false
                 val destination = node.destinationTargetSpec
-                    ?.let { resolveTargetSpec(it, session)?.location }
-                    ?: node.destinationSpec?.let { resolvePosition(it, session) }
+                    ?.let { resolveTargetSpec(it, session, effectiveContext)?.location }
+                    ?: node.destinationSpec?.let { resolvePosition(it, session, effectiveContext) }
                     ?: effectiveOrigin.clone()
-                effectiveContext?.facing?.let { facing ->
-                    if (facing.kind == FacingKind.ROTATION || facing.kind == FacingKind.CAPTURED) {
-                        destination.yaw = facing.yaw ?: destination.yaw
-                        destination.pitch = facing.pitch ?: destination.pitch
-                    }
-                }
+                effectiveContext?.facing?.let { applyFacing(destination, it, effectiveContext, session) }
                 targets.all { it.teleport(destination.clone()) }
             }
             CommandType.GIVE_ITEM -> {
@@ -348,7 +356,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             VariableOperation.ADD, VariableOperation.SUBTRACT -> {
                 val sign = if (operation == VariableOperation.ADD) 1 else -1
                 when (type) {
-                    VariableType.INTEGER -> WorldVariableValue(type, integerValue = (current?.integerValue ?: 0) + sign * node.string("value", "0").toLong())
+                    VariableType.INTEGER -> {
+                        val delta = Math.multiplyExact(sign.toLong(), node.string("value", "0").toLong())
+                        WorldVariableValue(
+                            type,
+                            integerValue = Math.addExact(current?.integerValue ?: 0, delta),
+                        )
+                    }
                     VariableType.DECIMAL -> WorldVariableValue(type, decimalValue = (current?.decimalValue ?: 0.0) + sign * node.string("value", "0").toDouble())
                     else -> return false
                 }
@@ -533,6 +547,54 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } ?: session.origin
     }
 
+    private fun applyFacing(
+        destination: Location,
+        facing: me.awabi2048.kantancommander.model.FacingSpec,
+        context: ExecutionContextSpec?,
+        session: ExecutionSession,
+    ) {
+        when (facing.kind) {
+            FacingKind.INHERITED -> Unit
+            FacingKind.ROTATION, FacingKind.CAPTURED -> {
+                destination.yaw = facing.yaw ?: destination.yaw
+                destination.pitch = facing.pitch ?: destination.pitch
+            }
+            FacingKind.EXECUTOR -> {
+                val location = resolveTargetSpec(
+                    context?.executor ?: TargetSpec(TargetKind.ACTIVATOR),
+                    session,
+                    context,
+                )?.location ?: return
+                destination.yaw = location.yaw
+                destination.pitch = location.pitch
+            }
+            FacingKind.TARGET -> {
+                val location = resolveTargetSpec(
+                    context?.target ?: TargetSpec(TargetKind.ACTIVATOR),
+                    session,
+                    context,
+                )?.location ?: return
+                faceLocation(destination, location)
+            }
+            FacingKind.COORDINATES -> faceLocation(
+                destination,
+                Location(
+                    destination.world,
+                    facing.x ?: return,
+                    facing.y ?: return,
+                    facing.z ?: return,
+                ),
+            )
+            FacingKind.MYWORLD_SPAWN -> faceLocation(destination, session.origin.world.spawnLocation)
+        }
+    }
+
+    private fun faceLocation(destination: Location, target: Location) {
+        if (destination.world != target.world) return
+        val direction = target.toVector().subtract(destination.toVector())
+        if (direction.lengthSquared() > 0.0) destination.direction = direction
+    }
+
     private fun parseLocation(raw: String, origin: Location): Location {
         val parts = raw.trim().split(Regex("\\s+"))
         fun coordinate(part: String?, base: Double): Double =
@@ -550,8 +612,20 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         else -> left >= right
     }
 
-    private fun stop(session: ExecutionSession, script: DiskScript, nodeId: UUID, reason: String, done: (Boolean) -> Unit) {
-        plugin.logger.warning("[KantanCommander] forced-stop root=${session.rootId} disk=${script.id} node=$nodeId reason=$reason executed=${session.executed} limit=${session.budget} world=${session.origin.world.name}")
+    private fun stop(
+        session: ExecutionSession,
+        script: DiskScript,
+        nodeId: UUID,
+        depth: Int,
+        reason: String,
+        done: (Boolean) -> Unit,
+    ) {
+        plugin.logger.warning(
+            "[KantanCommander] forced-stop root=${session.rootId} disk=${script.id} node=$nodeId " +
+                "reason=$reason executed=${session.executed} limit=${session.budget} depth=$depth " +
+                "world=${session.origin.world.name} " +
+                "location=${session.origin.blockX},${session.origin.blockY},${session.origin.blockZ}"
+        )
         done(false)
     }
 
@@ -585,4 +659,33 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var count: Long,
         val startContext: ExecutionContextSpec?,
     )
+}
+
+internal object ExecutionSemantics {
+    fun mergeContexts(
+        inherited: ExecutionContextSpec?,
+        override: ExecutionContextSpec?,
+    ): ExecutionContextSpec? {
+        if (override == null) return inherited
+        if (inherited == null) return override
+        return ExecutionContextSpec(
+            executor = override.executor ?: inherited.executor,
+            target = override.target ?: inherited.target,
+            position = override.position ?: inherited.position,
+            facing = override.facing ?: inherited.facing,
+        )
+    }
+
+    fun withinForRange(
+        value: Long,
+        end: Long,
+        step: Long,
+        inclusiveEnd: Boolean,
+    ): Boolean = when {
+        step > 0 && inclusiveEnd -> value <= end
+        step > 0 -> value < end
+        step < 0 && inclusiveEnd -> value >= end
+        step < 0 -> value > end
+        else -> false
+    }
 }

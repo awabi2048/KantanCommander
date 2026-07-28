@@ -18,18 +18,22 @@ object GraphValidator {
         }
         if (entry !in graph.nodes) errors += "開始ノードが存在しません"
 
-        graph.nodes.values.forEach { node ->
+        val duplicateIds = graph.nodes.values.groupingBy(CommandNode::id).eachCount().filterValues { it > 1 }.keys
+        duplicateIds.forEach { errors += "ノードIDが重複しています: $it" }
+        graph.nodes.forEach { (key, node) ->
+            if (key != node.id) errors += "ノードの保存キーとIDが一致しません: key=$key id=${node.id}"
             node.outgoing().filterNot(graph.nodes::containsKey).forEach {
                 errors += "${node.id} が存在しないノード $it を参照しています"
             }
             when (node.type) {
                 CommandType.CONDITION -> validateCondition(graph, node, errors)
                 CommandType.MERGE -> validatePair(graph, node, CommandType.CONDITION, errors)
-                CommandType.FOR_START -> validatePair(graph, node, CommandType.FOR_END, errors)
+                CommandType.FOR_START -> validateForStart(graph, node, errors)
                 CommandType.FOR_END -> validatePair(graph, node, CommandType.FOR_START, errors)
                 else -> Unit
             }
         }
+        validateIncomingEdges(graph, errors)
 
         if (entry in graph.nodes) {
             val visited = mutableSetOf<UUID>()
@@ -101,7 +105,25 @@ object GraphValidator {
     }
 
     private fun validateCondition(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
-        if (node.pairedNodeId != null) validatePair(graph, node, CommandType.MERGE, errors)
+        val mergeId = node.pairedNodeId ?: return
+        validatePair(graph, node, CommandType.MERGE, errors)
+        if (!allPathsReach(graph, node.trueNext, mergeId)) {
+            errors += "CONDITION ${node.id} のtrue枝が対応合流へ到達しません"
+        }
+        if (!allPathsReach(graph, node.falseNext, mergeId)) {
+            errors += "CONDITION ${node.id} のfalse枝が対応合流へ到達しません"
+        }
+    }
+
+    private fun validateForStart(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
+        val endId = node.pairedNodeId ?: run {
+            validatePair(graph, node, CommandType.FOR_END, errors)
+            return
+        }
+        validatePair(graph, node, CommandType.FOR_END, errors)
+        if (!allPathsReach(graph, node.trueNext, endId)) {
+            errors += "FOR_START ${node.id} のbodyが対応for終了へ到達しません"
+        }
     }
 
     private fun validatePair(
@@ -116,10 +138,45 @@ object GraphValidator {
         }
     }
 
+    private fun validateIncomingEdges(graph: CommandGraph, errors: MutableList<String>) {
+        val incoming = mutableMapOf<UUID, Int>()
+        graph.nodes.values.forEach { node ->
+            node.outgoing().forEach { target -> incoming[target] = (incoming[target] ?: 0) + 1 }
+        }
+        graph.nodes.values.forEach { node ->
+            val count = incoming[node.id] ?: 0
+            val allowed = if (node.type == CommandType.MERGE) 2 else if (node.id == graph.entryNodeId) 0 else 1
+            if (count > allowed) {
+                errors += "${node.type} ${node.id} に複数の親があります: $count"
+            }
+            if (node.type == CommandType.MERGE && count != 2) {
+                errors += "MERGE ${node.id} の入力枝数が不正です: $count"
+            }
+        }
+    }
+
+    private fun allPathsReach(graph: CommandGraph, start: UUID?, stop: UUID): Boolean {
+        val active = mutableSetOf<UUID>()
+        val memo = mutableMapOf<UUID, Boolean>()
+        fun visit(id: UUID?): Boolean {
+            if (id == stop) return true
+            if (id == null || !graph.nodes.containsKey(id)) return false
+            memo[id]?.let { return it }
+            if (!active.add(id)) return false
+            val node = graph.nodes.getValue(id)
+            val outgoing = node.outgoing()
+            val result = outgoing.isNotEmpty() && outgoing.all(::visit)
+            active.remove(id)
+            memo[id] = result
+            return result
+        }
+        return visit(start)
+    }
+
     private fun CommandNode.outgoing(): List<UUID> =
         when (type) {
             CommandType.CONDITION -> listOfNotNull(trueNext, falseNext)
-            CommandType.FOR_START -> listOfNotNull(trueNext, pairedNodeId)
+            CommandType.FOR_START -> listOfNotNull(trueNext)
             else -> listOfNotNull(next)
         }
 }

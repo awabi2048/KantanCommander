@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -88,5 +89,17 @@ class GraphEditorTest {
         val occupiedStart = GraphEditor.append(occupied, CommandType.FOR_START)
         GraphEditor.appendToForBody(occupied, occupiedStart.id, CommandType.WAIT)
         assertEquals(false, GraphEditor.delete(occupied, occupiedStart.id))
+    }
+
+    @Test
+    fun `outer condition cannot merge before nested condition`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.insert(graph, outer.id, GraphEditor.Edge.TRUE, CommandType.CONDITION)
+
+        assertEquals(false, GraphEditor.canAppendMerge(graph, outer.id))
+        assertThrows(IllegalArgumentException::class.java) {
+            GraphEditor.appendMerge(graph, outer.id)
+        }
     }
 }

@@ -13,9 +13,12 @@ class ModelsTest {
 
     @Test
     fun `graph copy is independent`() {
-        val node = CommandType.DISPLAY_TEXT.newNode()
+        val node = CommandType.ENTITY_ACTION.newNode()
+        node.secondaryTargetSpec = TargetSpec(TargetKind.NEAREST_ENTITY, maximumDistance = 8.0)
         val graph = CommandGraph(node.id, linkedMapOf(node.id to node))
         val copy = graph.deepCopy()
         assertNotSame(graph.nodes[node.id]?.params, copy.nodes[node.id]?.params)
+        assertNotSame(graph.nodes[node.id]?.secondaryTargetSpec, copy.nodes[node.id]?.secondaryTargetSpec)
+        assertEquals(graph.nodes[node.id]?.secondaryTargetSpec, copy.nodes[node.id]?.secondaryTargetSpec)
     }
 }
