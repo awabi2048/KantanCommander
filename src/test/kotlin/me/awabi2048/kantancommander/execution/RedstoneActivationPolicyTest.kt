@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.model.ActivationMode
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.util.UUID

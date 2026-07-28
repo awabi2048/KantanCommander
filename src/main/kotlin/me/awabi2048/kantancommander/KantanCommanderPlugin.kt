@@ -140,6 +140,14 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
     }
 
+    internal fun resetActivationTiming(scriptId: java.util.UUID) {
+        triggerListener.resetTiming(scriptId)
+    }
+
+    internal fun forgetActivationState(placementKey: String, scriptId: java.util.UUID) {
+        triggerListener.forget(placementKey, scriptId)
+    }
+
     fun reloadManagedSettings(): Boolean {
         val result = CCSystem.getAPI().getConfigSchemaService().prepare("kantan")
         if (!result.successful) return false
