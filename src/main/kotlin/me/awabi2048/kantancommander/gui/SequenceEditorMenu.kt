@@ -155,6 +155,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     KcI18n.text(player, "gui.editor.activation"),
                     GuiNameStyle.PRIMARY,
                     activationLore,
+                    GuiElementRole.CONTENT,
                 ),
                 GuiElementRole.CONTENT,
             )
@@ -189,6 +190,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 KcI18n.text(player, "gui.editor.info"),
                 GuiNameStyle.PRIMARY,
                 listOf(GuiLoreLine.Text(GraphDiagramRenderer.render(layout, origin))),
+                GuiElementRole.CONTENT,
             ),
             GuiElementRole.CONTENT,
         )
@@ -244,6 +246,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.setting")),
                 KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.editor.remove")),
             ),
+            GuiElementRole.CONTENT,
         ),
         GuiElementRole.CONTENT,
         "command",

@@ -42,7 +42,7 @@ object KcGui {
         name: String,
         style: GuiNameStyle = GuiNameStyle.DEFAULT,
         lines: List<GuiLoreLine> = emptyList(),
-        role: GuiElementRole = GuiElementRole.CONTENT,
+        role: GuiElementRole = GuiElementRole.ACTION,
     ) =
         elements.item(GuiItemSpec(
             material,

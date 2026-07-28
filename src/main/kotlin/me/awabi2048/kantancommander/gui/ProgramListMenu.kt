@@ -80,6 +80,7 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                         KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.programs.action_get")),
                         KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.programs.action_edit")),
                     ),
+                    GuiElementRole.CONTENT,
                 ),
                 role = GuiElementRole.CONTENT,
                 actionId = ACTION_SELECT,
@@ -97,7 +98,7 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
         )
         elements += MenuElement(
             layout.infoSlot,
-            KcGui.item(Material.BOOK, "${page + 1}/$total", GuiNameStyle.MUTED),
+            KcGui.item(Material.BOOK, "${page + 1}/$total", GuiNameStyle.MUTED, role = GuiElementRole.CONTENT),
             GuiElementRole.DECORATION,
         )
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, "gui.programs.title")), elements)
