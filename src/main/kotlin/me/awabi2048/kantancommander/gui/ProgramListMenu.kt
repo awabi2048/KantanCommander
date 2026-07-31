@@ -3,15 +3,13 @@ package me.awabi2048.kantancommander.gui
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiElementRole
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
+import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
 import com.awabi2048.ccsystem.api.gui.MenuActionResult
 import com.awabi2048.ccsystem.api.gui.MenuActionHandler
-import com.awabi2048.ccsystem.api.gui.MenuAcceptedClicks
-import com.awabi2048.ccsystem.api.gui.MenuActionBranch
 import com.awabi2048.ccsystem.api.gui.MenuElement
-import com.awabi2048.ccsystem.api.gui.MenuInteraction
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import java.util.UUID
@@ -70,54 +68,45 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
         val elements = mutableListOf<MenuElement>()
 
         scripts.drop(page * layout.itemSlots.size).take(layout.itemSlots.size).forEachIndexed { index, script ->
-            elements += MenuElement(
+            elements += KcGui.entry(
+                player = player,
                 slot = layout.itemSlots[index],
-                item = KcGui.item(
-                    Material.MUSIC_DISC_13,
-                    script.name,
-                    GuiNameStyle.PRIMARY,
-                    listOf(
-                        GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
-                        GuiLoreLine.Spacer,
-                        KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.programs.action_get")),
-                        KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.programs.action_edit")),
-                    ),
-                    GuiElementRole.CONTENT,
+                material = Material.MUSIC_DISC_13,
+                name = script.name,
+                style = GuiNameStyle.PRIMARY,
+                lines = listOf(
+                    GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
+                    GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
                 ),
                 role = GuiElementRole.CONTENT,
-                actionId = ACTION_SELECT,
-                actionPayload = mapOf(SCRIPT_ID to script.id.toString()),
-                interaction = MenuInteraction.Branches(
-                    listOf(
-                        MenuActionBranch(ACTION_SELECT, MenuAcceptedClicks.PLAIN_LEFT, mapOf(SCRIPT_ID to script.id.toString())),
-                        MenuActionBranch(ACTION_SELECT, MenuAcceptedClicks.PLAIN_RIGHT, mapOf(SCRIPT_ID to script.id.toString())),
+                actions = listOf(
+                    GuiMenuActionIntent.LeftRight(
+                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, "gui.programs.action_get"), mapOf(SCRIPT_ID to script.id.toString())),
+                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, "gui.programs.action_edit"), mapOf(SCRIPT_ID to script.id.toString())),
                     ),
                 ),
             )
         }
 
-        elements += navigationElement(layout.previousPageSlot, page > 0, "<", ACTION_PREVIOUS)
-        elements += navigationElement(layout.nextPageSlot, page < total - 1, ">", ACTION_NEXT)
+        elements += navigationElement(player, layout.previousPageSlot, page > 0, "<", ACTION_PREVIOUS)
+        elements += navigationElement(player, layout.nextPageSlot, page < total - 1, ">", ACTION_NEXT)
         elements += KcGui.elements.backEntry(player, layout.backSlot)
-        elements += MenuElement(
-            layout.infoSlot,
-            KcGui.item(Material.BOOK, "${page + 1}/$total", GuiNameStyle.MUTED, role = GuiElementRole.CONTENT),
-            GuiElementRole.CONTENT,
-        )
+        elements += KcGui.entry(player, layout.infoSlot, Material.BOOK, "${page + 1}/$total", GuiNameStyle.MUTED, role = GuiElementRole.CONTENT)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, "gui.programs.title")), elements)
     }
 
-    private fun navigationElement(slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {
+    private fun navigationElement(player: Player, slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {
         return if (enabled) {
-            MenuElement(
-                slot,
-                KcGui.item(Material.ARROW, name, role = GuiElementRole.NAVIGATION),
-                GuiElementRole.NAVIGATION,
-                actionId,
+            KcGui.entry(
+                player = player,
+                slot = slot,
+                material = Material.ARROW,
+                name = name,
+                role = GuiElementRole.NAVIGATION,
+                actions = listOf(GuiMenuActionIntent.AnyClick(actionId, name)),
             )
         } else {
-            MenuElement(slot, KcGui.elements.decoration(Material.BARRIER), GuiElementRole.DECORATION)
+            KcGui.entry(player, slot, Material.BARRIER, "", role = GuiElementRole.DECORATION)
         }
     }
 
