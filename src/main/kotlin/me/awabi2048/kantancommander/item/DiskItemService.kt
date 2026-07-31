@@ -55,15 +55,13 @@ object DiskItemService {
         item.editMeta { meta ->
             meta.lore(
                 CCSystem.getAPI().getLoreService().render(
-                    GuiLoreSpec.Rich(
-                        listOf(
-                            me.awabi2048.kantancommander.gui.KcGui.action(
-                                player,
-                                "lore.click.shift_right",
-                                KcI18n.text(player, "item.action_place"),
-                            )
-                        ),
-                        GuiLoreFrame.BOTH,
+                    CCSystem.getAPI().getLoreService().compose(
+                        GuiLoreSpec.None,
+                        listOf(me.awabi2048.kantancommander.gui.KcGui.action(
+                            player,
+                            "lore.click.shift_right",
+                            KcI18n.text(player, "item.action_place"),
+                        ))
                     )
                 )
             )
@@ -117,11 +115,20 @@ object DiskItemService {
         item.unsetData(DataComponentTypes.CONSUMABLE)
     }
 
+    private fun composeLore(lines: List<GuiLoreLine>): GuiLoreSpec {
+        val actions = lines.filterIsInstance<GuiLoreLine.Interaction>()
+        val base = lines.filterNot { it is GuiLoreLine.Interaction }
+        return CCSystem.getAPI().getLoreService().compose(
+            if (base.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(base, GuiLoreFrame.BOTH),
+            actions,
+        )
+    }
+
     private fun updateLore(item: ItemStack, script: DiskScript, player: Player) {
         item.editMeta { meta ->
             val ownerName = Bukkit.getOfflinePlayer(script.owner).name ?: script.owner.toString().take(8)
             val lore = CCSystem.getAPI().getLoreService().render(
-                GuiLoreSpec.Rich(
+                composeLore(
                     listOf(
                         GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
                         GuiLoreLine.Data(KcI18n.text(player, "item.owner"), ownerName, "§f"),
@@ -138,7 +145,6 @@ object DiskItemService {
                             KcI18n.text(player, "item.action_place")
                         )
                     ),
-                    GuiLoreFrame.BOTH
                 )
             )
             meta.lore(lore)

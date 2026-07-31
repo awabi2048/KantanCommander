@@ -50,7 +50,12 @@ object KcGui {
         elements.item(GuiItemSpec(
             material,
             GuiNameSpec.Text(name, style),
-            if (lines.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(lines, GuiLoreFrame.BOTH),
+            CCSystem.getAPI().getLoreService().compose(
+                lines.filterNot { it is GuiLoreLine.Interaction }.let { base ->
+                    if (base.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(base, GuiLoreFrame.BOTH)
+                },
+                lines.filterIsInstance<GuiLoreLine.Interaction>(),
+            ),
             role,
             1
         ))
@@ -71,7 +76,12 @@ object KcGui {
             item = GuiItemSpec(
                 material = material,
                 name = GuiNameSpec.Text(name, style),
-                lore = if (lines.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(lines, GuiLoreFrame.BOTH),
+                lore = CCSystem.getAPI().getLoreService().compose(
+                    lines.filterNot { it is GuiLoreLine.Interaction }.let { base ->
+                        if (base.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(base, GuiLoreFrame.BOTH)
+                    },
+                    lines.filterIsInstance<GuiLoreLine.Interaction>(),
+                ),
                 role = role,
                 amount = 1,
             ),
