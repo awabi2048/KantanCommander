@@ -1383,7 +1383,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun back() = MenuActionHandler { MenuActionResult.Success(MenuUpdate.Back) }
 
     private fun backElement(player: Player) =
-        MenuElement(36, KcGui.elements.backItem(KcI18n.text(player, "gui.common.back")), GuiElementRole.BACK, "back")
+        KcGui.elements.backEntry(player, 36)
 
     private fun state(player: Player, configured: Boolean): String =
         KcI18n.text(player, if (configured) "gui.option.configured" else "gui.option.inherited")

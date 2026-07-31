@@ -8,7 +8,10 @@ import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
 import com.awabi2048.ccsystem.api.gui.MenuActionResult
 import com.awabi2048.ccsystem.api.gui.MenuActionHandler
+import com.awabi2048.ccsystem.api.gui.MenuAcceptedClicks
+import com.awabi2048.ccsystem.api.gui.MenuActionBranch
 import com.awabi2048.ccsystem.api.gui.MenuElement
+import com.awabi2048.ccsystem.api.gui.MenuInteraction
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import java.util.UUID
@@ -85,17 +88,18 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 role = GuiElementRole.CONTENT,
                 actionId = ACTION_SELECT,
                 actionPayload = mapOf(SCRIPT_ID to script.id.toString()),
+                interaction = MenuInteraction.Branches(
+                    listOf(
+                        MenuActionBranch(ACTION_SELECT, MenuAcceptedClicks.PLAIN_LEFT, mapOf(SCRIPT_ID to script.id.toString())),
+                        MenuActionBranch(ACTION_SELECT, MenuAcceptedClicks.PLAIN_RIGHT, mapOf(SCRIPT_ID to script.id.toString())),
+                    ),
+                ),
             )
         }
 
         elements += navigationElement(layout.previousPageSlot, page > 0, "<", ACTION_PREVIOUS)
         elements += navigationElement(layout.nextPageSlot, page < total - 1, ">", ACTION_NEXT)
-        elements += MenuElement(
-            layout.backSlot,
-            KcGui.elements.backItem(KcI18n.text(player, "gui.common.close")),
-            GuiElementRole.CANCEL,
-            ACTION_CLOSE,
-        )
+        elements += KcGui.elements.backEntry(player, layout.backSlot)
         elements += MenuElement(
             layout.infoSlot,
             KcGui.item(Material.BOOK, "${page + 1}/$total", GuiNameStyle.MUTED, role = GuiElementRole.CONTENT),

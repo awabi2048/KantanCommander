@@ -6,8 +6,11 @@ import com.awabi2048.ccsystem.api.gui.GuiItemSpec
 import com.awabi2048.ccsystem.api.gui.GuiLoreFrame
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiLoreSpec
+import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
+import com.awabi2048.ccsystem.api.gui.GuiStructuredMenuEntrySpec
 import com.awabi2048.ccsystem.api.gui.GuiNameSpec
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
+import com.awabi2048.ccsystem.api.gui.MenuGesture
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -52,17 +55,43 @@ object KcGui {
             1
         ))
 
-    fun action(player: Player, operationKey: String, action: String): GuiLoreLine.Action =
-        GuiLoreLine.Action(commonText(player, operationKey), action)
+    fun entry(
+        player: Player,
+        slot: Int,
+        material: Material,
+        name: String,
+        style: GuiNameStyle = GuiNameStyle.DEFAULT,
+        lines: List<GuiLoreLine> = emptyList(),
+        role: GuiElementRole = GuiElementRole.ACTION,
+        actions: List<GuiMenuActionIntent> = emptyList(),
+    ) = elements.menuStructuredEntry(
+        player,
+        GuiStructuredMenuEntrySpec(
+            slot = slot,
+            item = GuiItemSpec(
+                material = material,
+                name = GuiNameSpec.Text(name, style),
+                lore = if (lines.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(lines, GuiLoreFrame.BOTH),
+                role = role,
+                amount = 1,
+            ),
+            actions = actions,
+        ),
+    )
 
-    fun singleAction(player: Player, action: String): GuiLoreLine.SingleAction {
-        val operation = commonText(player, "lore.click.any")
-        val resolvedText = CCSystem.getAPI().getI18nString(
-            player,
-            "lore.action_single_with_operation",
-            mapOf("operation" to operation, "action" to action)
-        )
-        return GuiLoreLine.SingleAction(operation, action, resolvedText)
+    fun action(player: Player, operationKey: String, action: String): GuiLoreLine.Interaction =
+        GuiLoreLine.Interaction(player, gesture(operationKey), action)
+
+    fun singleAction(player: Player, action: String): GuiLoreLine.Interaction =
+        GuiLoreLine.Interaction(player, MenuGesture.ANY, action)
+
+    private fun gesture(operationKey: String): MenuGesture = when (operationKey) {
+        "lore.click.left" -> MenuGesture.LEFT
+        "lore.click.right" -> MenuGesture.RIGHT
+        "lore.click.shift_left" -> MenuGesture.SHIFT_LEFT
+        "lore.click.shift_right" -> MenuGesture.SHIFT_RIGHT
+        "lore.click.middle" -> MenuGesture.MIDDLE
+        else -> MenuGesture.ANY
     }
 
     private fun commonText(player: Player, key: String): String =

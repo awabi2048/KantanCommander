@@ -9,7 +9,10 @@ import com.awabi2048.ccsystem.api.gui.InventoryMenuView
 import com.awabi2048.ccsystem.api.gui.MenuActionContext
 import com.awabi2048.ccsystem.api.gui.MenuActionHandler
 import com.awabi2048.ccsystem.api.gui.MenuActionResult
+import com.awabi2048.ccsystem.api.gui.MenuAcceptedClicks
+import com.awabi2048.ccsystem.api.gui.MenuActionBranch
 import com.awabi2048.ccsystem.api.gui.MenuElement
+import com.awabi2048.ccsystem.api.gui.MenuInteraction
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
@@ -252,6 +255,12 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         GuiElementRole.CONTENT,
         "command",
         mapOf("nodeId" to node.id.toString()),
+        interaction = MenuInteraction.Branches(
+            listOf(
+                MenuActionBranch("command", MenuAcceptedClicks.PLAIN_LEFT, mapOf("nodeId" to node.id.toString())),
+                MenuActionBranch("command", MenuAcceptedClicks.PLAIN_RIGHT, mapOf("nodeId" to node.id.toString())),
+            ),
+        ),
     )
 
     private fun commandSummary(player: Player, node: CommandNode): String = when (node.type) {
@@ -351,6 +360,16 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         KcGui.item(material, name, GuiNameStyle.PRIMARY, lore, GuiElementRole.ACTION),
         GuiElementRole.ACTION,
         id,
+        interaction = if (id == "navigate") {
+            MenuInteraction.Branches(
+                listOf(
+                    MenuActionBranch(id, MenuAcceptedClicks.PLAIN_LEFT),
+                    MenuActionBranch(id, MenuAcceptedClicks.PLAIN_RIGHT),
+                    MenuActionBranch(id, MenuAcceptedClicks.SHIFT_LEFT),
+                    MenuActionBranch(id, MenuAcceptedClicks.SHIFT_RIGHT),
+                ),
+            )
+        } else null,
     )
 
     private fun placement(route: MenuRoute): DiskPlacement? {
