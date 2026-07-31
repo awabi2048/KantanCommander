@@ -7,7 +7,7 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-    <version>26.731.10</version>
+    <version>26.731.11</version>
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>
@@ -51,19 +51,19 @@
         <dependency>
             <groupId>com.awabi2048</groupId>
             <artifactId>CC-System</artifactId>
-            <version>26.731.29</version>
+            <version>26.731.31</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>awabi2048</groupId>
             <artifactId>my-world-manager</artifactId>
-            <version>3.0.0</version>
+            <version>26.731.48</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>me.awabi2048</groupId>
             <artifactId>MWM-Chanpon</artifactId>
-            <version>2.1.1</version>
+            <version>26.731.36</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
