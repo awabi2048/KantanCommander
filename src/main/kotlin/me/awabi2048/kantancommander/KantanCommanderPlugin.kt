@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander
 
 import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.CCSystemAPI
 import com.awabi2048.ccsystem.api.config.ConfigClassification
 import com.awabi2048.ccsystem.api.config.ManagedConfigSpec
 import com.awabi2048.ccsystem.api.gui.MenuTargetPolicy
@@ -52,6 +53,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     private var standaloneExportContributor: KantanStandaloneExportContributor? = null
 
     override fun onEnable() {
+        if (!verifyGuiRuntimeContract()) return
+
         CCSystem.getAPI().getConfigSchemaService().register(
             "kantan",
             listOf(
@@ -180,5 +183,44 @@ class KantanCommanderPlugin : JavaPlugin() {
         maximumMapHeight = config.getInt("limits.max-map-height"),
         maximumBranchDepth = config.getInt("limits.max-branch-depth"),
     )
+
+    /**
+     * MenuDialogRequestなどのGUI公開ABIが異なるCC-System上では、登録処理より先に停止します。
+     * 古いKantan Commanderが新しいCC-Systemへ接続してNoSuchMethodErrorを起こすことを防ぎます。
+     */
+    private fun verifyGuiRuntimeContract(): Boolean {
+        val ccSystemPlugin = server.pluginManager.getPlugin("CC-System")
+        if (ccSystemPlugin == null || !ccSystemPlugin.isEnabled) {
+            logger.severe("CC-Systemが有効ではないため、Kantan Commanderを無効化します")
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+
+        val actualVersion = try {
+            CCSystem.getAPI().guiRuntimeContractVersion
+        } catch (failure: LinkageError) {
+            logger.severe("CC-System GUI契約版を取得できないため、Kantan Commanderを無効化します: ${failure.message}")
+            server.pluginManager.disablePlugin(this)
+            return false
+        } catch (failure: RuntimeException) {
+            logger.severe("CC-System GUI契約版の取得に失敗したため、Kantan Commanderを無効化します: ${failure.message}")
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+
+        if (actualVersion != REQUIRED_GUI_RUNTIME_CONTRACT_VERSION) {
+            logger.severe(
+                "CC-System GUI契約版が一致しないため、Kantan Commanderを無効化します: " +
+                    "expected=$REQUIRED_GUI_RUNTIME_CONTRACT_VERSION, actual=$actualVersion",
+            )
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+        return true
+    }
+
+    private companion object {
+        const val REQUIRED_GUI_RUNTIME_CONTRACT_VERSION = CCSystemAPI.GUI_RUNTIME_CONTRACT_VERSION
+    }
 
 }
