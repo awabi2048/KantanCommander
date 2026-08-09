@@ -190,6 +190,74 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `all fixed entity references fail standalone preflight`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
+
+        val fixedTarget = store.create(UUID.randomUUID(), "fixed-target")
+        GraphEditor.append(fixedTarget.graph, CommandType.DISPLAY_TEXT).targetSpec =
+            TargetSpec(TargetKind.FIXED_ENTITY)
+
+        val fixedSecondary = store.create(UUID.randomUUID(), "fixed-secondary")
+        GraphEditor.append(fixedSecondary.graph, CommandType.ENTITY_ACTION).apply {
+            targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            secondaryTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+        }
+
+        val fixedDestination = store.create(UUID.randomUUID(), "fixed-destination")
+        GraphEditor.append(fixedDestination.graph, CommandType.TELEPORT).apply {
+            targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            destinationTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+        }
+
+        listOf(fixedTarget, fixedSecondary, fixedDestination).forEach { script ->
+            assertInstanceOf(
+                StandaloneCompilation.Failure::class.java,
+                exporter.compileForStandalone(script),
+            )
+        }
+    }
+
+    @Test
+    fun `standalone function names stay within vanilla limits and references resolve`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "short-function-names")
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.EXECUTOR)
+        GraphEditor.append(script.graph, CommandType.VARIABLE).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "place",
+                    "scope" to "TEMPORARY",
+                    "type" to VariableType.POSITION.name,
+                    "operation" to VariableOperation.STORE_POSITION.name,
+                )
+            )
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        assertTrue(
+            success.functions.keys.all { it.length <= 64 },
+            "function name exceeded the vanilla limit: ${success.functions.keys}",
+        )
+
+        val references = success.functions.values
+            .flatMap { body ->
+                Regex("""function kantan:([a-z0-9_]+)""")
+                    .findAll(body)
+                    .map { it.groupValues[1] }
+                    .toList()
+            }
+            .toSet()
+        assertTrue(
+            references.all { it in success.functions.keys },
+            "unresolved function reference(s): ${references - success.functions.keys}",
+        )
+    }
+
+    @Test
     fun `temporary variables reset while world variables remain persistent`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "variables")
@@ -508,7 +576,7 @@ class VanillaDatapackExporterTest {
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(
-            Regex("""positioned 2\.0 70\.0 3\.0 run function kantan:snapshot_[0-9a-f]{24}""")
+            Regex("""positioned 2\.0 70\.0 3\.0 run function kantan:s_[0-9a-f]{16}""")
                 .containsMatchIn(text)
         )
     }
@@ -517,7 +585,7 @@ class VanillaDatapackExporterTest {
     fun `failed vanilla command does not execute its successor`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "failure")
-        val give = GraphEditor.append(script.graph, CommandType.GIVE_ITEM)
+        GraphEditor.append(script.graph, CommandType.GIVE_ITEM)
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         store.save(script)
 
@@ -526,7 +594,13 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val function = success.directory
-            .resolve("data/kantan/function/${script.id}_${give.id}.mcfunction")
+            .resolve("data/kantan/function")
+            .walkTopDown()
+            .first {
+                it.isFile && it.readText().let { body ->
+                    "execute store success score" in body && "matches 1 run return run function" in body
+                }
+            }
             .readText()
         assertTrue(function.contains("execute store success score"))
         assertTrue(function.contains("matches 1 run return run function"))
@@ -625,7 +699,9 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val function = success.directory
-            .resolve("data/kantan/function/${script.id}_${title.id}.mcfunction")
+            .resolve("data/kantan/function")
+            .walkTopDown()
+            .first { it.isFile && it.readText().contains("title @s times 3 17 4") }
             .readText()
 
         assertTrue(function.contains("title @s times 3 17 4"))
@@ -654,11 +730,18 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val arithmetic = success.directory
-            .resolve("data/kantan/function/${script.id}_${variable.id}_arithmetic.mcfunction")
+            .resolve("data/kantan/function")
+            .walkTopDown()
+            .first {
+                it.isFile && it.readText().let { body ->
+                    "scoreboard players add" in body && " kc_vars 10" in body
+                }
+            }
             .readText()
-        val loopEnd = requireNotNull(script.graph.nodes[loop.pairedNodeId])
         val endFunction = success.directory
-            .resolve("data/kantan/function/${script.id}_${loopEnd.id}.mcfunction")
+            .resolve("data/kantan/function")
+            .walkTopDown()
+            .first { it.isFile && it.readText().contains("scoreboard players operation #for_") }
             .readText()
 
         assertTrue(arithmetic.contains("matches 2147483638.. run return 0"))
