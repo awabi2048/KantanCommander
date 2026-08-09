@@ -258,6 +258,27 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `standalone compilation namespaces do not collide between placements`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "placement-namespaces")
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.EXECUTOR)
+        val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
+
+        val first = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            exporter.compileForStandalone(script, entryFunctionName = "p_first"),
+        )
+        val second = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            exporter.compileForStandalone(script, entryFunctionName = "p_second"),
+        )
+
+        assertTrue(first.entryFunctionName == "p_first")
+        assertTrue(second.entryFunctionName == "p_second")
+        assertTrue(first.functions.keys.intersect(second.functions.keys).isEmpty())
+    }
+
+    @Test
     fun `temporary variables reset while world variables remain persistent`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "variables")
@@ -576,7 +597,7 @@ class VanillaDatapackExporterTest {
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(
-            Regex("""positioned 2\.0 70\.0 3\.0 run function kantan:s_[0-9a-f]{16}""")
+            Regex("""positioned 2\.0 70\.0 3\.0 run function kantan:s_[0-9a-f]{24}""")
                 .containsMatchIn(text)
         )
     }
@@ -733,9 +754,7 @@ class VanillaDatapackExporterTest {
             .resolve("data/kantan/function")
             .walkTopDown()
             .first {
-                it.isFile && it.readText().let { body ->
-                    "scoreboard players add" in body && " kc_vars 10" in body
-                }
+                it.isFile && it.readText().contains("matches 2147483638.. run return 0")
             }
             .readText()
         val endFunction = success.directory

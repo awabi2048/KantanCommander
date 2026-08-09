@@ -34,6 +34,7 @@ class VanillaDatapackExporter(
     fun compileForStandalone(
         root: DiskScript,
         worldVariableTypes: Map<String, VariableType> = emptyMap(),
+        entryFunctionName: String = root.id.toString(),
     ): StandaloneCompilation {
         val exportRoot = root.copy(graph = root.graph.deepCopy())
         val errors = mutableListOf<String>()
@@ -41,7 +42,7 @@ class VanillaDatapackExporter(
         annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
         validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0)
         return if (errors.isEmpty()) {
-            StandaloneCompilation.Success(compile(exportRoot))
+            StandaloneCompilation.Success(compile(exportRoot, entryFunctionName), entryFunctionName)
         } else {
             StandaloneCompilation.Failure(errors.distinct())
         }
@@ -274,14 +275,14 @@ class VanillaDatapackExporter(
         }
     }
 
-    private fun compile(script: DiskScript): Map<String, String> =
+    private fun compile(script: DiskScript, entryFunctionName: String): Map<String, String> =
         linkedMapOf<String, String>().also {
             compileGraph(
                 script.graph,
-                scriptPrefix(script.id),
+                scriptPrefix(entryFunctionName, script.graph),
                 it,
                 resetBudget = true,
-                rootFunctionName = script.id.toString(),
+                rootFunctionName = entryFunctionName,
             )
         }
 
@@ -293,7 +294,7 @@ class VanillaDatapackExporter(
         rootFunctionName: String = prefix,
     ) {
         val entryCall = graph.entryNodeId?.let { "return run function kantan:${nodeFunction(prefix, it)}\n" } ?: "return 1\n"
-        output[rootFunctionName] = if (resetBudget) {
+        defineFunction(output, rootFunctionName, if (resetBudget) {
             buildString {
                 appendLine("scoreboard players set #executed kc_runtime 0")
                 temporaryNames(graph).forEach {
@@ -302,7 +303,7 @@ class VanillaDatapackExporter(
                 }
                 append(entryCall)
             }
-        } else entryCall
+        } else entryCall)
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
             if (node.type == CommandType.VARIABLE &&
@@ -312,12 +313,12 @@ class VanillaDatapackExporter(
                 node.params[EXPORT_CAPTURE_FUNCTION] = helper
                 val temporary = node.string("scope", "TEMPORARY") != "WORLD"
                 val path = VanillaStorageNames.variablePath(node.string("name"), temporary)
-                output[helper] = buildString {
+                defineFunction(output, helper, buildString {
                     appendLine("data modify storage kantan:variables $path set value {}")
                     appendLine("data modify storage kantan:variables $path.position set from entity @s Pos")
                     appendLine("data modify storage kantan:variables $path.rotation set from entity @s Rotation")
                     appendLine("kill @s")
-                }
+                })
             }
             val emptyFor = node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId
             if (!emptyFor) {
@@ -335,7 +336,11 @@ class VanillaDatapackExporter(
                     lines += assignLoopValue(loop, "step", node, "step")
                     lines += "scoreboard players set #${loop}_count kc_vars 1"
                     lines += "return run function kantan:${nodeFunction(prefix, node.id, "check")}"
-                    output[nodeFunction(prefix, node.id, "check")] = loopCheck(graph, prefix, node)
+                    defineFunction(
+                        output,
+                        nodeFunction(prefix, node.id, "check"),
+                        loopCheck(graph, prefix, node),
+                    )
                 }
                 node.type == CommandType.FOR_END -> {
                     val start = node.pairedNodeId?.let(graph.nodes::get)
@@ -377,8 +382,11 @@ class VanillaDatapackExporter(
                         VariableOperation.SUBTRACT.name,
                     ) -> {
                     val helper = nodeFunction(prefix, node.id, "arithmetic")
-                    output[helper] = lowerArithmeticVariable(node, graph)
-                        .joinToString("\n", postfix = "\n")
+                    defineFunction(
+                        output,
+                        helper,
+                        lowerArithmeticVariable(node, graph).joinToString("\n", postfix = "\n"),
+                    )
                     val command = "function kantan:$helper"
                     lines += storeFunctionResult(
                         node,
@@ -437,7 +445,7 @@ class VanillaDatapackExporter(
                     lines += "return 0"
                 }
             }
-            output[nodeFunction(prefix, node.id)] = lines.joinToString("\n", postfix = "\n")
+            defineFunction(output, nodeFunction(prefix, node.id), lines.joinToString("\n", postfix = "\n"))
         }
     }
 
@@ -767,10 +775,11 @@ class VanillaDatapackExporter(
 
     /**
      * Minecraftの関数名はパス要素ごとに64文字までなので、UUIDをそのまま連結しない。
-     * UUID由来のノードトークンはbase36化して衝突を起こさず、親グラフの接頭辞は
-     * SHA-256の短い値にして、ネストしたグラフでも同じ名前空間を再現できるようにする。
+     * ノードUUIDはbase36化して情報を削らず、入口名とグラフ内容から作る96bit接頭辞で
+     * 配置単位・ネストしたグラフ単位の名前空間を分離する。
      */
-    private fun scriptPrefix(scriptId: UUID): String = "s_${shortDigest(scriptId.toString(), 16)}"
+    private fun scriptPrefix(entryFunctionName: String, graph: CommandGraph): String =
+        "s_${shortDigest("root/$entryFunctionName/${graphFingerprint(graph)}", 24)}"
 
     private fun nodeFunction(prefix: String, nodeId: UUID, suffix: String? = null): String = buildString {
         append(prefix)
@@ -778,7 +787,13 @@ class VanillaDatapackExporter(
         append(uuidToken(nodeId))
         suffix?.takeIf(String::isNotEmpty)?.let {
             append('_')
-            append(it)
+            append(
+                when (it) {
+                    "capture_position" -> "capture"
+                    "arithmetic" -> "arith"
+                    else -> it
+                }
+            )
         }
     }
 
@@ -786,13 +801,42 @@ class VanillaDatapackExporter(
         BigInteger(id.toString().replace("-", ""), 16).toString(36)
 
     private fun snapshotPrefix(parentPrefix: String, nodeId: UUID): String =
-        "s_${shortDigest("$parentPrefix/$nodeId", 16)}"
+        "s_${shortDigest("snapshot/$parentPrefix/$nodeId", 24)}"
+
+    private fun graphFingerprint(graph: CommandGraph): String = buildString {
+        append("entry=").append(graph.entryNodeId)
+        graph.nodes.entries.sortedBy { it.key.toString() }.forEach { (id, node) ->
+            append("|node=").append(id)
+                .append(':').append(node.type.name)
+                .append(":params=").append(node.params.toSortedMap())
+                .append(":next=").append(node.next)
+                .append(":true=").append(node.trueNext)
+                .append(":false=").append(node.falseNext)
+                .append(":pair=").append(node.pairedNodeId)
+                .append(":target=").append(node.targetSpec)
+                .append(":secondary=").append(node.secondaryTargetSpec)
+                .append(":destination=").append(node.destinationSpec)
+                .append(":destinationTarget=").append(node.destinationTargetSpec)
+                .append(":conditionPosition=").append(node.conditionPositionSpec)
+                .append(":context=").append(node.contextOverride)
+            node.snapshot?.let {
+                append(":snapshot={").append(graphFingerprint(it)).append('}')
+            }
+        }
+    }
 
     private fun shortDigest(value: String, length: Int): String =
         MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
             .take(length)
+
+    private fun defineFunction(output: MutableMap<String, String>, name: String, content: String) {
+        val previous = output.putIfAbsent(name, content)
+        require(previous == null || previous == content) {
+            "同じバニラ関数名へ異なる内容を割り当てました: $name"
+        }
+    }
 
     private fun selector(spec: TargetSpec): String {
         if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) return "@s"
@@ -864,7 +908,10 @@ sealed interface ExportResult {
 }
 
 sealed interface StandaloneCompilation {
-    data class Success(val functions: Map<String, String>) : StandaloneCompilation
+    data class Success(
+        val functions: Map<String, String>,
+        val entryFunctionName: String = functions.keys.first(),
+    ) : StandaloneCompilation
     data class Failure(val errors: List<String>) : StandaloneCompilation
 }
 

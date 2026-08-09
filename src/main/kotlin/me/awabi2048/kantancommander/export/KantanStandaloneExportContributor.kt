@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.export
 
 import java.nio.file.Files
 import java.nio.file.Path
+import java.security.MessageDigest
 import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.PlacementStore
@@ -52,7 +53,15 @@ class KantanStandaloneExportContributor(
             val worldVariableTypes = plugin.variables.definitions(world.uuid)
                 .mapKeys { (name, _) -> "${namespace}_$name" }
                 .mapValues { (_, value) -> value.type }
-            when (val compilation = plugin.exporter.compileForStandalone(script, worldVariableTypes)) {
+            // 同じスクリプトを複数ワールドへ配置しても、ワールド変数を含む関数本文が衝突しない名前にする。
+            val entryFunctionName = standaloneEntryFunctionName(placement, script, world.uuid)
+            when (
+                val compilation = plugin.exporter.compileForStandalone(
+                    script,
+                    worldVariableTypes,
+                    entryFunctionName,
+                )
+            ) {
                 is StandaloneCompilation.Failure -> {
                     compilation.errors.forEach { errors += "${placement.key}: $it" }
                     null
@@ -62,6 +71,7 @@ class KantanStandaloneExportContributor(
                     script = script,
                     dimensionKey = world.dimensionKey,
                     variableNamespace = namespace,
+                    entryFunctionName = compilation.entryFunctionName,
                     functions = compilation.functions.toMap(),
                 )
             }
@@ -95,6 +105,17 @@ class KantanStandaloneExportContributor(
         return if (valid) null else "$world/$name: 変数初期値が不完全または有限値ではありません"
     }
 
+    private fun standaloneEntryFunctionName(
+        placement: DiskPlacement,
+        script: DiskScript,
+        worldId: UUID,
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest("${script.id}/$worldId/${placement.key}".toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return "p_${digest.take(24)}"
+    }
+
     private fun namespaceWorldVariables(script: DiskScript, namespace: String): DiskScript {
         val graph = script.graph.deepCopy()
         fun rewrite(current: me.awabi2048.kantancommander.model.CommandGraph) {
@@ -122,6 +143,7 @@ internal data class PreparedProgram(
     val script: DiskScript,
     val dimensionKey: String,
     val variableNamespace: String,
+    val entryFunctionName: String = script.id.toString(),
     val functions: Map<String, String>,
 )
 
@@ -153,6 +175,8 @@ internal class PreparedKantanExport(
             "scoreboard objectives add kc_timer dummy",
         )
         val tick = mutableListOf<String>()
+        // 関数名の衝突を無言の上書きにせず、同一内容だけを共有する。
+        val writtenFunctions = mutableMapOf<String, String>()
         variableDefinitions.forEach { (dimension, variables) ->
             variables.values.forEach { (name, value) ->
                 load += initializeVariable(dimension, "${variables.namespace}_$name", value)
@@ -160,12 +184,18 @@ internal class PreparedKantanExport(
         }
         programs.forEach { program ->
             program.functions.forEach { (name, body) ->
-                val target = functions.resolve("$name.mcfunction")
-                Files.createDirectories(target.parent)
-                Files.writeString(target, body)
+                val previous = writtenFunctions.putIfAbsent(name, body)
+                require(previous == null || previous == body) {
+                    "異なる配置のKantan関数が同じ名前へ解決されました: $name"
+                }
+                if (previous == null) {
+                    val target = functions.resolve("$name.mcfunction")
+                    Files.createDirectories(target.parent)
+                    Files.writeString(target, body)
+                }
             }
             load += "execute in ${program.dimensionKey} run kill @e[type=minecraft:block_display,tag=${PlacementStore.DISPLAY_TAG}]"
-            val entry = program.script.id.toString()
+            val entry = program.entryFunctionName
             val command = if (program.script.timer.enabled) {
                 val wrapper = "placed/${entry}_timer"
                 val holder = timerHolder(entry)
