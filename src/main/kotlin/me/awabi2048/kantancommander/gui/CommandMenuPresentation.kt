@@ -72,11 +72,11 @@ internal object CommandPresentationPolicy {
 /** 設定数が多いコマンドは、意味上の組を崩さない専用配置を使用します。 */
 internal object CommandSettingsSlotPolicy {
     private val variableSlots = mapOf(
-        "scope" to 10,
-        "name" to 11,
-        "type" to 12,
-        "operation" to 19,
-        "value" to 20,
+        "scope" to 19,
+        "name" to 20,
+        "type" to 21,
+        "operation" to 28,
+        "value" to 29,
     )
     private val forSlots = mapOf(
         "startSource" to 10,
@@ -99,4 +99,10 @@ internal object CommandSettingsSlotPolicy {
         }
         return DistributedSettingSlots.slots(fieldKeys.size)
     }
+
+    fun size(type: CommandType): Int = if (type == CommandType.VARIABLE) 54 else 45
+
+    fun backSlot(type: CommandType): Int = size(type) - 9
+
+    fun contextSlot(type: CommandType): Int = size(type) - 5
 }

@@ -36,9 +36,12 @@ class CommandMenuPresentationTest {
     @Test
     fun `variable and for settings use semantic two-dimensional layouts`() {
         assertEquals(
-            listOf(10, 11, 12, 19, 20),
+            listOf(19, 20, 21, 28, 29),
             CommandSettingsSlotPolicy.slots(CommandType.VARIABLE, listOf("scope", "name", "type", "operation", "value")),
         )
+        assertEquals(54, CommandSettingsSlotPolicy.size(CommandType.VARIABLE))
+        assertEquals(45, CommandSettingsSlotPolicy.backSlot(CommandType.VARIABLE))
+        assertEquals(49, CommandSettingsSlotPolicy.contextSlot(CommandType.VARIABLE))
         assertEquals(
             listOf(10, 11, 12, 19, 20, 21, 28),
             CommandSettingsSlotPolicy.slots(

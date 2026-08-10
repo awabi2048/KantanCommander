@@ -15,11 +15,14 @@ class MenuSlotDistributionTest {
 
     @Test
     fun `choice menus center up to three choices and left-pack larger sets`() {
-        assertEquals(listOf(22), ChoiceMenuSlotDistribution.slots(1))
-        assertEquals(listOf(20, 24), ChoiceMenuSlotDistribution.slots(2))
-        assertEquals(listOf(20, 22, 24), ChoiceMenuSlotDistribution.slots(3))
-        assertEquals(listOf(19, 20, 21, 22), ChoiceMenuSlotDistribution.slots(4))
-        assertEquals(listOf(19, 20, 21, 22, 23, 24, 25, 28, 29, 30), ChoiceMenuSlotDistribution.slots(10))
+        assertEquals(ChoiceMenuLayout(45, listOf(22), 36), ChoiceMenuLayoutPolicy.layout(1))
+        assertEquals(ChoiceMenuLayout(45, listOf(20, 24), 36), ChoiceMenuLayoutPolicy.layout(2))
+        assertEquals(ChoiceMenuLayout(45, listOf(20, 22, 24), 36), ChoiceMenuLayoutPolicy.layout(3))
+        assertEquals(ChoiceMenuLayout(45, listOf(19, 20, 21, 22), 36), ChoiceMenuLayoutPolicy.layout(4))
+        assertEquals(
+            ChoiceMenuLayout(54, listOf(19, 20, 21, 22, 23, 24, 25, 28, 29, 30), 45),
+            ChoiceMenuLayoutPolicy.layout(10),
+        )
     }
 
     @Test

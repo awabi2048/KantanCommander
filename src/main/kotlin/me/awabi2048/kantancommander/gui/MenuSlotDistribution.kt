@@ -15,12 +15,15 @@ internal object CommandPickerLayoutPolicy {
  * MWMのChoice画面に合わせ、3択以下は中央対置し、4択以上は本文2行へ左詰めします。
  * 確認画面の対置と、候補一覧の走査順を混同しないための画面ファミリー別規則です。
  */
-internal object ChoiceMenuSlotDistribution {
-    fun slots(count: Int): List<Int> = when (count) {
-        1 -> listOf(22)
-        2 -> listOf(20, 24)
-        3 -> listOf(20, 22, 24)
-        in 4..14 -> leftPackedSlots(count, firstRow = 2, maxRows = 2)
+internal data class ChoiceMenuLayout(val size: Int, val itemSlots: List<Int>, val backSlot: Int)
+
+internal object ChoiceMenuLayoutPolicy {
+    fun layout(count: Int): ChoiceMenuLayout = when (count) {
+        1 -> ChoiceMenuLayout(45, listOf(22), 36)
+        2 -> ChoiceMenuLayout(45, listOf(20, 24), 36)
+        3 -> ChoiceMenuLayout(45, listOf(20, 22, 24), 36)
+        in 4..7 -> ChoiceMenuLayout(45, leftPackedSlots(count, firstRow = 2, maxRows = 1), 36)
+        in 8..14 -> ChoiceMenuLayout(54, leftPackedSlots(count, firstRow = 2, maxRows = 2), 45)
         else -> error("Choice画面の候補数は1～14件である必要があります: count=$count")
     }
 }

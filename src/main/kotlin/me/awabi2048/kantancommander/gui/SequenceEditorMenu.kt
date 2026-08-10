@@ -522,9 +522,12 @@ internal object GraphDiagramRenderer {
  */
 internal object MapCellMaterialPolicy {
     fun material(kind: MapCellKind): Material = when (kind) {
+        MapCellKind.PATH,
+        MapCellKind.BRANCH_PATH,
+        -> Material.WHITE_STAINED_GLASS_PANE
         MapCellKind.ADD -> Material.YELLOW_STAINED_GLASS_PANE
         MapCellKind.LOOP_RETURN_PATH -> Material.LIGHT_BLUE_STAINED_GLASS_PANE
-        else -> Material.WHITE_STAINED_GLASS_PANE
+        MapCellKind.NODE -> error("ノードの素材はコマンド種別から決定するため、経路素材へ変換できません")
     }
 }
 

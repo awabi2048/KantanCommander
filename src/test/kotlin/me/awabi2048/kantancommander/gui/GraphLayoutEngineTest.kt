@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.Test
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
 import org.bukkit.Material
@@ -200,6 +201,7 @@ class GraphLayoutEngineTest {
         assertEquals(Material.LIGHT_BLUE_STAINED_GLASS_PANE, MapCellMaterialPolicy.material(MapCellKind.LOOP_RETURN_PATH))
         assertEquals(Material.WHITE_STAINED_GLASS_PANE, MapCellMaterialPolicy.material(MapCellKind.PATH))
         assertEquals(Material.WHITE_STAINED_GLASS_PANE, MapCellMaterialPolicy.material(MapCellKind.BRANCH_PATH))
+        assertThrows<IllegalStateException> { MapCellMaterialPolicy.material(MapCellKind.NODE) }
     }
 
     @Test
