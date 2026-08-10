@@ -51,19 +51,19 @@
         <dependency>
             <groupId>com.awabi2048</groupId>
             <artifactId>CC-System</artifactId>
-            <version>26.809.1</version>
+            <version>26.810.2</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>awabi2048</groupId>
             <artifactId>my-world-manager</artifactId>
-            <version>26.809.1</version>
+            <version>26.810.1</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
             <groupId>me.awabi2048</groupId>
             <artifactId>MWM-Chanpon</artifactId>
-            <version>26.809.1</version>
+            <version>26.810.1</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
@@ -71,6 +71,12 @@
             <artifactId>junit-jupiter</artifactId>
             <version>5.12.2</version>
             <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.geysermc.geyser</groupId>
+            <artifactId>api</artifactId>
+            <version>2.10.1</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
 

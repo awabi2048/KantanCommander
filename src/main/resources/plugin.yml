@@ -8,6 +8,7 @@ depend:
   - MyWorldManager
 softdepend:
   - MWMChanpon
+  - Geyser-Spigot
 commands:
   kankoma:
     description: Kantan Commander 管理コマンド

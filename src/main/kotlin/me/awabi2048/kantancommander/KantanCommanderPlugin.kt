@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.CCSystemAPI
 import com.awabi2048.ccsystem.api.config.ConfigClassification
+import com.awabi2048.ccsystem.api.config.ConfigMigration
 import com.awabi2048.ccsystem.api.config.ManagedConfigSpec
 import com.awabi2048.ccsystem.api.gui.MenuTargetPolicy
 import com.awabi2048.ccsystem.api.gui.PublicMenuDefinition
@@ -14,6 +15,7 @@ import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.SequenceExecutor
+import me.awabi2048.kantancommander.execution.SummonedEntityTracker
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
@@ -36,6 +38,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var variables: WorldVariableStore
         private set
     lateinit var executor: SequenceExecutor
+        private set
+    lateinit var summonedEntities: SummonedEntityTracker
         private set
     lateinit var programListMenu: ProgramListMenu
         private set
@@ -63,12 +67,20 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 1,
+                    currentVersion = 2,
                     classification = ConfigClassification.MANAGED_CONFIG,
-                    migrations = emptyMap(),
+                    migrations = mapOf(
+                        1 to ConfigMigration { config ->
+                            config.set("execution.max-summoned-entities-per-world", 256)
+                            config.set("execution.max-summoned-entities-server", 2048)
+                        },
+                    ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.max-nodes-per-activation") >= 1)
                         require(config.getInt("execution.max-disk-call-depth") >= 0)
+                        require(config.getInt("execution.max-summoned-entities-per-world") >= 1)
+                        require(config.getInt("execution.max-summoned-entities-server") >=
+                            config.getInt("execution.max-summoned-entities-per-world"))
                         require(config.getInt("timer.minimum-units", 1) == 1)
                         require(config.getInt("timer.maximum-units", 86400) == 86400)
                         require(config.getInt("limits.max-nodes-per-disk") >= 1)
@@ -92,6 +104,10 @@ class KantanCommanderPlugin : JavaPlugin() {
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"))
+        summonedEntities = SummonedEntityTracker(
+            this,
+            dataFolder.resolve("summoned-entities.csv"),
+        )
         executor = SequenceExecutor(this)
 
         programListMenu = ProgramListMenu(this)
@@ -147,6 +163,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
+        pm.registerEvents(summonedEntities, this)
     }
 
     internal fun resetActivationTiming(scriptId: java.util.UUID) {

@@ -90,6 +90,37 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `new semantic commands compile and camera shake is reported as skipped`() {
+        val store = ScriptStore(temp.resolve("new-commands"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "commands")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:pig"
+            params["tags"] = "kc_test"
+        }
+        GraphEditor.append(script.graph, CommandType.PLAY_SOUND).params["sound"] = "minecraft:block.note_block.harp"
+        GraphEditor.append(script.graph, CommandType.APPLY_EFFECT).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+            params["effect"] = "minecraft:speed"
+        }
+        GraphEditor.append(script.graph, CommandType.EQUIP_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+            params["item"] = "minecraft:stone"
+        }
+        GraphEditor.append(script.graph, CommandType.CAMERA_SHAKE).targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("summon minecraft:pig"))
+        assertTrue(body.contains("playsound minecraft:block.note_block.harp"))
+        assertTrue(body.contains("effect give"))
+        assertTrue(body.contains("item replace entity"))
+        assertTrue(result.warnings.any { it.contains("カメラ揺れ") })
+    }
+
+    @Test
     fun `plugin item fails preflight`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "invalid")

@@ -16,6 +16,8 @@ import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.item.DiskItemService
 import me.awabi2048.kantancommander.util.KcI18n
+import me.awabi2048.kantancommander.model.DiskProfile
+import me.awabi2048.kantancommander.model.effectiveProfile
 import org.bukkit.Material
 import org.bukkit.entity.Player
 
@@ -76,6 +78,11 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 style = GuiNameStyle.PRIMARY,
                 lines = listOf(
                     GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
+                    GuiLoreLine.Data(
+                        KcI18n.text(player, "item.profile"),
+                        KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
+                        "§f",
+                    ),
                     GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
                 ),
                 role = GuiElementRole.CONTENT,

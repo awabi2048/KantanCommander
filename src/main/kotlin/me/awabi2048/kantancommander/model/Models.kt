@@ -18,7 +18,14 @@ data class DiskScript(
     var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
     var timer: TimerSetting = TimerSetting(),
     var graph: CommandGraph = CommandGraph.empty(),
+    /** 旧JSONでは欠損するためnullableで保持し、利用時は[effectiveProfile]で通常版へ正規化します。 */
+    var profile: DiskProfile? = DiskProfile.STANDARD,
 )
+
+enum class DiskProfile { STANDARD, SIMPLE }
+
+val DiskScript.effectiveProfile: DiskProfile
+    get() = profile ?: DiskProfile.STANDARD
 
 data class TimerSetting(
     var enabled: Boolean = false,
@@ -76,6 +83,8 @@ data class CommandNode(
     var destinationTargetSpec: TargetSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
+    /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
+    var contextSource: ContextSource? = ContextSource.BASE,
     var snapshot: CommandGraph? = null,
 ) {
     fun string(key: String, default: String = "") = params[key]?.takeIf(String::isNotBlank) ?: default
@@ -83,6 +92,11 @@ data class CommandNode(
     fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
     fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
 }
+
+enum class ContextSource { BASE, PREVIOUS }
+
+val CommandNode.effectiveContextSource: ContextSource
+    get() = contextSource ?: ContextSource.BASE
 
 enum class TargetKind {
     EXECUTOR, ACTIVATOR, INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
@@ -179,6 +193,21 @@ enum class CommandType(
         "mode" to "tellraw", "text" to "", "fadeIn" to "10", "stay" to "60", "fadeOut" to "10"
     )),
     WAIT("command.wait", Material.CLOCK, mapOf("ticks" to "20")),
+    SUMMON_ENTITY("command.summon_entity", Material.ZOMBIE_SPAWN_EGG, mapOf(
+        "entity" to "", "tags" to ""
+    )),
+    PLAY_SOUND("command.play_sound", Material.NOTE_BLOCK, mapOf(
+        "sound" to "", "volume" to "1.0", "pitch" to "1.0"
+    )),
+    APPLY_EFFECT("command.apply_effect", Material.POTION, mapOf(
+        "effect" to "", "level" to "1", "seconds" to "30"
+    )),
+    CAMERA_SHAKE("command.camera_shake", Material.SPYGLASS, mapOf(
+        "intensity" to "1.0", "seconds" to "5.0", "shakeType" to "positional"
+    )),
+    EQUIP_ITEM("command.equip_item", Material.IRON_CHESTPLATE, mapOf(
+        "slot" to "HAND", "item" to ""
+    )),
     CONDITION("command.condition", Material.COMPARATOR, mapOf(
         "kind" to ConditionKind.TARGET_EXISTS.name,
         "inverted" to "false",
