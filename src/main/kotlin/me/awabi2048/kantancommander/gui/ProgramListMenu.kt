@@ -2,8 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiElementRole
-import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntryData
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
@@ -70,20 +70,20 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
         val elements = mutableListOf<MenuElement>()
 
         scripts.drop(page * layout.itemSlots.size).take(layout.itemSlots.size).forEachIndexed { index, script ->
-            elements += KcGui.entry(
+            elements += KcGui.menuEntry(
                 player = player,
                 slot = layout.itemSlots[index],
                 material = Material.MUSIC_DISC_13,
                 name = script.name,
                 style = GuiNameStyle.PRIMARY,
-                lines = listOf(
-                    GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
-                    GuiLoreLine.Data(
+                description = KcI18n.list(player, "gui.programs.entry_description"),
+                data = listOf(
+                    GuiMenuEntryData(KcI18n.text(player, "item.commands"), script.graph.nodes.size),
+                    GuiMenuEntryData(
                         KcI18n.text(player, "item.profile"),
                         KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
-                        "§f",
                     ),
-                    GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
+                    GuiMenuEntryData(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key)),
                 ),
                 role = GuiElementRole.CONTENT,
                 actions = listOf(
@@ -98,18 +98,23 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
         elements += navigationElement(player, layout.previousPageSlot, page > 0, "<", ACTION_PREVIOUS)
         elements += navigationElement(player, layout.nextPageSlot, page < total - 1, ">", ACTION_NEXT)
         elements += KcGui.elements.backEntry(player, layout.backSlot)
-        elements += KcGui.entry(player, layout.infoSlot, Material.BOOK, "${page + 1}/$total", GuiNameStyle.MUTED, role = GuiElementRole.CONTENT)
+        elements += KcGui.menuEntry(
+            player, layout.infoSlot, Material.BOOK, KcI18n.text(player, "gui.programs.page"),
+            GuiNameStyle.MUTED, GuiElementRole.CONTENT,
+            data = listOf(GuiMenuEntryData(KcI18n.text(player, "gui.programs.page"), "${page + 1}/$total")),
+        )
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, "gui.programs.title")), elements)
     }
 
     private fun navigationElement(player: Player, slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {
         return if (enabled) {
-            KcGui.entry(
+            KcGui.menuEntry(
                 player = player,
                 slot = slot,
                 material = Material.ARROW,
                 name = name,
                 role = GuiElementRole.NAVIGATION,
+                description = KcI18n.list(player, "gui.programs.navigation_description"),
                 actions = listOf(GuiMenuActionIntent.AnyClick(actionId, name)),
             )
         } else {
