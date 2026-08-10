@@ -12,6 +12,11 @@ object CommandFeaturePolicy {
         CommandType.DISPLAY_TEXT,
         CommandType.WAIT,
         CommandType.CONTEXT,
+        CommandType.SUMMON_ENTITY,
+        CommandType.PLAY_SOUND,
+        CommandType.APPLY_EFFECT,
+        CommandType.CAMERA_SHAKE,
+        CommandType.EQUIP_ITEM,
     )
 
     fun allows(profile: DiskProfile, type: CommandType): Boolean =

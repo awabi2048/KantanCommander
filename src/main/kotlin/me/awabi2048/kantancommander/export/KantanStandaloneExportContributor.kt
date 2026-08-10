@@ -73,7 +73,9 @@ class KantanStandaloneExportContributor(
                     variableNamespace = namespace,
                     entryFunctionName = compilation.entryFunctionName,
                     functions = compilation.functions.toMap(),
-                )
+                ).also {
+                    compilation.warnings.forEach(plugin.logger::warning)
+                }
             }
         }
         if (errors.isNotEmpty()) {

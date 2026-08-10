@@ -15,6 +15,9 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.execution.ExecutionSemantics
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.Material
 import java.io.File
@@ -38,11 +41,13 @@ class VanillaDatapackExporter(
     ): StandaloneCompilation {
         val exportRoot = root.copy(graph = root.graph.deepCopy())
         val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
         errors += ExecutableScriptValidator.validate(exportRoot, graphLimits)
+        collectWarnings(exportRoot.graph, "root", warnings)
         annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
         validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0)
         return if (errors.isEmpty()) {
-            StandaloneCompilation.Success(compile(exportRoot, entryFunctionName), entryFunctionName)
+            StandaloneCompilation.Success(compile(exportRoot, entryFunctionName), entryFunctionName, warnings.distinct())
         } else {
             StandaloneCompilation.Failure(errors.distinct())
         }
@@ -67,7 +72,7 @@ class VanillaDatapackExporter(
         (compilation as StandaloneCompilation.Success).functions.forEach { (name, content) ->
             functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8)
         }
-        return ExportResult.Success(pack)
+        return ExportResult.Success(pack, compilation.warnings)
     }
 
     private fun validate(
@@ -306,6 +311,7 @@ class VanillaDatapackExporter(
         } else entryCall)
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
+            val nodeExportContext = exportContext(graph, node)
             if (node.type == CommandType.VARIABLE &&
                 node.string("operation") == VariableOperation.STORE_POSITION.name
             ) {
@@ -365,11 +371,15 @@ class VanillaDatapackExporter(
                         lines += "return run function kantan:${nodeFunction(prefix, it)}"
                     } ?: run { lines += "return 1" }
                 }
+                node.type == CommandType.CAMERA_SHAKE -> {
+                    // Java版には命令本体を出せないため、成功だけ記録して後続関数を維持します。
+                    lines += "scoreboard players set ${scoreHolder(node.id)} kc_result 1"
+                }
                 node.type == CommandType.DISK_CALL -> {
                     val snapshotPrefix = snapshotPrefix(prefix, node.id)
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
                     val call = "function kantan:$snapshotPrefix"
-                    lines += storeFunctionResult(node, node.contextOverride?.let { wrapContext(it, call) } ?: call)
+                    lines += storeFunctionResult(node, nodeExportContext?.let { wrapContext(it, call) } ?: call)
                 }
                 node.type == CommandType.CONTEXT -> {
                     node.next?.let {
@@ -390,16 +400,16 @@ class VanillaDatapackExporter(
                     val command = "function kantan:$helper"
                     lines += storeFunctionResult(
                         node,
-                        node.contextOverride?.let { wrapContext(it, command) } ?: command,
+                        nodeExportContext?.let { wrapContext(it, command) } ?: command,
                     )
                 }
                 else -> lower(node, graph)?.let { command ->
                     if (node.type == CommandType.DISPLAY_TEXT && node.string("mode", "tellraw") == "title") {
                         val times = "title ${effectiveTarget(node)} times ${node.int("fadeIn", 10)} " +
                             "${node.int("stay", 60)} ${node.int("fadeOut", 10)}"
-                        lines += node.contextOverride?.let { wrapContext(it, times) } ?: times
+                        lines += nodeExportContext?.let { wrapContext(it, times) } ?: times
                     }
-                    val contextual = node.contextOverride?.let { wrapContext(it, command) } ?: command
+                    val contextual = nodeExportContext?.let { wrapContext(it, command) } ?: command
                     lines += storeResult(node, contextual)
                 }
             }
@@ -460,10 +470,55 @@ class VanillaDatapackExporter(
             "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
             else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text"))}\"}"
         }
+        CommandType.SUMMON_ENTITY -> {
+            val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
+            val nbt = if (tags.isEmpty()) "" else " {Tags:[${tags.joinToString(",") { "\\\"${escape(it)}\\\"" }}]}"
+            "summon ${node.string("entity")} ~ ~ ~$nbt"
+        }
+        CommandType.PLAY_SOUND ->
+            "execute as @a at @s run playsound ${node.string("sound")} master @s ~ ~ ~ " +
+                "${node.double("volume", 1.0)} ${node.double("pitch", 1.0)}"
+        CommandType.APPLY_EFFECT ->
+            "effect give ${effectiveTarget(node)} ${node.string("effect")} ${node.int("seconds", 30)} ${node.int("level", 1) - 1}"
+        CommandType.CAMERA_SHAKE -> null
+        CommandType.EQUIP_ITEM ->
+            "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with ${node.string("item")}"
         CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node, graph)
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
+    }
+
+    private fun equipmentSlot(slot: String) = when (slot) {
+        "OFF_HAND" -> "weapon.offhand"
+        "HEAD" -> "armor.head"
+        "CHEST" -> "armor.chest"
+        "LEGS" -> "armor.legs"
+        "FEET" -> "armor.feet"
+        else -> "weapon.mainhand"
+    }
+
+    /** PREVIOUSは、合流する全経路の指定が一致する場合だけ安全に静的展開します。 */
+    private fun exportContext(graph: CommandGraph, node: CommandNode): ExecutionContextSpec? {
+        fun resolve(current: CommandNode, visited: MutableSet<UUID>): ExecutionContextSpec? {
+            if (!visited.add(current.id)) return current.contextOverride
+            if (current.effectiveContextSource == ContextSource.BASE) return current.contextOverride
+            val predecessors = graph.nodes.values.filter {
+                current.id in listOfNotNull(it.next, it.trueNext, it.falseNext)
+            }
+            val inherited = predecessors.map { resolve(it, visited.toMutableSet()) }.distinct().singleOrNull()
+            return ExecutionSemantics.mergeContexts(inherited, current.contextOverride)
+        }
+        return resolve(node, mutableSetOf())
+    }
+
+    private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
+        graph.nodes.values.forEach { node ->
+            if (node.type == CommandType.CAMERA_SHAKE) {
+                warnings += "$path/${node.id}: カメラ揺れはJava版データパックから省略されました"
+            }
+            node.snapshot?.let { collectWarnings(it, "$path/${node.id}/snapshot", warnings) }
+        }
     }
 
     private fun predicate(node: CommandNode): String = when (
@@ -903,7 +958,7 @@ class VanillaDatapackExporter(
 }
 
 sealed interface ExportResult {
-    data class Success(val directory: File) : ExportResult
+    data class Success(val directory: File, val warnings: List<String> = emptyList()) : ExportResult
     data class Failure(val errors: List<String>) : ExportResult
 }
 
@@ -911,6 +966,7 @@ sealed interface StandaloneCompilation {
     data class Success(
         val functions: Map<String, String>,
         val entryFunctionName: String = functions.keys.first(),
+        val warnings: List<String> = emptyList(),
     ) : StandaloneCompilation
     data class Failure(val errors: List<String>) : StandaloneCompilation
 }

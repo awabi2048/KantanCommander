@@ -93,7 +93,9 @@ class ScriptStore(
     private fun read(file: File): DiskScript? = try {
         gson.fromJson(file.readText(Charsets.UTF_8), DiskScript::class.java)
             ?.takeIf { it.formatVersion == STRUCTURED_FORMAT_VERSION }
-            ?.also { require(validateRecursively(it.graph).isEmpty()) }
+            ?.also {
+                require((validateRecursively(it.graph) + CommandFeaturePolicy.validate(it)).isEmpty())
+            }
     } catch (error: Exception) {
         quarantine(file, error)
         null

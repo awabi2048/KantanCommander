@@ -16,13 +16,16 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.CommandFeaturePolicy
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
 import java.util.Collections
 import java.util.IdentityHashMap
 
 object ExecutableScriptValidator {
     fun validate(script: DiskScript, limits: GraphLimits = GraphLimits()): List<String> {
         val errors = mutableListOf<String>()
+        errors += CommandFeaturePolicy.validate(script)
         if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
             errors += "root: タイマーオフでは常時実行を使用できません"
         }
@@ -96,6 +99,36 @@ object ExecutableScriptValidator {
             }
             CommandType.WAIT ->
                 if (node.int("ticks", 0) < 1) errors += "$path: 待機時間は1tick以上である必要があります"
+            CommandType.SUMMON_ENTITY -> {
+                val key = NamespacedKey.fromString(node.string("entity"))
+                if (key == null) errors += "$path: エンティティ種類が不正です"
+                val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
+                if (tags.any { !it.matches(Regex("[A-Za-z0-9_.:+-]{1,64}")) }) errors += "$path: 召喚タグが不正です"
+            }
+            CommandType.PLAY_SOUND -> {
+                if (NamespacedKey.fromString(node.string("sound")) == null) errors += "$path: サウンドIDが不正です"
+                if (node.double("volume", -1.0) !in 0.0..2.0) errors += "$path: 音量は0.0〜2.0の範囲です"
+                if (node.double("pitch", -1.0) !in 0.5..2.0) errors += "$path: ピッチは0.5〜2.0の範囲です"
+            }
+            CommandType.APPLY_EFFECT -> {
+                val key = NamespacedKey.fromString(node.string("effect"))
+                if (key == null) errors += "$path: エフェクト種類が不正です"
+                if (node.int("level", 0) !in 1..255) errors += "$path: エフェクトレベルは1〜255の範囲です"
+                if (node.int("seconds", 0) !in 1..86_400) errors += "$path: 効果時間は1〜86400秒の範囲です"
+            }
+            CommandType.CAMERA_SHAKE -> {
+                if (node.double("intensity", -1.0) !in 0.1..4.0) errors += "$path: 揺れの強さは0.1〜4.0の範囲です"
+                if (node.double("seconds", -1.0) !in 1.0..10.0) errors += "$path: 揺れ時間は1.0〜10.0秒の範囲です"
+                if (node.string("shakeType") !in setOf("positional", "rotational")) errors += "$path: 揺れ種類が不正です"
+                if (node.targetSpec == null) errors += "$path: カメラ揺れの対象が未設定です"
+            }
+            CommandType.EQUIP_ITEM -> {
+                if (node.targetSpec == null) errors += "$path: 装備変更の対象が未設定です"
+                if (node.string("slot") !in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")) {
+                    errors += "$path: 装備スロットが不正です"
+                }
+                if (Material.matchMaterial(node.string("item")) == null) errors += "$path: 装備アイテムが未設定です"
+            }
             CommandType.CONDITION -> validateCondition(node, path, errors)
             CommandType.CONTEXT -> if (node.contextOverride == null) errors += "$path: コンテキストが未設定です"
             CommandType.DISK_CALL -> if (node.snapshot == null) errors += "$path: 呼び出すディスク内容が未設定です"

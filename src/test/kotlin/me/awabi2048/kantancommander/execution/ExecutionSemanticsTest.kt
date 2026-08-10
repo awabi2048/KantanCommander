@@ -7,6 +7,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.ContextSource
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -30,6 +31,21 @@ class ExecutionSemanticsTest {
         assertEquals(inherited.target, merged.target)
         assertEquals(inherited.position, merged.position)
         assertEquals(override.facing, merged.facing)
+    }
+
+    @Test
+    fun `previous execute context is selected only when requested and node override stays strongest`() {
+        val base = ExecutionContextSpec(position = PositionSpec(PositionKind.DISK))
+        val previous = ExecutionContextSpec(
+            position = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0),
+            target = TargetSpec(TargetKind.NEAREST_PLAYER),
+        )
+        val override = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
+
+        val inherited = requireNotNull(ExecutionSemantics.effectiveContext(base, previous, ContextSource.PREVIOUS, override))
+        assertEquals(previous.position, inherited.position)
+        assertEquals(override.target, inherited.target)
+        assertEquals(base, ExecutionSemantics.effectiveContext(base, previous, ContextSource.BASE, null))
     }
 
     @Test

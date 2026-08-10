@@ -33,6 +33,10 @@ import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.model.CommandFeaturePolicy
+import me.awabi2048.kantancommander.model.effectiveProfile
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import org.bukkit.Material
@@ -54,6 +58,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         val type = context.payload["type"]?.let { runCatching { CommandType.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!CommandFeaturePolicy.allows(script.effectiveProfile, type)) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
                         val sourceId = context.route.payload[SOURCE_ID]?.takeIf(String::isNotBlank)
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                         val edge = context.route.payload[EDGE]?.let {
@@ -231,7 +238,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "field" to MenuActionHandler { context ->
                         val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (field == "item" && node.type == CommandType.GIVE_ITEM) {
+                        if (field == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
                             val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                             plugin.itemSelection.begin(context.player, scriptId, node.id, context.route)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
@@ -303,7 +310,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
-                        if (field in setOf("count", "ticks", "text", "stay", "value", "startValue", "endValue", "stepValue")) {
+                        if (field == "contextSource") {
+                            updateNode(context.route) {
+                                it.contextSource = if (it.effectiveContextSource == ContextSource.BASE) {
+                                    ContextSource.PREVIOUS
+                                } else ContextSource.BASE
+                            }
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field in setOf(
+                                "count", "ticks", "text", "stay", "value", "startValue", "endValue", "stepValue",
+                                "entity", "tags", "sound", "volume", "pitch", "effect", "level", "seconds",
+                                "intensity", "shakeType", "slot",
+                            )) {
                             showFieldDialog(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -580,6 +599,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             GraphEditor.isInsideFor(it, sourceId, edge ?: GraphEditor.Edge.ENTRY)
         } == true
         val types = CommandType.entries.filter { type ->
+            if (script != null && !CommandFeaturePolicy.allows(script.effectiveProfile, type)) return@filter false
             when (type) {
                 CommandType.FOR_END -> false
                 CommandType.MERGE -> GraphEditor.canAppendMerge(script?.graph, mergeConditionId)
@@ -1112,6 +1132,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "startValue" -> FieldDialogDefinition("field_start", "0", false)
             "endValue" -> FieldDialogDefinition("field_end", "0", false)
             "stepValue" -> FieldDialogDefinition("field_step", "1", false)
+            "entity" -> FieldDialogDefinition("field_entity", "minecraft:pig", false)
+            "tags" -> FieldDialogDefinition("field_tags", "", false)
+            "sound" -> FieldDialogDefinition("field_sound", "minecraft:block.note_block.harp", false)
+            "volume" -> FieldDialogDefinition("field_volume", "1.0", false)
+            "pitch" -> FieldDialogDefinition("field_pitch", "1.0", false)
+            "effect" -> FieldDialogDefinition("field_effect", "minecraft:speed", false)
+            "level" -> FieldDialogDefinition("field_level", "1", true)
+            "seconds" -> FieldDialogDefinition("field_seconds", "30", true)
+            "intensity" -> FieldDialogDefinition("field_intensity", "1.0", false)
+            "shakeType" -> FieldDialogDefinition("field_shake_type", "positional", false)
+            "slot" -> FieldDialogDefinition("field_equipment_slot", "HAND", false)
             else -> return
         }
         val title = KcI18n.text(player, "gui.dialog.${definition.key}")
@@ -1670,7 +1701,8 @@ object EditorMenuLayout {
         return rowSlots.subList(start, start + count)
     }
 
-    fun fields(type: CommandType): List<EditorField> = when (type) {
+    fun fields(type: CommandType): List<EditorField> {
+        val fields = when (type) {
         CommandType.TELEPORT -> listOf(
             field("target", "gui.field.target", Material.PLAYER_HEAD) {
                 it.targetSpec?.kind?.name ?: "未設定"
@@ -1708,6 +1740,37 @@ object EditorMenuLayout {
             field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.WAIT -> listOf(field("ticks", "gui.field.wait", Material.CLOCK))
+        CommandType.SUMMON_ENTITY -> listOf(
+            field("entity", "gui.field.entity", Material.ZOMBIE_SPAWN_EGG),
+            field("tags", "gui.field.tags", Material.NAME_TAG),
+            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+        )
+        CommandType.PLAY_SOUND -> listOf(
+            field("sound", "gui.field.sound", Material.NOTE_BLOCK),
+            field("volume", "gui.field.volume", Material.JUKEBOX),
+            field("pitch", "gui.field.pitch", Material.NOTE_BLOCK),
+            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+        )
+        CommandType.APPLY_EFFECT -> listOf(
+            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.name ?: "未設定" },
+            field("effect", "gui.field.effect", Material.POTION),
+            field("level", "gui.field.level", Material.GLOWSTONE_DUST),
+            field("seconds", "gui.field.seconds", Material.CLOCK),
+            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+        )
+        CommandType.CAMERA_SHAKE -> listOf(
+            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.name ?: "未設定" },
+            field("intensity", "gui.field.intensity", Material.SPYGLASS),
+            field("seconds", "gui.field.seconds", Material.CLOCK),
+            field("shakeType", "gui.field.shake_type", Material.COMPASS),
+            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+        )
+        CommandType.EQUIP_ITEM -> listOf(
+            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.name ?: "未設定" },
+            field("slot", "gui.field.equipment_slot", Material.ARMOR_STAND),
+            field("item", "gui.field.item", Material.CHEST),
+            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+        )
         CommandType.CONDITION -> listOf(
             field("inverted", "gui.field.inverted", Material.REDSTONE_TORCH) { if (it.boolean("inverted")) "オン" else "オフ" },
             field("kind", "gui.field.condition_kind", Material.COMPARATOR),
@@ -1752,6 +1815,13 @@ object EditorMenuLayout {
                 it.boolean("inclusiveEnd", true).toString()
             },
         )
+        }
+        if (type in setOf(CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE, CommandType.WAIT)) {
+            return fields
+        }
+        return fields + field("contextSource", "gui.field.context_source", Material.COMPARATOR) {
+            it.effectiveContextSource.name
+        }
     }
 
     private fun field(key: String, label: String, material: Material, value: (CommandNode) -> String = { it.string(key, "未設定") }) =

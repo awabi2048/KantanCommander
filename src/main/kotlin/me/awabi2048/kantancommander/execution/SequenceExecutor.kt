@@ -18,10 +18,15 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.effectiveContextSource
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
+import org.bukkit.Registry
+import org.bukkit.SoundCategory
 import org.bukkit.entity.Entity
 import org.bukkit.entity.LivingEntity
 import org.bukkit.entity.Player
@@ -31,6 +36,7 @@ import java.util.UUID
 import java.util.logging.Level
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.item.ItemStackCodec
+import org.bukkit.inventory.EquipmentSlot
 
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private val activeRoots = mutableSetOf<UUID>()
@@ -113,35 +119,42 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 node.int("ticks", 20).coerceAtLeast(1).toLong(),
             )
             CommandType.CONDITION -> {
+                val effectiveContext = effectiveContext(node, session)
                 val rawResult = evaluateCondition(
                     node,
                     session,
-                    ExecutionSemantics.mergeContexts(session.context, node.contextOverride),
+                    effectiveContext,
                 )
                 val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
+                session.previousContext = effectiveContext
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, true)
             }
             CommandType.CONTEXT -> {
-                session.context = ExecutionSemantics.mergeContexts(session.context, contextFrom(node))
+                session.context = effectiveContext(node, session)
+                session.previousContext = session.context
                 next(node.next, true)
             }
             CommandType.DISK_CALL -> {
                 val callerContext = session.context
-                session.context = ExecutionSemantics.mergeContexts(callerContext, node.contextOverride)
+                val callerPrevious = session.previousContext
+                session.context = effectiveContext(node, session)
                 runDiskCall(node, session, depth) { success ->
                     session.context = callerContext
+                    session.previousContext = callerPrevious
                     next(node.next, success)
                 }
             }
-            CommandType.VARIABLE -> next(
-                node.next,
-                executeVariable(
+            CommandType.VARIABLE -> {
+                val effectiveContext = effectiveContext(node, session)
+                val success = executeVariable(
                     node,
                     session,
-                    ExecutionSemantics.mergeContexts(session.context, node.contextOverride),
-                ),
-            )
+                    effectiveContext,
+                )
+                if (success) session.previousContext = effectiveContext
+                next(node.next, success)
+            }
             CommandType.MERGE -> next(node.next, true)
             CommandType.FOR_START -> beginFor(script, graph, node, session, depth, done)
             CommandType.FOR_END -> finishForIteration(script, graph, node, session, depth, done)
@@ -269,14 +282,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
-        val effectiveContext = ExecutionSemantics.mergeContexts(session.context, node.contextOverride)
+        val effectiveContext = effectiveContext(node, session)
         val targets = resolveTargets(effectiveContext, node.targetSpec, session)
         val effectiveOrigin = if (effectiveContext?.position != null) {
             resolvePosition(effectiveContext.position, session, effectiveContext) ?: return false
         } else {
             session.origin
         }
-        when (node.type) {
+        val success = when (node.type) {
             CommandType.TELEPORT -> {
                 if (targets.isEmpty()) return false
                 val destination = node.destinationTargetSpec
@@ -328,8 +341,68 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
                 true
             }
+            CommandType.SUMMON_ENTITY -> {
+                if (!plugin.summonedEntities.canSummon(effectiveOrigin.world.uid)) return false
+                val key = NamespacedKey.fromString(node.string("entity")) ?: return false
+                val type = Registry.ENTITY_TYPE.get(key) ?: return false
+                val spawn = effectiveOrigin.clone()
+                effectiveContext?.facing?.let { applyFacing(spawn, it, effectiveContext, session) }
+                val entity = effectiveOrigin.world.spawnEntity(spawn, type)
+                node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
+                    .forEach(entity::addScoreboardTag)
+                plugin.summonedEntities.register(entity, session.rootId)
+                true
+            }
+            CommandType.PLAY_SOUND -> {
+                val sound = node.string("sound")
+                if (NamespacedKey.fromString(sound) == null) return false
+                val volume = node.double("volume", 1.0).toFloat()
+                val pitch = node.double("pitch", 1.0).toFloat()
+                // 完全一括再生は各プレイヤー位置から鳴らし、距離減衰で聞こえない参加者を作りません。
+                effectiveOrigin.world.players.forEach {
+                    it.playSound(it.location, sound, SoundCategory.MASTER, volume, pitch)
+                }
+                true
+            }
+            CommandType.APPLY_EFFECT -> {
+                val key = NamespacedKey.fromString(node.string("effect")) ?: return false
+                val effect = Registry.EFFECT.get(key) ?: return false
+                val applicable = targets.filterIsInstance<LivingEntity>()
+                if (applicable.isEmpty()) return false
+                applicable.forEach {
+                    it.addPotionEffect(org.bukkit.potion.PotionEffect(
+                        effect,
+                        node.int("seconds", 30) * 20,
+                        node.int("level", 1) - 1,
+                    ))
+                }
+                true
+            }
+            CommandType.CAMERA_SHAKE -> {
+                targets.filterIsInstance<Player>().forEach {
+                    CameraShakeService.apply(
+                        plugin,
+                        it,
+                        node.double("intensity", 1.0).toFloat(),
+                        node.double("seconds", 5.0).toFloat(),
+                        node.string("shakeType", "positional"),
+                    )
+                }
+                true
+            }
+            CommandType.EQUIP_ITEM -> {
+                val material = Material.matchMaterial(node.string("item")) ?: return false
+                val template = ItemStackCodec.decode(node.string("itemData")) ?: ItemStack(material)
+                val slot = runCatching { EquipmentSlot.valueOf(node.string("slot")) }.getOrNull() ?: return false
+                val applicable = targets.filterIsInstance<LivingEntity>().mapNotNull { it.equipment }
+                if (applicable.isEmpty()) return false
+                applicable.forEach { it.setItem(slot, template.clone()) }
+                true
+            }
             else -> true
         }
+        if (success) session.previousContext = effectiveContext
+        success
     }.onFailure {
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", it)
     }.getOrDefault(false)
@@ -595,6 +668,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
 
+    /** 現在ノードの明示設定を最優先し、PREVIOUS指定時だけ直前の有効execute指定を基準にします。 */
+    private fun effectiveContext(node: CommandNode, session: ExecutionSession): ExecutionContextSpec? {
+        return ExecutionSemantics.effectiveContext(
+            session.context,
+            session.previousContext,
+            node.effectiveContextSource,
+            node.contextOverride,
+        )
+    }
+
     private fun resolvePosition(
         spec: PositionSpec,
         session: ExecutionSession,
@@ -703,6 +786,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val worldId: UUID,
         var executed: Int = 0,
         var context: ExecutionContextSpec? = null,
+        var previousContext: ExecutionContextSpec? = null,
         val results: MutableMap<UUID, Boolean> = mutableMapOf(),
         val temporaryVariables: MutableMap<String, WorldVariableValue> = mutableMapOf(),
         val loops: MutableList<LoopFrame> = mutableListOf(),
@@ -751,6 +835,16 @@ internal object ExecutionSemantics {
             facing = override.facing ?: inherited.facing,
         )
     }
+
+    fun effectiveContext(
+        base: ExecutionContextSpec?,
+        previous: ExecutionContextSpec?,
+        source: ContextSource,
+        override: ExecutionContextSpec?,
+    ): ExecutionContextSpec? = mergeContexts(
+        if (source == ContextSource.PREVIOUS) previous ?: base else base,
+        override,
+    )
 
     fun withinForRange(
         value: Long,
