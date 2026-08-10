@@ -7,6 +7,9 @@ import com.awabi2048.ccsystem.api.gui.GuiLoreFrame
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiLoreSpec
 import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntryData
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntryOption
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntrySpec
 import com.awabi2048.ccsystem.api.gui.GuiStructuredMenuEntrySpec
 import com.awabi2048.ccsystem.api.gui.GuiNameSpec
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
@@ -86,6 +89,41 @@ object KcGui {
                 amount = 1,
             ),
             actions = actions,
+        ),
+    )
+
+    /**
+     * Kantan Commanderの通常アイコンを、表示とクリック受付が分離しないCC-Systemの
+     * 意味データ契約から生成します。色や区切りを画面側で手組みしないための正規入口です。
+     */
+    fun menuEntry(
+        player: Player,
+        slot: Int,
+        material: Material,
+        name: String,
+        style: GuiNameStyle = GuiNameStyle.DEFAULT,
+        role: GuiElementRole = GuiElementRole.ACTION,
+        description: List<String> = emptyList(),
+        data: List<GuiMenuEntryData> = emptyList(),
+        options: List<GuiMenuEntryOption> = emptyList(),
+        warnings: List<String> = emptyList(),
+        dangers: List<String> = emptyList(),
+        actions: List<GuiMenuActionIntent> = emptyList(),
+        glint: Boolean? = null,
+    ) = elements.menuEntry(
+        player,
+        GuiMenuEntrySpec(
+            slot = slot,
+            material = material,
+            name = GuiNameSpec.Text(name, style),
+            role = role,
+            description = description,
+            data = data,
+            options = options,
+            warnings = warnings,
+            dangers = dangers,
+            actions = actions,
+            glint = glint,
         ),
     )
 

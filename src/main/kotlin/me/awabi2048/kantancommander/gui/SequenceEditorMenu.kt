@@ -6,9 +6,12 @@ import com.awabi2048.ccsystem.api.gui.GuiItemSpec
 import com.awabi2048.ccsystem.api.gui.GuiLoreBlock
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiLoreSpec
+import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntryData
 import com.awabi2048.ccsystem.api.gui.GuiMenuDisplaySpec
 import com.awabi2048.ccsystem.api.gui.GuiNameSpec
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
+import com.awabi2048.ccsystem.api.gui.GuiValueTone
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
 import com.awabi2048.ccsystem.api.gui.MenuActionContext
@@ -18,6 +21,7 @@ import com.awabi2048.ccsystem.api.gui.MenuAcceptedClicks
 import com.awabi2048.ccsystem.api.gui.MenuActionBranch
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuInteraction
+import com.awabi2048.ccsystem.api.gui.MenuGesture
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
@@ -144,53 +148,75 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             val node = cell.nodeId?.let(script.graph.nodes::get)
             elements += if (node != null) commandElement(player, slot, node) else pathElement(player, slot, cell)
         }
-        val activationLore = mutableListOf<GuiLoreLine>(
-            GuiLoreLine.Data(KcI18n.text(player, "gui.editor.current"), KcI18n.text(player, script.activation.key), "§f"),
-        )
-        if (script.timer.enabled) {
-            activationLore += KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.activation"))
-            elements += action(
-                36,
-                if (script.activation == me.awabi2048.kantancommander.model.ActivationMode.NEEDS_REDSTONE) Material.LEVER else Material.REDSTONE_TORCH,
-                KcI18n.text(player, "gui.editor.activation"),
-                "activation",
-                activationLore,
-            )
-        } else {
-            elements += MenuElement(
-                36,
-                KcGui.item(
-                    Material.LEVER,
-                    KcI18n.text(player, "gui.editor.activation"),
-                    GuiNameStyle.PRIMARY,
-                    activationLore,
-                    GuiElementRole.CONTENT,
-                ),
-                GuiElementRole.CONTENT,
-            )
-        }
-        elements += action(
-            37,
-            Material.CLOCK,
-            KcI18n.text(player, "gui.editor.timer"),
-            "timer",
+        val activationActions = if (script.timer.enabled) {
             listOf(
-                GuiLoreLine.Data(
-                    KcI18n.text(player, "gui.editor.current"),
-                    if (script.timer.enabled) {
-                        KcI18n.text(player, "gui.editor.interval_units", mapOf("value" to script.timer.intervalUnits))
-                    } else KcI18n.text(player, "gui.editor.disabled"),
-                    "§f",
+                GuiMenuActionIntent.AnyClick(
+                    actionId = "activation",
+                    label = KcI18n.text(player, "gui.editor.activation_action"),
                 ),
-                KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.timer")),
+            )
+        } else emptyList()
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = 36,
+            material = if (script.activation == me.awabi2048.kantancommander.model.ActivationMode.NEEDS_REDSTONE) {
+                Material.LEVER
+            } else Material.REDSTONE_TORCH,
+            name = KcI18n.text(player, "gui.editor.activation"),
+            style = GuiNameStyle.PRIMARY,
+            role = if (activationActions.isEmpty()) GuiElementRole.CONTENT else GuiElementRole.ACTION,
+            description = KcI18n.list(player, "gui.editor.activation_description"),
+            data = listOf(
+                GuiMenuEntryData(
+                    KcI18n.text(player, "gui.editor.activation_mode_label"),
+                    KcI18n.text(player, script.activation.key),
+                    GuiValueTone.DEFAULT,
+                ),
+            ),
+            warnings = if (script.timer.enabled) emptyList() else {
+                KcI18n.list(player, "gui.editor.activation_timer_required")
+            },
+            actions = activationActions,
+        )
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = 37,
+            material = Material.CLOCK,
+            name = KcI18n.text(player, "gui.editor.timer"),
+            style = GuiNameStyle.PRIMARY,
+            description = KcI18n.list(player, "gui.editor.timer_description"),
+            data = buildList {
+                add(
+                    GuiMenuEntryData(
+                        KcI18n.text(player, "gui.editor.state_label"),
+                        KcI18n.text(player, if (script.timer.enabled) "gui.editor.enabled" else "gui.editor.disabled"),
+                        if (script.timer.enabled) GuiValueTone.SUCCESS else GuiValueTone.MUTED,
+                    ),
+                )
+                if (script.timer.enabled) {
+                    add(
+                        GuiMenuEntryData(
+                            KcI18n.text(player, "gui.editor.interval_label"),
+                            KcI18n.text(player, "gui.editor.interval_units", mapOf("value" to script.timer.intervalUnits)),
+                            GuiValueTone.DEFAULT,
+                        ),
+                    )
+                }
+            },
+            actions = listOf(
+                GuiMenuActionIntent.AnyClick("timer", KcI18n.text(player, "gui.editor.timer_action")),
             ),
         )
-        elements += action(
-            38,
-            Material.COMPASS,
-            KcI18n.text(player, "gui.editor.center"),
-            "center",
-            listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.center"))),
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = 38,
+            material = Material.COMPASS,
+            name = KcI18n.text(player, "gui.editor.center"),
+            style = GuiNameStyle.PRIMARY,
+            description = KcI18n.list(player, "gui.editor.center_description"),
+            actions = listOf(
+                GuiMenuActionIntent.AnyClick("center", KcI18n.text(player, "gui.editor.center_action")),
+            ),
         )
         elements += KcGui.elements.menuDisplay(
             GuiMenuDisplaySpec(
@@ -225,66 +251,83 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             ),
         )
         if (placement(route) != null) {
-            elements += action(
-                40,
-                Material.MUSIC_DISC_13,
-                KcI18n.text(player, "gui.editor.output"),
-                "output",
-                listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.output_copy"))),
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = 40,
+                material = Material.MUSIC_DISC_13,
+                name = KcI18n.text(player, "gui.editor.output"),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, "gui.editor.output_description"),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, "gui.editor.output_copy")),
+                ),
             )
-            elements += action(
-                41,
-                Material.RED_CONCRETE,
-                KcI18n.text(player, "gui.editor.remove"),
-                "remove",
-                listOf(
-                    GuiLoreLine.Warning(KcI18n.text(player, "gui.editor.remove_warning")),
-                    KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.remove")),
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = 41,
+                material = Material.RED_CONCRETE,
+                name = KcI18n.text(player, "gui.editor.remove"),
+                style = GuiNameStyle.DANGER,
+                description = KcI18n.list(player, "gui.editor.remove_description"),
+                warnings = listOf(KcI18n.text(player, "gui.editor.remove_warning")),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick("remove", KcI18n.text(player, "gui.editor.remove_action")),
                 ),
             )
         }
-        elements += action(
-            42,
-            Material.BOOK,
-            KcI18n.text(player, "gui.editor.save"),
-            "save_library",
-            listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.save"))),
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = 42,
+            material = Material.BOOK,
+            name = KcI18n.text(player, "gui.editor.save"),
+            style = GuiNameStyle.PRIMARY,
+            description = KcI18n.list(player, "gui.editor.save_description"),
+            actions = listOf(
+                GuiMenuActionIntent.AnyClick("save_library", KcI18n.text(player, "gui.editor.save_action")),
+            ),
         )
-        elements += action(
-            44,
-            Material.RECOVERY_COMPASS,
-            KcI18n.text(player, "gui.editor.navigate"),
-            "navigate",
-            listOf(
-                KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.move_left")),
-                KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.editor.move_right")),
-                KcGui.action(player, "lore.click.shift_left", KcI18n.text(player, "gui.editor.move_up")),
-                KcGui.action(player, "lore.click.shift_right", KcI18n.text(player, "gui.editor.move_down")),
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = 44,
+            material = Material.RECOVERY_COMPASS,
+            name = KcI18n.text(player, "gui.editor.navigate"),
+            style = GuiNameStyle.PRIMARY,
+            description = KcI18n.list(player, "gui.editor.navigate_description"),
+            actions = listOf(
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_LEFT, KcI18n.text(player, "gui.editor.move_left")),
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_RIGHT, KcI18n.text(player, "gui.editor.move_right")),
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_LEFT, KcI18n.text(player, "gui.editor.move_up")),
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_RIGHT, KcI18n.text(player, "gui.editor.move_down")),
             ),
         )
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.title")), elements)
     }
 
-    private fun commandElement(player: Player, slot: Int, node: CommandNode) = MenuElement(
-        slot,
-        KcGui.item(
-            node.type.icon,
-            KcI18n.text(player, node.type.key),
-            GuiNameStyle.DEFAULT,
-            listOf(
-                GuiLoreLine.Data(KcI18n.text(player, "gui.editor.setting"), commandSummary(player, node), "§f"),
-                KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.setting")),
-                KcGui.action(player, "lore.click.right", KcI18n.text(player, "gui.editor.remove")),
+    private fun commandElement(player: Player, slot: Int, node: CommandNode) = KcGui.menuEntry(
+        player = player,
+        slot = slot,
+        material = node.type.icon,
+        name = KcI18n.text(player, node.type.key),
+        role = GuiElementRole.ACTION,
+        description = KcI18n.list(player, "${node.type.key}_description"),
+        data = listOf(
+            GuiMenuEntryData(
+                KcI18n.text(player, "gui.editor.settings_summary_label"),
+                commandSummary(player, node),
             ),
-            GuiElementRole.CONTENT,
         ),
-        GuiElementRole.CONTENT,
-        "command",
-        mapOf("nodeId" to node.id.toString()),
-        interaction = MenuInteraction.Branches(
-            listOf(
-                MenuActionBranch("command", MenuAcceptedClicks.PLAIN_LEFT, mapOf("nodeId" to node.id.toString())),
-                MenuActionBranch("command", MenuAcceptedClicks.PLAIN_RIGHT, mapOf("nodeId" to node.id.toString())),
+        actions = listOf(
+            GuiMenuActionIntent.GestureAction(
+                "command",
+                MenuGesture.PLAIN_LEFT,
+                KcI18n.text(player, "gui.editor.edit_action"),
+                mapOf("nodeId" to node.id.toString()),
+            ),
+            GuiMenuActionIntent.GestureAction(
+                "command",
+                MenuGesture.PLAIN_RIGHT,
+                KcI18n.text(player, "gui.editor.delete_action"),
+                mapOf("nodeId" to node.id.toString()),
             ),
         ),
     )
@@ -345,21 +388,27 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun pathElement(player: Player, slot: Int, cell: MapCell): MenuElement {
         val insertionTarget = cell.insertionTarget
         if (insertionTarget != null) {
-            return MenuElement(
-                slot,
-                KcGui.item(
-                    MapCellMaterialPolicy.material(cell.kind),
-                    KcI18n.text(player, if (cell.kind == MapCellKind.ADD) "gui.editor.add" else "gui.editor.insert"),
-                    GuiNameStyle.PRIMARY,
-                    listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, if (cell.kind == MapCellKind.ADD) "gui.editor.add" else "gui.editor.insert"))),
-                    GuiElementRole.ACTION,
+            val addAtEnd = cell.kind == MapCellKind.ADD
+            return KcGui.menuEntry(
+                player = player,
+                slot = slot,
+                material = MapCellMaterialPolicy.material(cell.kind),
+                name = KcI18n.text(player, if (addAtEnd) "gui.editor.add" else "gui.editor.insert"),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(
+                    player,
+                    if (addAtEnd) "gui.editor.add_description" else "gui.editor.insert_description",
                 ),
-                GuiElementRole.ACTION,
-                "add",
-                mapOf(
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick(
+                        actionId = "add",
+                        label = KcI18n.text(player, if (addAtEnd) "gui.editor.add" else "gui.editor.insert"),
+                        payload = mapOf(
                     "sourceId" to insertionTarget.sourceId?.toString().orEmpty(),
                     "edge" to insertionTarget.edge.name,
                     "mergeConditionId" to insertionTarget.mergeConditionId?.toString().orEmpty(),
+                        ),
+                    ),
                 ),
             )
         }
