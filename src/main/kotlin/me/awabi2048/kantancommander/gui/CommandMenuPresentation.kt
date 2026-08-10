@@ -72,20 +72,20 @@ internal object CommandPresentationPolicy {
 /** 設定数が多いコマンドは、意味上の組を崩さない専用配置を使用します。 */
 internal object CommandSettingsSlotPolicy {
     private val variableSlots = mapOf(
-        "scope" to 11,
-        "name" to 13,
-        "type" to 15,
-        "operation" to 20,
-        "value" to 24,
+        "scope" to 10,
+        "name" to 11,
+        "type" to 12,
+        "operation" to 19,
+        "value" to 20,
     )
     private val forSlots = mapOf(
-        "startSource" to 11,
-        "endSource" to 13,
-        "stepSource" to 15,
-        "startValue" to 20,
-        "endValue" to 22,
-        "stepValue" to 24,
-        "inclusiveEnd" to 31,
+        "startSource" to 10,
+        "endSource" to 11,
+        "stepSource" to 12,
+        "startValue" to 19,
+        "endValue" to 20,
+        "stepValue" to 21,
+        "inclusiveEnd" to 28,
     )
 
     fun slots(type: CommandType, fieldKeys: List<String>): List<Int> {

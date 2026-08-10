@@ -817,7 +817,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 Triple(PositionKind.WORLD_VARIABLE, Material.ENDER_CHEST, KcI18n.text(player, "gui.field.world_variable")),
             )
             options.mapIndexed { index, option ->
-                choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+                choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.second, option.third,
                     "select", mapOf("kind" to option.first.name))
             }.toMutableList()
         }
@@ -836,7 +836,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(FacingKind.ROTATION, Material.REPEATER, KcI18n.text(player, "gui.option.numeric")),
         )
         val elements = options.mapIndexed { index, option ->
-            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+            choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.second, option.third,
                 "select", mapOf("kind" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
@@ -846,8 +846,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderTimer(player: Player, route: MenuRoute): InventoryMenuView {
         val script = script(route)
         val elements = mutableListOf(
-            choiceElement(player, 21, Material.REDSTONE_TORCH, KcI18n.text(player, "gui.editor.disabled"), "off"),
-            choiceElement(player, 23, Material.CLOCK, KcI18n.text(player, "gui.editor.enabled"), "on",
+            choiceElement(player, 20, Material.REDSTONE_TORCH, KcI18n.text(player, "gui.editor.disabled"), "off"),
+            choiceElement(player, 24, Material.CLOCK, KcI18n.text(player, "gui.editor.enabled"), "on",
                 dataLabel = KcI18n.text(player, "gui.editor.interval_label"),
                 dataValue = KcI18n.text(player, "gui.editor.interval_units", mapOf("value" to (script?.timer?.intervalUnits ?: 1)))),
             backElement(player),
@@ -864,7 +864,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(ConditionKind.ITEM_POSSESSION, Material.CHEST, KcI18n.text(player, "condition.item_possession")),
         )
         val elements = options.mapIndexed { index, option ->
-            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+            choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.second, option.third,
                 "select", mapOf("kind" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
@@ -910,7 +910,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 DetailOption(Material.DIAMOND, "gui.field.count", "count", node.string("count", "1")),
             )
         }
-        val slots = EditorMenuLayout.centeredSlots(options.size)
+        val slots = ChoiceMenuSlotDistribution.slots(options.size)
         val elements = options.mapIndexed { index, option ->
             choiceElement(player, slots[index], option.material, KcI18n.text(player, option.nameKey), option.action,
                 dataLabel = KcI18n.text(player, option.nameKey), dataValue = localizedValue(player, option.value))
@@ -933,7 +933,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             }
         }
         val elements = options.mapIndexed { index, option ->
-            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.material,
+            choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.material,
                 KcI18n.text(player, option.nameKey), option.action)
         }.toMutableList()
         elements += backElement(player)
@@ -962,7 +962,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(VariableType.ENTITY, Material.PLAYER_HEAD, KcI18n.text(player, "gui.option.entity_reference")),
         )
         val elements = options.mapIndexed { index, option ->
-            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+            choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.second, option.third,
                 "select", mapOf("type" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
@@ -983,7 +983,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(VariableOperation.CLEAR, Material.BARRIER, KcI18n.text(player, "gui.option.clear")),
         ).filter { it.first in allowedVariableOperations(type) }
         val elements = options.mapIndexed { index, option ->
-            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+            choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.second, option.third,
                 "select", mapOf("operation" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
@@ -1024,7 +1024,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple("actionbar", Material.NAME_TAG, KcI18n.text(player, "gui.option.actionbar")),
         )
         val elements = options.mapIndexed { index, option ->
-            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+            choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.second, option.third,
                 "select", mapOf("mode" to option.first))
         }.toMutableList()
         elements += backElement(player)
@@ -1034,13 +1034,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderContextOverride(player: Player, route: MenuRoute): InventoryMenuView {
         val context = node(route)?.contextOverride
         val options = listOf(
-            ContextOption(20, Material.PLAYER_HEAD, KcI18n.text(player, "gui.option.executor"), "executor", state(player, context?.executor != null)),
-            ContextOption(21, Material.TARGET, KcI18n.text(player, "gui.field.target"), "target", state(player, context?.target != null)),
-            ContextOption(22, Material.COMPASS, KcI18n.text(player, "gui.field.position"), "position", state(player, context?.position != null)),
-            ContextOption(23, Material.SPYGLASS, KcI18n.text(player, "gui.field.facing"), "facing", state(player, context?.facing != null)),
+            ContextOption(19, Material.PLAYER_HEAD, KcI18n.text(player, "gui.option.executor"), "executor", state(player, context?.executor != null)),
+            ContextOption(20, Material.TARGET, KcI18n.text(player, "gui.field.target"), "target", state(player, context?.target != null)),
+            ContextOption(21, Material.COMPASS, KcI18n.text(player, "gui.field.position"), "position", state(player, context?.position != null)),
+            ContextOption(22, Material.SPYGLASS, KcI18n.text(player, "gui.field.facing"), "facing", state(player, context?.facing != null)),
             ContextOption(24, Material.GRAY_DYE, KcI18n.text(player, "gui.option.inherit_all"), "inherit", KcI18n.text(player, "gui.option.clear_context")),
             ContextOption(
-                31,
+                28,
                 Material.COMPARATOR,
                 KcI18n.text(player, "gui.field.context_source"),
                 "source",
@@ -1717,14 +1717,6 @@ data class EditorField(
 )
 
 object EditorMenuLayout {
-    private val rowSlots = (18..26).toList()
-
-    fun centeredSlots(count: Int): List<Int> {
-        require(count in 1..9)
-        val start = (rowSlots.size - count) / 2
-        return rowSlots.subList(start, start + count)
-    }
-
     fun fields(type: CommandType): List<EditorField> {
         val fields = when (type) {
         CommandType.TELEPORT -> listOf(

@@ -36,11 +36,11 @@ class CommandMenuPresentationTest {
     @Test
     fun `variable and for settings use semantic two-dimensional layouts`() {
         assertEquals(
-            listOf(11, 13, 15, 20, 24),
+            listOf(10, 11, 12, 19, 20),
             CommandSettingsSlotPolicy.slots(CommandType.VARIABLE, listOf("scope", "name", "type", "operation", "value")),
         )
         assertEquals(
-            listOf(11, 13, 15, 20, 22, 24, 31),
+            listOf(10, 11, 12, 19, 20, 21, 28),
             CommandSettingsSlotPolicy.slots(
                 CommandType.FOR_START,
                 listOf("startSource", "endSource", "stepSource", "startValue", "endValue", "stepValue", "inclusiveEnd"),
