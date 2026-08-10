@@ -18,6 +18,9 @@ object KcI18n {
     fun text(player: Player?, key: String, vars: Map<String, Any> = emptyMap()): String =
         com.awabi2048.ccsystem.CCSystem.getAPI().getI18nString(player, "$PREFIX.$key", vars)
 
+    fun list(player: Player?, key: String, vars: Map<String, Any> = emptyMap()): List<String> =
+        com.awabi2048.ccsystem.CCSystem.getAPI().getI18nStringList(player, "$PREFIX.$key", vars)
+
     fun component(player: Player?, key: String, vars: Map<String, Any> = emptyMap()): Component =
         com.awabi2048.ccsystem.CCSystem.getAPI().getI18nComponent(player, "$PREFIX.$key", vars)
 }

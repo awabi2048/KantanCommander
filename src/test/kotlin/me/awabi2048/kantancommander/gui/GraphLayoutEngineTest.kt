@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer
+import org.bukkit.Material
 
 class GraphLayoutEngineTest {
     @Test
@@ -191,6 +192,24 @@ class GraphLayoutEngineTest {
         assertTrue(diagram.contains("■"))
         assertFalse(diagram.any { it in "○+┌┐└┘├┤┬┴┼│─╔╗╚╝║═LP" })
         assertTrue(diagram.contains("⋮"))
+    }
+
+    @Test
+    fun `map materials distinguish only add and loop return paths`() {
+        assertEquals(Material.YELLOW_STAINED_GLASS_PANE, MapCellMaterialPolicy.material(MapCellKind.ADD))
+        assertEquals(Material.LIGHT_BLUE_STAINED_GLASS_PANE, MapCellMaterialPolicy.material(MapCellKind.LOOP_RETURN_PATH))
+        assertEquals(Material.WHITE_STAINED_GLASS_PANE, MapCellMaterialPolicy.material(MapCellKind.PATH))
+        assertEquals(Material.WHITE_STAINED_GLASS_PANE, MapCellMaterialPolicy.material(MapCellKind.BRANCH_PATH))
+    }
+
+    @Test
+    fun `overview keeps map boundaries and the complete viewport`() {
+        val selected = OverviewAxis.select(size = 40, viewportStart = 17, viewportSize = 9, limit = 21)
+
+        assertEquals(0, selected.first())
+        assertEquals(39, selected.last())
+        assertTrue((17..25).all(selected::contains))
+        assertEquals(21, selected.size)
     }
 
     @Test

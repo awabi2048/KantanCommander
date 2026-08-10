@@ -2,7 +2,12 @@ package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiElementRole
+import com.awabi2048.ccsystem.api.gui.GuiItemSpec
+import com.awabi2048.ccsystem.api.gui.GuiLoreBlock
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
+import com.awabi2048.ccsystem.api.gui.GuiLoreSpec
+import com.awabi2048.ccsystem.api.gui.GuiMenuDisplaySpec
+import com.awabi2048.ccsystem.api.gui.GuiNameSpec
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
@@ -187,16 +192,37 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             "center",
             listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.center"))),
         )
-        elements += MenuElement(
-            39,
-            KcGui.item(
-                Material.MAP,
-                KcI18n.text(player, "gui.editor.info"),
-                GuiNameStyle.PRIMARY,
-                listOf(GuiLoreLine.Component(GraphDiagramRenderer.render(layout, origin))),
-                GuiElementRole.CONTENT,
+        elements += KcGui.elements.menuDisplay(
+            GuiMenuDisplaySpec(
+                slot = 39,
+                item = GuiItemSpec(
+                    material = Material.MAP,
+                    name = GuiNameSpec.Text(KcI18n.text(player, "gui.editor.info"), GuiNameStyle.PRIMARY),
+                    lore = GuiLoreSpec.Blocks(
+                        listOf(
+                            GuiLoreBlock(KcI18n.list(player, "gui.editor.info_description").map(GuiLoreLine::Text)),
+                            // セルの色自体が表示範囲を表すため、図は文字列化せずAdventure Componentで保持します。
+                            GuiLoreBlock(listOf(GuiLoreLine.Component(GraphDiagramRenderer.render(layout, origin)))),
+                            GuiLoreBlock(
+                                listOf(
+                                    GuiLoreLine.Data(
+                                        KcI18n.text(player, "gui.editor.info_viewport_label"),
+                                        KcI18n.text(player, "gui.editor.info_viewport_value"),
+                                        "§e",
+                                    ),
+                                    GuiLoreLine.Data(
+                                        KcI18n.text(player, "gui.editor.info_omitted_label"),
+                                        KcI18n.text(player, "gui.editor.info_omitted_value"),
+                                        "§7",
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                    role = GuiElementRole.CONTENT,
+                    amount = 1,
+                ),
             ),
-            GuiElementRole.CONTENT,
         )
         if (placement(route) != null) {
             elements += action(
@@ -322,11 +348,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             return MenuElement(
                 slot,
                 KcGui.item(
-                    when {
-                        cell.kind == MapCellKind.ADD -> Material.YELLOW_WOOL
-                        cell.kind == MapCellKind.BRANCH_PATH -> Material.CYAN_STAINED_GLASS_PANE
-                        else -> Material.GRAY_STAINED_GLASS_PANE
-                    },
+                    MapCellMaterialPolicy.material(cell.kind),
                     KcI18n.text(player, if (cell.kind == MapCellKind.ADD) "gui.editor.add" else "gui.editor.insert"),
                     GuiNameStyle.PRIMARY,
                     listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, if (cell.kind == MapCellKind.ADD) "gui.editor.add" else "gui.editor.insert"))),
@@ -341,11 +363,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 ),
             )
         }
-        val material = when (cell.kind) {
-            MapCellKind.LOOP_RETURN_PATH -> Material.LIGHT_BLUE_STAINED_GLASS_PANE
-            MapCellKind.BRANCH_PATH -> Material.CYAN_STAINED_GLASS_PANE
-            else -> Material.GRAY_STAINED_GLASS_PANE
-        }
+        val material = MapCellMaterialPolicy.material(cell.kind)
         return MenuElement(slot, KcGui.elements.decoration(material), GuiElementRole.DECORATION)
     }
 
@@ -440,26 +458,26 @@ internal object GraphDiagramRenderer {
     private const val MAX_HEIGHT = 9
 
     fun render(layout: GraphLayout, origin: MapPoint): Component {
-        val fromX = (origin.x - 4).coerceAtLeast(0)
-            .coerceAtMost((layout.width - MAX_WIDTH).coerceAtLeast(0))
-        val toX = (fromX + MAX_WIDTH - 1).coerceAtMost(layout.width - 1)
-        val fromY = (origin.y - 3).coerceAtLeast(0)
-            .coerceAtMost((layout.height - MAX_HEIGHT).coerceAtLeast(0))
-        val toY = (fromY + MAX_HEIGHT - 1).coerceAtMost(layout.height - 1)
+        val visibleX = OverviewAxis.select(layout.width, origin.x, 9, MAX_WIDTH)
+        val visibleY = OverviewAxis.select(layout.height, origin.y, 3, MAX_HEIGHT)
         val result = Component.text()
         var hasLine = false
         fun nextLine() {
             if (hasLine) result.append(Component.newline())
             hasLine = true
         }
-        if (fromY > 0) {
+        var previousY: Int? = null
+        for (y in visibleY) {
+            if (previousY != null && y > previousY + 1) {
+                nextLine()
+                result.append(Component.text("⋮", NamedTextColor.GRAY))
+            }
             nextLine()
-            result.append(Component.text("⋮", NamedTextColor.GRAY))
-        }
-        for (y in fromY..toY) {
-            nextLine()
-            if (fromX > 0) result.append(Component.text("…", NamedTextColor.GRAY))
-            for (x in fromX..toX) {
+            var previousX: Int? = null
+            for (x in visibleX) {
+                if (previousX != null && x > previousX + 1) {
+                    result.append(Component.text("…", NamedTextColor.GRAY))
+                }
                 val selected = x in origin.x until origin.x + 9 &&
                     y in origin.y until origin.y + 3
                 val occupied = layout.cells.containsKey(MapPoint(x, y))
@@ -467,14 +485,58 @@ internal object GraphDiagramRenderer {
                     if (occupied) "■" else " ",
                     if (selected && occupied) NamedTextColor.YELLOW else NamedTextColor.GRAY,
                 ))
+                previousX = x
             }
-            if (toX < layout.width - 1) result.append(Component.text("…", NamedTextColor.GRAY))
-        }
-        if (toY < layout.height - 1) {
-            nextLine()
-            result.append(Component.text("⋮", NamedTextColor.GRAY))
+            previousY = y
         }
         return result.build()
+    }
+}
+
+/**
+ * 挿入可能経路と装飾経路で素材がずれないよう、論理マップの素材対応を一箇所で管理します。
+ * 実行順序と逆向きに戻るfor経路だけは、通常経路と異なる色で表示します。
+ */
+internal object MapCellMaterialPolicy {
+    fun material(kind: MapCellKind): Material = when (kind) {
+        MapCellKind.ADD -> Material.YELLOW_STAINED_GLASS_PANE
+        MapCellKind.LOOP_RETURN_PATH -> Material.LIGHT_BLUE_STAINED_GLASS_PANE
+        else -> Material.WHITE_STAINED_GLASS_PANE
+    }
+}
+
+/**
+ * マップの端と現在のビューポートを必ず残しながら、軸方向の概略表示座標を決定します。
+ * 省略された座標範囲は、描画側が省略記号へ変換します。
+ */
+internal object OverviewAxis {
+    fun select(size: Int, viewportStart: Int, viewportSize: Int, limit: Int): List<Int> {
+        require(size > 0)
+        require(limit > 0)
+        if (size <= limit) return (0 until size).toList()
+
+        val selected = linkedSetOf(0, size - 1)
+        val viewportEnd = (viewportStart + viewportSize - 1).coerceAtMost(size - 1)
+        for (coordinate in viewportStart.coerceAtLeast(0)..viewportEnd) selected += coordinate
+
+        var distance = 1
+        while (selected.size < limit) {
+            val candidates = listOf(
+                viewportStart - distance,
+                viewportEnd + distance,
+                distance,
+                size - 1 - distance,
+            )
+            var added = false
+            for (candidate in candidates) {
+                if (candidate in 0 until size && selected.size < limit) {
+                    added = selected.add(candidate) || added
+                }
+            }
+            if (!added && candidates.all { it !in 0 until size }) break
+            distance++
+        }
+        return selected.sorted()
     }
 }
 
