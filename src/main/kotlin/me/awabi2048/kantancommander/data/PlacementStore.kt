@@ -18,6 +18,7 @@ import org.bukkit.util.Transformation
 import org.joml.AxisAngle4f
 import org.joml.Vector3f
 import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
+import me.awabi2048.kantancommander.model.effectiveProfile
 
 class PlacementStore(private val plugin: KantanCommanderPlugin, private val file: File) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -62,7 +63,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
             plugin.scripts.load(id)?.let { script ->
                 world.getBlockAt(placement.x, placement.y, placement.z)
-                    .setType(PlacedDiskMaterials.forTimer(script.timer.enabled), false)
+                    .setType(PlacedDiskMaterials.forTimer(script.timer.enabled, script.effectiveProfile), false)
             }
             removeDisplay(world, placement.displayId)
             spawnDisplay(world, placement)

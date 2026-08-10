@@ -14,6 +14,8 @@ import org.bukkit.event.block.Action
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.EquipmentSlot
 import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
+import me.awabi2048.kantancommander.model.DiskProfile
+import me.awabi2048.kantancommander.model.effectiveProfile
 
 class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Listener {
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
@@ -53,13 +55,14 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
                     DiskItemState.WRITTEN -> diskId?.let(plugin.scripts::load) ?: return
                     DiskItemState.NOT_DISK -> return
                 }
+                val unsetProfile = DiskItemService.unsetProfile(item) ?: DiskProfile.STANDARD
                 if (!plugin.placementAccess.canManage(player, player.world.name)) {
                     player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
                     return
                 }
                 val base = event.clickedBlock ?: return
                 val target = if (base.isReplaceable) base else base.getRelative(event.blockFace)
-                placeDisk(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND)
+                placeDisk(player, target.location, base, script, unsetProfile, event.hand ?: EquipmentSlot.HAND)
             }
         }
     }
@@ -80,6 +83,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         location: org.bukkit.Location,
         blockAgainst: org.bukkit.block.Block,
         source: me.awabi2048.kantancommander.model.DiskScript?,
+        unsetProfile: DiskProfile,
         hand: EquipmentSlot,
     ) {
         val block = location.block
@@ -105,8 +109,9 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             ?: plugin.scripts.createPlacement(
                 player.uniqueId,
                 plugin.config.getString("default-disk-name", "Kantan Disk") ?: "Kantan Disk",
+                unsetProfile,
             )
-        val material = PlacedDiskMaterials.forTimer(placedScript.timer.enabled)
+        val material = PlacedDiskMaterials.forTimer(placedScript.timer.enabled, placedScript.effectiveProfile)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
             player.sendMessage(KcI18n.text(player, "message.place_blocked"))

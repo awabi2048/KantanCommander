@@ -8,6 +8,8 @@ import io.papermc.paper.datacomponent.DataComponentTypes
 import io.papermc.paper.datacomponent.item.ItemAttributeModifiers
 import io.papermc.paper.datacomponent.item.Tool
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.DiskProfile
+import me.awabi2048.kantancommander.model.effectiveProfile
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -27,7 +29,8 @@ enum class DiskItemState {
 }
 
 object DiskItemService {
-    private const val CUSTOM_ITEM_ID = "kantan.disk"
+    const val STANDARD_ITEM_ID = "kantan.disk"
+    const val SIMPLE_ITEM_ID = "kantan.simple_disk"
     private val customItemIdKey = NamespacedKey("kantancommander", "custom_item_id")
     private val diskIdKey = NamespacedKey("kantancommander", "disk_id")
     private val musicDiscModels = listOf(
@@ -38,7 +41,7 @@ object DiskItemService {
     )
     private val baseMaterial = Material.POISONOUS_POTATO
 
-    fun createUnset(name: String, player: Player): ItemStack {
+    fun createUnset(name: String, player: Player, profile: DiskProfile = DiskProfile.STANDARD): ItemStack {
         val item = ItemStack(baseMaterial, 1)
         item.editMeta { meta ->
             meta.displayName(Component.text(name, NamedTextColor.YELLOW))
@@ -49,7 +52,7 @@ object DiskItemService {
                 )
             )
             meta.setMaxStackSize(1)
-            meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, CUSTOM_ITEM_ID)
+            meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, itemId(profile))
         }
         applyCustomItemComponents(item)
         item.editMeta { meta ->
@@ -75,7 +78,7 @@ object DiskItemService {
             meta.displayName(Component.text(script.name, NamedTextColor.YELLOW))
             meta.setItemModel(NamespacedKey("minecraft", musicDiscModels[Math.floorMod(script.id.hashCode(), musicDiscModels.size)]))
             meta.setMaxStackSize(1)
-            meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, CUSTOM_ITEM_ID)
+            meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, itemId(script.effectiveProfile))
             meta.persistentDataContainer.set(diskIdKey, PersistentDataType.STRING, script.id.toString())
         }
         applyCustomItemComponents(item)
@@ -94,7 +97,7 @@ object DiskItemService {
     fun state(item: ItemStack?): DiskItemState {
         if (item?.type != baseMaterial) return DiskItemState.NOT_DISK
         val meta = item.itemMeta ?: return DiskItemState.NOT_DISK
-        if (meta.persistentDataContainer.get(customItemIdKey, PersistentDataType.STRING) != CUSTOM_ITEM_ID) {
+        if (profile(meta.persistentDataContainer.get(customItemIdKey, PersistentDataType.STRING)) == null) {
             return DiskItemState.NOT_DISK
         }
         return if (meta.persistentDataContainer.has(diskIdKey, PersistentDataType.STRING)) {
@@ -105,6 +108,21 @@ object DiskItemService {
     }
 
     fun isDisk(item: ItemStack?): Boolean = state(item) != DiskItemState.NOT_DISK
+
+    /** 未記入ディスクだけは参照先スクリプトがないため、アイテムIDを作成プロファイルの正データとします。 */
+    fun unsetProfile(item: ItemStack?): DiskProfile? {
+        if (state(item) != DiskItemState.UNSET) return null
+        return profile(item?.itemMeta?.persistentDataContainer?.get(customItemIdKey, PersistentDataType.STRING))
+    }
+
+    private fun itemId(profile: DiskProfile) =
+        if (profile == DiskProfile.SIMPLE) SIMPLE_ITEM_ID else STANDARD_ITEM_ID
+
+    private fun profile(itemId: String?): DiskProfile? = when (itemId) {
+        STANDARD_ITEM_ID -> DiskProfile.STANDARD
+        SIMPLE_ITEM_ID -> DiskProfile.SIMPLE
+        else -> null
+    }
 
     private fun applyCustomItemComponents(item: ItemStack) {
         item.setData(DataComponentTypes.TOOL, Tool.tool().build())

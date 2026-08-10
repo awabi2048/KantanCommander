@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.DiskProfile
+import me.awabi2048.kantancommander.model.effectiveProfile
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -12,6 +14,8 @@ import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.util.UUID
 import java.util.logging.Logger
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 
 class ScriptStoreTest {
     @TempDir
@@ -102,5 +106,30 @@ class ScriptStoreTest {
 
         assertThrows(IllegalArgumentException::class.java) { store.save(script) }
         assertTrue(requireNotNull(store.load(script.id)).graph.nodes.isEmpty())
+    }
+
+    @Test
+    fun `simple profile is copied and rejects control flow commands`() {
+        val store = ScriptStore(temp.resolve("simple"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "simple", DiskProfile.SIMPLE)
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val copy = store.copyForPlacement(script)
+        assertEquals(DiskProfile.SIMPLE, copy.effectiveProfile)
+        GraphEditor.append(copy.graph, CommandType.CONDITION)
+        assertThrows(IllegalArgumentException::class.java) { store.save(copy) }
+    }
+
+    @Test
+    fun `missing profile in existing json is treated as standard`() {
+        val store = ScriptStore(temp.resolve("legacy-profile"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "standard")
+        val file = temp.resolve("legacy-profile/${script.id}.json")
+        val json = JsonParser.parseString(file.readText()).asJsonObject
+        json.remove("profile")
+        file.writeText(GsonBuilder().setPrettyPrinting().create().toJson(json))
+
+        assertEquals(DiskProfile.STANDARD, requireNotNull(store.load(script.id)).effectiveProfile)
     }
 }

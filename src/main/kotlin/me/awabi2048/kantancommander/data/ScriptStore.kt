@@ -3,6 +3,8 @@ package me.awabi2048.kantancommander.data
 import com.google.gson.GsonBuilder
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
+import me.awabi2048.kantancommander.model.CommandFeaturePolicy
+import me.awabi2048.kantancommander.model.DiskProfile
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
 import java.nio.file.Files
@@ -24,11 +26,14 @@ class ScriptStore(
         dir.mkdirs()
     }
 
-    fun create(owner: UUID, name: String): DiskScript =
-        DiskScript(name = name, owner = owner).also(::save)
+    fun create(owner: UUID, name: String, profile: DiskProfile = DiskProfile.STANDARD): DiskScript =
+        DiskScript(name = name, owner = owner, profile = profile).also(::save)
 
-    fun createPlacement(owner: UUID, name: String): DiskScript =
-        DiskScript(name = name, owner = owner, listed = false).also(::save)
+    fun createPlacement(
+        owner: UUID,
+        name: String,
+        profile: DiskProfile = DiskProfile.STANDARD,
+    ): DiskScript = DiskScript(name = name, owner = owner, listed = false, profile = profile).also(::save)
 
     fun copyForPlacement(source: DiskScript): DiskScript =
         source.copy(
@@ -60,7 +65,7 @@ class ScriptStore(
 
     fun save(script: DiskScript) {
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
-        val validation = validateRecursively(script.graph)
+        val validation = validateRecursively(script.graph) + CommandFeaturePolicy.validate(script)
         require(validation.isEmpty()) { validation.joinToString("; ") }
         atomicWrite(file(script.id), gson.toJson(script))
     }
