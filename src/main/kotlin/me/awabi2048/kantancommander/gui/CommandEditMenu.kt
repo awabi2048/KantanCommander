@@ -3,6 +3,9 @@ package me.awabi2048.kantancommander.gui
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiElementRole
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
+import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntryData
+import com.awabi2048.ccsystem.api.gui.GuiValueTone
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
@@ -54,6 +57,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderPicker(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
+                    "category" to MenuActionHandler { context ->
+                        val category = context.payload["category"]
+                            ?.let { value -> CommandCategory.entries.firstOrNull { it.routeValue == value } }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        MenuActionResult.Success(
+                            MenuUpdate.Replace(context.route.copy(payload = context.route.payload + (PICKER_CATEGORY to category.routeValue)))
+                        )
+                    },
                     "select" to MenuActionHandler { context ->
                         val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         val type = context.payload["type"]?.let { runCatching { CommandType.valueOf(it) }.getOrNull() }
@@ -471,6 +482,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "facing" to MenuActionHandler { context ->
                         MenuActionResult.Success(MenuUpdate.Navigate(facingRoute(context.route)))
                     },
+                    "source" to MenuActionHandler { context ->
+                        updateNode(context.route) {
+                            it.contextSource = if (it.effectiveContextSource == ContextSource.BASE) {
+                                ContextSource.PREVIOUS
+                            } else ContextSource.BASE
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
                     "inherit" to MenuActionHandler { context ->
                         updateNode(context.route) { it.contextOverride = null }
                         MenuActionResult.Success(MenuUpdate.Back)
@@ -598,7 +617,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val insideFor = script?.graph?.let {
             GraphEditor.isInsideFor(it, sourceId, edge ?: GraphEditor.Edge.ENTRY)
         } == true
+        val category = CommandCategory.fromRoute(route.payload[PICKER_CATEGORY])
         val types = CommandType.entries.filter { type ->
+            if (CommandPresentationPolicy.category(type) != category) return@filter false
             if (script != null && !CommandFeaturePolicy.allows(script.effectiveProfile, type)) return@filter false
             when (type) {
                 CommandType.FOR_END -> false
@@ -608,57 +629,120 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             }
         }
         val elements = types.mapIndexed { index, type ->
-            MenuElement(
-                pickerSlots(types.size)[index],
-                KcGui.item(
-                    type.icon,
-                    KcI18n.text(player, type.key),
-                    GuiNameStyle.PRIMARY,
-                    listOf(KcGui.action(player, "lore.click.left", KcI18n.text(player, "gui.editor.add"))),
-                ),
-                GuiElementRole.ACTION,
-                "select",
-                mapOf("type" to type.name),
+            KcGui.menuEntry(
+                player = player,
+                slot = CommandPickerSlotDistribution.slots(types.size)[index],
+                material = type.icon,
+                name = KcI18n.text(player, type.key),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, "${type.key}_description"),
+                actions = listOf(GuiMenuActionIntent.AnyClick(
+                    actionId = "select",
+                    label = KcI18n.text(player, "gui.editor.add"),
+                    payload = mapOf("type" to type.name),
+                )),
             )
         }.toMutableList()
+        CommandCategory.entries.forEachIndexed { index, option ->
+            val selected = option == category
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = 40 + index * 2,
+                material = if (option == CommandCategory.PROCESS) Material.COMMAND_BLOCK else Material.CHAIN_COMMAND_BLOCK,
+                name = KcI18n.text(player, option.labelKey),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, "${option.labelKey}_description"),
+                data = listOf(GuiMenuEntryData(
+                    KcI18n.text(player, "gui.editor.category_state"),
+                    KcI18n.text(player, if (selected) "gui.editor.selected" else "gui.editor.not_selected"),
+                    if (selected) GuiValueTone.SUCCESS else GuiValueTone.MUTED,
+                )),
+                actions = if (selected) emptyList() else listOf(GuiMenuActionIntent.AnyClick(
+                    actionId = "category",
+                    label = KcI18n.text(player, "gui.editor.show_category"),
+                    payload = mapOf("category" to option.routeValue),
+                )),
+                glint = selected,
+            )
+        }
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.select_command")), elements)
     }
 
-    private fun pickerSlots(count: Int): List<Int> {
-        require(count in 1..27)
-        return (0 until count).chunked(9).flatMapIndexed { row, chunk ->
-            val first = 9 + row * 9 + (9 - chunk.size) / 2
-            (first until first + chunk.size).toList()
-        }
-    }
+    /**
+     * 選択画面の説明・値・クリック受付を同じ意味宣言から生成します。
+     * 個別画面でLoreだけ、または受付クリックだけが取り残される再発を防ぎます。
+     */
+    private fun choiceElement(
+        player: Player,
+        slot: Int,
+        material: Material,
+        name: String,
+        actionId: String,
+        payload: Map<String, String> = emptyMap(),
+        dataLabel: String? = null,
+        dataValue: String? = null,
+        style: GuiNameStyle = GuiNameStyle.PRIMARY,
+    ): MenuElement = KcGui.menuEntry(
+        player = player,
+        slot = slot,
+        material = material,
+        name = name,
+        style = style,
+        description = KcI18n.list(player, "gui.editor.choice_description", mapOf("value" to name)),
+        data = if (dataLabel == null || dataValue == null) emptyList() else listOf(GuiMenuEntryData(dataLabel, dataValue)),
+        actions = listOf(GuiMenuActionIntent.AnyClick(
+            actionId = actionId,
+            label = KcI18n.text(player, "gui.editor.select_action"),
+            payload = payload,
+        )),
+    )
 
     private fun renderSettings(player: Player, route: MenuRoute): InventoryMenuView {
         val node = node(route)
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.command_settings")), listOf(backElement(player)))
         val fields = settingsFields(node)
+        val slots = CommandSettingsSlotPolicy.slots(node.type, fields.map(EditorField::key))
         val elements = fields.mapIndexed { index, field ->
-            MenuElement(
-                EditorMenuLayout.centeredSlots(fields.size)[index],
-                KcGui.item(
-                    field.material,
+            KcGui.menuEntry(
+                player = player,
+                slot = slots[index],
+                material = field.material,
+                name = KcI18n.text(player, field.label),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, field.descriptionKey),
+                data = listOf(GuiMenuEntryData(
                     KcI18n.text(player, field.label),
-                    GuiNameStyle.PRIMARY,
-                    listOf(
-                        GuiLoreLine.Data(
-                            KcI18n.text(player, "gui.editor.current"),
-                            localizedValue(player, field.value(node)),
-                            "§f",
-                        ),
-                        KcGui.action(player, "lore.click.left", KcI18n.text(player, field.label)),
-                    ),
-                    GuiElementRole.ACTION,
-                ),
-                GuiElementRole.ACTION,
-                "field",
-                mapOf("field" to field.key),
+                    localizedValue(player, field.value(node)),
+                )),
+                actions = listOf(GuiMenuActionIntent.AnyClick(
+                    actionId = "field",
+                    label = KcI18n.text(player, field.actionKey),
+                    payload = mapOf("field" to field.key),
+                )),
             )
         }.toMutableList()
+        if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
+            val configured = node.contextOverride != null
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = 40,
+                material = Material.RECOVERY_COMPASS,
+                name = KcI18n.text(player, "gui.field.context"),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, "gui.field_description.context"),
+                data = listOf(GuiMenuEntryData(
+                    KcI18n.text(player, "gui.field.context_application"),
+                    KcI18n.text(player, if (configured) "gui.option.configured" else "gui.option.inherited"),
+                    if (configured) GuiValueTone.SUCCESS else GuiValueTone.MUTED,
+                )),
+                actions = listOf(GuiMenuActionIntent.AnyClick(
+                    actionId = "field",
+                    label = KcI18n.text(player, "gui.field_action.context"),
+                    payload = mapOf("field" to "context"),
+                )),
+            )
+        }
         elements += backElement(player)
         return InventoryMenuView(
             45,
@@ -681,13 +765,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(TargetKind.FIXED_ENTITY, Material.ARMOR_STAND, KcI18n.text(player, "gui.option.fixed_entity")),
         )
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                pickerSlots(options.size)[index],
-                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
-                GuiElementRole.ACTION,
-                "select",
-                mapOf("kind" to option.first.name),
-            )
+            choiceElement(player, CommandPickerSlotDistribution.slots(options.size)[index], option.second, option.third,
+                "select", mapOf("kind" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.target_title")), elements)
@@ -708,16 +787,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             DetailOption(Material.LEVER, "gui.field.exclude_activator", "excludeActivator", spec.excludeActivator.toString()),
         )
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                pickerSlots(options.size)[index],
-                KcGui.item(
-                    option.material,
-                    KcI18n.text(player, option.nameKey),
-                    GuiNameStyle.PRIMARY,
-                    listOf(GuiLoreLine.Data(KcI18n.text(player, "gui.editor.current"), localizedValue(player, option.value), "§f")),
-                ),
-                GuiElementRole.ACTION,
-                option.action,
+            choiceElement(
+                player, CommandPickerSlotDistribution.slots(options.size)[index], option.material,
+                KcI18n.text(player, option.nameKey), option.action,
+                dataLabel = KcI18n.text(player, option.nameKey), dataValue = localizedValue(player, option.value),
             )
         }.toMutableList()
         elements += backElement(player)
@@ -728,9 +801,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val destination = route.payload[ROLE] == "destination"
         val elements = if (destination) {
             mutableListOf(
-                MenuElement(20, KcGui.item(Material.COMPASS, KcI18n.text(player, "gui.option.coordinates_set"), GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "select", mapOf("kind" to PositionKind.COORDINATES.name)),
-                MenuElement(22, KcGui.item(Material.ENDER_PEARL, KcI18n.text(player, "gui.option.other_entity"), GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "target"),
-                MenuElement(24, KcGui.item(Material.RECOVERY_COMPASS, KcI18n.text(player, "gui.option.current_position_set"), GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "select", mapOf("kind" to PositionKind.CAPTURED.name)),
+                choiceElement(player, 20, Material.COMPASS, KcI18n.text(player, "gui.option.coordinates_set"), "select", mapOf("kind" to PositionKind.COORDINATES.name)),
+                choiceElement(player, 22, Material.ENDER_PEARL, KcI18n.text(player, "gui.option.other_entity"), "target"),
+                choiceElement(player, 24, Material.RECOVERY_COMPASS, KcI18n.text(player, "gui.option.current_position_set"), "select", mapOf("kind" to PositionKind.CAPTURED.name)),
             )
         } else {
             val options = listOf(
@@ -744,13 +817,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 Triple(PositionKind.WORLD_VARIABLE, Material.ENDER_CHEST, KcI18n.text(player, "gui.field.world_variable")),
             )
             options.mapIndexed { index, option ->
-                MenuElement(
-                    EditorMenuLayout.centeredSlots(options.size)[index],
-                    KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
-                    GuiElementRole.ACTION,
-                    "select",
-                    mapOf("kind" to option.first.name),
-                )
+                choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+                    "select", mapOf("kind" to option.first.name))
             }.toMutableList()
         }
         elements += backElement(player)
@@ -768,13 +836,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(FacingKind.ROTATION, Material.REPEATER, KcI18n.text(player, "gui.option.numeric")),
         )
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                EditorMenuLayout.centeredSlots(options.size)[index],
-                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
-                GuiElementRole.ACTION,
-                "select",
-                mapOf("kind" to option.first.name),
-            )
+            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+                "select", mapOf("kind" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.facing_title")), elements)
@@ -783,22 +846,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderTimer(player: Player, route: MenuRoute): InventoryMenuView {
         val script = script(route)
         val elements = mutableListOf(
-            MenuElement(21, KcGui.item(Material.REDSTONE_TORCH, KcI18n.text(player, "gui.editor.disabled"), GuiNameStyle.PRIMARY), GuiElementRole.ACTION, "off"),
-            MenuElement(
-                23,
-                KcGui.item(
-                    Material.CLOCK,
-                    KcI18n.text(player, "gui.editor.enabled"),
-                    GuiNameStyle.PRIMARY,
-                    listOf(GuiLoreLine.Data(
-                        KcI18n.text(player, "gui.editor.timer"),
-                        KcI18n.text(player, "gui.editor.interval_units", mapOf("value" to (script?.timer?.intervalUnits ?: 1))),
-                        "§f",
-                    )),
-                ),
-                GuiElementRole.ACTION,
-                "on",
-            ),
+            choiceElement(player, 21, Material.REDSTONE_TORCH, KcI18n.text(player, "gui.editor.disabled"), "off"),
+            choiceElement(player, 23, Material.CLOCK, KcI18n.text(player, "gui.editor.enabled"), "on",
+                dataLabel = KcI18n.text(player, "gui.editor.interval_label"),
+                dataValue = KcI18n.text(player, "gui.editor.interval_units", mapOf("value" to (script?.timer?.intervalUnits ?: 1)))),
             backElement(player),
         )
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.timer")), elements)
@@ -813,13 +864,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(ConditionKind.ITEM_POSSESSION, Material.CHEST, KcI18n.text(player, "condition.item_possession")),
         )
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                EditorMenuLayout.centeredSlots(options.size)[index],
-                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
-                GuiElementRole.ACTION,
-                "select",
-                mapOf("kind" to option.first.name),
-            )
+            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+                "select", mapOf("kind" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.condition_title")), elements)
@@ -866,17 +912,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
         val slots = EditorMenuLayout.centeredSlots(options.size)
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                slots[index],
-                KcGui.item(
-                    option.material,
-                    KcI18n.text(player, option.nameKey),
-                    GuiNameStyle.PRIMARY,
-                    listOf(GuiLoreLine.Data(KcI18n.text(player, "gui.editor.current"), localizedValue(player, option.value), "§f")),
-                ),
-                GuiElementRole.ACTION,
-                option.action,
-            )
+            choiceElement(player, slots[index], option.material, KcI18n.text(player, option.nameKey), option.action,
+                dataLabel = KcI18n.text(player, option.nameKey), dataValue = localizedValue(player, option.value))
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.condition_detail_title")), elements)
@@ -896,12 +933,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             }
         }
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                EditorMenuLayout.centeredSlots(options.size)[index],
-                KcGui.item(option.material, KcI18n.text(player, option.nameKey), GuiNameStyle.PRIMARY),
-                GuiElementRole.ACTION,
-                option.action,
-            )
+            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.material,
+                KcI18n.text(player, option.nameKey), option.action)
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.variable_value_title")), elements)
@@ -929,13 +962,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(VariableType.ENTITY, Material.PLAYER_HEAD, KcI18n.text(player, "gui.option.entity_reference")),
         )
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                EditorMenuLayout.centeredSlots(options.size)[index],
-                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
-                GuiElementRole.ACTION,
-                "select",
-                mapOf("type" to option.first.name),
-            )
+            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+                "select", mapOf("type" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.variable_type_title")), elements)
@@ -955,13 +983,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(VariableOperation.CLEAR, Material.BARRIER, KcI18n.text(player, "gui.option.clear")),
         ).filter { it.first in allowedVariableOperations(type) }
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                EditorMenuLayout.centeredSlots(options.size)[index],
-                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
-                GuiElementRole.ACTION,
-                "select",
-                mapOf("operation" to option.first.name),
-            )
+            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+                "select", mapOf("operation" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.variable_operation_title")), elements)
@@ -1001,13 +1024,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple("actionbar", Material.NAME_TAG, KcI18n.text(player, "gui.option.actionbar")),
         )
         val elements = options.mapIndexed { index, option ->
-            MenuElement(
-                EditorMenuLayout.centeredSlots(options.size)[index],
-                KcGui.item(option.second, option.third, GuiNameStyle.PRIMARY),
-                GuiElementRole.ACTION,
-                "select",
-                mapOf("mode" to option.first),
-            )
+            choiceElement(player, EditorMenuLayout.centeredSlots(options.size)[index], option.second, option.third,
+                "select", mapOf("mode" to option.first))
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.display_mode_title")), elements)
@@ -1021,19 +1039,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             ContextOption(22, Material.COMPASS, KcI18n.text(player, "gui.field.position"), "position", state(player, context?.position != null)),
             ContextOption(23, Material.SPYGLASS, KcI18n.text(player, "gui.field.facing"), "facing", state(player, context?.facing != null)),
             ContextOption(24, Material.GRAY_DYE, KcI18n.text(player, "gui.option.inherit_all"), "inherit", KcI18n.text(player, "gui.option.clear_context")),
+            ContextOption(
+                31,
+                Material.COMPARATOR,
+                KcI18n.text(player, "gui.field.context_source"),
+                "source",
+                KcI18n.text(player, if (node(route)?.effectiveContextSource == ContextSource.PREVIOUS) {
+                    "gui.option.context_previous"
+                } else "gui.option.context_base"),
+            ),
         )
         val elements = options.map { option ->
-            MenuElement(
-                option.slot,
-                KcGui.item(
-                    option.material,
-                    option.name,
-                    GuiNameStyle.PRIMARY,
-                    listOf(GuiLoreLine.Data(KcI18n.text(player, "gui.editor.current"), option.value, "§f")),
-                ),
-                GuiElementRole.ACTION,
-                option.action,
-            )
+            choiceElement(player, option.slot, option.material, option.name, option.action,
+                dataLabel = option.name, dataValue = option.value)
         }.toMutableList()
         elements += backElement(player)
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.context_title")), elements)
@@ -1041,8 +1059,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun renderDelete(player: Player, route: MenuRoute): InventoryMenuView {
         val elements = listOf(
-            MenuElement(20, KcGui.item(Material.BARRIER, KcI18n.text(player, "gui.editor.cancel_delete"), GuiNameStyle.PRIMARY), GuiElementRole.CANCEL, "back"),
-            MenuElement(24, KcGui.item(Material.RED_CONCRETE, KcI18n.text(player, "gui.editor.delete_command"), GuiNameStyle.DANGER), GuiElementRole.ACTION, "delete"),
+            choiceElement(player, 20, Material.BARRIER, KcI18n.text(player, "gui.editor.cancel_delete"), "back"),
+            choiceElement(player, 24, Material.RED_CONCRETE, KcI18n.text(player, "gui.editor.delete_command"), "delete", style = GuiNameStyle.DANGER),
         )
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.delete_title")), elements)
     }
@@ -1616,6 +1634,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val SOURCE_ID = "sourceId"
         private const val EDGE = "edge"
         private const val MERGE_CONDITION_ID = "mergeConditionId"
+        private const val PICKER_CATEGORY = "pickerCategory"
         private const val ROLE = "role"
         private const val CURRENT_ITERATION = "\$current_iteration_value"
         private const val CURRENT_LOOP_COUNT = "\$current_loop_count"
@@ -1692,6 +1711,8 @@ data class EditorField(
     val key: String,
     val label: String,
     val material: Material,
+    val descriptionKey: String,
+    val actionKey: String,
     val value: (CommandNode) -> String,
 )
 
@@ -1819,14 +1840,9 @@ object EditorMenuLayout {
             },
         )
         }
-        if (type in setOf(CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE, CommandType.WAIT)) {
-            return fields
-        }
-        return fields + field("contextSource", "gui.field.context_source", Material.COMPARATOR) {
-            it.effectiveContextSource.name
-        }
+        return fields.filterNot { it.key == "context" }
     }
 
     private fun field(key: String, label: String, material: Material, value: (CommandNode) -> String = { it.string(key, "未設定") }) =
-        EditorField(key, label, material, value)
+        EditorField(key, label, material, "gui.field_description.$key", "gui.field_action.$key", value)
 }

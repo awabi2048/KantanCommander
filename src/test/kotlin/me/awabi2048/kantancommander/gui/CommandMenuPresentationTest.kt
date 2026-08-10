@@ -20,6 +20,17 @@ class CommandMenuPresentationTest {
         assertTrue(CommandPresentationPolicy.supportsContextOverride(CommandType.CONDITION))
         assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.CONTEXT))
         assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.FOR_START))
+        CommandType.entries.forEach { type ->
+            assertFalse(EditorMenuLayout.fields(type).any { it.key == "context" || it.key == "contextSource" })
+        }
+    }
+
+    @Test
+    fun `every editable field declares semantic lore metadata`() {
+        CommandType.entries.flatMap(EditorMenuLayout::fields).forEach { field ->
+            assertTrue(field.descriptionKey.startsWith("gui.field_description."), field.key)
+            assertTrue(field.actionKey.startsWith("gui.field_action."), field.key)
+        }
     }
 
     @Test
