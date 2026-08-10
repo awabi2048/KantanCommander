@@ -45,12 +45,9 @@ object DiskItemService {
         val item = ItemStack(baseMaterial, 1)
         item.editMeta { meta ->
             meta.displayName(Component.text(name, NamedTextColor.YELLOW))
-            meta.setItemModel(
-                NamespacedKey(
-                    "minecraft",
-                    musicDiscModels[ThreadLocalRandom.current().nextInt(musicDiscModels.size)],
-                )
-            )
+            meta.setItemModel(NamespacedKey("minecraft", if (profile == DiskProfile.SIMPLE) {
+                "music_disc_11"
+            } else musicDiscModels[ThreadLocalRandom.current().nextInt(musicDiscModels.size)]))
             meta.setMaxStackSize(1)
             meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, itemId(profile))
         }
@@ -59,7 +56,14 @@ object DiskItemService {
             meta.lore(
                 CCSystem.getAPI().getLoreService().render(
                     CCSystem.getAPI().getLoreService().compose(
-                        GuiLoreSpec.None,
+                        GuiLoreSpec.Rich(
+                            listOf(GuiLoreLine.Data(
+                                KcI18n.text(player, "item.profile"),
+                                KcI18n.text(player, if (profile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
+                                "§f",
+                            )),
+                            GuiLoreFrame.BOTH,
+                        ),
                         listOf(me.awabi2048.kantancommander.gui.KcGui.action(
                             player,
                             "lore.click.shift_right",
@@ -76,7 +80,9 @@ object DiskItemService {
         val item = ItemStack(baseMaterial, 1)
         item.editMeta { meta ->
             meta.displayName(Component.text(script.name, NamedTextColor.YELLOW))
-            meta.setItemModel(NamespacedKey("minecraft", musicDiscModels[Math.floorMod(script.id.hashCode(), musicDiscModels.size)]))
+            meta.setItemModel(NamespacedKey("minecraft", if (script.effectiveProfile == DiskProfile.SIMPLE) {
+                "music_disc_11"
+            } else musicDiscModels[Math.floorMod(script.id.hashCode(), musicDiscModels.size)]))
             meta.setMaxStackSize(1)
             meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, itemId(script.effectiveProfile))
             meta.persistentDataContainer.set(diskIdKey, PersistentDataType.STRING, script.id.toString())
@@ -149,6 +155,11 @@ object DiskItemService {
                 composeLore(
                     listOf(
                         GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
+                        GuiLoreLine.Data(
+                            KcI18n.text(player, "item.profile"),
+                            KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
+                            "§f",
+                        ),
                         GuiLoreLine.Data(KcI18n.text(player, "item.owner"), ownerName, "§f"),
                         GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
                         GuiLoreLine.Spacer,

@@ -1518,6 +1518,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun enumValueKey(value: String): String? {
+        runCatching { ContextSource.valueOf(value) }.getOrNull()?.let {
+            return if (it == ContextSource.PREVIOUS) "gui.option.context_previous" else "gui.option.context_base"
+        }
         runCatching { TargetKind.valueOf(value) }.getOrNull()?.let {
             return when (it) {
                 TargetKind.EXECUTOR -> "gui.option.executor"
