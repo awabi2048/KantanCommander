@@ -721,7 +721,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 description = KcI18n.list(player, field.descriptionKey),
                 data = listOf(GuiMenuEntryData(
                     KcI18n.text(player, field.label),
-                    localizedValue(player, field.value(node)),
+                    field.value(node).render(player),
                 )),
                 actions = listOf(GuiMenuActionIntent.AnyClick(
                     actionId = "field",
@@ -784,23 +784,23 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderTargetFilters(player: Player, route: MenuRoute): InventoryMenuView {
         val spec = selectedTargetSpec(route) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
         val options = listOf(
-            DetailOption(Material.ARMOR_STAND, "gui.field.entity_type", "entityType", spec.entityType ?: "-"),
-            DetailOption(Material.LIME_DYE, "gui.field.minimum_distance", "minimumDistance", spec.minimumDistance?.toString() ?: "-"),
-            DetailOption(Material.RED_DYE, "gui.field.maximum_distance", "maximumDistance", spec.maximumDistance?.toString() ?: "-"),
-            DetailOption(Material.REPEATER, "gui.field.limit", "limit", spec.limit?.toString() ?: "-"),
-            DetailOption(Material.COMPARATOR, "gui.field.sort", "sort", spec.sort.name),
-            DetailOption(Material.PLAYER_HEAD, "gui.field.game_mode", "gameMode", spec.gameMode ?: "-"),
-            DetailOption(Material.NAME_TAG, "gui.field.tag", "tag", spec.tag ?: "-"),
-            DetailOption(Material.OAK_SIGN, "gui.field.name", "name", spec.name ?: "-"),
-            DetailOption(Material.BARRIER, "gui.field.exclude_executor", "excludeExecutor", spec.excludeExecutor.toString()),
-            DetailOption(Material.LEVER, "gui.field.exclude_activator", "excludeActivator", spec.excludeActivator.toString()),
+            DetailOption(Material.ARMOR_STAND, "gui.field.entity_type", "entityType", displayLiteral(spec.entityType)),
+            DetailOption(Material.LIME_DYE, "gui.field.minimum_distance", "minimumDistance", displayLiteral(spec.minimumDistance)),
+            DetailOption(Material.RED_DYE, "gui.field.maximum_distance", "maximumDistance", displayLiteral(spec.maximumDistance)),
+            DetailOption(Material.REPEATER, "gui.field.limit", "limit", displayLiteral(spec.limit)),
+            DetailOption(Material.COMPARATOR, "gui.field.sort", "sort", DisplayValue.Localized("gui.option.sort_${spec.sort.name.lowercase()}")),
+            DetailOption(Material.PLAYER_HEAD, "gui.field.game_mode", "gameMode", displayGameMode(spec.gameMode)),
+            DetailOption(Material.NAME_TAG, "gui.field.tag", "tag", displayLiteral(spec.tag)),
+            DetailOption(Material.OAK_SIGN, "gui.field.name", "name", displayLiteral(spec.name)),
+            DetailOption(Material.BARRIER, "gui.field.exclude_executor", "excludeExecutor", displayBoolean(spec.excludeExecutor)),
+            DetailOption(Material.LEVER, "gui.field.exclude_activator", "excludeActivator", displayBoolean(spec.excludeActivator)),
         )
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
             choiceElement(
                 player, layout.itemSlots[index], option.material,
                 KcI18n.text(player, option.nameKey), option.action,
-                dataLabel = KcI18n.text(player, option.nameKey), dataValue = localizedValue(player, option.value),
+                dataLabel = KcI18n.text(player, option.nameKey), dataValue = option.value.render(player),
             )
         }.toMutableList()
         elements += backElement(player, layout.backSlot)
@@ -891,42 +891,42 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             .getOrDefault(ConditionKind.TARGET_EXISTS)
         val options = when (kind) {
             ConditionKind.TARGET_EXISTS -> listOf(
-                DetailOption(Material.TARGET, "gui.field.target", "target", node.targetSpec?.kind?.name ?: "EXECUTOR"),
+                DetailOption(Material.TARGET, "gui.field.target", "target", displayTarget(node.targetSpec?.kind ?: TargetKind.EXECUTOR)),
             )
             ConditionKind.ENTITY_STATE -> listOf(
-                DetailOption(Material.TARGET, "gui.field.target", "target", node.targetSpec?.kind?.name ?: "EXECUTOR"),
-                DetailOption(Material.LEVER, "gui.field.entity_state", "state", node.string("state", "sneaking")),
+                DetailOption(Material.TARGET, "gui.field.target", "target", displayTarget(node.targetSpec?.kind ?: TargetKind.EXECUTOR)),
+                DetailOption(Material.LEVER, "gui.field.entity_state", "state", displayEntityState(node.string("state", "sneaking"))),
             )
             ConditionKind.VARIABLE_STATE -> listOf(
-                DetailOption(Material.NAME_TAG, "gui.field.variable", "variable", node.string("variable", "-")),
-                DetailOption(Material.ENDER_CHEST, "gui.field.variable_scope", "scope", node.string("variableScope", VariableScope.TEMPORARY.name)),
-                DetailOption(Material.COMPARATOR, "gui.field.operator", "operator", node.string("operator", "==")),
-                DetailOption(Material.REPEATER, "gui.field.value", "value", node.string("value", "0")),
+                DetailOption(Material.NAME_TAG, "gui.field.variable", "variable", displayLiteral(node.string("variable"))),
+                DetailOption(Material.ENDER_CHEST, "gui.field.variable_scope", "scope", displayVariableScope(node.string("variableScope", VariableScope.TEMPORARY.name))),
+                DetailOption(Material.COMPARATOR, "gui.field.operator", "operator", DisplayValue.Literal(node.string("operator", "=="))),
+                DetailOption(Material.REPEATER, "gui.field.value", "value", DisplayValue.Literal(node.string("value", "0"))),
             )
             ConditionKind.BLOCK_STATE -> listOf(
                 DetailOption(
                     Material.COMPASS,
                     "gui.field.position",
                     "position",
-                    node.conditionPositionSpec?.kind?.name ?: "DISK",
+                    displayPosition(node.conditionPositionSpec?.kind ?: PositionKind.DISK),
                 ),
-                DetailOption(Material.GRASS_BLOCK, "gui.field.block", "block", node.string("block", "minecraft:air")),
+                DetailOption(Material.GRASS_BLOCK, "gui.field.block", "block", DisplayValue.Literal(node.string("block", "minecraft:air"))),
             )
             ConditionKind.ITEM_POSSESSION -> listOf(
-                DetailOption(Material.TARGET, "gui.field.target", "target", node.targetSpec?.kind?.name ?: "EXECUTOR"),
+                DetailOption(Material.TARGET, "gui.field.target", "target", displayTarget(node.targetSpec?.kind ?: TargetKind.EXECUTOR)),
                 DetailOption(
                     Material.CHEST,
                     "gui.field.item_condition",
                     "item",
-                    node.string("item").ifBlank { KcI18n.text(player, "gui.field.unset") },
+                    displayLiteral(node.string("item")),
                 ),
-                DetailOption(Material.DIAMOND, "gui.field.count", "count", node.string("count", "1")),
+                DetailOption(Material.DIAMOND, "gui.field.count", "count", DisplayValue.Literal(node.string("count", "1"))),
             )
         }
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
             choiceElement(player, layout.itemSlots[index], option.material, KcI18n.text(player, option.nameKey), option.action,
-                dataLabel = KcI18n.text(player, option.nameKey), dataValue = localizedValue(player, option.value))
+                dataLabel = KcI18n.text(player, option.nameKey), dataValue = option.value.render(player))
         }.toMutableList()
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, "gui.editor.condition_detail_title")), elements)
@@ -939,10 +939,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             node.string("type") == VariableType.INTEGER.name &&
             GraphEditor.isInsideFor(script.graph, node.id, GraphEditor.Edge.NEXT)
         val options = buildList {
-            add(DetailOption(Material.WRITABLE_BOOK, "gui.option.direct_value", "direct", ""))
+            add(DetailOption(Material.WRITABLE_BOOK, "gui.option.direct_value", "direct", DisplayValue.Literal("")))
             if (insideFor) {
-                add(DetailOption(Material.COMPARATOR, "gui.option.current_iteration", "iteration", ""))
-                add(DetailOption(Material.REPEATER, "gui.option.current_loop_count", "count", ""))
+                add(DetailOption(Material.COMPARATOR, "gui.option.current_iteration", "iteration", DisplayValue.Literal("")))
+                add(DetailOption(Material.REPEATER, "gui.option.current_loop_count", "count", DisplayValue.Literal("")))
             }
         }
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
@@ -1539,80 +1539,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         MenuActionResult.Success(MenuUpdate.None)
     }
 
-    private fun localizedValue(player: Player, value: String): String = when (value) {
-        "継承" -> KcI18n.text(player, "gui.option.inherited")
-        "設定済み" -> KcI18n.text(player, "gui.option.configured")
-        "オン" -> KcI18n.text(player, "gui.editor.enabled")
-        "オフ" -> KcI18n.text(player, "gui.editor.disabled")
-        "一時変数" -> KcI18n.text(player, "gui.option.temporary_variable")
-        "ワールド内変数" -> KcI18n.text(player, "gui.field.world_variable")
-        "未設定" -> KcI18n.text(player, "gui.field.unset")
-        "true" -> KcI18n.text(player, "gui.editor.enabled")
-        "false" -> KcI18n.text(player, "gui.editor.disabled")
-        else -> enumValueKey(value)?.let { KcI18n.text(player, it) } ?: value
-    }
-
-    private fun enumValueKey(value: String): String? {
-        runCatching { ContextSource.valueOf(value) }.getOrNull()?.let {
-            return if (it == ContextSource.PREVIOUS) "gui.option.context_previous" else "gui.option.context_base"
-        }
-        runCatching { TargetKind.valueOf(value) }.getOrNull()?.let {
-            return when (it) {
-                TargetKind.EXECUTOR -> "gui.option.executor"
-                TargetKind.ACTIVATOR -> "gui.option.activator"
-                TargetKind.INHERITED_TARGET -> "gui.option.inherited_target"
-                TargetKind.NEAREST_PLAYER -> "gui.option.nearest_player"
-                TargetKind.NEARBY_PLAYERS -> "gui.option.nearby_players"
-                TargetKind.ALL_PLAYERS -> "gui.option.all_players"
-                TargetKind.RANDOM_PLAYER -> "gui.option.random_player"
-                TargetKind.NEAREST_ENTITY -> "gui.option.nearest_entity"
-                TargetKind.NEARBY_ENTITIES -> "gui.option.nearby_entities"
-                TargetKind.FIXED_ENTITY -> "gui.option.fixed_entity"
-            }
-        }
-        runCatching { PositionKind.valueOf(value) }.getOrNull()?.let {
-            return when (it) {
-                PositionKind.CAPTURED -> "gui.option.current_position"
-                PositionKind.DISK -> "gui.option.disk_position"
-                PositionKind.EXECUTOR -> "gui.option.executor_position"
-                PositionKind.TARGET -> "gui.option.target_position"
-                PositionKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
-                PositionKind.COORDINATES -> "gui.option.coordinates"
-                PositionKind.TEMPORARY_VARIABLE -> "gui.option.temporary_variable"
-                PositionKind.WORLD_VARIABLE -> "gui.field.world_variable"
-            }
-        }
-        runCatching { FacingKind.valueOf(value) }.getOrNull()?.let {
-            return when (it) {
-                FacingKind.INHERITED -> "gui.option.unchanged"
-                FacingKind.CAPTURED -> "gui.option.current_facing"
-                FacingKind.EXECUTOR -> "gui.option.executor_facing"
-                FacingKind.TARGET -> "gui.option.face_target"
-                FacingKind.COORDINATES -> "gui.option.face_coordinates"
-                FacingKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
-                FacingKind.ROTATION -> "gui.option.numeric"
-            }
-        }
-        runCatching { ConditionKind.valueOf(value) }.getOrNull()?.let { return it.key }
-        runCatching { VariableType.valueOf(value) }.getOrNull()?.let {
-            return when (it) {
-                VariableType.BOOLEAN -> "gui.option.true_false"
-                VariableType.INTEGER -> "gui.option.integer"
-                VariableType.DECIMAL -> "gui.option.decimal"
-                VariableType.TEXT -> "gui.option.text"
-                VariableType.POSITION -> "gui.option.position"
-                VariableType.ENTITY -> "gui.option.entity_reference"
-            }
-        }
-        runCatching { VariableOperation.valueOf(value) }.getOrNull()?.let {
-            return "gui.option.${it.name.lowercase()}"
-        }
-        runCatching { TargetSort.valueOf(value) }.getOrNull()?.let {
-            return "gui.option.sort_${it.name.lowercase()}"
-        }
-        return null
-    }
-
     private fun script(route: MenuRoute) = scriptId(route)?.let(plugin.scripts::load)
 
     private fun node(route: MenuRoute): CommandNode? {
@@ -1721,8 +1647,22 @@ private data class DetailOption(
     val material: Material,
     val nameKey: String,
     val action: String,
-    val value: String,
+    val value: DisplayValue,
 )
+
+/**
+ * Loreへ渡す値が翻訳対象か利用者入力値かを、設定定義の時点で固定します。
+ * 内部enum名を文字列から推測する方式に戻さないため、表示時の分岐はこの型だけを見ます。
+ */
+sealed interface DisplayValue {
+    data class Literal(val value: String) : DisplayValue
+    data class Localized(val key: String) : DisplayValue
+
+    fun render(player: Player): String = when (this) {
+        is Literal -> value
+        is Localized -> KcI18n.text(player, key)
+    }
+}
 
 data class EditorField(
     val key: String,
@@ -1730,7 +1670,7 @@ data class EditorField(
     val material: Material,
     val descriptionKey: String,
     val actionKey: String,
-    val value: (CommandNode) -> String,
+    val value: (CommandNode) -> DisplayValue,
 )
 
 object EditorMenuLayout {
@@ -1738,120 +1678,220 @@ object EditorMenuLayout {
         val fields = when (type) {
         CommandType.TELEPORT -> listOf(
             field("target", "gui.field.target", Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.name ?: "未設定"
+                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
             },
             field("destination", "gui.field.destination", Material.COMPASS) {
-                it.destinationTargetSpec?.kind?.name ?: it.destinationSpec?.kind?.name ?: "未設定"
+                it.destinationTargetSpec?.kind?.let(::displayTarget)
+                    ?: it.destinationSpec?.kind?.let(::displayPosition)
+                    ?: displayUnset()
             },
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.GIVE_ITEM -> listOf(
             field("target", "gui.field.give_target", Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.name ?: "未設定"
+                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
             },
             field("item", "gui.field.item", Material.CHEST),
             field("count", "gui.field.count", Material.DIAMOND),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.ENTITY_ACTION -> listOf(
             field("target", "gui.field.target", Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.name ?: "未設定"
+                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
             },
-            field("action", "gui.field.action", Material.SADDLE),
+            field("action", "gui.field.action", Material.SADDLE) { displayEntityAction(it.string("action", "ride")) },
             field("other", "gui.field.other", Material.ANVIL) {
-                it.secondaryTargetSpec?.kind?.name ?: "未設定"
+                it.secondaryTargetSpec?.kind?.let(::displayTarget) ?: displayUnset()
             },
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.DISPLAY_TEXT -> listOf(
             field("target", "gui.field.display_target", Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.name ?: "未設定"
+                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
             },
-            field("mode", "gui.field.mode", Material.OAK_SIGN),
+            field("mode", "gui.field.mode", Material.OAK_SIGN) { displayTextMode(it.string("mode", "tellraw")) },
             field("text", "gui.field.text", Material.WRITTEN_BOOK),
             field("stay", "gui.field.duration", Material.CLOCK),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.WAIT -> listOf(field("ticks", "gui.field.wait", Material.CLOCK))
         CommandType.SUMMON_ENTITY -> listOf(
             field("entity", "gui.field.entity", Material.ZOMBIE_SPAWN_EGG),
             field("tags", "gui.field.tags", Material.NAME_TAG),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.PLAY_SOUND -> listOf(
             field("sound", "gui.field.sound", Material.NOTE_BLOCK),
             field("volume", "gui.field.volume", Material.JUKEBOX),
             field("pitch", "gui.field.pitch", Material.NOTE_BLOCK),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.APPLY_EFFECT -> listOf(
-            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.name ?: "未設定" },
+            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("effect", "gui.field.effect", Material.POTION),
             field("level", "gui.field.level", Material.GLOWSTONE_DUST),
             field("seconds", "gui.field.seconds", Material.CLOCK),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.CAMERA_SHAKE -> listOf(
-            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.name ?: "未設定" },
+            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("intensity", "gui.field.intensity", Material.SPYGLASS),
             field("seconds", "gui.field.seconds", Material.CLOCK),
-            field("shakeType", "gui.field.shake_type", Material.COMPASS),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+            field("shakeType", "gui.field.shake_type", Material.COMPASS) { displayShakeType(it.string("shakeType")) },
         )
         CommandType.EQUIP_ITEM -> listOf(
-            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.name ?: "未設定" },
-            field("slot", "gui.field.equipment_slot", Material.ARMOR_STAND),
+            field("target", "gui.field.target", Material.PLAYER_HEAD) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field("slot", "gui.field.equipment_slot", Material.ARMOR_STAND) { displayEquipmentSlot(it.string("slot")) },
             field("item", "gui.field.item", Material.CHEST),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.CONDITION -> listOf(
-            field("inverted", "gui.field.inverted", Material.REDSTONE_TORCH) { if (it.boolean("inverted")) "オン" else "オフ" },
-            field("kind", "gui.field.condition_kind", Material.COMPARATOR),
-            field("condition", "gui.field.condition_value", Material.TARGET) { it.string("kind") },
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+            field("inverted", "gui.field.inverted", Material.REDSTONE_TORCH) { displayBoolean(it.boolean("inverted")) },
+            field("kind", "gui.field.condition_kind", Material.COMPARATOR) { displayCondition(it.string("kind")) },
+            field("condition", "gui.field.condition_value", Material.TARGET) { displayCondition(it.string("kind")) },
         )
         CommandType.CONTEXT -> listOf(
             field("executor", "gui.field.executor", Material.PLAYER_HEAD) {
-                it.contextOverride?.executor?.kind?.name ?: "未設定"
+                it.contextOverride?.executor?.kind?.let(::displayTarget) ?: displayUnset()
             },
             field("target", "gui.field.target", Material.TARGET) {
-                it.contextOverride?.target?.kind?.name ?: "未設定"
+                it.contextOverride?.target?.kind?.let(::displayTarget) ?: displayUnset()
             },
             field("position", "gui.field.position", Material.COMPASS) {
-                it.contextOverride?.position?.kind?.name ?: "未設定"
+                it.contextOverride?.position?.kind?.let(::displayPosition) ?: displayUnset()
             },
             field("facing", "gui.field.facing", Material.SPYGLASS) {
-                it.contextOverride?.facing?.kind?.name ?: "未設定"
+                it.contextOverride?.facing?.kind?.let(::displayFacing) ?: displayUnset()
             },
         )
         CommandType.DISK_CALL -> listOf(
             field("diskId", "gui.field.disk", Material.MUSIC_DISC_13),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
         )
         CommandType.VARIABLE -> listOf(
-            field("scope", "gui.field.scope", Material.ENDER_CHEST) { if (it.string("scope") == "WORLD") "ワールド内変数" else "一時変数" },
+            field("scope", "gui.field.scope", Material.ENDER_CHEST) { displayVariableScope(it.string("scope", "TEMPORARY")) },
             field("name", "gui.field.variable", Material.NAME_TAG),
-            field("type", "gui.field.type", Material.STRUCTURE_VOID),
-            field("operation", "gui.field.operation", Material.REDSTONE),
-            field("value", "gui.field.value", Material.COMPARATOR),
-            field("context", "gui.field.context", Material.RECOVERY_COMPASS) { if (it.contextOverride == null) "継承" else "設定済み" },
+            field("type", "gui.field.type", Material.STRUCTURE_VOID) { displayVariableType(it.string("type")) },
+            field("operation", "gui.field.operation", Material.REDSTONE) { displayVariableOperation(it.string("operation")) },
+            field("value", "gui.field.value", Material.COMPARATOR) { displayVariableValue(it.string("value")) },
         )
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
         CommandType.FOR_START -> listOf(
-            field("startSource", "gui.field.start_source", Material.LIME_DYE),
-            field("endSource", "gui.field.end_source", Material.RED_DYE),
-            field("stepSource", "gui.field.step_source", Material.ARROW),
+            field("startSource", "gui.field.start_source", Material.LIME_DYE) { displayForSource(it.string("startSource", "FIXED")) },
+            field("endSource", "gui.field.end_source", Material.RED_DYE) { displayForSource(it.string("endSource", "FIXED")) },
+            field("stepSource", "gui.field.step_source", Material.ARROW) { displayForSource(it.string("stepSource", "FIXED")) },
             field("startValue", "gui.field.start", Material.LIME_DYE),
             field("endValue", "gui.field.end", Material.RED_DYE),
             field("stepValue", "gui.field.step", Material.ARROW),
             field("inclusiveEnd", "gui.field.inclusive_end", Material.COMPARATOR) {
-                it.boolean("inclusiveEnd", true).toString()
+                displayBoolean(it.boolean("inclusiveEnd", true))
             },
         )
         }
-        return fields.filterNot { it.key == "context" }
+        return fields
     }
 
-    private fun field(key: String, label: String, material: Material, value: (CommandNode) -> String = { it.string(key, "未設定") }) =
+    private fun field(
+        key: String,
+        label: String,
+        material: Material,
+        value: (CommandNode) -> DisplayValue = { displayLiteral(it.string(key)) },
+    ) =
         EditorField(key, label, material, "gui.field_description.$key", "gui.field_action.$key", value)
+}
+
+private fun displayLiteral(value: Any?): DisplayValue = value?.toString()?.takeIf(String::isNotBlank)
+    ?.let(DisplayValue::Literal) ?: displayUnset()
+
+private fun displayUnset() = DisplayValue.Localized("gui.field.unset")
+private fun displayBoolean(value: Boolean) = DisplayValue.Localized(if (value) "gui.editor.enabled" else "gui.editor.disabled")
+
+private fun displayTarget(kind: TargetKind) = DisplayValue.Localized(when (kind) {
+    TargetKind.EXECUTOR -> "gui.option.executor"
+    TargetKind.ACTIVATOR -> "gui.option.activator"
+    TargetKind.INHERITED_TARGET -> "gui.option.inherited_target"
+    TargetKind.NEAREST_PLAYER -> "gui.option.nearest_player"
+    TargetKind.NEARBY_PLAYERS -> "gui.option.nearby_players"
+    TargetKind.ALL_PLAYERS -> "gui.option.all_players"
+    TargetKind.RANDOM_PLAYER -> "gui.option.random_player"
+    TargetKind.NEAREST_ENTITY -> "gui.option.nearest_entity"
+    TargetKind.NEARBY_ENTITIES -> "gui.option.nearby_entities"
+    TargetKind.FIXED_ENTITY -> "gui.option.fixed_entity"
+})
+
+private fun displayPosition(kind: PositionKind) = DisplayValue.Localized(when (kind) {
+    PositionKind.CAPTURED -> "gui.option.current_position"
+    PositionKind.DISK -> "gui.option.disk_position"
+    PositionKind.EXECUTOR -> "gui.option.executor_position"
+    PositionKind.TARGET -> "gui.option.target_position"
+    PositionKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
+    PositionKind.COORDINATES -> "gui.option.coordinates"
+    PositionKind.TEMPORARY_VARIABLE -> "gui.option.temporary_variable"
+    PositionKind.WORLD_VARIABLE -> "gui.field.world_variable"
+})
+
+private fun displayFacing(kind: FacingKind) = DisplayValue.Localized(when (kind) {
+    FacingKind.INHERITED -> "gui.option.unchanged"
+    FacingKind.CAPTURED -> "gui.option.current_facing"
+    FacingKind.EXECUTOR -> "gui.option.executor_facing"
+    FacingKind.TARGET -> "gui.option.face_target"
+    FacingKind.COORDINATES -> "gui.option.face_coordinates"
+    FacingKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
+    FacingKind.ROTATION -> "gui.option.numeric"
+})
+
+private fun displayCondition(value: String) = runCatching { ConditionKind.valueOf(value) }.getOrNull()
+    ?.let { DisplayValue.Localized(it.key) } ?: displayUnset()
+
+private fun displayVariableScope(value: String) = DisplayValue.Localized(
+    if (value == VariableScope.WORLD.name) "gui.field.world_variable" else "gui.option.temporary_variable",
+)
+
+private fun displayVariableType(value: String) = runCatching { VariableType.valueOf(value) }.getOrNull()?.let {
+    DisplayValue.Localized(when (it) {
+        VariableType.BOOLEAN -> "gui.option.true_false"
+        VariableType.INTEGER -> "gui.option.integer"
+        VariableType.DECIMAL -> "gui.option.decimal"
+        VariableType.TEXT -> "gui.option.text"
+        VariableType.POSITION -> "gui.option.position"
+        VariableType.ENTITY -> "gui.option.entity_reference"
+    })
+} ?: displayUnset()
+
+private fun displayVariableOperation(value: String) = runCatching { VariableOperation.valueOf(value) }.getOrNull()
+    ?.let { DisplayValue.Localized("gui.option.${it.name.lowercase()}") } ?: displayUnset()
+
+private fun displayVariableValue(value: String) = when (value) {
+    "$" + "current_iteration_value" -> DisplayValue.Localized("gui.option.current_iteration")
+    "$" + "current_loop_count" -> DisplayValue.Localized("gui.option.current_loop_count")
+    else -> displayLiteral(value)
+}
+
+private fun displayEntityAction(value: String) = DisplayValue.Localized(
+    if (value == "dismount") "gui.option.dismount" else "gui.option.ride",
+)
+
+private fun displayTextMode(value: String) = DisplayValue.Localized(when (value) {
+    "title" -> "gui.option.title"
+    "actionbar" -> "gui.option.actionbar"
+    else -> "gui.option.chat"
+})
+
+private fun displayEntityState(value: String) = DisplayValue.Localized(
+    if (value == "on_ground") "gui.option.on_ground" else "gui.option.sneaking",
+)
+
+private fun displayForSource(value: String) = DisplayValue.Localized(
+    if (value == "TEMPORARY") "gui.option.temporary_variable" else "gui.option.fixed_value",
+)
+
+private fun displayGameMode(value: String?) = value?.let {
+    DisplayValue.Localized("gui.option.game_mode_${it.lowercase()}")
+} ?: displayUnset()
+
+private fun displayShakeType(value: String) = when (value.lowercase()) {
+    "positional" -> DisplayValue.Localized("gui.option.shake_positional")
+    "rotational" -> DisplayValue.Localized("gui.option.shake_rotational")
+    else -> displayUnset()
+}
+
+private fun displayEquipmentSlot(value: String) = when (value.uppercase()) {
+    "HAND" -> DisplayValue.Localized("gui.option.equipment_hand")
+    "OFF_HAND" -> DisplayValue.Localized("gui.option.equipment_off_hand")
+    "HEAD" -> DisplayValue.Localized("gui.option.equipment_head")
+    "CHEST" -> DisplayValue.Localized("gui.option.equipment_chest")
+    "LEGS" -> DisplayValue.Localized("gui.option.equipment_legs")
+    "FEET" -> DisplayValue.Localized("gui.option.equipment_feet")
+    else -> displayUnset()
 }

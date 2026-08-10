@@ -234,6 +234,11 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                                         "§e",
                                     ),
                                     GuiLoreLine.Data(
+                                        KcI18n.text(player, "gui.editor.info_outside_label"),
+                                        KcI18n.text(player, "gui.editor.info_outside_value"),
+                                        "§7",
+                                    ),
+                                    GuiLoreLine.Data(
                                         KcI18n.text(player, "gui.editor.info_omitted_label"),
                                         KcI18n.text(player, "gui.editor.info_omitted_value"),
                                         "§7",
