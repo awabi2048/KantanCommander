@@ -6,14 +6,11 @@ import org.junit.jupiter.api.Test
 
 class MenuSlotDistributionTest {
     @Test
-    fun `command picker fills the seven-column body from the upper left`() {
-        for (count in 1..21) {
-            val slots = CommandPickerSlotDistribution.slots(count)
-
-            assertEquals(count, slots.distinct().size)
-            assertTrue(slots.all { it % 9 in 1..7 }, "count=$count slots=$slots")
-            assertEquals((0 until count).map { 10 + (it / 7) * 9 + (it % 7) }, slots)
-        }
+    fun `command picker keeps one empty row above and below a fixed fourteen-slot area`() {
+        assertEquals(54, CommandPickerLayoutPolicy.SIZE)
+        assertEquals((19..25).toList() + (28..34).toList(), CommandPickerLayoutPolicy.itemSlots)
+        assertEquals(listOf(49, 51), CommandPickerLayoutPolicy.categorySlots)
+        assertEquals(45, CommandPickerLayoutPolicy.BACK_SLOT)
     }
 
     @Test

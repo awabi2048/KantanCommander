@@ -1,18 +1,14 @@
 package me.awabi2048.kantancommander.gui
 
 /**
- * MWMの一覧系画面と同様に、左右1枠を余白として残した7列を上段左から順に埋めます。
- * 件数によって既存アイコンの位置を動かさず、追加時の視線移動も左から右、上から下に固定します。
+ * コマンド選択はタブ間で画面が動かない固定6行です。MWMの8～14件一覧と同じく、
+ * 本文の上下に1行ずつ余白を置き、左右1枠を除いた14枠を配置領域とします。
  */
-internal object CommandPickerSlotDistribution {
-    private const val FIRST_CONTENT_ROW = 1
-    private const val MAX_ITEMS_PER_ROW = 7
-    private const val MAX_ROWS = 3
-
-    fun slots(count: Int): List<Int> {
-        require(count in 1..MAX_ITEMS_PER_ROW * MAX_ROWS)
-        return leftPackedSlots(count, FIRST_CONTENT_ROW, MAX_ROWS)
-    }
+internal object CommandPickerLayoutPolicy {
+    const val SIZE = 54
+    const val BACK_SLOT = 45
+    val itemSlots: List<Int> = (19..25).toList() + (28..34).toList()
+    val categorySlots: List<Int> = listOf(49, 51)
 }
 
 /**

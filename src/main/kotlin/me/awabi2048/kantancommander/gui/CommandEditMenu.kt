@@ -631,7 +631,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val elements = types.mapIndexed { index, type ->
             KcGui.menuEntry(
                 player = player,
-                slot = CommandPickerSlotDistribution.slots(types.size)[index],
+                slot = CommandPickerLayoutPolicy.itemSlots[index],
                 material = type.icon,
                 name = KcI18n.text(player, type.key),
                 style = GuiNameStyle.PRIMARY,
@@ -643,11 +643,18 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 )),
             )
         }.toMutableList()
+        CommandPickerLayoutPolicy.itemSlots.drop(types.size).forEach { slot ->
+            elements += MenuElement(
+                slot,
+                KcGui.elements.decoration(Material.WHITE_STAINED_GLASS_PANE),
+                GuiElementRole.DECORATION,
+            )
+        }
         CommandCategory.entries.forEachIndexed { index, option ->
             val selected = option == category
             elements += KcGui.menuEntry(
                 player = player,
-                slot = 40 + index * 2,
+                slot = CommandPickerLayoutPolicy.categorySlots[index],
                 material = if (option == CommandCategory.PROCESS) Material.COMMAND_BLOCK else Material.CHAIN_COMMAND_BLOCK,
                 name = KcI18n.text(player, option.labelKey),
                 style = GuiNameStyle.PRIMARY,
@@ -665,8 +672,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 glint = selected,
             )
         }
-        elements += backElement(player)
-        return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.select_command")), elements)
+        elements += backElement(player, CommandPickerLayoutPolicy.BACK_SLOT)
+        return InventoryMenuView(CommandPickerLayoutPolicy.SIZE, KcGui.title(KcI18n.text(player, "gui.editor.select_command")), elements)
     }
 
     /**
@@ -765,7 +772,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(TargetKind.FIXED_ENTITY, Material.ARMOR_STAND, KcI18n.text(player, "gui.option.fixed_entity")),
         )
         val elements = options.mapIndexed { index, option ->
-            choiceElement(player, CommandPickerSlotDistribution.slots(options.size)[index], option.second, option.third,
+                choiceElement(player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.second, option.third,
                 "select", mapOf("kind" to option.first.name))
         }.toMutableList()
         elements += backElement(player)
@@ -788,7 +795,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
         val elements = options.mapIndexed { index, option ->
             choiceElement(
-                player, CommandPickerSlotDistribution.slots(options.size)[index], option.material,
+                player, ChoiceMenuSlotDistribution.slots(options.size)[index], option.material,
                 KcI18n.text(player, option.nameKey), option.action,
                 dataLabel = KcI18n.text(player, option.nameKey), dataValue = localizedValue(player, option.value),
             )
@@ -1431,8 +1438,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun back() = MenuActionHandler { MenuActionResult.Success(MenuUpdate.Back) }
 
-    private fun backElement(player: Player) =
-        KcGui.elements.backEntry(player, 36)
+    private fun backElement(player: Player, slot: Int = 36) =
+        KcGui.elements.backEntry(player, slot)
 
     private fun state(player: Player, configured: Boolean): String =
         KcI18n.text(player, if (configured) "gui.option.configured" else "gui.option.inherited")
