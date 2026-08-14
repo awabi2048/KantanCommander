@@ -60,7 +60,7 @@ object DiskItemService {
                         GuiLoreSpec.Rich(
                             listOf(GuiLoreLine.Data(
                                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROFILE),
-                                KcI18n.text(player, if (profile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
+                                KcI18n.text(player, if (profile == DiskProfile.SIMPLE) KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_SIMPLE else KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_STANDARD),
                                 "§f",
                             )),
                             GuiLoreFrame.BOTH,
@@ -158,7 +158,7 @@ object DiskItemService {
                         GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size, "§f"),
                         GuiLoreLine.Data(
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROFILE),
-                            KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
+                            KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_SIMPLE else KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_STANDARD),
                             "§f",
                         ),
                         GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_OWNER), ownerName, "§f"),

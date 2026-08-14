@@ -82,7 +82,7 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                     GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size),
                     GuiMenuEntryData(
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROFILE),
-                        KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
+                        KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_SIMPLE else KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_STANDARD),
                     ),
                     GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_TRIGGER), KcI18n.text(player, script.activation.key)),
                 ),

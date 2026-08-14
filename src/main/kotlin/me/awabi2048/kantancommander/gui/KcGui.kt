@@ -141,7 +141,4 @@ object KcGui {
         "lore.click.middle" -> MenuGesture.MIDDLE
         else -> MenuGesture.ANY
     }
-
-    private fun commonText(player: Player, key: String): String =
-        CCSystem.getAPI().getI18nString(player, key)
 }

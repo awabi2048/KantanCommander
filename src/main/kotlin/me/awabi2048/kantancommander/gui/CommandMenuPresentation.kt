@@ -1,11 +1,17 @@
 package me.awabi2048.kantancommander.gui
 
+import com.awabi2048.ccsystem.api.localization.LocalizationKey
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
 
 /** コマンド選択画面で、実処理と実行順序の制御を混在させないための表示分類です。 */
-internal enum class CommandCategory(val routeValue: String, val labelKey: String) {
-    PROCESS("process", "gui.editor.category_process"),
-    CONTROL("control", "gui.editor.category_control"),
+internal enum class CommandCategory(
+    val routeValue: String,
+    val labelKey: LocalizationKey<String>,
+    val descriptionKey: LocalizationKey<List<String>>,
+) {
+    PROCESS("process", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS_DESCRIPTION),
+    CONTROL("control", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL_DESCRIPTION),
     ;
 
     companion object {

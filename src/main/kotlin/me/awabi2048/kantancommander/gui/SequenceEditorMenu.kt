@@ -187,7 +187,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 add(
                     GuiMenuEntryData(
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_STATE_LABEL),
-                        KcI18n.text(player, if (script.timer.enabled) "gui.editor.enabled" else "gui.editor.disabled"),
+                        KcI18n.text(player, if (script.timer.enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED),
                         if (script.timer.enabled) GuiValueTone.SUCCESS else GuiValueTone.MUTED,
                     ),
                 )
@@ -312,7 +312,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         material = node.type.icon,
         name = KcI18n.text(player, node.type.key),
         role = GuiElementRole.ACTION,
-        description = KcI18n.list(player, "${node.type.key}_description"),
+        description = KcI18n.list(player, node.type.descriptionKey),
         data = listOf(
             GuiMenuEntryData(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SETTINGS_SUMMARY_LABEL),
@@ -351,7 +351,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             ?.let { KcI18n.text(player, it.key) }
             ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         CommandType.DISK_CALL ->
-            KcI18n.text(player, if (node.snapshot == null) "gui.field.unset" else "gui.option.configured")
+            KcI18n.text(player, if (node.snapshot == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
         CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.FOR_START ->
             "${node.string("startValue")}..${node.string("endValue")} / ${node.string("stepValue")}"
@@ -361,30 +361,30 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun localizedTarget(player: Player, kind: TargetKind): String = KcI18n.text(
         player,
         when (kind) {
-            TargetKind.EXECUTOR -> "gui.option.executor"
-            TargetKind.ACTIVATOR -> "gui.option.activator"
-            TargetKind.INHERITED_TARGET -> "gui.option.inherited_target"
-            TargetKind.NEAREST_PLAYER -> "gui.option.nearest_player"
-            TargetKind.NEARBY_PLAYERS -> "gui.option.nearby_players"
-            TargetKind.ALL_PLAYERS -> "gui.option.all_players"
-            TargetKind.RANDOM_PLAYER -> "gui.option.random_player"
-            TargetKind.NEAREST_ENTITY -> "gui.option.nearest_entity"
-            TargetKind.NEARBY_ENTITIES -> "gui.option.nearby_entities"
-            TargetKind.FIXED_ENTITY -> "gui.option.fixed_entity"
+            TargetKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR
+            TargetKind.ACTIVATOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIVATOR
+            TargetKind.INHERITED_TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET
+            TargetKind.NEAREST_PLAYER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER
+            TargetKind.NEARBY_PLAYERS -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS
+            TargetKind.ALL_PLAYERS -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL_PLAYERS
+            TargetKind.RANDOM_PLAYER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RANDOM_PLAYER
+            TargetKind.NEAREST_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY
+            TargetKind.NEARBY_ENTITIES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES
+            TargetKind.FIXED_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
         }
     )
 
     private fun localizedPosition(player: Player, kind: PositionKind): String = KcI18n.text(
         player,
         when (kind) {
-            PositionKind.CAPTURED -> "gui.option.current_position"
-            PositionKind.DISK -> "gui.option.disk_position"
-            PositionKind.EXECUTOR -> "gui.option.executor_position"
-            PositionKind.TARGET -> "gui.option.target_position"
-            PositionKind.MYWORLD_SPAWN -> "gui.option.myworld_spawn"
-            PositionKind.COORDINATES -> "gui.option.coordinates"
-            PositionKind.TEMPORARY_VARIABLE -> "gui.option.temporary_variable"
-            PositionKind.WORLD_VARIABLE -> "gui.field.world_variable"
+            PositionKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_POSITION
+            PositionKind.DISK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISK_POSITION
+            PositionKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR_POSITION
+            PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
+            PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
+            PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
+            PositionKind.TEMPORARY_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
+            PositionKind.WORLD_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
         }
     )
 
@@ -396,16 +396,16 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 player = player,
                 slot = slot,
                 material = MapCellMaterialPolicy.material(cell.kind),
-                name = KcI18n.text(player, if (addAtEnd) "gui.editor.add" else "gui.editor.insert"),
+                name = KcI18n.text(player, if (addAtEnd) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ADD else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INSERT),
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(
                     player,
-                    if (addAtEnd) "gui.editor.add_description" else "gui.editor.insert_description",
+                    if (addAtEnd) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ADD_DESCRIPTION else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INSERT_DESCRIPTION,
                 ),
                 actions = listOf(
                     GuiMenuActionIntent.AnyClick(
                         actionId = "add",
-                        label = KcI18n.text(player, if (addAtEnd) "gui.editor.add" else "gui.editor.insert"),
+                        label = KcI18n.text(player, if (addAtEnd) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ADD else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INSERT),
                         payload = mapOf(
                     "sourceId" to insertionTarget.sourceId?.toString().orEmpty(),
                     "edge" to insertionTarget.edge.name,

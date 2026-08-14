@@ -28,8 +28,8 @@ class CommandMenuPresentationTest {
     @Test
     fun `every editable field declares semantic lore metadata`() {
         CommandType.entries.flatMap(EditorMenuLayout::fields).forEach { field ->
-            assertTrue(field.descriptionKey.startsWith("gui.field_description."), field.key)
-            assertTrue(field.actionKey.startsWith("gui.field_action."), field.key)
+            assertTrue(field.descriptionKey.id.startsWith("kantan_commander_clean.gui.field_description."), field.key)
+            assertTrue(field.actionKey.id.startsWith("kantan_commander_clean.gui.field_action."), field.key)
         }
     }
 

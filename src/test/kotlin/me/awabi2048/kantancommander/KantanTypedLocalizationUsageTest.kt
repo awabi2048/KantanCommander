@@ -9,16 +9,18 @@ import org.junit.jupiter.api.Test
 
 class KantanTypedLocalizationUsageTest {
     @Test
-    fun `fixed localization references use generated typed keys`() {
+    fun `localization references cannot leave the generated typed key boundary`() {
         val sourceRoot = Path.of("src/main/kotlin")
-        val literalCall = Regex(
-            """KcI18n\.(?:text|list|component)\(\s*[^,]+,\s*\"[^\"$]+\"""",
-            setOf(RegexOption.DOT_MATCHES_ALL),
+        val forbidden = listOf(
+            Regex("""KcI18n\.(?:text|list|component)\(\s*[^,]+,\s*\"""", RegexOption.DOT_MATCHES_ALL),
+            Regex("""KcI18n\.dynamic(?:Text|List|Component)\("""),
+            Regex("""getI18n(?:String|StringList|Component|ComponentList)\(\s*[^,]+,\s*(?:\"|[^,\n]+\.id\b)"""),
+            Regex("""LocalizationKey\.(?:text|textList)\("""),
         )
         val violations = Files.walk(sourceRoot).use { paths ->
             paths
                 .filter { Files.isRegularFile(it) && it.extension == "kt" }
-                .filter { literalCall.containsMatchIn(it.readText()) }
+                .filter { path -> forbidden.any { it.containsMatchIn(path.readText()) } }
                 .map(sourceRoot::relativize)
                 .sorted()
                 .toList()
@@ -26,7 +28,7 @@ class KantanTypedLocalizationUsageTest {
 
         assertTrue(
             violations.isEmpty(),
-            "固定言語キーはKcKeysのLocalizationKey定数で参照してください: $violations",
+            "生成済みLocalizationKeyを失う文字列APIまたは任意キー生成が残っています: $violations",
         )
     }
 }

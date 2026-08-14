@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.gui
 
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -17,8 +18,8 @@ class EditorMenuLayoutTest {
         }
         val values = EditorMenuLayout.fields(CommandType.TELEPORT).associate { it.key to it.value(node) }
 
-        assertEquals(DisplayValue.Localized("gui.option.nearest_player"), values["target"])
-        assertEquals(DisplayValue.Localized("gui.option.myworld_spawn"), values["destination"])
+        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER), values["target"])
+        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN), values["destination"])
     }
 
     @Test
@@ -35,31 +36,31 @@ class EditorMenuLayoutTest {
         }
 
         assertEquals(
-            DisplayValue.Localized("gui.option.dismount"),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT),
             EditorMenuLayout.fields(CommandType.ENTITY_ACTION).single { it.key == "action" }.value(entityAction),
         )
         assertEquals(
-            DisplayValue.Localized("gui.option.actionbar"),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIONBAR),
             EditorMenuLayout.fields(CommandType.DISPLAY_TEXT).single { it.key == "mode" }.value(displayText),
         )
         assertEquals(
-            DisplayValue.Localized("gui.option.shake_positional"),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_POSITIONAL),
             EditorMenuLayout.fields(CommandType.CAMERA_SHAKE).single { it.key == "shakeType" }.value(cameraShake),
         )
         assertEquals(
-            DisplayValue.Localized("gui.option.equipment_off_hand"),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND),
             EditorMenuLayout.fields(CommandType.EQUIP_ITEM).single { it.key == "slot" }.value(equipment),
         )
         assertEquals(
-            DisplayValue.Localized("condition.entity_state"),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE),
             EditorMenuLayout.fields(CommandType.CONDITION).single { it.key == "kind" }.value(condition),
         )
         assertEquals(
-            DisplayValue.Localized("gui.option.current_loop_count"),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_LOOP_COUNT),
             EditorMenuLayout.fields(CommandType.VARIABLE).single { it.key == "value" }.value(variable),
         )
         val loopValues = EditorMenuLayout.fields(CommandType.FOR_START).associate { it.key to it.value(loop) }
-        assertEquals(DisplayValue.Localized("gui.option.fixed_value"), loopValues["startSource"])
-        assertEquals(DisplayValue.Localized("gui.option.temporary_variable"), loopValues["endSource"])
+        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE), loopValues["startSource"])
+        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE), loopValues["endSource"])
     }
 }

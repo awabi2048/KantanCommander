@@ -25,7 +25,11 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
             "placed" -> listPlaced(sender)
             "reload" -> {
                 if (!sender.hasPermission("kankoma.admin")) return true
-                val key = if (plugin.reloadManagedSettings()) "message.reloaded" else "message.reload_failed"
+                val key = if (plugin.reloadManagedSettings()) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_RELOADED
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_RELOAD_FAILED
+                }
                 sender.sendMessage(KcI18n.text(sender as? Player, key))
             }
             else -> help(sender)
@@ -49,8 +53,12 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
 
     private fun help(sender: CommandSender) {
         val player = sender as? Player
-        listOf("help_programs", "help_placed", "help_reload").forEach {
-            sender.sendMessage(KcI18n.text(player, "message.$it"))
+        listOf(
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_PROGRAMS,
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_PLACED,
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_RELOAD,
+        ).forEach {
+            sender.sendMessage(KcI18n.text(player, it))
         }
     }
 
