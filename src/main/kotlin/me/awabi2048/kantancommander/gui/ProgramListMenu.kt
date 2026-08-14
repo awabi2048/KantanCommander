@@ -1,4 +1,5 @@
 package me.awabi2048.kantancommander.gui
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiElementRole
@@ -76,20 +77,20 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 material = Material.MUSIC_DISC_13,
                 name = script.name,
                 style = GuiNameStyle.PRIMARY,
-                description = KcI18n.list(player, "gui.programs.entry_description"),
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ENTRY_DESCRIPTION),
                 data = listOf(
-                    GuiMenuEntryData(KcI18n.text(player, "item.commands"), script.graph.nodes.size),
+                    GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size),
                     GuiMenuEntryData(
-                        KcI18n.text(player, "item.profile"),
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROFILE),
                         KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
                     ),
-                    GuiMenuEntryData(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key)),
+                    GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_TRIGGER), KcI18n.text(player, script.activation.key)),
                 ),
                 role = GuiElementRole.CONTENT,
                 actions = listOf(
                     GuiMenuActionIntent.LeftRight(
-                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, "gui.programs.action_get"), mapOf(SCRIPT_ID to script.id.toString())),
-                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, "gui.programs.action_edit"), mapOf(SCRIPT_ID to script.id.toString())),
+                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ACTION_GET), mapOf(SCRIPT_ID to script.id.toString())),
+                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ACTION_EDIT), mapOf(SCRIPT_ID to script.id.toString())),
                     ),
                 ),
             )
@@ -99,11 +100,11 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
         elements += navigationElement(player, layout.nextPageSlot, page < total - 1, ">", ACTION_NEXT)
         elements += KcGui.elements.backEntry(player, layout.backSlot)
         elements += KcGui.menuEntry(
-            player, layout.infoSlot, Material.BOOK, KcI18n.text(player, "gui.programs.page"),
+            player, layout.infoSlot, Material.BOOK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_PAGE),
             GuiNameStyle.MUTED, GuiElementRole.CONTENT,
-            data = listOf(GuiMenuEntryData(KcI18n.text(player, "gui.programs.page"), "${page + 1}/$total")),
+            data = listOf(GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_PAGE), "${page + 1}/$total")),
         )
-        return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, "gui.programs.title")), elements)
+        return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_TITLE)), elements)
     }
 
     private fun navigationElement(player: Player, slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {
@@ -114,7 +115,7 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 material = Material.ARROW,
                 name = name,
                 role = GuiElementRole.NAVIGATION,
-                description = KcI18n.list(player, "gui.programs.navigation_description"),
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_NAVIGATION_DESCRIPTION),
                 actions = listOf(GuiMenuActionIntent.AnyClick(actionId, name)),
             )
         } else {

@@ -1,4 +1,5 @@
 package me.awabi2048.kantancommander.item
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiLoreFrame
@@ -58,7 +59,7 @@ object DiskItemService {
                     CCSystem.getAPI().getLoreService().compose(
                         GuiLoreSpec.Rich(
                             listOf(GuiLoreLine.Data(
-                                KcI18n.text(player, "item.profile"),
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROFILE),
                                 KcI18n.text(player, if (profile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
                                 "§f",
                             )),
@@ -67,7 +68,7 @@ object DiskItemService {
                         listOf(me.awabi2048.kantancommander.gui.KcGui.action(
                             player,
                             "lore.click.shift_right",
-                            KcI18n.text(player, "item.action_place"),
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_PLACE),
                         ))
                     )
                 )
@@ -154,24 +155,24 @@ object DiskItemService {
             val lore = CCSystem.getAPI().getLoreService().render(
                 composeLore(
                     listOf(
-                        GuiLoreLine.Data(KcI18n.text(player, "item.commands"), script.graph.nodes.size, "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size, "§f"),
                         GuiLoreLine.Data(
-                            KcI18n.text(player, "item.profile"),
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROFILE),
                             KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) "profile.simple" else "profile.standard"),
                             "§f",
                         ),
-                        GuiLoreLine.Data(KcI18n.text(player, "item.owner"), ownerName, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, "item.trigger"), KcI18n.text(player, script.activation.key), "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_OWNER), ownerName, "§f"),
+                        GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_TRIGGER), KcI18n.text(player, script.activation.key), "§f"),
                         GuiLoreLine.Spacer,
                         me.awabi2048.kantancommander.gui.KcGui.action(
                             player,
                             "lore.click.right",
-                            KcI18n.text(player, "item.action_edit")
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_EDIT)
                         ),
                         me.awabi2048.kantancommander.gui.KcGui.action(
                             player,
                             "lore.click.shift_right",
-                            KcI18n.text(player, "item.action_place")
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_PLACE)
                         )
                     ),
                 )

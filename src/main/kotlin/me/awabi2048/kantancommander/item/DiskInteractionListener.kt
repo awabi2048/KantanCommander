@@ -1,4 +1,5 @@
 package me.awabi2048.kantancommander.item
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
@@ -34,7 +35,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             event.isCancelled = true
             val script = plugin.scripts.load(clickedPlacement.scriptId) ?: return
             if (!plugin.placementAccess.canManage(player, clickedPlacement.world)) {
-                player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
+                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
                 return
             }
             plugin.editorMenu.open(player, clickedPlacement)
@@ -57,7 +58,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
                 }
                 val unsetProfile = DiskItemService.unsetProfile(item) ?: DiskProfile.STANDARD
                 if (!plugin.placementAccess.canManage(player, player.world.name)) {
-                    player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
+                    player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
                     return
                 }
                 val base = event.clickedBlock ?: return
@@ -75,7 +76,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         event.isCancelled = true
         val script = plugin.scripts.load(placement.scriptId) ?: return
         if (!plugin.placementAccess.canManage(event.player, placement.world)) return
-        event.player.sendMessage(KcI18n.text(event.player, "message.remove_from_menu"))
+        event.player.sendMessage(KcI18n.text(event.player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_REMOVE_FROM_MENU))
     }
 
     private fun placeDisk(
@@ -88,11 +89,11 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
     ) {
         val block = location.block
         if (!block.isReplaceable) {
-            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
         if (plugin.placements.find(block.location) != null) {
-            player.sendMessage(KcI18n.text(player, "message.place_exists"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_EXISTS))
             return
         }
 
@@ -101,7 +102,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             block.location.clone().add(1.0, 1.0, 1.0).toVector(),
         )
         if (player.boundingBox.overlaps(targetBox)) {
-            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
 
@@ -114,7 +115,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         val material = PlacedDiskMaterials.forTimer(placedScript.timer.enabled, placedScript.effectiveProfile)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
-            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
         val replacedState = block.state
@@ -132,7 +133,7 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
         if (placeEvent.isCancelled() || !placeEvent.canBuild()) {
             replacedState.update(true, false)
             plugin.scripts.delete(placedScript.id)
-            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
         val placement = DiskPlacement(
@@ -146,11 +147,11 @@ class DiskInteractionListener(private val plugin: KantanCommanderPlugin) : Liste
             plugin.placements.remove(block.world, block.x, block.y, block.z)
             plugin.scripts.delete(placedScript.id)
             replacedState.update(true, false)
-            player.sendMessage(KcI18n.text(player, "message.place_blocked"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
         val stack = if (hand == EquipmentSlot.OFF_HAND) player.inventory.itemInOffHand else player.inventory.itemInMainHand
         if (player.gameMode != org.bukkit.GameMode.CREATIVE) stack.amount = (stack.amount - 1).coerceAtLeast(0)
-        player.sendMessage(KcI18n.text(player, "message.place_created"))
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_CREATED))
     }
 }

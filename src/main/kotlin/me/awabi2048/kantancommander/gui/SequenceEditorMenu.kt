@@ -1,4 +1,5 @@
 package me.awabi2048.kantancommander.gui
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiElementRole
@@ -106,7 +107,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         val source = scriptId(context.route)?.let(plugin.scripts::load)
                             ?: return@handler MenuActionResult.Ignored
                         plugin.scripts.copyToLibrary(source, context.player.uniqueId)
-                        context.player.sendMessage(KcI18n.text(context.player, "message.saved"))
+                        context.player.sendMessage(KcI18n.text(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_SAVED))
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                 ),
@@ -135,7 +136,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun render(player: Player, route: MenuRoute): InventoryMenuView {
         val script = scriptId(route)?.let(plugin.scripts::load)
-            ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.title")), emptyList())
+            ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)), emptyList())
         val origin = origin(route)
         val layout = GraphLayoutEngine.layout(script.graph)
         val elements = mutableListOf<MenuElement>()
@@ -149,7 +150,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             listOf(
                 GuiMenuActionIntent.AnyClick(
                     actionId = "activation",
-                    label = KcI18n.text(player, "gui.editor.activation_action"),
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_ACTION),
                 ),
             )
         } else emptyList()
@@ -159,19 +160,19 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             material = if (script.activation == me.awabi2048.kantancommander.model.ActivationMode.NEEDS_REDSTONE) {
                 Material.LEVER
             } else Material.REDSTONE_TORCH,
-            name = KcI18n.text(player, "gui.editor.activation"),
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION),
             style = GuiNameStyle.PRIMARY,
             role = if (activationActions.isEmpty()) GuiElementRole.CONTENT else GuiElementRole.ACTION,
-            description = KcI18n.list(player, "gui.editor.activation_description"),
+            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_DESCRIPTION),
             data = listOf(
                 GuiMenuEntryData(
-                    KcI18n.text(player, "gui.editor.activation_mode_label"),
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_MODE_LABEL),
                     KcI18n.text(player, script.activation.key),
                     GuiValueTone.DEFAULT,
                 ),
             ),
             warnings = if (script.timer.enabled) emptyList() else {
-                KcI18n.list(player, "gui.editor.activation_timer_required")
+                KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_TIMER_REQUIRED)
             },
             actions = activationActions,
         )
@@ -179,13 +180,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             player = player,
             slot = 37,
             material = Material.CLOCK,
-            name = KcI18n.text(player, "gui.editor.timer"),
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
             style = GuiNameStyle.PRIMARY,
-            description = KcI18n.list(player, "gui.editor.timer_description"),
+            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER_DESCRIPTION),
             data = buildList {
                 add(
                     GuiMenuEntryData(
-                        KcI18n.text(player, "gui.editor.state_label"),
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_STATE_LABEL),
                         KcI18n.text(player, if (script.timer.enabled) "gui.editor.enabled" else "gui.editor.disabled"),
                         if (script.timer.enabled) GuiValueTone.SUCCESS else GuiValueTone.MUTED,
                     ),
@@ -193,26 +194,26 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 if (script.timer.enabled) {
                     add(
                         GuiMenuEntryData(
-                            KcI18n.text(player, "gui.editor.interval_label"),
-                            KcI18n.text(player, "gui.editor.interval_units", mapOf("value" to script.timer.intervalUnits)),
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_LABEL),
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS, mapOf("value" to script.timer.intervalUnits)),
                             GuiValueTone.DEFAULT,
                         ),
                     )
                 }
             },
             actions = listOf(
-                GuiMenuActionIntent.AnyClick("timer", KcI18n.text(player, "gui.editor.timer_action")),
+                GuiMenuActionIntent.AnyClick("timer", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER_ACTION)),
             ),
         )
         elements += KcGui.menuEntry(
             player = player,
             slot = 38,
             material = Material.COMPASS,
-            name = KcI18n.text(player, "gui.editor.center"),
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER),
             style = GuiNameStyle.PRIMARY,
-            description = KcI18n.list(player, "gui.editor.center_description"),
+            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_DESCRIPTION),
             actions = listOf(
-                GuiMenuActionIntent.AnyClick("center", KcI18n.text(player, "gui.editor.center_action")),
+                GuiMenuActionIntent.AnyClick("center", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_ACTION)),
             ),
         )
         elements += KcGui.elements.menuDisplay(
@@ -220,27 +221,27 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 slot = 39,
                 item = GuiItemSpec(
                     material = Material.MAP,
-                    name = GuiNameSpec.Text(KcI18n.text(player, "gui.editor.info"), GuiNameStyle.PRIMARY),
+                    name = GuiNameSpec.Text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO), GuiNameStyle.PRIMARY),
                     lore = GuiLoreSpec.Blocks(
                         listOf(
-                            GuiLoreBlock(KcI18n.list(player, "gui.editor.info_description").map(GuiLoreLine::Text)),
+                            GuiLoreBlock(KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO_DESCRIPTION).map(GuiLoreLine::Text)),
                             // セルの色自体が表示範囲を表すため、図は文字列化せずAdventure Componentで保持します。
                             GuiLoreBlock(listOf(GuiLoreLine.Component(GraphDiagramRenderer.render(layout, origin)))),
                             GuiLoreBlock(
                                 listOf(
                                     GuiLoreLine.Data(
-                                        KcI18n.text(player, "gui.editor.info_viewport_label"),
-                                        KcI18n.text(player, "gui.editor.info_viewport_value"),
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO_VIEWPORT_LABEL),
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO_VIEWPORT_VALUE),
                                         "§e",
                                     ),
                                     GuiLoreLine.Data(
-                                        KcI18n.text(player, "gui.editor.info_outside_label"),
-                                        KcI18n.text(player, "gui.editor.info_outside_value"),
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO_OUTSIDE_LABEL),
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO_OUTSIDE_VALUE),
                                         "§7",
                                     ),
                                     GuiLoreLine.Data(
-                                        KcI18n.text(player, "gui.editor.info_omitted_label"),
-                                        KcI18n.text(player, "gui.editor.info_omitted_value"),
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO_OMITTED_LABEL),
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INFO_OMITTED_VALUE),
                                         "§7",
                                     ),
                                 ),
@@ -257,23 +258,23 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 player = player,
                 slot = 40,
                 material = Material.MUSIC_DISC_13,
-                name = KcI18n.text(player, "gui.editor.output"),
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT),
                 style = GuiNameStyle.PRIMARY,
-                description = KcI18n.list(player, "gui.editor.output_description"),
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
                 actions = listOf(
-                    GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, "gui.editor.output_copy")),
+                    GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)),
                 ),
             )
             elements += KcGui.menuEntry(
                 player = player,
                 slot = 41,
                 material = Material.RED_CONCRETE,
-                name = KcI18n.text(player, "gui.editor.remove"),
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE),
                 style = GuiNameStyle.DANGER,
-                description = KcI18n.list(player, "gui.editor.remove_description"),
-                warnings = listOf(KcI18n.text(player, "gui.editor.remove_warning")),
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_DESCRIPTION),
+                warnings = listOf(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_WARNING)),
                 actions = listOf(
-                    GuiMenuActionIntent.AnyClick("remove", KcI18n.text(player, "gui.editor.remove_action")),
+                    GuiMenuActionIntent.AnyClick("remove", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_ACTION)),
                 ),
             )
         }
@@ -281,28 +282,28 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             player = player,
             slot = 42,
             material = Material.BOOK,
-            name = KcI18n.text(player, "gui.editor.save"),
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SAVE),
             style = GuiNameStyle.PRIMARY,
-            description = KcI18n.list(player, "gui.editor.save_description"),
+            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SAVE_DESCRIPTION),
             actions = listOf(
-                GuiMenuActionIntent.AnyClick("save_library", KcI18n.text(player, "gui.editor.save_action")),
+                GuiMenuActionIntent.AnyClick("save_library", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SAVE_ACTION)),
             ),
         )
         elements += KcGui.menuEntry(
             player = player,
             slot = 44,
             material = Material.RECOVERY_COMPASS,
-            name = KcI18n.text(player, "gui.editor.navigate"),
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NAVIGATE),
             style = GuiNameStyle.PRIMARY,
-            description = KcI18n.list(player, "gui.editor.navigate_description"),
+            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NAVIGATE_DESCRIPTION),
             actions = listOf(
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_LEFT, KcI18n.text(player, "gui.editor.move_left")),
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_RIGHT, KcI18n.text(player, "gui.editor.move_right")),
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_LEFT, KcI18n.text(player, "gui.editor.move_up")),
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_RIGHT, KcI18n.text(player, "gui.editor.move_down")),
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT)),
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT)),
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP)),
+                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN)),
             ),
         )
-        return InventoryMenuView(45, KcGui.title(KcI18n.text(player, "gui.editor.title")), elements)
+        return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)), elements)
     }
 
     private fun commandElement(player: Player, slot: Int, node: CommandNode) = KcGui.menuEntry(
@@ -314,7 +315,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         description = KcI18n.list(player, "${node.type.key}_description"),
         data = listOf(
             GuiMenuEntryData(
-                KcI18n.text(player, "gui.editor.settings_summary_label"),
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SETTINGS_SUMMARY_LABEL),
                 commandSummary(player, node),
             ),
         ),
@@ -322,13 +323,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             GuiMenuActionIntent.GestureAction(
                 "command",
                 MenuGesture.PLAIN_LEFT,
-                KcI18n.text(player, "gui.editor.edit_action"),
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_EDIT_ACTION),
                 mapOf("nodeId" to node.id.toString()),
             ),
             GuiMenuActionIntent.GestureAction(
                 "command",
                 MenuGesture.PLAIN_RIGHT,
-                KcI18n.text(player, "gui.editor.delete_action"),
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DELETE_ACTION),
                 mapOf("nodeId" to node.id.toString()),
             ),
         ),
@@ -337,21 +338,21 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun commandSummary(player: Player, node: CommandNode): String = when (node.type) {
         CommandType.TELEPORT -> {
             val target = node.targetSpec?.kind?.let { localizedTarget(player, it) }
-                ?: KcI18n.text(player, "gui.field.unset")
+                ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
             val destination = node.destinationTargetSpec?.kind?.let { localizedTarget(player, it) }
                 ?: node.destinationSpec?.kind?.let { localizedPosition(player, it) }
-                ?: KcI18n.text(player, "gui.field.unset")
+                ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
             "$target → $destination"
         }
         CommandType.GIVE_ITEM -> "${node.string("item")} ×${node.int("count", 1)}"
-        CommandType.DISPLAY_TEXT -> node.string("text").ifBlank { KcI18n.text(player, "gui.field.unset") }
+        CommandType.DISPLAY_TEXT -> node.string("text").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.WAIT -> "${node.int("ticks", 20)} tick"
         CommandType.CONDITION -> runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
             ?.let { KcI18n.text(player, it.key) }
-            ?: KcI18n.text(player, "gui.field.unset")
+            ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         CommandType.DISK_CALL ->
             KcI18n.text(player, if (node.snapshot == null) "gui.field.unset" else "gui.option.configured")
-        CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, "gui.field.unset") }
+        CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.FOR_START ->
             "${node.string("startValue")}..${node.string("endValue")} / ${node.string("stepValue")}"
         else -> KcI18n.text(player, node.type.key)
@@ -431,7 +432,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun outputDisk(player: Player, placement: DiskPlacement, removeBlock: Boolean): Boolean {
         val source = plugin.scripts.load(placement.scriptId) ?: return false
         if (!plugin.placementAccess.canManage(player, placement.world)) {
-            player.sendMessage(KcI18n.text(player, "message.no_placement_access"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
             return false
         }
         val world = plugin.server.getWorld(placement.world) ?: return false
@@ -444,14 +445,14 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             return false
         }
         player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
-        player.sendMessage(KcI18n.text(player, "message.disk_output"))
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
 
         if (removeBlock) {
             plugin.placements.removeDisplay(world, placement.displayId)
             plugin.placements.remove(world, placement.x, placement.y, placement.z)
             block.setType(Material.AIR, false)
             plugin.scripts.delete(source.id)
-            player.sendMessage(KcI18n.text(player, "message.placement_removed"))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENT_REMOVED))
         }
         return true
     }

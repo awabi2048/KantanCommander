@@ -1,4 +1,5 @@
 package me.awabi2048.kantancommander.command
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import com.awabi2048.ccsystem.CCSystem
@@ -34,9 +35,9 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
 
     private fun listPlaced(sender: CommandSender) {
         if (!sender.hasPermission("kankoma.admin")) return
-        sender.sendMessage(KcI18n.text(sender as? Player, "message.placements_header", mapOf("count" to plugin.placements.all().size)))
+        sender.sendMessage(KcI18n.text(sender as? Player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_HEADER, mapOf("count" to plugin.placements.all().size)))
         plugin.placements.all().take(10).forEach {
-            sender.sendMessage(KcI18n.text(sender as? Player, "message.placements_entry", mapOf(
+            sender.sendMessage(KcI18n.text(sender as? Player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_ENTRY, mapOf(
                 "world" to it.world,
                 "x" to it.x,
                 "y" to it.y,
