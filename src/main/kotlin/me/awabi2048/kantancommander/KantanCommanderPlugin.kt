@@ -7,6 +7,7 @@ import com.awabi2048.ccsystem.api.config.ConfigMigration
 import com.awabi2048.ccsystem.api.config.ManagedConfigSpec
 import com.awabi2048.ccsystem.api.gui.MenuTargetPolicy
 import com.awabi2048.ccsystem.api.gui.PublicMenuDefinition
+import com.awabi2048.ccsystem.api.localization.LocalizationCatalogContract
 import me.awabi2048.kantancommander.command.KantanCommanderCommand
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.GraphLimits
@@ -58,6 +59,7 @@ class KantanCommanderPlugin : JavaPlugin() {
 
     override fun onEnable() {
         if (!verifyGuiRuntimeContract()) return
+        if (!verifyLocalizationContract()) return
 
         CCSystem.getAPI().getConfigSchemaService().register(
             "kantan",
@@ -236,8 +238,34 @@ class KantanCommanderPlugin : JavaPlugin() {
         return true
     }
 
+    /**
+     * KantanのGUIが要求する全ローカライズキーの世代を、機能登録より前に照合します。
+     * これによりCC-SystemとKantanCommanderのJAR世代がずれても、GUI操作中の連鎖例外にはしません。
+     */
+    private fun verifyLocalizationContract(): Boolean {
+        val actualFingerprint = runCatching {
+            LocalizationCatalogContract.fingerprint(LOCALIZATION_DOMAIN)
+        }.getOrElse { failure ->
+            logger.severe("CC-System言語契約の取得に失敗したため、Kantan Commanderを無効化します: ${failure.message}")
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+        if (actualFingerprint != REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT) {
+            logger.severe(
+                "CC-System言語契約が一致しないため、Kantan Commanderを無効化します: " +
+                    "expected=$REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT, actual=$actualFingerprint",
+            )
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+        return true
+    }
+
     private companion object {
         const val REQUIRED_GUI_RUNTIME_CONTRACT_VERSION = CCSystemAPI.GUI_RUNTIME_CONTRACT_VERSION
+        const val LOCALIZATION_DOMAIN = "kantan_commander_clean"
+        const val REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT =
+            "ea14c14266e453194bc8057063bc9a63578e5e2c54207b20282688c7b52aafda"
     }
 
 }
