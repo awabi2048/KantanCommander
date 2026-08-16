@@ -1,5 +1,7 @@
 package me.awabi2048.kantancommander.model
 
+import com.awabi2048.ccsystem.api.localization.LocalizationKey
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import org.bukkit.Material
 import java.util.UUID
 
@@ -18,7 +20,14 @@ data class DiskScript(
     var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
     var timer: TimerSetting = TimerSetting(),
     var graph: CommandGraph = CommandGraph.empty(),
+    /** 旧JSONでは欠損するためnullableで保持し、利用時は[effectiveProfile]で通常版へ正規化します。 */
+    var profile: DiskProfile? = DiskProfile.STANDARD,
 )
+
+enum class DiskProfile { STANDARD, SIMPLE }
+
+val DiskScript.effectiveProfile: DiskProfile
+    get() = profile ?: DiskProfile.STANDARD
 
 data class TimerSetting(
     var enabled: Boolean = false,
@@ -28,9 +37,9 @@ data class TimerSetting(
     val intervalTicks: Long get() = intervalUnits.coerceIn(MIN_TIMER_UNITS, MAX_TIMER_UNITS) * TIMER_UNIT_TICKS.toLong()
 }
 
-enum class ActivationMode(val key: String) {
-    NEEDS_REDSTONE("activation.needs_redstone"),
-    ALWAYS_ACTIVE("activation.always_active");
+enum class ActivationMode(val key: LocalizationKey<String>) {
+    NEEDS_REDSTONE(KcKeys.KANTAN_COMMANDER_CLEAN_ACTIVATION_NEEDS_REDSTONE),
+    ALWAYS_ACTIVE(KcKeys.KANTAN_COMMANDER_CLEAN_ACTIVATION_ALWAYS_ACTIVE);
 
     fun toggled(timerEnabled: Boolean): ActivationMode =
         if (!timerEnabled) NEEDS_REDSTONE else if (this == NEEDS_REDSTONE) ALWAYS_ACTIVE else NEEDS_REDSTONE
@@ -76,6 +85,8 @@ data class CommandNode(
     var destinationTargetSpec: TargetSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
+    /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
+    var contextSource: ContextSource? = ContextSource.BASE,
     var snapshot: CommandGraph? = null,
 ) {
     fun string(key: String, default: String = "") = params[key]?.takeIf(String::isNotBlank) ?: default
@@ -83,6 +94,11 @@ data class CommandNode(
     fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
     fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
 }
+
+enum class ContextSource { BASE, PREVIOUS }
+
+val CommandNode.effectiveContextSource: ContextSource
+    get() = contextSource ?: ContextSource.BASE
 
 enum class TargetKind {
     EXECUTOR, ACTIVATOR, INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
@@ -137,12 +153,12 @@ data class ExecutionContextSpec(
     val facing: FacingSpec? = null,
 )
 
-enum class ConditionKind(val key: String) {
-    TARGET_EXISTS("condition.target_exists"),
-    ENTITY_STATE("condition.entity_state"),
-    VARIABLE_STATE("condition.variable_state"),
-    BLOCK_STATE("condition.block_state"),
-    ITEM_POSSESSION("condition.item_possession"),
+enum class ConditionKind(val key: LocalizationKey<String>) {
+    TARGET_EXISTS(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS),
+    ENTITY_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE),
+    VARIABLE_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
+    BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
+    ITEM_POSSESSION(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ITEM_POSSESSION),
 }
 
 enum class VariableType { BOOLEAN, INTEGER, DECIMAL, TEXT, POSITION, ENTITY }
@@ -168,18 +184,34 @@ data class SavedPosition(
 )
 
 enum class CommandType(
-    val key: String,
+    val key: LocalizationKey<String>,
+    val descriptionKey: LocalizationKey<List<String>>,
     val icon: Material,
     val defaults: Map<String, String>,
 ) {
-    TELEPORT("command.teleport", Material.ENDER_PEARL, emptyMap()),
-    GIVE_ITEM("command.give_item", Material.CHEST, mapOf("count" to "1")),
-    ENTITY_ACTION("command.entity_action", Material.SADDLE, mapOf("action" to "ride")),
-    DISPLAY_TEXT("command.display_text", Material.WRITABLE_BOOK, mapOf(
+    TELEPORT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT_DESCRIPTION, Material.ENDER_PEARL, emptyMap()),
+    GIVE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM_DESCRIPTION, Material.CHEST, mapOf("count" to "1")),
+    ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf("action" to "ride")),
+    DISPLAY_TEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT_DESCRIPTION, Material.WRITABLE_BOOK, mapOf(
         "mode" to "tellraw", "text" to "", "fadeIn" to "10", "stay" to "60", "fadeOut" to "10"
     )),
-    WAIT("command.wait", Material.CLOCK, mapOf("ticks" to "20")),
-    CONDITION("command.condition", Material.COMPARATOR, mapOf(
+    WAIT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT_DESCRIPTION, Material.CLOCK, mapOf("ticks" to "20")),
+    SUMMON_ENTITY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY_DESCRIPTION, Material.ZOMBIE_SPAWN_EGG, mapOf(
+        "entity" to "", "tags" to ""
+    )),
+    PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
+        "sound" to "", "volume" to "1.0", "pitch" to "1.0"
+    )),
+    APPLY_EFFECT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT_DESCRIPTION, Material.POTION, mapOf(
+        "effect" to "", "level" to "1", "seconds" to "30"
+    )),
+    CAMERA_SHAKE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CAMERA_SHAKE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CAMERA_SHAKE_DESCRIPTION, Material.SPYGLASS, mapOf(
+        "intensity" to "1.0", "seconds" to "5.0", "shakeType" to "positional"
+    )),
+    EQUIP_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM_DESCRIPTION, Material.IRON_CHESTPLATE, mapOf(
+        "slot" to "HAND", "item" to ""
+    )),
+    CONDITION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
         "kind" to ConditionKind.TARGET_EXISTS.name,
         "inverted" to "false",
         "state" to "sneaking",
@@ -190,19 +222,19 @@ enum class CommandType(
         "block" to "minecraft:air",
         "count" to "1",
     )),
-    CONTEXT("command.context", Material.RECOVERY_COMPASS, mapOf(
+    CONTEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT_DESCRIPTION, Material.RECOVERY_COMPASS, mapOf(
         "executor" to "", "target" to "", "position" to "", "facing" to ""
     )),
-    DISK_CALL("command.disk_call", Material.MUSIC_DISC_13, mapOf("diskId" to "")),
-    VARIABLE("command.variable", Material.REDSTONE, mapOf(
+    DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
+    VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REDSTONE, mapOf(
         "name" to "",
         "scope" to VariableScope.TEMPORARY.name,
         "type" to VariableType.BOOLEAN.name,
         "operation" to VariableOperation.SET.name,
         "value" to "false",
     )),
-    MERGE("command.merge", Material.HOPPER, emptyMap()),
-    FOR_START("command.for_start", Material.REPEATER, mapOf(
+    MERGE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE_DESCRIPTION, Material.HOPPER, emptyMap()),
+    FOR_START(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START_DESCRIPTION, Material.REPEATER, mapOf(
         "startSource" to "FIXED",
         "startValue" to "0",
         "endSource" to "FIXED",
@@ -211,9 +243,9 @@ enum class CommandType(
         "stepValue" to "1",
         "inclusiveEnd" to "true",
     )),
-    FOR_END("command.for_end", Material.COMPARATOR, emptyMap()),
-    BREAK("command.break", Material.BARRIER, emptyMap()),
-    CONTINUE("command.continue", Material.ARROW, emptyMap());
+    FOR_END(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_END, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_END_DESCRIPTION, Material.COMPARATOR, emptyMap()),
+    BREAK(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK_DESCRIPTION, Material.BARRIER, emptyMap()),
+    CONTINUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE_DESCRIPTION, Material.ARROW, emptyMap());
 
     fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
 }

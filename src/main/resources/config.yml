@@ -2,6 +2,8 @@ default-disk-name: "Kantan Disk"
 execution:
   max-nodes-per-activation: 1024
   max-disk-call-depth: 3
+  max-summoned-entities-per-world: 256
+  max-summoned-entities-server: 2048
 limits:
   max-nodes-per-disk: 512
   max-map-width: 1024
@@ -10,4 +12,4 @@ limits:
 timer:
   minimum-units: 1
   maximum-units: 86400
-config_version: 1
+config_version: 2

@@ -6,8 +6,14 @@ import com.awabi2048.ccsystem.api.gui.GuiItemSpec
 import com.awabi2048.ccsystem.api.gui.GuiLoreFrame
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiLoreSpec
+import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntryData
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntryOption
+import com.awabi2048.ccsystem.api.gui.GuiMenuEntrySpec
+import com.awabi2048.ccsystem.api.gui.GuiStructuredMenuEntrySpec
 import com.awabi2048.ccsystem.api.gui.GuiNameSpec
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
+import com.awabi2048.ccsystem.api.gui.MenuGesture
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -47,24 +53,92 @@ object KcGui {
         elements.item(GuiItemSpec(
             material,
             GuiNameSpec.Text(name, style),
-            if (lines.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(lines, GuiLoreFrame.BOTH),
+            CCSystem.getAPI().getLoreService().compose(
+                lines.filterNot { it is GuiLoreLine.Interaction }.let { base ->
+                    if (base.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(base, GuiLoreFrame.BOTH)
+                },
+                lines.filterIsInstance<GuiLoreLine.Interaction>(),
+            ),
             role,
             1
         ))
 
-    fun action(player: Player, operationKey: String, action: String): GuiLoreLine.Action =
-        GuiLoreLine.Action(commonText(player, operationKey), action)
+    fun entry(
+        player: Player,
+        slot: Int,
+        material: Material,
+        name: String,
+        style: GuiNameStyle = GuiNameStyle.DEFAULT,
+        lines: List<GuiLoreLine> = emptyList(),
+        role: GuiElementRole = GuiElementRole.ACTION,
+        actions: List<GuiMenuActionIntent> = emptyList(),
+    ) = elements.menuStructuredEntry(
+        player,
+        GuiStructuredMenuEntrySpec(
+            slot = slot,
+            item = GuiItemSpec(
+                material = material,
+                name = GuiNameSpec.Text(name, style),
+                lore = CCSystem.getAPI().getLoreService().compose(
+                    lines.filterNot { it is GuiLoreLine.Interaction }.let { base ->
+                        if (base.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(base, GuiLoreFrame.BOTH)
+                    },
+                    lines.filterIsInstance<GuiLoreLine.Interaction>(),
+                ),
+                role = role,
+                amount = 1,
+            ),
+            actions = actions,
+        ),
+    )
 
-    fun singleAction(player: Player, action: String): GuiLoreLine.SingleAction {
-        val operation = commonText(player, "lore.click.any")
-        val resolvedText = CCSystem.getAPI().getI18nString(
-            player,
-            "lore.action_single_with_operation",
-            mapOf("operation" to operation, "action" to action)
-        )
-        return GuiLoreLine.SingleAction(operation, action, resolvedText)
+    /**
+     * Kantan Commanderの通常アイコンを、表示とクリック受付が分離しないCC-Systemの
+     * 意味データ契約から生成します。色や区切りを画面側で手組みしないための正規入口です。
+     */
+    fun menuEntry(
+        player: Player,
+        slot: Int,
+        material: Material,
+        name: String,
+        style: GuiNameStyle = GuiNameStyle.DEFAULT,
+        role: GuiElementRole = GuiElementRole.ACTION,
+        description: List<String> = emptyList(),
+        data: List<GuiMenuEntryData> = emptyList(),
+        options: List<GuiMenuEntryOption> = emptyList(),
+        warnings: List<String> = emptyList(),
+        dangers: List<String> = emptyList(),
+        actions: List<GuiMenuActionIntent> = emptyList(),
+        glint: Boolean? = null,
+    ) = elements.menuEntry(
+        player,
+        GuiMenuEntrySpec(
+            slot = slot,
+            material = material,
+            name = GuiNameSpec.Text(name, style),
+            role = role,
+            description = description,
+            data = data,
+            options = options,
+            warnings = warnings,
+            dangers = dangers,
+            actions = actions,
+            glint = glint,
+        ),
+    )
+
+    fun action(player: Player, operationKey: String, action: String): GuiLoreLine.Interaction =
+        GuiLoreLine.Interaction(player, gesture(operationKey), action)
+
+    fun singleAction(player: Player, action: String): GuiLoreLine.Interaction =
+        GuiLoreLine.Interaction(player, MenuGesture.ANY, action)
+
+    private fun gesture(operationKey: String): MenuGesture = when (operationKey) {
+        "lore.click.left" -> MenuGesture.LEFT
+        "lore.click.right" -> MenuGesture.RIGHT
+        "lore.click.shift_left" -> MenuGesture.SHIFT_LEFT
+        "lore.click.shift_right" -> MenuGesture.SHIFT_RIGHT
+        "lore.click.middle" -> MenuGesture.MIDDLE
+        else -> MenuGesture.ANY
     }
-
-    private fun commonText(player: Player, key: String): String =
-        CCSystem.getAPI().getI18nString(player, key)
 }

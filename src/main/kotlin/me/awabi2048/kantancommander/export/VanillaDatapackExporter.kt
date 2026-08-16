@@ -15,9 +15,13 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.execution.ExecutionSemantics
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.Material
 import java.io.File
+import java.math.BigInteger
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.UUID
@@ -33,14 +37,17 @@ class VanillaDatapackExporter(
     fun compileForStandalone(
         root: DiskScript,
         worldVariableTypes: Map<String, VariableType> = emptyMap(),
+        entryFunctionName: String = root.id.toString(),
     ): StandaloneCompilation {
         val exportRoot = root.copy(graph = root.graph.deepCopy())
         val errors = mutableListOf<String>()
+        val warnings = mutableListOf<String>()
         errors += ExecutableScriptValidator.validate(exportRoot, graphLimits)
+        collectWarnings(exportRoot.graph, "root", warnings)
         annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
         validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0)
         return if (errors.isEmpty()) {
-            StandaloneCompilation.Success(compile(exportRoot))
+            StandaloneCompilation.Success(compile(exportRoot, entryFunctionName), entryFunctionName, warnings.distinct())
         } else {
             StandaloneCompilation.Failure(errors.distinct())
         }
@@ -65,7 +72,7 @@ class VanillaDatapackExporter(
         (compilation as StandaloneCompilation.Success).functions.forEach { (name, content) ->
             functions.resolve("$name.mcfunction").writeText(content, Charsets.UTF_8)
         }
-        return ExportResult.Success(pack)
+        return ExportResult.Success(pack, compilation.warnings)
     }
 
     private fun validate(
@@ -171,7 +178,9 @@ class VanillaDatapackExporter(
             }
             node.contextOverride?.let { validateContext(script, node, it, errors) }
             validatePosition(script, node, node.conditionPositionSpec, errors)
-            if (node.secondaryTargetSpec?.kind == TargetKind.FIXED_ENTITY) {
+            if (listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec)
+                    .any { it.kind == TargetKind.FIXED_ENTITY }
+            ) {
                 errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
             }
             listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach { spec ->
@@ -271,17 +280,26 @@ class VanillaDatapackExporter(
         }
     }
 
-    private fun compile(script: DiskScript): Map<String, String> =
-        linkedMapOf<String, String>().also { compileGraph(script.graph, script.id.toString(), it, resetBudget = true) }
+    private fun compile(script: DiskScript, entryFunctionName: String): Map<String, String> =
+        linkedMapOf<String, String>().also {
+            compileGraph(
+                script.graph,
+                scriptPrefix(entryFunctionName, script.graph),
+                it,
+                resetBudget = true,
+                rootFunctionName = entryFunctionName,
+            )
+        }
 
     private fun compileGraph(
         graph: CommandGraph,
         prefix: String,
         output: MutableMap<String, String>,
         resetBudget: Boolean = false,
+        rootFunctionName: String = prefix,
     ) {
-        val entryCall = graph.entryNodeId?.let { "return run function kantan:${prefix}_$it\n" } ?: "return 1\n"
-        output[prefix] = if (resetBudget) {
+        val entryCall = graph.entryNodeId?.let { "return run function kantan:${nodeFunction(prefix, it)}\n" } ?: "return 1\n"
+        defineFunction(output, rootFunctionName, if (resetBudget) {
             buildString {
                 appendLine("scoreboard players set #executed kc_runtime 0")
                 temporaryNames(graph).forEach {
@@ -290,22 +308,23 @@ class VanillaDatapackExporter(
                 }
                 append(entryCall)
             }
-        } else entryCall
+        } else entryCall)
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
+            val nodeExportContext = exportContext(graph, node)
             if (node.type == CommandType.VARIABLE &&
                 node.string("operation") == VariableOperation.STORE_POSITION.name
             ) {
-                val helper = "${prefix}_${node.id}_capture_position"
+                val helper = nodeFunction(prefix, node.id, "capture_position")
                 node.params[EXPORT_CAPTURE_FUNCTION] = helper
                 val temporary = node.string("scope", "TEMPORARY") != "WORLD"
                 val path = VanillaStorageNames.variablePath(node.string("name"), temporary)
-                output[helper] = buildString {
+                defineFunction(output, helper, buildString {
                     appendLine("data modify storage kantan:variables $path set value {}")
                     appendLine("data modify storage kantan:variables $path.position set from entity @s Pos")
                     appendLine("data modify storage kantan:variables $path.rotation set from entity @s Rotation")
                     appendLine("kill @s")
-                }
+                })
             }
             val emptyFor = node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId
             if (!emptyFor) {
@@ -314,7 +333,7 @@ class VanillaDatapackExporter(
             }
             when {
                 emptyFor -> node.pairedNodeId?.let(graph.nodes::get)?.next?.let {
-                    lines += "return run function kantan:${prefix}_$it"
+                    lines += "return run function kantan:${nodeFunction(prefix, it)}"
                 } ?: run { lines += "return 1" }
                 node.type == CommandType.FOR_START -> {
                     val loop = loopName(node.id)
@@ -322,8 +341,12 @@ class VanillaDatapackExporter(
                     lines += assignLoopValue(loop, "end", node, "end")
                     lines += assignLoopValue(loop, "step", node, "step")
                     lines += "scoreboard players set #${loop}_count kc_vars 1"
-                    lines += "return run function kantan:${prefix}_${node.id}_check"
-                    output["${prefix}_${node.id}_check"] = loopCheck(graph, prefix, node)
+                    lines += "return run function kantan:${nodeFunction(prefix, node.id, "check")}"
+                    defineFunction(
+                        output,
+                        nodeFunction(prefix, node.id, "check"),
+                        loopCheck(graph, prefix, node),
+                    )
                 }
                 node.type == CommandType.FOR_END -> {
                     val start = node.pairedNodeId?.let(graph.nodes::get)
@@ -335,28 +358,32 @@ class VanillaDatapackExporter(
                             source = "#${loop}_step",
                         )
                         lines += "scoreboard players add #${loop}_count kc_vars 1"
-                        lines += "return run function kantan:${prefix}_${start.id}_check"
+                        lines += "return run function kantan:${nodeFunction(prefix, start.id, "check")}"
                     }
                 }
                 node.type == CommandType.BREAK -> {
                     enclosingFor(graph, node.id)?.pairedNodeId?.let(graph.nodes::get)?.next?.let {
-                        lines += "return run function kantan:${prefix}_$it"
+                        lines += "return run function kantan:${nodeFunction(prefix, it)}"
                     } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.CONTINUE -> {
                     enclosingFor(graph, node.id)?.pairedNodeId?.let {
-                        lines += "return run function kantan:${prefix}_$it"
+                        lines += "return run function kantan:${nodeFunction(prefix, it)}"
                     } ?: run { lines += "return 1" }
+                }
+                node.type == CommandType.CAMERA_SHAKE -> {
+                    // Java版には命令本体を出せないため、成功だけ記録して後続関数を維持します。
+                    lines += "scoreboard players set ${scoreHolder(node.id)} kc_result 1"
                 }
                 node.type == CommandType.DISK_CALL -> {
                     val snapshotPrefix = snapshotPrefix(prefix, node.id)
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
                     val call = "function kantan:$snapshotPrefix"
-                    lines += storeFunctionResult(node, node.contextOverride?.let { wrapContext(it, call) } ?: call)
+                    lines += storeFunctionResult(node, nodeExportContext?.let { wrapContext(it, call) } ?: call)
                 }
                 node.type == CommandType.CONTEXT -> {
                     node.next?.let {
-                        lines += "return run ${wrapContext(contextFrom(node), "function kantan:${prefix}_$it")}"
+                        lines += "return run ${wrapContext(contextFrom(node), "function kantan:${nodeFunction(prefix, it)}")}"
                     } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.VARIABLE &&
@@ -364,22 +391,25 @@ class VanillaDatapackExporter(
                         VariableOperation.ADD.name,
                         VariableOperation.SUBTRACT.name,
                     ) -> {
-                    val helper = "${prefix}_${node.id}_arithmetic"
-                    output[helper] = lowerArithmeticVariable(node, graph)
-                        .joinToString("\n", postfix = "\n")
+                    val helper = nodeFunction(prefix, node.id, "arithmetic")
+                    defineFunction(
+                        output,
+                        helper,
+                        lowerArithmeticVariable(node, graph).joinToString("\n", postfix = "\n"),
+                    )
                     val command = "function kantan:$helper"
                     lines += storeFunctionResult(
                         node,
-                        node.contextOverride?.let { wrapContext(it, command) } ?: command,
+                        nodeExportContext?.let { wrapContext(it, command) } ?: command,
                     )
                 }
                 else -> lower(node, graph)?.let { command ->
                     if (node.type == CommandType.DISPLAY_TEXT && node.string("mode", "tellraw") == "title") {
                         val times = "title ${effectiveTarget(node)} times ${node.int("fadeIn", 10)} " +
                             "${node.int("stay", 60)} ${node.int("fadeOut", 10)}"
-                        lines += node.contextOverride?.let { wrapContext(it, times) } ?: times
+                        lines += nodeExportContext?.let { wrapContext(it, times) } ?: times
                     }
-                    val contextual = node.contextOverride?.let { wrapContext(it, command) } ?: command
+                    val contextual = nodeExportContext?.let { wrapContext(it, command) } ?: command
                     lines += storeResult(node, contextual)
                 }
             }
@@ -397,33 +427,35 @@ class VanillaDatapackExporter(
                     val trueCheck = if (inverted) "unless" else "if"
                     val falseCheck = if (inverted) "if" else "unless"
                     val trueBranch = node.trueNext?.let {
-                        "execute $trueCheck $predicate run return run function kantan:${prefix}_$it"
+                        "execute $trueCheck $predicate run return run function kantan:${nodeFunction(prefix, it)}"
                     } ?: "execute $trueCheck $predicate run return 1"
                     val falseBranch = node.falseNext?.let {
-                        "execute $falseCheck $predicate run return run function kantan:${prefix}_$it"
+                        "execute $falseCheck $predicate run return run function kantan:${nodeFunction(prefix, it)}"
                     } ?: "execute $falseCheck $predicate run return 1"
                     lines += conditionContext?.let { context -> wrapContext(context, trueBranch) } ?: trueBranch
                     lines += conditionContext?.let { context -> wrapContext(context, falseBranch) } ?: falseBranch
                     lines += "return 0"
                 }
                 CommandType.WAIT ->
-                    node.next?.let { lines += "schedule function kantan:${prefix}_$it ${node.int("ticks", 20).coerceAtLeast(1)}t replace" }
+                    node.next?.let {
+                        lines += "schedule function kantan:${nodeFunction(prefix, it)} ${node.int("ticks", 20).coerceAtLeast(1)}t replace"
+                    }
                 CommandType.CONTEXT -> Unit
                 CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
                 CommandType.MERGE -> node.next?.let {
-                    lines += "return run function kantan:${prefix}_$it"
+                    lines += "return run function kantan:${nodeFunction(prefix, it)}"
                 } ?: run { lines += "return 1" }
                 else -> {
                     val result = scoreHolder(node.id)
                     node.next?.let {
-                        lines += "execute if score $result kc_result matches 1 run return run function kantan:${prefix}_$it"
+                        lines += "execute if score $result kc_result matches 1 run return run function kantan:${nodeFunction(prefix, it)}"
                     } ?: run {
                         lines += "execute if score $result kc_result matches 1 run return 1"
                     }
                     lines += "return 0"
                 }
             }
-            output["${prefix}_${node.id}"] = lines.joinToString("\n", postfix = "\n")
+            defineFunction(output, nodeFunction(prefix, node.id), lines.joinToString("\n", postfix = "\n"))
         }
     }
 
@@ -438,10 +470,55 @@ class VanillaDatapackExporter(
             "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
             else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text"))}\"}"
         }
+        CommandType.SUMMON_ENTITY -> {
+            val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
+            val nbt = if (tags.isEmpty()) "" else " {Tags:[${tags.joinToString(",") { "\\\"${escape(it)}\\\"" }}]}"
+            "summon ${node.string("entity")} ~ ~ ~$nbt"
+        }
+        CommandType.PLAY_SOUND ->
+            "execute as @a at @s run playsound ${node.string("sound")} master @s ~ ~ ~ " +
+                "${node.double("volume", 1.0)} ${node.double("pitch", 1.0)}"
+        CommandType.APPLY_EFFECT ->
+            "effect give ${effectiveTarget(node)} ${node.string("effect")} ${node.int("seconds", 30)} ${node.int("level", 1) - 1}"
+        CommandType.CAMERA_SHAKE -> null
+        CommandType.EQUIP_ITEM ->
+            "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with ${node.string("item")}"
         CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node, graph)
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
+    }
+
+    private fun equipmentSlot(slot: String) = when (slot) {
+        "OFF_HAND" -> "weapon.offhand"
+        "HEAD" -> "armor.head"
+        "CHEST" -> "armor.chest"
+        "LEGS" -> "armor.legs"
+        "FEET" -> "armor.feet"
+        else -> "weapon.mainhand"
+    }
+
+    /** PREVIOUSは、合流する全経路の指定が一致する場合だけ安全に静的展開します。 */
+    private fun exportContext(graph: CommandGraph, node: CommandNode): ExecutionContextSpec? {
+        fun resolve(current: CommandNode, visited: MutableSet<UUID>): ExecutionContextSpec? {
+            if (!visited.add(current.id)) return current.contextOverride
+            if (current.effectiveContextSource == ContextSource.BASE) return current.contextOverride
+            val predecessors = graph.nodes.values.filter {
+                current.id in listOfNotNull(it.next, it.trueNext, it.falseNext)
+            }
+            val inherited = predecessors.map { resolve(it, visited.toMutableSet()) }.distinct().singleOrNull()
+            return ExecutionSemantics.mergeContexts(inherited, current.contextOverride)
+        }
+        return resolve(node, mutableSetOf())
+    }
+
+    private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
+        graph.nodes.values.forEach { node ->
+            if (node.type == CommandType.CAMERA_SHAKE) {
+                warnings += "$path/${node.id}: カメラ揺れはJava版データパックから省略されました"
+            }
+            node.snapshot?.let { collectWarnings(it, "$path/${node.id}/snapshot", warnings) }
+        }
     }
 
     private fun predicate(node: CommandNode): String = when (
@@ -620,7 +697,7 @@ class VanillaDatapackExporter(
         val body = start.trueNext
         val end = start.pairedNodeId
         val after = end?.let(graph.nodes::get)?.next
-        val bodyFunction = body?.takeUnless { it == end }?.let { "function kantan:${prefix}_$it" }
+        val bodyFunction = body?.takeUnless { it == end }?.let { "function kantan:${nodeFunction(prefix, it)}" }
         val lines = mutableListOf<String>()
         lines += assignLoopValue(loop, "end", start, "end")
         lines += "scoreboard players set #${loop}_run kc_vars 0"
@@ -632,7 +709,7 @@ class VanillaDatapackExporter(
             lines += "execute if score #${loop}_run kc_vars matches 1 run return run $bodyFunction"
         }
         after?.let {
-            lines += "execute if score #${loop}_run kc_vars matches 0 run return run function kantan:${prefix}_$it"
+            lines += "execute if score #${loop}_run kc_vars matches 0 run return run function kantan:${nodeFunction(prefix, it)}"
         } ?: run {
             lines += "execute if score #${loop}_run kc_vars matches 0 run return 1"
         }
@@ -751,11 +828,69 @@ class VanillaDatapackExporter(
 
     private fun scoreHolder(id: UUID) = "#n_${id.toString().replace("-", "")}"
 
-    private fun snapshotPrefix(parentPrefix: String, nodeId: UUID): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest("$parentPrefix/$nodeId".toByteArray(Charsets.UTF_8))
+    /**
+     * Minecraftの関数名はパス要素ごとに64文字までなので、UUIDをそのまま連結しない。
+     * ノードUUIDはbase36化して情報を削らず、入口名とグラフ内容から作る96bit接頭辞で
+     * 配置単位・ネストしたグラフ単位の名前空間を分離する。
+     */
+    private fun scriptPrefix(entryFunctionName: String, graph: CommandGraph): String =
+        "s_${shortDigest("root/$entryFunctionName/${graphFingerprint(graph)}", 24)}"
+
+    private fun nodeFunction(prefix: String, nodeId: UUID, suffix: String? = null): String = buildString {
+        append(prefix)
+        append("_n_")
+        append(uuidToken(nodeId))
+        suffix?.takeIf(String::isNotEmpty)?.let {
+            append('_')
+            append(
+                when (it) {
+                    "capture_position" -> "capture"
+                    "arithmetic" -> "arith"
+                    else -> it
+                }
+            )
+        }
+    }
+
+    private fun uuidToken(id: UUID): String =
+        BigInteger(id.toString().replace("-", ""), 16).toString(36)
+
+    private fun snapshotPrefix(parentPrefix: String, nodeId: UUID): String =
+        "s_${shortDigest("snapshot/$parentPrefix/$nodeId", 24)}"
+
+    private fun graphFingerprint(graph: CommandGraph): String = buildString {
+        append("entry=").append(graph.entryNodeId)
+        graph.nodes.entries.sortedBy { it.key.toString() }.forEach { (id, node) ->
+            append("|node=").append(id)
+                .append(':').append(node.type.name)
+                .append(":params=").append(node.params.toSortedMap())
+                .append(":next=").append(node.next)
+                .append(":true=").append(node.trueNext)
+                .append(":false=").append(node.falseNext)
+                .append(":pair=").append(node.pairedNodeId)
+                .append(":target=").append(node.targetSpec)
+                .append(":secondary=").append(node.secondaryTargetSpec)
+                .append(":destination=").append(node.destinationSpec)
+                .append(":destinationTarget=").append(node.destinationTargetSpec)
+                .append(":conditionPosition=").append(node.conditionPositionSpec)
+                .append(":context=").append(node.contextOverride)
+            node.snapshot?.let {
+                append(":snapshot={").append(graphFingerprint(it)).append('}')
+            }
+        }
+    }
+
+    private fun shortDigest(value: String, length: Int): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
-        return "snapshot_${digest.take(24)}"
+            .take(length)
+
+    private fun defineFunction(output: MutableMap<String, String>, name: String, content: String) {
+        val previous = output.putIfAbsent(name, content)
+        require(previous == null || previous == content) {
+            "同じバニラ関数名へ異なる内容を割り当てました: $name"
+        }
     }
 
     private fun selector(spec: TargetSpec): String {
@@ -823,12 +958,16 @@ class VanillaDatapackExporter(
 }
 
 sealed interface ExportResult {
-    data class Success(val directory: File) : ExportResult
+    data class Success(val directory: File, val warnings: List<String> = emptyList()) : ExportResult
     data class Failure(val errors: List<String>) : ExportResult
 }
 
 sealed interface StandaloneCompilation {
-    data class Success(val functions: Map<String, String>) : StandaloneCompilation
+    data class Success(
+        val functions: Map<String, String>,
+        val entryFunctionName: String = functions.keys.first(),
+        val warnings: List<String> = emptyList(),
+    ) : StandaloneCompilation
     data class Failure(val errors: List<String>) : StandaloneCompilation
 }
 

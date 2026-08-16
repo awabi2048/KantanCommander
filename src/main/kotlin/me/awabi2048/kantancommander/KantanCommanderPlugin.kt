@@ -1,10 +1,13 @@
 package me.awabi2048.kantancommander
 
 import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.CCSystemAPI
 import com.awabi2048.ccsystem.api.config.ConfigClassification
+import com.awabi2048.ccsystem.api.config.ConfigMigration
 import com.awabi2048.ccsystem.api.config.ManagedConfigSpec
 import com.awabi2048.ccsystem.api.gui.MenuTargetPolicy
 import com.awabi2048.ccsystem.api.gui.PublicMenuDefinition
+import com.awabi2048.ccsystem.api.localization.LocalizationCatalogContract
 import me.awabi2048.kantancommander.command.KantanCommanderCommand
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.GraphLimits
@@ -13,6 +16,7 @@ import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.SequenceExecutor
+import me.awabi2048.kantancommander.execution.SummonedEntityTracker
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
@@ -36,6 +40,8 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     lateinit var executor: SequenceExecutor
         private set
+    lateinit var summonedEntities: SummonedEntityTracker
+        private set
     lateinit var programListMenu: ProgramListMenu
         private set
     lateinit var editorMenu: SequenceEditorMenu
@@ -52,6 +58,9 @@ class KantanCommanderPlugin : JavaPlugin() {
     private var standaloneExportContributor: KantanStandaloneExportContributor? = null
 
     override fun onEnable() {
+        if (!verifyGuiRuntimeContract()) return
+        if (!verifyLocalizationContract()) return
+
         CCSystem.getAPI().getConfigSchemaService().register(
             "kantan",
             listOf(
@@ -60,12 +69,20 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 1,
+                    currentVersion = 2,
                     classification = ConfigClassification.MANAGED_CONFIG,
-                    migrations = emptyMap(),
+                    migrations = mapOf(
+                        1 to ConfigMigration { config ->
+                            config.set("execution.max-summoned-entities-per-world", 256)
+                            config.set("execution.max-summoned-entities-server", 2048)
+                        },
+                    ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.max-nodes-per-activation") >= 1)
                         require(config.getInt("execution.max-disk-call-depth") >= 0)
+                        require(config.getInt("execution.max-summoned-entities-per-world") >= 1)
+                        require(config.getInt("execution.max-summoned-entities-server") >=
+                            config.getInt("execution.max-summoned-entities-per-world"))
                         require(config.getInt("timer.minimum-units", 1) == 1)
                         require(config.getInt("timer.maximum-units", 86400) == 86400)
                         require(config.getInt("limits.max-nodes-per-disk") >= 1)
@@ -89,6 +106,10 @@ class KantanCommanderPlugin : JavaPlugin() {
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"))
+        summonedEntities = SummonedEntityTracker(
+            this,
+            dataFolder.resolve("summoned-entities.csv"),
+        )
         executor = SequenceExecutor(this)
 
         programListMenu = ProgramListMenu(this)
@@ -144,6 +165,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
+        pm.registerEvents(summonedEntities, this)
     }
 
     internal fun resetActivationTiming(scriptId: java.util.UUID) {
@@ -180,5 +202,70 @@ class KantanCommanderPlugin : JavaPlugin() {
         maximumMapHeight = config.getInt("limits.max-map-height"),
         maximumBranchDepth = config.getInt("limits.max-branch-depth"),
     )
+
+    /**
+     * MenuDialogRequestなどのGUI公開ABIが異なるCC-System上では、登録処理より先に停止します。
+     * 古いKantan Commanderが新しいCC-Systemへ接続してNoSuchMethodErrorを起こすことを防ぎます。
+     */
+    private fun verifyGuiRuntimeContract(): Boolean {
+        val ccSystemPlugin = server.pluginManager.getPlugin("CC-System")
+        if (ccSystemPlugin == null || !ccSystemPlugin.isEnabled) {
+            logger.severe("CC-Systemが有効ではないため、Kantan Commanderを無効化します")
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+
+        val actualVersion = try {
+            CCSystem.getAPI().guiRuntimeContractVersion
+        } catch (failure: LinkageError) {
+            logger.severe("CC-System GUI契約版を取得できないため、Kantan Commanderを無効化します: ${failure.message}")
+            server.pluginManager.disablePlugin(this)
+            return false
+        } catch (failure: RuntimeException) {
+            logger.severe("CC-System GUI契約版の取得に失敗したため、Kantan Commanderを無効化します: ${failure.message}")
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+
+        if (actualVersion != REQUIRED_GUI_RUNTIME_CONTRACT_VERSION) {
+            logger.severe(
+                "CC-System GUI契約版が一致しないため、Kantan Commanderを無効化します: " +
+                    "expected=$REQUIRED_GUI_RUNTIME_CONTRACT_VERSION, actual=$actualVersion",
+            )
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+        return true
+    }
+
+    /**
+     * KantanのGUIが要求する全ローカライズキーの世代を、機能登録より前に照合します。
+     * これによりCC-SystemとKantanCommanderのJAR世代がずれても、GUI操作中の連鎖例外にはしません。
+     */
+    private fun verifyLocalizationContract(): Boolean {
+        val actualFingerprint = runCatching {
+            LocalizationCatalogContract.fingerprint(LOCALIZATION_DOMAIN)
+        }.getOrElse { failure ->
+            logger.severe("CC-System言語契約の取得に失敗したため、Kantan Commanderを無効化します: ${failure.message}")
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+        if (actualFingerprint != REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT) {
+            logger.severe(
+                "CC-System言語契約が一致しないため、Kantan Commanderを無効化します: " +
+                    "expected=$REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT, actual=$actualFingerprint",
+            )
+            server.pluginManager.disablePlugin(this)
+            return false
+        }
+        return true
+    }
+
+    private companion object {
+        const val REQUIRED_GUI_RUNTIME_CONTRACT_VERSION = CCSystemAPI.GUI_RUNTIME_CONTRACT_VERSION
+        const val LOCALIZATION_DOMAIN = "kantan_commander_clean"
+        const val REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT =
+            "ea14c14266e453194bc8057063bc9a63578e5e2c54207b20282688c7b52aafda"
+    }
 
 }
