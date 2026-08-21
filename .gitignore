@@ -16,3 +16,8 @@ Thumbs.db
 # Environment
 .env
 *.log
+
+# Documentation policy: keep README files, leave other documents untracked.
+*.md
+!README.md
+docs/
