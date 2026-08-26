@@ -132,8 +132,8 @@ object KantanItemService {
                         ),
                         me.awabi2048.kantancommander.gui.KcGui.action(
                             player,
-                            "lore.click.shift_right",
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_PLACE),
+                            "lore.click.right",
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_WRITE),
                         ),
                     ),
                 ),

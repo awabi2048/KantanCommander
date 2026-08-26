@@ -3,7 +3,6 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
-import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Bukkit
@@ -45,6 +44,12 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
                 return
             }
+            // 空の拡張コマンドブロックへコマンドディスクを右クリックした場合は、内容の上書き確認を開く。
+            if (itemKind == KantanItemKind.DISK && script.graph.nodes.isEmpty()) {
+                val diskScriptId = diskId ?: return
+                plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
+                return
+            }
             plugin.editorMenu.open(player, clickedPlacement)
             return
         }
@@ -55,17 +60,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 val script = diskId?.let(plugin.scripts::load) ?: return
                 event.isCancelled = true
                 plugin.editorMenu.open(player, script.id)
-            }
-            KantanItemAction.PLACE -> {
-                event.isCancelled = true
-                val script = diskId?.let(plugin.scripts::load) ?: return
-                if (!plugin.placementAccess.canManage(player, player.world.name)) {
-                    player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
-                    return
-                }
-                val base = event.clickedBlock ?: return
-                val target = if (base.isReplaceable) base else base.getRelative(event.blockFace)
-                placeBlock(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND, replaceabilityGuaranteed = false)
             }
         }
     }
@@ -82,8 +76,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
         plugin.logger.info("拡張コマンドブロックの設置を検出: player=${player.name}, location=${event.block.location}, material=${event.block.type}")
-        // バニラの配置イベントが配置位置を保証済み（canBeReplacedを満たす）のため、置換可能性は再判定しない。
-        placeBlock(player, event.block.location, event.blockAgainst, null, event.hand, replaceabilityGuaranteed = true)
+        // バニラの配置イベントが配置位置を保証済み（置換可能性・プレイヤー重なりもバニラが検証済み）のため、
+        // 自前の再判定は行わず、既存配置物の重複と保護判定だけを追加確認する。
+        placeBlock(player, event.block.location, event.blockAgainst, event.hand)
     }
 
     /** 拡張コマンドブロックの破壊。管理権限があれば内容をコマンドディスクとして出力して撤去する。 */
@@ -105,18 +100,12 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         player: Player,
         location: Location,
         blockAgainst: Block,
-        source: DiskScript?,
         hand: EquipmentSlot,
-        replaceabilityGuaranteed: Boolean,
     ) {
         val block = location.block
         // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにする。
         // 原因の追跡用に、失敗の理由を常時サーバーログへ記録する。
-        // バニラの配置イベント経由では配置位置の置換可能性が保証済みのため、ディスクの自前配置だけ再判定する。
-        if (!replaceabilityGuaranteed && !block.isReplaceable) {
-            plugin.logger.info("配置先が置換不能のため設置せず: location=${block.location}, material=${block.type}")
-            return
-        }
+        // バニラが配置位置を保証済みのため置換可能性は再判定せず、Kantan独自の重複チェックだけ行う。
         if (plugin.placements.find(block.location) != null) {
             plugin.logger.info("既存の配置物があるため設置せず: location=${block.location}, material=${block.type}")
             return
@@ -131,11 +120,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
 
-        val placedScript = source?.let(plugin.scripts::copyForPlacement)
-            ?: plugin.scripts.createPlacement(
-                player.uniqueId,
-                plugin.config.getString("default-disk-name", "Kantan Disk") ?: "Kantan Disk",
-            )
+        val placedScript = plugin.scripts.createPlacement(
+            player.uniqueId,
+            plugin.config.getString("default-disk-name", "Kantan Disk") ?: "Kantan Disk",
+        )
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
