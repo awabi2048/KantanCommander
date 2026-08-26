@@ -142,10 +142,14 @@ class VanillaDatapackExporter(
                         errors += "${script.id}/${node.id}: 整数値はバニラscoreboardの範囲外です"
                     }
                     if (type == VariableType.INTEGER &&
-                        operation == VariableOperation.SUBTRACT &&
+                        operation in setOf(VariableOperation.ADD, VariableOperation.SUBTRACT) &&
                         node.string("value").toLongOrNull() == Int.MIN_VALUE.toLong()
                     ) {
-                        errors += "${script.id}/${node.id}: Int最小値の減算はバニラscoreboard命令へ安全に変換できません"
+                        // Int最小値は32bit定数へ反転できないため、加減算どちらでもバニラ命令が範囲外になる。
+                        errors += "${script.id}/${node.id}: Int最小値の加減算はバニラscoreboard命令へ安全に変換できません"
+                    }
+                    if (operation == VariableOperation.STORE_TARGET && node.targetSpec == null) {
+                        errors += "${script.id}/${node.id}: 対象を保存するための対象指定が未設定です"
                     }
                     if (node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")) {
                         if (node.string("type") != VariableType.INTEGER.name) {
@@ -176,6 +180,9 @@ class VanillaDatapackExporter(
                 }
                 else -> Unit
             }
+            if (resolveExportContext(script.graph, node).second) {
+                errors += "${script.id}/${node.id}: 直前コンテキスト(PREVIOUS)の継承内容が経路ごとに確定しないため、完全バニラ出力できません"
+            }
             node.contextOverride?.let { validateContext(script, node, it, errors) }
             validatePosition(script, node, node.conditionPositionSpec, errors)
             if (listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec)
@@ -203,6 +210,20 @@ class VanillaDatapackExporter(
         }
         if (kind == ConditionKind.VARIABLE_STATE && node.params[EXPORT_VARIABLE_TYPE] == null) {
             errors += "${script.id}/${node.id}: 変数の型を一意に解決できません"
+        }
+        // 整数変数の大小比較はバニラscoreboardのmatches範囲へ展開されるため、
+        // 比較値が32bit範囲外・非数値のまま出力すると常にfalseまたはコマンドエラーになる。
+        val comparisonType = node.params[EXPORT_VARIABLE_TYPE]?.let {
+            runCatching { VariableType.valueOf(it) }.getOrNull()
+        }
+        if (kind == ConditionKind.VARIABLE_STATE &&
+            comparisonType == VariableType.INTEGER &&
+            node.string("operator") !in setOf("set", "unset")
+        ) {
+            val parsed = node.string("value").toLongOrNull()
+            if (parsed == null || parsed !in VANILLA_INTEGER_RANGE) {
+                errors += "${script.id}/${node.id}: 整数比較値はバニラscoreboardの32bit整数範囲で指定してください: ${node.string("value")}"
+            }
         }
     }
 
@@ -498,19 +519,71 @@ class VanillaDatapackExporter(
         else -> "weapon.mainhand"
     }
 
-    /** PREVIOUSは、合流する全経路の指定が一致する場合だけ安全に静的展開します。 */
-    private fun exportContext(graph: CommandGraph, node: CommandNode): ExecutionContextSpec? {
-        fun resolve(current: CommandNode, visited: MutableSet<UUID>): ExecutionContextSpec? {
-            if (!visited.add(current.id)) return current.contextOverride
-            if (current.effectiveContextSource == ContextSource.BASE) return current.contextOverride
-            val predecessors = graph.nodes.values.filter {
-                current.id in listOfNotNull(it.next, it.trueNext, it.falseNext)
-            }
-            val inherited = predecessors.map { resolve(it, visited.toMutableSet()) }.distinct().singleOrNull()
-            return ExecutionSemantics.mergeContexts(inherited, current.contextOverride)
+    /**
+     * PREVIOUSは、直前に実行したノードの有効コンテキストへ静的に展開できる場合だけ出力できます。
+     * 2つ目の戻り値は「先行経路ごとに継承内容が確定せず静的展開できない」ことを示します。
+     * MERGEやfor終了など直前実行情報を更新しない経由ノードは、さらに手前の実行ノードへ遡って解決します。
+     */
+    private fun resolveExportContext(
+        graph: CommandGraph,
+        node: CommandNode,
+    ): Pair<ExecutionContextSpec?, Boolean> {
+        if (node.effectiveContextSource != ContextSource.PREVIOUS) {
+            return ExecutionSemantics.mergeContexts(null, node.contextOverride) to false
         }
-        return resolve(node, mutableSetOf())
+        val directPredecessors = graphPredecessors(graph, node)
+        val candidates = if (directPredecessors.isEmpty()) setOf<ExecutionContextSpec?>(null)
+        else previousContextCandidates(graph, directPredecessors)
+        if (candidates.size >= 2) return null to true
+        return ExecutionSemantics.mergeContexts(candidates.singleOrNull(), node.contextOverride) to false
     }
+
+    /** 直前実行情報（PREVIOUS継承元）を更新しないため、解決をさらに手前へ透過させるノード種別。 */
+    private fun passesThroughPreviousContext(node: CommandNode): Boolean = when (node.type) {
+        CommandType.WAIT, CommandType.MERGE, CommandType.FOR_START,
+        CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE,
+        CommandType.DISK_CALL -> true
+        else -> false
+    }
+
+    private fun graphPredecessors(graph: CommandGraph, node: CommandNode): List<CommandNode> =
+        graph.nodes.values.filter { node.id in listOfNotNull(it.next, it.trueNext, it.falseNext) }
+
+    /** ノード自身の有効コンテキスト。PREVIOUS指定時は先行ノードの直前実行値を単一候補として解決します。 */
+    private fun ownExportContext(graph: CommandGraph, current: CommandNode): ExecutionContextSpec? {
+        if (current.effectiveContextSource != ContextSource.PREVIOUS) {
+            return ExecutionSemantics.mergeContexts(null, current.contextOverride)
+        }
+        val predecessors = graphPredecessors(graph, current)
+        val inherited = previousContextCandidates(graph, predecessors).singleOrNull()
+        return ExecutionSemantics.mergeContexts(inherited, current.contextOverride)
+    }
+
+    /** 先行ノード群それぞれを「直前に実行した」ときのpreviousContext候補をすべて収集します。 */
+    private fun previousContextCandidates(
+        graph: CommandGraph,
+        starts: List<CommandNode>,
+    ): Set<ExecutionContextSpec?> {
+        val candidates = linkedSetOf<ExecutionContextSpec?>()
+        fun visit(current: CommandNode, visited: MutableSet<UUID>) {
+            if (!visited.add(current.id)) return
+            if (passesThroughPreviousContext(current)) {
+                val predecessors = graphPredecessors(graph, current)
+                if (predecessors.isEmpty()) {
+                    candidates += null
+                    return
+                }
+                predecessors.forEach { visit(it, mutableSetOf()) }
+                return
+            }
+            candidates += ownExportContext(graph, current)
+        }
+        starts.forEach { visit(it, mutableSetOf()) }
+        return candidates
+    }
+
+    private fun exportContext(graph: CommandGraph, node: CommandNode): ExecutionContextSpec? =
+        resolveExportContext(graph, node).first
 
     private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
         graph.nodes.values.forEach { node ->
@@ -780,7 +853,8 @@ class VanillaDatapackExporter(
                 PositionKind.DISK -> "~ ~ ~"
                 PositionKind.EXECUTOR -> "@s"
                 PositionKind.TARGET ->
-                    selector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
+                    // tpの移動先は単一エンティティでなければならないため、limit=1へ固定する。
+                    singleSelector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
                 PositionKind.MYWORLD_SPAWN,
                 PositionKind.TEMPORARY_VARIABLE,
                 PositionKind.WORLD_VARIABLE -> error("unsupported structured teleport destination")
