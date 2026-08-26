@@ -78,10 +78,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val player = event.player
         if (!plugin.placementAccess.canManage(player, player.world.name)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
-            plugin.logger.fine("拡張コマンドブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
+            plugin.logger.info("拡張コマンドブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
             return
         }
-        plugin.logger.fine("拡張コマンドブロックの設置を検出: player=${player.name}, location=${event.block.location}")
+        plugin.logger.info("拡張コマンドブロックの設置を検出: player=${player.name}, location=${event.block.location}")
         placeBlock(player, event.block.location, event.blockAgainst, null, event.hand)
     }
 
@@ -93,7 +93,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         if (!plugin.placementAccess.canManage(event.player, placement.world)) {
             event.isCancelled = true
             event.player.sendMessage(KcI18n.text(event.player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
-            plugin.logger.fine("拡張コマンドブロックの破壊を権限不足で拒否: player=${event.player.name}, location=${block.location}")
+            plugin.logger.info("拡張コマンドブロックの破壊を権限不足で拒否: player=${event.player.name}, location=${block.location}")
             return
         }
         event.isCancelled = true
@@ -109,13 +109,13 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     ) {
         val block = location.block
         // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにする。
-        // 原因の追跡用に、失敗の理由だけデバッグログへ記録する。
+        // 原因の追跡用に、失敗の理由を常時サーバーログへ記録する。
         if (!block.isReplaceable) {
-            plugin.logger.fine("配置先が置換不能のため設置せず: location=${block.location}")
+            plugin.logger.info("配置先が置換不能のため設置せず: location=${block.location}")
             return
         }
         if (plugin.placements.find(block.location) != null) {
-            plugin.logger.fine("既存の配置物があるため設置せず: location=${block.location}")
+            plugin.logger.info("既存の配置物があるため設置せず: location=${block.location}")
             return
         }
 
@@ -124,7 +124,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             block.location.clone().add(1.0, 1.0, 1.0).toVector(),
         )
         if (player.boundingBox.overlaps(targetBox)) {
-            plugin.logger.fine("プレイヤーと重なる位置のため設置せず: player=${player.name}, location=${block.location}")
+            plugin.logger.info("プレイヤーと重なる位置のため設置せず: player=${player.name}, location=${block.location}")
             return
         }
 
@@ -136,7 +136,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
-            plugin.logger.fine("ブロック状態が設置不可のため設置せず: location=${block.location}, material=$material")
+            plugin.logger.info("ブロック状態が設置不可のため設置せず: location=${block.location}, material=$material")
             return
         }
         val replacedState = block.state
@@ -154,7 +154,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         if (placeEvent.isCancelled() || !placeEvent.canBuild()) {
             replacedState.update(true, false)
             plugin.scripts.delete(placedScript.id)
-            plugin.logger.fine(
+            plugin.logger.info(
                 "BlockPlaceEventがキャンセルされたため設置を中止: location=${block.location}, " +
                     "cancelled=${placeEvent.isCancelled()}, canBuild=${placeEvent.canBuild()}",
             )
@@ -172,7 +172,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.scripts.delete(placedScript.id)
             replacedState.update(true, false)
             plugin.logger.log(
-                java.util.logging.Level.FINE,
+                java.util.logging.Level.INFO,
                 "配置データの保存または表示体スポーンに失敗したため設置を中止: location=${block.location}",
                 error,
             )
@@ -187,7 +187,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             Particle.BLOCK, center, 32, 0.5, 0.5, 0.5,
             Bukkit.createBlockData(material),
         )
-        plugin.logger.fine("拡張コマンドブロックを設置: placement=${placement.key}, script=${placedScript.id}")
+        plugin.logger.info("拡張コマンドブロックを設置: placement=${placement.key}, script=${placedScript.id}")
     }
 
     /** 破壊時の後始末。内容をコマンドディスクとして出力し、表示・配置・スクリプトを削除する。 */
@@ -207,7 +207,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 val item = runCatching { KantanItemService.createDisk(output, player) }.getOrElse { error ->
                     plugin.scripts.delete(output.id)
                     plugin.logger.log(
-                        java.util.logging.Level.FINE,
+                        java.util.logging.Level.INFO,
                         "破壊時のコマンドディスク生成に失敗: location=${block.location}, script=${output.id}",
                         error,
                     )
@@ -215,17 +215,17 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 }
                 player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
-                plugin.logger.fine("破壊時のディスク出力完了: location=${block.location}, script=${output.id}")
+                plugin.logger.info("破壊時のディスク出力完了: location=${block.location}, script=${output.id}")
             } else {
-                plugin.logger.fine("破壊時のスクリプト複製に失敗したため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
+                plugin.logger.info("破壊時のスクリプト複製に失敗したため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
             }
         } else {
-            plugin.logger.fine("参照スクリプトが消失しているため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
+            plugin.logger.info("参照スクリプトが消失しているため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
         }
         plugin.placements.removeDisplay(world, placement.displayId)
         plugin.placements.remove(world, placement.x, placement.y, placement.z)
         block.setType(Material.AIR, false)
         if (source != null) plugin.scripts.delete(source.id)
-        plugin.logger.fine("拡張コマンドブロックの破壊処理完了: placement=${placement.key}")
+        plugin.logger.info("拡張コマンドブロックの破壊処理完了: placement=${placement.key}")
     }
 }
