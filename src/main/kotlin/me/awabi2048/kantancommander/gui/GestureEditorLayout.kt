@@ -43,13 +43,13 @@ object GestureEditorLayout {
     const val UPPER_W: Double = 2.90
     const val UPPER_H: Double = 1.0606601717798212
 
-    /** 列の左端xを求める（10列を中央配置せず左寄せ: 最初の列を-1.35に） */
-    fun originColumnX(): Double = -(VIEWPORT_COLS - 1) * PITCH_X / 2.0
+    /** 列の左端x（最初の列の中心）。仕様§3.1: ビューポートを左寄せし-1.35から開始します。 */
+    fun originColumnX(): Double = -1.35
 
     /** 指定したグリッドgxに対応する画面中心x */
     fun cellCenterX(gx: Int): Double = originColumnX() + gx * PITCH_X
-    /** 指定したグリッドgyに対応する画面中心y（gy増加＝画面下方向） */
-    fun cellCenterY(gy: Int): Double = ((VIEWPORT_ROWS - 1) / 2) * PITCH_Y - gy * PITCH_Y
+    /** 指定したグリッドgyに対応する画面中心y（gy増加＝画面下方向）。仕様§3.1: 最上行を0.34に置きます。 */
+    fun cellCenterY(gy: Int): Double = 0.34 - gy * PITCH_Y
 
     /** グリッド座標→画面中央座標 */
     fun cellCenter(point: MapPoint): Pair<Double, Double> = cellCenterX(point.x) to cellCenterY(point.y)

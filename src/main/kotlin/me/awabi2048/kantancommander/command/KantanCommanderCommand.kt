@@ -32,6 +32,22 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
                 }
                 sender.sendMessage(KcI18n.text(sender as? Player, key))
             }
+            "gesture" -> {
+                if (!sender.hasPermission("kankoma.admin")) return true
+                when (args.getOrNull(1)?.lowercase()) {
+                    "on" -> {
+                        plugin.config.set("use-gesture-editor", true)
+                        plugin.saveConfig()
+                        sender.sendMessage("ジェスチャーエディターを使用します。")
+                    }
+                    "off" -> {
+                        plugin.config.set("use-gesture-editor", false)
+                        plugin.saveConfig()
+                        sender.sendMessage("従来のエディターを使用します。")
+                    }
+                    else -> sender.sendMessage("/kankoma gesture <on|off>")
+                }
+            }
             else -> help(sender)
         }
         return true
@@ -71,7 +87,8 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
 
     override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): List<String> {
         return when (args.size) {
-            1 -> listOf("programs", "placed", "reload", "help").filter { it.startsWith(args[0], true) }
+            1 -> listOf("programs", "placed", "reload", "gesture", "help").filter { it.startsWith(args[0], true) }
+            2 -> if (args[0].equals("gesture", true)) listOf("on", "off").filter { it.startsWith(args[1], true) } else emptyList()
             else -> emptyList()
         }
     }

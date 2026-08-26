@@ -4,6 +4,7 @@ import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiAccess
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiBounds
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiChildOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOpenOptions
@@ -11,6 +12,8 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskPlacement
 import org.bukkit.Bukkit
 import org.bukkit.Color
@@ -28,52 +31,84 @@ data class GestureEditorState(
     var origin: MapPoint = MapPoint(0, 0),
     var selectedNodeId: UUID? = null,
     var anchor: Location? = null,
+    /** 下部パネルの表示モード */
+    var lowerMode: GestureLowerMode = GestureLowerMode.SETTINGS,
+    /** SETTINGSで選択中のフィールドインデックス */
+    var settingsTab: Int = 0,
+    /** PICKERで選択中のカテゴリインデックス */
+    var pickerCategory: Int = 0,
+    /** CONFIRM対象のノードID（削除確認） */
+    var confirmNodeId: UUID? = null,
 )
+
+/** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
+enum class GestureLowerMode {
+    SETTINGS,
+    PICKER,
+    CONFIRM,
+}
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 /**
  * ジェスチャーエディターの主要コントローラー。
- * プレイヤー単位に開かれたジェスチャーGUIセッションを管理し、上部ビューポートを生成します。
- * 下部パネルは既存のMenuRuntimeServiceによるインベントリGUIを継続利用します（v1）。
+ * 上部ビューポートと下部パネルをジェスチャーGUIセッションとして管理します。
+ * 下部のモード切替はupdateScreen、CONFIRMのみopenChild（赤ガラス）で実現します。
  */
 class GestureSequenceEditor(
     private val plugin: KantanCommanderPlugin,
-    private val viewportState: GestureEditorState,
+    private val state: GestureEditorState,
 ) {
     private val api get() = CCSystem.getAPI().getGestureGuiService()
+    private val lowerPanel = GestureLowerPanel(plugin)
 
     private val UPPER_SCREEN_ID = "gesture-editor-upper"
 
     fun open(player: Player) {
-        val upper = buildUpperViewport()
-        api.open(player, listOf(upper), GestureGuiOpenOptions(anchor = viewportState.anchor))
+        api.registerOwner(player.uniqueId)
+        val upper = buildUpperViewport(player)
+        val lower = lowerPanel.build(state, player)
+        api.open(player, listOf(upper, lower), GestureGuiOpenOptions(anchor = state.anchor))
     }
 
-    fun updateViewport(player: Player) {
-        val upper = buildUpperViewport()
-        api.updateScreen(player.uniqueId, upper)
+    fun updateUpper(player: Player) {
+        api.updateScreen(player.uniqueId, buildUpperViewport(player))
     }
 
-    private fun buildUpperViewport(): GestureGuiView {
-        val script = plugin.scripts.load(viewportState.scriptId) ?: return emptyView()
+    fun updateLower(player: Player) {
+        api.updateScreen(player.uniqueId, lowerPanel.build(state, player))
+    }
+
+    fun openConfirmChild(player: Player) {
+        state.lowerMode = GestureLowerMode.CONFIRM
+        val view = lowerPanel.build(state, player)
+        api.openChild(
+            player.uniqueId,
+            view,
+            GestureGuiChildOptions(
+                parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                overlayMaterial = Material.RED_STAINED_GLASS,
+            ),
+        )
+    }
+
+    private fun buildUpperViewport(player: Player): GestureGuiView {
+        val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
         val layout = GraphLayoutEngine.layout(script.graph)
-        val cells = layout.viewport(viewportState.origin, GestureEditorLayout.VIEWPORT_COLS, GestureEditorLayout.VIEWPORT_ROWS)
+        val cells = layout.viewport(state.origin, GestureEditorLayout.VIEWPORT_COLS, GestureEditorLayout.VIEWPORT_ROWS)
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
 
         cells.forEach { (localPoint, cell) ->
-            val gx = viewportState.origin.x + localPoint.x
-            val gy = viewportState.origin.y + localPoint.y
+            val gx = state.origin.x + localPoint.x
+            val gy = state.origin.y + localPoint.y
             val cx = GestureEditorLayout.cellCenterX(gx)
             val cy = GestureEditorLayout.cellCenterY(gy)
             when (cell.kind) {
                 MapCellKind.NODE -> {
                     val node = cell.nodeId?.let { script.graph.nodes[it] }
                     if (node != null) {
-                        val isSelected = viewportState.selectedNodeId == node.id
-                        // 選択中ノードは色付きglow＋前面レイヤー。Geyser非対応時はglowが見えないため、
-                        // 実機検証時に背景色変更フォールバックの併用を検討します。
+                        val isSelected = state.selectedNodeId == node.id
                         val glowColor = if (isSelected) Color.YELLOW.asRGB() else null
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
@@ -120,7 +155,7 @@ class GestureSequenceEditor(
             }
         }
 
-        buildPathSegments(cells, viewportState.origin).forEach { seg ->
+        buildPathSegments(cells, state.origin).forEach { seg ->
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
@@ -168,11 +203,19 @@ class GestureSequenceEditor(
         when {
             context.elementId.startsWith("node:") -> {
                 val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node:")) }.getOrNull() ?: return
-                if (context.gesture == GestureGuiGesture.PRIMARY) {
-                    viewportState.selectedNodeId = nodeId
-                    updateViewport(player)
-                } else if (context.gesture == GestureGuiGesture.SECONDARY) {
-                    // TODO: 削除確認子画面（CONFIRM）を下部画面上へ開く
+                when (context.gesture) {
+                    GestureGuiGesture.PRIMARY -> {
+                        state.selectedNodeId = nodeId
+                        state.lowerMode = GestureLowerMode.SETTINGS
+                        state.settingsTab = 0
+                        updateUpper(player)
+                        updateLower(player)
+                    }
+                    GestureGuiGesture.SECONDARY -> {
+                        state.confirmNodeId = nodeId
+                        openConfirmChild(player)
+                    }
+                    else -> Unit
                 }
             }
             context.elementId.startsWith("nav-") && context.gesture == GestureGuiGesture.PRIMARY -> {
@@ -183,26 +226,75 @@ class GestureSequenceEditor(
                     "nav-right" -> MapPoint(1, 0)
                     else -> return
                 }
-                val script = plugin.scripts.load(viewportState.scriptId) ?: return
-                viewportState.origin = GestureEditorLayout.clampOrigin(
-                    MapPoint(viewportState.origin.x + delta.x, viewportState.origin.y + delta.y),
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                state.origin = GestureEditorLayout.clampOrigin(
+                    MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
                     GraphLayoutEngine.layout(script.graph),
                 )
-                updateViewport(player)
+                updateUpper(player)
             }
-            context.elementId == "back-to-start" && context.gesture == GestureUiGestureSafe.PRIMARY -> {
-                viewportState.selectedNodeId = null
-                viewportState.origin = MapPoint(0, 0)
-                updateViewport(player)
+            context.elementId == "back-to-start" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.selectedNodeId = null
+                state.origin = MapPoint(0, 0)
+                updateUpper(player)
+                updateLower(player)
             }
             context.elementId.startsWith("add:") && context.gesture == GestureGuiGesture.PRIMARY -> {
-                // TODO: 追加ピッカー（既存typeRoute相当）を下部へ表示
+                state.lowerMode = GestureLowerMode.PICKER
+                state.pickerCategory = 0
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.settingsTab = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-edit:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                val fieldKey = context.elementId.removePrefix("lower-edit:")
+                val script = plugin.scripts.load(state.scriptId)
+                val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) } ?: return
+                // チャット入力でフィールド値を設定する（ジェスチャーGUIは閉じない）
+                plugin.gestureChatInput.begin(player, "チャットで値を入力してください（「キャンセル」で中止）") { value ->
+                    node.params[fieldKey] = value
+                    if (script != null) plugin.scripts.save(script)
+                    updateLower(player)
+                }
+            }
+            context.elementId.startsWith("lower-cat:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-type:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                val typeName = context.elementId.removePrefix("lower-type:")
+                val type = runCatching { CommandType.valueOf(typeName) }.getOrNull() ?: return
+                // TODO: ノード挿入（既存GraphEditor.insert相当）を実行する
+                state.lowerMode = GestureLowerMode.SETTINGS
+                state.settingsTab = 0
+                updateLower(player)
+            }
+            context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.lowerMode = GestureLowerMode.SETTINGS
+                updateLower(player)
+            }
+            context.elementId == "confirm-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                val nodeId = state.confirmNodeId ?: return
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                if (GraphEditor.delete(script.graph, nodeId)) {
+                    plugin.scripts.save(script)
+                }
+                state.confirmNodeId = null
+                state.selectedNodeId = null
+                state.lowerMode = GestureLowerMode.SETTINGS
+                api.closeChild(player.uniqueId, lowerPanel.LOWER_SCREEN_ID)
+                updateUpper(player)
+                updateLower(player)
+            }
+            context.elementId == "confirm-cancel" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.confirmNodeId = null
+                state.lowerMode = GestureLowerMode.SETTINGS
+                api.closeChild(player.uniqueId, lowerPanel.LOWER_SCREEN_ID)
+                updateLower(player)
             }
         }
-    }
-
-    private object GestureUiGestureSafe {
-        val PRIMARY = GestureGuiGesture.PRIMARY
     }
 
     private fun emptyView(): GestureGuiView {
@@ -262,7 +354,6 @@ class GestureSequenceEditor(
     /**
      * ビューポート内のセルから経路セグメントを生成します。
      * 経路セルは左右・上下隣の接続可能セル（経路/ノード/追加ポイント）との間に帯を張ります。
-     * ノードの裏(z=1)に潜ることで、アイコンと厳密に繋がって見えます。
      */
     private fun buildPathSegments(viewportCells: Map<MapPoint, MapCell>, origin: MapPoint): List<GestureEditorLayout.PathSegment> {
         val segments = mutableListOf<GestureEditorLayout.PathSegment>()
