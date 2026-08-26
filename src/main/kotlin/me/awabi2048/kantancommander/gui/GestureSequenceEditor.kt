@@ -720,24 +720,32 @@ class GestureSequenceEditor(
 
         val rawSegments = mutableListOf<GestureEditorLayout.PathSegment>()
         spans.forEach { span ->
-            val startPoint = if (span.horizontal) MapPoint(span.start, span.line) else MapPoint(span.line, span.start)
-            val endPoint = if (span.horizontal) MapPoint(span.end, span.line) else MapPoint(span.line, span.end)
             val trim = GestureEditorLayout.PATH_THICKNESS / 2.0
-            val startInset = if (isJunction(startPoint, span.horizontal)) trim else 0.0
-            val endInset = if (isJunction(endPoint, span.horizontal)) trim else 0.0
-            val first = if (span.horizontal) metrics.x(span.start) else metrics.y(span.start)
-            val last = if (span.horizontal) metrics.x(span.end) else metrics.y(span.end)
-            val low = minOf(first, last) + if (first <= last) startInset else endInset
-            val high = maxOf(first, last) - if (first <= last) endInset else startInset
-            val length = (high - low).coerceAtLeast(0.0)
-            if (length <= 1.0e-6) return@forEach
-            val third = length / 3.0
-            repeat(3) { index ->
-                val center = low + third * (index + 0.5)
-                rawSegments += if (span.horizontal) {
-                    GestureEditorLayout.PathSegment(center, metrics.y(span.line), third, GestureEditorLayout.PATH_THICKNESS)
-                } else {
-                    GestureEditorLayout.PathSegment(metrics.x(span.line), center, GestureEditorLayout.PATH_THICKNESS, third)
+            // 垂直枝が接続する内部セルでは帯を分割し、正方形の角と重ねません。
+            val breakPoints = (span.start..span.end).filter { coordinate ->
+                val point = if (span.horizontal) MapPoint(coordinate, span.line) else MapPoint(span.line, coordinate)
+                isJunction(point, span.horizontal)
+            }
+            val boundaries = (listOf(span.start) + breakPoints + span.end).distinct().sorted()
+            boundaries.zipWithNext().forEach { (from, to) ->
+                val fromPoint = if (span.horizontal) MapPoint(from, span.line) else MapPoint(span.line, from)
+                val toPoint = if (span.horizontal) MapPoint(to, span.line) else MapPoint(span.line, to)
+                val first = if (span.horizontal) metrics.x(from) else metrics.y(from)
+                val last = if (span.horizontal) metrics.x(to) else metrics.y(to)
+                val fromInset = if (isJunction(fromPoint, span.horizontal)) trim else 0.0
+                val toInset = if (isJunction(toPoint, span.horizontal)) trim else 0.0
+                val low = minOf(first, last) + if (first <= last) fromInset else toInset
+                val high = maxOf(first, last) - if (first <= last) toInset else fromInset
+                val length = (high - low).coerceAtLeast(0.0)
+                if (length <= 1.0e-6) return@forEach
+                val third = length / 3.0
+                repeat(3) { index ->
+                    val center = low + third * (index + 0.5)
+                    rawSegments += if (span.horizontal) {
+                        GestureEditorLayout.PathSegment(center, metrics.y(span.line), third, GestureEditorLayout.PATH_THICKNESS)
+                    } else {
+                        GestureEditorLayout.PathSegment(metrics.x(span.line), center, GestureEditorLayout.PATH_THICKNESS, third)
+                    }
                 }
             }
         }
