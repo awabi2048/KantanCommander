@@ -7,6 +7,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiBounds
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiChildOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOpenOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
@@ -16,6 +17,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
@@ -159,6 +161,13 @@ class GestureSequenceEditor(
                             bounds = iconBounds(cx, cy),
                             acceptedGestures = setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SECONDARY),
                             targetVisualId = "node-icon-${node.id}",
+                            hoverText = GestureGuiHoverText(
+                                text = net.kyori.adventure.text.Component.text(KcI18n.text(player, node.type.key)),
+                                x = cx,
+                                y = cy + GestureEditorLayout.ICON_H * 0.9,
+                                size = 0.006,
+                                lineWidth = 180,
+                            ),
                         ))
                     }
                 }
@@ -193,7 +202,7 @@ class GestureSequenceEditor(
             }
         }
 
-        buildPathSegments(cells, state.origin).forEach { seg ->
+        buildPathSegments(cells, state.origin, layout.cells).forEach { seg ->
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
@@ -397,8 +406,8 @@ class GestureSequenceEditor(
                 val inserted = GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
                 plugin.scripts.save(script)
                 state.pendingInsertion = null
-                // 新規作成直後は特定アイコンを選択状態に固定せず、余白と同じ未選択状態にします。
-                state.selectedNodeId = null
+                // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。
+                state.selectedNodeId = inserted.id
                 state.selectedAddPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
@@ -496,7 +505,11 @@ class GestureSequenceEditor(
      * 経路セルは左右・上下隣の接続可能セル（経路/ノード/追加ポイント）との間に帯を張ります。
      * 配置は列/行インデックス基準です。
      */
-    private fun buildPathSegments(viewportCells: Map<MapPoint, MapCell>, origin: MapPoint): List<GestureEditorLayout.PathSegment> {
+    private fun buildPathSegments(
+        viewportCells: Map<MapPoint, MapCell>,
+        origin: MapPoint,
+        allCells: Map<MapPoint, MapCell>,
+    ): List<GestureEditorLayout.PathSegment> {
         val segments = linkedSetOf<GestureEditorLayout.PathSegment>()
         val pathKinds = setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH)
         viewportCells.forEach { (localPoint, cell) ->
@@ -531,8 +544,15 @@ class GestureSequenceEditor(
                     val y1 = GestureEditorLayout.cellCenterY(p.y)
                     val x2 = GestureEditorLayout.cellCenterX(n.x)
                     val y2 = GestureEditorLayout.cellCenterY(n.y)
-                    if (p.y == n.y) segments.add(GestureEditorLayout.horizontalPath(y1, x1, x2))
-                    else segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
+                    if (p.y == n.y) {
+                        val mid = (x1 + x2) / 2.0
+                        segments.add(GestureEditorLayout.horizontalPath(y1, x1, mid))
+                        segments.add(GestureEditorLayout.horizontalPath(y1, mid, x2))
+                    } else {
+                        val mid = (y1 + y2) / 2.0
+                        segments.add(GestureEditorLayout.verticalPath(x1, y1, mid))
+                        segments.add(GestureEditorLayout.verticalPath(x1, mid, y2))
+                    }
                 }
             }
         }
@@ -549,6 +569,30 @@ class GestureSequenceEditor(
                     if (p.y == n.y) segments.add(GestureEditorLayout.horizontalPath(y1, x1, x2))
                     else segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
                 }
+        }
+        // ビューポート端の先にも論理セルが続く場合は、画面端までのスタブを描画します。
+        val maxX = GestureEditorLayout.VIEWPORT_COLS - 1
+        val maxY = GestureEditorLayout.VIEWPORT_ROWS - 1
+        viewportCells.forEach { (p, cell) ->
+            if (cell.kind !in CONNECTABLE_KINDS) return@forEach
+            val global = MapPoint(origin.x + p.x, origin.y + p.y)
+            listOf(
+                MapPoint(-1, 0) to (p.x == 0),
+                MapPoint(1, 0) to (p.x == maxX),
+                MapPoint(0, -1) to (p.y == 0),
+                MapPoint(0, 1) to (p.y == maxY),
+            ).forEach { (delta, atEdge) ->
+                if (!atEdge || allCells[MapPoint(global.x + delta.x, global.y + delta.y)]?.kind !in CONNECTABLE_KINDS) return@forEach
+                val cx = GestureEditorLayout.cellCenterX(p.x)
+                val cy = GestureEditorLayout.cellCenterY(p.y)
+                if (delta.x != 0) {
+                    val outsideX = GestureEditorLayout.cellCenterX(if (delta.x < 0) -1 else GestureEditorLayout.VIEWPORT_COLS)
+                    segments.add(GestureEditorLayout.horizontalPath(cy, cx, outsideX))
+                } else {
+                    val outsideY = GestureEditorLayout.cellCenterY(if (delta.y < 0) -1 else GestureEditorLayout.VIEWPORT_ROWS)
+                    segments.add(GestureEditorLayout.verticalPath(cx, cy, outsideY))
+                }
+            }
         }
         return segments.toList()
     }
