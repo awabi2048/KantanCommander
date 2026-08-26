@@ -154,6 +154,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     override fun onDisable() {
+        runCatching { if (::gestureEditor.isInitialized) gestureEditor.closeAll() }
         standaloneExportContributor?.let(StandaloneExportContributors::unregister)
         standaloneExportContributor = null
         if (::placements.isInitialized) {

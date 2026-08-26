@@ -103,6 +103,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
         event.isCancelled = true
+        // 編集中の表示Entity・入力クレームを先に解放し、破壊後に古い画面が残らないようにします。
+        plugin.gestureEditor.closeForPlacement(placement)
         outputDiskAndRemove(event.player, block, placement)
     }
 

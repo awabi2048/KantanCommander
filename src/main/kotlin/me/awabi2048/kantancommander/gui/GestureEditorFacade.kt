@@ -49,6 +49,19 @@ class GestureEditorFacade(
     }
 
     fun close(player: Player) {
-        sessions.remove(player.uniqueId)
+        sessions.remove(player.uniqueId)?.closeImmediately(player.uniqueId)
+    }
+
+    /** 配置ブロック破壊時に、その配置を編集中の全プレイヤーを即時終了させます。 */
+    fun closeForPlacement(placement: DiskPlacement) {
+        sessions.filterValues { it.isEditing(placement) }.keys.toList().forEach { playerId ->
+            sessions.remove(playerId)?.closeImmediately(playerId)
+        }
+    }
+
+    fun closeAll() {
+        sessions.keys.toList().forEach { playerId ->
+            sessions.remove(playerId)?.closeImmediately(playerId)
+        }
     }
 }

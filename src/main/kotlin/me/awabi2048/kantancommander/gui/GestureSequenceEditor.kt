@@ -76,6 +76,12 @@ class GestureSequenceEditor(
 
     private val UPPER_SCREEN_ID = "gesture-editor-upper"
 
+    internal fun isEditing(placement: DiskPlacement): Boolean = state.placement?.key == placement.key
+
+    internal fun closeImmediately(ownerId: UUID) {
+        api.close(ownerId, com.awabi2048.ccsystem.api.gesturegui.GestureGuiCloseMode.IMMEDIATE)
+    }
+
     fun open(player: Player) {
         api.registerOwner(player.uniqueId)
         val upper = buildUpperViewport(player)
