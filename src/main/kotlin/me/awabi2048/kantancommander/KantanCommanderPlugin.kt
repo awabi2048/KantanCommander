@@ -21,6 +21,7 @@ import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
 import me.awabi2048.kantancommander.gui.CommandEditMenu
+import me.awabi2048.kantancommander.gui.GestureEditorFacade
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
 import me.awabi2048.kantancommander.item.KantanInteractionListener
@@ -47,6 +48,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var editorMenu: SequenceEditorMenu
         private set
     lateinit var commandEditMenu: CommandEditMenu
+        private set
+    lateinit var gestureEditor: GestureEditorFacade
         private set
     lateinit var itemSelection: ItemSelectionListener
         private set
@@ -130,6 +133,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         itemSelection = ItemSelectionListener(this)
         editorMenu = SequenceEditorMenu(this)
         commandEditMenu = CommandEditMenu(this)
+        gestureEditor = GestureEditorFacade(this)
         placementAccess = PlacementAccessPolicy(this)
         triggerListener = RedstoneTriggerListener(this)
 

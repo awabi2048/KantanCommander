@@ -47,6 +47,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
                 return
             }
+            if (plugin.config.getBoolean("use-gesture-editor", false)) {
+                plugin.gestureEditor.open(player, clickedPlacement)
+                return
+            }
             plugin.editorMenu.open(player, clickedPlacement)
             return
         }
