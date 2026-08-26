@@ -147,7 +147,8 @@ class GestureSequenceEditor(
                             x = cx, y = cy,
                             item = org.bukkit.inventory.ItemStack(node.type.icon),
                             scale = GestureEditorLayout.ICON_SCALE,
-                            layer = if (isSelected) 5 else 3,
+                            // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
+                            layer = 3,
                             glowColor = null,
                         ))
                         elements.add(GestureGuiElement(
@@ -332,6 +333,7 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
+                updateUpper(player)
                 updateLower(player)
             }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {

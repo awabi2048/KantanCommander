@@ -185,22 +185,22 @@ class GestureLowerPanel(
     private fun buildConfirm(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
-        addText(visuals, "confirm-title", 0.0, 0.18, 0.007, 200, Component.text("このノードを削除しますか？"))
-        addText(visuals, "confirm-warn", 0.0, 0.10, 0.005, 200, Component.text("元に戻せません"))
+        addText(visuals, "confirm-title", 0.0, 0.11, 0.005, 150, Component.text("このノードを削除しますか？"))
+        addText(visuals, "confirm-warn", 0.0, 0.05, 0.004, 150, Component.text("元に戻せません"))
 
-        addBlock(visuals, "confirm-yes-bg", -0.55, -0.10, 1.0, 0.22, Material.RED_CONCRETE, 4)
-        addText(visuals, "confirm-yes", -0.55, -0.12, 0.006, 160, Component.text("削除する"))
+        addBlock(visuals, "confirm-yes-bg", -0.27, -0.08, 0.48, 0.12, Material.RED_CONCRETE, 4)
+        addText(visuals, "confirm-yes", -0.27, -0.08, 0.004, 100, Component.text("削除する"))
         elements.add(GestureGuiElement(
             elementId = "confirm-delete",
-            bounds = rect(-0.55, -0.10, 1.0, 0.22),
+            bounds = rect(-0.27, -0.08, 0.48, 0.12),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
             targetVisualId = "confirm-yes-bg",
         ))
-        addBlock(visuals, "confirm-no-bg", 0.55, -0.10, 1.0, 0.22, Material.GRAY_CONCRETE, 4)
-        addText(visuals, "confirm-no", 0.55, -0.12, 0.006, 160, Component.text("キャンセル"))
+        addBlock(visuals, "confirm-no-bg", 0.27, -0.08, 0.48, 0.12, Material.GRAY_CONCRETE, 4)
+        addText(visuals, "confirm-no", 0.27, -0.08, 0.004, 100, Component.text("キャンセル"))
         elements.add(GestureGuiElement(
             elementId = "confirm-cancel",
-            bounds = rect(0.55, -0.10, 1.0, 0.22),
+            bounds = rect(0.27, -0.08, 0.48, 0.12),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
             targetVisualId = "confirm-no-bg",
         ))
