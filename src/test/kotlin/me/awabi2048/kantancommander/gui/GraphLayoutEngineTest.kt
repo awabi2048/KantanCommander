@@ -256,4 +256,54 @@ class GraphLayoutEngineTest {
         assertFalse(diagram.any { it in "○+LP" })
         assertTrue(diagram.count { it == '■' } >= 3)
     }
+
+    @Test
+    fun `path between merge and its successor accepts insertion at the merge node`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        GraphEditor.append(graph, CommandType.WAIT)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val path = layout.cells[MapPoint(mergePoint.x + 1, mergePoint.y)]
+
+        assertEquals(merge.id, path?.insertionTarget?.sourceId)
+        assertEquals(GraphEditor.Edge.NEXT, path?.insertionTarget?.edge)
+    }
+
+    @Test
+    fun `path between for end and its successor accepts insertion at the for end node`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        GraphEditor.append(graph, CommandType.WAIT)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val endPoint = requireNotNull(layout.nodePoints[end.id])
+        val path = layout.cells[MapPoint(endPoint.x + 1, endPoint.y)]
+
+        assertEquals(end.id, path?.insertionTarget?.sourceId)
+        assertEquals(GraphEditor.Edge.NEXT, path?.insertionTarget?.edge)
+    }
+
+    @Test
+    fun `body ending with an open condition does not offer ambiguous tail insertion`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val endPoint = requireNotNull(layout.nodePoints[end.id])
+        val tailPath = layout.cells[MapPoint(endPoint.x - 1, endPoint.y)]
+
+        // 挿入先が曖昧なbody末尾は装飾扱いとし、誤った位置への挿入を防ぐ。
+        assertEquals(null, tailPath?.insertionTarget)
+        // 一方、枝末端の黄色追加アイコンは維持されるため追加導線は失われない。
+        assertTrue(layout.cells.values.any { it.kind == MapCellKind.ADD })
+    }
 }
