@@ -119,7 +119,15 @@ class GestureLowerPanel(private val plugin: KantanCommanderPlugin) {
         ))
 
         val category = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
-        val types = CommandType.entries.filter { CommandPresentationPolicy.category(it) == category }
+        // MERGE/FOR_ENDは単独挿入不可、FOR_START以外の制御系はこの経路へ挿入できないため除外する
+        val types = CommandType.entries.filter { type ->
+            CommandPresentationPolicy.category(type) == category &&
+                type != CommandType.MERGE &&
+                type != CommandType.FOR_END &&
+                type != CommandType.FOR_START &&
+                type != CommandType.BREAK &&
+                type != CommandType.CONTINUE
+        }
         types.take(8).forEachIndexed { index, type ->
             val cx = if (index % 2 == 0) -0.11 else 0.65
             val cy = 0.20 - (index / 2) * 0.18

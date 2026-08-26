@@ -39,6 +39,8 @@ data class GestureEditorState(
     var pickerCategory: Int = 0,
     /** CONFIRM対象のノードID（削除確認） */
     var confirmNodeId: UUID? = null,
+    /** PICKERで選択中の挿入先（addポイントクリック時に保持） */
+    var pendingInsertion: InsertionTarget? = null,
 )
 
 /** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
@@ -240,6 +242,20 @@ class GestureSequenceEditor(
                 updateLower(player)
             }
             context.elementId.startsWith("add:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                // addポイントの挿入先情報を保持し、下部をPICKERへ切り替える
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val gx = context.elementId.removePrefix("add:").substringBefore(":").toIntOrNull() ?: return
+                val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
+                val layout = GraphLayoutEngine.layout(script.graph)
+                val cell = layout.cells[MapPoint(gx, gy)]
+                val target = cell?.insertionTarget ?: run {
+                    // セルが持たない場合は前後ノードから直接挿入先を導出する（末端追加）
+                    InsertionTarget(
+                        sourceId = null,
+                        edge = GraphEditor.Edge.ENTRY,
+                    )
+                }
+                state.pendingInsertion = target
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 updateLower(player)
@@ -266,9 +282,22 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-type:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val typeName = context.elementId.removePrefix("lower-type:")
                 val type = runCatching { CommandType.valueOf(typeName) }.getOrNull() ?: return
-                // TODO: ノード挿入（既存GraphEditor.insert相当）を実行する
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val target = state.pendingInsertion
+                    ?: InsertionTarget(null, GraphEditor.Edge.ENTRY)
+                if (type in setOf(CommandType.MERGE, CommandType.FOR_END)) {
+                    // 単独挿入不可の型はPICKER側で候補から除外済み。ここでは黙って戻る
+                    state.lowerMode = GestureLowerMode.SETTINGS
+                    updateLower(player)
+                    return
+                }
+                val inserted = GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
+                plugin.scripts.save(script)
+                state.pendingInsertion = null
+                state.selectedNodeId = inserted.id
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
+                updateUpper(player)
                 updateLower(player)
             }
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
