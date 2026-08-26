@@ -8,6 +8,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiChildOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOpenOptions
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
@@ -35,8 +36,10 @@ data class GestureEditorState(
     var lowerMode: GestureLowerMode = GestureLowerMode.SETTINGS,
     /** SETTINGSで選択中のフィールドインデックス */
     var settingsTab: Int = 0,
+    var settingsPage: Int = 0,
     /** PICKERで選択中のカテゴリインデックス */
     var pickerCategory: Int = 0,
+    var pickerPage: Int = 0,
     /** CONFIRM対象のノードID（削除確認） */
     var confirmNodeId: UUID? = null,
     /** PICKERで選択中の挿入先（addポイントクリック時に保持） */
@@ -202,6 +205,7 @@ class GestureSequenceEditor(
         return GestureGuiView(
             GestureGuiScreenDefinition(UPPER_SCREEN_ID, elements, access = GestureGuiAccess.OWNER_ONLY),
             visuals,
+            panel = GestureGuiPanel(width = GestureEditorLayout.UPPER_W, height = GestureEditorLayout.UPPER_H),
         ) { context -> handleUpperAction(context) }
     }
 
@@ -215,6 +219,7 @@ class GestureSequenceEditor(
                         state.selectedNodeId = nodeId
                         state.lowerMode = GestureLowerMode.SETTINGS
                         state.settingsTab = 0
+                        state.settingsPage = 0
                         updateUpper(player)
                         updateLower(player)
                     }
@@ -234,10 +239,16 @@ class GestureSequenceEditor(
                     else -> return
                 }
                 val script = plugin.scripts.load(state.scriptId) ?: return
-                state.origin = GestureEditorLayout.clampOrigin(
-                    MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
-                    GraphLayoutEngine.layout(script.graph),
+                val layout = GraphLayoutEngine.layout(script.graph)
+                val nextOrigin = GestureEditorLayout.clampOrigin(
+                    MapPoint(state.origin.x + delta.x, state.origin.y + delta.y), layout,
                 )
+                if (nextOrigin == state.origin) {
+                    // 移動不能時も無反応にせず、操作対象へ短いフィードバックを返します。
+                    player.playSound(player.location, org.bukkit.Sound.BLOCK_NOTE_BLOCK_BASS, 0.35f, 0.7f)
+                    return
+                }
+                state.origin = nextOrigin
                 updateUpper(player)
             }
             context.elementId == "back-to-start" && context.gesture == GestureGuiGesture.PRIMARY -> {
@@ -247,10 +258,20 @@ class GestureSequenceEditor(
                 val firstAdd = layout?.let { GestureEditorLayout.findFirstAddPoint(it.cells) }
                 if (firstAdd != null) {
                     // firstAddがビューポート内に入るよう原点を調整
-                    val maxOx = (layout!!.width - GestureEditorLayout.VIEWPORT_COLS).coerceAtLeast(0)
+                    val maxOx = (layout.width - GestureEditorLayout.VIEWPORT_COLS).coerceAtLeast(0)
                     val maxOy = (layout.height - GestureEditorLayout.VIEWPORT_ROWS).coerceAtLeast(0)
-                    val ox = firstAdd.x.coerceIn(0, maxOx)
-                    val oy = firstAdd.y.coerceIn(0, maxOy)
+                    val ox = when {
+                        firstAdd.x < state.origin.x -> firstAdd.x
+                        firstAdd.x > state.origin.x + GestureEditorLayout.VIEWPORT_COLS - 1 ->
+                            firstAdd.x - GestureEditorLayout.VIEWPORT_COLS + 1
+                        else -> state.origin.x
+                    }.coerceIn(0, maxOx)
+                    val oy = when {
+                        firstAdd.y < state.origin.y -> firstAdd.y
+                        firstAdd.y > state.origin.y + GestureEditorLayout.VIEWPORT_ROWS - 1 ->
+                            firstAdd.y - GestureEditorLayout.VIEWPORT_ROWS + 1
+                        else -> state.origin.y
+                    }.coerceIn(0, maxOy)
                     state.origin = MapPoint(ox, oy)
                 } else {
                     state.origin = MapPoint(0, 0)
@@ -276,10 +297,15 @@ class GestureSequenceEditor(
                 state.pendingInsertion = target
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
+                state.pickerPage = 0
                 updateLower(player)
             }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.settingsTab = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-settings-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.settingsPage = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
                 updateLower(player)
             }
             context.elementId.startsWith("lower-edit:") && context.gesture == GestureGuiGesture.PRIMARY -> {
@@ -295,6 +321,11 @@ class GestureSequenceEditor(
             }
             context.elementId.startsWith("lower-cat:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
+                state.pickerPage = 0
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-picker-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.pickerPage = context.elementId.removePrefix("lower-picker-page:").toIntOrNull() ?: return
                 updateLower(player)
             }
             context.elementId.startsWith("lower-type:") && context.gesture == GestureGuiGesture.PRIMARY -> {
@@ -315,12 +346,17 @@ class GestureSequenceEditor(
                 state.selectedNodeId = inserted.id
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
+                state.settingsPage = 0
                 updateUpper(player)
                 updateLower(player)
             }
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
+            }
+            context.elementId == "lower-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.confirmNodeId = state.selectedNodeId ?: return
+                openConfirmChild(player)
             }
             context.elementId == "confirm-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val nodeId = state.confirmNodeId ?: return
@@ -404,24 +440,33 @@ class GestureSequenceEditor(
      * 配置は列/行インデックス基準です。
      */
     private fun buildPathSegments(viewportCells: Map<MapPoint, MapCell>, origin: MapPoint): List<GestureEditorLayout.PathSegment> {
-        val segments = mutableListOf<GestureEditorLayout.PathSegment>()
+        val segments = linkedSetOf<GestureEditorLayout.PathSegment>()
+        val pathKinds = setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH)
         viewportCells.forEach { (localPoint, cell) ->
-            if (cell.kind != MapCellKind.PATH && cell.kind != MapCellKind.BRANCH_PATH) return@forEach
+            if (cell.kind !in pathKinds) return@forEach
             val colIndex = localPoint.x
             val rowIndex = localPoint.y
             val cx = GestureEditorLayout.cellCenterX(colIndex)
             val cy = GestureEditorLayout.cellCenterY(rowIndex)
+            val left = viewportCells[MapPoint(localPoint.x - 1, localPoint.y)]
             val right = viewportCells[MapPoint(localPoint.x + 1, localPoint.y)]
+            val up = viewportCells[MapPoint(localPoint.x, localPoint.y - 1)]
             val down = viewportCells[MapPoint(localPoint.x, localPoint.y + 1)]
+            if (left != null && left.kind in CONNECTABLE_KINDS) {
+                segments.add(GestureEditorLayout.horizontalPath(cy, GestureEditorLayout.cellCenterX(colIndex - 1), cx))
+            }
             val connectsRight = right != null && right.kind in CONNECTABLE_KINDS
             val connectsDown = down != null && down.kind in CONNECTABLE_KINDS
             if (connectsRight) segments.add(GestureEditorLayout.horizontalPath(cy, cx, GestureEditorLayout.cellCenterX(colIndex + 1)))
+            if (up != null && up.kind in CONNECTABLE_KINDS) {
+                segments.add(GestureEditorLayout.verticalPath(cx, GestureEditorLayout.cellCenterY(rowIndex - 1), cy))
+            }
             if (connectsDown) segments.add(GestureEditorLayout.verticalPath(cx, cy, GestureEditorLayout.cellCenterY(rowIndex + 1)))
         }
-        return segments
+        return segments.toList()
     }
 
     private companion object {
-        val CONNECTABLE_KINDS = setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.NODE, MapCellKind.ADD)
+        val CONNECTABLE_KINDS = MapCellKind.entries.toSet()
     }
 }

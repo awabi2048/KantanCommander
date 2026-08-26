@@ -5,6 +5,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiBounds
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
@@ -41,7 +42,7 @@ class GestureLowerPanel(
         }
     }
 
-    /** SETTINGS: 左タブ列＝フィールド（最大5件＋ページャー）、右詳細＝現在値＋候補 */
+    /** SETTINGS: 左タブ列＝フィールド4件＋固定削除操作、右詳細＝現在値＋編集操作 */
     private fun buildSettings(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -57,8 +58,16 @@ class GestureLowerPanel(
             addText(visuals, "lower-hint", 0.28, 0.20, 0.010, 160, Component.text("設定項目はありません"))
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
-        val tabs = fields.take(5)
-        val selected = state.settingsTab.coerceIn(0, tabs.lastIndex)
+        val pageCount = (fields.size + SETTINGS_PAGE_SIZE - 1) / SETTINGS_PAGE_SIZE
+        val page = state.settingsPage.coerceIn(0, pageCount - 1)
+        val pageStart = page * SETTINGS_PAGE_SIZE
+        val tabs = fields.drop(pageStart).take(SETTINGS_PAGE_SIZE)
+        val selectedAbsolute = state.settingsTab.coerceIn(0, fields.lastIndex)
+        val selected = if (selectedAbsolute in pageStart until pageStart + tabs.size) {
+            selectedAbsolute - pageStart
+        } else {
+            0
+        }
 
         tabs.forEachIndexed { index, field ->
             val cy = 0.38 - index * 0.17
@@ -68,28 +77,41 @@ class GestureLowerPanel(
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, field.label)))
             elements.add(GestureGuiElement(
-                elementId = "lower-tab:$index",
+                elementId = "lower-tab:${pageStart + index}",
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "tab-bg-$index",
             ))
         }
-        if (fields.size > 5) {
-            addText(visuals, "lower-more", -0.7975, 0.38 - tabs.size * 0.17, 0.006, 90, Component.text("▼"))
+
+        // 危険操作はページ内容と混ぜず、左列最下段の安定した位置へ固定します。
+        val deleteY = -0.30
+        addBlock(visuals, "delete-bg", -0.7975, deleteY, 0.47, 0.15, Material.RED_CONCRETE, 4)
+        addText(visuals, "delete-label", -0.7975, deleteY, 0.0055, 90, Component.text("削除"))
+        elements.add(GestureGuiElement(
+            elementId = "lower-delete",
+            bounds = rect(-0.7975, deleteY, 0.47, 0.15),
+            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "delete-bg",
+        ))
+        if (pageCount > 1) {
+            addPager(visuals, elements, "settings", page, pageCount, -0.7975, -0.43)
         }
 
         val field = tabs[selected]
         val value = field.value(node).render(player)
         addText(visuals, "lower-header", 0.28, 0.43, 0.007, 200,
-            Component.text(KcI18n.text(player, field.label) + "：" + value))
-        addText(visuals, "lower-current", 0.28, 0.36, 0.005, 200, Component.text("[現在値]"))
-        addText(visuals, "lower-hint", 0.28, 0.29, 0.005, 200, Component.text("左クリックで設定を変更"))
+            Component.text(KcI18n.text(player, field.label)))
+        addText(visuals, "lower-current-label", 0.28, 0.34, 0.0048, 200, Component.text("現在値"))
+        addText(visuals, "lower-current-value", 0.28, 0.27, 0.006, 200, Component.text(value))
         // 値編集ボタン: チャット入力で値を確定する（ジェスチャーGUIは閉じない）
         addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.26, Material.STONE_BUTTON, 4)
-        addText(visuals, "lower-edit", 0.28, -0.02, 0.006, 160, Component.text("編集（チャット入力）"))
+        addText(visuals, "lower-edit", 0.28, 0.02, 0.006, 160, Component.text("チャットで編集"))
         elements.add(GestureGuiElement(
             elementId = "lower-edit:${field.key}",
             bounds = rect(0.28, 0.02, 1.2, 0.26),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "lower-edit-bg",
         ))
 
         return view(GestureLowerMode.SETTINGS, elements, visuals)
@@ -111,14 +133,17 @@ class GestureLowerPanel(
                 elementId = "lower-cat:$index",
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "cat-bg-$index",
             ))
         }
         val closeCy = 0.38 - categories.size * 0.17
-        addText(visuals, "lower-close", -0.7975, closeCy - 0.02, 0.006, 90, Component.text("＋ 閉じる"))
+        addBlock(visuals, "lower-close-bg", -0.7975, closeCy, 0.47, 0.15, Material.BROWN_CONCRETE, 4)
+        addText(visuals, "lower-close", -0.7975, closeCy, 0.006, 90, Component.text("閉じる"))
         elements.add(GestureGuiElement(
             elementId = "lower-close-picker",
             bounds = rect(-0.7975, closeCy, 0.47, 0.15),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "lower-close-bg",
         ))
 
         val category = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
@@ -131,7 +156,9 @@ class GestureLowerPanel(
                 type != CommandType.BREAK &&
                 type != CommandType.CONTINUE
         }
-        types.take(8).forEachIndexed { index, type ->
+        val pageCount = ((types.size + PICKER_PAGE_SIZE - 1) / PICKER_PAGE_SIZE).coerceAtLeast(1)
+        val page = state.pickerPage.coerceIn(0, pageCount - 1)
+        types.drop(page * PICKER_PAGE_SIZE).take(PICKER_PAGE_SIZE).forEachIndexed { index, type ->
             val cx = if (index % 2 == 0) -0.11 else 0.65
             val cy = 0.20 - (index / 2) * 0.18
             addBlock(visuals, "type-bg-$index", cx, cy, 0.72, 0.155, Material.STONE, 4)
@@ -141,8 +168,10 @@ class GestureLowerPanel(
                 elementId = "lower-type:${type.name}",
                 bounds = rect(cx, cy, 0.72, 0.155),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "type-bg-$index",
             ))
         }
+        if (pageCount > 1) addPager(visuals, elements, "picker", page, pageCount, 0.28, -0.48)
         return view(GestureLowerMode.PICKER, elements, visuals)
     }
 
@@ -159,6 +188,7 @@ class GestureLowerPanel(
             elementId = "confirm-delete",
             bounds = rect(-0.55, -0.10, 1.0, 0.22),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "confirm-yes-bg",
         ))
         addBlock(visuals, "confirm-no-bg", 0.55, -0.10, 1.0, 0.22, Material.GRAY_CONCRETE, 4)
         addText(visuals, "confirm-no", 0.55, -0.12, 0.006, 160, Component.text("キャンセル"))
@@ -166,6 +196,7 @@ class GestureLowerPanel(
             elementId = "confirm-cancel",
             bounds = rect(0.55, -0.10, 1.0, 0.22),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "confirm-no-bg",
         ))
         return view(GestureLowerMode.CONFIRM, elements, visuals)
     }
@@ -198,8 +229,34 @@ class GestureLowerPanel(
             access = GestureGuiAccess.OWNER_ONLY,
         ),
         visuals,
+        panel = GestureGuiPanel(width = GestureEditorLayout.LOWER_W, height = GestureEditorLayout.LOWER_H),
         onAction = onAction,
     )
+
+    private fun addPager(
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        id: String,
+        page: Int,
+        pageCount: Int,
+        centerX: Double,
+        centerY: Double,
+    ) {
+        listOf(page - 1 to "◀", page + 1 to "▶").forEachIndexed { index, (targetPage, glyph) ->
+            if (targetPage !in 0 until pageCount) return@forEachIndexed
+            val x = centerX + if (index == 0) -0.12 else 0.12
+            val visualId = "$id-page-$targetPage-bg"
+            addBlock(visuals, visualId, x, centerY, 0.18, 0.10, Material.CYAN_CONCRETE, 4)
+            addText(visuals, "$id-page-$targetPage-label", x, centerY, 0.005, 60, Component.text(glyph))
+            elements.add(GestureGuiElement(
+                elementId = "lower-$id-page:$targetPage",
+                bounds = rect(x, centerY, 0.18, 0.10),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = visualId,
+            ))
+        }
+        addText(visuals, "$id-page-status", centerX, centerY, 0.004, 80, Component.text("${page + 1}/$pageCount"))
+    }
 
     private fun addBlock(
         visuals: MutableList<GestureGuiVisual>,
@@ -242,5 +299,10 @@ class GestureLowerPanel(
         val hw = w / 2.0
         val hh = h / 2.0
         return GestureGuiBounds(cx - hw, cy - hh, cx + hw, cy + hh)
+    }
+
+    private companion object {
+        const val SETTINGS_PAGE_SIZE = 4
+        const val PICKER_PAGE_SIZE = 8
     }
 }
