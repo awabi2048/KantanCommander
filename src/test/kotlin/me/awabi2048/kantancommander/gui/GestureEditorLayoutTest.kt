@@ -9,61 +9,61 @@ import kotlin.math.abs
 class GestureEditorLayoutTest {
     @Test
     fun `cell centers follow grid pitch with 90 percent icons`() {
-        // マス中心: x = -1.35 + gx*0.22、y = 0.34 - gy*0.24
-        assertEquals(-1.35, GestureEditorLayout.cellCenterX(0), 1.0e-9)
-        assertEquals(-1.13, GestureEditorLayout.cellCenterX(1), 1.0e-9)
-        assertEquals(0.41, GestureEditorLayout.cellCenterX(8), 1.0e-9)
-        assertEquals(0.34, GestureEditorLayout.cellCenterY(0), 1.0e-9)
-        assertEquals(0.10, GestureEditorLayout.cellCenterY(1), 1.0e-9)
-        assertEquals(-0.14, GestureEditorLayout.cellCenterY(2), 1.0e-9)
+        // マス中心: x = -0.99 + col*0.22、y = 0.28 - row*0.20
+        assertEquals(-0.99, GestureEditorLayout.cellCenterX(0), 1.0e-9)
+        assertEquals(-0.77, GestureEditorLayout.cellCenterX(1), 1.0e-9)
+        assertEquals(0.99, GestureEditorLayout.cellCenterX(9), 1.0e-9)
+        assertEquals(0.28, GestureEditorLayout.cellCenterY(0), 1.0e-9)
+        assertEquals(0.08, GestureEditorLayout.cellCenterY(1), 1.0e-9)
+        assertEquals(-0.12, GestureEditorLayout.cellCenterY(2), 1.0e-9)
         // アイコンはマスの90%
-        assertEquals(0.171, GestureEditorLayout.ICON_W, 1.0e-9)
-        assertEquals(0.171, GestureEditorLayout.ICON_H, 1.0e-9)
+        assertEquals(0.22 * 0.9, GestureEditorLayout.ICON_W, 1.0e-9)
+        assertEquals(0.22 * 0.9, GestureEditorLayout.ICON_H, 1.0e-9)
     }
 
     @Test
     fun `horizontal path spans between node centers with thin thickness`() {
         val seg = GestureEditorLayout.horizontalPath(
-            y = 0.10,
-            xFrom = -1.13,
-            xTo = -0.91,
+            y = 0.08,
+            xFrom = -0.77,
+            xTo = -0.55,
         )
-        assertEquals(-1.02, seg.x, 1.0e-9)
-        assertEquals(0.10, seg.y, 1.0e-9)
+        assertEquals(-0.66, seg.x, 1.0e-9)
+        assertEquals(0.08, seg.y, 1.0e-9)
         assertEquals(0.22, seg.w, 1.0e-9)
-        // 断面はマスの2/3
-        assertEquals(GestureEditorLayout.CELL_W * 2.0 / 3.0, seg.h, 1.0e-9)
+        // 断面はピッチの2:3
+        assertEquals(GestureEditorLayout.PITCH_X * 2.0 / 3.0, seg.h, 1.0e-9)
     }
 
     @Test
     fun `vertical path spans between node centers`() {
         val seg = GestureEditorLayout.verticalPath(
-            x = -0.03,
-            yFrom = 0.34,
-            yTo = -0.14,
+            x = -0.33,
+            yFrom = 0.28,
+            yTo = -0.12,
         )
-        assertEquals(-0.03, seg.x, 1.0e-9)
-        assertEquals(0.10, seg.y, 1.0e-9)
-        assertEquals(0.48, seg.h, 1.0e-9)
+        assertEquals(-0.33, seg.x, 1.0e-9)
+        assertEquals(0.08, seg.y, 1.0e-9)
+        assertEquals(0.40, seg.h, 1.0e-9)
     }
 
     @Test
     fun `l path turns from top into right`() {
         val segments = GestureEditorLayout.lPathDownRight(
-            cornerX = -0.03,
-            cornerY = -0.14,
-            topY = 0.34,
-            rightX = 0.41,
+            cornerX = -0.33,
+            cornerY = -0.12,
+            topY = 0.28,
+            rightX = 0.33,
         )
         assertEquals(2, segments.size)
         // 垂直部分: 上(IF)からcornerまで
         val vertical = segments.first { it.w < it.h }
-        assertEquals(-0.03, vertical.x, 1.0e-9)
-        assertTrue(abs(vertical.h - 0.48) < 1.0e-9)
+        assertEquals(-0.33, vertical.x, 1.0e-9)
+        assertTrue(abs(vertical.h - 0.40) < 1.0e-9)
         // 水平部分: cornerから右(分岐先)まで
         val horizontal = segments.first { it.w > it.h }
-        assertEquals(-0.14, horizontal.y, 1.0e-9)
-        assertEquals(0.44, horizontal.w, 1.0e-9)
+        assertEquals(-0.12, horizontal.y, 1.0e-9)
+        assertEquals(0.66, horizontal.w, 1.0e-9)
     }
 
     @Test

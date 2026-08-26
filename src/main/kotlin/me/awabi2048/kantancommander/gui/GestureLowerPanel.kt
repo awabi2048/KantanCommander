@@ -48,7 +48,7 @@ class GestureLowerPanel(
         val script = plugin.scripts.load(state.scriptId)
         val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
         if (node == null) {
-            addText(visuals, "lower-hint", 0.28, 0.20, 0.010, 160, Component.text("ノードを選択してください"))
+            addText(visuals, "lower-hint", 0.0, 0.20, 0.010, 160, Component.text("ノードを選択してください"))
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
 
