@@ -29,11 +29,15 @@ class RedstoneActivationPolicyTest {
     }
 
     @Test
-    fun `timer with redstone repeats only while powered and interval elapsed`() {
-        assertFalse(decide(timer = true, powered = true, now = 100, last = null))
-        assertFalse(decide(timer = true, powered = true, now = 109, last = 100))
-        assertTrue(decide(timer = true, powered = true, now = 110, last = 100))
-        assertFalse(decide(timer = true, powered = false, now = 110, last = 100))
+    fun `timer with redstone runs on rising edge then repeats by interval`() {
+        // タイマー有効時は立ち上がりエッジで即時実行され、基準時刻が張り直される。
+        assertTrue(decide(timer = true, previous = false, powered = true, now = 100, last = 95))
+        // 立ち上がり後は常時実行へ切り替えた場合と同じく、間隔経過だけで判定する。
+        assertFalse(decide(timer = true, previous = true, powered = true, now = 109, last = 100))
+        assertTrue(decide(timer = true, previous = true, powered = true, now = 110, last = 100))
+        // 通電が切れている間も経過時間は進むため、間隔が満ちていれば直ちに実行される。
+        assertTrue(decide(timer = true, previous = true, powered = false, now = 110, last = 100))
+        assertFalse(decide(timer = true, previous = true, powered = false, now = 109, last = 100))
     }
 
     @Test
@@ -68,11 +72,26 @@ class RedstoneActivationPolicyTest {
     }
 
     @Test
+    fun `first observation while powered does not count as rising edge`() {
+        val state = RedstoneRuntimeState()
+        // 初回観測は通電状態を記録するだけで、前回値として現在値そのものを返す。
+        assertEquals(true, state.observePower("world,1,2,3", true))
+        // そのためサーバー起動直後に通電中でも、立ち上がり実行は起きない。
+        assertFalse(
+            decide(
+                timer = false,
+                previous = state.observePower("world,1,2,3", true),
+                powered = true,
+            )
+        )
+    }
+
+    @Test
     fun `timer anchor and power edge reset when configuration or placement is removed`() {
         val state = RedstoneRuntimeState()
         val id = UUID.randomUUID()
 
-        assertFalse(state.observePower("world,1,2,3", true))
+        assertEquals(true, state.observePower("world,1,2,3", true))
         assertEquals(100L, state.timerAnchor(id, true, 100L))
         state.markRun(id, 120L)
         assertEquals(120L, state.timerAnchor(id, true, 130L))
@@ -80,7 +99,7 @@ class RedstoneActivationPolicyTest {
         state.resetTiming(id)
         assertEquals(140L, state.timerAnchor(id, true, 140L))
         state.forget("world,1,2,3", id)
-        assertFalse(state.observePower("world,1,2,3", true))
+        assertEquals(true, state.observePower("world,1,2,3", true))
         assertEquals(null, state.timerAnchor(id, false, 150L))
     }
 
