@@ -12,7 +12,16 @@ data class InsertionTarget(
     val sourceId: UUID?,
     val edge: GraphEditor.Edge,
     val mergeConditionId: UUID? = null,
-)
+    /**
+     * 弱い候補は、同じセルへ後から明示的な調整経路が来た場合に譲る補助的な挿入先。
+     * 合流後・for終了後の水平経路のように、外側構造の経路とセルを共有し得る場所で使う。
+     */
+    val weak: Boolean = false,
+) {
+    init {
+        require(!weak || mergeConditionId == null) { "弱い挿入候補は分岐対応を持ちません" }
+    }
+}
 
 enum class MapCellKind {
     NODE,
@@ -95,9 +104,18 @@ object GraphLayoutEngine {
                     val branch = renderCondition(node, cursorX, y)
                     cursorX = branch.nextX
                     maximumY = maxOf(maximumY, branch.maxY)
-                    currentId = graph.nodes[node.pairedNodeId]?.next
-                    if (currentId != null) putPath(cursorX - 1, y)
-                    else return Segment(cursorX, maximumY, branch.tail)
+                    // 合流後の水平経路は「合流と次コマンドの間」への弱い挿入候補（仕様13.5）。
+                    // 外側分岐の調整経路とセルを共有する場合はそちらへ譲る。
+                    val mergeNode = graph.nodes[node.pairedNodeId]
+                    currentId = mergeNode?.next
+                    if (currentId != null) {
+                        putPath(
+                            cursorX - 1, y,
+                            sourceId = mergeNode?.id,
+                            edge = GraphEditor.Edge.NEXT,
+                            weakInsertionTarget = true,
+                        )
+                    } else return Segment(cursorX, maximumY, branch.tail)
                     continue
                 }
                 if (node.type == CommandType.CONDITION) {
@@ -111,9 +129,17 @@ object GraphLayoutEngine {
                     val loop = renderFor(node, cursorX, y)
                     cursorX = loop.nextX
                     maximumY = maxOf(maximumY, loop.maxY)
-                    currentId = graph.nodes[node.pairedNodeId]?.next
-                    if (currentId != null) putPath(cursorX - 1, y)
-                    else return Segment(cursorX, maximumY, loop.tail)
+                    // for終了後の水平経路は「for終了と次コマンドの間」への弱い挿入候補（仕様13.5）。
+                    val endNode = graph.nodes[node.pairedNodeId]
+                    currentId = endNode?.next
+                    if (currentId != null) {
+                        putPath(
+                            cursorX - 1, y,
+                            sourceId = endNode?.id,
+                            edge = GraphEditor.Edge.NEXT,
+                            weakInsertionTarget = true,
+                        )
+                    } else return Segment(cursorX, maximumY, loop.tail)
                     continue
                 }
                 putNode(cursorX, y, node)
@@ -225,10 +251,16 @@ object GraphLayoutEngine {
                 Segment(x + 2, y, null)
             }
             val endX = body.nextX
-            if (body.tail == null) {
-                putPath(endX - 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
-            } else {
-                putPath(endX - 1, y, sourceId = body.tail, edge = GraphEditor.Edge.NEXT)
+            when {
+                bodyStart == null || bodyStart == endId ->
+                    // 空bodyの開始・終了間の経路は、body先頭への挿入（FOR_BODY）を受け付ける（仕様10.1）。
+                    putPath(endX - 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
+                body.tail != null ->
+                    putPath(endX - 1, y, sourceId = body.tail, edge = GraphEditor.Edge.NEXT)
+                else ->
+                    // 未合流分岐など挿入先が曖昧なbody末尾では誤挿入より無反応が安全なため装飾扱いにする。
+                    // 枝末端には既に黄色の追加アイコンがあるため追加導線は失われない。
+                    putPath(endX - 1, y)
             }
             val end = graph.nodes[endId] ?: return Segment(endX, body.maxY, start.id)
             putNode(endX, y, end)
@@ -268,13 +300,16 @@ object GraphLayoutEngine {
             sourceId: UUID? = null,
             edge: GraphEditor.Edge? = null,
             mergeConditionId: UUID? = null,
+            weakInsertionTarget: Boolean = false,
         ) {
             val point = MapPoint(x, y)
             val existing = cells[point]
             check(existing?.kind != MapCellKind.NODE && existing?.kind != MapCellKind.ADD) {
                 "生成経路が実行要素と衝突しています: point=$point existing=$existing"
             }
-            val incomingTarget = edge?.let { InsertionTarget(sourceId, it, mergeConditionId) }
+            val incomingTarget = edge?.let {
+                InsertionTarget(sourceId, it, mergeConditionId, weak = weakInsertionTarget)
+            }
             val resolvedKind = mergePathKind(existing?.kind, kind)
             val resolvedTarget = mergeInsertionTarget(point, existing?.insertionTarget, incomingTarget)
             cells[point] = MapCell(point, resolvedKind, insertionTarget = resolvedTarget)
@@ -312,6 +347,9 @@ object GraphLayoutEngine {
         ): InsertionTarget? = when {
             existing == null -> incoming
             incoming == null || existing == incoming -> existing
+            // 弱い候補は、同じセルを共有する明示的な調整経路へ譲る。
+            existing.weak && !incoming.weak -> incoming
+            incoming.weak && !existing.weak -> existing
             else -> error("異なる挿入位置が同じセルを共有しています: point=$point existing=$existing incoming=$incoming")
         }
     }

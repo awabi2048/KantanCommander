@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -821,5 +822,159 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         assertTrue(failure.errors.any { it.contains("安全に変換できません") })
+    }
+
+    @Test
+    fun `unrepresentable minimum integer addition fails preflight`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "minimum-addition")
+        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
+        variable.params.putAll(
+            mapOf(
+                "name" to "counter",
+                "type" to VariableType.INTEGER.name,
+                "operation" to VariableOperation.ADD.name,
+                "value" to Int.MIN_VALUE.toString(),
+            )
+        )
+
+        val failure = assertInstanceOf(
+            ExportResult.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        assertTrue(failure.errors.any { it.contains("安全に変換できません") })
+    }
+
+    @Test
+    fun `store target without a target spec fails preflight`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "store-target-missing")
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "name" to "victim",
+                "scope" to "TEMPORARY",
+                "type" to VariableType.ENTITY.name,
+                "operation" to VariableOperation.STORE_TARGET.name,
+            )
+        )
+
+        val failure = assertInstanceOf(
+            ExportResult.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        assertTrue(failure.errors.any { it.contains("対象指定が未設定") })
+    }
+
+    @Test
+    fun `integer condition with out of range comparison fails preflight`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
+
+        fun comparisonScript(name: String, value: String): me.awabi2048.kantancommander.model.DiskScript {
+            val script = store.create(UUID.randomUUID(), name)
+            GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+                mapOf(
+                    "name" to "counter",
+                    "scope" to "TEMPORARY",
+                    "type" to VariableType.INTEGER.name,
+                    "operation" to VariableOperation.SET.name,
+                    "value" to "0",
+                )
+            )
+            val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+            condition.params.putAll(
+                mapOf(
+                    "kind" to "VARIABLE_STATE",
+                    "variable" to "counter",
+                    "variableScope" to "TEMPORARY",
+                    "operator" to ">",
+                    "value" to value,
+                )
+            )
+            return script
+        }
+
+        val oversized = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(comparisonScript("compare-oversized", (Int.MAX_VALUE.toLong() + 1).toString())),
+        )
+        assertTrue(oversized.errors.any { it.contains("32bit整数範囲") })
+
+        val nonNumeric = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(comparisonScript("compare-non-numeric", "abc")),
+        )
+        assertTrue(nonNumeric.errors.any { it.contains("32bit整数範囲") })
+    }
+
+    @Test
+    fun `teleport destination target is limited to one entity`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "teleport-multi")
+        GraphEditor.append(script.graph, CommandType.TELEPORT).apply {
+            targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            destinationTargetSpec = null
+            destinationSpec = PositionSpec(PositionKind.TARGET)
+            contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val text = success.functions.values.joinToString("\n")
+        // 移動先は複数エンティティへtpできないため、limit=1の単一セレクタへ固定される。
+        assertTrue(text.contains(Regex("""tp @s @a\[.*limit=1.*]""")))
+    }
+
+    @Test
+    fun `for ranges may read world variables in vanilla output`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "for-world-vanilla")
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        start.params.putAll(
+            mapOf(
+                "startSource" to "WORLD",
+                "startValue" to "base",
+                "endSource" to "WORLD",
+                "endValue" to "limit",
+                "stepSource" to "FIXED",
+                "stepValue" to "1",
+            )
+        )
+        GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
+        // ワールド内変数（永続scoreboard）からfor開始値・終了値が転記される。
+        assertTrue(text.contains("= ${VanillaScoreNames.variableHolder("base", false)} kc_vars"))
+        assertTrue(text.contains("= ${VanillaScoreNames.variableHolder("limit", false)} kc_vars"))
+    }
+
+    @Test
+    fun `ambiguous previous context across merged branches fails preflight`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "ambiguous-previous")
+
+        // 条件分岐のtrue枝だけがコンテキストを設定し、合流後のPREVIOUS参照は経路ごとに内容が変わる。
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.CONTEXT).apply {
+            contextOverride = ExecutionContextSpec(position = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0))
+        }
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
+        val merge = GraphEditor.appendMerge(script.graph, condition.id)
+        val follower = GraphEditor.insert(script.graph, merge.id, GraphEditor.Edge.NEXT, CommandType.DISPLAY_TEXT)
+        follower.contextSource = ContextSource.PREVIOUS
+        follower.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+
+        val failure = assertInstanceOf(
+            ExportResult.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        assertTrue(failure.errors.any { it.contains("確定しないため") })
     }
 }

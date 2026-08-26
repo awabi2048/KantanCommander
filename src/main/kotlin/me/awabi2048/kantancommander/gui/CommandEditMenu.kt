@@ -277,8 +277,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field.endsWith("Source") && node.type == CommandType.FOR_START) {
+                            // 参照元は固定値→一時変数→ワールド内変数の3択を循環する（仕様10.2）。
                             updateNode(context.route) {
-                                it.params[field] = if (it.string(field) == "TEMPORARY") "FIXED" else "TEMPORARY"
+                                it.params[field] = when (it.string(field, "FIXED")) {
+                                    "TEMPORARY" -> "WORLD"
+                                    "WORLD" -> "FIXED"
+                                    else -> "TEMPORARY"
+                                }
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
@@ -935,8 +940,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderVariableValue(player: Player, route: MenuRoute): InventoryMenuView {
         val script = script(route)
         val node = node(route)
+        // 反復値・ループ回数は一時変数（起動ローカル）だけへ保存できるため、
+        // ワールド内変数ノードでは選択肢を表示しない（仕様12.2）。
         val insideFor = script != null && node != null &&
             node.string("type") == VariableType.INTEGER.name &&
+            node.string("scope", VariableScope.TEMPORARY.name) != VariableScope.WORLD.name &&
             GraphEditor.isInsideFor(script.graph, node.id, GraphEditor.Edge.NEXT)
         val options = buildList {
             add(DetailOption(Material.WRITABLE_BOOK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE, "direct", DisplayValue.Literal("")))
@@ -1932,7 +1940,11 @@ private fun displayEntityState(value: String) = DisplayValue.Localized(
 )
 
 private fun displayForSource(value: String) = DisplayValue.Localized(
-    if (value == "TEMPORARY") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE,
+    when (value) {
+        "TEMPORARY" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
+        "WORLD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
+        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE
+    },
 )
 
 private fun displayGameMode(value: String?) = when (value?.lowercase()) {

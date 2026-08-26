@@ -103,4 +103,33 @@ class ScriptStoreTest {
         assertThrows(IllegalArgumentException::class.java) { store.save(script) }
         assertTrue(requireNotNull(store.load(script.id)).graph.nodes.isEmpty())
     }
+
+    @Test
+    fun `lowering config limits does not quarantine previously saved scripts`() {
+        val dir = temp.resolve("limits-shrink")
+        val wideStore = ScriptStore(dir, Logger.getAnonymousLogger())
+        val script = wideStore.create(UUID.randomUUID(), "wide")
+        repeat(3) { GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT) }
+        wideStore.save(script)
+
+        // リロード相当: 同じ保存先をより小さい上限で開き直しても、既存データは隔離されず読み込める。
+        val shrunk = ScriptStore(dir, Logger.getAnonymousLogger(), GraphLimits(maximumNodeCount = 2))
+        val loaded = requireNotNull(shrunk.load(script.id))
+        assertEquals(3, loaded.graph.nodes.size)
+        assertFalse(dir.resolve("corrupt").exists() && dir.resolve("corrupt").list().orEmpty().isNotEmpty())
+    }
+
+    @Test
+    fun `load hands out independent copies so unsaved edits stay invisible`() {
+        val store = ScriptStore(temp.resolve("copy"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "copy")
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val first = requireNotNull(store.load(script.id))
+        first.graph.nodes.values.forEach { it.params["text"] = "unsaved" }
+
+        val second = requireNotNull(store.load(script.id))
+        assertTrue(second.graph.nodes.values.all { it.string("text").isBlank() })
+    }
 }

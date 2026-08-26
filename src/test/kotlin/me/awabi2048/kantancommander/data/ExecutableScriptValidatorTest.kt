@@ -114,4 +114,43 @@ class ExecutableScriptValidatorTest {
         assertTrue(errors.any { it.contains("対象数は1以上") })
         assertTrue(errors.any { it.contains("座標が未設定") })
     }
+
+    @Test
+    fun `for ranges may reference world variables`() {
+        val script = DiskScript(name = "for-world", owner = UUID.randomUUID())
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        start.params.putAll(
+            mapOf(
+                "startSource" to "WORLD",
+                "startValue" to "base",
+                "endSource" to "WORLD",
+                "endValue" to "limit",
+                "stepSource" to "FIXED",
+                "stepValue" to "1",
+            )
+        )
+
+        assertFalse(
+            ExecutableScriptValidator.validate(script).any { it.contains("forの") },
+        )
+    }
+
+    @Test
+    fun `loop values cannot be stored into world variables`() {
+        val script = DiskScript(name = "loop-world", owner = UUID.randomUUID())
+        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
+        variable.params.putAll(
+            mapOf(
+                "name" to "shared",
+                "scope" to "WORLD",
+                "type" to VariableType.INTEGER.name,
+                "operation" to VariableOperation.SET.name,
+                "value" to "\$current_iteration_value",
+            )
+        )
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any { it.contains("ループ値はワールド内変数へ保存できません") },
+        )
+    }
 }

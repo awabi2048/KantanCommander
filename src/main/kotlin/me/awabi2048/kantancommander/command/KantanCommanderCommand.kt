@@ -22,7 +22,7 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
                     emptyMap()
                 )
             }
-            "placed" -> listPlaced(sender)
+            "placed" -> listPlaced(sender, args.getOrNull(1)?.toIntOrNull() ?: 1)
             "reload" -> {
                 if (!sender.hasPermission("kankoma.admin")) return true
                 val key = if (plugin.reloadManagedSettings()) {
@@ -37,10 +37,17 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
         return true
     }
 
-    private fun listPlaced(sender: CommandSender) {
+    /** 配置一覧を10件ごとのページで表示する。ページ範囲外の指定は有効範囲へ丸める。 */
+    private fun listPlaced(sender: CommandSender, requestedPage: Int) {
         if (!sender.hasPermission("kankoma.admin")) return
-        sender.sendMessage(KcI18n.text(sender as? Player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_HEADER, mapOf("count" to plugin.placements.all().size)))
-        plugin.placements.all().take(10).forEach {
+        val player = sender as? Player
+        val all = plugin.placements.all()
+        val pageSize = 10
+        val totalPages = ((all.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = requestedPage.coerceIn(1, totalPages)
+        sender.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_HEADER, mapOf("count" to all.size)))
+        sender.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_PAGE, mapOf("page" to page, "pages" to totalPages)))
+        all.drop((page - 1) * pageSize).take(pageSize).forEach {
             sender.sendMessage(KcI18n.text(sender as? Player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_ENTRY, mapOf(
                 "world" to it.world,
                 "x" to it.x,

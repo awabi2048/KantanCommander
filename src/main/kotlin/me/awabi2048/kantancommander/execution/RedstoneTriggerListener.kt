@@ -69,8 +69,12 @@ internal class RedstoneRuntimeState {
     private val powered = mutableMapOf<String, Boolean>()
     private val lastRun = mutableMapOf<UUID, Long>()
 
-    fun observePower(placementKey: String, current: Boolean): Boolean =
-        powered.put(placementKey, current) ?: false
+    fun observePower(placementKey: String, current: Boolean): Boolean {
+        // サーバー起動直後・再配置直後など初回観測時は、通電状態を記録するだけで
+        // 立ち上がりとは数えない（前回値として現在値そのものを返す）。
+        val previous = powered.put(placementKey, current)
+        return previous ?: current
+    }
 
     fun timerAnchor(scriptId: UUID, timerEnabled: Boolean, currentTick: Long): Long? {
         if (!timerEnabled) {
@@ -107,10 +111,11 @@ internal object RedstoneActivationPolicy {
         if (!timerEnabled) {
             return activation == ActivationMode.NEEDS_REDSTONE && !wasPowered && isPowered
         }
+        // タイマー有効時は、レッドストーン信号の立ち上がりで即時実行して基準時刻を張り直し、
+        // 以降は常時実行へ切り替えた場合と同じく、間隔経過だけで定期実行する。
+        // 通電が切れている間も経過時間は進むため、再通電時に間隔が満ちていれば直ちに実行される。
+        if (activation == ActivationMode.NEEDS_REDSTONE && !wasPowered && isPowered) return true
         val intervalElapsed = lastRunTick != null && currentTick - lastRunTick >= intervalTicks
-        return intervalElapsed && (
-            activation == ActivationMode.ALWAYS_ACTIVE ||
-                activation == ActivationMode.NEEDS_REDSTONE && isPowered
-            )
+        return intervalElapsed
     }
 }
