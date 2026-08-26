@@ -8,8 +8,6 @@ import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.Material
-import org.bukkit.Sound
-import org.bukkit.SoundCategory
 import org.bukkit.block.Block
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
@@ -190,9 +188,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     /** 破壊時の後始末。内容をコマンドディスクとして出力し、表示・配置・スクリプトを削除する。 */
     private fun outputDiskAndRemove(player: Player, block: Block, placement: DiskPlacement) {
         val world = block.world
-        // イベントキャンセル方式のため、バニラのブロック破壊と同じ破壊音を自前で再生する。パーティクルはバニラが再生する。
-        val center = block.location.toCenterLocation()
-        world.playSound(center, Sound.BLOCK_GLASS_BREAK, SoundCategory.BLOCKS, 1.0f, 0.8f)
+        // 破壊音・パーティクルは、イベントキャンセル下でもバニラがクライアントへ送信するため自前では再生しない。
         val source = plugin.scripts.load(placement.scriptId)
         // 内容が空の場合はディスクを出力せず破壊のみ行う。
         if (source != null && source.graph.nodes.isNotEmpty()) {
