@@ -59,7 +59,7 @@ object KantanItemService {
                         GuiLoreSpec.None,
                         listOf(me.awabi2048.kantancommander.gui.KcGui.action(
                             player,
-                            "lore.click.place",
+                            "lore.click.right",
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_PLACE_BLOCK),
                         )),
                     ),
