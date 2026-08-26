@@ -700,13 +700,9 @@ class GestureSequenceEditor(
                     val x2 = GestureEditorLayout.cellCenterX(n.x)
                     val y2 = GestureEditorLayout.cellCenterY(n.y)
                     if (p.y == n.y) {
-                        val mid = (x1 + x2) / 2.0
-                        segments.add(GestureEditorLayout.horizontalPath(y1, x1, mid))
-                        segments.add(GestureEditorLayout.horizontalPath(y1, mid, x2))
+                        segments.add(GestureEditorLayout.horizontalPath(y1, x1, x2))
                     } else {
-                        val mid = (y1 + y2) / 2.0
-                        segments.add(GestureEditorLayout.verticalPath(x1, y1, mid))
-                        segments.add(GestureEditorLayout.verticalPath(x1, mid, y2))
+                        segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
                     }
                 }
         }
@@ -734,7 +730,20 @@ class GestureSequenceEditor(
                 }
             }
         }
-        return segments.toList()
+        // 各論理接続は3枚の連続ディスプレイへ分割し、ノード間の隙間をなくします。
+        return segments.flatMap { segment ->
+            if (segment.w >= segment.h) {
+                val third = segment.w / 3.0
+                listOf(0, 1, 2).map { index ->
+                    GestureEditorLayout.PathSegment(segment.x - segment.w / 2.0 + third * (index + 0.5), segment.y, third, segment.h)
+                }
+            } else {
+                val third = segment.h / 3.0
+                listOf(0, 1, 2).map { index ->
+                    GestureEditorLayout.PathSegment(segment.x, segment.y + segment.h / 2.0 - third * (index + 0.5), segment.w, third)
+                }
+            }
+        }.distinct()
     }
 
     private companion object {

@@ -44,15 +44,13 @@ object GestureEditorLayout {
     fun horizontalPath(y: Double, xFrom: Double, xTo: Double): PathSegment {
         val left = minOf(xFrom, xTo)
         val right = maxOf(xFrom, xTo)
-        val inset = (PATH_THICKNESS / 2.0).coerceAtMost((right - left) / 2.0)
-        return PathSegment((left + right) / 2.0, y, (right - left - inset * 2.0).coerceAtLeast(PATH_THICKNESS), PATH_THICKNESS)
+        return PathSegment((left + right) / 2.0, y, right - left, PATH_THICKNESS)
     }
 
     fun verticalPath(x: Double, yFrom: Double, yTo: Double): PathSegment {
         val top = maxOf(yFrom, yTo)
         val bottom = minOf(yFrom, yTo)
-        val inset = (PATH_THICKNESS / 2.0).coerceAtMost((top - bottom) / 2.0)
-        return PathSegment(x, (top + bottom) / 2.0, PATH_THICKNESS, (top - bottom - inset * 2.0).coerceAtLeast(PATH_THICKNESS))
+        return PathSegment(x, (top + bottom) / 2.0, PATH_THICKNESS, top - bottom)
     }
 
     /** L字経路: (cornerX, cornerY)で曲がり、上から入って右へ出る（┘型） */
