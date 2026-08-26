@@ -65,7 +65,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 }
                 val base = event.clickedBlock ?: return
                 val target = if (base.isReplaceable) base else base.getRelative(event.blockFace)
-                placeBlock(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND)
+                placeBlock(player, target.location, base, script, event.hand ?: EquipmentSlot.HAND, replaceabilityGuaranteed = false)
             }
         }
     }
@@ -81,8 +81,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.logger.info("拡張コマンドブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
             return
         }
-        plugin.logger.info("拡張コマンドブロックの設置を検出: player=${player.name}, location=${event.block.location}")
-        placeBlock(player, event.block.location, event.blockAgainst, null, event.hand)
+        plugin.logger.info("拡張コマンドブロックの設置を検出: player=${player.name}, location=${event.block.location}, material=${event.block.type}")
+        // バニラの配置イベントが配置位置を保証済み（canBeReplacedを満たす）のため、置換可能性は再判定しない。
+        placeBlock(player, event.block.location, event.blockAgainst, null, event.hand, replaceabilityGuaranteed = true)
     }
 
     /** 拡張コマンドブロックの破壊。管理権限があれば内容をコマンドディスクとして出力して撤去する。 */
@@ -106,16 +107,18 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         blockAgainst: Block,
         source: DiskScript?,
         hand: EquipmentSlot,
+        replaceabilityGuaranteed: Boolean,
     ) {
         val block = location.block
         // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにする。
         // 原因の追跡用に、失敗の理由を常時サーバーログへ記録する。
-        if (!block.isReplaceable) {
-            plugin.logger.info("配置先が置換不能のため設置せず: location=${block.location}")
+        // バニラの配置イベント経由では配置位置の置換可能性が保証済みのため、ディスクの自前配置だけ再判定する。
+        if (!replaceabilityGuaranteed && !block.isReplaceable) {
+            plugin.logger.info("配置先が置換不能のため設置せず: location=${block.location}, material=${block.type}")
             return
         }
         if (plugin.placements.find(block.location) != null) {
-            plugin.logger.info("既存の配置物があるため設置せず: location=${block.location}")
+            plugin.logger.info("既存の配置物があるため設置せず: location=${block.location}, material=${block.type}")
             return
         }
 
@@ -136,7 +139,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
-            plugin.logger.info("ブロック状態が設置不可のため設置せず: location=${block.location}, material=$material")
+            plugin.logger.info(
+                "ブロック状態が設置不可のため設置せず: location=${block.location}, " +
+                    "target=${block.type}, material=$material",
+            )
             return
         }
         val replacedState = block.state
