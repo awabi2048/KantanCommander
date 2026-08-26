@@ -162,13 +162,17 @@ class VanillaDatapackExporter(
                 }
                 CommandType.FOR_START -> {
                     listOf("start", "end", "step").forEach { field ->
-                        if (node.string("${field}Source", "FIXED") == "FIXED") {
-                            val value = node.string("${field}Value").toLongOrNull()
-                            if (value == null) {
-                                errors += "${script.id}/${node.id}: forの${field}値は64bit符号付き整数で指定してください"
-                            } else if (value !in VANILLA_INTEGER_RANGE) {
-                                errors += "${script.id}/${node.id}: forの${field}値はバニラscoreboardの範囲外です"
+                        when (node.string("${field}Source", "FIXED")) {
+                            "FIXED" -> {
+                                val value = node.string("${field}Value").toLongOrNull()
+                                if (value == null) {
+                                    errors += "${script.id}/${node.id}: forの${field}値は64bit符号付き整数で指定してください"
+                                } else if (value !in VANILLA_INTEGER_RANGE) {
+                                    errors += "${script.id}/${node.id}: forの${field}値はバニラscoreboardの範囲外です"
+                                }
                             }
+                            "TEMPORARY", "WORLD" -> Unit
+                            else -> errors += "${script.id}/${node.id}: forの${field}参照元が不正です"
                         }
                     }
                     if (node.string("stepSource", "FIXED") == "FIXED" && node.string("stepValue").toLongOrNull() == 0L) {
@@ -758,10 +762,14 @@ class VanillaDatapackExporter(
 
     private fun assignLoopValue(loop: String, target: String, node: CommandNode, field: String): String {
         val destination = "#${loop}_$target"
-        return if (node.string("${field}Source", "FIXED") == "TEMPORARY") {
-            "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"), temporary = true)} kc_vars"
-        } else {
-            "scoreboard players set $destination kc_vars ${node.string("${field}Value", if (field == "step") "1" else "0")}"
+        return when (node.string("${field}Source", "FIXED")) {
+            "TEMPORARY" ->
+                "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"), temporary = true)} kc_vars"
+            // ワールド内変数は永続scoreboardへ初期化済みのため、一時変数と同じoperation転記で読める。
+            "WORLD" ->
+                "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"), temporary = false)} kc_vars"
+            else ->
+                "scoreboard players set $destination kc_vars ${node.string("${field}Value", if (field == "step") "1" else "0")}"
         }
     }
 

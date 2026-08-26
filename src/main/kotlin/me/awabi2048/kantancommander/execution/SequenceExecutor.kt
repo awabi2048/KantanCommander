@@ -261,6 +261,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return when (source) {
             "FIXED" -> value.toLongOrNull()
             "TEMPORARY" -> session.temporaryVariables[value]?.integerValue
+            // ワールド内変数も参照元として使える（仕様10.2）。未定義・型不一致は整数値なし扱いで強制停止へ。
+            "WORLD" -> plugin.variables.get(session.worldId, value)?.integerValue
             else -> null
         }
     }

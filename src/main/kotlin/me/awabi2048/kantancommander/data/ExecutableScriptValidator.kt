@@ -217,6 +217,14 @@ object ExecutableScriptValidator {
         if (operation == VariableOperation.STORE_TARGET && type != VariableType.ENTITY) {
             errors += "$path: 対象保存にはエンティティ型が必要です"
         }
+        // 反復値・ループ回数は起動ローカルの読み取り専用値のため、ワールド内変数（MyWorld共有）への
+        // 保存を拒否する（仕様12.2 forの反復値・ループ回数の出力先には使用できない）。
+        if (operation == VariableOperation.SET &&
+            node.string("scope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name &&
+            node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")
+        ) {
+            errors += "$path: ループ値はワールド内変数へ保存できません"
+        }
     }
 
     private fun validateFor(node: CommandNode, path: String, errors: MutableList<String>) {
@@ -226,6 +234,9 @@ object ExecutableScriptValidator {
                     errors += "$path: forの${field}値が不正です"
                 }
                 "TEMPORARY" -> if (node.string("${field}Value").isBlank()) {
+                    errors += "$path: forの${field}参照変数が未設定です"
+                }
+                "WORLD" -> if (node.string("${field}Value").isBlank()) {
                     errors += "$path: forの${field}参照変数が未設定です"
                 }
                 else -> errors += "$path: forの${field}参照元が不正です"

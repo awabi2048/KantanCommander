@@ -928,6 +928,33 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `for ranges may read world variables in vanilla output`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "for-world-vanilla")
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        start.params.putAll(
+            mapOf(
+                "startSource" to "WORLD",
+                "startValue" to "base",
+                "endSource" to "WORLD",
+                "endValue" to "limit",
+                "stepSource" to "FIXED",
+                "stepValue" to "1",
+            )
+        )
+        GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT)
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
+        // ワールド内変数（永続scoreboard）からfor開始値・終了値が転記される。
+        assertTrue(text.contains("= ${VanillaScoreNames.variableHolder("base", false)} kc_vars"))
+        assertTrue(text.contains("= ${VanillaScoreNames.variableHolder("limit", false)} kc_vars"))
+    }
+
+    @Test
     fun `ambiguous previous context across merged branches fails preflight`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "ambiguous-previous")
