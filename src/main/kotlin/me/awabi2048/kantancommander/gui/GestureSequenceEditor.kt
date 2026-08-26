@@ -119,6 +119,15 @@ class GestureSequenceEditor(
                     if (node != null) {
                         val isSelected = state.selectedNodeId == node.id
                         val glowColor = if (isSelected) Color.YELLOW.asRGB() else null
+                        // アイコン単体を浮かせず、追加ポイントと同じマス背景で視認性と接続先を示します。
+                        visuals.add(GestureGuiVisual.Block(
+                            visualId = "node-bg-${node.id}",
+                            x = cx, y = cy,
+                            width = GestureEditorLayout.ICON_W,
+                            height = GestureEditorLayout.ICON_H,
+                            blockData = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                            layer = 2,
+                        ))
                         // マスの90% (ICON_W=0.171) に合わせる。Item.scale 0.22が標準のため 0.22*0.78≈0.17 とする
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
