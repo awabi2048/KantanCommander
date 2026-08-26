@@ -20,6 +20,13 @@ class ScriptStore(
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
 
+    /**
+     * 保存済み内容の正本キャッシュ。レッドストーン監視のようにtick単位で参照される
+     * [load]が、参照ごとにJSON解析と構造検証を繰り返さないようにするためのもの。
+     * 正本は検証に通った時点の内容のみを採用し、[load]経由では独立コピーを渡す。
+     */
+    private val cache = mutableMapOf<UUID, DiskScript>()
+
     init {
         dir.mkdirs()
     }
@@ -58,26 +65,44 @@ class ScriptStore(
             graph = source.graph.deepCopy(),
         ).also(::save)
 
-    fun load(id: UUID): DiskScript? = file(id).takeIf(File::isFile)?.let(::read)
+    /** 保存済み内容の独立コピーを返す。呼び出し側が変更しても保存済み正本へ波及しない。 */
+    fun load(id: UUID): DiskScript? = cached(id)?.deepCopy()
 
     fun save(script: DiskScript) {
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
         atomicWrite(file(script.id), gson.toJson(script))
+        // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
+        cache[script.id] = script.deepCopy()
     }
 
     fun delete(id: UUID) {
         file(id).delete()
+        cache.remove(id)
     }
 
     fun listAll(): List<DiskScript> =
         dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
-            ?.mapNotNull(::read)
+            ?.mapNotNull { file ->
+                val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()
+                    ?: return@mapNotNull null
+                cached(id)?.deepCopy()
+            }
             ?.sortedBy(DiskScript::createdAt)
             ?: emptyList()
 
     fun listOwned(owner: UUID): List<DiskScript> = listAll().filter { it.owner == owner && it.listed }
+
+    private fun cached(id: UUID): DiskScript? {
+        cache[id]?.let { return it }
+        if (!file(id).isFile) return null
+        val loaded = read(file(id)) ?: return null
+        cache[id] = loaded
+        return loaded
+    }
+
+    private fun DiskScript.deepCopy(): DiskScript = copy(graph = graph.deepCopy())
 
     private fun file(id: UUID) = dir.resolve("$id.json")
 
@@ -90,8 +115,20 @@ class ScriptStore(
     private fun read(file: File): DiskScript? = try {
         gson.fromJson(file.readText(Charsets.UTF_8), DiskScript::class.java)
             ?.takeIf { it.formatVersion == STRUCTURED_FORMAT_VERSION }
-            ?.also {
-                require(validateRecursively(it.graph).isEmpty())
+            ?.also { script ->
+                // 構造そのものの違反は破損データとして隔離する。
+                val structuralViolations = validateRecursively(script.graph, UNBOUNDED_LIMITS)
+                require(structuralViolations.isEmpty()) { structuralViolations.joinToString("; ") }
+                // config上限だけを超えるデータは、リロードでの上限引き下げ時に
+                // 既存データを失わせないため、警告のみで読み込みを続行する（仕様18 既存グラフを変更しない）。
+                // 実行可否は実行前検証が別途判定する。
+                val limitViolations = validateRecursively(script.graph, limits)
+                if (limitViolations.isNotEmpty()) {
+                    logger.warning(
+                        "設定上限を超える保存済みコマンドディスクを読み込みました（隔離していません）: " +
+                            "${file.absolutePath} (${limitViolations.joinToString("; ")})"
+                    )
+                }
             }
     } catch (error: Exception) {
         quarantine(file, error)
@@ -105,7 +142,10 @@ class ScriptStore(
         logger.log(Level.WARNING, "構造化コマンドディスクを隔離しました: ${file.absolutePath}", error)
     }
 
-    private fun validateRecursively(root: me.awabi2048.kantancommander.model.CommandGraph): List<String> {
+    private fun validateRecursively(
+        root: me.awabi2048.kantancommander.model.CommandGraph,
+        limits: GraphLimits = this.limits,
+    ): List<String> {
         val errors = mutableListOf<String>()
         val visited = Collections.newSetFromMap(
             IdentityHashMap<me.awabi2048.kantancommander.model.CommandGraph, Boolean>()
@@ -130,5 +170,15 @@ class ScriptStore(
         }
         validate(root, "root")
         return errors
+    }
+
+    private companion object {
+        /** 構造違反と上限超過を区別するための、上限を実質無効化した検証用設定。 */
+        private val UNBOUNDED_LIMITS = GraphLimits(
+            maximumNodeCount = Int.MAX_VALUE,
+            maximumMapWidth = Int.MAX_VALUE,
+            maximumMapHeight = Int.MAX_VALUE,
+            maximumBranchDepth = Int.MAX_VALUE,
+        )
     }
 }
