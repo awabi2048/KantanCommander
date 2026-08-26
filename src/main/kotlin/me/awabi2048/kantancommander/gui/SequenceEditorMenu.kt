@@ -23,7 +23,7 @@ import com.awabi2048.ccsystem.api.gui.MenuGesture
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.item.DiskItemService
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -95,13 +95,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     },
                     "output" to handler { context ->
                         val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
-                        if (!outputDisk(context.player, placement, false)) return@handler MenuActionResult.Ignored
+                        if (!outputDisk(context.player, placement)) return@handler MenuActionResult.Ignored
                         MenuActionResult.Success(MenuUpdate.Refresh)
-                    },
-                    "remove" to handler { context ->
-                        val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
-                        if (!outputDisk(context.player, placement, true)) return@handler MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Close)
                     },
                     "save_library" to handler { context ->
                         val source = scriptId(context.route)?.let(plugin.scripts::load)
@@ -257,24 +252,12 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             elements += KcGui.menuEntry(
                 player = player,
                 slot = 40,
-                material = Material.MUSIC_DISC_13,
+                material = Material.MUSIC_DISC_OTHERSIDE,
                 name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT),
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
                 actions = listOf(
                     GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)),
-                ),
-            )
-            elements += KcGui.menuEntry(
-                player = player,
-                slot = 41,
-                material = Material.RED_CONCRETE,
-                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE),
-                style = GuiNameStyle.DANGER,
-                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_DESCRIPTION),
-                warnings = listOf(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_WARNING)),
-                actions = listOf(
-                    GuiMenuActionIntent.AnyClick("remove", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_ACTION)),
                 ),
             )
         }
@@ -429,7 +412,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    private fun outputDisk(player: Player, placement: DiskPlacement, removeBlock: Boolean): Boolean {
+    private fun outputDisk(player: Player, placement: DiskPlacement): Boolean {
         val source = plugin.scripts.load(placement.scriptId) ?: return false
         if (!plugin.placementAccess.canManage(player, placement.world)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
@@ -440,20 +423,12 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         if (plugin.placements.find(block.location)?.scriptId != source.id) return false
 
         val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull() ?: return false
-        val item = runCatching { DiskItemService.create(output, player) }.getOrElse {
+        val item = runCatching { KantanItemService.createDisk(output, player) }.getOrElse {
             plugin.scripts.delete(output.id)
             return false
         }
         player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
-
-        if (removeBlock) {
-            plugin.placements.removeDisplay(world, placement.displayId)
-            plugin.placements.remove(world, placement.x, placement.y, placement.z)
-            block.setType(Material.AIR, false)
-            plugin.scripts.delete(source.id)
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENT_REMOVED))
-        }
         return true
     }
 

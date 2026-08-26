@@ -15,10 +15,8 @@ import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.item.DiskItemService
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.util.KcI18n
-import me.awabi2048.kantancommander.model.DiskProfile
-import me.awabi2048.kantancommander.model.effectiveProfile
 import org.bukkit.Material
 import org.bukkit.entity.Player
 
@@ -49,7 +47,7 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                             MenuActionResult.Success(MenuUpdate.Navigate(SequenceEditorMenu.route(script.id)))
                         } else {
                             val copy = plugin.scripts.copyForItem(script)
-                            context.player.inventory.addItem(DiskItemService.create(copy, context.player)).values
+                            context.player.inventory.addItem(KantanItemService.createDisk(copy, context.player)).values
                                 .forEach { context.player.world.dropItem(context.player.location, it) }
                             MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -74,16 +72,12 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
             elements += KcGui.menuEntry(
                 player = player,
                 slot = layout.itemSlots[index],
-                material = Material.MUSIC_DISC_13,
+                material = Material.MUSIC_DISC_OTHERSIDE,
                 name = script.name,
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ENTRY_DESCRIPTION),
                 data = listOf(
                     GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size),
-                    GuiMenuEntryData(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROFILE),
-                        KcI18n.text(player, if (script.effectiveProfile == DiskProfile.SIMPLE) KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_SIMPLE else KcKeys.KANTAN_COMMANDER_CLEAN_PROFILE_STANDARD),
-                    ),
                     GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_TRIGGER), KcI18n.text(player, script.activation.key)),
                 ),
                 role = GuiElementRole.CONTENT,

@@ -23,9 +23,9 @@ import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
 import me.awabi2048.kantancommander.gui.CommandEditMenu
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
-import me.awabi2048.kantancommander.item.DiskInteractionListener
-import me.awabi2048.kantancommander.placement.PlacementProtectionListener
+import me.awabi2048.kantancommander.item.KantanInteractionListener
 import me.awabi2048.kantancommander.item.KantanItemGrantProvider
+import me.awabi2048.kantancommander.placement.PlacementProtectionListener
 import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
@@ -160,7 +160,7 @@ class KantanCommanderPlugin : JavaPlugin() {
 
     private fun registerEvents() {
         val pm = server.pluginManager
-        pm.registerEvents(DiskInteractionListener(this), this)
+        pm.registerEvents(KantanInteractionListener(this), this)
         pm.registerEvents(PlacementProtectionListener(this), this)
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
@@ -265,7 +265,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         const val REQUIRED_GUI_RUNTIME_CONTRACT_VERSION = CCSystemAPI.GUI_RUNTIME_CONTRACT_VERSION
         const val LOCALIZATION_DOMAIN = "kantan_commander_clean"
         const val REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT =
-            "ea14c14266e453194bc8057063bc9a63578e5e2c54207b20282688c7b52aafda"
+            "89fe19c43c9da55345e1b41f6b4a05c54b28804a5f479f7736664e5235707a3e"
     }
 
 }

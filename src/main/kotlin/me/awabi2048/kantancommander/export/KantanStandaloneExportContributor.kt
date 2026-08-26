@@ -11,7 +11,7 @@ import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
-import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
+import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.mwmchanpon.api.PreparedStandaloneExport
@@ -38,7 +38,7 @@ class KantanStandaloneExportContributor(
         val programs = selected.mapNotNull { placement ->
             val liveWorld = plugin.server.getWorld(placement.world)
             val liveBlock = liveWorld?.getBlockAt(placement.x, placement.y, placement.z)
-            if (liveBlock == null || !PlacedDiskMaterials.isPlacedDisk(liveBlock.type)) {
+            if (liveBlock == null || !PlacedBlockMaterials.isPlacedBlock(liveBlock.type)) {
                 errors += "${placement.key}: 配置ブロックの実体が存在しないか、別のブロックへ変更されています"
                 return@mapNotNull null
             }
