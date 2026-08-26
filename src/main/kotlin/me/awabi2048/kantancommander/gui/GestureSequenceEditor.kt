@@ -44,6 +44,8 @@ data class GestureEditorState(
     var confirmNodeId: UUID? = null,
     /** PICKERで選択中の挿入先（addポイントクリック時に保持） */
     var pendingInsertion: InsertionTarget? = null,
+    /** PICKERへ遷移した追加ポイントの選択状態。既存ノード選択とは独立して表示します。 */
+    var selectedAddPoint: MapPoint? = null,
 )
 
 /** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
@@ -161,13 +163,15 @@ class GestureSequenceEditor(
                     }
                 }
                 MapCellKind.ADD -> {
+                    val isSelected = state.selectedAddPoint == MapPoint(gx, gy)
                     visuals.add(GestureGuiVisual.Block(
                         visualId = "add-block-$gx-$gy",
                         x = cx, y = cy,
                         width = GestureEditorLayout.ICON_W,
                         height = GestureEditorLayout.ICON_H,
-                        blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                        blockData = Bukkit.createBlockData(if (isSelected) Material.YELLOW_CONCRETE else Material.CYAN_TERRACOTTA),
                         layer = 2,
+                        glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
                     ))
                     visuals.add(GestureGuiVisual.Text(
                         visualId = "add-plus-$gx-$gy",
@@ -261,6 +265,7 @@ class GestureSequenceEditor(
             }
             context.elementId == "viewport-empty" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.selectedNodeId = null
+                state.selectedAddPoint = null
                 state.confirmNodeId = null
                 updateUpper(player)
                 updateLower(player)
@@ -331,6 +336,7 @@ class GestureSequenceEditor(
                 }
                 state.pendingInsertion = target
                 state.selectedNodeId = null
+                state.selectedAddPoint = MapPoint(gx, gy)
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
@@ -387,6 +393,7 @@ class GestureSequenceEditor(
                 state.pendingInsertion = null
                 // 新規作成直後は特定アイコンを選択状態に固定せず、余白と同じ未選択状態にします。
                 state.selectedNodeId = null
+                state.selectedAddPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
                 state.settingsPage = 0
@@ -409,6 +416,7 @@ class GestureSequenceEditor(
                 }
                 state.confirmNodeId = null
                 state.selectedNodeId = null
+                state.selectedAddPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateUpper(player)
@@ -505,6 +513,22 @@ class GestureSequenceEditor(
                 segments.add(GestureEditorLayout.verticalPath(cx, GestureEditorLayout.cellCenterY(rowIndex - 1), cy))
             }
             if (connectsDown) segments.add(GestureEditorLayout.verticalPath(cx, cy, GestureEditorLayout.cellCenterY(rowIndex + 1)))
+        }
+        // 経路セルが省略された末端でも、NODE/ADD同士を直接接続して孤立した追加ボタンを防ぎます。
+        viewportCells.forEach { (p, cell) ->
+            val neighbors = listOf(MapPoint(p.x + 1, p.y), MapPoint(p.x, p.y + 1))
+            neighbors.forEach { n ->
+                val other = viewportCells[n] ?: return@forEach
+                if (cell.kind in setOf(MapCellKind.NODE, MapCellKind.ADD) &&
+                    other.kind in setOf(MapCellKind.NODE, MapCellKind.ADD)) {
+                    val x1 = GestureEditorLayout.cellCenterX(p.x)
+                    val y1 = GestureEditorLayout.cellCenterY(p.y)
+                    val x2 = GestureEditorLayout.cellCenterX(n.x)
+                    val y2 = GestureEditorLayout.cellCenterY(n.y)
+                    if (p.y == n.y) segments.add(GestureEditorLayout.horizontalPath(y1, x1, x2))
+                    else segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
+                }
+            }
         }
         return segments.toList()
     }
