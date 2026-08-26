@@ -165,12 +165,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             )
             return false
         }
-        // 設置演出のパーティクルを再生する（配置音はバニラが元イベントの成功時に再生するため自前では鳴らさない）。
-        val center = block.location.toCenterLocation()
-        block.world.spawnParticle(
-            Particle.BLOCK, center, 32, 0.5, 0.5, 0.5,
-            Bukkit.createBlockData(material),
-        )
+        // 配置音はバニラが元イベントの成功時に再生する。設置時のパーティクルはバニラ同様に出さない。
         // 後続リスナー（保護プラグイン等）が元イベントをキャンセルして巻き戻した場合に備え、
         // 次のtickで実体が残っているかを確認し、残っていなければ配置を撤去する。
         scheduleGhostCheck(placement, block.location)
@@ -204,7 +199,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             Bukkit.createBlockData(block.type),
         )
         val source = plugin.scripts.load(placement.scriptId)
-        if (source != null) {
+        // 内容が空の場合はディスクを出力せず破壊のみ行う。
+        if (source != null && source.graph.nodes.isNotEmpty()) {
             val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull()
             if (output != null) {
                 val item = runCatching { KantanItemService.createDisk(output, player) }.getOrElse { error ->
@@ -222,8 +218,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             } else {
                 plugin.logger.info("破壊時のスクリプト複製に失敗したため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
             }
-        } else {
+        } else if (source == null) {
             plugin.logger.info("参照スクリプトが消失しているため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
+        } else {
+            plugin.logger.info("内容が空のためディスクを出力せず破壊: location=${block.location}, script=${placement.scriptId}")
         }
         plugin.placements.removeDisplay(world, placement.displayId)
         plugin.placements.remove(world, placement.x, placement.y, placement.z)

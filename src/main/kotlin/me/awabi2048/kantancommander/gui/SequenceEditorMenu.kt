@@ -275,18 +275,23 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 ),
             ),
         )
-        if (placement(route) != null) {
-            elements += KcGui.menuEntry(
-                player = player,
-                slot = 40,
-                material = Material.MUSIC_DISC_OTHERSIDE,
-                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT),
-                style = GuiNameStyle.PRIMARY,
-                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
-                actions = listOf(
-                    GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)),
-                ),
-            )
+        val currentPlacement = placement(route)
+        if (currentPlacement != null) {
+            val placementScript = scriptId(route)?.let(plugin.scripts::load)
+            val hasContent = placementScript?.graph?.nodes?.isNotEmpty() == true
+            if (hasContent) {
+                elements += KcGui.menuEntry(
+                    player = player,
+                    slot = 40,
+                    material = Material.MUSIC_DISC_OTHERSIDE,
+                    name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT),
+                    style = GuiNameStyle.PRIMARY,
+                    description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
+                    actions = listOf(
+                        GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)),
+                    ),
+                )
+            }
         }
         elements += KcGui.menuEntry(
             player = player,
@@ -503,6 +508,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun outputDisk(player: Player, placement: DiskPlacement): Boolean {
         val source = plugin.scripts.load(placement.scriptId) ?: return false
+        // 内容が空の場合はディスク出力の対象外とする。
+        if (source.graph.nodes.isEmpty()) return false
         if (!plugin.placementAccess.canManage(player, placement.world)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
             return false
