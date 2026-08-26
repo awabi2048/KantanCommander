@@ -205,7 +205,12 @@ class GestureSequenceEditor(
         return GestureGuiView(
             GestureGuiScreenDefinition(UPPER_SCREEN_ID, elements, access = GestureGuiAccess.OWNER_ONLY),
             visuals,
-            panel = GestureGuiPanel(width = GestureEditorLayout.UPPER_W, height = GestureEditorLayout.UPPER_H),
+            panel = GestureGuiPanel(
+                width = GestureEditorLayout.UPPER_W,
+                height = GestureEditorLayout.UPPER_H,
+                backgroundMaterial = Material.GRAY_CONCRETE,
+                frameMaterial = Material.LIGHT_GRAY_CONCRETE,
+            ),
         ) { context -> handleUpperAction(context) }
     }
 

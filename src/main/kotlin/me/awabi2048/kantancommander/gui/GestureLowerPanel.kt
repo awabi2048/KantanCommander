@@ -229,12 +229,17 @@ class GestureLowerPanel(
         visuals: List<GestureGuiVisual>,
     ): GestureGuiView = GestureGuiView(
         GestureGuiScreenDefinition(
-            LOWER_SCREEN_ID,
+            if (mode == GestureLowerMode.CONFIRM) CONFIRM_SCREEN_ID else LOWER_SCREEN_ID,
             elements,
             access = GestureGuiAccess.OWNER_ONLY,
         ),
         visuals,
-        panel = GestureGuiPanel(width = GestureEditorLayout.LOWER_W, height = GestureEditorLayout.LOWER_H),
+        panel = GestureGuiPanel(
+            width = GestureEditorLayout.LOWER_W,
+            height = GestureEditorLayout.LOWER_H,
+            backgroundMaterial = Material.GRAY_CONCRETE,
+            frameMaterial = Material.LIGHT_GRAY_CONCRETE,
+        ),
         onAction = onAction,
     )
 
@@ -307,6 +312,7 @@ class GestureLowerPanel(
     }
 
     private companion object {
+        const val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
         const val SETTINGS_PAGE_SIZE = 4
         const val PICKER_PAGE_SIZE = 8
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
