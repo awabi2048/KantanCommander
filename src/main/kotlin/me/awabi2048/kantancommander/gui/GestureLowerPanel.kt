@@ -27,7 +27,10 @@ import org.bukkit.entity.Player
  *
  * 座標は画面中央原点・ブロック単位。左列: x=-0.7975 / 右ペイン: x∈[-0.50, 1.03]。
  */
-class GestureLowerPanel(private val plugin: KantanCommanderPlugin) {
+class GestureLowerPanel(
+    private val plugin: KantanCommanderPlugin,
+    private val onAction: (GestureGuiActionContext) -> Unit = {},
+) {
     val LOWER_SCREEN_ID = "gesture-editor-lower"
 
     fun build(state: GestureEditorState, player: Player): GestureGuiView {
@@ -195,12 +198,8 @@ class GestureLowerPanel(private val plugin: KantanCommanderPlugin) {
             access = GestureGuiAccess.OWNER_ONLY,
         ),
         visuals,
-        onAction = { context -> onAction(context, mode) },
+        onAction = onAction,
     )
-
-    private fun onAction(context: GestureGuiActionContext, mode: GestureLowerMode) {
-        // 操作ハンドリングはGestureSequenceEditorが担う。ここではビュー生成のみ。
-    }
 
     private fun addBlock(
         visuals: MutableList<GestureGuiVisual>,

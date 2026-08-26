@@ -62,7 +62,8 @@ class GestureSequenceEditor(
     private val state: GestureEditorState,
 ) {
     private val api get() = CCSystem.getAPI().getGestureGuiService()
-    private val lowerPanel = GestureLowerPanel(plugin)
+    // 下部画面のクリックは上部と同じハンドラで処理します（タブ切替・PICKER・CONFIRMの共通ロジック）。
+    private val lowerPanel = GestureLowerPanel(plugin, onAction = { ctx -> handleUpperAction(ctx) })
 
     private val UPPER_SCREEN_ID = "gesture-editor-upper"
 
