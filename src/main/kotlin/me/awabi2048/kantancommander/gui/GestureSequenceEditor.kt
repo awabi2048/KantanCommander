@@ -32,7 +32,7 @@ data class GestureEditorState(
     var scriptId: UUID,
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
-    /** ビューポート表示倍率。0=100%、正数で拡大、負数で縮小します。 */
+    /** ビューポート表示倍率。0=75%、25%刻みで25%〜150%を許可します。 */
     var zoomLevel: Int = 0,
     var selectedNodeId: UUID? = null,
     var anchor: Location? = null,
@@ -109,7 +109,7 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
         val layout = GraphLayoutEngine.layout(script.graph)
         val cells = layout.viewport(state.origin, GestureEditorLayout.VIEWPORT_COLS, GestureEditorLayout.VIEWPORT_ROWS)
-        val zoomScale = (1.0 + state.zoomLevel.coerceIn(-1, 2) * 0.2).coerceIn(0.8, 1.4)
+        val zoomScale = (0.75 + state.zoomLevel.coerceIn(-2, 3) * 0.25).coerceIn(0.25, 1.5)
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
@@ -230,7 +230,13 @@ class GestureSequenceEditor(
             }
         }
 
-        buildPathSegments(cells, state.origin, layout.cells).forEach { seg ->
+        val expandedPathCells = layout.cells.mapNotNull { (global, cell) ->
+            val local = MapPoint(global.x - state.origin.x, global.y - state.origin.y)
+            if (local.x in -1..GestureEditorLayout.VIEWPORT_COLS && local.y in -1..GestureEditorLayout.VIEWPORT_ROWS) {
+                local to cell.copy(point = local)
+            } else null
+        }.toMap()
+        buildPathSegments(expandedPathCells, state.origin, layout.cells).forEach { seg ->
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
@@ -337,11 +343,15 @@ class GestureSequenceEditor(
                 updateLower(player)
             }
             context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.zoomLevel = (state.zoomLevel + 1).coerceAtMost(2)
+                state.zoomLevel = (state.zoomLevel + 1).coerceAtMost(3)
                 updateUpper(player)
             }
             context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.zoomLevel = (state.zoomLevel - 1).coerceAtLeast(-1)
+                state.zoomLevel = (state.zoomLevel - 1).coerceAtLeast(-2)
+                updateUpper(player)
+            }
+            context.elementId == "nav-zoom-reset" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.zoomLevel = 0
                 updateUpper(player)
             }
             context.elementId.startsWith("nav-") && context.gesture == GestureGuiGesture.PRIMARY -> {
@@ -371,21 +381,11 @@ class GestureSequenceEditor(
                 val layout = script?.let { GraphLayoutEngine.layout(it.graph) }
                 val firstAdd = layout?.let { GestureEditorLayout.findFirstAddPoint(it.cells) }
                 if (firstAdd != null) {
-                    // firstAddがビューポート内に入るよう原点を調整
+                    // 常に先頭追加ポイントをビューポート左上寄りの基準位置へ戻します。
                     val maxOx = (layout.width - GestureEditorLayout.VIEWPORT_COLS).coerceAtLeast(0)
                     val maxOy = (layout.height - GestureEditorLayout.VIEWPORT_ROWS).coerceAtLeast(0)
-                    val ox = when {
-                        firstAdd.x < state.origin.x -> firstAdd.x
-                        firstAdd.x > state.origin.x + GestureEditorLayout.VIEWPORT_COLS - 1 ->
-                            firstAdd.x - GestureEditorLayout.VIEWPORT_COLS + 1
-                        else -> state.origin.x
-                    }.coerceIn(0, maxOx)
-                    val oy = when {
-                        firstAdd.y < state.origin.y -> firstAdd.y
-                        firstAdd.y > state.origin.y + GestureEditorLayout.VIEWPORT_ROWS - 1 ->
-                            firstAdd.y - GestureEditorLayout.VIEWPORT_ROWS + 1
-                        else -> state.origin.y
-                    }.coerceIn(0, maxOy)
+                    val ox = firstAdd.x.coerceIn(0, maxOx)
+                    val oy = firstAdd.y.coerceIn(0, maxOy)
                     state.origin = MapPoint(ox, oy)
                 } else {
                     state.origin = MapPoint(0, 0)
@@ -470,13 +470,17 @@ class GestureSequenceEditor(
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 val target = state.pendingInsertion
                     ?: InsertionTarget(null, GraphEditor.Edge.ENTRY)
-                if (type in setOf(CommandType.MERGE, CommandType.FOR_END)) {
-                    // 単独挿入不可の型はPICKER側で候補から除外済み。ここでは黙って戻る
+                if (type == CommandType.FOR_END || (type == CommandType.MERGE && target.mergeConditionId == null)) {
+                    // 合流は対応する分岐を持つ経路以外では選択できません。
                     state.lowerMode = GestureLowerMode.SETTINGS
                     updateLower(player)
                     return
                 }
-                val inserted = GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
+                val inserted = if (type == CommandType.MERGE) {
+                    GraphEditor.appendMerge(script.graph, requireNotNull(target.mergeConditionId))
+                } else {
+                    GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
+                }
                 plugin.scripts.save(script)
                 state.pendingInsertion = null
                 // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。
@@ -600,6 +604,22 @@ class GestureSequenceEditor(
                 targetVisualId = "$id-glyph",
             ))
         }
+        val resetY = GestureEditorLayout.ZOOM_TOP_Y - GestureEditorLayout.ZOOM_PITCH
+        visuals.add(GestureGuiVisual.Block(
+            visualId = "nav-zoom-reset-block", x = GestureEditorLayout.ZOOM_X, y = resetY,
+            width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
+            blockData = Bukkit.createBlockData(Material.BROWN_CONCRETE), layer = 4,
+        ))
+        visuals.add(GestureGuiVisual.Text(
+            visualId = "nav-zoom-reset-glyph", x = GestureEditorLayout.ZOOM_X, y = resetY - 0.01,
+            text = net.kyori.adventure.text.Component.text("↺"), size = 0.009, layer = 6,
+        ))
+        elements.add(GestureGuiElement(
+            elementId = "nav-zoom-reset",
+            bounds = navBounds(GestureEditorLayout.ZOOM_X, resetY, GestureEditorLayout.ZOOM_SIZE),
+            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "nav-zoom-reset-glyph",
+        ))
     }
 
     /**
@@ -635,34 +655,12 @@ class GestureSequenceEditor(
             }
             if (connectsDown) segments.add(GestureEditorLayout.verticalPath(cx, cy, GestureEditorLayout.cellCenterY(rowIndex + 1)))
         }
-        // 経路セルが省略された末端でも、NODE/ADD同士を直接接続して孤立した追加ボタンを防ぎます。
-        viewportCells.forEach { (p, cell) ->
-            val neighbors = listOf(MapPoint(p.x + 1, p.y), MapPoint(p.x, p.y + 1))
-            neighbors.forEach { n ->
-                val other = viewportCells[n] ?: return@forEach
-                if (cell.kind in setOf(MapCellKind.NODE, MapCellKind.ADD) &&
-                    other.kind in setOf(MapCellKind.NODE, MapCellKind.ADD)) {
-                    val x1 = GestureEditorLayout.cellCenterX(p.x)
-                    val y1 = GestureEditorLayout.cellCenterY(p.y)
-                    val x2 = GestureEditorLayout.cellCenterX(n.x)
-                    val y2 = GestureEditorLayout.cellCenterY(n.y)
-                    if (p.y == n.y) {
-                        val mid = (x1 + x2) / 2.0
-                        segments.add(GestureEditorLayout.horizontalPath(y1, x1, mid))
-                        segments.add(GestureEditorLayout.horizontalPath(y1, mid, x2))
-                    } else {
-                        val mid = (y1 + y2) / 2.0
-                        segments.add(GestureEditorLayout.verticalPath(x1, y1, mid))
-                        segments.add(GestureEditorLayout.verticalPath(x1, mid, y2))
-                    }
-                }
-            }
-        }
+        // 経路セルが省略された末端は、挿入元IDが一致する追加ポイントだけを接続します。
         viewportCells.forEach { (p, cell) ->
             if (cell.kind != MapCellKind.ADD) return@forEach
             listOf(MapPoint(p.x - 2, p.y), MapPoint(p.x + 2, p.y), MapPoint(p.x, p.y - 2), MapPoint(p.x, p.y + 2))
                 .mapNotNull { candidate -> viewportCells[candidate]?.let { candidate to it } }
-                .filter { (_, other) -> other.kind == MapCellKind.NODE }
+                .filter { (_, other) -> other.kind == MapCellKind.NODE && other.nodeId == cell.insertionTarget?.sourceId }
                 .forEach { (n, _) ->
                     val x1 = GestureEditorLayout.cellCenterX(p.x)
                     val y1 = GestureEditorLayout.cellCenterY(p.y)

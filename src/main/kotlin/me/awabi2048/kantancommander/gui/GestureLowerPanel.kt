@@ -153,10 +153,10 @@ class GestureLowerPanel(
         ))
 
         val category = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
-        // MERGE/FOR_ENDは単独挿入不可、FOR_START以外の制御系はこの経路へ挿入できないため除外する
+        // MERGEは分岐合流用の挿入先だけで候補化し、FOR_END等は単独挿入不可のため除外します。
         val types = CommandType.entries.filter { type ->
             CommandPresentationPolicy.category(type) == category &&
-                type != CommandType.MERGE &&
+                (type != CommandType.MERGE || state.pendingInsertion?.mergeConditionId != null) &&
                 type != CommandType.FOR_END &&
                 type != CommandType.FOR_START &&
                 type != CommandType.BREAK &&
