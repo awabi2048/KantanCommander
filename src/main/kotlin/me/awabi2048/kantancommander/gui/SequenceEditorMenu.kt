@@ -23,7 +23,7 @@ import com.awabi2048.ccsystem.api.gui.MenuGesture
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.item.DiskItemService
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -95,13 +95,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     },
                     "output" to handler { context ->
                         val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
-                        if (!outputDisk(context.player, placement, false)) return@handler MenuActionResult.Ignored
+                        if (!outputDisk(context.player, placement)) return@handler MenuActionResult.Ignored
                         MenuActionResult.Success(MenuUpdate.Refresh)
-                    },
-                    "remove" to handler { context ->
-                        val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
-                        if (!outputDisk(context.player, placement, true)) return@handler MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Close)
                     },
                     "save_library" to handler { context ->
                         val source = scriptId(context.route)?.let(plugin.scripts::load)
@@ -113,10 +108,37 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 ),
             ),
         )
+        runtime.register(
+            InventoryMenuDefinition(
+                OWNER,
+                WRITE_ID,
+                renderer = { renderWriteConfirm(it.player, it.route) },
+                actions = mapOf(
+                    "write_cancel" to handler { MenuActionResult.Success(MenuUpdate.Close) },
+                    "write" to handler { context ->
+                        val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
+                        val diskScriptId = context.route.payload[DISK_ID]
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                            ?: return@handler MenuActionResult.Ignored
+                        if (!overwritePlacement(context.player, placement, diskScriptId)) {
+                            return@handler MenuActionResult.Ignored
+                        }
+                        MenuActionResult.Success(MenuUpdate.Close)
+                    },
+                ),
+            ),
+        )
     }
 
     fun open(player: Player, scriptId: UUID) = runtime.open(player, route(scriptId))
     fun open(player: Player, placement: DiskPlacement) = runtime.open(player, route(placement))
+
+    /** 空の拡張コマンドブロックへコマンドディスクの内容を書き込む確認画面を開く。 */
+    fun openWriteConfirm(player: Player, placement: DiskPlacement, diskId: UUID) =
+        runtime.open(
+            player,
+            EditorSession.forPlacement(placement).route(OWNER, WRITE_ID, mapOf(DISK_ID to diskId.toString())),
+        )
 
     private fun navigate(context: MenuActionContext): MenuActionResult {
         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return MenuActionResult.Ignored
@@ -253,30 +275,23 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 ),
             ),
         )
-        if (placement(route) != null) {
-            elements += KcGui.menuEntry(
-                player = player,
-                slot = 40,
-                material = Material.MUSIC_DISC_13,
-                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT),
-                style = GuiNameStyle.PRIMARY,
-                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
-                actions = listOf(
-                    GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)),
-                ),
-            )
-            elements += KcGui.menuEntry(
-                player = player,
-                slot = 41,
-                material = Material.RED_CONCRETE,
-                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE),
-                style = GuiNameStyle.DANGER,
-                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_DESCRIPTION),
-                warnings = listOf(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_WARNING)),
-                actions = listOf(
-                    GuiMenuActionIntent.AnyClick("remove", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_REMOVE_ACTION)),
-                ),
-            )
+        val currentPlacement = placement(route)
+        if (currentPlacement != null) {
+            val placementScript = scriptId(route)?.let(plugin.scripts::load)
+            val hasContent = placementScript?.graph?.nodes?.isNotEmpty() == true
+            if (hasContent) {
+                elements += KcGui.menuEntry(
+                    player = player,
+                    slot = 40,
+                    material = Material.MUSIC_DISC_OTHERSIDE,
+                    name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT),
+                    style = GuiNameStyle.PRIMARY,
+                    description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
+                    actions = listOf(
+                        GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)),
+                    ),
+                )
+            }
         }
         elements += KcGui.menuEntry(
             player = player,
@@ -429,8 +444,72 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    private fun outputDisk(player: Player, placement: DiskPlacement, removeBlock: Boolean): Boolean {
+    /** コマンドディスクの内容で、空の拡張コマンドブロックを上書きする確認画面。 */
+    private fun renderWriteConfirm(player: Player, route: MenuRoute): InventoryMenuView {
+        val elements = listOf(
+            KcGui.menuEntry(
+                player = player,
+                slot = 20,
+                material = Material.BARRIER,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WRITE_CANCEL),
+                style = GuiNameStyle.MUTED,
+                role = GuiElementRole.ACTION,
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick(
+                        "write_cancel",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WRITE_CANCEL),
+                    ),
+                ),
+            ),
+            KcGui.menuEntry(
+                player = player,
+                slot = 24,
+                material = Material.MUSIC_DISC_OTHERSIDE,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WRITE_CONFIRM),
+                style = GuiNameStyle.PRIMARY,
+                role = GuiElementRole.ACTION,
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WRITE_DESCRIPTION),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick(
+                        "write",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WRITE_CONFIRM),
+                    ),
+                ),
+            ),
+        )
+        return InventoryMenuView(
+            45,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WRITE_TITLE)),
+            elements,
+        )
+    }
+
+    /** 空の拡張コマンドブロックのスクリプトを、コマンドディスクの内容で上書きする。 */
+    private fun overwritePlacement(player: Player, placement: DiskPlacement, diskScriptId: UUID): Boolean {
+        if (!plugin.placementAccess.canManage(player, placement.world)) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
+            return false
+        }
+        val placementScript = plugin.scripts.load(placement.scriptId) ?: return false
+        // 書き込み対象は内容が空の拡張コマンドブロックだけに限定する。
+        if (placementScript.graph.nodes.isNotEmpty()) return false
+        val diskScript = plugin.scripts.load(diskScriptId) ?: return false
+
+        placementScript.name = diskScript.name
+        placementScript.activation = diskScript.activation
+        placementScript.timer = diskScript.timer
+        placementScript.graph = diskScript.graph.deepCopy()
+        plugin.scripts.save(placementScript)
+        plugin.resetActivationTiming(placementScript.id)
+        plugin.placements.refreshDisplaysForScript(placementScript.id)
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_WRITTEN))
+        return true
+    }
+
+    private fun outputDisk(player: Player, placement: DiskPlacement): Boolean {
         val source = plugin.scripts.load(placement.scriptId) ?: return false
+        // 内容が空の場合はディスク出力の対象外とする。
+        if (source.graph.nodes.isEmpty()) return false
         if (!plugin.placementAccess.canManage(player, placement.world)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
             return false
@@ -440,20 +519,12 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         if (plugin.placements.find(block.location)?.scriptId != source.id) return false
 
         val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull() ?: return false
-        val item = runCatching { DiskItemService.create(output, player) }.getOrElse {
+        val item = runCatching { KantanItemService.createDisk(output, player) }.getOrElse {
             plugin.scripts.delete(output.id)
             return false
         }
         player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
-
-        if (removeBlock) {
-            plugin.placements.removeDisplay(world, placement.displayId)
-            plugin.placements.remove(world, placement.x, placement.y, placement.z)
-            block.setType(Material.AIR, false)
-            plugin.scripts.delete(source.id)
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENT_REMOVED))
-        }
         return true
     }
 
@@ -462,6 +533,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     companion object {
         const val OWNER = ProgramListMenu.OWNER
         private const val MENU_ID = "editor"
+        private const val WRITE_ID = "write_confirm"
+        private const val DISK_ID = "diskId"
         private const val VIEWPORT_WIDTH = 9
         private const val VIEWPORT_HEIGHT = 3
 

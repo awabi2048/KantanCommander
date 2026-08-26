@@ -20,14 +20,7 @@ data class DiskScript(
     var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
     var timer: TimerSetting = TimerSetting(),
     var graph: CommandGraph = CommandGraph.empty(),
-    /** 旧JSONでは欠損するためnullableで保持し、利用時は[effectiveProfile]で通常版へ正規化します。 */
-    var profile: DiskProfile? = DiskProfile.STANDARD,
 )
-
-enum class DiskProfile { STANDARD, SIMPLE }
-
-val DiskScript.effectiveProfile: DiskProfile
-    get() = profile ?: DiskProfile.STANDARD
 
 data class TimerSetting(
     var enabled: Boolean = false,

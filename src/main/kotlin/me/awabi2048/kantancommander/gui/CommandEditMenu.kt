@@ -40,8 +40,6 @@ import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
-import me.awabi2048.kantancommander.model.CommandFeaturePolicy
-import me.awabi2048.kantancommander.model.effectiveProfile
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import org.bukkit.Material
@@ -71,9 +69,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         val type = context.payload["type"]?.let { runCatching { CommandType.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!CommandFeaturePolicy.allows(script.effectiveProfile, type)) {
-                            return@MenuActionHandler MenuActionResult.Ignored
-                        }
                         val sourceId = context.route.payload[SOURCE_ID]?.takeIf(String::isNotBlank)
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                         val edge = context.route.payload[EDGE]?.let {
@@ -622,7 +617,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val category = CommandCategory.fromRoute(route.payload[PICKER_CATEGORY])
         val types = CommandType.entries.filter { type ->
             if (CommandPresentationPolicy.category(type) != category) return@filter false
-            if (script != null && !CommandFeaturePolicy.allows(script.effectiveProfile, type)) return@filter false
             when (type) {
                 CommandType.FOR_END -> false
                 CommandType.MERGE -> GraphEditor.canAppendMerge(script?.graph, mergeConditionId)

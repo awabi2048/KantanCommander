@@ -7,7 +7,7 @@ import org.bukkit.block.BlockFace
 import org.bukkit.event.EventHandler
 import org.bukkit.event.Listener
 import java.util.UUID
-import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
+import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 
 class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Listener {
     private val runtimeState = RedstoneRuntimeState()
@@ -21,7 +21,7 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         plugin.placements.all().forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
-            if (!PlacedDiskMaterials.isPlacedDisk(block.type)) return@forEach
+            if (!PlacedBlockMaterials.isPlacedBlock(block.type)) return@forEach
             val script = plugin.scripts.load(placement.scriptId) ?: return@forEach
             val hasPower = POWER_FACES.any { face ->
                 val adjacent = block.getRelative(face)

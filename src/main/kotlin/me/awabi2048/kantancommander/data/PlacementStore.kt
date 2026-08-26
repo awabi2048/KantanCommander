@@ -4,6 +4,11 @@ import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
+import me.awabi2048.kantancommander.util.KcI18n
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.Material
@@ -17,8 +22,6 @@ import java.util.logging.Level
 import org.bukkit.util.Transformation
 import org.joml.AxisAngle4f
 import org.joml.Vector3f
-import me.awabi2048.kantancommander.placement.PlacedDiskMaterials
-import me.awabi2048.kantancommander.model.effectiveProfile
 
 class PlacementStore(private val plugin: KantanCommanderPlugin, private val file: File) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
@@ -63,7 +66,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
             plugin.scripts.load(id)?.let { script ->
                 world.getBlockAt(placement.x, placement.y, placement.z)
-                    .setType(PlacedDiskMaterials.forTimer(script.timer.enabled, script.effectiveProfile), false)
+                    .setType(PlacedBlockMaterials.forTimer(script.timer.enabled), false)
             }
             removeDisplay(world, placement.displayId)
             spawnDisplay(world, placement)
@@ -92,7 +95,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 return@forEach
             }
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
-            if (!PlacedDiskMaterials.isPlacedDisk(block.type)) {
+            if (!PlacedBlockMaterials.isPlacedBlock(block.type)) {
                 removeDisplay(world, placement.displayId)
                 stale += placement.key
                 return@forEach
@@ -113,6 +116,11 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val displayMaterial = if (script?.timer?.enabled == true) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
             it.block = Bukkit.createBlockData(displayMaterial)
             it.isGlowing = false
+            // 設置後実体の名称を拡張コマンドブロックへ統一する（浮遊表示はせず識別用に保持する）。
+            it.customName(Component.text(
+                KcI18n.text(null, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_NAME_BLOCK),
+                NamedTextColor.AQUA,
+            ))
             it.addScoreboardTag(DISPLAY_TAG)
             it.transformation = Transformation(
                 Vector3f(-0.375f, 0.125f, -0.375f),

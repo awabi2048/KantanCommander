@@ -5,8 +5,11 @@ import com.awabi2048.ccsystem.api.item.ItemGrantProvider
 import com.awabi2048.ccsystem.api.item.ItemGrantRequest
 import com.awabi2048.ccsystem.api.item.ItemGrantResult
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.model.DiskProfile
 
+/**
+ * 配布対象は拡張コマンドブロックだけとする。
+ * コマンドディスクは内容を明示的に出力した場合にのみ生成されるため、配布定義を持たない。
+ */
 class KantanItemGrantProvider(
     private val plugin: KantanCommanderPlugin
 ) : ItemGrantProvider {
@@ -15,13 +18,7 @@ class KantanItemGrantProvider(
     override fun definitions(): Collection<ItemGrantDefinition> =
         listOf(
             ItemGrantDefinition(
-                id = DiskItemService.STANDARD_ITEM_ID,
-                permission = "cc.item.give.kantan",
-                maximumAmount = 1,
-                argumentSuggestions = { emptyList() }
-            ),
-            ItemGrantDefinition(
-                id = DiskItemService.SIMPLE_ITEM_ID,
+                id = KantanItemService.BLOCK_ITEM_ID,
                 permission = "cc.item.give.kantan",
                 maximumAmount = 1,
                 argumentSuggestions = { emptyList() }
@@ -29,14 +26,8 @@ class KantanItemGrantProvider(
         )
 
     override fun grant(request: ItemGrantRequest): ItemGrantResult {
-        val name = request.arguments.joinToString(" ").ifBlank {
-            plugin.config.getString("default-disk-name", "Kantan Disk") ?: "Kantan Disk"
-        }
         return runCatching {
-            val profile = if (request.definition.id == DiskItemService.SIMPLE_ITEM_ID) {
-                DiskProfile.SIMPLE
-            } else DiskProfile.STANDARD
-            val item = DiskItemService.createUnset(name, request.target, profile)
+            val item = KantanItemService.createBlock(request.target)
             var dropped = 0
             request.target.inventory.addItem(item).values.forEach { overflow ->
                 dropped += overflow.amount
@@ -48,6 +39,6 @@ class KantanItemGrantProvider(
                 droppedAmount = dropped,
                 message = null
             )
-        }.getOrElse { failure -> ItemGrantResult(false, 0, 0, failure.message ?: "disk creation failed") }
+        }.getOrElse { failure -> ItemGrantResult(false, 0, 0, failure.message ?: "block creation failed") }
     }
 }

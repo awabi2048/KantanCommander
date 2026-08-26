@@ -48,7 +48,7 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
                 node.params["itemData"] = ItemStackCodec.encode(selected)
             }
             SelectionKind.DISK -> {
-                val selectedId = DiskItemService.diskId(selected) ?: return
+                val selectedId = KantanItemService.diskId(selected) ?: return
                 val selectedScript = plugin.scripts.load(selectedId) ?: return
                 node.params["diskId"] = selectedId.toString()
                 node.snapshot = selectedScript.graph.deepCopy()

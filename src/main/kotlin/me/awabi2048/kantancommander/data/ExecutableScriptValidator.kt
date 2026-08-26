@@ -16,7 +16,6 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetSpec
-import me.awabi2048.kantancommander.model.CommandFeaturePolicy
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import java.util.Collections
@@ -25,7 +24,6 @@ import java.util.IdentityHashMap
 object ExecutableScriptValidator {
     fun validate(script: DiskScript, limits: GraphLimits = GraphLimits()): List<String> {
         val errors = mutableListOf<String>()
-        errors += CommandFeaturePolicy.validate(script)
         if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
             errors += "root: タイマーオフでは常時実行を使用できません"
         }
