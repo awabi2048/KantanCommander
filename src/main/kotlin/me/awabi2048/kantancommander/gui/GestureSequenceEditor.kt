@@ -94,6 +94,7 @@ class GestureSequenceEditor(
             GestureGuiChildOptions(
                 parentScreenId = lowerPanel.LOWER_SCREEN_ID,
                 overlayMaterial = Material.RED_STAINED_GLASS,
+                animated = false,
             ),
         )
     }
@@ -104,6 +105,17 @@ class GestureSequenceEditor(
         val cells = layout.viewport(state.origin, GestureEditorLayout.VIEWPORT_COLS, GestureEditorLayout.VIEWPORT_ROWS)
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
+        // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
+        elements.add(GestureGuiElement(
+            elementId = "viewport-empty",
+            bounds = GestureGuiBounds(
+                -GestureEditorLayout.UPPER_W / 2.0 + 0.045,
+                -GestureEditorLayout.UPPER_H / 2.0 + 0.045,
+                GestureEditorLayout.UPPER_W / 2.0 - 0.045,
+                GestureEditorLayout.UPPER_H / 2.0 - 0.045,
+            ),
+            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+        ))
 
         cells.forEach { (localPoint, cell) ->
             // セル検索はグリッド座標、配置は列/行インデックスで行う（origin移動してもグリッド位置は固定）
@@ -125,8 +137,9 @@ class GestureSequenceEditor(
                             x = cx, y = cy,
                             width = GestureEditorLayout.ICON_W,
                             height = GestureEditorLayout.ICON_H,
-                            blockData = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
-                            layer = 2,
+                            blockData = Bukkit.createBlockData(if (isSelected) Material.YELLOW_CONCRETE else Material.CYAN_TERRACOTTA),
+                            layer = if (isSelected) 5 else 2,
+                            glowColor = glowColor,
                         ))
                         // マスの90% (ICON_W=0.171) に合わせる。Item.scale 0.22が標準のため 0.22*0.78≈0.17 とする
                         visuals.add(GestureGuiVisual.Item(
@@ -135,7 +148,7 @@ class GestureSequenceEditor(
                             item = org.bukkit.inventory.ItemStack(node.type.icon),
                             scale = GestureEditorLayout.ICON_SCALE,
                             layer = if (isSelected) 5 else 3,
-                            glowColor = glowColor,
+                            glowColor = null,
                         ))
                         elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
@@ -244,6 +257,12 @@ class GestureSequenceEditor(
                     else -> Unit
                 }
             }
+            context.elementId == "viewport-empty" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.selectedNodeId = null
+                state.confirmNodeId = null
+                updateUpper(player)
+                updateLower(player)
+            }
             context.elementId.startsWith("nav-") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val delta = when (context.elementId) {
                     "nav-up" -> MapPoint(0, -1)
@@ -309,6 +328,7 @@ class GestureSequenceEditor(
                     )
                 }
                 state.pendingInsertion = target
+                state.selectedNodeId = null
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
@@ -362,7 +382,8 @@ class GestureSequenceEditor(
                 val inserted = GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
                 plugin.scripts.save(script)
                 state.pendingInsertion = null
-                state.selectedNodeId = inserted.id
+                // 新規作成直後は特定アイコンを選択状態に固定せず、余白と同じ未選択状態にします。
+                state.selectedNodeId = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
                 state.settingsPage = 0

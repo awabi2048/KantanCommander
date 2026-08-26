@@ -236,8 +236,8 @@ class GestureLowerPanel(
         ),
         visuals,
         panel = GestureGuiPanel(
-            width = GestureEditorLayout.LOWER_W,
-            height = GestureEditorLayout.LOWER_H,
+            width = if (mode == GestureLowerMode.CONFIRM) GestureEditorLayout.LOWER_W * 0.5 else GestureEditorLayout.LOWER_W,
+            height = if (mode == GestureLowerMode.CONFIRM) GestureEditorLayout.LOWER_H * 0.5 else GestureEditorLayout.LOWER_H,
             backgroundMaterial = Material.GRAY_CONCRETE,
             frameMaterial = Material.LIGHT_GRAY_CONCRETE,
         ),
