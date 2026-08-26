@@ -23,6 +23,13 @@ import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.EquipmentSlot
 
 class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Listener {
+    /**
+     * 配置処理中フラグ。placeBlockが保護判定用に自前で発火するBlockPlaceEventは、
+     * 拡張コマンドブロックのアイテムを持ったまま配信されるため、このリスナー自身が再帰的に呼ばれる。
+     * 無限再帰によるStackOverflowErrorを防ぐため、自前イベントの配信中は再処理をスキップする。
+     */
+    private var placingInProgress = false
+
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onInteract(event: PlayerInteractEvent) {
         val player = event.player
@@ -67,6 +74,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     /** 拡張コマンドブロックの設置。バニラのブロック配置イベントを捕捉して配置物へ変換する。 */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onBlockPlace(event: BlockPlaceEvent) {
+        // 配置処理中の自前イベントは、既に配置ロジックが進行中のため再処理しない。
+        if (placingInProgress) return
         if (KantanItemService.kind(event.itemInHand) != KantanItemKind.BLOCK) return
         event.isCancelled = true
         val player = event.player
@@ -144,7 +153,14 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             true,
             hand
         )
-        Bukkit.getPluginManager().callEvent(placeEvent)
+        // 自前イベントは拡張コマンドブロックのアイテムを保持したまま配信されるため、
+        // 再入フラグを立ててこのリスナー自身の再帰呼び出しを防ぐ。
+        placingInProgress = true
+        try {
+            Bukkit.getPluginManager().callEvent(placeEvent)
+        } finally {
+            placingInProgress = false
+        }
         if (placeEvent.isCancelled() || !placeEvent.canBuild()) {
             replacedState.update(true, false)
             plugin.scripts.delete(placedScript.id)
