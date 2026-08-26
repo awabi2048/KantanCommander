@@ -162,7 +162,7 @@ class GestureSequenceEditor(
                         elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
                             bounds = iconBounds(cx, cy),
-                            acceptedGestures = setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SECONDARY),
+                            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                             targetVisualId = "node-icon-${node.id}",
                             hoverText = GestureGuiHoverText(
                                 text = net.kyori.adventure.text.Component.text(KcI18n.text(player, node.type.key)),
@@ -323,12 +323,6 @@ class GestureSequenceEditor(
                         state.settingsPage = 0
                         updateUpper(player)
                         updateLower(player)
-                    }
-                    GestureGuiGesture.SECONDARY -> {
-                        state.selectedAddPoint = null
-                        state.pendingInsertion = null
-                        state.confirmNodeId = nodeId
-                        openConfirmChild(player)
                     }
                     else -> Unit
                 }

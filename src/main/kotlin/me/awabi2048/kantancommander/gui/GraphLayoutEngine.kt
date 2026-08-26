@@ -163,6 +163,7 @@ object GraphLayoutEngine {
                 renderSequence(trueStart, mergeId, x + 2, y)
             } else {
                 // 分岐先が空、または直ちに合流する場合も専用の追加ポイントを表示します。
+                putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
                 putAdd(x + 2, y, condition.id, GraphEditor.Edge.TRUE, condition.id)
                 Segment(x + 4, y, null)
             }
@@ -176,6 +177,7 @@ object GraphLayoutEngine {
             val falseSegment = if (falseStart != null && falseStart != mergeId) {
                 renderSequence(falseStart, mergeId, x + 2, falseY)
             } else {
+                putPath(x + 1, falseY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
                 putAdd(x + 2, falseY, condition.id, GraphEditor.Edge.FALSE, condition.id)
                 Segment(x + 4, falseY, null)
             }

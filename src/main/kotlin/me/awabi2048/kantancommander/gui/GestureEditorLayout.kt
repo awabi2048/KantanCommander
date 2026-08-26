@@ -13,7 +13,7 @@ package me.awabi2048.kantancommander.gui
 object GestureEditorLayout {
     /** ビューポートのマス数 */
     const val VIEWPORT_COLS: Int = 10
-    const val VIEWPORT_ROWS: Int = 3
+    const val VIEWPORT_ROWS: Int = 4
 
     /** マス間のピッチ（隣接マス中心間距離） */
     const val PITCH_X: Double = 0.22
@@ -26,7 +26,8 @@ object GestureEditorLayout {
     const val ICON_H: Double = ICON_SCALE_REFERENCE * 0.9
 
     /** 経路の断面（短辺）。進行方向に細長い2:3 */
-    const val PATH_THICKNESS: Double = PITCH_X * 2.0 / 3.0
+    // 水平・垂直の双方で同じ正方形断面に見えるよう、短いピッチを基準にします。
+    val PATH_THICKNESS: Double = minOf(PITCH_X, PITCH_Y) * 2.0 / 3.0
 
     /** グリッドの第1列/第1行の中心座標（パネル内に収まるよう計算） */
     const val FIRST_COL_X: Double = -0.99
@@ -79,7 +80,7 @@ object GestureEditorLayout {
     val BACK_Y: Double = NAV_CENTER_Y - NAV_PITCH
 
     /** ナビゲーション右側に縦積みするズーム操作領域 */
-    const val ZOOM_X: Double = 1.20
+    const val ZOOM_X: Double = 1.30
     const val ZOOM_TOP_Y: Double = NAV_CENTER_Y + 0.055
     const val ZOOM_SIZE: Double = NAV_SIZE
     const val ZOOM_PITCH: Double = NAV_SIZE + 0.015

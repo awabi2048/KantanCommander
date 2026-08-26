@@ -32,7 +32,7 @@ class GestureEditorLayoutTest {
         assertEquals(0.08, seg.y, 1.0e-9)
         assertEquals(0.22, seg.w, 1.0e-9)
         // 断面はピッチの2:3
-        assertEquals(GestureEditorLayout.PITCH_X * 2.0 / 3.0, seg.h, 1.0e-9)
+        assertEquals(GestureEditorLayout.PATH_THICKNESS, seg.h, 1.0e-9)
     }
 
     @Test
@@ -89,7 +89,7 @@ class GestureEditorLayoutTest {
         // 幅20・高さ5のマップでは、原点xは0..10、yは0..2に収まる
         val layout = GraphLayout(width = 20, height = 5, cells = emptyMap(), nodePoints = emptyMap())
         assertEquals(MapPoint(0, 0), GestureEditorLayout.clampOrigin(MapPoint(-5, -1), layout))
-        assertEquals(MapPoint(10, 2), GestureEditorLayout.clampOrigin(MapPoint(99, 99), layout))
+        assertEquals(MapPoint(10, 1), GestureEditorLayout.clampOrigin(MapPoint(99, 99), layout))
         assertEquals(MapPoint(3, 1), GestureEditorLayout.clampOrigin(MapPoint(3, 1), layout))
     }
 
