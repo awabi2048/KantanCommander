@@ -51,7 +51,7 @@
         <dependency>
             <groupId>com.awabi2048</groupId>
             <artifactId>CC-System</artifactId>
-            <version>26.826.1</version>
+<version>26.826.2</version>
             <scope>provided</scope>
         </dependency>
         <dependency>

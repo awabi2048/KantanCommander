@@ -9,6 +9,9 @@ import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.Particle
+import org.bukkit.Sound
+import org.bukkit.SoundCategory
 import org.bukkit.block.Block
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
@@ -102,23 +105,15 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         hand: EquipmentSlot,
     ) {
         val block = location.block
-        if (!block.isReplaceable) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
-            return
-        }
-        if (plugin.placements.find(block.location) != null) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_EXISTS))
-            return
-        }
+        // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにする。
+        if (!block.isReplaceable) return
+        if (plugin.placements.find(block.location) != null) return
 
         val targetBox = org.bukkit.util.BoundingBox.of(
             block.location.toVector(),
             block.location.clone().add(1.0, 1.0, 1.0).toVector(),
         )
-        if (player.boundingBox.overlaps(targetBox)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
-            return
-        }
+        if (player.boundingBox.overlaps(targetBox)) return
 
         val placedScript = source?.let(plugin.scripts::copyForPlacement)
             ?: plugin.scripts.createPlacement(
@@ -128,7 +123,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
         val replacedState = block.state
@@ -146,7 +140,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         if (placeEvent.isCancelled() || !placeEvent.canBuild()) {
             replacedState.update(true, false)
             plugin.scripts.delete(placedScript.id)
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
         val placement = DiskPlacement(
@@ -160,17 +153,29 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.placements.remove(block.world, block.x, block.y, block.z)
             plugin.scripts.delete(placedScript.id)
             replacedState.update(true, false)
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_BLOCKED))
             return
         }
         val stack = if (hand == EquipmentSlot.OFF_HAND) player.inventory.itemInOffHand else player.inventory.itemInMainHand
         if (player.gameMode != org.bukkit.GameMode.CREATIVE) stack.amount = (stack.amount - 1).coerceAtLeast(0)
-        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACE_CREATED))
+        // イベントキャンセル方式のため、バニラのブロック配置と同じ設置音・パーティクルを自前で再生する。
+        val center = block.location.toCenterLocation()
+        block.world.playSound(center, Sound.BLOCK_GLASS_PLACE, SoundCategory.BLOCKS, 1.0f, 0.8f)
+        block.world.spawnParticle(
+            Particle.BLOCK, center, 32, 0.5, 0.5, 0.5,
+            Bukkit.createBlockData(material),
+        )
     }
 
     /** 破壊時の後始末。内容をコマンドディスクとして出力し、表示・配置・スクリプトを削除する。 */
     private fun outputDiskAndRemove(player: Player, block: Block, placement: DiskPlacement) {
         val world = block.world
+        // イベントキャンセル方式のため、バニラのブロック破壊と同じ破壊音・パーティクルを自前で再生する。
+        val center = block.location.toCenterLocation()
+        world.playSound(center, Sound.BLOCK_GLASS_BREAK, SoundCategory.BLOCKS, 1.0f, 0.8f)
+        world.spawnParticle(
+            Particle.BLOCK, center, 64, 0.5, 0.5, 0.5,
+            Bukkit.createBlockData(block.type),
+        )
         val source = plugin.scripts.load(placement.scriptId)
         if (source != null) {
             val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull()

@@ -12,6 +12,7 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.format.TextDecoration
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
@@ -40,31 +41,19 @@ object KantanItemService {
     /** コマンドディスクはカスタムアイテムの慣習に合わせ、見た目用の毒じゃがいもを基底とする。 */
     private val diskMaterial = Material.POISONOUS_POTATO
 
-    /** 未設定の拡張コマンドブロックを生成する。設置時に新しいスクリプトが作られる。 */
+    /**
+     * 未設定の拡張コマンドブロックを生成する。設置時に新しいスクリプトが作られる。
+     * 通常のブロックと同じ体験にするため、Loreや毒じゃがいも用のカスタムコンポーネントは付与しない。
+     */
     fun createBlock(player: Player): ItemStack {
         val item = ItemStack(blockMaterial, 1)
         item.editMeta { meta ->
             meta.displayName(Component.text(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_NAME_BLOCK),
                 NamedTextColor.AQUA,
-            ))
+            ).decoration(TextDecoration.ITALIC, false))
             meta.setItemModel(NamespacedKey("minecraft", "test_block"))
             meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, BLOCK_ITEM_ID)
-        }
-        applyCustomItemComponents(item)
-        item.editMeta { meta ->
-            meta.lore(
-                CCSystem.getAPI().getLoreService().render(
-                    CCSystem.getAPI().getLoreService().compose(
-                        GuiLoreSpec.None,
-                        listOf(me.awabi2048.kantancommander.gui.KcGui.action(
-                            player,
-                            "lore.click.right",
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_PLACE_BLOCK),
-                        )),
-                    ),
-                ),
-            )
         }
         return item
     }
@@ -76,7 +65,7 @@ object KantanItemService {
             meta.displayName(Component.text(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_NAME_DISK),
                 NamedTextColor.AQUA,
-            ))
+            ).decoration(TextDecoration.ITALIC, false))
             meta.setItemModel(NamespacedKey("minecraft", "music_disc_otherside"))
             meta.setMaxStackSize(1)
             meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, DISK_ITEM_ID)
