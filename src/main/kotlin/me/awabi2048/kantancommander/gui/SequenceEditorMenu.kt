@@ -311,12 +311,21 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NAVIGATE),
             style = GuiNameStyle.PRIMARY,
             description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NAVIGATE_DESCRIPTION),
-            actions = listOf(
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT)),
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT)),
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP)),
-                GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN)),
-            ),
+            // 実行不能な方向の操作行は表示しない（移動不能時は無言・無音・状態不変、仕様14）。
+            actions = buildList {
+                if (layout.canMove(origin, -1, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
+                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT)))
+                }
+                if (layout.canMove(origin, 1, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
+                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT)))
+                }
+                if (layout.canMove(origin, 0, -1, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
+                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP)))
+                }
+                if (layout.canMove(origin, 0, 1, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
+                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN)))
+                }
+            },
         )
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)), elements)
     }
