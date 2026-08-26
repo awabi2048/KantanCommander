@@ -167,7 +167,7 @@ class GestureLowerPanel(
         types.drop(page * PICKER_PAGE_SIZE).take(PICKER_PAGE_SIZE).forEachIndexed { index, type ->
             val cx = if (index % 2 == 0) -0.11 else 0.65
             val cy = 0.20 - (index / 2) * 0.18
-            addBlock(visuals, "type-bg-$index", cx, cy, 0.72, 0.155, Material.STONE, 4)
+            addBlock(visuals, "type-bg-$index", cx, cy, 0.72, 0.155, Material.CYAN_TERRACOTTA, 4)
             addText(visuals, "type-$index", cx, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, type.key)))
             elements.add(GestureGuiElement(

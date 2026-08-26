@@ -78,6 +78,12 @@ object GestureEditorLayout {
     val BACK_X: Double = NAV_CENTER_X - NAV_PITCH
     val BACK_Y: Double = NAV_CENTER_Y - NAV_PITCH
 
+    /** ナビゲーション右側に縦積みするズーム操作領域 */
+    const val ZOOM_X: Double = 1.20
+    const val ZOOM_TOP_Y: Double = NAV_CENTER_Y + 0.055
+    const val ZOOM_SIZE: Double = NAV_SIZE
+    const val ZOOM_PITCH: Double = NAV_SIZE + 0.015
+
     /** 上部画面パネル寸法（案A: ワイド） */
     const val UPPER_W: Double = 2.90
     const val UPPER_H: Double = 1.0606601717798212

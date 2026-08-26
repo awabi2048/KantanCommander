@@ -161,7 +161,11 @@ object GraphLayoutEngine {
             val trueSegment = if (trueStart != null && trueStart != mergeId) {
                 putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
                 renderSequence(trueStart, mergeId, x + 2, y)
-            } else Segment(x + 2, y, null)
+            } else {
+                // 分岐先が空、または直ちに合流する場合も専用の追加ポイントを表示します。
+                putAdd(x + 2, y, condition.id, GraphEditor.Edge.TRUE, condition.id)
+                Segment(x + 4, y, null)
+            }
 
             val falseY = trueSegment.maxY + 2
             putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
@@ -171,7 +175,10 @@ object GraphLayoutEngine {
             val falseStart = condition.falseNext
             val falseSegment = if (falseStart != null && falseStart != mergeId) {
                 renderSequence(falseStart, mergeId, x + 2, falseY)
-            } else Segment(x + 2, falseY, null)
+            } else {
+                putAdd(x + 2, falseY, condition.id, GraphEditor.Edge.FALSE, condition.id)
+                Segment(x + 4, falseY, null)
+            }
 
             val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
             val trueSource = trueSegment.tail ?: condition.id

@@ -32,6 +32,8 @@ data class GestureEditorState(
     var scriptId: UUID,
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
+    /** ビューポート表示倍率。0=100%、正数で拡大、負数で縮小します。 */
+    var zoomLevel: Int = 0,
     var selectedNodeId: UUID? = null,
     var anchor: Location? = null,
     /** 下部パネルの表示モード */
@@ -107,6 +109,7 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
         val layout = GraphLayoutEngine.layout(script.graph)
         val cells = layout.viewport(state.origin, GestureEditorLayout.VIEWPORT_COLS, GestureEditorLayout.VIEWPORT_ROWS)
+        val zoomScale = (1.0 + state.zoomLevel.coerceIn(-1, 2) * 0.2).coerceIn(0.8, 1.4)
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
@@ -194,10 +197,35 @@ class GestureSequenceEditor(
                         bounds = iconBounds(cx, cy),
                         acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                         targetVisualId = "add-plus-$gx-$gy",
+                        hoverText = GestureGuiHoverText(
+                            text = net.kyori.adventure.text.Component.text("クリックで追加"),
+                            x = cx,
+                            y = cy + GestureEditorLayout.ICON_H * 0.9,
+                            size = 0.006,
+                            lineWidth = 120,
+                        ),
                     ))
                 }
                 MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
-                    // 経路は後で一括生成
+                    // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
+                    val hasAddNeighbor = listOf(
+                        MapPoint(localPoint.x - 1, localPoint.y), MapPoint(localPoint.x + 1, localPoint.y),
+                        MapPoint(localPoint.x, localPoint.y - 1), MapPoint(localPoint.x, localPoint.y + 1),
+                    ).any { cells[it]?.kind == MapCellKind.ADD }
+                    if (!hasAddNeighbor && cell.insertionTarget != null) {
+                        elements.add(GestureGuiElement(
+                            elementId = "path:${gx}:${gy}",
+                            bounds = rect(cx, cy, GestureEditorLayout.PITCH_X, GestureEditorLayout.PITCH_Y),
+                            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                            hoverText = GestureGuiHoverText(
+                                text = net.kyori.adventure.text.Component.text("クリックで挿入"),
+                                x = cx,
+                                y = cy + GestureEditorLayout.PATH_THICKNESS,
+                                size = 0.0055,
+                                lineWidth = 120,
+                            ),
+                        ))
+                    }
                 }
             }
         }
@@ -239,9 +267,38 @@ class GestureSequenceEditor(
             targetVisualId = "back-label",
         ))
 
+        addZoomControls(visuals, elements)
+
+        // ズームはビューポート内容とその当たり判定だけを同じ倍率で変換します。
+        val scaledVisuals = visuals.map { visual ->
+            if (visual.visualId.startsWith("node-") || visual.visualId.startsWith("add-") || visual.visualId.startsWith("path-")) {
+                when (visual) {
+                    is GestureGuiVisual.Block -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
+                        width = visual.width * zoomScale, height = visual.height * zoomScale)
+                    is GestureGuiVisual.Item -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
+                        scale = visual.scale * zoomScale)
+                    is GestureGuiVisual.Text -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
+                        size = visual.size * zoomScale)
+                }
+            } else visual
+        }
+        val scaledElements = elements.map { element ->
+            if (element.elementId.startsWith("node:") || element.elementId.startsWith("add:") || element.elementId.startsWith("path:")) {
+                val hover = element.hoverText
+                element.copy(
+                    bounds = scaleBounds(element.bounds, zoomScale),
+                    hoverText = hover?.copy(
+                        x = hover.x * zoomScale,
+                        y = hover.y * zoomScale,
+                        size = hover.size * zoomScale,
+                    ),
+                )
+            } else element
+        }
+
         return GestureGuiView(
-            GestureGuiScreenDefinition(UPPER_SCREEN_ID, elements, access = GestureGuiAccess.OWNER_ONLY),
-            visuals,
+            GestureGuiScreenDefinition(UPPER_SCREEN_ID, scaledElements, access = GestureGuiAccess.OWNER_ONLY),
+            scaledVisuals,
             panel = GestureGuiPanel(
                 width = GestureEditorLayout.UPPER_W,
                 height = GestureEditorLayout.UPPER_H,
@@ -358,6 +415,28 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
+            context.elementId.startsWith("path:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
+                if (point.size != 2) return
+                val cell = GraphLayoutEngine.layout(script.graph).cells[MapPoint(point[0], point[1])] ?: return
+                state.pendingInsertion = cell.insertionTarget ?: return
+                state.selectedNodeId = null
+                state.selectedAddPoint = null
+                state.lowerMode = GestureLowerMode.PICKER
+                state.pickerCategory = 0
+                state.pickerPage = 0
+                updateUpper(player)
+                updateLower(player)
+            }
+            context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.zoomLevel = (state.zoomLevel + 1).coerceAtMost(2)
+                updateUpper(player)
+            }
+            context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.zoomLevel = (state.zoomLevel - 1).coerceAtLeast(-1)
+                updateUpper(player)
+            }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.settingsTab = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
                 updateLower(player)
@@ -463,6 +542,12 @@ class GestureSequenceEditor(
         return GestureGuiBounds(cx - h, cy - h, cx + h, cy + h)
     }
 
+    private fun rect(cx: Double, cy: Double, width: Double, height: Double): GestureGuiBounds =
+        GestureGuiBounds(cx - width / 2.0, cy - height / 2.0, cx + width / 2.0, cy + height / 2.0)
+
+    private fun scaleBounds(bounds: GestureGuiBounds, scale: Double): GestureGuiBounds =
+        GestureGuiBounds(bounds.minX * scale, bounds.minY * scale, bounds.maxX * scale, bounds.maxY * scale)
+
     /** 十字ナビゲーション（75%サイズ・右下） */
     private fun addNavigation(visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
         val s = GestureEditorLayout.NAV_SIZE
@@ -496,6 +581,29 @@ class GestureSequenceEditor(
                 bounds = navBounds(nx, ny, s),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "${quad.first}-glyph",
+            ))
+        }
+    }
+
+    /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
+    private fun addZoomControls(visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
+        listOf("nav-zoom-in" to "＋", "nav-zoom-out" to "−").forEachIndexed { index, (id, glyph) ->
+            val x = GestureEditorLayout.ZOOM_X
+            val y = GestureEditorLayout.ZOOM_TOP_Y + index * GestureEditorLayout.ZOOM_PITCH
+            visuals.add(GestureGuiVisual.Block(
+                visualId = "$id-block", x = x, y = y,
+                width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
+                blockData = Bukkit.createBlockData(Material.CYAN_CONCRETE), layer = 4,
+            ))
+            visuals.add(GestureGuiVisual.Text(
+                visualId = "$id-glyph", x = x, y = y - 0.01,
+                text = net.kyori.adventure.text.Component.text(glyph), size = 0.010, layer = 6,
+            ))
+            elements.add(GestureGuiElement(
+                elementId = id,
+                bounds = navBounds(x, y, GestureEditorLayout.ZOOM_SIZE),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "$id-glyph",
             ))
         }
     }
@@ -566,8 +674,15 @@ class GestureSequenceEditor(
                     val y1 = GestureEditorLayout.cellCenterY(p.y)
                     val x2 = GestureEditorLayout.cellCenterX(n.x)
                     val y2 = GestureEditorLayout.cellCenterY(n.y)
-                    if (p.y == n.y) segments.add(GestureEditorLayout.horizontalPath(y1, x1, x2))
-                    else segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
+                    if (p.y == n.y) {
+                        val mid = (x1 + x2) / 2.0
+                        segments.add(GestureEditorLayout.horizontalPath(y1, x1, mid))
+                        segments.add(GestureEditorLayout.horizontalPath(y1, mid, x2))
+                    } else {
+                        val mid = (y1 + y2) / 2.0
+                        segments.add(GestureEditorLayout.verticalPath(x1, y1, mid))
+                        segments.add(GestureEditorLayout.verticalPath(x1, mid, y2))
+                    }
                 }
         }
         // ビューポート端の先にも論理セルが続く場合は、画面端までのスタブを描画します。
