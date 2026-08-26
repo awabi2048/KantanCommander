@@ -51,21 +51,6 @@ class WorldVariableStoreTest {
     }
 
     @Test
-    fun `MyWorld copy receives definitions and initial values but not runtime values`() {
-        val source = UUID.randomUUID()
-        val target = UUID.randomUUID()
-        val store = WorldVariableStore(directory)
-        store.set(source, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 1))
-        store.set(source, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 9))
-
-        store.copyDefinitions(source, target)
-
-        assertEquals(9, store.get(source, "wave")?.integerValue)
-        assertEquals(1, store.get(target, "wave")?.integerValue)
-        assertEquals(1, WorldVariableStore(directory).get(target, "wave")?.integerValue)
-    }
-
-    @Test
     fun `non finite and incomplete values are rejected before cache mutation`() {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)

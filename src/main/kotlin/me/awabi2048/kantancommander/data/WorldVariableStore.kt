@@ -51,18 +51,6 @@ class WorldVariableStore(private val directory: File) {
         state(worldId).definitions.mapValues { (_, value) -> value.copy() }
 
     @Synchronized
-    fun copyDefinitions(sourceWorldId: UUID, targetWorldId: UUID) {
-        require(sourceWorldId != targetWorldId) { "source and target MyWorld must differ" }
-        val initialValues = state(sourceWorldId).definitions.mapValues { (_, value) -> value.copy() }
-        val candidate = WorldVariables(
-            definitions = initialValues.toMutableMap(),
-            values = initialValues.toMutableMap(),
-        )
-        persist(targetWorldId, candidate)
-        cache[targetWorldId] = candidate
-    }
-
-    @Synchronized
     fun deleteWorld(worldId: UUID): Boolean {
         cache.remove(worldId)
         val target = file(worldId)

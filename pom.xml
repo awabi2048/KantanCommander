@@ -7,7 +7,7 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-    <version>26.826.18</version>
+    <version>26.826.19</version>
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>
