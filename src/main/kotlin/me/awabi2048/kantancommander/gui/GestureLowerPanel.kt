@@ -33,6 +33,7 @@ class GestureLowerPanel(
     private val onAction: (GestureGuiActionContext) -> Unit = {},
 ) {
     val LOWER_SCREEN_ID = "gesture-editor-lower"
+    val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
 
     fun build(state: GestureEditorState, player: Player): GestureGuiView {
         return when (state.lowerMode) {
@@ -312,7 +313,6 @@ class GestureLowerPanel(
     }
 
     private companion object {
-        const val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
         const val SETTINGS_PAGE_SIZE = 4
         const val PICKER_PAGE_SIZE = 8
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */

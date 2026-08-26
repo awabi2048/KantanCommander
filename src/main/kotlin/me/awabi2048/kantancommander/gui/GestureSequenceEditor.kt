@@ -386,14 +386,14 @@ class GestureSequenceEditor(
                 state.confirmNodeId = null
                 state.selectedNodeId = null
                 state.lowerMode = GestureLowerMode.SETTINGS
-                api.closeChild(player.uniqueId, lowerPanel.LOWER_SCREEN_ID)
+                api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateUpper(player)
                 updateLower(player)
             }
             context.elementId == "confirm-cancel" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.confirmNodeId = null
                 state.lowerMode = GestureLowerMode.SETTINGS
-                api.closeChild(player.uniqueId, lowerPanel.LOWER_SCREEN_ID)
+                api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateLower(player)
             }
         }
