@@ -32,7 +32,7 @@ data class GestureEditorState(
     var scriptId: UUID,
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
-    /** ビューポート表示倍率。0=75%、25%刻みで25%〜150%を許可します。 */
+    /** ビューポート表示倍率。0=75%、縮小25%・拡大75%の範囲を25%刻みで許可します。 */
     var zoomLevel: Int = 0,
     var selectedNodeId: UUID? = null,
     var anchor: Location? = null,
@@ -307,10 +307,27 @@ class GestureSequenceEditor(
                 )
             } else element
         }
+        val clippedVisuals = scaledVisuals.filter { visual ->
+            if (!(visual.visualId.startsWith("node-") || visual.visualId.startsWith("add-") || visual.visualId.startsWith("path-"))) return@filter true
+            val halfW = GestureEditorLayout.UPPER_W / 2.0 - 0.045
+            val halfH = GestureEditorLayout.UPPER_H / 2.0 - 0.045
+            val halfVisualW = when (visual) {
+                is GestureGuiVisual.Block -> visual.width / 2.0
+                is GestureGuiVisual.Item -> GestureEditorLayout.ICON_W / 2.0
+                is GestureGuiVisual.Text -> 0.06
+            }
+            val halfVisualH = when (visual) {
+                is GestureGuiVisual.Block -> visual.height / 2.0
+                is GestureGuiVisual.Item -> GestureEditorLayout.ICON_H / 2.0
+                is GestureGuiVisual.Text -> 0.04
+            }
+            visual.x + halfVisualW >= -halfW && visual.x - halfVisualW <= halfW &&
+                visual.y + halfVisualH >= -halfH && visual.y - halfVisualH <= halfH
+        }
 
         return GestureGuiView(
             GestureGuiScreenDefinition(UPPER_SCREEN_ID, scaledElements, access = GestureGuiAccess.OWNER_ONLY),
-            scaledVisuals,
+            clippedVisuals,
             panel = GestureGuiPanel(
                 width = GestureEditorLayout.UPPER_W,
                 height = GestureEditorLayout.UPPER_H,
