@@ -39,8 +39,6 @@ import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.inventory.EquipmentSlot
 
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
-    private val activeRoots = mutableSetOf<UUID>()
-
     fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
         val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
             MyWorldManagerApi.getWorldRepository()?.findByWorldName(origin.world.name)
@@ -57,10 +55,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
             return callback(false)
         }
-        if (!activeRoots.add(scriptId)) {
-            plugin.logger.warning("[KantanCommander] rejected disk=$scriptId reason=already_running")
-            return callback(false)
-        }
+        // 同一ディスクの再トリガー（タイマーとレッドストーンの同時到来、WAIT中の再起動など）は
+        // 実行可能な範囲で並行許可する。各起動は独立したExecutionSessionを持つため干渉しない。
         val session = ExecutionSession(
             rootId = scriptId,
             origin = origin.clone(),
@@ -71,7 +67,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         )
         plugin.logger.info("[KantanCommander] start disk=$scriptId world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
         runGraph(script, script.graph, session, 0) { success ->
-            activeRoots.remove(scriptId)
             plugin.logger.info("[KantanCommander] finish disk=$scriptId success=$success executed=${session.executed}/${session.budget}")
             callback(success)
         }
@@ -108,7 +103,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
 
         val next: (UUID?, Boolean) -> Unit = { target, success ->
-            session.results[node.id] = success
             if (success) runNode(script, graph, target, session, depth, done)
             else stop(session, script, node.id, depth, "node_failed", done)
         }
@@ -477,6 +471,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (operation == VariableOperation.CLEAR) return removeVariable(session, name, scope)
         val current = getVariable(session, name, scope)
         val type = VariableType.valueOf(node.string("type", current?.type?.name ?: VariableType.BOOLEAN.name))
+        // 現在値が存在し型が設定型と不一致の加減算・切替は、仕様3.3「型不正は実行失敗」に従い起動全体を停止する。
+        // SETとSTORE系は上書き保存のため対象外。
+        if (current != null && current.type != type &&
+            operation in setOf(VariableOperation.ADD, VariableOperation.SUBTRACT, VariableOperation.TOGGLE)
+        ) {
+            return false
+        }
         val value = when (operation) {
             VariableOperation.SET -> parseVariable(type, node.string("value"), session)
             VariableOperation.ADD, VariableOperation.SUBTRACT -> {
@@ -751,15 +752,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (direction.lengthSquared() > 0.0) destination.direction = direction
     }
 
-    private fun compare(left: Int, right: Int, operator: String) = when (operator) {
-        "==" -> left == right
-        "!=" -> left != right
-        ">" -> left > right
-        "<" -> left < right
-        "<=" -> left <= right
-        else -> left >= right
-    }
-
     private fun stop(
         session: ExecutionSession,
         script: DiskScript,
@@ -787,7 +779,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var executed: Int = 0,
         var context: ExecutionContextSpec? = null,
         var previousContext: ExecutionContextSpec? = null,
-        val results: MutableMap<UUID, Boolean> = mutableMapOf(),
         val temporaryVariables: MutableMap<String, WorldVariableValue> = mutableMapOf(),
         val loops: MutableList<LoopFrame> = mutableListOf(),
         var currentIterationValue: Long? = null,
