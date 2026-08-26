@@ -336,6 +336,14 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
+            context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.zoomLevel = (state.zoomLevel + 1).coerceAtMost(2)
+                updateUpper(player)
+            }
+            context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.zoomLevel = (state.zoomLevel - 1).coerceAtLeast(-1)
+                updateUpper(player)
+            }
             context.elementId.startsWith("nav-") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val delta = when (context.elementId) {
                     "nav-up" -> MapPoint(0, -1)
@@ -422,14 +430,6 @@ class GestureSequenceEditor(
                 state.pickerPage = 0
                 updateUpper(player)
                 updateLower(player)
-            }
-            context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.zoomLevel = (state.zoomLevel + 1).coerceAtMost(2)
-                updateUpper(player)
-            }
-            context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.zoomLevel = (state.zoomLevel - 1).coerceAtLeast(-1)
-                updateUpper(player)
             }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.settingsTab = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
