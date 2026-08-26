@@ -1,5 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
+import kotlin.math.roundToInt
+
 /**
  * ジェスチャーエディターのビューポート・経路・ナビゲーション配置を純関数で計算します。
  * 既存インベントリGUIのグリッド配置前提を排し、ブロック単位の自由座標で表現します。
@@ -14,6 +16,9 @@ object GestureEditorLayout {
     /** ビューポートのマス数 */
     const val VIEWPORT_COLS: Int = 10
     const val VIEWPORT_ROWS: Int = 4
+
+    /** 基準倍率。基準倍率では論理セルを10×4枚表示します。 */
+    const val DEFAULT_ZOOM: Double = 0.75
 
     /** マス間のピッチ（隣接マス中心間距離） */
     const val PITCH_X: Double = 0.22
@@ -34,9 +39,11 @@ object GestureEditorLayout {
     const val FIRST_ROW_Y: Double = 0.28
 
     /** 指定した列インデックスに対応する画面中心x（originによらず固定） */
-    fun cellCenterX(col: Int): Double = FIRST_COL_X + col * PITCH_X
+    fun cellCenterX(col: Int): Double = cellCenterX(col.toDouble())
+    fun cellCenterX(col: Double): Double = FIRST_COL_X + col * PITCH_X
     /** 指定した行インデックスに対応する画面中心y（originによらず固定） */
-    fun cellCenterY(row: Int): Double = FIRST_ROW_Y - row * PITCH_Y
+    fun cellCenterY(row: Int): Double = cellCenterY(row.toDouble())
+    fun cellCenterY(row: Double): Double = FIRST_ROW_Y - row * PITCH_Y
 
     /** 2点を結ぶ軸整列な経路セグメントを生成します（水平または垂直） */
     data class PathSegment(val x: Double, val y: Double, val w: Double, val h: Double)
@@ -64,8 +71,12 @@ object GestureEditorLayout {
 
     /** ビューポート原点の範囲をclampします（canMoveと同等） */
     fun clampOrigin(origin: MapPoint, layout: GraphLayout): MapPoint {
-        val maxX = (layout.width - VIEWPORT_COLS).coerceAtLeast(0)
-        val maxY = (layout.height - VIEWPORT_ROWS).coerceAtLeast(0)
+        return clampOrigin(origin, layout, VIEWPORT_COLS, VIEWPORT_ROWS)
+    }
+
+    fun clampOrigin(origin: MapPoint, layout: GraphLayout, viewportCols: Int, viewportRows: Int): MapPoint {
+        val maxX = (layout.width - viewportCols).coerceAtLeast(0)
+        val maxY = (layout.height - viewportRows).coerceAtLeast(0)
         return MapPoint(origin.x.coerceIn(0, maxX), origin.y.coerceIn(0, maxY))
     }
 
@@ -84,6 +95,16 @@ object GestureEditorLayout {
     const val ZOOM_TOP_Y: Double = NAV_CENTER_Y + 0.055
     const val ZOOM_SIZE: Double = NAV_SIZE
     const val ZOOM_PITCH: Double = NAV_SIZE + 0.015
+
+    /** ズーム倍率に応じた論理表示セル数です。座標を拡大縮小するだけにせず、表示範囲も再計算します。 */
+    fun viewportColumns(zoomScale: Double): Int =
+        (VIEWPORT_COLS * DEFAULT_ZOOM / zoomScale).roundToInt().coerceAtLeast(1)
+
+    fun viewportRows(zoomScale: Double): Int =
+        (VIEWPORT_ROWS * DEFAULT_ZOOM / zoomScale).roundToInt().coerceAtLeast(1)
+
+    /** 基準グリッドを画面中央へ保つための小数セルオフセットです。 */
+    fun viewportOffset(base: Int, visible: Int): Double = (base - visible) / 2.0
 
     /** 上部画面パネル寸法（案A: ワイド） */
     const val UPPER_W: Double = 2.90

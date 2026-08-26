@@ -94,6 +94,17 @@ class GestureEditorLayoutTest {
     }
 
     @Test
+    fun `zoom recalculates logical viewport dimensions around the default range`() {
+        assertEquals(10, GestureEditorLayout.viewportColumns(0.75))
+        assertEquals(4, GestureEditorLayout.viewportRows(0.75))
+        assertEquals(20, GestureEditorLayout.viewportColumns(0.375))
+        assertEquals(8, GestureEditorLayout.viewportRows(0.375))
+        assertEquals(5, GestureEditorLayout.viewportColumns(1.5))
+        assertEquals(2, GestureEditorLayout.viewportRows(1.5))
+        assertEquals(-5.0, GestureEditorLayout.viewportOffset(10, 20), 1.0e-9)
+    }
+
+    @Test
     fun `nav and back positions are adjacent bottom-left of the cross`() {
         // back-to-startは十字の下・左に隣接: x = 十字中心x - ピッチ、y = 十字中心y - ピッチ
         assertEquals(

@@ -61,6 +61,18 @@ enum class GestureLowerMode {
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
+/** ズーム後も論理セル範囲と画面上の座標系を一致させる値です。 */
+private data class ViewportMetrics(
+    val zoomScale: Double,
+    val columns: Int,
+    val rows: Int,
+    val offsetX: Double,
+    val offsetY: Double,
+) {
+    fun x(local: Int): Double = GestureEditorLayout.cellCenterX(local + offsetX)
+    fun y(local: Int): Double = GestureEditorLayout.cellCenterY(local + offsetY)
+}
+
 /**
  * ジェスチャーエディターの主要コントローラー。
  * 上部ビューポートと下部パネルをジェスチャーGUIセッションとして管理します。
@@ -114,8 +126,9 @@ class GestureSequenceEditor(
     private fun buildUpperViewport(player: Player): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
         val layout = GraphLayoutEngine.layout(script.graph)
-        val cells = layout.viewport(state.origin, GestureEditorLayout.VIEWPORT_COLS, GestureEditorLayout.VIEWPORT_ROWS)
-        val zoomScale = (0.75 + state.zoomLevel.coerceIn(-2, 3) * 0.25).coerceIn(0.25, 1.5)
+        val zoomScale = zoomScale()
+        val metrics = viewportMetrics(zoomScale)
+        val cells = layout.viewport(state.origin, metrics.columns, metrics.rows)
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
@@ -136,8 +149,8 @@ class GestureSequenceEditor(
             val rowIndex = localPoint.y
             val gx = state.origin.x + colIndex
             val gy = state.origin.y + rowIndex
-            val cx = GestureEditorLayout.cellCenterX(colIndex)
-            val cy = GestureEditorLayout.cellCenterY(rowIndex)
+            val cx = metrics.x(colIndex)
+            val cy = metrics.y(rowIndex)
             when (cell.kind) {
                 MapCellKind.NODE -> {
                     val node = cell.nodeId?.let { script.graph.nodes[it] }
@@ -243,11 +256,11 @@ class GestureSequenceEditor(
 
         val expandedPathCells = layout.cells.mapNotNull { (global, cell) ->
             val local = MapPoint(global.x - state.origin.x, global.y - state.origin.y)
-            if (local.x in -1..GestureEditorLayout.VIEWPORT_COLS && local.y in -1..GestureEditorLayout.VIEWPORT_ROWS) {
+            if (local.x in -1..metrics.columns && local.y in -1..metrics.rows) {
                 local to cell.copy(point = local)
             } else null
         }.toMap()
-        buildPathSegments(expandedPathCells, state.origin, layout.cells).forEach { seg ->
+        buildPathSegments(expandedPathCells, metrics).forEach { seg ->
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
@@ -392,8 +405,12 @@ class GestureSequenceEditor(
                 }
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 val layout = GraphLayoutEngine.layout(script.graph)
+                val metrics = viewportMetrics(zoomScale())
                 val nextOrigin = GestureEditorLayout.clampOrigin(
-                    MapPoint(state.origin.x + delta.x, state.origin.y + delta.y), layout,
+                    MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
+                    layout,
+                    metrics.columns,
+                    metrics.rows,
                 )
                 if (nextOrigin == state.origin) {
                     // 移動不能時も無反応にせず、操作対象へ短いフィードバックを返します。
@@ -410,8 +427,9 @@ class GestureSequenceEditor(
                 val firstAdd = layout?.let { GestureEditorLayout.findFirstAddPoint(it.cells) }
                 if (firstAdd != null) {
                     // 常に先頭追加ポイントをビューポート左上寄りの基準位置へ戻します。
-                    val maxOx = (layout.width - GestureEditorLayout.VIEWPORT_COLS).coerceAtLeast(0)
-                    val maxOy = (layout.height - GestureEditorLayout.VIEWPORT_ROWS).coerceAtLeast(0)
+                    val metrics = viewportMetrics(zoomScale())
+                    val maxOx = (layout.width - metrics.columns).coerceAtLeast(0)
+                    val maxOy = (layout.height - metrics.rows).coerceAtLeast(0)
                     val ox = firstAdd.x.coerceIn(0, maxOx)
                     val oy = firstAdd.y.coerceIn(0, maxOy)
                     state.origin = MapPoint(ox, oy)
@@ -657,93 +675,124 @@ class GestureSequenceEditor(
      */
     private fun buildPathSegments(
         viewportCells: Map<MapPoint, MapCell>,
-        origin: MapPoint,
-        allCells: Map<MapPoint, MapCell>,
+        metrics: ViewportMetrics,
     ): List<GestureEditorLayout.PathSegment> {
-        val segments = linkedSetOf<GestureEditorLayout.PathSegment>()
         val pathKinds = setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH)
-        viewportCells.forEach { (localPoint, cell) ->
+        data class GridEdge(val a: MapPoint, val b: MapPoint)
+        data class Span(val horizontal: Boolean, val line: Int, val start: Int, val end: Int)
+
+        fun edge(a: MapPoint, b: MapPoint): GridEdge =
+            if (a.x < b.x || (a.x == b.x && a.y <= b.y)) GridEdge(a, b) else GridEdge(b, a)
+
+        val edges = linkedSetOf<GridEdge>()
+        viewportCells.forEach { (p, cell) ->
             if (cell.kind !in pathKinds) return@forEach
-            val colIndex = localPoint.x
-            val rowIndex = localPoint.y
-            val cx = GestureEditorLayout.cellCenterX(colIndex)
-            val cy = GestureEditorLayout.cellCenterY(rowIndex)
-            val left = viewportCells[MapPoint(localPoint.x - 1, localPoint.y)]
-            val right = viewportCells[MapPoint(localPoint.x + 1, localPoint.y)]
-            val up = viewportCells[MapPoint(localPoint.x, localPoint.y - 1)]
-            val down = viewportCells[MapPoint(localPoint.x, localPoint.y + 1)]
-            if (left != null && left.kind in CONNECTABLE_KINDS) {
-                segments.add(GestureEditorLayout.horizontalPath(cy, GestureEditorLayout.cellCenterX(colIndex - 1), cx))
-            }
-            val connectsRight = right != null && right.kind in CONNECTABLE_KINDS
-            val connectsDown = down != null && down.kind in CONNECTABLE_KINDS
-            if (connectsRight) segments.add(GestureEditorLayout.horizontalPath(cy, cx, GestureEditorLayout.cellCenterX(colIndex + 1)))
-            if (up != null && up.kind in CONNECTABLE_KINDS) {
-                segments.add(GestureEditorLayout.verticalPath(cx, GestureEditorLayout.cellCenterY(rowIndex - 1), cy))
-            }
-            if (connectsDown) segments.add(GestureEditorLayout.verticalPath(cx, cy, GestureEditorLayout.cellCenterY(rowIndex + 1)))
-            val horizontal = (left?.kind in CONNECTABLE_KINDS) || connectsRight
-            val vertical = (up?.kind in CONNECTABLE_KINDS) || connectsDown
-            if (horizontal && vertical) {
-                segments.add(GestureEditorLayout.PathSegment(cx, cy, GestureEditorLayout.PATH_THICKNESS, GestureEditorLayout.PATH_THICKNESS))
-            }
+            listOf(MapPoint(p.x - 1, p.y), MapPoint(p.x + 1, p.y), MapPoint(p.x, p.y - 1), MapPoint(p.x, p.y + 1))
+                .filter { viewportCells[it]?.kind in CONNECTABLE_KINDS }
+                .forEach { edges += edge(p, it) }
         }
-        // 経路セルが省略された末端は、挿入元IDが一致する追加ポイントだけを接続します。
-        viewportCells.forEach { (p, cell) ->
-            if (cell.kind != MapCellKind.ADD) return@forEach
-            listOf(MapPoint(p.x - 2, p.y), MapPoint(p.x + 2, p.y), MapPoint(p.x, p.y - 2), MapPoint(p.x, p.y + 2))
-                .mapNotNull { candidate -> viewportCells[candidate]?.let { candidate to it } }
-                .filter { (_, other) -> other.kind == MapCellKind.NODE && other.nodeId == cell.insertionTarget?.sourceId }
-                .forEach { (n, _) ->
-                    val x1 = GestureEditorLayout.cellCenterX(p.x)
-                    val y1 = GestureEditorLayout.cellCenterY(p.y)
-                    val x2 = GestureEditorLayout.cellCenterX(n.x)
-                    val y2 = GestureEditorLayout.cellCenterY(n.y)
-                    if (p.y == n.y) {
-                        segments.add(GestureEditorLayout.horizontalPath(y1, x1, x2))
-                    } else {
-                        segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
-                    }
+
+        // 隣接セルごとに帯を作ると、node-path-node間に6枚が重なります。
+        // まず同一直線上の論理辺を連結し、1本の接続を3枚へ分割します。
+        fun mergeSpans(source: List<Span>): List<Span> {
+            val result = mutableListOf<Span>()
+            source.groupBy { it.horizontal to it.line }.values.forEach { grouped ->
+                var current = grouped.minByOrNull { it.start } ?: return@forEach
+                grouped.sortedBy { it.start }.drop(1).forEach { next ->
+                    if (next.start <= current.end) current = current.copy(end = maxOf(current.end, next.end))
+                    else { result += current; current = next }
                 }
+                result += current
+            }
+            return result
         }
-        // ビューポート端の先にも論理セルが続く場合は、画面端までのスタブを描画します。
-        val maxX = GestureEditorLayout.VIEWPORT_COLS - 1
-        val maxY = GestureEditorLayout.VIEWPORT_ROWS - 1
-        viewportCells.forEach { (p, cell) ->
-            if (cell.kind !in CONNECTABLE_KINDS) return@forEach
-            val global = MapPoint(origin.x + p.x, origin.y + p.y)
-            listOf(
-                MapPoint(-1, 0) to (p.x == 0),
-                MapPoint(1, 0) to (p.x == maxX),
-                MapPoint(0, -1) to (p.y == 0),
-                MapPoint(0, 1) to (p.y == maxY),
-            ).forEach { (delta, atEdge) ->
-                if (!atEdge || cell.kind !in setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH)) return@forEach
-                val cx = GestureEditorLayout.cellCenterX(p.x)
-                val cy = GestureEditorLayout.cellCenterY(p.y)
-                if (delta.x != 0) {
-                    val outsideX = GestureEditorLayout.cellCenterX(if (delta.x < 0) -1 else GestureEditorLayout.VIEWPORT_COLS)
-                    segments.add(GestureEditorLayout.horizontalPath(cy, cx, outsideX))
+
+        val spans = mergeSpans(edges.map { e ->
+            if (e.a.y == e.b.y) Span(true, e.a.y, e.a.x, e.b.x)
+            else Span(false, e.a.x, e.a.y, e.b.y)
+        })
+
+        fun isJunction(point: MapPoint, horizontal: Boolean): Boolean =
+            edges.any { e ->
+                val incident = e.a == point || e.b == point
+                incident && if (horizontal) e.a.x == e.b.x else e.a.y == e.b.y
+            }
+
+        val rawSegments = mutableListOf<GestureEditorLayout.PathSegment>()
+        spans.forEach { span ->
+            val startPoint = if (span.horizontal) MapPoint(span.start, span.line) else MapPoint(span.line, span.start)
+            val endPoint = if (span.horizontal) MapPoint(span.end, span.line) else MapPoint(span.line, span.end)
+            val trim = GestureEditorLayout.PATH_THICKNESS / 2.0
+            val startInset = if (isJunction(startPoint, span.horizontal)) trim else 0.0
+            val endInset = if (isJunction(endPoint, span.horizontal)) trim else 0.0
+            val first = if (span.horizontal) metrics.x(span.start) else metrics.y(span.start)
+            val last = if (span.horizontal) metrics.x(span.end) else metrics.y(span.end)
+            val low = minOf(first, last) + if (first <= last) startInset else endInset
+            val high = maxOf(first, last) - if (first <= last) endInset else startInset
+            val length = (high - low).coerceAtLeast(0.0)
+            if (length <= 1.0e-6) return@forEach
+            val third = length / 3.0
+            repeat(3) { index ->
+                val center = low + third * (index + 0.5)
+                rawSegments += if (span.horizontal) {
+                    GestureEditorLayout.PathSegment(center, metrics.y(span.line), third, GestureEditorLayout.PATH_THICKNESS)
                 } else {
-                    val outsideY = GestureEditorLayout.cellCenterY(if (delta.y < 0) -1 else GestureEditorLayout.VIEWPORT_ROWS)
-                    segments.add(GestureEditorLayout.verticalPath(cx, cy, outsideY))
+                    GestureEditorLayout.PathSegment(metrics.x(span.line), center, GestureEditorLayout.PATH_THICKNESS, third)
                 }
             }
         }
-        // 各論理接続は3枚の連続ディスプレイへ分割し、ノード間の隙間をなくします。
-        return segments.flatMap { segment ->
-            if (segment.w >= segment.h) {
-                val third = segment.w / 3.0
-                listOf(0, 1, 2).map { index ->
-                    GestureEditorLayout.PathSegment(segment.x - segment.w / 2.0 + third * (index + 0.5), segment.y, third, segment.h)
-                }
-            } else {
-                val third = segment.h / 3.0
-                listOf(0, 1, 2).map { index ->
-                    GestureEditorLayout.PathSegment(segment.x, segment.y + segment.h / 2.0 - third * (index + 0.5), segment.w, third)
+
+        // 角は専用の正方形1枚で埋め、水平・垂直帯同士の透明材重複を防ぎます。
+        viewportCells.keys.filter { p ->
+            viewportCells[p]?.kind in pathKinds &&
+                edges.any { (it.a == p || it.b == p) && it.a.y == it.b.y } &&
+                edges.any { (it.a == p || it.b == p) && it.a.x == it.b.x }
+        }.forEach { p ->
+            rawSegments += GestureEditorLayout.PathSegment(
+                metrics.x(p.x), metrics.y(p.y),
+                GestureEditorLayout.PATH_THICKNESS, GestureEditorLayout.PATH_THICKNESS,
+            )
+        }
+
+        // ビューポート端から外へ続く経路は、論理セルの有無に関係なく3枚のスタブで示します。
+        val maxX = metrics.columns - 1
+        val maxY = metrics.rows - 1
+        viewportCells.forEach { (p, cell) ->
+            if (cell.kind !in pathKinds) return@forEach
+            fun addStub(q: MapPoint) {
+                if (q.x != p.x) {
+                    val a = metrics.x(p.x)
+                    val b = metrics.x(q.x)
+                    val third = kotlin.math.abs(b - a) / 3.0
+                    repeat(3) { i -> rawSegments += GestureEditorLayout.PathSegment(minOf(a, b) + third * (i + .5), metrics.y(p.y), third, GestureEditorLayout.PATH_THICKNESS) }
+                } else {
+                    val a = metrics.y(p.y)
+                    val b = metrics.y(q.y)
+                    val third = kotlin.math.abs(b - a) / 3.0
+                    repeat(3) { i -> rawSegments += GestureEditorLayout.PathSegment(metrics.x(p.x), maxOf(a, b) - third * (i + .5), GestureEditorLayout.PATH_THICKNESS, third) }
                 }
             }
-        }.distinct()
+            if (p.x == 0 && viewportCells[MapPoint(-1, p.y)] == null) addStub(MapPoint(-1, p.y))
+            if (p.x == maxX && viewportCells[MapPoint(maxX + 1, p.y)] == null) addStub(MapPoint(maxX + 1, p.y))
+            if (p.y == 0 && viewportCells[MapPoint(p.x, -1)] == null) addStub(MapPoint(p.x, -1))
+            if (p.y == maxY && viewportCells[MapPoint(p.x, maxY + 1)] == null) addStub(MapPoint(p.x, maxY + 1))
+        }
+        return rawSegments.distinct()
+    }
+
+    private fun zoomScale(): Double =
+        (GestureEditorLayout.DEFAULT_ZOOM + state.zoomLevel.coerceIn(-2, 3) * 0.25).coerceIn(0.25, 1.5)
+
+    private fun viewportMetrics(scale: Double): ViewportMetrics {
+        val columns = GestureEditorLayout.viewportColumns(scale)
+        val rows = GestureEditorLayout.viewportRows(scale)
+        return ViewportMetrics(
+            zoomScale = scale,
+            columns = columns,
+            rows = rows,
+            offsetX = GestureEditorLayout.viewportOffset(GestureEditorLayout.VIEWPORT_COLS, columns),
+            offsetY = GestureEditorLayout.viewportOffset(GestureEditorLayout.VIEWPORT_ROWS, rows),
+        )
     }
 
     private companion object {
