@@ -130,7 +130,7 @@ class GestureSequenceEditor(
                     val node = cell.nodeId?.let { script.graph.nodes[it] }
                     if (node != null) {
                         val isSelected = state.selectedNodeId == node.id
-                        val glowColor = if (isSelected) Color.YELLOW.asRGB() else null
+                        val glowColor = if (isSelected) Color.YELLOW.asARGB() else null
                         // アイコン単体を浮かせず、追加ポイントと同じマス背景で視認性と接続先を示します。
                         visuals.add(GestureGuiVisual.Block(
                             visualId = "node-bg-${node.id}",
