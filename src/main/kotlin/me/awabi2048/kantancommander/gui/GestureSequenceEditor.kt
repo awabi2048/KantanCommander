@@ -138,7 +138,8 @@ class GestureSequenceEditor(
                             width = GestureEditorLayout.ICON_W,
                             height = GestureEditorLayout.ICON_H,
                             blockData = Bukkit.createBlockData(if (isSelected) Material.YELLOW_CONCRETE else Material.CYAN_TERRACOTTA),
-                            layer = if (isSelected) 5 else 2,
+                            // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
+                            layer = 2,
                             glowColor = glowColor,
                         ))
                         // マスの90% (ICON_W=0.171) に合わせる。Item.scale 0.22が標準のため 0.22*0.78≈0.17 とする
