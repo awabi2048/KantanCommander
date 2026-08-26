@@ -139,7 +139,7 @@ class GestureSequenceEditor(
                             x = cx, y = cy,
                             width = GestureEditorLayout.ICON_W,
                             height = GestureEditorLayout.ICON_H,
-                            blockData = Bukkit.createBlockData(if (isSelected) Material.YELLOW_CONCRETE else Material.CYAN_TERRACOTTA),
+                            blockData = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
                             // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
                             layer = 2,
                             glowColor = glowColor,
@@ -169,7 +169,7 @@ class GestureSequenceEditor(
                         x = cx, y = cy,
                         width = GestureEditorLayout.ICON_W,
                         height = GestureEditorLayout.ICON_H,
-                        blockData = Bukkit.createBlockData(if (isSelected) Material.YELLOW_CONCRETE else Material.CYAN_TERRACOTTA),
+                        blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
                         layer = 2,
                         glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
                     ))
@@ -250,6 +250,8 @@ class GestureSequenceEditor(
                 when (context.gesture) {
                     GestureGuiGesture.PRIMARY -> {
                         state.selectedNodeId = nodeId
+                        state.selectedAddPoint = null
+                        state.pendingInsertion = null
                         state.lowerMode = GestureLowerMode.SETTINGS
                         state.settingsTab = 0
                         state.settingsPage = 0
@@ -257,6 +259,8 @@ class GestureSequenceEditor(
                         updateLower(player)
                     }
                     GestureGuiGesture.SECONDARY -> {
+                        state.selectedAddPoint = null
+                        state.pendingInsertion = null
                         state.confirmNodeId = nodeId
                         openConfirmChild(player)
                     }
@@ -267,6 +271,8 @@ class GestureSequenceEditor(
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
                 state.confirmNodeId = null
+                state.pendingInsertion = null
+                state.lowerMode = GestureLowerMode.SETTINGS
                 updateUpper(player)
                 updateLower(player)
             }
@@ -529,6 +535,20 @@ class GestureSequenceEditor(
                     else segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
                 }
             }
+        }
+        viewportCells.forEach { (p, cell) ->
+            if (cell.kind != MapCellKind.ADD) return@forEach
+            listOf(MapPoint(p.x - 2, p.y), MapPoint(p.x + 2, p.y), MapPoint(p.x, p.y - 2), MapPoint(p.x, p.y + 2))
+                .mapNotNull { candidate -> viewportCells[candidate]?.let { candidate to it } }
+                .filter { (_, other) -> other.kind == MapCellKind.NODE }
+                .forEach { (n, _) ->
+                    val x1 = GestureEditorLayout.cellCenterX(p.x)
+                    val y1 = GestureEditorLayout.cellCenterY(p.y)
+                    val x2 = GestureEditorLayout.cellCenterX(n.x)
+                    val y2 = GestureEditorLayout.cellCenterY(n.y)
+                    if (p.y == n.y) segments.add(GestureEditorLayout.horizontalPath(y1, x1, x2))
+                    else segments.add(GestureEditorLayout.verticalPath(x1, y1, y2))
+                }
         }
         return segments.toList()
     }

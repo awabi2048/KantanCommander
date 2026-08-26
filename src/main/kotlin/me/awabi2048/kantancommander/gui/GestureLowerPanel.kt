@@ -74,7 +74,7 @@ class GestureLowerPanel(
             val cy = 0.38 - index * 0.17
             val on = index == selected
             addBlock(visuals, "tab-bg-$index", -0.7975, cy, 0.47, 0.15,
-                if (on) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE, 4)
+                if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4)
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, field.label)))
             elements.add(GestureGuiElement(
@@ -108,7 +108,7 @@ class GestureLowerPanel(
         // 値編集ボタン: チャット入力で値を確定する（ジェスチャーGUIは閉じない）
         val editable = field.key in CHAT_EDITABLE_KEYS
         addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.26,
-            if (editable) Material.STONE_BUTTON else Material.GRAY_CONCRETE, 4)
+            if (editable) Material.STONE_BUTTON else Material.CYAN_TERRACOTTA, 4)
         addText(visuals, "lower-edit", 0.28, 0.02, 0.006, 160,
             Component.text(if (editable) "チャットで編集" else "専用選択で編集"))
         if (editable) {
@@ -132,7 +132,7 @@ class GestureLowerPanel(
             val cy = 0.38 - index * 0.17
             val on = index == state.pickerCategory
             addBlock(visuals, "cat-bg-$index", -0.7975, cy, 0.47, 0.15,
-                if (on) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE, 4)
+                if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4)
             addText(visuals, "cat-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, category.labelKey)))
             elements.add(GestureGuiElement(
@@ -196,7 +196,7 @@ class GestureLowerPanel(
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
             targetVisualId = "confirm-yes-bg",
         ))
-        addBlock(visuals, "confirm-no-bg", 0.27, -0.08, 0.48, 0.12, Material.GRAY_CONCRETE, 4)
+        addBlock(visuals, "confirm-no-bg", 0.27, -0.08, 0.48, 0.12, Material.CYAN_TERRACOTTA, 4)
         addText(visuals, "confirm-no", 0.27, -0.08, 0.004, 100, Component.text("キャンセル"))
         elements.add(GestureGuiElement(
             elementId = "confirm-cancel",
