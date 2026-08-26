@@ -105,14 +105,19 @@ class GestureLowerPanel(
         addText(visuals, "lower-current-label", 0.28, 0.34, 0.0048, 200, Component.text("現在値"))
         addText(visuals, "lower-current-value", 0.28, 0.27, 0.006, 200, Component.text(value))
         // 値編集ボタン: チャット入力で値を確定する（ジェスチャーGUIは閉じない）
-        addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.26, Material.STONE_BUTTON, 4)
-        addText(visuals, "lower-edit", 0.28, 0.02, 0.006, 160, Component.text("チャットで編集"))
-        elements.add(GestureGuiElement(
-            elementId = "lower-edit:${field.key}",
-            bounds = rect(0.28, 0.02, 1.2, 0.26),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-            targetVisualId = "lower-edit-bg",
-        ))
+        val editable = field.key in CHAT_EDITABLE_KEYS
+        addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.26,
+            if (editable) Material.STONE_BUTTON else Material.GRAY_CONCRETE, 4)
+        addText(visuals, "lower-edit", 0.28, 0.02, 0.006, 160,
+            Component.text(if (editable) "チャットで編集" else "専用選択で編集"))
+        if (editable) {
+            elements.add(GestureGuiElement(
+                elementId = "lower-edit:${field.key}",
+                bounds = rect(0.28, 0.02, 1.2, 0.26),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "lower-edit-bg",
+            ))
+        }
 
         return view(GestureLowerMode.SETTINGS, elements, visuals)
     }
@@ -304,5 +309,11 @@ class GestureLowerPanel(
     private companion object {
         const val SETTINGS_PAGE_SIZE = 4
         const val PICKER_PAGE_SIZE = 8
+        /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
+        val CHAT_EDITABLE_KEYS = setOf(
+            "item", "count", "text", "stay", "ticks", "tags", "sound", "volume", "pitch",
+            "effect", "level", "seconds", "intensity", "diskId", "name", "startValue",
+            "endValue", "stepValue", "condition", "variable", "value",
+        )
     }
 }

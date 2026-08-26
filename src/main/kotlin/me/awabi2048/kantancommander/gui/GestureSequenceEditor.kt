@@ -310,6 +310,11 @@ class GestureSequenceEditor(
             }
             context.elementId.startsWith("lower-edit:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
+                if (fieldKey !in setOf(
+                        "item", "count", "text", "stay", "ticks", "tags", "sound", "volume", "pitch",
+                        "effect", "level", "seconds", "intensity", "diskId", "name", "startValue",
+                        "endValue", "stepValue", "condition", "variable", "value",
+                    )) return
                 val script = plugin.scripts.load(state.scriptId)
                 val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) } ?: return
                 // チャット入力でフィールド値を設定する（ジェスチャーGUIは閉じない）
