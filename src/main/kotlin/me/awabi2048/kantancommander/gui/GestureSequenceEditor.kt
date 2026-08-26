@@ -113,11 +113,12 @@ class GestureSequenceEditor(
                     if (node != null) {
                         val isSelected = state.selectedNodeId == node.id
                         val glowColor = if (isSelected) Color.YELLOW.asRGB() else null
+                        // マスの90% (ICON_W=0.171) に合わせる。Item.scale 0.22が標準のため 0.22*0.78≈0.17 とする
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
                             item = org.bukkit.inventory.ItemStack(node.type.icon),
-                            scale = 0.13,
+                            scale = 0.18,
                             layer = if (isSelected) 5 else 3,
                             glowColor = glowColor,
                         ))
@@ -237,8 +238,25 @@ class GestureSequenceEditor(
                 updateUpper(player)
             }
             context.elementId == "back-to-start" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                // 最も先頭にある追加ポイントをビューに含める
+                val script = plugin.scripts.load(state.scriptId)
+                val firstAdd = script?.let { GestureEditorLayout.findFirstAddPoint(GraphLayoutEngine.layout(it.graph).cells) }
+                if (firstAdd != null) {
+                    // firstAddがビューポート内に入るよう原点を調整
+                    var ox = state.origin.x
+                    var oy = state.origin.y
+                    if (firstAdd.x < ox) ox = firstAdd.x
+                    else if (firstAdd.x > ox + GestureEditorLayout.VIEWPORT_COLS - 1) ox = firstAdd.x - GestureEditorLayout.VIEWPORT_COLS + 1
+                    if (firstAdd.y < oy) oy = firstAdd.y
+                    else if (firstAdd.y > oy + GestureEditorLayout.VIEWPORT_ROWS - 1) oy = firstAdd.y - GestureEditorLayout.VIEWPORT_ROWS + 1
+                    state.origin = GestureEditorLayout.clampOrigin(
+                        MapPoint(ox, oy),
+                        GraphLayoutEngine.layout(script.graph),
+                    )
+                } else {
+                    state.origin = MapPoint(0, 0)
+                }
                 state.selectedNodeId = null
-                state.origin = MapPoint(0, 0)
                 updateUpper(player)
                 updateLower(player)
             }
