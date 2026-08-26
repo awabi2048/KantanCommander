@@ -218,7 +218,12 @@ class GestureSequenceEditor(
                         MapPoint(localPoint.x - 1, localPoint.y), MapPoint(localPoint.x + 1, localPoint.y),
                         MapPoint(localPoint.x, localPoint.y - 1), MapPoint(localPoint.x, localPoint.y + 1),
                     ).any { cells[it]?.kind == MapCellKind.ADD }
-                    if (!hasAddNeighbor && cell.insertionTarget != null) {
+                    val verticalBranchOnly = cell.kind == MapCellKind.BRANCH_PATH &&
+                        (cells[MapPoint(localPoint.x, localPoint.y - 1)]?.kind in CONNECTABLE_KINDS ||
+                            cells[MapPoint(localPoint.x, localPoint.y + 1)]?.kind in CONNECTABLE_KINDS) &&
+                        cells[MapPoint(localPoint.x - 1, localPoint.y)]?.kind !in CONNECTABLE_KINDS &&
+                        cells[MapPoint(localPoint.x + 1, localPoint.y)]?.kind !in CONNECTABLE_KINDS
+                    if (!hasAddNeighbor && !verticalBranchOnly && cell.insertionTarget != null) {
                         elements.add(GestureGuiElement(
                             elementId = "path:${gx}:${gy}",
                             bounds = rect(cx, cy, GestureEditorLayout.PITCH_X, GestureEditorLayout.PITCH_Y),
@@ -677,6 +682,11 @@ class GestureSequenceEditor(
                 segments.add(GestureEditorLayout.verticalPath(cx, GestureEditorLayout.cellCenterY(rowIndex - 1), cy))
             }
             if (connectsDown) segments.add(GestureEditorLayout.verticalPath(cx, cy, GestureEditorLayout.cellCenterY(rowIndex + 1)))
+            val horizontal = (left?.kind in CONNECTABLE_KINDS) || connectsRight
+            val vertical = (up?.kind in CONNECTABLE_KINDS) || connectsDown
+            if (horizontal && vertical) {
+                segments.add(GestureEditorLayout.PathSegment(cx, cy, GestureEditorLayout.PATH_THICKNESS, GestureEditorLayout.PATH_THICKNESS))
+            }
         }
         // 経路セルが省略された末端は、挿入元IDが一致する追加ポイントだけを接続します。
         viewportCells.forEach { (p, cell) ->
@@ -712,7 +722,7 @@ class GestureSequenceEditor(
                 MapPoint(0, -1) to (p.y == 0),
                 MapPoint(0, 1) to (p.y == maxY),
             ).forEach { (delta, atEdge) ->
-                if (!atEdge || allCells[MapPoint(global.x + delta.x, global.y + delta.y)]?.kind !in CONNECTABLE_KINDS) return@forEach
+                if (!atEdge || cell.kind !in setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH)) return@forEach
                 val cx = GestureEditorLayout.cellCenterX(p.x)
                 val cy = GestureEditorLayout.cellCenterY(p.y)
                 if (delta.x != 0) {

@@ -30,7 +30,7 @@ class GestureEditorLayoutTest {
         )
         assertEquals(-0.66, seg.x, 1.0e-9)
         assertEquals(0.08, seg.y, 1.0e-9)
-        assertEquals(0.22, seg.w, 1.0e-9)
+        assertEquals(GestureEditorLayout.PATH_THICKNESS, seg.w, 1.0e-9)
         // 断面はピッチの2:3
         assertEquals(GestureEditorLayout.PATH_THICKNESS, seg.h, 1.0e-9)
     }
@@ -44,7 +44,7 @@ class GestureEditorLayoutTest {
         )
         assertEquals(-0.33, seg.x, 1.0e-9)
         assertEquals(0.08, seg.y, 1.0e-9)
-        assertEquals(0.40, seg.h, 1.0e-9)
+        assertEquals(0.40 - GestureEditorLayout.PATH_THICKNESS, seg.h, 1.0e-9)
     }
 
     @Test
@@ -59,11 +59,11 @@ class GestureEditorLayoutTest {
         // 垂直部分: 上(IF)からcornerまで
         val vertical = segments.first { it.w < it.h }
         assertEquals(-0.33, vertical.x, 1.0e-9)
-        assertTrue(abs(vertical.h - 0.40) < 1.0e-9)
+        assertTrue(abs(vertical.h - (0.40 - GestureEditorLayout.PATH_THICKNESS)) < 1.0e-9)
         // 水平部分: cornerから右(分岐先)まで
         val horizontal = segments.first { it.w > it.h }
         assertEquals(-0.12, horizontal.y, 1.0e-9)
-        assertEquals(0.66, horizontal.w, 1.0e-9)
+        assertEquals(0.66 - GestureEditorLayout.PATH_THICKNESS, horizontal.w, 1.0e-9)
     }
 
     @Test

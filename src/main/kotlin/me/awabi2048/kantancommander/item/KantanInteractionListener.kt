@@ -41,8 +41,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
                 return
             }
-            // 空の拡張コマンドブロックへコマンドディスクを右クリックした場合は、内容の上書き確認を開く。
-            if (itemKind == KantanItemKind.DISK && script.graph.nodes.isEmpty()) {
+            // コマンドディスク挿入は常に既存の書き込み確認へ送り、Gesture GUIを開かない。
+            if (itemKind == KantanItemKind.DISK) {
                 val diskScriptId = diskId ?: return
                 plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
                 return
