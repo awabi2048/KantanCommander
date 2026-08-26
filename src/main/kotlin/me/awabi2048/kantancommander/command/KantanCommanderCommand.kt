@@ -46,6 +46,7 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
         val totalPages = ((all.size + pageSize - 1) / pageSize).coerceAtLeast(1)
         val page = requestedPage.coerceIn(1, totalPages)
         sender.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_HEADER, mapOf("count" to all.size)))
+        sender.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_PAGE, mapOf("page" to page, "pages" to totalPages)))
         all.drop((page - 1) * pageSize).take(pageSize).forEach {
             sender.sendMessage(KcI18n.text(sender as? Player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENTS_ENTRY, mapOf(
                 "world" to it.world,
