@@ -277,19 +277,19 @@ object GraphLayoutEngine {
             }
 
             // 枝が集まる角と合流ノードを同じセルへ置かず、専用の経路セルを
-            // 1つ確保します。mergeX はL字の角、mergeX + 1 は角から
-            // 合流ノードへ向かう経路、mergeX + 2 が合流ノードです。
+            // 1つ確保します。mergeX - 1 はL字の角、mergeX は角から
+            // 合流ノードへ向かう経路、mergeX + 1 が合流ノードです。
             // これにより、角から合流ノード中心までの距離が通常接続と同じ
             // 2ピッチとなり、経路を3枚へ分割しても短い断片になりません。
             val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
-            val mergeNodeX = mergeX + 2
+            val mergeNodeX = mergeX + 1
             val trueSource = trueSegment.tail ?: condition.id
             val trueEdge = if (trueSegment.tail == null) GraphEditor.Edge.TRUE else GraphEditor.Edge.NEXT
             val falseSource = falseSegment.tail ?: condition.id
             val falseEdge = if (falseSegment.tail == null) GraphEditor.Edge.FALSE else GraphEditor.Edge.NEXT
             fillHorizontal(
                 trueSegment.nextX - 1,
-                mergeX,
+                mergeX - 1,
                 y,
                 MapCellKind.BRANCH_PATH,
                 trueSource,
@@ -298,7 +298,7 @@ object GraphLayoutEngine {
             )
             fillHorizontal(
                 falseSegment.nextX - 1,
-                mergeX,
+                mergeX - 1,
                 falseY,
                 MapCellKind.BRANCH_PATH,
                 falseSource,
@@ -307,7 +307,7 @@ object GraphLayoutEngine {
             )
             for (verticalY in y + 1..falseY) {
                 putPath(
-                    mergeX,
+                    mergeX - 1,
                     verticalY,
                     MapCellKind.BRANCH_PATH,
                     falseSource,
@@ -321,7 +321,7 @@ object GraphLayoutEngine {
             // 枝が空／短い場合でも、「水平枝→L字の角→専用水平経路→
             // 合流アイコン」の接続が欠けないようにします。
             putPath(
-                mergeX + 1,
+                mergeX,
                 y,
                 MapCellKind.BRANCH_PATH,
                 trueSource,

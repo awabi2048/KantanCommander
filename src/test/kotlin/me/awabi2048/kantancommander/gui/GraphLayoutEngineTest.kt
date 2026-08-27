@@ -61,7 +61,12 @@ class GraphLayoutEngineTest {
 
         val layout = GraphLayoutEngine.layout(graph)
         assertEquals(graph.nodes.keys, layout.nodePoints.keys)
-        assertTrue(layout.nodePoints.values.all { it.x % 2 == 1 && it.y % 2 == 1 })
+        // 合流ノードはL字接続を2ピッチで収めるため、x座標が通常ノードと
+        // 同じ奇数格子になるとは限りません。縦方向のレーンは維持し、
+        // ノード同士の重複とノード位置の上書きだけを検証します。
+        assertTrue(layout.nodePoints.values.all { it.y % 2 == 1 })
+        assertEquals(layout.nodePoints.size, layout.nodePoints.values.toSet().size)
+        assertTrue(layout.nodePoints.values.all { layout.cells[it]?.kind == MapCellKind.NODE })
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.LOOP_RETURN_PATH })
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.BRANCH_PATH })
     }
