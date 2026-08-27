@@ -374,7 +374,6 @@ class GestureSequenceEditor(
                         state.settingsPage = 0
                         updateUpper(player)
                         updateLower(player)
-                        playClick(player)
                     }
                     else -> Unit
                 }
@@ -387,14 +386,12 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateUpper(player)
                 updateLower(player)
-                playClick(player)
             }
             context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val next = (state.zoomLevel + 1).coerceAtMost(3)
                 if (next != state.zoomLevel) {
                     state.zoomLevel = next
                     updateUpper(player)
-                    playClick(player)
                 }
             }
             context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
@@ -402,14 +399,12 @@ class GestureSequenceEditor(
                 if (next != state.zoomLevel) {
                     state.zoomLevel = next
                     updateUpper(player)
-                    playClick(player)
                 }
             }
             context.elementId == "nav-zoom-reset" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 if (state.zoomLevel != 0) {
                     state.zoomLevel = 0
                     updateUpper(player)
-                    playClick(player)
                 }
             }
             context.elementId.startsWith("nav-") && context.gesture == GestureGuiGesture.PRIMARY -> {
@@ -435,7 +430,6 @@ class GestureSequenceEditor(
                 }
                 state.origin = nextOrigin
                 updateUpper(player)
-                playClick(player)
             }
             context.elementId == "back-to-start" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 // 最も先頭にある追加ポイントをビューに含めるよう原点を調整
@@ -460,7 +454,6 @@ class GestureSequenceEditor(
                 state.selectedNodeId = null
                 updateUpper(player)
                 updateLower(player)
-                playClick(player)
             }
             context.elementId.startsWith("add:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 // addポイントの挿入先情報を保持し、下部をPICKERへ切り替える
@@ -484,7 +477,6 @@ class GestureSequenceEditor(
                 state.pickerPage = 0
                 updateUpper(player)
                 updateLower(player)
-                playClick(player)
             }
             context.elementId.startsWith("path:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return
@@ -499,17 +491,14 @@ class GestureSequenceEditor(
                 state.pickerPage = 0
                 updateUpper(player)
                 updateLower(player)
-                playClick(player)
             }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.settingsTab = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
                 updateLower(player)
-                playClick(player)
             }
             context.elementId.startsWith("lower-settings-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.settingsPage = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
                 updateLower(player)
-                playClick(player)
             }
             context.elementId.startsWith("lower-edit:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
@@ -526,18 +515,15 @@ class GestureSequenceEditor(
                     if (script != null) plugin.scripts.save(script)
                     updateLower(player)
                 }
-                playClick(player)
             }
             context.elementId.startsWith("lower-cat:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
                 state.pickerPage = 0
                 updateLower(player)
-                playClick(player)
             }
             context.elementId.startsWith("lower-picker-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pickerPage = context.elementId.removePrefix("lower-picker-page:").toIntOrNull() ?: return
                 updateLower(player)
-                playClick(player)
             }
             context.elementId.startsWith("lower-type:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val typeName = context.elementId.removePrefix("lower-type:")
@@ -570,17 +556,14 @@ class GestureSequenceEditor(
                 state.settingsPage = 0
                 updateUpper(player)
                 updateLower(player)
-                playClick(player)
             }
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
-                playClick(player)
             }
             context.elementId == "lower-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.confirmNodeId = state.selectedNodeId ?: return
                 openConfirmChild(player)
-                playClick(player)
             }
             context.elementId == "confirm-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val nodeId = state.confirmNodeId ?: return
@@ -594,24 +577,14 @@ class GestureSequenceEditor(
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateUpper(player)
                 updateLower(player)
-                playClick(player)
             }
             context.elementId == "confirm-cancel" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.confirmNodeId = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateLower(player)
-                playClick(player)
             }
         }
-    }
-
-    /**
-     * ジェスチャーGUIの確定操作音を一箇所に集約します。
-     * `ui.click` は設定項目が存在しない画面や無効な候補では呼び出しません。
-     */
-    private fun playClick(player: Player) {
-        player.playSound(player.location, "ui.click", 1.0f, 2.0f)
     }
 
     private fun emptyView(): GestureGuiView {
