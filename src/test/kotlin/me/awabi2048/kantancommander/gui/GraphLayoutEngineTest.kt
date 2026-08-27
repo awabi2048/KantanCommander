@@ -356,6 +356,31 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `nested false add point reserves a separate parent merge column`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueHead = GraphEditor.append(graph, CommandType.WAIT)
+        val merge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, trueHead.id, GraphEditor.Edge.NEXT, CommandType.CONDITION)
+        GraphEditor.insert(graph, inner.id, GraphEditor.Edge.FALSE, CommandType.WAIT)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val innerPoint = requireNotNull(layout.nodePoints[inner.id])
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val innerAdd = layout.cells.entries
+            .first { (point, cell) -> point.y > innerPoint.y && cell.kind == MapCellKind.ADD }
+            .key
+
+        // 追加ポイントが存在する列へ親合流の縦線を置かず、1ノード分右へ
+        // 退避します。上段の内側条件→親合流も全セル連続でなければなりません。
+        assertEquals(innerAdd.x + 2, mergePoint.x)
+        ((innerPoint.x + 1) until mergePoint.x).forEach { x ->
+            assertTrue(layout.cells[MapPoint(x, innerPoint.y)]?.kind in PATH_CELL_KINDS)
+        }
+        assertTrue(layout.cells[MapPoint(mergePoint.x, innerAdd.y)]?.kind in PATH_CELL_KINDS)
+    }
+
+    @Test
     fun `L shaped merge keeps the full vertical connector into the merge node`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)

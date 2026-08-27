@@ -304,7 +304,15 @@ object GraphLayoutEngine {
             // TRUE枝は従来どおり左側から直進させますが、折り返すFALSE枝は mergeX 列まで
             // 水平に延ばしてから真上へ戻します。これにより、合流ノードの直下セルが最後の
             // 接続端点になり、画面上でもMERGEアイコンの下側ポートへ経路が潜り込みます。
-            val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
+            //
+            // ただし、枝の中に未合流の条件分岐がある場合、nextXがその枝の追加ポイント
+            // 自体を指すことがあります（通常ノードを追加した直後のFALSE枝が該当）。
+            // その列へ合流側の縦線を置くと、追加ポイントを経路で上書きして描画例外になり、
+            // UI側では候補選択が無反応に見えます。開いた枝を含むときはノード1個分を
+            // 予約してから合流列を決め、追加ポイントと戻り経路を必ず別列へ分離します。
+            val openBranchClearance =
+                if (trueSegment.hasOpenEnd || falseSegment.hasOpenEnd) 2 else 0
+            val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX) + openBranchClearance
             val mergeNodeX = mergeX
             // 枝の長さ調整セルへ挿入先を付けるのは、枝が単一の閉じた実行列で
             // 終わっている場合だけです。開いた条件を含む枝は末尾位置が一意で
