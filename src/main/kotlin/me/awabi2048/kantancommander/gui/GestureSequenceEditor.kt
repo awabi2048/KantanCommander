@@ -361,6 +361,9 @@ class GestureSequenceEditor(
         when {
             context.elementId.startsWith("node:") -> {
                 val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node:")) }.getOrNull() ?: return
+                // 画面更新後に削除されたノードからの遅延入力は、選択も効果音も発生させません。
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                if (script.graph.nodes[nodeId] == null) return
                 when (context.gesture) {
                     GestureGuiGesture.PRIMARY -> {
                         state.selectedNodeId = nodeId
@@ -371,6 +374,7 @@ class GestureSequenceEditor(
                         state.settingsPage = 0
                         updateUpper(player)
                         updateLower(player)
+                        playClick(player)
                     }
                     else -> Unit
                 }
@@ -383,18 +387,30 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateUpper(player)
                 updateLower(player)
+                playClick(player)
             }
             context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.zoomLevel = (state.zoomLevel + 1).coerceAtMost(3)
-                updateUpper(player)
+                val next = (state.zoomLevel + 1).coerceAtMost(3)
+                if (next != state.zoomLevel) {
+                    state.zoomLevel = next
+                    updateUpper(player)
+                    playClick(player)
+                }
             }
             context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.zoomLevel = (state.zoomLevel - 1).coerceAtLeast(-2)
-                updateUpper(player)
+                val next = (state.zoomLevel - 1).coerceAtLeast(-2)
+                if (next != state.zoomLevel) {
+                    state.zoomLevel = next
+                    updateUpper(player)
+                    playClick(player)
+                }
             }
             context.elementId == "nav-zoom-reset" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.zoomLevel = 0
-                updateUpper(player)
+                if (state.zoomLevel != 0) {
+                    state.zoomLevel = 0
+                    updateUpper(player)
+                    playClick(player)
+                }
             }
             context.elementId.startsWith("nav-") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val delta = when (context.elementId) {
@@ -414,12 +430,12 @@ class GestureSequenceEditor(
                     metrics.rows,
                 )
                 if (nextOrigin == state.origin) {
-                    // 移動不能時も無反応にせず、操作対象へ短いフィードバックを返します。
-                    player.playSound(player.location, org.bukkit.Sound.BLOCK_NOTE_BLOCK_BASS, 0.35f, 0.7f)
+                    // 移動不能時は状態・更新・効果音のいずれも発生させません。
                     return
                 }
                 state.origin = nextOrigin
                 updateUpper(player)
+                playClick(player)
             }
             context.elementId == "back-to-start" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 // 最も先頭にある追加ポイントをビューに含めるよう原点を調整
@@ -440,6 +456,7 @@ class GestureSequenceEditor(
                 state.selectedNodeId = null
                 updateUpper(player)
                 updateLower(player)
+                playClick(player)
             }
             context.elementId.startsWith("add:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 // addポイントの挿入先情報を保持し、下部をPICKERへ切り替える
@@ -463,6 +480,7 @@ class GestureSequenceEditor(
                 state.pickerPage = 0
                 updateUpper(player)
                 updateLower(player)
+                playClick(player)
             }
             context.elementId.startsWith("path:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return
@@ -477,14 +495,17 @@ class GestureSequenceEditor(
                 state.pickerPage = 0
                 updateUpper(player)
                 updateLower(player)
+                playClick(player)
             }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.settingsTab = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
                 updateLower(player)
+                playClick(player)
             }
             context.elementId.startsWith("lower-settings-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.settingsPage = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
                 updateLower(player)
+                playClick(player)
             }
             context.elementId.startsWith("lower-edit:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
@@ -501,15 +522,18 @@ class GestureSequenceEditor(
                     if (script != null) plugin.scripts.save(script)
                     updateLower(player)
                 }
+                playClick(player)
             }
             context.elementId.startsWith("lower-cat:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
                 state.pickerPage = 0
                 updateLower(player)
+                playClick(player)
             }
             context.elementId.startsWith("lower-picker-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pickerPage = context.elementId.removePrefix("lower-picker-page:").toIntOrNull() ?: return
                 updateLower(player)
+                playClick(player)
             }
             context.elementId.startsWith("lower-type:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val typeName = context.elementId.removePrefix("lower-type:")
@@ -524,14 +548,14 @@ class GestureSequenceEditor(
                     updateLower(player)
                     return
                 }
-                val inserted = if (type == CommandType.MERGE) {
-                    // 画面表示後に別操作でグラフが変わる競合にも例外を漏らしません。
-                    runCatching {
+                val inserted = runCatching {
+                    if (type == CommandType.MERGE) {
+                        // 画面表示後に別操作でグラフが変わる競合にも例外を漏らしません。
                         GraphEditor.appendMerge(script.graph, requireNotNull(target.mergeConditionId))
-                    }.getOrNull() ?: return
-                } else {
-                    GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
-                }
+                    } else {
+                        GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
+                    }
+                }.getOrNull() ?: return
                 plugin.scripts.save(script)
                 state.pendingInsertion = null
                 // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。
@@ -542,21 +566,23 @@ class GestureSequenceEditor(
                 state.settingsPage = 0
                 updateUpper(player)
                 updateLower(player)
+                playClick(player)
             }
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
+                playClick(player)
             }
             context.elementId == "lower-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.confirmNodeId = state.selectedNodeId ?: return
                 openConfirmChild(player)
+                playClick(player)
             }
             context.elementId == "confirm-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val nodeId = state.confirmNodeId ?: return
                 val script = plugin.scripts.load(state.scriptId) ?: return
-                if (GraphEditor.delete(script.graph, nodeId)) {
-                    plugin.scripts.save(script)
-                }
+                if (!GraphEditor.delete(script.graph, nodeId)) return
+                plugin.scripts.save(script)
                 state.confirmNodeId = null
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
@@ -564,14 +590,24 @@ class GestureSequenceEditor(
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateUpper(player)
                 updateLower(player)
+                playClick(player)
             }
             context.elementId == "confirm-cancel" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.confirmNodeId = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateLower(player)
+                playClick(player)
             }
         }
+    }
+
+    /**
+     * ジェスチャーGUIの確定操作音を一箇所に集約します。
+     * `ui.click` は設定項目が存在しない画面や無効な候補では呼び出しません。
+     */
+    private fun playClick(player: Player) {
+        player.playSound(player.location, "ui.click", 1.0f, 2.0f)
     }
 
     private fun emptyView(): GestureGuiView {
