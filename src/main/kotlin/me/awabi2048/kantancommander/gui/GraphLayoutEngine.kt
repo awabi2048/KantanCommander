@@ -89,7 +89,7 @@ object GraphLayoutEngine {
             }
             val segment = renderSequence(entry, null, 1, 1)
             segment.tail?.let { tail ->
-                putAdd(segment.nextX, nodePoints[tail]?.y ?: 1, tail, GraphEditor.Edge.NEXT)
+                putTailAdd(segment.nextX, nodePoints[tail]?.y ?: 1, tail)
             }
         }
 
@@ -231,7 +231,7 @@ object GraphLayoutEngine {
                 Segment(x + 4, y, null)
             }
             if (trueSegment.tail != null) {
-                putAdd(trueSegment.nextX, y, trueSegment.tail, GraphEditor.Edge.NEXT, condition.id)
+                putTailAdd(trueSegment.nextX, y, trueSegment.tail, condition.id)
             }
             val falseY = trueSegment.maxY + 2
             for (verticalY in y + 1..falseY) {
@@ -244,7 +244,7 @@ object GraphLayoutEngine {
                 Segment(x + 4, falseY, null)
             }
             if (falseSegment.tail != null) {
-                putAdd(falseSegment.nextX, falseY, falseSegment.tail, GraphEditor.Edge.NEXT, condition.id)
+                putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
             }
             return Segment(maxOf(trueSegment.nextX, falseSegment.nextX), falseSegment.maxY, null)
         }
@@ -340,6 +340,29 @@ object GraphLayoutEngine {
                 MapCellKind.ADD,
                 insertionTarget = InsertionTarget(sourceId, edge, mergeConditionId),
             )
+        }
+
+        /**
+         * 末尾ノードの直後へ追加ポイントを置く共通処理です。
+         *
+         * `renderSequence` は末尾ノードの次セルを予約せずに Segment を返すため、
+         * 追加ポイントだけを置くと「ノード→空セル→追加」の未接続状態になります。
+         * 必ず直前セルへ NEXT 経路を生成してから追加ポイントを配置します。
+         */
+        private fun putTailAdd(
+            x: Int,
+            y: Int,
+            sourceId: UUID,
+            mergeConditionId: UUID? = null,
+        ) {
+            putPath(
+                x - 1,
+                y,
+                sourceId = sourceId,
+                edge = GraphEditor.Edge.NEXT,
+                mergeConditionId = mergeConditionId,
+            )
+            putAdd(x, y, sourceId, GraphEditor.Edge.NEXT, mergeConditionId)
         }
 
         private fun mergePathKind(existing: MapCellKind?, incoming: MapCellKind): MapCellKind = when {

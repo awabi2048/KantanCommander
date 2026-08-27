@@ -93,6 +93,21 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `tail add points are connected to their preceding command`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val falseNode = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        val layout = GraphLayoutEngine.layout(graph)
+
+        val trueAdd = layout.cells.entries.single { it.value.kind == MapCellKind.ADD && it.key.y == 1 }.key
+        val falseAdd = layout.cells.entries.single { it.value.kind == MapCellKind.ADD && it.key.y > 1 }.key
+
+        assertTrue(layout.cells[MapPoint(trueAdd.x - 1, trueAdd.y)]?.kind in setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH))
+        assertTrue(layout.cells[MapPoint(falseAdd.x - 1, falseAdd.y)]?.kind in setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH))
+        assertEquals(falseNode.id, layout.cells[MapPoint(falseAdd.x - 1, falseAdd.y)]?.insertionTarget?.sourceId)
+    }
+
+    @Test
     fun `nested true branch moves outer false branch below its occupied area`() {
         val graph = CommandGraph.empty()
         val outer = GraphEditor.append(graph, CommandType.CONDITION)
@@ -228,6 +243,7 @@ class GraphLayoutEngineTest {
         assertEquals(11, layout.width)
         assertTrue(layout.canMove(MapPoint(0, 0), 1, 0, 9, 3))
         assertTrue(layout.viewport(MapPoint(1, 0), 9, 3).values.any { it.kind == MapCellKind.ADD })
+        assertEquals(MapCellKind.PATH, layout.cells[MapPoint(add.point.x - 1, add.point.y)]?.kind)
     }
 
     @Test
