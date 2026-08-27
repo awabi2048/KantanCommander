@@ -713,6 +713,11 @@ class GestureSequenceEditor(
         listOf("nav-zoom-in" to "＋", "nav-zoom-out" to "−").forEachIndexed { index, (id, glyph) ->
             val x = GestureEditorLayout.ZOOM_X
             val y = GestureEditorLayout.ZOOM_TOP_Y + index * GestureEditorLayout.ZOOM_PITCH
+            val enabled = if (id == "nav-zoom-in") {
+                state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
+            } else {
+                state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
+            }
             visuals.add(GestureGuiVisual.Block(
                 visualId = "$id-block", x = x, y = y,
                 width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
@@ -725,11 +730,13 @@ class GestureSequenceEditor(
             elements.add(GestureGuiElement(
                 elementId = id,
                 bounds = navBounds(x, y, GestureEditorLayout.ZOOM_SIZE),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                // 上限／下限では要素を無効化し、クリック音を含めて何もしません。
+                acceptedGestures = if (enabled) setOf(GestureGuiGesture.PRIMARY) else emptySet(),
                 targetVisualId = "$id-glyph",
             ))
         }
         val resetY = GestureEditorLayout.ZOOM_TOP_Y - GestureEditorLayout.ZOOM_PITCH
+        val resetEnabled = state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL
         visuals.add(GestureGuiVisual.Block(
             visualId = "nav-zoom-reset-block", x = GestureEditorLayout.ZOOM_X, y = resetY,
             width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
@@ -742,7 +749,7 @@ class GestureSequenceEditor(
         elements.add(GestureGuiElement(
             elementId = "nav-zoom-reset",
             bounds = navBounds(GestureEditorLayout.ZOOM_X, resetY, GestureEditorLayout.ZOOM_SIZE),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = if (resetEnabled) setOf(GestureGuiGesture.PRIMARY) else emptySet(),
             targetVisualId = "nav-zoom-reset-glyph",
         ))
     }
@@ -787,7 +794,7 @@ class GestureSequenceEditor(
     private fun zoomScale(): Double =
         (GestureEditorLayout.DEFAULT_ZOOM +
             state.zoomLevel.coerceIn(GestureEditorLayout.MIN_ZOOM_LEVEL, GestureEditorLayout.MAX_ZOOM_LEVEL) * 0.25)
-            .coerceIn(0.25, 1.5)
+            .coerceIn(0.25, GestureEditorLayout.DEFAULT_ZOOM)
 
     private fun viewportMetrics(scale: Double): ViewportMetrics {
         val columns = GestureEditorLayout.viewportColumns(scale)

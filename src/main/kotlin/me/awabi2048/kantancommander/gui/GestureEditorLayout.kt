@@ -22,9 +22,9 @@ object GestureEditorLayout {
     /** 表示領域の余白とGestureGuiPanelのフレーム幅を一致させます。 */
     const val FRAME_WIDTH: Double = 0.045
 
-    /** ズーム段階の範囲。初期値は最大倍率（150%）です。 */
+    /** ズーム段階の範囲。初期値は最大倍率（75%）です。 */
     const val MIN_ZOOM_LEVEL: Int = -2
-    const val MAX_ZOOM_LEVEL: Int = 3
+    const val MAX_ZOOM_LEVEL: Int = 0
     const val INITIAL_ZOOM_LEVEL: Int = MAX_ZOOM_LEVEL
 
     /** マス間のピッチ（隣接マス中心間距離） */

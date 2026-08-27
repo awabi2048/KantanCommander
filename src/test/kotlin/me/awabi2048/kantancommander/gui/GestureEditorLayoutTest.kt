@@ -113,8 +113,8 @@ class GestureEditorLayoutTest {
         assertEquals(4, GestureEditorLayout.viewportRows(0.75))
         assertEquals(20, GestureEditorLayout.viewportColumns(0.375))
         assertEquals(8, GestureEditorLayout.viewportRows(0.375))
-        assertEquals(5, GestureEditorLayout.viewportColumns(1.5))
-        assertEquals(2, GestureEditorLayout.viewportRows(1.5))
+        assertEquals(30, GestureEditorLayout.viewportColumns(0.25))
+        assertEquals(12, GestureEditorLayout.viewportRows(0.25))
         assertEquals(-5.0, GestureEditorLayout.viewportOffset(10, 20), 1.0e-9)
     }
 
@@ -125,6 +125,7 @@ class GestureEditorLayoutTest {
             GestureEditorLayout.INITIAL_ZOOM_LEVEL,
             GestureEditorState(UUID.randomUUID(), null).zoomLevel,
         )
+        assertEquals(0, GestureEditorLayout.MAX_ZOOM_LEVEL)
         assertEquals(0.045, GestureEditorLayout.FRAME_WIDTH, 1.0e-9)
     }
 
