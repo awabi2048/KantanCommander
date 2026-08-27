@@ -21,7 +21,6 @@ import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
 import me.awabi2048.kantancommander.gui.CommandEditMenu
-import me.awabi2048.kantancommander.gui.GestureChatInput
 import me.awabi2048.kantancommander.gui.GestureEditorFacade
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
@@ -51,8 +50,6 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var commandEditMenu: CommandEditMenu
         private set
     lateinit var gestureEditor: GestureEditorFacade
-        private set
-    lateinit var gestureChatInput: GestureChatInput
         private set
     lateinit var itemSelection: ItemSelectionListener
         private set
@@ -137,7 +134,6 @@ class KantanCommanderPlugin : JavaPlugin() {
         editorMenu = SequenceEditorMenu(this)
         commandEditMenu = CommandEditMenu(this)
         gestureEditor = GestureEditorFacade(this)
-        gestureChatInput = GestureChatInput(this)
         placementAccess = PlacementAccessPolicy(this)
         triggerListener = RedstoneTriggerListener(this)
 
@@ -175,7 +171,6 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(summonedEntities, this)
-        pm.registerEvents(gestureChatInput, this)
     }
 
     internal fun resetActivationTiming(scriptId: java.util.UUID) {

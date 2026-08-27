@@ -804,16 +804,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun renderPosition(player: Player, route: MenuRoute): InventoryMenuView {
         val destination = route.payload[ROLE] == "destination"
-        val layout = ChoiceMenuLayoutPolicy.layout(if (destination) 3 else 8)
+        // 「現在位置を設定」は編集画面の選択肢から廃止しました。
+        // 既存データのCAPTURED値は読み込み・実行側で引き続き扱えますが、
+        // 新規設定では座標／ディスク／対象など明示的な方式だけを提示します。
+        val layout = ChoiceMenuLayoutPolicy.layout(if (destination) 2 else 7)
         val elements = if (destination) {
             mutableListOf(
                 choiceElement(player, 20, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES_SET), "select", mapOf("kind" to PositionKind.COORDINATES.name)),
                 choiceElement(player, 22, Material.ENDER_PEARL, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_OTHER_ENTITY), "target"),
-                choiceElement(player, 24, Material.RECOVERY_COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_POSITION_SET), "select", mapOf("kind" to PositionKind.CAPTURED.name)),
             )
         } else {
             val options = listOf(
-                Triple(PositionKind.CAPTURED, Material.RECOVERY_COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_POSITION)),
                 Triple(PositionKind.DISK, Material.COMMAND_BLOCK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISK_POSITION)),
                 Triple(PositionKind.EXECUTOR, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR_POSITION)),
                 Triple(PositionKind.TARGET, Material.TARGET, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION)),

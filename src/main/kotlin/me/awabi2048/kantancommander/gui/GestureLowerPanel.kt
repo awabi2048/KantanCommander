@@ -5,6 +5,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiBounds
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
@@ -24,9 +25,11 @@ import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
+import kotlin.math.sqrt
 
 /**
  * ジェスチャーエディターの下部パネル（左右 1:3 分割型）のビュー生成を担います。
@@ -42,7 +45,12 @@ class GestureLowerPanel(
     private val onAction: (GestureGuiActionContext) -> Unit = {},
 ) {
     val LOWER_SCREEN_ID = "gesture-editor-lower"
+    /** 個別設定専用。親の下部画面を残したまま前面へ重ねます。 */
+    val SETTING_CHILD_SCREEN_ID = "gesture-editor-setting-child"
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
+
+    /** 子画面の面積を親の約90%にする一様縮尺です（sqrt(0.9)）。 */
+    private val SETTING_CHILD_SCALE = sqrt(0.9)
 
     fun build(state: GestureEditorState, player: Player): GestureGuiView {
         return when (state.lowerMode) {
@@ -52,6 +60,10 @@ class GestureLowerPanel(
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
         }
     }
+
+    /** 親画面を残して重ねる個別設定子画面を生成します。 */
+    fun buildSettingChild(state: GestureEditorState, player: Player): GestureGuiView =
+        buildSettingChoices(state, player, child = true)
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(state: GestureEditorState, player: Player): GestureGuiView {
@@ -77,28 +89,58 @@ class GestureLowerPanel(
         val selected = if (selectedAbsolute in pageStart until pageStart + tabs.size) selectedAbsolute - pageStart else 0
         val field = tabs[selected]
         val value = field.value(node).render(player)
-        addValueRow(visuals, "lower-setting", 0.29, KcI18n.text(player, field.label), value)
+        addDescriptionRows(visuals, player, field, null)
+        addValueRow(visuals, "lower-setting", 0.26, KcI18n.text(player, field.label), value)
 
         val descriptor = CommandSettingsModel.descriptor(node, field.key)
         // 専用選択項目はタブ選択時に直接開くため、ここには余分なボタンを置きません。
-        // 文字列・数値など、専用モデルを持たない項目だけチャット入力を表示します。
+        // 文字列・数値など、専用モデルを持たない項目だけダイアログ入力を表示します。
         val heldItemSetting = field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
-        if (heldItemSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in CHAT_EDITABLE_KEYS && !heldItemSetting)) {
-            addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.20, Material.CYAN_TERRACOTTA, 4)
+        val mainHandAvailable = player.inventory.itemInMainHand.type != Material.AIR
+        val configuredItem = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+        if (heldItemSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS)) {
+            addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.16, Material.CYAN_TERRACOTTA, 4)
             addText(
                 visuals,
                 "lower-edit",
                 0.28,
                 0.02,
-                0.006,
+                0.0055,
                 180,
-                Component.text(if (heldItemSetting) "メインハンドのアイテムを設定" else "チャットで編集"),
+                Component.text(if (heldItemSetting) "メインハンドから設定" else "値を入力"),
             )
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
-                bounds = rect(0.28, 0.02, 1.2, 0.20),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                bounds = rect(0.28, 0.02, 1.2, 0.16),
+                // 空のメインハンドでは入力面自体を無効化し、CC-Systemの
+                // クリック音も発生させません。
+                acceptedGestures = if (heldItemSetting && !mainHandAvailable) emptySet() else setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "lower-edit-bg",
+                hoverText = twoLineHover(
+                    top = fieldDescription(player, field),
+                    bottom = if (heldItemSetting) "メインハンドのアイテム情報を保存します" else "ダイアログで値を入力します",
+                    x = 0.28,
+                    y = 0.39,
+                ),
+            ))
+        }
+        if (heldItemSetting) {
+            addBlock(visuals, "lower-item-get-bg", 0.28, -0.15, 1.2, 0.12, Material.BROWN_CONCRETE, 4)
+            addText(visuals, "lower-item-get", 0.28, -0.15, 0.0048, 180, Component.text("設定中のアイテムを取得"))
+            elements.add(GestureGuiElement(
+                elementId = "lower-item-get",
+                bounds = rect(0.28, -0.15, 1.2, 0.12),
+                // 設定値がない取得ボタンは入力面を作らず、効果音を含めて無操作にします。
+                acceptedGestures = if (!configuredItem) {
+                    emptySet()
+                } else setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "lower-item-get-bg",
+                hoverText = twoLineHover(
+                    top = fieldDescription(player, field),
+                    bottom = "保存済みのアイテムをインベントリへ取得します",
+                    x = 0.28,
+                    y = 0.39,
+                ),
             ))
         }
         return view(GestureLowerMode.SETTINGS, elements, visuals)
@@ -138,6 +180,12 @@ class GestureLowerPanel(
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "tab-bg-$index",
+                hoverText = twoLineHover(
+                    top = fieldDescription(player, field),
+                    bottom = fieldActionDescription(player, field),
+                    x = 0.28,
+                    y = 0.39,
+                ),
             ))
         }
 
@@ -145,13 +193,19 @@ class GestureLowerPanel(
         if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
             val activeContext = state.settingFieldKey == "context" && state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE
             addBlock(visuals, "context-bg", -0.7975, contextY, 0.47, 0.14,
-                if (activeContext) Material.LIME_CONCRETE else Material.LIME_TERRACOTTA, 4)
+                if (activeContext) Material.YELLOW_CONCRETE else Material.YELLOW_TERRACOTTA, 4)
             addText(visuals, "context-label", -0.7975, contextY - 0.018, 0.0045, 110, Component.text("実行コンテキスト上書き"))
             elements.add(GestureGuiElement(
                 elementId = "lower-context",
                 bounds = rect(-0.7975, contextY, 0.47, 0.14),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "context-bg",
+                hoverText = twoLineHover(
+                    top = "実行コンテキスト上書き",
+                    bottom = "このノードだけ実行者・対象・位置・向きを上書きします",
+                    x = 0.28,
+                    y = 0.39,
+                ),
             ))
         }
 
@@ -182,6 +236,72 @@ class GestureLowerPanel(
         addText(visuals, "$id-value", 0.52, y, 0.0060, 170, Component.text(value))
     }
 
+    /** タブ説明と、現在ホバーしている候補の説明を2行に分けて表示します。 */
+    private fun addDescriptionRows(
+        visuals: MutableList<GestureGuiVisual>,
+        player: Player,
+        field: EditorField?,
+        hoveredDescription: String?,
+        fallback: String = "設定項目",
+    ) {
+        addText(
+            visuals,
+            "setting-description-tab",
+            0.28,
+            0.43,
+            0.0047,
+            280,
+            Component.text(field?.let { fieldDescription(player, it) } ?: fallback),
+        )
+        addText(
+            visuals,
+            "setting-description-hover",
+            0.28,
+            0.36,
+            0.0043,
+            280,
+            Component.text(hoveredDescription ?: "項目にカーソルを合わせると説明を表示", NamedTextColor.GRAY),
+        )
+    }
+
+    private fun fieldDescription(player: Player, field: EditorField): String =
+        KcI18n.list(player, field.descriptionKey).firstOrNull()?.takeIf(String::isNotBlank)
+            ?: KcI18n.text(player, field.label)
+
+    private fun fieldActionDescription(player: Player, field: EditorField): String =
+        if (field.key == "item") "メインハンドのアイテム情報を保存・取得します"
+        else KcI18n.text(player, field.actionKey)
+
+    private fun choiceDescription(choice: SettingChoice): String = when {
+        choice.id == "open-filters" -> "距離・種類・除外条件などの対象オプションを設定します"
+        choice.id.startsWith("target:") -> "このコマンドの対象種別を設定します"
+        choice.id.startsWith("filter:") -> "対象の絞り込み条件を変更します"
+        choice.id.startsWith("position:") -> "実行位置をこの方式へ変更します"
+        choice.id.startsWith("facing:") -> "実行時の向きをこの方式へ変更します"
+        choice.id.startsWith("context:") -> "実行コンテキストの上書き内容を変更します"
+        choice.id.startsWith("condition-") -> "条件分岐で判定する内容を設定します"
+        choice.id.startsWith("display:") -> "文字列を表示する場所を設定します"
+        choice.id.startsWith("action:") -> "対象エンティティへの操作を設定します"
+        choice.id.startsWith("scope:") -> "変数を保存する範囲を設定します"
+        choice.id.startsWith("type:") -> "変数へ保存するデータ型を設定します"
+        choice.id.startsWith("operation:") -> "変数へ適用する操作を設定します"
+        choice.id.startsWith("value:") -> "変数へ設定する値の入力方法を選びます"
+        choice.id.startsWith("source:") -> "ループ値の参照元を設定します"
+        choice.id.startsWith("inclusive:") -> "終端値を含めるか設定します"
+        else -> "クリックで設定"
+    }
+
+    private fun twoLineHover(top: String, bottom: String, x: Double, y: Double): GestureGuiHoverText =
+        GestureGuiHoverText(
+            text = Component.text(top)
+                .append(Component.newline())
+                .append(Component.text(bottom, NamedTextColor.GRAY)),
+            x = x,
+            y = y,
+            size = 0.0048,
+            lineWidth = 280,
+        )
+
     /**
      * 専用選択で編集する設定画面です。
      *
@@ -190,7 +310,11 @@ class GestureLowerPanel(
      * どのGUIから変更しても同じCommandNodeの構造化フィールドへ保存されます。
      * 画面上の値は設定画面と同じく「項目名 設定値」の1行を常に上部へ表示します。
      */
-    private fun buildSettingChoices(state: GestureEditorState, player: Player): GestureGuiView {
+    private fun buildSettingChoices(
+        state: GestureEditorState,
+        player: Player,
+        child: Boolean = false,
+    ): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         val context = state.settingContext
@@ -201,7 +325,7 @@ class GestureLowerPanel(
         if (context == null || node == null || fieldKey == null || screen == null) {
             addText(visuals, "setting-hint", 0.28, 0.20, 0.008, 220, Component.text("設定対象がありません"))
             addBackSetting(elements, visuals)
-            return view(GestureLowerMode.SETTING_CHOICES, elements, visuals)
+            return view(GestureLowerMode.SETTING_CHOICES, elements, visuals, child = child)
         }
 
         // 専用選択中も設定タブを同じ左領域へ描画し、下部画面全体が
@@ -216,7 +340,8 @@ class GestureLowerPanel(
             ?: if (screen == GestureSettingScreen.CONTEXT_OVERRIDE) {
                 if (node.contextOverride == null) "すべて継承" else "一部を上書き"
             } else settingCurrentValue(node, context, screen, fieldKey, player)
-        addValueRow(visuals, "setting-header", 0.40, fieldLabel, fieldValue)
+        addDescriptionRows(visuals, player, field, null, fallback = fieldLabel)
+        addValueRow(visuals, "setting-header", 0.26, fieldLabel, fieldValue)
 
         val choices = settingChoices(node, context, screen, fieldKey, player)
         val pageSize = SETTING_CHOICE_PAGE_SIZE
@@ -238,17 +363,29 @@ class GestureLowerPanel(
                 if (choice.selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA,
                 4,
             )
-            addText(visuals, "setting-choice-label-$index", cx, cy - 0.015, 0.0045, 115, Component.text(choice.label))
+            addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
             elements.add(GestureGuiElement(
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, SETTING_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                // 条件のアイテム設定もメインハンド実体がない場合は無効化し、
+                // 「何もしない」操作でクリック音だけが鳴る状態を防ぎます。
+                acceptedGestures = if (choice.id == "condition-item" && player.inventory.itemInMainHand.type == Material.AIR) {
+                    emptySet()
+                } else setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = bgId,
+                hoverText = twoLineHover(
+                    top = field?.let { fieldDescription(player, it) } ?: fieldLabel,
+                    bottom = choice.description.ifBlank { choiceDescription(choice) },
+                    x = 0.28,
+                    y = 0.39,
+                ),
             ))
         }
         if (pageCount > 1) addPager(visuals, elements, "setting", page, pageCount, 0.25, -0.43)
-        addBackSetting(elements, visuals, centerX = 0.78, width = 0.42)
-        return view(GestureLowerMode.SETTING_CHOICES, elements, visuals)
+        if (screen != GestureSettingScreen.CONTEXT_OVERRIDE) {
+            addBackSetting(elements, visuals, centerX = 0.78, width = 0.42)
+        }
+        return view(GestureLowerMode.SETTING_CHOICES, elements, visuals, child = child)
     }
 
     private fun addBackSetting(
@@ -271,6 +408,7 @@ class GestureLowerPanel(
         val id: String,
         val label: String,
         val selected: Boolean = false,
+        val description: String = "",
     )
 
     private fun settingChoices(
@@ -365,9 +503,9 @@ class GestureLowerPanel(
             TargetKind.NEARBY_ENTITIES to "周囲のエンティティ",
             TargetKind.FIXED_ENTITY to "固定エンティティ",
         ).map { (kind, label) -> SettingChoice("target:${kind.name}", label, current == kind) }
-        return if (current in FILTERABLE_TARGET_KINDS) {
-            choices + SettingChoice("open-filters", "詳細条件を編集")
-        } else choices
+        // 対象種別にかかわらずオプション入口を常設します。対象を変更した後に
+        // 詳細条件の導線だけ消えると、同じ設定を再び開けなくなるためです。
+        return choices + SettingChoice("open-filters", "詳細条件を編集")
     }
 
     private fun targetFilterChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
@@ -410,11 +548,9 @@ class GestureLowerPanel(
             listOf(
                 PositionKind.COORDINATES to "座標を設定",
                 PositionKind.TARGET to "他のエンティティ",
-                PositionKind.CAPTURED to "現在位置を設定",
             )
         } else {
             listOf(
-                PositionKind.CAPTURED to "現在位置",
                 PositionKind.DISK to "ディスク位置",
                 PositionKind.EXECUTOR to "実行者の位置",
                 PositionKind.TARGET to "対象の位置",
@@ -565,11 +701,28 @@ class GestureLowerPanel(
     private fun buildConfirm(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
-        addText(visuals, "confirm-title", 0.0, 0.11, 0.005, 150, Component.text("このノードを削除しますか？"))
-        addText(visuals, "confirm-warn", 0.0, 0.05, 0.004, 150, Component.text("元に戻せません"))
+        val overwrite = state.confirmKind == GestureConfirmKind.ITEM_OVERWRITE
+        addText(
+            visuals,
+            "confirm-title",
+            0.0,
+            0.11,
+            0.005,
+            180,
+            Component.text(if (overwrite) "設定中のアイテムを上書きしますか？" else "このノードを削除しますか？"),
+        )
+        addText(
+            visuals,
+            "confirm-warn",
+            0.0,
+            0.05,
+            0.004,
+            180,
+            Component.text(if (overwrite) "現在のアイテム情報は置き換えられます" else "元に戻せません"),
+        )
 
         addBlock(visuals, "confirm-yes-bg", -0.27, -0.08, 0.48, 0.12, Material.RED_CONCRETE, 4)
-        addText(visuals, "confirm-yes", -0.27, -0.08, 0.004, 100, Component.text("削除する"))
+        addText(visuals, "confirm-yes", -0.27, -0.08, 0.004, 100, Component.text(if (overwrite) "上書きする" else "削除する"))
         elements.add(GestureGuiElement(
             elementId = "confirm-delete",
             bounds = rect(-0.27, -0.08, 0.48, 0.12),
@@ -591,21 +744,73 @@ class GestureLowerPanel(
         mode: GestureLowerMode,
         elements: List<GestureGuiElement>,
         visuals: List<GestureGuiVisual>,
+        child: Boolean = false,
     ): GestureGuiView = GestureGuiView(
         GestureGuiScreenDefinition(
-            if (mode == GestureLowerMode.CONFIRM) CONFIRM_SCREEN_ID else LOWER_SCREEN_ID,
+            when {
+                mode == GestureLowerMode.CONFIRM -> CONFIRM_SCREEN_ID
+                child -> SETTING_CHILD_SCREEN_ID
+                else -> LOWER_SCREEN_ID
+            },
             elements,
             access = GestureGuiAccess.OWNER_ONLY,
         ),
         visuals,
         panel = GestureGuiPanel(
-            width = if (mode == GestureLowerMode.CONFIRM) GestureEditorLayout.LOWER_W * 0.5 else GestureEditorLayout.LOWER_W,
-            height = if (mode == GestureLowerMode.CONFIRM) GestureEditorLayout.LOWER_H * 0.5 else GestureEditorLayout.LOWER_H,
+            width = when {
+                mode == GestureLowerMode.CONFIRM -> GestureEditorLayout.LOWER_W * 0.5
+                child -> GestureEditorLayout.LOWER_W * SETTING_CHILD_SCALE
+                else -> GestureEditorLayout.LOWER_W
+            },
+            height = when {
+                mode == GestureLowerMode.CONFIRM -> GestureEditorLayout.LOWER_H * 0.5
+                child -> GestureEditorLayout.LOWER_H * SETTING_CHILD_SCALE
+                else -> GestureEditorLayout.LOWER_H
+            },
             backgroundMaterial = Material.GRAY_CONCRETE,
             frameMaterial = Material.LIGHT_GRAY_CONCRETE,
         ),
         onAction = onAction,
-    )
+    ).let { view -> if (child) scaleChildView(view) else view }
+
+    /** 子画面のパネル寸法と内容座標を同じ縮尺で変換し、端の要素を欠落させません。 */
+    private fun scaleChildView(view: GestureGuiView): GestureGuiView {
+        val scaledVisuals = view.visuals.map { visual ->
+            when (visual) {
+                is GestureGuiVisual.Block -> visual.copy(
+                    x = visual.x * SETTING_CHILD_SCALE,
+                    y = visual.y * SETTING_CHILD_SCALE,
+                    width = visual.width * SETTING_CHILD_SCALE,
+                    height = visual.height * SETTING_CHILD_SCALE,
+                )
+                is GestureGuiVisual.Text -> visual.copy(
+                    x = visual.x * SETTING_CHILD_SCALE,
+                    y = visual.y * SETTING_CHILD_SCALE,
+                    size = visual.size * SETTING_CHILD_SCALE,
+                )
+                is GestureGuiVisual.Item -> visual.copy(
+                    x = visual.x * SETTING_CHILD_SCALE,
+                    y = visual.y * SETTING_CHILD_SCALE,
+                    scale = visual.scale * SETTING_CHILD_SCALE,
+                )
+            }
+        }
+        val scaledElements = view.definition.elements.map { element ->
+            val hover = element.hoverText
+            element.copy(
+                bounds = scaleBounds(element.bounds, SETTING_CHILD_SCALE),
+                hoverText = hover?.copy(
+                    x = hover.x * SETTING_CHILD_SCALE,
+                    y = hover.y * SETTING_CHILD_SCALE,
+                    size = hover.size * SETTING_CHILD_SCALE,
+                ),
+            )
+        }
+        return view.copy(
+            definition = view.definition.copy(elements = scaledElements),
+            visuals = scaledVisuals,
+        )
+    }
 
     private fun addPager(
         visuals: MutableList<GestureGuiVisual>,
@@ -675,6 +880,14 @@ class GestureLowerPanel(
         return GestureGuiBounds(cx - hw, cy - hh, cx + hw, cy + hh)
     }
 
+    private fun scaleBounds(bounds: GestureGuiBounds, scale: Double): GestureGuiBounds =
+        GestureGuiBounds(
+            bounds.minX * scale,
+            bounds.minY * scale,
+            bounds.maxX * scale,
+            bounds.maxY * scale,
+        )
+
     private companion object {
         const val SETTINGS_PAGE_SIZE = 4
         const val PICKER_PAGE_SIZE = 8
@@ -684,16 +897,8 @@ class GestureLowerPanel(
         const val SETTING_CHOICE_WIDTH = 0.66
         const val SETTING_CHOICE_HEIGHT = 0.10
         const val SETTING_CHOICE_PITCH = 0.12
-        val FILTERABLE_TARGET_KINDS = setOf(
-            TargetKind.NEAREST_PLAYER,
-            TargetKind.NEARBY_PLAYERS,
-            TargetKind.ALL_PLAYERS,
-            TargetKind.RANDOM_PLAYER,
-            TargetKind.NEAREST_ENTITY,
-            TargetKind.NEARBY_ENTITIES,
-        )
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
-        val CHAT_EDITABLE_KEYS = setOf(
+        val DIALOG_EDITABLE_KEYS = setOf(
             "item", "count", "text", "stay", "ticks", "tags", "sound", "volume", "pitch",
             "effect", "level", "seconds", "intensity", "shakeType", "slot", "entity", "diskId", "name", "startValue",
             "endValue", "stepValue", "condition", "variable", "value",
