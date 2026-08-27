@@ -98,6 +98,21 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `closed merge branches do not create add points`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val layout = GraphLayoutEngine.layout(graph)
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val addPoints = layout.cells.filterValues { it.kind == MapCellKind.ADD }.keys
+
+        // 枝は合流で閉じているため、追加ポイントは合流後の末尾だけです。
+        assertEquals(setOf(MapPoint(mergePoint.x + 2, mergePoint.y)), addPoints)
+        assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x - 1, mergePoint.y)]?.kind)
+        assertEquals(MapCellKind.PATH, layout.cells[MapPoint(mergePoint.x + 1, mergePoint.y)]?.kind)
+    }
+
+    @Test
     fun `open condition keeps true and false insertion targets distinct`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)

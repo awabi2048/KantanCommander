@@ -257,10 +257,10 @@ object GraphLayoutEngine {
                 putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
                 renderSequence(trueStart, mergeId, x + 2, y)
             } else {
-                // 分岐先が空、または直ちに合流する場合も専用の追加ポイントを表示します。
+                // 合流で閉じた枝には追加ポイントを置きません。経路だけを残し、
+                // 後段で合流ノードへ直接接続します（インベントリGUIと同じ規則）。
                 putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
-                putAdd(x + 2, y, condition.id, GraphEditor.Edge.TRUE, condition.id)
-                Segment(x + 4, y, null)
+                Segment(x + 2, y, null)
             }
 
             val falseY = trueSegment.maxY + 2
@@ -273,8 +273,7 @@ object GraphLayoutEngine {
                 renderSequence(falseStart, mergeId, x + 2, falseY)
             } else {
                 putPath(x + 1, falseY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
-                putAdd(x + 2, falseY, condition.id, GraphEditor.Edge.FALSE, condition.id)
-                Segment(x + 4, falseY, null)
+                Segment(x + 2, falseY, null)
             }
 
             val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
@@ -312,6 +311,16 @@ object GraphLayoutEngine {
             }
 
             val merge = graph.nodes[mergeId] ?: return Segment(mergeX, falseSegment.maxY, condition.id)
+            // 合流ノードの直前セルを必ず予約します。枝が空／短い場合でも、
+            // 「水平枝→縦合流線→合流アイコン」の接続が欠けないようにします。
+            putPath(
+                mergeX - 1,
+                y,
+                MapCellKind.BRANCH_PATH,
+                trueSource,
+                trueEdge,
+                condition.id,
+            )
             putNode(mergeX, y, merge)
             return Segment(mergeX + 2, maxOf(falseSegment.maxY, falseY), merge.id)
         }

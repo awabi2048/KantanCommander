@@ -19,6 +19,13 @@ object GestureEditorLayout {
 
     /** 基準倍率。基準倍率では論理セルを10×4枚表示します。 */
     const val DEFAULT_ZOOM: Double = 0.75
+    /** 表示領域の余白とGestureGuiPanelのフレーム幅を一致させます。 */
+    const val FRAME_WIDTH: Double = 0.045
+
+    /** ズーム段階の範囲。初期値は最大倍率（150%）です。 */
+    const val MIN_ZOOM_LEVEL: Int = -2
+    const val MAX_ZOOM_LEVEL: Int = 3
+    const val INITIAL_ZOOM_LEVEL: Int = MAX_ZOOM_LEVEL
 
     /** マス間のピッチ（隣接マス中心間距離） */
     const val PITCH_X: Double = 0.22
@@ -126,6 +133,11 @@ object GestureEditorLayout {
     const val ZOOM_TOP_Y: Double = NAV_CENTER_Y + 0.055
     const val ZOOM_SIZE: Double = NAV_SIZE
     const val ZOOM_PITCH: Double = NAV_SIZE + 0.015
+
+    /** 画面右上の閉じるボタン（ズーム／ナビゲーションと同じ正方形寸法）。 */
+    const val CLOSE_X: Double = ZOOM_X
+    const val CLOSE_Y: Double = 0.40
+    const val CLOSE_SIZE: Double = NAV_SIZE
 
     /** ズーム倍率に応じた論理表示セル数です。座標を拡大縮小するだけにせず、表示範囲も再計算します。 */
     fun viewportColumns(zoomScale: Double): Int =

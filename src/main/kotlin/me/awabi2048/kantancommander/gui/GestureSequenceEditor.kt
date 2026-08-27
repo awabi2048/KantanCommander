@@ -32,8 +32,8 @@ data class GestureEditorState(
     var scriptId: UUID,
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
-    /** ビューポート表示倍率。0=75%、縮小25%・拡大75%の範囲を25%刻みで許可します。 */
-    var zoomLevel: Int = 0,
+    /** ビューポート表示倍率。初期値は最大倍率、縮小25%まで25%刻みで許可します。 */
+    var zoomLevel: Int = GestureEditorLayout.INITIAL_ZOOM_LEVEL,
     var selectedNodeId: UUID? = null,
     var anchor: Location? = null,
     /** 下部パネルの表示モード */
@@ -50,6 +50,8 @@ data class GestureEditorState(
     var pendingInsertion: InsertionTarget? = null,
     /** PICKERへ遷移した追加ポイントの選択状態。既存ノード選択とは独立して表示します。 */
     var selectedAddPoint: MapPoint? = null,
+    /** PICKERへ遷移した経路上の挿入候補。論理座標で保持し、ズーム／パン後も同じ候補を示します。 */
+    var selectedInsertionPoint: MapPoint? = null,
 )
 
 /** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
@@ -149,10 +151,10 @@ class GestureSequenceEditor(
         elements.add(GestureGuiElement(
             elementId = "viewport-empty",
             bounds = GestureGuiBounds(
-                -GestureEditorLayout.UPPER_W / 2.0 + 0.045,
-                -GestureEditorLayout.UPPER_H / 2.0 + 0.045,
-                GestureEditorLayout.UPPER_W / 2.0 - 0.045,
-                GestureEditorLayout.UPPER_H / 2.0 - 0.045,
+                -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                -GestureEditorLayout.UPPER_H / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
             ),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
         ))
@@ -288,6 +290,30 @@ class GestureSequenceEditor(
             ))
         }
 
+        // 経路をクリックしてPICKERへ移った場合も、クリック元の論理セルを
+        // 背景側だけ発光させます。経路素材そのものの色は変更しません。
+        state.selectedInsertionPoint?.let { selectedGlobal ->
+            val local = MapPoint(
+                selectedGlobal.x - state.origin.x,
+                selectedGlobal.y - state.origin.y,
+            )
+            val selectedCell = cells[local]
+            if (selectedCell != null && selectedCell.kind in PATH_CELL_KINDS && selectedCell.insertionTarget != null) {
+                val cx = metrics.x(local.x)
+                val cy = metrics.y(local.y)
+                visuals.add(GestureGuiVisual.Block(
+                    visualId = "path-highlight-${selectedGlobal.x}-${selectedGlobal.y}",
+                    x = cx,
+                    y = cy,
+                    width = GestureEditorLayout.PITCH_X * 0.86,
+                    height = GestureEditorLayout.PITCH_Y * 0.86,
+                    blockData = Bukkit.createBlockData(Material.WHITE_CONCRETE),
+                    layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
+                    glowColor = Color.YELLOW.asARGB(),
+                ))
+            }
+        }
+
         addNavigation(visuals, elements)
 
         // back-to-start（十字の下・左に隣接）
@@ -316,6 +342,7 @@ class GestureSequenceEditor(
         ))
 
         addZoomControls(visuals, elements)
+        addCloseButton(visuals, elements)
 
         // ズームはビューポート内容とその当たり判定だけを同じ倍率で変換します。
         val scaledVisuals = visuals.map { visual ->
@@ -345,8 +372,8 @@ class GestureSequenceEditor(
         }
         val clippedVisuals = scaledVisuals.filter { visual ->
             if (!(visual.visualId.startsWith("node-") || visual.visualId.startsWith("add-") || visual.visualId.startsWith("path-"))) return@filter true
-            val halfW = GestureEditorLayout.UPPER_W / 2.0 - 0.045
-            val halfH = GestureEditorLayout.UPPER_H / 2.0 - 0.045
+            val halfW = GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH
+            val halfH = GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH
             val halfVisualW = when (visual) {
                 is GestureGuiVisual.Block -> visual.width / 2.0
                 is GestureGuiVisual.Item -> GestureEditorLayout.ICON_W / 2.0
@@ -369,6 +396,7 @@ class GestureSequenceEditor(
                 height = GestureEditorLayout.UPPER_H,
                 backgroundMaterial = Material.GRAY_CONCRETE,
                 frameMaterial = Material.LIGHT_GRAY_CONCRETE,
+                frameWidth = GestureEditorLayout.FRAME_WIDTH,
             ),
         ) { context -> handleUpperAction(context) }
     }
@@ -385,6 +413,7 @@ class GestureSequenceEditor(
                     GestureGuiGesture.PRIMARY -> {
                         state.selectedNodeId = nodeId
                         state.selectedAddPoint = null
+                        state.selectedInsertionPoint = null
                         state.pendingInsertion = null
                         state.lowerMode = GestureLowerMode.SETTINGS
                         state.settingsTab = 0
@@ -398,6 +427,7 @@ class GestureSequenceEditor(
             context.elementId == "viewport-empty" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
+                state.selectedInsertionPoint = null
                 state.confirmNodeId = null
                 state.pendingInsertion = null
                 state.lowerMode = GestureLowerMode.SETTINGS
@@ -405,26 +435,27 @@ class GestureSequenceEditor(
                 updateLower(player)
             }
             context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                val next = (state.zoomLevel + 1).coerceAtMost(3)
+                val next = (state.zoomLevel + 1).coerceAtMost(GestureEditorLayout.MAX_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
                     state.zoomLevel = next
                     updateUpper(player)
                 }
             }
             context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                val next = (state.zoomLevel - 1).coerceAtLeast(-2)
+                val next = (state.zoomLevel - 1).coerceAtLeast(GestureEditorLayout.MIN_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
                     state.zoomLevel = next
                     updateUpper(player)
                 }
             }
             context.elementId == "nav-zoom-reset" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                if (state.zoomLevel != 0) {
-                    state.zoomLevel = 0
+                if (state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL) {
+                    state.zoomLevel = GestureEditorLayout.INITIAL_ZOOM_LEVEL
                     updateUpper(player)
                 }
             }
-            context.elementId.startsWith("nav-") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("nav-") && context.elementId != "nav-close" &&
+                context.gesture == GestureGuiGesture.PRIMARY -> {
                 val delta = when (context.elementId) {
                     "nav-up" -> MapPoint(0, -1)
                     "nav-down" -> MapPoint(0, 1)
@@ -469,6 +500,8 @@ class GestureSequenceEditor(
                     state.origin = MapPoint(0, 0)
                 }
                 state.selectedNodeId = null
+                state.selectedAddPoint = null
+                state.selectedInsertionPoint = null
                 updateUpper(player)
                 updateLower(player)
             }
@@ -489,6 +522,7 @@ class GestureSequenceEditor(
                 state.pendingInsertion = target
                 state.selectedNodeId = null
                 state.selectedAddPoint = MapPoint(gx, gy)
+                state.selectedInsertionPoint = null
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
@@ -503,6 +537,7 @@ class GestureSequenceEditor(
                 state.pendingInsertion = cell.insertionTarget ?: return
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
+                state.selectedInsertionPoint = MapPoint(point[0], point[1])
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
@@ -565,6 +600,7 @@ class GestureSequenceEditor(
                 }.getOrNull() ?: return
                 plugin.scripts.save(script)
                 state.pendingInsertion = null
+                state.selectedInsertionPoint = null
                 // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。
                 state.selectedNodeId = inserted.id
                 state.selectedAddPoint = null
@@ -575,8 +611,15 @@ class GestureSequenceEditor(
                 updateLower(player)
             }
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                state.pendingInsertion = null
+                state.selectedAddPoint = null
+                state.selectedInsertionPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
+            }
+            context.elementId == "nav-close" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                // 右上の閉じる操作は、親・子画面と入力claimをまとめて即時解放します。
+                closeImmediately(player.uniqueId)
             }
             context.elementId == "lower-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.confirmNodeId = state.selectedNodeId ?: return
@@ -590,6 +633,7 @@ class GestureSequenceEditor(
                 state.confirmNodeId = null
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
+                state.selectedInsertionPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateUpper(player)
@@ -703,8 +747,47 @@ class GestureSequenceEditor(
         ))
     }
 
+    /** 画面右上へ配置する明示的な終了導線です。 */
+    private fun addCloseButton(visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
+        val x = GestureEditorLayout.CLOSE_X
+        val y = GestureEditorLayout.CLOSE_Y
+        val size = GestureEditorLayout.CLOSE_SIZE
+        visuals.add(GestureGuiVisual.Block(
+            visualId = "nav-close-block",
+            x = x,
+            y = y,
+            width = size,
+            height = size,
+            blockData = Bukkit.createBlockData(Material.RED_CONCRETE),
+            layer = 4,
+        ))
+        visuals.add(GestureGuiVisual.Text(
+            visualId = "nav-close-glyph",
+            x = x,
+            y = y - 0.01,
+            text = net.kyori.adventure.text.Component.text("×"),
+            size = 0.010,
+            layer = 6,
+        ))
+        elements.add(GestureGuiElement(
+            elementId = "nav-close",
+            bounds = navBounds(x, y, size),
+            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "nav-close-glyph",
+            hoverText = GestureGuiHoverText(
+                text = net.kyori.adventure.text.Component.text("閉じる"),
+                x = x,
+                y = y - size,
+                size = 0.0055,
+                lineWidth = 80,
+            ),
+        ))
+    }
+
     private fun zoomScale(): Double =
-        (GestureEditorLayout.DEFAULT_ZOOM + state.zoomLevel.coerceIn(-2, 3) * 0.25).coerceIn(0.25, 1.5)
+        (GestureEditorLayout.DEFAULT_ZOOM +
+            state.zoomLevel.coerceIn(GestureEditorLayout.MIN_ZOOM_LEVEL, GestureEditorLayout.MAX_ZOOM_LEVEL) * 0.25)
+            .coerceIn(0.25, 1.5)
 
     private fun viewportMetrics(scale: Double): ViewportMetrics {
         val columns = GestureEditorLayout.viewportColumns(scale)

@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.util.UUID
 import kotlin.math.abs
 
 class GestureEditorLayoutTest {
@@ -115,6 +116,16 @@ class GestureEditorLayoutTest {
         assertEquals(5, GestureEditorLayout.viewportColumns(1.5))
         assertEquals(2, GestureEditorLayout.viewportRows(1.5))
         assertEquals(-5.0, GestureEditorLayout.viewportOffset(10, 20), 1.0e-9)
+    }
+
+    @Test
+    fun `gesture editor starts and resets at maximum zoom`() {
+        assertEquals(GestureEditorLayout.MAX_ZOOM_LEVEL, GestureEditorLayout.INITIAL_ZOOM_LEVEL)
+        assertEquals(
+            GestureEditorLayout.INITIAL_ZOOM_LEVEL,
+            GestureEditorState(UUID.randomUUID(), null).zoomLevel,
+        )
+        assertEquals(0.045, GestureEditorLayout.FRAME_WIDTH, 1.0e-9)
     }
 
     @Test
