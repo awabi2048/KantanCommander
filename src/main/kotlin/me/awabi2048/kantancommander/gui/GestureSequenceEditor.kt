@@ -128,6 +128,14 @@ class GestureSequenceEditor(
         val layout = GraphLayoutEngine.layout(script.graph)
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
+        // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
+        // 描画・入力判定で共有する原点を毎回正規化します。
+        state.origin = GestureEditorLayout.clampOrigin(
+            state.origin,
+            layout,
+            metrics.columns,
+            metrics.rows,
+        )
         val cells = layout.viewport(state.origin, metrics.columns, metrics.rows)
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -255,18 +263,26 @@ class GestureSequenceEditor(
             }
         }
 
+        // 画面境界の外側も一定幅だけ同じ論理グリッドで描画し、最後に画面矩形で
+        // 切り取ります。外側の曲がり角や分岐点を含めるため1セルでは足りません。
         val expandedPathCells = layout.cells.mapNotNull { (global, cell) ->
             val local = MapPoint(global.x - state.origin.x, global.y - state.origin.y)
-            if (local.x in -1..metrics.columns && local.y in -1..metrics.rows) {
+            if (local.x in -PATH_RENDER_MARGIN_CELLS..(metrics.columns - 1 + PATH_RENDER_MARGIN_CELLS) &&
+                local.y in -PATH_RENDER_MARGIN_CELLS..(metrics.rows - 1 + PATH_RENDER_MARGIN_CELLS)) {
                 local to cell.copy(point = local)
             } else null
         }.toMap()
-        buildPathSegments(expandedPathCells, metrics).forEach { seg ->
+        GesturePathRenderer.buildSegments(
+            expandedPathCells,
+            xCenter = metrics::x,
+            yCenter = metrics::y,
+            thickness = GestureEditorLayout.PATH_THICKNESS,
+        ).forEach { seg ->
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
                 width = seg.w, height = seg.h,
-                blockData = Bukkit.createBlockData(Material.WHITE_STAINED_GLASS),
+                blockData = Bukkit.createBlockData(Material.WHITE_CONCRETE),
                 layer = 1,
             ))
         }
@@ -686,120 +702,6 @@ class GestureSequenceEditor(
         ))
     }
 
-    /**
-     * ビューポート内のセルから経路セグメントを生成します。
-     * 経路セルは左右・上下隣の接続可能セル（経路/ノード/追加ポイント）との間に帯を張ります。
-     * 配置は列/行インデックス基準です。
-     */
-    private fun buildPathSegments(
-        viewportCells: Map<MapPoint, MapCell>,
-        metrics: ViewportMetrics,
-    ): List<GestureEditorLayout.PathSegment> {
-        val pathKinds = setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH)
-        data class GridEdge(val a: MapPoint, val b: MapPoint)
-        data class Span(val horizontal: Boolean, val line: Int, val start: Int, val end: Int)
-
-        fun edge(a: MapPoint, b: MapPoint): GridEdge =
-            if (a.x < b.x || (a.x == b.x && a.y <= b.y)) GridEdge(a, b) else GridEdge(b, a)
-
-        val edges = linkedSetOf<GridEdge>()
-        viewportCells.forEach { (p, cell) ->
-            // ノードと新規追加を同じ接続可能な端点として扱います。
-            // 経路セルを挟まない隣接端点にも同じ接続規則を適用します。
-            if (cell.kind !in CONNECTABLE_KINDS) return@forEach
-            listOf(MapPoint(p.x - 1, p.y), MapPoint(p.x + 1, p.y), MapPoint(p.x, p.y - 1), MapPoint(p.x, p.y + 1))
-                .filter { viewportCells[it]?.kind in CONNECTABLE_KINDS }
-                .forEach { edges += edge(p, it) }
-        }
-
-        // 隣接セルごとに帯を作ると、node-path-node間に6枚が重なります。
-        // まず同一接続内の論理辺だけを連結し、1本の接続を3枚へ分割します。
-        // ノード／新規追加は接続の境界なので、そこで必ず連結を止めます。
-        fun mergeSpans(source: List<Span>): List<Span> {
-            val result = mutableListOf<Span>()
-            source.groupBy { it.horizontal to it.line }.values.forEach { grouped ->
-                var current = grouped.minByOrNull { it.start } ?: return@forEach
-                grouped.sortedBy { it.start }.drop(1).forEach { next ->
-                    val sharedPoint = if (current.horizontal) {
-                        MapPoint(next.start, current.line)
-                    } else {
-                        MapPoint(current.line, next.start)
-                    }
-                    val crossesEndpoint = next.start == current.end &&
-                        viewportCells[sharedPoint]?.kind in ENDPOINT_KINDS
-                    if (next.start <= current.end && !crossesEndpoint) {
-                        current = current.copy(end = maxOf(current.end, next.end))
-                    } else {
-                        result += current
-                        current = next
-                    }
-                }
-                result += current
-            }
-            return result
-        }
-
-        val spans = mergeSpans(edges.map { e ->
-            if (e.a.y == e.b.y) Span(true, e.a.y, e.a.x, e.b.x)
-            else Span(false, e.a.x, e.a.y, e.b.y)
-        })
-
-        fun isJunction(point: MapPoint, horizontal: Boolean): Boolean =
-            edges.any { e ->
-                val incident = e.a == point || e.b == point
-                incident && if (horizontal) e.a.x == e.b.x else e.a.y == e.b.y
-            }
-
-        val rawSegments = mutableListOf<GestureEditorLayout.PathSegment>()
-        spans.forEach { span ->
-            val trim = GestureEditorLayout.PATH_THICKNESS / 2.0
-            // 垂直枝が接続する内部セルでは帯を分割し、正方形の角と重ねません。
-            val breakPoints = (span.start..span.end).filter { coordinate ->
-                val point = if (span.horizontal) MapPoint(coordinate, span.line) else MapPoint(span.line, coordinate)
-                isJunction(point, span.horizontal)
-            }
-            val boundaries = (listOf(span.start) + breakPoints + span.end).distinct().sorted()
-            boundaries.zipWithNext().forEach { (from, to) ->
-                val fromPoint = if (span.horizontal) MapPoint(from, span.line) else MapPoint(span.line, from)
-                val toPoint = if (span.horizontal) MapPoint(to, span.line) else MapPoint(span.line, to)
-                val first = if (span.horizontal) metrics.x(from) else metrics.y(from)
-                val last = if (span.horizontal) metrics.x(to) else metrics.y(to)
-                val fromInset = if (isJunction(fromPoint, span.horizontal)) trim else 0.0
-                val toInset = if (isJunction(toPoint, span.horizontal)) trim else 0.0
-                val low = minOf(first, last) + if (first <= last) fromInset else toInset
-                val high = maxOf(first, last) - if (first <= last) toInset else fromInset
-                val length = (high - low).coerceAtLeast(0.0)
-                if (length <= 1.0e-6) return@forEach
-                val third = length / 3.0
-                repeat(3) { index ->
-                    val center = low + third * (index + 0.5)
-                    rawSegments += if (span.horizontal) {
-                        GestureEditorLayout.PathSegment(center, metrics.y(span.line), third, GestureEditorLayout.PATH_THICKNESS)
-                    } else {
-                        GestureEditorLayout.PathSegment(metrics.x(span.line), center, GestureEditorLayout.PATH_THICKNESS, third)
-                    }
-                }
-            }
-        }
-
-        // 角は専用の正方形1枚で埋め、水平・垂直帯同士の透明材重複を防ぎます。
-        viewportCells.keys.filter { p ->
-            viewportCells[p]?.kind in pathKinds &&
-                edges.any { (it.a == p || it.b == p) && it.a.y == it.b.y } &&
-                edges.any { (it.a == p || it.b == p) && it.a.x == it.b.x }
-        }.forEach { p ->
-            rawSegments += GestureEditorLayout.PathSegment(
-                metrics.x(p.x), metrics.y(p.y),
-                GestureEditorLayout.PATH_THICKNESS, GestureEditorLayout.PATH_THICKNESS,
-            )
-        }
-
-        // 画面端の経路は、expandedPathCells に含めた1セル外側の実体から自然に描画します。
-        // 外側セルが存在しない場合に仮スタブを足すと、原点を移動しただけで
-        // 横鎖の各セルから偽の縦経路が生じるため、無条件のスタブ生成は行いません。
-        return rawSegments.distinct()
-    }
-
     private fun zoomScale(): Double =
         (GestureEditorLayout.DEFAULT_ZOOM + state.zoomLevel.coerceIn(-2, 3) * 0.25).coerceIn(0.25, 1.5)
 
@@ -816,6 +718,8 @@ class GestureSequenceEditor(
     }
 
     private companion object {
+        /** 経路の曲がり角を画面外から取り込む論理セル余白です。 */
+        const val PATH_RENDER_MARGIN_CELLS = 2
         /** 経路の両端になり得る要素を固定列挙し、将来の表示専用セルを誤接続しません。 */
         val CONNECTABLE_KINDS = setOf(
             MapCellKind.NODE,
@@ -824,7 +728,5 @@ class GestureSequenceEditor(
             MapCellKind.BRANCH_PATH,
             MapCellKind.LOOP_RETURN_PATH,
         )
-        /** 1接続を分割する境界となる実体アイコンです。 */
-        val ENDPOINT_KINDS = setOf(MapCellKind.NODE, MapCellKind.ADD)
     }
 }
