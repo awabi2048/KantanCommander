@@ -76,11 +76,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         } ?: GraphEditor.Edge.ENTRY
                         val mergeConditionId = context.route.payload[MERGE_CONDITION_ID]?.takeIf(String::isNotBlank)
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                        val node = if (type == CommandType.MERGE) {
-                            GraphEditor.appendMerge(script.graph, requireNotNull(mergeConditionId))
-                        } else {
-                            GraphEditor.insert(script.graph, sourceId, edge, type)
+                        // 表示後に別画面でグラフが更新されると、表示時には有効だった
+                        // 合流候補が無効になることがあります。ジェスチャーGUIと同じ
+                        // 検証を実行境界でも行い、IllegalArgumentExceptionをイベントへ
+                        // 漏らさず安全に操作を無視します。
+                        if (type == CommandType.MERGE && !GraphEditor.canAppendMerge(script.graph, mergeConditionId)) {
+                            return@MenuActionHandler MenuActionResult.Ignored
                         }
+                        val node = runCatching {
+                            if (type == CommandType.MERGE) {
+                                GraphEditor.appendMerge(script.graph, requireNotNull(mergeConditionId))
+                            } else {
+                                GraphEditor.insert(script.graph, sourceId, edge, type)
+                            }
+                        }.getOrNull() ?: return@MenuActionHandler MenuActionResult.Ignored
                         plugin.scripts.save(script)
                         if (type in setOf(CommandType.MERGE, CommandType.BREAK, CommandType.CONTINUE)) {
                             MenuActionResult.Success(MenuUpdate.Replace(SequenceEditorMenu.editorRoute(context.route)))
