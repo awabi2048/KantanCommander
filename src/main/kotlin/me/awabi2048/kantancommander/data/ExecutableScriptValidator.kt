@@ -16,6 +16,7 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TargetKind
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import java.util.Collections
@@ -137,6 +138,23 @@ object ExecutableScriptValidator {
     }
 
     private fun validateTarget(spec: TargetSpec, path: String, errors: MutableList<String>) {
+        if (spec.kind == TargetKind.FIXED_ENTITY && spec.fixedEntityId == null) {
+            errors += "$path: 固定エンティティが未設定です"
+        }
+        spec.entityType?.takeIf(String::isNotBlank)?.let { raw ->
+            if (NamespacedKey.fromString(raw) == null) errors += "$path: エンティティ種別が不正です"
+        }
+        spec.gameMode?.takeIf(String::isNotBlank)?.let { mode ->
+            if (mode.uppercase() !in setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) {
+                errors += "$path: ゲームモードが不正です"
+            }
+        }
+        spec.tag?.takeIf(String::isNotBlank)?.let { tag ->
+            if (!tag.matches(Regex("[A-Za-z0-9_.:+-]{1,64}"))) errors += "$path: タグが不正です"
+        }
+        spec.name?.let { name ->
+            if (name.length > 256) errors += "$path: エンティティ名が長すぎます"
+        }
         if (spec.minimumDistance?.isFinite() == false || spec.maximumDistance?.isFinite() == false) {
             errors += "$path: 対象距離は有限値で指定してください"
         }
@@ -153,6 +171,9 @@ object ExecutableScriptValidator {
         if (spec.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES) &&
             listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }
         ) errors += "$path: 座標が未設定または有限値ではありません"
+        if (spec.kind == PositionKind.CAPTURED &&
+            (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)
+        ) errors += "$path: 捕捉した向きが未設定または有限値ではありません"
         if (spec.kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE) &&
             !spec.variable.orEmpty().matches(Regex("[a-z0-9_.-]{1,64}"))
         ) errors += "$path: 位置変数名が不正です"

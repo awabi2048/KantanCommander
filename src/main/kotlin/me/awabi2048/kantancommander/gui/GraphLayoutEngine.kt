@@ -173,8 +173,16 @@ data class GraphLayout(
  * GUI都合の圧縮、端での例外配置、レーンへの再投影は行いません。
  */
 object GraphLayoutEngine {
-    fun layout(graph: CommandGraph): GraphLayout {
-        val builder = Builder(graph)
+    /**
+     * グラフを論理セルへ展開します。
+     *
+     * [maxCells] は外部JSONや設定変更で異常に大きくなったグラフを、描画前に
+     * 有限時間・有限メモリで拒否するための安全弁です。通常のGUI呼び出しは
+     * 無制限の既定値を使い、ScriptStoreだけが設定上限に応じた値を渡します。
+     */
+    fun layout(graph: CommandGraph, maxCells: Long = Long.MAX_VALUE): GraphLayout {
+        require(maxCells > 0L) { "layout cell limit must be positive" }
+        val builder = Builder(graph, maxCells)
         builder.renderRoot()
         val maxX = builder.cells.keys.maxOfOrNull(MapPoint::x) ?: 0
         val maxY = builder.cells.keys.maxOfOrNull(MapPoint::y) ?: 0
@@ -186,7 +194,10 @@ object GraphLayoutEngine {
         )
     }
 
-    private class Builder(private val graph: CommandGraph) {
+    private class Builder(
+        private val graph: CommandGraph,
+        private val maxCells: Long,
+    ) {
         val cells = linkedMapOf<MapPoint, MapCell>()
         val nodePoints = linkedMapOf<UUID, MapPoint>()
 
@@ -493,6 +504,14 @@ object GraphLayoutEngine {
 
         private fun putNode(x: Int, y: Int, node: CommandNode) {
             val point = MapPoint(x, y)
+            val existing = cells[point]
+            check(existing == null || (existing.kind == MapCellKind.NODE && existing.nodeId == node.id)) {
+                "ノードが既存の経路または別ノードと衝突しています: point=$point existing=$existing node=${node.id}"
+            }
+            // 同じ構造ノードが分岐の描画経路上へ再登場する場合があります。
+            // そのときは最新位置をクリック対象として採用しますが、経路／追加ポイント
+            // の上書きだけは上の衝突検査で必ず拒否します。
+            ensureCapacity(point)
             cells[point] = MapCell(point, MapCellKind.NODE, node.id)
             nodePoints[node.id] = point
         }
@@ -516,6 +535,7 @@ object GraphLayoutEngine {
             }
             val resolvedKind = mergePathKind(existing?.kind, kind)
             val resolvedTarget = mergeInsertionTarget(point, existing?.insertionTarget, incomingTarget)
+            ensureCapacity(point)
             cells[point] = MapCell(point, resolvedKind, insertionTarget = resolvedTarget)
         }
 
@@ -530,11 +550,18 @@ object GraphLayoutEngine {
             check(cells[point] == null) {
                 "追加位置が既存要素と衝突しています: point=$point existing=${cells[point]}"
             }
+            ensureCapacity(point)
             cells[point] = MapCell(
                 point,
                 MapCellKind.ADD,
                 insertionTarget = InsertionTarget(sourceId, edge, mergeConditionId),
             )
+        }
+
+        private fun ensureCapacity(point: MapPoint) {
+            if (point !in cells && cells.size.toLong() >= maxCells) {
+                throw IllegalArgumentException("描画セル数が上限 $maxCells を超えています: point=$point")
+            }
         }
 
         /**

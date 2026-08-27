@@ -10,6 +10,7 @@ import org.bukkit.event.entity.EntityRemoveEvent
 import org.bukkit.event.world.EntitiesLoadEvent
 import org.bukkit.persistence.PersistentDataType
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
@@ -25,7 +26,16 @@ class SummonedEntityTracker(
 
     init {
         load()
-        plugin.server.worlds.flatMap(World::getEntities).forEach(::recover)
+        val recovered = plugin.server.worlds.flatMap(World::getEntities).count { recover(it) }
+        if (recovered > 0) {
+            runCatching { save() }.onFailure { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "再起動時に検出した召喚体台帳を保存できませんでした: count=$recovered",
+                    failure,
+                )
+            }
+        }
     }
 
     fun canSummon(worldId: UUID): Boolean =
@@ -40,28 +50,68 @@ class SummonedEntityTracker(
         check(canSummon(entity.world.uid)) { "Kantan召喚数が上限へ到達しています" }
         entity.persistentDataContainer.set(markerKey, PersistentDataType.BYTE, 1)
         entity.persistentDataContainer.set(scriptKey, PersistentDataType.STRING, scriptId.toString())
-        tracked.getOrPut(entity.world.uid, ::linkedSetOf).add(entity.uniqueId)
-        save()
+        val worldEntities = tracked.getOrPut(entity.world.uid, ::linkedSetOf)
+        worldEntities.add(entity.uniqueId)
+        try {
+            save()
+        } catch (failure: Throwable) {
+            // 台帳保存に失敗した召喚体を「追跡済み」として残すと、再起動後に
+            // 上限計算だけが壊れるため、登録を取り消して呼び出し側へ返します。
+            worldEntities.remove(entity.uniqueId)
+            if (worldEntities.isEmpty()) tracked.remove(entity.world.uid)
+            entity.persistentDataContainer.remove(markerKey)
+            entity.persistentDataContainer.remove(scriptKey)
+            throw failure
+        }
     }
 
     @EventHandler
     fun onEntitiesLoad(event: EntitiesLoadEvent) {
-        var changed = false
+        val added = mutableListOf<Pair<UUID, UUID>>()
         event.entities.forEach { entity ->
-            if (isTracked(entity)) changed = tracked.getOrPut(entity.world.uid, ::linkedSetOf).add(entity.uniqueId) || changed
+            if (isTracked(entity)) {
+                val ids = tracked.getOrPut(entity.world.uid, ::linkedSetOf)
+                if (ids.add(entity.uniqueId)) added += entity.world.uid to entity.uniqueId
+            }
         }
-        if (changed) save()
+        if (added.isEmpty()) return
+        runCatching { save() }.onFailure { failure ->
+            // チャンク読込時の台帳保存に失敗した場合も、メモリだけ新しい数を
+            // 数え続けないよう追加分を巻き戻します。次の読込で再試行できます。
+            added.forEach { (worldId, entityId) ->
+                tracked[worldId]?.remove(entityId)
+                if (tracked[worldId].isNullOrEmpty()) tracked.remove(worldId)
+            }
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "召喚体台帳のチャンク読込更新を保存できませんでした",
+                failure,
+            )
+        }
     }
 
     @EventHandler
     fun onEntityRemove(event: EntityRemoveEvent) {
         // UNLOADは実体が存続するため台帳へ残し、死亡・デスポーン・明示削除だけを解放します。
         if (event.cause == EntityRemoveEvent.Cause.UNLOAD || !isTracked(event.entity)) return
-        if (tracked[event.entity.world.uid]?.remove(event.entity.uniqueId) == true) save()
+        val worldId = event.entity.world.uid
+        val entityId = event.entity.uniqueId
+        if (tracked[worldId]?.remove(entityId) != true) return
+        if (tracked[worldId].isNullOrEmpty()) tracked.remove(worldId)
+        runCatching { save() }.onFailure { failure ->
+            // 保存失敗時は次回復帰や上限計算のために台帳上のIDを戻します。
+            tracked.getOrPut(worldId, ::linkedSetOf).add(entityId)
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "召喚体台帳の削除を保存できませんでした: entity=$entityId",
+                failure,
+            )
+        }
     }
 
-    private fun recover(entity: Entity) {
-        if (isTracked(entity)) tracked.getOrPut(entity.world.uid, ::linkedSetOf).add(entity.uniqueId)
+    private fun recover(entity: Entity): Boolean {
+        if (!isTracked(entity)) return false
+        return tracked.getOrPut(entity.world.uid, ::linkedSetOf).add(entity.uniqueId)
     }
 
     private fun isTracked(entity: Entity) =
@@ -84,7 +134,16 @@ class SummonedEntityTracker(
             tracked.flatMap { (world, entities) -> entities.map { "$world,$it" } }.joinToString("\n"),
             Charsets.UTF_8,
         )
-        Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        try {
+            Files.move(
+                temporary.toPath(),
+                file.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (_: AtomicMoveNotSupportedException) {
+            Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
     }
 }
 

@@ -6,6 +6,7 @@ import com.awabi2048.ccsystem.api.gui.MenuDialogButton
 import com.awabi2048.ccsystem.api.gui.MenuDialogHandler
 import com.awabi2048.ccsystem.api.gui.MenuDialogInput
 import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
+import com.awabi2048.ccsystem.api.gui.MenuDialogResponse
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiAccess
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
@@ -44,6 +45,7 @@ import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.Sound
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
 import java.util.UUID
@@ -285,7 +287,8 @@ class GestureSequenceEditor(
 
     private fun buildUpperViewport(player: Player): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
-        val layout = GraphLayoutEngine.layout(script.graph)
+        val layout = runCatching { GraphLayoutEngine.layout(script.graph) }
+            .getOrElse { return layoutErrorView() }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
@@ -556,31 +559,23 @@ class GestureSequenceEditor(
                 )
             } else element
         }
-        val clippedVisuals = scaledVisuals.filter { visual ->
-            if (!(visual.visualId.startsWith("node-") || visual.visualId.startsWith("add-") || visual.visualId.startsWith("path-"))) return@filter true
-            // マップ要素は、入力要素・経路と同じグラフ領域へクリップします。
-            // パネル全体へ別の矩形で切り取ると、ノードだけがナビ列へ流出するため、
-            // 端の継続経路もここで同じ境界に揃えます。
-            val minX = metrics.graphMinX
-            val maxX = metrics.graphMaxX
-            val minY = metrics.graphMinY
-            val maxY = metrics.graphMaxY
-            val halfVisualW = when (visual) {
-                is GestureGuiVisual.Block -> visual.width / 2.0
-                is GestureGuiVisual.Item -> metrics.iconSize * zoomScale / 2.0
-                is GestureGuiVisual.Text -> 0.06 * zoomScale
-            }
-            val halfVisualH = when (visual) {
-                is GestureGuiVisual.Block -> visual.height / 2.0
-                is GestureGuiVisual.Item -> metrics.iconSize * zoomScale / 2.0
-                is GestureGuiVisual.Text -> 0.04 * zoomScale
-            }
-            visual.x + halfVisualW >= minX && visual.x - halfVisualW <= maxX &&
-                visual.y + halfVisualH >= minY && visual.y - halfVisualH <= maxY
+        // 表示と入力の境界は同じグラフ矩形から生成します。従来は表示だけを
+        // filterしていたため、画面外へ消えたアイコンのInteractionがナビ列を
+        // 横取りしていました。Blockは矩形を実際に切り詰め、Item/Textは
+        // 完全に収まる場合だけ残すことで、見えていない要素を操作不能にします。
+        val clippedVisuals = scaledVisuals.mapNotNull { visual ->
+            if (!isMapVisual(visual)) visual else clipMapVisual(visual, metrics)
+        }
+        val clippedElements = scaledElements.mapNotNull { element ->
+            if (!isMapElement(element)) element else clipMapElement(element, metrics)
+        }
+        val visibleVisualIds = clippedVisuals.mapTo(hashSetOf(), GestureGuiVisual::visualId)
+        val finalElements = clippedElements.filter {
+            it.targetVisualId == null || it.targetVisualId in visibleVisualIds
         }
 
         return GestureGuiView(
-            GestureGuiScreenDefinition(UPPER_SCREEN_ID, scaledElements, access = GestureGuiAccess.OWNER_ONLY),
+            GestureGuiScreenDefinition(UPPER_SCREEN_ID, finalElements, access = GestureGuiAccess.OWNER_ONLY),
             clippedVisuals,
             panel = GestureGuiPanel(
                 width = GestureEditorLayout.UPPER_W,
@@ -616,14 +611,16 @@ class GestureSequenceEditor(
         invalidateInput()
         state.settingsTab = absoluteIndex
         state.settingsPage = absoluteIndex / SETTINGS_PAGE_SIZE
+        // タブ切替は親画面内の表示更新だけに留めます。子画面は、タブ内の
+        // 詳細候補（対象フィルタやコンテキストの構成要素）へ進むときだけ開きます。
+        if (settingChildOpen(player.uniqueId)) {
+            api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+        }
         val field = fields[absoluteIndex]
         // アイテムタブの選択は表示だけを切り替えます。タブを開いただけで
         // 設定済みアイテムを上書きしないよう、保存操作は右ペインの
         // 「メインハンドから設定」ボタンへ限定します。
         if (field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
-            if (settingChildOpen(player.uniqueId)) {
-                api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
-            }
             clearSettingState()
             state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
@@ -644,7 +641,7 @@ class GestureSequenceEditor(
             state.settingParentScreen = null
             state.settingPage = 0
             state.lowerMode = GestureLowerMode.SETTING_CHOICES
-            ensureSettingChild(player)
+            updateLower(player)
             return
         }
         updateLower(player)
@@ -687,9 +684,13 @@ class GestureSequenceEditor(
                 ?.let { KcI18n.text(player, it.label) }
                 ?: fieldKey
             showTextInputDialog(player, "${fieldLabel}を入力してください", node.string(fieldKey)) { value ->
-                if (CommandSettingsModel.updateNode(plugin, context) { it.params[fieldKey] = value } != null) {
+                val updated = CommandSettingsModel.updateNode(plugin, context) { it.params[fieldKey] = value }
+                if (updated == null) {
+                    "設定を保存できませんでした。"
+                } else {
                     updateUpper(player)
                     updateLower(player)
+                    null
                 }
             }
             return
@@ -700,7 +701,7 @@ class GestureSequenceEditor(
         state.settingParentScreen = null
         state.settingPage = 0
         state.lowerMode = GestureLowerMode.SETTING_CHOICES
-        ensureSettingChild(player)
+        updateLower(player)
     }
 
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
@@ -787,16 +788,29 @@ class GestureSequenceEditor(
         val context = state.pendingItemContext ?: return
         val itemKey = state.pendingItemKey ?: return
         val itemData = state.pendingItemData ?: return
-        val saved = CommandSettingsModel.updateNode(plugin, context) { node ->
-            node.params["item"] = itemKey
-            node.params["itemData"] = itemData
-        } != null
+        val saved = runCatching {
+            CommandSettingsModel.updateNode(plugin, context) { node ->
+                node.params["item"] = itemKey
+                node.params["itemData"] = itemData
+            } != null
+        }.onFailure { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "アイテム上書きの保存に失敗しました: script=${context.scriptId} node=${context.nodeId}",
+                failure,
+            )
+        }.getOrDefault(false)
+        if (!saved) {
+            // 確認子画面を閉じず、再試行できるよう保留中のItemStackを維持します。
+            player.sendMessage("アイテムを保存できませんでした。もう一度お試しください。")
+            return
+        }
         state.pendingItemContext = null
         state.pendingItemKey = null
         state.pendingItemData = null
         state.confirmKind = GestureConfirmKind.DELETE
         api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
-        if (saved) player.sendMessage("アイテムを上書きしました: $itemKey")
+        player.sendMessage("アイテムを上書きしました: $itemKey")
         state.lowerMode = if (settingChildOpen(player.uniqueId) && state.settingContext != null) {
             GestureLowerMode.SETTING_CHOICES
         } else {
@@ -812,28 +826,64 @@ class GestureSequenceEditor(
         context: CommandSettingContext,
         change: (me.awabi2048.kantancommander.model.CommandNode) -> Unit,
     ): Boolean {
-        if (CommandSettingsModel.updateNode(plugin, context, change) == null) return false
+        val saved = runCatching {
+            CommandSettingsModel.updateNode(plugin, context, change) != null
+        }.onFailure { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ジェスチャー設定の保存に失敗しました: script=${context.scriptId} node=${context.nodeId}",
+                failure,
+            )
+        }.getOrDefault(false)
+        if (!saved) return false
         updateUpper(player)
         updateLower(player)
         return true
     }
 
-    private fun beginSettingInput(player: Player, prompt: String, result: (String) -> Unit) {
+    private fun beginSettingInput(player: Player, prompt: String, result: (String) -> String?) {
         showTextInputDialog(player, prompt) { raw ->
-            result(raw.trim())
+            val error = result(raw.trim())
+            if (error != null) return@showTextInputDialog error
             updateUpper(player)
             updateLower(player)
+            null
         }
     }
 
-    /** 共通ダイアログ入力。チャット入力セッションを作らず、GUI終了後の
-     * 遅延応答も世代トークンで破棄します。 */
+    /** 単一文字列の入力を共通ダイアログへ委譲します。 */
     private fun showTextInputDialog(
         player: Player,
         prompt: String,
         initial: String = "",
         maxLength: Int = 512,
-        onSubmit: (String) -> Unit,
+        onSubmit: (String) -> String?,
+    ) = showInputDialog(
+        player = player,
+        body = listOf(
+            Component.text(prompt),
+            Component.text(if (initial.isBlank()) "現在値: 未設定" else "現在値: $initial", NamedTextColor.GRAY),
+        ),
+        inputs = listOf(
+            MenuDialogInput.Text(
+                id = "value",
+                label = Component.text("入力値"),
+                initial = initial,
+                maxLength = maxLength,
+            ),
+        ),
+    ) { response -> onSubmit(response.textValue("value")) }
+
+    /**
+     * 複数値の設定は入力欄を分割します（座標X/Y/Z、yaw/pitchなど）。
+     * 連結文字列を1欄で受けると、どの値が不正かをユーザーが特定できず、
+     * Dialog再表示時にも入力値の対応が崩れるため、入力IDと値を一対一にします。
+     */
+    private fun showInputDialog(
+        player: Player,
+        body: List<Component>,
+        inputs: List<MenuDialogInput>,
+        onSubmit: (MenuDialogResponse) -> String?,
     ) {
         invalidateInput()
         val token = UUID.randomUUID()
@@ -844,15 +894,8 @@ class GestureSequenceEditor(
                 owner = "kantan-commander",
                 id = "gesture-input-$token",
                 title = Component.text("値を入力"),
-                body = listOf(Component.text(prompt)),
-                inputs = listOf(
-                    MenuDialogInput.Text(
-                        id = "value",
-                        label = Component.text("入力値"),
-                        initial = initial,
-                        maxLength = maxLength,
-                    ),
-                ),
+                body = body,
+                inputs = inputs,
                 confirm = MenuDialogButton(
                     Component.text("確定", NamedTextColor.GREEN),
                     MenuDialogHandler { target, response ->
@@ -860,8 +903,16 @@ class GestureSequenceEditor(
                         if (target.uniqueId != player.uniqueId || activeInputToken != token || !target.isOnline || snapshot?.sessionId != gestureSessionId) {
                             return@MenuDialogHandler MenuActionResult.Ignored
                         }
+                        val error = runCatching { onSubmit(response) }
+                            .getOrElse { "入力を処理できませんでした。" }
+                        if (error != null) {
+                            // RejectedはCC-System側で同じダイアログを入力値付きで
+                            // 再表示するため、入力セッションを維持したまま修正できます。
+                            return@MenuDialogHandler MenuActionResult.Rejected(
+                                Component.text(error, NamedTextColor.RED),
+                            )
+                        }
                         activeInputToken = null
-                        onSubmit(response.textValue("value"))
                         MenuActionResult.Success(MenuUpdate.Close)
                     },
                 ),
@@ -876,14 +927,87 @@ class GestureSequenceEditor(
         )
     }
 
+    /**
+     * 座標設定用の入力欄をX/Y/Zへ分割します。
+     *
+     * 座標を1つの文字列として受け取る方式では、区切り文字の誤りや一部の
+     * 値だけの入力を画面上で特定できません。Dialogの各入力値をそのまま
+     * 検証することで、エラー時も入力済みの値を保持したまま再表示できます。
+     */
+    private fun showCoordinateSettingDialog(
+        player: Player,
+        x: Double,
+        y: Double,
+        z: Double,
+        onSubmit: (Double, Double, Double) -> String?,
+    ) {
+        showInputDialog(
+            player = player,
+            body = listOf(
+                Component.text("座標をX/Y/Zそれぞれに入力してください。"),
+                Component.text("現在値: X=$x Y=$y Z=$z", NamedTextColor.GRAY),
+            ),
+            inputs = listOf(
+                MenuDialogInput.Text("x", Component.text("X"), x.toString(), maxLength = 64),
+                MenuDialogInput.Text("y", Component.text("Y"), y.toString(), maxLength = 64),
+                MenuDialogInput.Text("z", Component.text("Z"), z.toString(), maxLength = 64),
+            ),
+        ) { response ->
+            val xValue = response.textValue("x").trim().toDoubleOrNull()?.takeIf(Double::isFinite)
+            val yValue = response.textValue("y").trim().toDoubleOrNull()?.takeIf(Double::isFinite)
+            val zValue = response.textValue("z").trim().toDoubleOrNull()?.takeIf(Double::isFinite)
+            if (xValue == null || yValue == null || zValue == null) {
+                return@showInputDialog "X/Y/Zは有限な数値で入力してください。"
+            }
+            onSubmit(xValue, yValue, zValue)
+        }
+    }
+
+    /** 回転設定用の入力欄をyaw/pitchへ分割します。 */
+    private fun showRotationSettingDialog(
+        player: Player,
+        yaw: Float,
+        pitch: Float,
+        onSubmit: (Float, Float) -> String?,
+    ) {
+        showInputDialog(
+            player = player,
+            body = listOf(
+                Component.text("回転角をyaw/pitchそれぞれに入力してください。"),
+                Component.text("現在値: yaw=$yaw pitch=$pitch", NamedTextColor.GRAY),
+            ),
+            inputs = listOf(
+                MenuDialogInput.Text("yaw", Component.text("Yaw"), yaw.toString(), maxLength = 64),
+                MenuDialogInput.Text("pitch", Component.text("Pitch"), pitch.toString(), maxLength = 64),
+            ),
+        ) { response ->
+            val yawValue = response.textValue("yaw").trim().toFloatOrNull()?.takeIf(Float::isFinite)
+            val pitchValue = response.textValue("pitch").trim().toFloatOrNull()?.takeIf(Float::isFinite)
+            if (yawValue == null || pitchValue == null) {
+                return@showInputDialog "Yaw/Pitchは有限な数値で入力してください。"
+            }
+            onSubmit(yawValue, pitchValue)
+        }
+    }
+
     private fun parseCoordinates(raw: String): Triple<Double, Double, Double>? {
-        val values = raw.split(Regex("[ ,]+"), limit = 4).mapNotNull(String::toDoubleOrNull)
-        return if (values.size == 3) Triple(values[0], values[1], values[2]) else null
+        val tokens = raw.trim().split(Regex("[ ,]+"))
+            .filter(String::isNotEmpty)
+        if (tokens.size != 3) return null
+        val values = tokens.map { it.toDoubleOrNull()?.takeIf(Double::isFinite) }
+        if (values.any { it == null }) return null
+        return Triple(values[0]!!, values[1]!!, values[2]!!)
     }
 
     /** 専用選択画面のすべての選択を共有モデルへ適用します。 */
     private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {
         if (context.gesture != GestureGuiGesture.PRIMARY) return
+        if (context.elementId == "setting-child-empty") {
+            // 子画面の余白クリックは「戻る」専用ボタンと同じ状態遷移にし、
+            // 親画面の選択や下部表示を残したまま子だけを閉じます。
+            closeSettingChild(player)
+            return
+        }
         if (context.elementId == "lower-setting-back") {
             val parent = state.settingParentScreen
             if (parent != null) {
@@ -916,7 +1040,7 @@ class GestureSequenceEditor(
             state.settingParentScreen = null
             state.settingPage = 0
             state.lowerMode = GestureLowerMode.SETTING_CHOICES
-            ensureSettingChild(player)
+            updateLower(player)
             return
         }
         val encoded = context.elementId.removePrefix("lower-setting-choice:")
@@ -930,9 +1054,9 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(settingContext.scriptId) ?: return
         val node = script.graph.nodes[settingContext.nodeId] ?: return
 
-        fun showSettingScreen() {
+        fun showSettingScreen(openChild: Boolean = false) {
             state.lowerMode = GestureLowerMode.SETTING_CHOICES
-            if (settingChildOpen(player.uniqueId)) updateLower(player) else ensureSettingChild(player)
+            if (openChild && !settingChildOpen(player.uniqueId)) ensureSettingChild(player) else updateLower(player)
         }
 
         fun returnToParentOrSettings() {
@@ -963,7 +1087,7 @@ class GestureSequenceEditor(
                     }
                     state.settingScreen = GestureSettingScreen.TARGET_FILTERS
                     state.settingPage = 0
-                    showSettingScreen()
+                    showSettingScreen(openChild = true)
                     return
                 }
                 if (group != "target") return
@@ -995,7 +1119,7 @@ class GestureSequenceEditor(
                     }
                     state.settingScreen = GestureSettingScreen.TARGET_FILTERS
                     state.settingPage = 0
-                    showSettingScreen()
+                    showSettingScreen(openChild = true)
                 } else {
                     returnToParentOrSettings()
                 }
@@ -1023,7 +1147,8 @@ class GestureSequenceEditor(
                     "entityType", "minimumDistance", "maximumDistance", "limit", "tag", "name" -> {
                         beginSettingInput(player, "$value を入力してください") { raw ->
                             val parsed = when (value) {
-                                "minimumDistance", "maximumDistance" -> raw.takeIf(String::isNotEmpty)?.toDoubleOrNull()
+                                "minimumDistance", "maximumDistance" -> raw.takeIf(String::isNotEmpty)
+                                    ?.toDoubleOrNull()?.takeIf(Double::isFinite)
                                 "limit" -> raw.takeIf(String::isNotEmpty)?.toIntOrNull()
                                 else -> raw.takeIf(String::isNotEmpty)
                             }
@@ -1033,10 +1158,9 @@ class GestureSequenceEditor(
                                 else -> false
                             }
                             if (raw.isNotEmpty() && (parsed == null || invalidRange)) {
-                                player.sendMessage("入力値の形式が正しくありません。")
-                                return@beginSettingInput
+                                return@beginSettingInput "入力値の形式が正しくありません。"
                             }
-                            updateSettingNode(player, settingContext) {
+                            if (!updateSettingNode(player, settingContext) {
                                 val updated = when (value) {
                                     "entityType" -> current.copy(entityType = parsed as String?)
                                     "minimumDistance" -> current.copy(minimumDistance = parsed as Double?)
@@ -1046,7 +1170,8 @@ class GestureSequenceEditor(
                                     else -> current.copy(name = parsed as String?)
                                 }
                                 CommandSettingsModel.setTargetSpec(it, role, updated)
-                            }
+                            }) return@beginSettingInput "設定を保存できませんでした。"
+                            null
                         }
                     }
                 }
@@ -1059,32 +1184,35 @@ class GestureSequenceEditor(
                     state.settingParentScreen = GestureSettingScreen.POSITION
                     state.settingScreen = GestureSettingScreen.TARGET
                     state.settingPage = 0
-                    showSettingScreen()
+                    showSettingScreen(openChild = true)
                     return
                 }
                 if (kind == PositionKind.COORDINATES) {
-                    beginSettingInput(player, "座標を x y z の順に入力してください") { raw ->
-                        val (x, y, z) = parseCoordinates(raw) ?: run {
-                            player.sendMessage("座標は x y z の3つの数値で入力してください。")
-                            return@beginSettingInput
-                        }
-                        updateSettingNode(player, settingContext) {
+                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
+                    showCoordinateSettingDialog(
+                        player,
+                        current?.x ?: player.location.x,
+                        current?.y ?: player.location.y,
+                        current?.z ?: player.location.z,
+                    ) { x, y, z ->
+                        if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, x = x, y = y, z = z))
-                        }
+                        }) return@showCoordinateSettingDialog "設定を保存できませんでした。"
                         returnToParentOrSettings()
+                        null
                     }
                     return
                 }
                 if (kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
                     beginSettingInput(player, "位置変数名を入力してください") { raw ->
                         if (!raw.matches(Regex("[a-z0-9_.-]{1,64}"))) {
-                            player.sendMessage("変数名は英小文字・数字・._-で入力してください。")
-                            return@beginSettingInput
+                            return@beginSettingInput "変数名は英小文字・数字・._-で入力してください。"
                         }
-                        updateSettingNode(player, settingContext) {
+                        if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, variable = raw))
-                        }
+                        }) return@beginSettingInput "設定を保存できませんでした。"
                         returnToParentOrSettings()
+                        null
                     }
                     return
                 }
@@ -1100,29 +1228,33 @@ class GestureSequenceEditor(
                 if (group != "facing") return
                 val kind = runCatching { FacingKind.valueOf(value) }.getOrNull() ?: return
                 if (kind == FacingKind.COORDINATES) {
-                    beginSettingInput(player, "向く座標を x y z の順に入力してください") { raw ->
-                        val (x, y, z) = parseCoordinates(raw) ?: run {
-                            player.sendMessage("座標は x y z の3つの数値で入力してください。")
-                            return@beginSettingInput
-                        }
-                        updateSettingNode(player, settingContext) {
+                    val current = CommandSettingsModel.facingSpec(node)
+                    showCoordinateSettingDialog(
+                        player,
+                        current?.x ?: player.location.x,
+                        current?.y ?: player.location.y,
+                        current?.z ?: player.location.z,
+                    ) { x, y, z ->
+                        if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, x = x, y = y, z = z))
-                        }
+                        }) return@showCoordinateSettingDialog "設定を保存できませんでした。"
                         returnToParentOrSettings()
+                        null
                     }
                     return
                 }
                 if (kind == FacingKind.ROTATION) {
-                    beginSettingInput(player, "向きの yaw pitch を入力してください") { raw ->
-                        val values = raw.split(Regex("[ ,]+"), limit = 3).mapNotNull(String::toFloatOrNull)
-                        if (values.size != 2) {
-                            player.sendMessage("yaw と pitch の2つの数値で入力してください。")
-                            return@beginSettingInput
-                        }
-                        updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = values[0], pitch = values[1]))
-                        }
+                    val current = CommandSettingsModel.facingSpec(node)
+                    showRotationSettingDialog(
+                        player,
+                        current?.yaw ?: player.location.yaw,
+                        current?.pitch ?: player.location.pitch,
+                    ) { yaw, pitch ->
+                        if (!updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = yaw, pitch = pitch))
+                        }) return@showRotationSettingDialog "設定を保存できませんでした。"
                         returnToParentOrSettings()
+                        null
                     }
                     return
                 }
@@ -1145,14 +1277,14 @@ class GestureSequenceEditor(
                         state.settingParentScreen = GestureSettingScreen.CONDITION_DETAIL
                         state.settingScreen = GestureSettingScreen.TARGET
                         state.settingPage = 0
-                        showSettingScreen()
+                        showSettingScreen(openChild = true)
                     }
                     "condition-position" -> {
                         state.settingContext = settingContext.copy(role = CommandSettingRole.CONDITION_POSITION)
                         state.settingParentScreen = GestureSettingScreen.CONDITION_DETAIL
                         state.settingScreen = GestureSettingScreen.POSITION
                         state.settingPage = 0
-                        showSettingScreen()
+                        showSettingScreen(openChild = true)
                     }
                     "condition-state" -> {
                         if (updateSettingNode(player, settingContext) {
@@ -1184,7 +1316,9 @@ class GestureSequenceEditor(
                             else -> "count"
                         }
                         beginSettingInput(player, "$parameter を入力してください") { raw ->
-                            updateSettingNode(player, settingContext) { it.params[parameter] = raw }
+                            if (!updateSettingNode(player, settingContext) { it.params[parameter] = raw }) {
+                                "設定を保存できませんでした。"
+                            } else null
                         }
                     }
                 }
@@ -1224,7 +1358,9 @@ class GestureSequenceEditor(
                 if (group != "value") return
                 when (value) {
                     "direct" -> beginSettingInput(player, "変数の値を入力してください") { raw ->
-                        updateSettingNode(player, settingContext) { it.params["value"] = raw }
+                        if (!updateSettingNode(player, settingContext) { it.params["value"] = raw }) {
+                            "設定を保存できませんでした。"
+                        } else null
                     }
                     "iteration" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_iteration_value" }) returnToParentOrSettings()
                     "count" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_loop_count" }) returnToParentOrSettings()
@@ -1246,21 +1382,21 @@ class GestureSequenceEditor(
                         state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
                         state.settingScreen = GestureSettingScreen.TARGET
                         state.settingPage = 0
-                        showSettingScreen()
+                        showSettingScreen(openChild = true)
                     }
                     "position" -> {
                         state.settingContext = settingContext.copy(role = CommandSettingRole.CONTEXT_POSITION)
                         state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
                         state.settingScreen = GestureSettingScreen.POSITION
                         state.settingPage = 0
-                        showSettingScreen()
+                        showSettingScreen(openChild = true)
                     }
                     "facing" -> {
                         state.settingContext = settingContext.copy(role = CommandSettingRole.CONTEXT_FACING)
                         state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
                         state.settingScreen = GestureSettingScreen.FACING
                         state.settingPage = 0
-                        showSettingScreen()
+                        showSettingScreen(openChild = true)
                     }
                     "source" -> {
                         if (updateSettingNode(player, settingContext) { CommandSettingsModel.toggleContextSource(it) }) updateLower(player)
@@ -1347,7 +1483,7 @@ class GestureSequenceEditor(
                     else -> return
                 }
                 val script = plugin.scripts.load(state.scriptId) ?: return
-                val layout = GraphLayoutEngine.layout(script.graph)
+                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return
                 val metrics = viewportMetrics(zoomScale())
                 val nextOrigin = GestureEditorLayout.clampOrigin(
                     MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
@@ -1365,8 +1501,9 @@ class GestureSequenceEditor(
             context.elementId == "back-to-start" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 // 最も先頭にある追加ポイントをビューに含めるよう原点を調整
                 val script = plugin.scripts.load(state.scriptId)
-                val layout = script?.let { GraphLayoutEngine.layout(it.graph) }
-                val firstAdd = layout?.let { GestureEditorLayout.findFirstAddPoint(it.cells) }
+                val layout = script?.let { runCatching { GraphLayoutEngine.layout(it.graph) }.getOrNull() }
+                    ?: return
+                val firstAdd = GestureEditorLayout.findFirstAddPoint(layout.cells)
                 if (firstAdd != null) {
                     // 枝が最も進んだ追加ポイントが範囲外なら、右端／下端に
                     // 入る位置まで原点を移動します。単純にポイント座標を原点へ
@@ -1397,7 +1534,7 @@ class GestureSequenceEditor(
                 }
                 val gx = context.elementId.removePrefix("add:").substringBefore(":").toIntOrNull() ?: return
                 val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
-                val layout = GraphLayoutEngine.layout(script.graph)
+                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return
                 val cell = layout.cells[MapPoint(gx, gy)]
                 val target = cell?.insertionTarget ?: run {
                     // セルが持たない場合は前後ノードから直接挿入先を導出する（末端追加）
@@ -1425,7 +1562,7 @@ class GestureSequenceEditor(
                 }
                 val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
                 if (point.size != 2) return
-                val layout = GraphLayoutEngine.layout(script.graph)
+                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return
                 val clickedPoint = MapPoint(point[0], point[1])
                 val cell = layout.cells[clickedPoint] ?: return
                 val target = cell.insertionTarget ?: return
@@ -1494,8 +1631,9 @@ class GestureSequenceEditor(
                 // そのまま適用しません。現在のレイアウト上でも同じセルが同じ
                 // 挿入先を示すことを確認し、連続経路の装飾セルへの誤挿入を防ぎます。
                 state.selectedInsertionCandidatePoint?.let { point ->
-                    val currentTarget = GraphLayoutEngine.layout(script.graph)
-                        .cells[point]
+                    val currentTarget = runCatching { GraphLayoutEngine.layout(script.graph) }
+                        .getOrNull()
+                        ?.cells?.get(point)
                         ?.insertionTarget
                     if (currentTarget != target) return
                 }
@@ -1523,7 +1661,9 @@ class GestureSequenceEditor(
                     GraphLayoutEngine.layout(candidateGraph)
                     plugin.scripts.save(script.copy(graph = candidateGraph))
                     insertedNode
-                }.getOrNull() ?: return
+                 }.getOrNull() ?: return
+                // コマンド追加の完了音は永続化が成功した後だけ再生します。
+                player.playSound(player.location, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 2.0f)
                 state.pendingInsertion = null
                 clearSettingState()
                 state.selectedInsertionCandidatePoint = null
@@ -1565,8 +1705,21 @@ class GestureSequenceEditor(
                 }
                 val nodeId = state.confirmNodeId ?: return
                 val script = plugin.scripts.load(state.scriptId) ?: return
-                if (!GraphEditor.delete(script.graph, nodeId)) return
-                plugin.scripts.save(script)
+                // 確認後の削除も候補グラフへ適用し、分岐・合流のレイアウト検証を
+                // 通過した内容だけを正本へ保存します。失敗時は選択状態を保持します。
+                val candidateGraph = script.graph.deepCopy()
+                if (!GraphEditor.delete(candidateGraph, nodeId)) return
+                runCatching { plugin.scripts.save(script.copy(graph = candidateGraph)) }
+                    .onFailure { failure ->
+                        plugin.logger.log(
+                            java.util.logging.Level.WARNING,
+                            "ジェスチャーGUIからのコマンド削除を保存できませんでした: script=${script.id} node=$nodeId",
+                            failure,
+                        )
+                    }
+                    .getOrElse { return }
+                // 削除確認を開いただけでは鳴らさず、保存成功後に削除音を再生します。
+                player.playSound(player.location, Sound.BLOCK_BAMBOO_HIT, 1.0f, 1.0f)
                 val settingChildWasOpen = settingChildOpen(player.uniqueId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE
@@ -1605,6 +1758,101 @@ class GestureSequenceEditor(
             GestureGuiScreenDefinition(UPPER_SCREEN_ID, emptyList(), access = GestureGuiAccess.OWNER_ONLY),
             emptyList(),
         ) {}
+    }
+
+    /** 不正な保存グラフでメニュー全体をクラッシュさせず、操作不能な警告面を返します。 */
+    private fun layoutErrorView(): GestureGuiView {
+        val visuals = listOf(
+            GestureGuiVisual.Text(
+                visualId = "viewport-error-title",
+                x = 0.0,
+                y = 0.10,
+                text = Component.text("コマンド経路を表示できません", NamedTextColor.RED),
+                size = 0.008,
+                lineWidth = 260,
+            ),
+            GestureGuiVisual.Text(
+                visualId = "viewport-error-detail",
+                x = 0.0,
+                y = -0.02,
+                text = Component.text("設定を確認してから再度開いてください", NamedTextColor.GRAY),
+                size = 0.005,
+                lineWidth = 260,
+            ),
+        )
+        return GestureGuiView(
+            GestureGuiScreenDefinition(UPPER_SCREEN_ID, emptyList(), access = GestureGuiAccess.OWNER_ONLY),
+            visuals,
+            panel = GestureGuiPanel(
+                width = GestureEditorLayout.UPPER_W,
+                height = GestureEditorLayout.UPPER_H,
+                backgroundMaterial = Material.GRAY_CONCRETE,
+                frameMaterial = Material.LIGHT_GRAY_CONCRETE,
+                frameWidth = GestureEditorLayout.FRAME_WIDTH,
+            ),
+        ) {}
+    }
+
+    private fun isMapVisual(visual: GestureGuiVisual): Boolean =
+        visual.visualId.startsWith("node-") ||
+            visual.visualId.startsWith("add-") ||
+            visual.visualId.startsWith("path-")
+
+    private fun isMapElement(element: GestureGuiElement): Boolean =
+        element.elementId.startsWith("node:") ||
+            element.elementId.startsWith("add:") ||
+            element.elementId.startsWith("path:")
+
+    private fun clipMapVisual(visual: GestureGuiVisual, metrics: ViewportMetrics): GestureGuiVisual? {
+        val halfWidth = when (visual) {
+            is GestureGuiVisual.Block -> visual.width / 2.0
+            is GestureGuiVisual.Item -> metrics.iconSize * metrics.zoomScale / 2.0
+            is GestureGuiVisual.Text -> 0.06 * metrics.zoomScale
+        }
+        val halfHeight = when (visual) {
+            is GestureGuiVisual.Block -> visual.height / 2.0
+            is GestureGuiVisual.Item -> metrics.iconSize * metrics.zoomScale / 2.0
+            is GestureGuiVisual.Text -> 0.04 * metrics.zoomScale
+        }
+        val left = maxOf(visual.x - halfWidth, metrics.graphMinX)
+        val right = minOf(visual.x + halfWidth, metrics.graphMaxX)
+        val bottom = maxOf(visual.y - halfHeight, metrics.graphMinY)
+        val top = minOf(visual.y + halfHeight, metrics.graphMaxY)
+        if (right - left <= 1.0e-6 || top - bottom <= 1.0e-6) return null
+        return when (visual) {
+            is GestureGuiVisual.Block -> visual.copy(
+                x = (left + right) / 2.0,
+                y = (bottom + top) / 2.0,
+                width = right - left,
+                height = top - bottom,
+            )
+            // ItemDisplay/TextDisplayは矩形クリップを持たないため、完全に
+            // 内側へ収まる要素だけを残します。対応するInteractionも同時に削除します。
+            is GestureGuiVisual.Item,
+            is GestureGuiVisual.Text -> visual.takeIf {
+                visual.x - halfWidth >= metrics.graphMinX &&
+                    visual.x + halfWidth <= metrics.graphMaxX &&
+                    visual.y - halfHeight >= metrics.graphMinY &&
+                    visual.y + halfHeight <= metrics.graphMaxY
+            }
+        }
+    }
+
+    private fun clipMapElement(element: GestureGuiElement, metrics: ViewportMetrics): GestureGuiElement? {
+        val minX = maxOf(element.bounds.minX, metrics.graphMinX)
+        val maxX = minOf(element.bounds.maxX, metrics.graphMaxX)
+        val minY = maxOf(element.bounds.minY, metrics.graphMinY)
+        val maxY = minOf(element.bounds.maxY, metrics.graphMaxY)
+        if (minX >= maxX || minY >= maxY) return null
+        val originalHover = element.hoverText
+        val hover = originalHover?.copy(
+            x = originalHover.x.coerceIn(metrics.graphMinX, metrics.graphMaxX),
+            y = originalHover.y.coerceIn(metrics.graphMinY, metrics.graphMaxY),
+        )
+        return element.copy(
+            bounds = GestureGuiBounds(minX, minY, maxX, maxY),
+            hoverText = hover,
+        )
     }
 
     private fun iconBounds(cx: Double, cy: Double, size: Double): GestureGuiBounds {
@@ -1764,12 +2012,13 @@ class GestureSequenceEditor(
         val centerY = state.origin.y + (oldMetrics.rows - 1) / 2.0
         state.zoomLevel = level
         val newMetrics = viewportMetrics(zoomScale())
+        val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return
         state.origin = GestureEditorLayout.clampOrigin(
             MapPoint(
                 (centerX - (newMetrics.columns - 1) / 2.0).roundToInt(),
                 (centerY - (newMetrics.rows - 1) / 2.0).roundToInt(),
             ),
-            GraphLayoutEngine.layout(script.graph),
+            layout,
             newMetrics.columns,
             newMetrics.rows,
         )

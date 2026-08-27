@@ -15,6 +15,7 @@ import org.bukkit.Material
 import org.bukkit.World
 import org.bukkit.entity.BlockDisplay
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.UUID
@@ -34,14 +35,27 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     }
 
     fun add(placement: DiskPlacement) {
-        placements[placement.key] = placement
-        save()
+        val previous = placements.put(placement.key, placement)
+        try {
+            save()
+        } catch (failure: Throwable) {
+            // ディスクへ書けなかった場合はメモリだけ先に進めない。次の操作が
+            // 壊れた配置を参照しないよう、直前の値へ戻してから例外を伝播します。
+            if (previous == null) placements.remove(placement.key) else placements[placement.key] = previous
+            throw failure
+        }
     }
 
     fun remove(world: World, x: Int, y: Int, z: Int): DiskPlacement? {
-        val removed = placements.remove(key(world.name, x, y, z))
-        removed?.let { plugin.forgetActivationState(it.key, it.scriptId) }
-        save()
+        val placementKey = key(world.name, x, y, z)
+        val removed = placements.remove(placementKey) ?: return null
+        try {
+            save()
+            plugin.forgetActivationState(removed.key, removed.scriptId)
+        } catch (failure: Throwable) {
+            placements[placementKey] = removed
+            throw failure
+        }
         return removed
     }
 
@@ -52,10 +66,18 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         val placementKey = key(world.name, x, y, z)
         val placement = placements[placementKey] ?: return null
         if (plugin.scripts.load(placement.scriptId) != null) return placement
-        removeDisplay(world, placement.displayId)
         placements.remove(placementKey)
+        runCatching { save() }.getOrElse { failure ->
+            placements[placementKey] = placement
+            plugin.logger.log(
+                Level.WARNING,
+                "参照切れ配置の台帳更新に失敗しました: placement=${placement.key}",
+                failure,
+            )
+            return null
+        }
         plugin.forgetActivationState(placement.key, placement.scriptId)
-        save()
+        removeDisplay(world, placement.displayId)
         return null
     }
 
@@ -68,8 +90,18 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 world.getBlockAt(placement.x, placement.y, placement.z)
                     .setType(PlacedBlockMaterials.forTimer(script.timer.enabled), false)
             }
-            removeDisplay(world, placement.displayId)
-            spawnDisplay(world, placement)
+            // 新しい表示体を保存できてから古い表示体を消します。先に古い体を
+            // 消すと、表示体スポーン／台帳保存の失敗時に配置だけが残ります。
+            val oldDisplayId = placement.displayId
+            runCatching { spawnDisplay(world, placement) }
+                .onSuccess { removeDisplay(world, oldDisplayId) }
+                .onFailure { failure ->
+                    plugin.logger.log(
+                        Level.WARNING,
+                        "配置表示の更新に失敗しました: placement=${placement.key}",
+                        failure,
+                    )
+                }
         }
     }
 
@@ -77,11 +109,18 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun removeWorld(worldName: String): List<DiskPlacement> {
         val removed = placements.values.filter { it.world == worldName }
-        removed.forEach {
-            placements.remove(it.key)
-            plugin.forgetActivationState(it.key, it.scriptId)
+        if (removed.isEmpty()) return emptyList()
+        // ワールド削除イベントでは台帳保存を先に確定します。保存失敗時に
+        // activation状態だけを先に捨てると、再試行時に残存配置が実行不能に
+        // なるため、メモリとランタイム状態を原子的に更新します。
+        removed.forEach { placements.remove(it.key) }
+        try {
+            save()
+        } catch (failure: Throwable) {
+            removed.forEach { placements[it.key] = it }
+            throw failure
         }
-        if (removed.isNotEmpty()) save()
+        removed.forEach { plugin.forgetActivationState(it.key, it.scriptId) }
         return removed
     }
 
@@ -100,8 +139,16 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 stale += placement.key
                 return@forEach
             }
-            removeDisplay(world, placement.displayId)
-            placement.displayId = spawnDisplay(world, placement)
+            val oldDisplayId = placement.displayId
+            runCatching { spawnDisplay(world, placement) }
+                .onSuccess { removeDisplay(world, oldDisplayId) }
+                .onFailure { failure ->
+                    plugin.logger.log(
+                        Level.WARNING,
+                        "配置表示の復元に失敗しました: placement=${placement.key}",
+                        failure,
+                    )
+                }
         }
         stale.forEach { key ->
             placements.remove(key)?.let { plugin.forgetActivationState(it.key, it.scriptId) }
@@ -129,8 +176,16 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 AxisAngle4f(),
             )
         }
+        val previousDisplayId = placement.displayId
         placement.displayId = display.uniqueId
-        save()
+        try {
+            save()
+        } catch (failure: Throwable) {
+            // 表示体だけが残ると、次回の復元で孤児Entityになります。
+            placement.displayId = previousDisplayId
+            display.remove()
+            throw failure
+        }
         return display.uniqueId
     }
 
@@ -197,7 +252,19 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
     private fun save() {
         val temporary = file.resolveSibling("${file.name}.tmp")
         temporary.writeText(gson.toJson(placements.values.toList()), Charsets.UTF_8)
-        Files.move(temporary.toPath(), file.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        try {
+            Files.move(
+                temporary.toPath(),
+                file.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (failure: AtomicMoveNotSupportedException) {
+            // 正本を通常置換へ落とすと、プロセス停止／IO障害の瞬間に
+            // placements.jsonが失われるため、非原子的なフォールバックは行いません。
+            runCatching { Files.deleteIfExists(temporary.toPath()) }
+            throw IllegalStateException("配置台帳を原子的に保存できないファイルシステムです", failure)
+        }
     }
 
     private fun key(world: String, x: Int, y: Int, z: Int): String = "$world,$x,$y,$z"

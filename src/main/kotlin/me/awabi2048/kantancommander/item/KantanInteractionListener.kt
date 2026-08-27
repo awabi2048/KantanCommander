@@ -159,8 +159,22 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.placements.add(placement)
             plugin.placements.spawnDisplay(block.world, placement)
         }.onFailure { error ->
-            plugin.placements.remove(block.world, block.x, block.y, block.z)
-            plugin.scripts.delete(placedScript.id)
+            runCatching { plugin.placements.remove(block.world, block.x, block.y, block.z) }
+                .onFailure { cleanupError ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "設置失敗後の配置台帳クリーンアップにも失敗しました: location=${block.location}",
+                        cleanupError,
+                    )
+                }
+            runCatching { plugin.scripts.delete(placedScript.id) }
+                .onFailure { cleanupError ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "設置失敗後のスクリプトクリーンアップにも失敗しました: script=${placedScript.id}",
+                        cleanupError,
+                    )
+                }
             plugin.logger.log(
                 java.util.logging.Level.INFO,
                 "配置データの保存または表示体スポーンに失敗したため設置を中止: location=${block.location}",
@@ -185,9 +199,25 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.logger.info(
                 "設置直後に配置ブロックが消失したため配置を撤去: placement=${placement.key}, material=${block.type}",
             )
-            plugin.placements.removeDisplay(world, placement.displayId)
-            plugin.placements.remove(world, placement.x, placement.y, placement.z)
-            plugin.scripts.delete(placement.scriptId)
+            val removed = runCatching {
+                plugin.placements.remove(world, placement.x, placement.y, placement.z)
+            }.getOrElse { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "消失した配置の台帳撤去に失敗しました: placement=${placement.key}",
+                    failure,
+                )
+                return@Runnable
+            } ?: return@Runnable
+            plugin.placements.removeDisplay(world, removed.displayId)
+            runCatching { plugin.scripts.delete(removed.scriptId) }
+                .onFailure { failure ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "消失した配置のスクリプト削除に失敗しました: placement=${placement.key}",
+                        failure,
+                    )
+                }
         })
     }
 
@@ -196,34 +226,70 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val world = block.world
         // 破壊音・パーティクルは、イベントキャンセル下でもバニラがクライアントへ送信するため自前では再生しない。
         val source = plugin.scripts.load(placement.scriptId)
+        var outputScript: me.awabi2048.kantancommander.model.DiskScript? = null
+        var outputItem: org.bukkit.inventory.ItemStack? = null
         // 内容が空の場合はディスクを出力せず破壊のみ行う。
         if (source != null && source.graph.nodes.isNotEmpty()) {
-            val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull()
-            if (output != null) {
-                val item = runCatching { KantanItemService.createDisk(output, player) }.getOrElse { error ->
-                    plugin.scripts.delete(output.id)
+            val copiedScript = runCatching { plugin.scripts.copyForItem(source) }.getOrElse { error ->
+                plugin.logger.log(
+                    java.util.logging.Level.INFO,
+                    "破壊時のスクリプト複製に失敗したため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}",
+                    error,
+                )
+                null
+            }
+            if (copiedScript != null) {
+                outputScript = copiedScript
+                outputItem = runCatching { KantanItemService.createDisk(copiedScript, player) }.getOrElse { error ->
+                    runCatching { plugin.scripts.delete(copiedScript.id) }
                     plugin.logger.log(
                         java.util.logging.Level.INFO,
-                        "破壊時のコマンドディスク生成に失敗: location=${block.location}, script=${output.id}",
+                        "破壊時のコマンドディスク生成に失敗: location=${block.location}, script=${copiedScript.id}",
                         error,
                     )
-                    return
+                    outputScript = null
+                    null
                 }
-                player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
-                plugin.logger.info("破壊時のディスク出力完了: location=${block.location}, script=${output.id}")
-            } else {
-                plugin.logger.info("破壊時のスクリプト複製に失敗したため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
             }
         } else if (source == null) {
             plugin.logger.info("参照スクリプトが消失しているため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
         } else {
             plugin.logger.info("内容が空のためディスクを出力せず破壊: location=${block.location}, script=${placement.scriptId}")
         }
-        plugin.placements.removeDisplay(world, placement.displayId)
-        plugin.placements.remove(world, placement.x, placement.y, placement.z)
+        // 配置台帳を先に保存します。表示体やブロックを先に消すと、保存失敗時に
+        // ワールド上だけ消えた「幽霊配置」になり、再起動後の復元対象と一致しません。
+        val removed = runCatching {
+            plugin.placements.remove(world, placement.x, placement.y, placement.z)
+        }.getOrElse { failure ->
+            outputScript?.let { runCatching { plugin.scripts.delete(it.id) } }
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "配置台帳の削除に失敗したため破壊を中止: location=${block.location}, placement=${placement.key}",
+                failure,
+            )
+            return
+        } ?: run {
+            outputScript?.let { runCatching { plugin.scripts.delete(it.id) } }
+            plugin.logger.warning("配置台帳が既に削除されているため破壊を中止: location=${block.location}")
+            return
+        }
+        plugin.placements.removeDisplay(world, removed.displayId)
         block.setType(Material.AIR, false)
-        if (source != null) plugin.scripts.delete(source.id)
+        if (source != null) {
+            runCatching { plugin.scripts.delete(source.id) }
+                .onFailure { failure ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "配置撤去後のスクリプト削除に失敗しました: script=${source.id}, placement=${placement.key}",
+                        failure,
+                    )
+                }
+        }
+        outputItem?.let { item ->
+            player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
+            plugin.logger.info("破壊時のディスク出力完了: location=${block.location}, script=${outputScript?.id}")
+        }
         plugin.logger.info("拡張コマンドブロックの破壊処理完了: placement=${placement.key}")
     }
 }

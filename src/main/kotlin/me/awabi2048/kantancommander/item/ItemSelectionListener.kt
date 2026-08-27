@@ -15,10 +15,6 @@ import java.util.UUID
 class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listener {
     private val selections = mutableMapOf<UUID, Selection>()
 
-    fun begin(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
-        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.ITEM)
-    }
-
     fun beginDisk(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
         selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.DISK)
     }
@@ -41,21 +37,27 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         event.isCancelled = true
         val selected = event.currentItem?.takeUnless { it.type == Material.AIR } ?: return
         val script = plugin.scripts.load(selection.scriptId) ?: return cancel(player)
-        val node = script.graph.nodes[selection.nodeId] ?: return cancel(player)
+        val candidateGraph = script.graph.deepCopy()
+        val node = candidateGraph.nodes[selection.nodeId] ?: return cancel(player)
         when (selection.kind) {
-            SelectionKind.ITEM -> {
-                node.params["item"] = selected.type.key.toString()
-                node.params["itemData"] = ItemStackCodec.encode(selected)
-            }
             SelectionKind.DISK -> {
-                val selectedId = KantanItemService.diskId(selected) ?: return
-                val selectedScript = plugin.scripts.load(selectedId) ?: return
+                val selectedId = KantanItemService.diskId(selected) ?: return cancel(player)
+                val selectedScript = plugin.scripts.load(selectedId) ?: return cancel(player)
                 node.params["diskId"] = selectedId.toString()
                 node.snapshot = selectedScript.graph.deepCopy()
             }
             SelectionKind.MATERIAL -> node.params[selection.parameter ?: return] = selected.type.key.toString()
         }
-        plugin.scripts.save(script)
+        runCatching { plugin.scripts.save(script.copy(graph = candidateGraph)) }
+            .onFailure { failure ->
+                selections.remove(player.uniqueId)
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "アイテム／素材選択の保存に失敗しました: script=${selection.scriptId} node=${selection.nodeId}",
+                    failure,
+                )
+            }
+            .getOrElse { return }
         selections.remove(player.uniqueId)
         CCSystem.getAPI().getMenuRuntimeService().open(player, selection.returnRoute)
     }
@@ -70,7 +72,7 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         selections.remove(player.uniqueId)
     }
 
-    private enum class SelectionKind { ITEM, DISK, MATERIAL }
+    private enum class SelectionKind { DISK, MATERIAL }
 
     private data class Selection(
         val scriptId: UUID,

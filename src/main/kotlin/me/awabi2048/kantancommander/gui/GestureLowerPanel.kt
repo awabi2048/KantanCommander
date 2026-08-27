@@ -260,7 +260,12 @@ class GestureLowerPanel(
             0.36,
             0.0043,
             280,
-            Component.text(hoveredDescription ?: "項目にカーソルを合わせると説明を表示", NamedTextColor.GRAY),
+            Component.text(
+                hoveredDescription
+                    ?: field?.let { fieldActionDescription(player, it) }
+                    ?: "",
+                NamedTextColor.GRAY,
+            ),
         )
     }
 
@@ -275,7 +280,17 @@ class GestureLowerPanel(
     private fun choiceDescription(choice: SettingChoice): String = when {
         choice.id == "open-filters" -> "距離・種類・除外条件などの対象オプションを設定します"
         choice.id.startsWith("target:") -> "このコマンドの対象種別を設定します"
-        choice.id.startsWith("filter:") -> "対象の絞り込み条件を変更します"
+        choice.id == "filter:entityType" -> "対象に含めるエンティティ種別を minecraft:zombie の形式で指定します"
+        choice.id == "filter:minimumDistance" -> "実行位置からこの距離以上にいる対象だけを選びます。空欄で制限しません"
+        choice.id == "filter:maximumDistance" -> "実行位置からこの距離以下にいる対象だけを選びます。空欄で制限しません"
+        choice.id == "filter:limit" -> "候補から選ぶ最大件数を指定します。1以上の整数を入力します"
+        choice.id == "filter:sort" -> "複数の対象があるとき、距離順またはランダムで選ぶ方法を切り替えます"
+        choice.id == "filter:gameMode" -> "プレイヤー対象をゲームモードで絞り込みます。未設定なら全モードです"
+        choice.id == "filter:tag" -> "指定したスコアボードタグを持つ対象だけを選びます。空欄で解除します"
+        choice.id == "filter:name" -> "対象名で絞り込みます。空欄で解除します"
+        choice.id == "filter:excludeExecutor" -> "対象一覧からこのコマンドの実行者を除外するか切り替えます"
+        choice.id == "filter:excludeActivator" -> "対象一覧から起動者を除外するか切り替えます"
+        choice.id.startsWith("filter:") -> "対象の種類・距離・件数などを組み合わせて実行対象を絞り込みます"
         choice.id.startsWith("position:") -> "実行位置をこの方式へ変更します"
         choice.id.startsWith("facing:") -> "実行時の向きをこの方式へ変更します"
         choice.id.startsWith("context:") -> "実行コンテキストの上書き内容を変更します"
@@ -322,6 +337,15 @@ class GestureLowerPanel(
         val node = context?.let { script?.graph?.nodes?.get(it.nodeId) }
         val fieldKey = state.settingFieldKey
         val screen = state.settingScreen
+        if (child) {
+            // 子画面の余白自体も入力面にします。ボタン以外をクリックしたときに
+            // 子画面を閉じ、背面の親画面へ誤って入力が透過しないようにします。
+            elements += GestureGuiElement(
+                elementId = "setting-child-empty",
+                bounds = rect(0.0, 0.0, GestureEditorLayout.LOWER_W, GestureEditorLayout.LOWER_H),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            )
+        }
         if (context == null || node == null || fieldKey == null || screen == null) {
             addText(visuals, "setting-hint", 0.28, 0.20, 0.008, 220, Component.text("設定対象がありません"))
             addBackSetting(elements, visuals)
@@ -664,6 +688,13 @@ class GestureLowerPanel(
         ))
 
         val category = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
+        val categoryDescription = KcI18n.list(player, category.descriptionKey)
+            .filter(String::isNotBlank)
+            .joinToString(" ")
+        addText(visuals, "picker-description-title", 0.28, 0.43, 0.0047, 280,
+            Component.text(KcI18n.text(player, category.labelKey)))
+        addText(visuals, "picker-description-body", 0.28, 0.36, 0.0043, 280,
+            Component.text(categoryDescription, NamedTextColor.GRAY))
         val script = plugin.scripts.load(state.scriptId)
         val mergeConditionId = state.pendingInsertion?.mergeConditionId
         // 候補表示とGraphEditorの実データ検証を同じ条件にし、ネスト未合流の外側へ
@@ -691,6 +722,14 @@ class GestureLowerPanel(
                 bounds = rect(cx, cy, 0.72, 0.155),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "type-bg-$index",
+                hoverText = twoLineHover(
+                    top = KcI18n.text(player, type.key),
+                    bottom = KcI18n.list(player, type.descriptionKey)
+                        .filter(String::isNotBlank)
+                        .joinToString(" "),
+                    x = 0.28,
+                    y = 0.39,
+                ),
             ))
         }
         if (pageCount > 1) addPager(visuals, elements, "picker", page, pageCount, 0.28, -0.48)

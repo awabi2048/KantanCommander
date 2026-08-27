@@ -27,6 +27,17 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `layout cell limit rejects expansion before unbounded allocation`() {
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+
+        assertThrows<IllegalArgumentException> {
+            GraphLayoutEngine.layout(graph, maxCells = 1)
+        }
+    }
+
+    @Test
     fun `layout is deterministic and keeps one cell margin`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)

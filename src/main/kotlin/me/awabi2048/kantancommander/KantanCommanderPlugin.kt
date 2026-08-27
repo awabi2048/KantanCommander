@@ -108,7 +108,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         rebuildConfiguredServices()
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
-        variables = WorldVariableStore(dataFolder.resolve("world-variables"))
+        variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
         summonedEntities = SummonedEntityTracker(
             this,
             dataFolder.resolve("summoned-entities.csv"),

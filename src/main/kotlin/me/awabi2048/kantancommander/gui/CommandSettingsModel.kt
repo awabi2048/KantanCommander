@@ -260,7 +260,16 @@ object CommandSettingsModel {
         val node = script.graph.nodes[context.nodeId] ?: return null
         change(node)
         plugin.scripts.save(script)
-        plugin.placements.refreshDisplaysForScript(script.id)
+        // 表示体の再生成は永続化成功後の補助処理です。ここで失敗しても
+        // 設定値そのものは保存済みなので、入力イベントへ例外を戻さず次回復元へ委ねます。
+        runCatching { plugin.placements.refreshDisplaysForScript(script.id) }
+            .onFailure { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "設定保存後の配置表示更新に失敗しました: script=${script.id}",
+                    failure,
+                )
+            }
         return node
     }
 

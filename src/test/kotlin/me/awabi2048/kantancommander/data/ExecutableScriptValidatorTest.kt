@@ -10,6 +10,8 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -113,6 +115,22 @@ class ExecutableScriptValidatorTest {
         assertTrue(errors.any { it.contains("対象距離は有限値") })
         assertTrue(errors.any { it.contains("対象数は1以上") })
         assertTrue(errors.any { it.contains("座標が未設定") })
+    }
+
+    @Test
+    fun `fixed targets and captured orientations require complete values`() {
+        val script = DiskScript(name = "target-shape", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+        teleport.destinationSpec = PositionSpec(PositionKind.CAPTURED, 1.0, 2.0, 3.0, null, null)
+        teleport.contextOverride = me.awabi2048.kantancommander.model.ExecutionContextSpec(
+            facing = FacingSpec(FacingKind.CAPTURED, yaw = null, pitch = null),
+        )
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.contains("固定エンティティが未設定") })
+        assertTrue(errors.any { it.contains("捕捉した向き") })
     }
 
     @Test

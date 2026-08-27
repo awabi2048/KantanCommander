@@ -346,7 +346,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val entity = effectiveOrigin.world.spawnEntity(spawn, type)
                 node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
                     .forEach(entity::addScoreboardTag)
-                plugin.summonedEntities.register(entity, session.rootId)
+                try {
+                    plugin.summonedEntities.register(entity, session.rootId)
+                } catch (failure: Throwable) {
+                    // 台帳へ登録できない召喚体をワールドへ残すと、制限をすり抜けた
+                    // 孤児Entityになります。登録と実体生成を一組として扱います。
+                    entity.remove()
+                    throw failure
+                }
                 true
             }
             CommandType.PLAY_SOUND -> {
@@ -404,17 +411,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }.getOrDefault(false)
 
     private fun giveItem(player: Player, template: ItemStack, count: Int): Boolean {
-        val original = player.inventory.storageContents.map { it?.clone() }.toTypedArray()
         var remaining = count
         while (remaining > 0) {
             val stack = template.clone()
             val batch = minOf(remaining, stack.maxStackSize)
             stack.amount = batch
-            if (player.inventory.addItem(stack).isNotEmpty()) {
-                player.inventory.storageContents = original
-                return false
-            }
+            val overflow = player.inventory.addItem(stack)
             remaining -= batch
+            if (overflow.isNotEmpty()) {
+                // 付与量が容量を超えた場合は、Minecraftの通常の付与と同じく
+                // 空きスロットへ入った分だけを残し、超過分は破棄します。
+                // 既に入った分まで巻き戻すと、複数対象時に結果が不自然になります。
+                return true
+            }
         }
         return true
     }

@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
+import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.util.Collections
@@ -78,7 +79,10 @@ class ScriptStore(
     }
 
     fun delete(id: UUID) {
-        file(id).delete()
+        val target = file(id)
+        if (target.exists() && !target.delete()) {
+            throw IllegalStateException("コマンドディスクを削除できません: ${target.absolutePath}")
+        }
         cache.remove(id)
     }
 
@@ -109,7 +113,20 @@ class ScriptStore(
     private fun atomicWrite(target: File, content: String) {
         val temporary = target.resolveSibling("${target.name}.tmp")
         temporary.writeText(content, Charsets.UTF_8)
-        Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+        try {
+            Files.move(
+                temporary.toPath(),
+                target.toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+                StandardCopyOption.ATOMIC_MOVE,
+            )
+        } catch (failure: AtomicMoveNotSupportedException) {
+            // 正本を通常のREPLACE_EXISTINGで上書きすると、途中停止時に正本が
+            // 消失／部分書込みになるため、非原子的な代替は行いません。
+            // 一時ファイルだけを破棄して既存正本を保ち、呼び出し側へ失敗を返します。
+            runCatching { Files.deleteIfExists(temporary.toPath()) }
+            throw IllegalStateException("コマンドディスクを原子的に保存できないファイルシステムです", failure)
+        }
     }
 
     private fun read(file: File): DiskScript? = try {
@@ -155,13 +172,24 @@ class ScriptStore(
                 errors += "$path: 別ディスクのコピー内容が循環参照しています"
                 return
             }
-            GraphValidator.validate(graph, limits).forEach { errors += "$path: $it" }
-            val layout = GraphLayoutEngine.layout(graph)
-            if (layout.width > limits.maximumMapWidth) {
-                errors += "$path: 描画幅が上限 ${limits.maximumMapWidth} を超えています"
-            }
-            if (layout.height > limits.maximumMapHeight) {
-                errors += "$path: 描画高さが上限 ${limits.maximumMapHeight} を超えています"
+            val graphErrors = GraphValidator.validate(graph, limits)
+            graphErrors.forEach { errors += "$path: $it" }
+            // 構造違反を含むグラフをレイアウトへ渡すと、巨大な座標や不正な参照を
+            // 描画セルへ展開して保存処理自体が例外になる可能性があります。
+            // 先に構造検証を通し、さらにセル数上限付きでレイアウトを検証します。
+            if (graphErrors.isEmpty()) {
+                runCatching {
+                    GraphLayoutEngine.layout(graph, maxCells = layoutCellLimit(limits))
+                }.onSuccess { layout ->
+                    if (layout.width > limits.maximumMapWidth) {
+                        errors += "$path: 描画幅が上限 ${limits.maximumMapWidth} を超えています"
+                    }
+                    if (layout.height > limits.maximumMapHeight) {
+                        errors += "$path: 描画高さが上限 ${limits.maximumMapHeight} を超えています"
+                    }
+                }.onFailure { failure ->
+                    errors += "$path: 描画レイアウトを生成できません: ${failure.message ?: failure::class.simpleName}"
+                }
             }
             graph.nodes.values.forEach { node ->
                 node.snapshot?.let { validate(it, "$path/${node.id}") }
@@ -173,6 +201,20 @@ class ScriptStore(
     }
 
     private companion object {
+        /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
+        private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
+
+        private fun layoutCellLimit(limits: GraphLimits): Long {
+            val width = limits.maximumMapWidth.toLong().coerceAtLeast(1L)
+            val height = limits.maximumMapHeight.toLong().coerceAtLeast(1L)
+            val product = if (width > MAX_LAYOUT_VALIDATION_CELLS / height) {
+                MAX_LAYOUT_VALIDATION_CELLS
+            } else {
+                width * height
+            }
+            return product.coerceAtMost(MAX_LAYOUT_VALIDATION_CELLS)
+        }
+
         /** 構造違反と上限超過を区別するための、上限を実質無効化した検証用設定。 */
         private val UNBOUNDED_LIMITS = GraphLimits(
             maximumNodeCount = Int.MAX_VALUE,

@@ -66,7 +66,14 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@handler MenuActionResult.Ignored
                         if (!script.timer.enabled) return@handler MenuActionResult.Ignored
                         script.activation = script.activation.toggled(true)
-                        plugin.scripts.save(script)
+                        runCatching { plugin.scripts.save(script) }.getOrElse { failure ->
+                            plugin.logger.log(
+                                java.util.logging.Level.WARNING,
+                                "実行方式の変更を保存できませんでした: script=${script.id}",
+                                failure,
+                            )
+                            return@handler MenuActionResult.Rejected(Component.text("設定を保存できませんでした。"))
+                        }
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "timer" to handler { context ->
@@ -142,7 +149,14 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun navigate(context: MenuActionContext): MenuActionResult {
         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return MenuActionResult.Ignored
-        val layout = GraphLayoutEngine.layout(script.graph)
+        val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "インベントリGUIの経路移動でレイアウトを生成できません: script=${script.id}",
+                failure,
+            )
+            return MenuActionResult.Rejected(Component.text("経路を表示できないため移動できません。"))
+        }
         val origin = origin(context.route)
         val delta = ViewportNavigation.delta(
             context.click.isLeftClick,
@@ -160,7 +174,27 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val script = scriptId(route)?.let(plugin.scripts::load)
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)), emptyList())
         val origin = origin(route)
-        val layout = GraphLayoutEngine.layout(script.graph)
+        val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "インベントリGUIの経路描画でレイアウトを生成できません: script=${script.id}",
+                failure,
+            )
+            return InventoryMenuView(
+                45,
+                KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)),
+                listOf(
+                    KcGui.menuEntry(
+                        player = player,
+                        slot = 22,
+                        material = Material.BARRIER,
+                        name = "経路を表示できません",
+                        style = GuiNameStyle.DANGER,
+                        description = listOf("保存内容を確認してから再度開いてください。"),
+                    ),
+                ),
+            )
+        }
         val elements = mutableListOf<MenuElement>()
 
         layout.viewport(origin, VIEWPORT_WIDTH, VIEWPORT_HEIGHT).forEach { (point, cell) ->
@@ -504,13 +538,30 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         if (placementScript.graph.nodes.isNotEmpty()) return false
         val diskScript = plugin.scripts.load(diskScriptId) ?: return false
 
-        placementScript.name = diskScript.name
-        placementScript.activation = diskScript.activation
-        placementScript.timer = diskScript.timer
-        placementScript.graph = diskScript.graph.deepCopy()
-        plugin.scripts.save(placementScript)
+        val candidate = placementScript.copy(
+            name = diskScript.name,
+            activation = diskScript.activation,
+            timer = diskScript.timer.copy(),
+            graph = diskScript.graph.deepCopy(),
+        )
+        runCatching { plugin.scripts.save(candidate) }
+            .onFailure { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "空の配置へディスクを書き込めませんでした: placement=${placement.key}",
+                    failure,
+                )
+            }
+            .getOrElse { return false }
         plugin.resetActivationTiming(placementScript.id)
-        plugin.placements.refreshDisplaysForScript(placementScript.id)
+        runCatching { plugin.placements.refreshDisplaysForScript(placementScript.id) }
+            .onFailure { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "ディスク書き込み後の配置表示更新に失敗しました: placement=${placement.key}",
+                    failure,
+                )
+            }
         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_WRITTEN))
         return true
     }
@@ -529,7 +580,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
         val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull() ?: return false
         val item = runCatching { KantanItemService.createDisk(output, player) }.getOrElse {
-            plugin.scripts.delete(output.id)
+            runCatching { plugin.scripts.delete(output.id) }
             return false
         }
         player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
