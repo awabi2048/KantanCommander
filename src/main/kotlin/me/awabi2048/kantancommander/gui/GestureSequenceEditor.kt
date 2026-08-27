@@ -687,7 +687,9 @@ class GestureSequenceEditor(
 
         val edges = linkedSetOf<GridEdge>()
         viewportCells.forEach { (p, cell) ->
-            if (cell.kind !in pathKinds) return@forEach
+            // ノードと新規追加を同じ接続可能な端点として扱います。
+            // 経路セルを挟まない隣接端点にも同じ接続規則を適用します。
+            if (cell.kind !in CONNECTABLE_KINDS) return@forEach
             listOf(MapPoint(p.x - 1, p.y), MapPoint(p.x + 1, p.y), MapPoint(p.x, p.y - 1), MapPoint(p.x, p.y + 1))
                 .filter { viewportCells[it]?.kind in CONNECTABLE_KINDS }
                 .forEach { edges += edge(p, it) }
@@ -805,6 +807,13 @@ class GestureSequenceEditor(
     }
 
     private companion object {
-        val CONNECTABLE_KINDS = MapCellKind.entries.toSet()
+        /** 経路の両端になり得る要素を固定列挙し、将来の表示専用セルを誤接続しません。 */
+        val CONNECTABLE_KINDS = setOf(
+            MapCellKind.NODE,
+            MapCellKind.ADD,
+            MapCellKind.PATH,
+            MapCellKind.BRANCH_PATH,
+            MapCellKind.LOOP_RETURN_PATH,
+        )
     }
 }
