@@ -67,13 +67,13 @@ class GestureEditorLayoutTest {
     }
 
     @Test
-    fun `first add point picks smallest coordinates`() {
+    fun `first add point picks the most advanced branch endpoint`() {
         val cells = mapOf(
             MapPoint(4, 2) to MapCell(MapPoint(4, 2), MapCellKind.ADD),
             MapPoint(10, 1) to MapCell(MapPoint(10, 1), MapCellKind.ADD),
             MapPoint(-1, 1) to MapCell(MapPoint(-1, 1), MapCellKind.ADD),
         )
-        assertEquals(MapPoint(-1, 1), GestureEditorLayout.findFirstAddPoint(cells))
+        assertEquals(MapPoint(10, 1), GestureEditorLayout.findFirstAddPoint(cells))
     }
 
     @Test
@@ -91,6 +91,19 @@ class GestureEditorLayoutTest {
         assertEquals(MapPoint(0, 0), GestureEditorLayout.clampOrigin(MapPoint(-5, -1), layout))
         assertEquals(MapPoint(10, 1), GestureEditorLayout.clampOrigin(MapPoint(99, 99), layout))
         assertEquals(MapPoint(3, 1), GestureEditorLayout.clampOrigin(MapPoint(3, 1), layout))
+    }
+
+    @Test
+    fun `reveal origin includes the most advanced add point`() {
+        val layout = GraphLayout(width = 20, height = 8, cells = emptyMap(), nodePoints = emptyMap())
+        assertEquals(
+            MapPoint(10, 4),
+            GestureEditorLayout.revealOrigin(MapPoint(0, 0), MapPoint(19, 7), layout, 10, 4),
+        )
+        assertEquals(
+            MapPoint(3, 1),
+            GestureEditorLayout.revealOrigin(MapPoint(3, 1), MapPoint(7, 3), layout, 10, 4),
+        )
     }
 
     @Test

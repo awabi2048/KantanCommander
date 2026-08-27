@@ -109,7 +109,9 @@ class GestureLowerPanel(
         // 値編集ボタン: チャット入力で値を確定する（ジェスチャーGUIは閉じない）
         val editable = field.key in CHAT_EDITABLE_KEYS
         addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.26,
-            if (editable) Material.STONE_BUTTON else Material.CYAN_TERRACOTTA, 4)
+            // 石系テクスチャは画面全体の配色契約に含めないため、操作可否に
+            // 関係なく空色テラコッタへ統一します。編集可否は要素の有無で表現します。
+            Material.CYAN_TERRACOTTA, 4)
         addText(visuals, "lower-edit", 0.28, 0.02, 0.006, 160,
             Component.text(if (editable) "チャットで編集" else "専用選択で編集"))
         if (editable) {

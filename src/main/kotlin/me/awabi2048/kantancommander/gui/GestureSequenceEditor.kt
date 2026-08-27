@@ -443,13 +443,17 @@ class GestureSequenceEditor(
                 val layout = script?.let { GraphLayoutEngine.layout(it.graph) }
                 val firstAdd = layout?.let { GestureEditorLayout.findFirstAddPoint(it.cells) }
                 if (firstAdd != null) {
-                    // 常に先頭追加ポイントをビューポート左上寄りの基準位置へ戻します。
+                    // 枝が最も進んだ追加ポイントが範囲外なら、右端／下端に
+                    // 入る位置まで原点を移動します。単純にポイント座標を原点へ
+                    // 代入すると、マップ末端では表示範囲を越えてしまいます。
                     val metrics = viewportMetrics(zoomScale())
-                    val maxOx = (layout.width - metrics.columns).coerceAtLeast(0)
-                    val maxOy = (layout.height - metrics.rows).coerceAtLeast(0)
-                    val ox = firstAdd.x.coerceIn(0, maxOx)
-                    val oy = firstAdd.y.coerceIn(0, maxOy)
-                    state.origin = MapPoint(ox, oy)
+                    state.origin = GestureEditorLayout.revealOrigin(
+                        state.origin,
+                        firstAdd,
+                        layout,
+                        metrics.columns,
+                        metrics.rows,
+                    )
                 } else {
                     state.origin = MapPoint(0, 0)
                 }

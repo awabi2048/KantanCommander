@@ -67,10 +67,38 @@ object GestureEditorLayout {
     fun lPathDownRight(cornerX: Double, cornerY: Double, topY: Double, rightX: Double): List<PathSegment> =
         listOf(verticalPath(cornerX, cornerY, topY), horizontalPath(cornerY, cornerX, rightX))
 
-    /** 最も先頭にあるadd-pointのグリッド座標を返します（エントリー用） */
+    /**
+     * 枝が最も進んだ位置にあるadd-pointのグリッド座標を返します。
+     *
+     * 「先頭へ戻る」はエントリー側の最小座標ではなく、分岐を含むグラフで
+     * 最も先まで進んだ枝末端を基準にします。同じ列なら画面下側の枝を優先し、
+     * ネストした分岐でも最後に到達する追加位置を安定して選びます。
+     */
     fun findFirstAddPoint(cells: Map<MapPoint, MapCell>): MapPoint? =
         cells.filter { it.value.kind == MapCellKind.ADD }
-            .minWithOrNull(compareBy({ it.key.x }, { it.key.y }))?.key
+            .maxWithOrNull(compareBy({ it.key.x }, { it.key.y }))?.key
+
+    /** targetセルが表示範囲へ入るよう、現在原点を必要な場合だけ移動します。 */
+    fun revealOrigin(
+        current: MapPoint,
+        target: MapPoint,
+        layout: GraphLayout,
+        viewportCols: Int,
+        viewportRows: Int,
+    ): MapPoint {
+        val maxX = (layout.width - viewportCols).coerceAtLeast(0)
+        val maxY = (layout.height - viewportRows).coerceAtLeast(0)
+        fun reveal(currentOrigin: Int, targetPoint: Int, visible: Int, maximum: Int): Int =
+            when {
+                targetPoint < currentOrigin -> targetPoint
+                targetPoint > currentOrigin + visible - 1 -> targetPoint - visible + 1
+                else -> currentOrigin
+            }.coerceIn(0, maximum)
+        return MapPoint(
+            reveal(current.x, target.x, viewportCols, maxX),
+            reveal(current.y, target.y, viewportRows, maxY),
+        )
+    }
 
     /** ビューポート原点の範囲をclampします（canMoveと同等） */
     fun clampOrigin(origin: MapPoint, layout: GraphLayout): MapPoint {
