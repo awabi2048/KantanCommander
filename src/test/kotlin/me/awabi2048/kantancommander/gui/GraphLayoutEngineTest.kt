@@ -334,6 +334,28 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `nested open condition keeps the upper chain connected to the parent merge`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueHead = GraphEditor.append(graph, CommandType.WAIT)
+        val merge = GraphEditor.appendMerge(graph, outer.id)
+
+        // TRUE枝の末尾直後へ、まだ合流していない条件分岐を挿入します。
+        // 内側条件のFALSE枝が下へ広がっても、外側合流までの上段経路は連続で
+        // なければなりません（以前は下枝の幅を上段終端と誤認して1セル欠落）。
+        GraphEditor.insert(graph, trueHead.id, GraphEditor.Edge.NEXT, CommandType.CONDITION)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val inner = layout.nodePoints.entries
+            .first { (id, _) -> id != outer.id && id != merge.id && graph.nodes[id]?.type == CommandType.CONDITION }
+            .value
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        ((inner.x + 1) until mergePoint.x).forEach { x ->
+            assertTrue(layout.cells[MapPoint(x, inner.y)]?.kind in PATH_CELL_KINDS)
+        }
+    }
+
+    @Test
     fun `L shaped merge keeps the full vertical connector into the merge node`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)

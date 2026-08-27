@@ -222,8 +222,17 @@ object GraphLayoutEngine {
                     cursorX = branch.nextX
                     maximumY = maxOf(maximumY, branch.maxY)
                     hasOpenEnd = hasOpenEnd || branch.hasOpenEnd
-                    currentId = null
-                    continue
+                    // nextXは下側のFALSE枝を含む全体幅です。一方、親の合流へ
+                    // 上段を延長するときは、条件のTRUE枝が実際に終わった列だけを
+                    // 使う必要があります。ここでmainNextXを保持しないと、内側の
+                    // 条件分岐の下枝幅ぶん上段に空白が生じます。
+                    return Segment(
+                        cursorX,
+                        maximumY,
+                        null,
+                        hasOpenEnd,
+                        mainNextX = branch.mainNextX,
+                    )
                 }
                 if (node.type == CommandType.FOR_START && node.pairedNodeId != null) {
                     val loop = renderFor(node, cursorX, y)
@@ -315,7 +324,7 @@ object GraphLayoutEngine {
                 else -> null
             }
             fillHorizontal(
-                trueSegment.nextX - 1,
+                trueSegment.mainNextX - 1,
                 mergeX - 1,
                 y,
                 MapCellKind.BRANCH_PATH,
@@ -324,7 +333,7 @@ object GraphLayoutEngine {
                 condition.id,
             )
             fillHorizontal(
-                falseSegment.nextX - 1,
+                falseSegment.mainNextX - 1,
                 mergeX,
                 falseY,
                 MapCellKind.BRANCH_PATH,
@@ -400,6 +409,9 @@ object GraphLayoutEngine {
                 falseSegment.maxY,
                 null,
                 hasOpenEnd = trueOpen || falseOpen,
+                // 親へ返す上段終端はTRUE枝の実際の幅です。nextX（下側枝を含む
+                // 全体幅）をそのまま返すと、親の合流補完で経路が空きます。
+                mainNextX = trueSegment.mainNextX,
             )
         }
 
@@ -551,5 +563,7 @@ object GraphLayoutEngine {
         val tail: UUID?,
         /** 親構造が末尾の挿入先を補完してはいけない開いた枝を含むか。 */
         val hasOpenEnd: Boolean = false,
+        /** 現在の主行（TRUE／通常行）で実際に経路が終わる次列。 */
+        val mainNextX: Int = nextX,
     )
 }
