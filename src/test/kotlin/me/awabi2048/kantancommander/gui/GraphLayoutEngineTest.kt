@@ -82,6 +82,22 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `merge node always has a path immediately before it`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val layout = GraphLayoutEngine.layout(graph)
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+
+        assertTrue(
+            layout.cells[MapPoint(mergePoint.x - 1, mergePoint.y)]?.kind in
+                setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH),
+        )
+    }
+
+    @Test
     fun `open condition keeps true and false insertion targets distinct`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)

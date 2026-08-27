@@ -517,14 +517,18 @@ class GestureSequenceEditor(
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 val target = state.pendingInsertion
                     ?: InsertionTarget(null, GraphEditor.Edge.ENTRY)
-                if (type == CommandType.FOR_END || (type == CommandType.MERGE && target.mergeConditionId == null)) {
+                if (type == CommandType.FOR_END || (type == CommandType.MERGE &&
+                        (target.mergeConditionId == null || !GraphEditor.canAppendMerge(script.graph, target.mergeConditionId)))) {
                     // 合流は対応する分岐を持つ経路以外では選択できません。
                     state.lowerMode = GestureLowerMode.SETTINGS
                     updateLower(player)
                     return
                 }
                 val inserted = if (type == CommandType.MERGE) {
-                    GraphEditor.appendMerge(script.graph, requireNotNull(target.mergeConditionId))
+                    // 画面表示後に別操作でグラフが変わる競合にも例外を漏らしません。
+                    runCatching {
+                        GraphEditor.appendMerge(script.graph, requireNotNull(target.mergeConditionId))
+                    }.getOrNull() ?: return
                 } else {
                     GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
                 }
@@ -777,29 +781,9 @@ class GestureSequenceEditor(
             )
         }
 
-        // ビューポート端から外へ続く経路は、論理セルの有無に関係なく3枚のスタブで示します。
-        val maxX = metrics.columns - 1
-        val maxY = metrics.rows - 1
-        viewportCells.forEach { (p, cell) ->
-            if (cell.kind !in pathKinds) return@forEach
-            fun addStub(q: MapPoint) {
-                if (q.x != p.x) {
-                    val a = metrics.x(p.x)
-                    val b = metrics.x(q.x)
-                    val third = kotlin.math.abs(b - a) / 3.0
-                    repeat(3) { i -> rawSegments += GestureEditorLayout.PathSegment(minOf(a, b) + third * (i + .5), metrics.y(p.y), third, GestureEditorLayout.PATH_THICKNESS) }
-                } else {
-                    val a = metrics.y(p.y)
-                    val b = metrics.y(q.y)
-                    val third = kotlin.math.abs(b - a) / 3.0
-                    repeat(3) { i -> rawSegments += GestureEditorLayout.PathSegment(metrics.x(p.x), maxOf(a, b) - third * (i + .5), GestureEditorLayout.PATH_THICKNESS, third) }
-                }
-            }
-            if (p.x == 0 && viewportCells[MapPoint(-1, p.y)] == null) addStub(MapPoint(-1, p.y))
-            if (p.x == maxX && viewportCells[MapPoint(maxX + 1, p.y)] == null) addStub(MapPoint(maxX + 1, p.y))
-            if (p.y == 0 && viewportCells[MapPoint(p.x, -1)] == null) addStub(MapPoint(p.x, -1))
-            if (p.y == maxY && viewportCells[MapPoint(p.x, maxY + 1)] == null) addStub(MapPoint(p.x, maxY + 1))
-        }
+        // 画面端の経路は、expandedPathCells に含めた1セル外側の実体から自然に描画します。
+        // 外側セルが存在しない場合に仮スタブを足すと、原点を移動しただけで
+        // 横鎖の各セルから偽の縦経路が生じるため、無条件のスタブ生成は行いません。
         return rawSegments.distinct()
     }
 

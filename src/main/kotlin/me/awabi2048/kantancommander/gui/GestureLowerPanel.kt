@@ -10,6 +10,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -153,10 +154,15 @@ class GestureLowerPanel(
         ))
 
         val category = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
+        val script = plugin.scripts.load(state.scriptId)
+        val mergeConditionId = state.pendingInsertion?.mergeConditionId
+        // 候補表示とGraphEditorの実データ検証を同じ条件にし、ネスト未合流の外側へ
+        // MERGEを表示してクリック時例外になる不一致を防ぎます。
+        val mergeAvailable = script?.let { GraphEditor.canAppendMerge(it.graph, mergeConditionId) } == true
         // MERGEは分岐合流用の挿入先だけで候補化し、FOR_END等は単独挿入不可のため除外します。
         val types = CommandType.entries.filter { type ->
             CommandPresentationPolicy.category(type) == category &&
-                (type != CommandType.MERGE || state.pendingInsertion?.mergeConditionId != null) &&
+                (type != CommandType.MERGE || mergeAvailable) &&
                 type != CommandType.FOR_END &&
                 type != CommandType.FOR_START &&
                 type != CommandType.BREAK &&
