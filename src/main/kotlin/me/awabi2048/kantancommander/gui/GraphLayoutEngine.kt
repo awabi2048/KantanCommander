@@ -276,13 +276,13 @@ object GraphLayoutEngine {
                 Segment(x + 2, falseY, null)
             }
 
-            // 枝が集まる角と合流ノードを同じセルへ置かず、専用の経路セルを
-            // 1つ確保します。mergeX - 1 はL字の角、mergeX は角から
-            // 合流ノードへ向かう経路、mergeX + 1 が合流ノードです。
-            // これにより、角から合流ノード中心までの距離が通常接続と同じ
-            // 2ピッチとなり、経路を3枚へ分割しても短い断片になりません。
+            // 枝が集まる角と合流ノードを隣接セルへ正しく配置します。
+            // mergeX - 1 をL字の角と合流直前の経路、
+            // mergeX を合流ノードとします。mergeX は枝末端のnextXと同じ
+            // 基準で計算するため、枝末端から合流ノードまでが通常接続と
+            // 同じ2ピッチになり、合流先が反対側へ1セルずれません。
             val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
-            val mergeNodeX = mergeX + 1
+            val mergeNodeX = mergeX
             val trueSource = trueSegment.tail ?: condition.id
             val trueEdge = if (trueSegment.tail == null) GraphEditor.Edge.TRUE else GraphEditor.Edge.NEXT
             val falseSource = falseSegment.tail ?: condition.id
@@ -317,11 +317,10 @@ object GraphLayoutEngine {
             }
 
             val merge = graph.nodes[mergeId] ?: return Segment(mergeNodeX, falseSegment.maxY, condition.id)
-            // 角の右隣を専用経路として予約し、その先に合流ノードを置きます。
-            // 枝が空／短い場合でも、「水平枝→L字の角→専用水平経路→
-            // 合流アイコン」の接続が欠けないようにします。
+            // 枝が空／短い場合でも、角セルを合流直前の経路として明示的に
+            // 再設定し、「水平枝→L字の角→合流アイコン」の接続を保証します。
             putPath(
-                mergeX,
+                mergeX - 1,
                 y,
                 MapCellKind.BRANCH_PATH,
                 trueSource,

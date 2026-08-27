@@ -61,12 +61,7 @@ class GraphLayoutEngineTest {
 
         val layout = GraphLayoutEngine.layout(graph)
         assertEquals(graph.nodes.keys, layout.nodePoints.keys)
-        // 合流ノードはL字接続を2ピッチで収めるため、x座標が通常ノードと
-        // 同じ奇数格子になるとは限りません。縦方向のレーンは維持し、
-        // ノード同士の重複とノード位置の上書きだけを検証します。
-        assertTrue(layout.nodePoints.values.all { it.y % 2 == 1 })
-        assertEquals(layout.nodePoints.size, layout.nodePoints.values.toSet().size)
-        assertTrue(layout.nodePoints.values.all { layout.cells[it]?.kind == MapCellKind.NODE })
+        assertTrue(layout.nodePoints.values.all { it.x % 2 == 1 && it.y % 2 == 1 })
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.LOOP_RETURN_PATH })
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.BRANCH_PATH })
     }
@@ -255,7 +250,7 @@ class GraphLayoutEngineTest {
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
         val falseY = requireNotNull(layout.nodePoints[falseTail.id]).y
 
-        val mergeSide = layout.cells[MapPoint(mergePoint.x - 2, falseY)]
+        val mergeSide = layout.cells[MapPoint(mergePoint.x - 1, falseY)]
         assertEquals(falseTail.id, mergeSide?.insertionTarget?.sourceId)
         assertEquals(GraphEditor.Edge.NEXT, mergeSide?.insertionTarget?.edge)
         assertEquals(condition.id, mergeSide?.insertionTarget?.mergeConditionId)
@@ -272,7 +267,7 @@ class GraphLayoutEngineTest {
         val layout = GraphLayoutEngine.layout(graph)
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
         val mergeY = GestureEditorLayout.cellCenterY(mergePoint.y)
-        val leftCenter = GestureEditorLayout.cellCenterX(mergePoint.x - 2)
+        val leftCenter = GestureEditorLayout.cellCenterX(mergePoint.x - 1)
         val mergeCenter = GestureEditorLayout.cellCenterX(mergePoint.x)
         val connector = GesturePathRenderer.buildSegments(
             layout.cells,
@@ -286,7 +281,7 @@ class GraphLayoutEngineTest {
                 it.x + it.w / 2.0 <= mergeCenter + 1.0e-9
         }
 
-        // L字の角から合流アイコン中心までの2ピッチを3枚で埋め、端点を短縮しません。
+        // L字の角から合流アイコン中心までの通常接続を3枚で埋め、端点を短縮しません。
         assertEquals(3, connector.size)
         assertEquals(
             mergeCenter - leftCenter,
