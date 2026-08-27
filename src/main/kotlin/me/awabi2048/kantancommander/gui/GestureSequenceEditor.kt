@@ -608,6 +608,11 @@ class GestureSequenceEditor(
         when (screen) {
             GestureSettingScreen.TARGET -> {
                 if (group == "open-filters") {
+                    // 通常の対象選択から詳細条件へ進んだ場合は、戻る操作で
+                    // まず対象種別へ戻れるように直前画面を明示します。
+                    if (state.settingParentScreen == null) {
+                        state.settingParentScreen = GestureSettingScreen.TARGET
+                    }
                     state.settingScreen = GestureSettingScreen.TARGET_FILTERS
                     state.settingPage = 0
                     updateLower(player)
@@ -637,6 +642,9 @@ class GestureSequenceEditor(
                         TargetKind.NEAREST_ENTITY,
                         TargetKind.NEARBY_ENTITIES,
                     )) {
+                    if (state.settingParentScreen == null) {
+                        state.settingParentScreen = GestureSettingScreen.TARGET
+                    }
                     state.settingScreen = GestureSettingScreen.TARGET_FILTERS
                     state.settingPage = 0
                     updateLower(player)
