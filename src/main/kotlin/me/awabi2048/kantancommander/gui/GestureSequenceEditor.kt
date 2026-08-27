@@ -696,14 +696,26 @@ class GestureSequenceEditor(
         }
 
         // 隣接セルごとに帯を作ると、node-path-node間に6枚が重なります。
-        // まず同一直線上の論理辺を連結し、1本の接続を3枚へ分割します。
+        // まず同一接続内の論理辺だけを連結し、1本の接続を3枚へ分割します。
+        // ノード／新規追加は接続の境界なので、そこで必ず連結を止めます。
         fun mergeSpans(source: List<Span>): List<Span> {
             val result = mutableListOf<Span>()
             source.groupBy { it.horizontal to it.line }.values.forEach { grouped ->
                 var current = grouped.minByOrNull { it.start } ?: return@forEach
                 grouped.sortedBy { it.start }.drop(1).forEach { next ->
-                    if (next.start <= current.end) current = current.copy(end = maxOf(current.end, next.end))
-                    else { result += current; current = next }
+                    val sharedPoint = if (current.horizontal) {
+                        MapPoint(next.start, current.line)
+                    } else {
+                        MapPoint(current.line, next.start)
+                    }
+                    val crossesEndpoint = next.start == current.end &&
+                        viewportCells[sharedPoint]?.kind in ENDPOINT_KINDS
+                    if (next.start <= current.end && !crossesEndpoint) {
+                        current = current.copy(end = maxOf(current.end, next.end))
+                    } else {
+                        result += current
+                        current = next
+                    }
                 }
                 result += current
             }
@@ -815,5 +827,7 @@ class GestureSequenceEditor(
             MapCellKind.BRANCH_PATH,
             MapCellKind.LOOP_RETURN_PATH,
         )
+        /** 1接続を分割する境界となる実体アイコンです。 */
+        val ENDPOINT_KINDS = setOf(MapCellKind.NODE, MapCellKind.ADD)
     }
 }
