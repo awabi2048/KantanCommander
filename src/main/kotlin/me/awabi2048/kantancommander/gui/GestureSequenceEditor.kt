@@ -187,8 +187,19 @@ class GestureSequenceEditor(
     internal fun closeImmediately(ownerId: UUID) {
         // GUIを閉じた後に遅延した入力コールバックが設定を書き換えないよう、
         // 画面の終了を入力セッションの終了として扱います。
+        val player = Bukkit.getPlayer(ownerId)
+        val hadActiveDialog = activeInputToken != null
         invalidateInput()
         gestureSessionId = null
+        if (hadActiveDialog && player != null) {
+            // PaperのDialogにはEscクローズ通知がないため、エディター自身が
+            // 開いた入力DialogをFキー終了時に明示的に閉じます。続けてRuntimeの
+            // 外部サスペンドも復帰し、次回のチャット／インベントリ入力へ
+            // 前回のDialog状態が漏れないようにします。別プラグインのDialogを
+            // 誤って閉じないよう、activeInputTokenがある場合だけ実行します。
+            player.closeDialog()
+            CCSystem.getAPI().getMenuRuntimeService().resumeFromExternal(player)
+        }
         api.close(ownerId, com.awabi2048.ccsystem.api.gesturegui.GestureGuiCloseMode.IMMEDIATE)
     }
 
