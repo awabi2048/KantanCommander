@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.Test
@@ -83,6 +84,35 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `false branch leaves the condition from its lower side`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val falseNode = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        GraphEditor.appendMerge(graph, condition.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val conditionPoint = requireNotNull(layout.nodePoints[condition.id])
+        val falsePoint = requireNotNull(layout.nodePoints[falseNode.id])
+
+        assertTrue(falsePoint.y > conditionPoint.y)
+        (conditionPoint.y + 1..falsePoint.y).forEach { y ->
+            assertEquals(
+                MapCellKind.BRANCH_PATH,
+                layout.cells[MapPoint(conditionPoint.x, y)]?.kind,
+            )
+        }
+        // 中心列の最下段は角、そこから右へ1セル進んでfalse枝先頭へ入ります。
+        assertEquals(
+            condition.id,
+            layout.cells[MapPoint(conditionPoint.x + 1, falsePoint.y)]
+                ?.insertionTarget
+                ?.sourceId,
+        )
+        assertEquals(GraphEditor.Edge.FALSE, layout.cells[MapPoint(conditionPoint.x + 1, falsePoint.y)]?.insertionTarget?.edge)
+    }
+
+    @Test
     fun `unequal branches align the returning column with the longest branch merge`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
@@ -101,11 +131,12 @@ class GraphLayoutEngineTest {
         assertEquals(trueTailPoint.x + 2, mergePoint.x)
         assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.kind)
         assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, mergePoint.y + 1)]?.kind)
-        // 長さ調整用の連続経路は、false末尾の直後（挿入後ノードの直前）の
-        // 一セルだけを候補にします。MERGE直下の縦線・角は接続専用です。
-        val falseInsertionPoint = MapPoint(falseTailPoint.x + 1, falseTailPoint.y)
-        assertEquals(falseTail.id, layout.cells[falseInsertionPoint]?.insertionTarget?.sourceId)
-        assertEquals(null, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.insertionTarget)
+        // 長さ調整用の連続経路は、false末尾から合流直前までの全水平セルを
+        // 同じ挿入判定領域にします。MERGE直下の縦線だけは接続専用です。
+        (falseTailPoint.x + 1..mergePoint.x).forEach { x ->
+            assertEquals(falseTail.id, layout.cells[MapPoint(x, falseTailPoint.y)]?.insertionTarget?.sourceId)
+            assertEquals(GraphEditor.Edge.NEXT, layout.cells[MapPoint(x, falseTailPoint.y)]?.insertionTarget?.edge)
+        }
     }
 
     @Test
@@ -266,7 +297,7 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `merge return path inserts at the false branch tail`() {
+    fun `merge return path exposes every horizontal cell at the false branch tail`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.WAIT)
@@ -274,17 +305,19 @@ class GraphLayoutEngineTest {
         val merge = GraphEditor.appendMerge(graph, condition.id)
         val layout = GraphLayoutEngine.layout(graph)
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val falseTailPoint = requireNotNull(layout.nodePoints[falseTail.id])
         val falseY = requireNotNull(layout.nodePoints[falseTail.id]).y
 
-        val mergeSide = layout.cells[MapPoint(mergePoint.x - 1, falseY)]
-        assertEquals(falseTail.id, mergeSide?.insertionTarget?.sourceId)
-        assertEquals(GraphEditor.Edge.NEXT, mergeSide?.insertionTarget?.edge)
-        assertEquals(condition.id, mergeSide?.insertionTarget?.mergeConditionId)
-        assertEquals(null, layout.cells[MapPoint(mergePoint.x, falseY)]?.insertionTarget)
+        (falseTailPoint.x + 1..mergePoint.x).forEach { x ->
+            val path = layout.cells[MapPoint(x, falseY)]
+            assertEquals(falseTail.id, path?.insertionTarget?.sourceId)
+            assertEquals(GraphEditor.Edge.NEXT, path?.insertionTarget?.edge)
+            assertEquals(condition.id, path?.insertionTarget?.mergeConditionId)
+        }
     }
 
     @Test
-    fun `continuous branch path exposes only the first cell after each source`() {
+    fun `continuous branch path exposes every cell after each source`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         val trueFirst = GraphEditor.append(graph, CommandType.WAIT)
@@ -296,20 +329,34 @@ class GraphLayoutEngineTest {
         val layout = GraphLayoutEngine.layout(graph)
         val falseTailPoint = requireNotNull(layout.nodePoints[falseTail.id])
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
-        val firstAfterTail = layout.cells[MapPoint(falseTailPoint.x + 1, falseTailPoint.y)]
-
-        assertEquals(falseTail.id, firstAfterTail?.insertionTarget?.sourceId)
-        assertEquals(GraphEditor.Edge.NEXT, firstAfterTail?.insertionTarget?.edge)
-        // MERGE側へ埋める残りの水平セル・縦線は接続だけを担い、同じ候補を持ちません。
-        ((falseTailPoint.x + 2)..mergePoint.x).forEach { x ->
-            assertEquals(null, layout.cells[MapPoint(x, falseTailPoint.y)]?.insertionTarget)
+        val targetCells = (falseTailPoint.x + 1..mergePoint.x).map { x ->
+            MapPoint(x, falseTailPoint.y)
         }
-        assertEquals(null, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.insertionTarget)
+        targetCells.forEach { point ->
+            val target = layout.cells[point]?.insertionTarget
+            assertEquals(falseTail.id, target?.sourceId)
+            assertEquals(GraphEditor.Edge.NEXT, target?.edge)
+            assertEquals(condition.id, target?.mergeConditionId)
+        }
 
-        val target = requireNotNull(firstAfterTail?.insertionTarget)
+        val target = requireNotNull(layout.cells[targetCells.first()]?.insertionTarget)
         val candidate = graph.deepCopy()
         GraphEditor.insert(candidate, target.sourceId, target.edge, CommandType.CONDITION)
         assertDoesNotThrow { GraphLayoutEngine.layout(candidate) }
+    }
+
+    @Test
+    fun `insertion preview points to the new node center instead of clicked path cell`() {
+        val graph = CommandGraph.empty()
+        val first = GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val layout = GraphLayoutEngine.layout(graph)
+        val pathPoint = MapPoint(2, 1)
+        val target = requireNotNull(layout.cells[pathPoint]?.insertionTarget)
+
+        assertEquals(MapPoint(3, 1), layout.insertionPreviewPoint(pathPoint, target))
+        assertNotEquals(pathPoint, layout.insertionPreviewPoint(pathPoint, target))
+        assertEquals(first.id, target.sourceId)
     }
 
     @Test

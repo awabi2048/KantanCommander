@@ -51,7 +51,9 @@ data class GestureEditorState(
     var pendingInsertion: InsertionTarget? = null,
     /** PICKERへ遷移した追加ポイントの選択状態。既存ノード選択とは独立して表示します。 */
     var selectedAddPoint: MapPoint? = null,
-    /** PICKERへ遷移した経路上の挿入候補。論理座標で保持し、ズーム／パン後も同じ候補を示します。 */
+    /** PICKERへ遷移した経路上で実際にクリックされた判定セル。競合検証に使います。 */
+    var selectedInsertionCandidatePoint: MapPoint? = null,
+    /** PICKERで作成するノードの配置予定位置。ズーム／パン後も同じ位置を示します。 */
     var selectedInsertionPoint: MapPoint? = null,
 )
 
@@ -308,24 +310,25 @@ class GestureSequenceEditor(
             ))
         }
 
-        // 経路をクリックしてPICKERへ移った場合も、クリック元の論理セルを
-        // 背景側だけ発光させます。経路素材そのものの色は変更しません。
+        // 経路をクリックしてPICKERへ移った場合は、クリック元の経路ではなく、
+        // 作成後に新ノードが配置される位置を背景側だけ発光させます。経路素材や
+        // 既存アイコン自体の色は変更しません。連続経路上のどのセルをクリックしても
+        // 同じ挿入先エッジへ入るため、ハイライト位置はクリックセルから切り離します。
         state.selectedInsertionPoint?.let { selectedGlobal ->
             val local = MapPoint(
                 selectedGlobal.x - state.origin.x,
                 selectedGlobal.y - state.origin.y,
             )
-            val selectedCell = cells[local]
-            if (selectedCell != null && selectedCell.kind in PATH_CELL_KINDS && selectedCell.insertionTarget != null) {
+            if (projection.contains(local)) {
                 val cx = metrics.x(local.x)
                 val cy = metrics.y(local.y)
                 visuals.add(GestureGuiVisual.Block(
-                    visualId = "path-highlight-${selectedGlobal.x}-${selectedGlobal.y}",
+                    visualId = "path-highlight-preview-${selectedGlobal.x}-${selectedGlobal.y}",
                     x = cx,
                     y = cy,
-                    width = metrics.pitchX * 0.86,
-                    height = metrics.pitchY * 0.86,
-                    blockData = Bukkit.createBlockData(Material.WHITE_CONCRETE),
+                    width = metrics.iconSize,
+                    height = metrics.iconSize,
+                    blockData = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
                     layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                     glowColor = Color.YELLOW.asARGB(),
                 ))
@@ -436,6 +439,7 @@ class GestureSequenceEditor(
                     GestureGuiGesture.PRIMARY -> {
                         state.selectedNodeId = nodeId
                         state.selectedAddPoint = null
+                        state.selectedInsertionCandidatePoint = null
                         state.selectedInsertionPoint = null
                         state.pendingInsertion = null
                         state.lowerMode = GestureLowerMode.SETTINGS
@@ -450,6 +454,7 @@ class GestureSequenceEditor(
             context.elementId == "viewport-empty" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
+                state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
                 state.confirmNodeId = null
                 state.pendingInsertion = null
@@ -524,6 +529,7 @@ class GestureSequenceEditor(
                 }
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
+                state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
                 updateUpper(player)
                 updateLower(player)
@@ -545,6 +551,7 @@ class GestureSequenceEditor(
                 state.pendingInsertion = target
                 state.selectedNodeId = null
                 state.selectedAddPoint = MapPoint(gx, gy)
+                state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
@@ -556,11 +563,15 @@ class GestureSequenceEditor(
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
                 if (point.size != 2) return
-                val cell = GraphLayoutEngine.layout(script.graph).cells[MapPoint(point[0], point[1])] ?: return
-                state.pendingInsertion = cell.insertionTarget ?: return
+                val layout = GraphLayoutEngine.layout(script.graph)
+                val clickedPoint = MapPoint(point[0], point[1])
+                val cell = layout.cells[clickedPoint] ?: return
+                val target = cell.insertionTarget ?: return
+                state.pendingInsertion = target
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
-                state.selectedInsertionPoint = MapPoint(point[0], point[1])
+                state.selectedInsertionCandidatePoint = clickedPoint
+                state.selectedInsertionPoint = layout.insertionPreviewPoint(clickedPoint, target) ?: clickedPoint
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
@@ -609,7 +620,7 @@ class GestureSequenceEditor(
                 // PICKERを開いている間に別の編集が発生した場合、古い座標の候補を
                 // そのまま適用しません。現在のレイアウト上でも同じセルが同じ
                 // 挿入先を示すことを確認し、連続経路の装飾セルへの誤挿入を防ぎます。
-                state.selectedInsertionPoint?.let { point ->
+                state.selectedInsertionCandidatePoint?.let { point ->
                     val currentTarget = GraphLayoutEngine.layout(script.graph)
                         .cells[point]
                         ?.insertionTarget
@@ -641,6 +652,7 @@ class GestureSequenceEditor(
                     insertedNode
                 }.getOrNull() ?: return
                 state.pendingInsertion = null
+                state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
                 // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。
                 state.selectedNodeId = inserted.id
@@ -654,6 +666,7 @@ class GestureSequenceEditor(
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pendingInsertion = null
                 state.selectedAddPoint = null
+                state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
@@ -674,6 +687,7 @@ class GestureSequenceEditor(
                 state.confirmNodeId = null
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
+                state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
