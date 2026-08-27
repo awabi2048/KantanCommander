@@ -671,7 +671,12 @@ class GestureSequenceEditor(
                                 "limit" -> raw.takeIf(String::isNotEmpty)?.toIntOrNull()
                                 else -> raw.takeIf(String::isNotEmpty)
                             }
-                            if (raw.isNotEmpty() && parsed == null) {
+                            val invalidRange = when (value) {
+                                "minimumDistance", "maximumDistance" -> (parsed as? Double)?.let { it < 0.0 } == true
+                                "limit" -> (parsed as? Int)?.let { it < 1 } == true
+                                else -> false
+                            }
+                            if (raw.isNotEmpty() && (parsed == null || invalidRange)) {
                                 player.sendMessage("入力値の形式が正しくありません。")
                                 return@beginSettingInput
                             }
