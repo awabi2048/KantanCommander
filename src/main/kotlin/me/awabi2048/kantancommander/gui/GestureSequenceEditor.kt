@@ -165,17 +165,17 @@ class GestureSequenceEditor(
                             height = GestureEditorLayout.ICON_H,
                             blockData = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
                             // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
-                            layer = 2,
+                            layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                             glowColor = glowColor,
                         ))
-                        // マスの90% (ICON_W=0.171) に合わせる。Item.scale 0.22が標準のため 0.22*0.78≈0.17 とする
+                        // マスの90% (ICON_W=0.198) に合わせます。追加ポイントの背景・記号も同じ寸法です。
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
                             item = org.bukkit.inventory.ItemStack(node.type.icon),
                             scale = GestureEditorLayout.ICON_SCALE,
                             // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
-                            layer = 3,
+                            layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
                         elements.add(GestureGuiElement(
@@ -201,15 +201,16 @@ class GestureSequenceEditor(
                         width = GestureEditorLayout.ICON_W,
                         height = GestureEditorLayout.ICON_H,
                         blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
-                        layer = 2,
+                        layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                         glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
                     ))
                     visuals.add(GestureGuiVisual.Text(
                         visualId = "add-plus-$gx-$gy",
-                        x = cx, y = cy - 0.02,
+                        // 新規追加もコマンドアイコンと同じ中心・前景レベルで表示します。
+                        x = cx, y = cy,
                         text = net.kyori.adventure.text.Component.text("+"),
                         size = 0.012,
-                        layer = 4,
+                        layer = GestureEditorLayout.ICON_LAYER,
                     ))
                     elements.add(GestureGuiElement(
                         elementId = "add:$gx:$gy",

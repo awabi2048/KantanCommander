@@ -29,6 +29,9 @@ object GestureEditorLayout {
     const val ICON_SCALE: Double = 0.20
     const val ICON_W: Double = ICON_SCALE_REFERENCE * 0.9
     const val ICON_H: Double = ICON_SCALE_REFERENCE * 0.9
+    /** コマンド／新規追加の共通表示レベル。背景の上にアイコン本体を置きます。 */
+    const val ICON_BACKGROUND_LAYER: Int = 2
+    const val ICON_LAYER: Int = 3
 
     /** 経路の断面（短辺）。進行方向に細長い2:3 */
     // 水平・垂直の双方で同じ正方形断面に見えるよう、短いピッチを基準にします。
