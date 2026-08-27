@@ -53,7 +53,7 @@ class GestureLowerPanel(
         }
     }
 
-    /** SETTINGS: 左タブ列＝フィールド4件＋固定削除操作、右詳細＝現在値＋編集操作 */
+    /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -69,17 +69,63 @@ class GestureLowerPanel(
             addText(visuals, "lower-hint", 0.28, 0.20, 0.010, 160, Component.text("設定項目はありません"))
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
-        val pageCount = (fields.size + SETTINGS_PAGE_SIZE - 1) / SETTINGS_PAGE_SIZE
+        val pageCount = addSettingsNavigation(state, player, node, visuals, elements)
         val page = state.settingsPage.coerceIn(0, pageCount - 1)
         val pageStart = page * SETTINGS_PAGE_SIZE
         val tabs = fields.drop(pageStart).take(SETTINGS_PAGE_SIZE)
         val selectedAbsolute = state.settingsTab.coerceIn(0, fields.lastIndex)
-        val selected = if (selectedAbsolute in pageStart until pageStart + tabs.size) {
-            selectedAbsolute - pageStart
-        } else {
-            0
-        }
+        val selected = if (selectedAbsolute in pageStart until pageStart + tabs.size) selectedAbsolute - pageStart else 0
+        val field = tabs[selected]
+        val value = field.value(node).render(player)
+        addValueRow(visuals, "lower-setting", 0.29, KcI18n.text(player, field.label), value)
 
+        val descriptor = CommandSettingsModel.descriptor(node, field.key)
+        // 専用選択項目はタブ選択時に直接開くため、ここには余分なボタンを置きません。
+        // 文字列・数値など、専用モデルを持たない項目だけチャット入力を表示します。
+        val heldItemSetting = field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
+        if (heldItemSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in CHAT_EDITABLE_KEYS && !heldItemSetting)) {
+            addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.20, Material.CYAN_TERRACOTTA, 4)
+            addText(
+                visuals,
+                "lower-edit",
+                0.28,
+                0.02,
+                0.006,
+                180,
+                Component.text(if (heldItemSetting) "メインハンドのアイテムを設定" else "チャットで編集"),
+            )
+            elements.add(GestureGuiElement(
+                elementId = "lower-edit:${field.key}",
+                bounds = rect(0.28, 0.02, 1.2, 0.20),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "lower-edit-bg",
+            ))
+        }
+        return view(GestureLowerMode.SETTINGS, elements, visuals)
+    }
+
+    /**
+     * 設定タブと固定操作を全モードで同じように描画します。
+     * 専用選択モードへ入っても左側を消さず、タブクリックだけで別項目へ
+     * 移れるようにすることが、無駄なページ移動をなくすための重要な共通部です。
+     */
+    private fun addSettingsNavigation(
+        state: GestureEditorState,
+        player: Player,
+        node: CommandNode,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        pagerCenterX: Double = -0.10,
+    ): Int {
+        val fields = CommandSettingsModel.visibleFields(node)
+        if (fields.isEmpty()) return 1
+        val pageCount = (fields.size + SETTINGS_PAGE_SIZE - 1) / SETTINGS_PAGE_SIZE
+        val page = state.settingsPage.coerceIn(0, pageCount - 1)
+        val pageStart = page * SETTINGS_PAGE_SIZE
+        val tabs = fields.drop(pageStart).take(SETTINGS_PAGE_SIZE)
+        val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
+            ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
+        val selected = if (activeField in pageStart until pageStart + tabs.size) activeField - pageStart else 0
         tabs.forEachIndexed { index, field ->
             val cy = 0.38 - index * 0.17
             val on = index == selected
@@ -95,69 +141,45 @@ class GestureLowerPanel(
             ))
         }
 
-        // 危険操作はページ内容と混ぜず、左列最下段の安定した位置へ固定します。
-        val deleteY = -0.30
-        addBlock(visuals, "delete-bg", -0.7975, deleteY, 0.47, 0.15, Material.RED_CONCRETE, 4)
-        addText(visuals, "delete-label", -0.7975, deleteY, 0.0055, 90, Component.text("削除"))
+        val contextY = -0.29
+        if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
+            val activeContext = state.settingFieldKey == "context" && state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE
+            addBlock(visuals, "context-bg", -0.7975, contextY, 0.47, 0.14,
+                if (activeContext) Material.LIME_CONCRETE else Material.LIME_TERRACOTTA, 4)
+            addText(visuals, "context-label", -0.7975, contextY - 0.018, 0.0045, 110, Component.text("実行コンテキスト上書き"))
+            elements.add(GestureGuiElement(
+                elementId = "lower-context",
+                bounds = rect(-0.7975, contextY, 0.47, 0.14),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "context-bg",
+            ))
+        }
+
+        val deleteY = -0.43
+        addBlock(visuals, "delete-bg", -0.7975, deleteY, 0.47, 0.10, Material.RED_CONCRETE, 4)
+        addText(visuals, "delete-label", -0.7975, deleteY, 0.0049, 90, Component.text("削除"))
         elements.add(GestureGuiElement(
             elementId = "lower-delete",
-            bounds = rect(-0.7975, deleteY, 0.47, 0.15),
+            bounds = rect(-0.7975, deleteY, 0.47, 0.10),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
             targetVisualId = "delete-bg",
         ))
-        if (pageCount > 1) {
-            addPager(visuals, elements, "settings", page, pageCount, -0.7975, -0.43)
-        }
+        // ページャーは左ナビと右ペインの境界に置きます。専用選択画面では
+        // 候補用ページャーと重ならないよう、呼び出し側から位置を分けます。
+        if (pageCount > 1) addPager(visuals, elements, "settings", page, pageCount, pagerCenterX, -0.43)
+        return pageCount
+    }
 
-        val field = tabs[selected]
-        val value = field.value(node).render(player)
-        // 設定値は「項目名 設定値」の1行に統一します。項目名・現在値・値を
-        // 別々の縦段へ置くと、画面倍率や日本語幅によって上下位置がずれるため、
-        // 意味上の1つのテキスト要素として投影します。
-        addText(
-            visuals,
-            "lower-setting-row",
-            0.28,
-            0.29,
-            0.0065,
-            280,
-            Component.text("${KcI18n.text(player, field.label)} $value"),
-        )
-        val descriptor = CommandSettingsModel.descriptor(node, field.key)
-        // 専用選択経路も常に要素化します。従来はチャット入力可能なキーだけが
-        // clickableだったため、TARGET/POSITION等が「専用選択で編集」と表示される
-        // だけで操作不能になっていました。
-        val editable = descriptor.editor != CommandSettingEditor.TEXT || field.key in CHAT_EDITABLE_KEYS
-        addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.26,
-            // 石系テクスチャは画面全体の配色契約に含めないため、操作可否に
-            // 関係なく空色テラコッタへ統一します。編集可否は要素の有無で表現します。
-            Material.CYAN_TERRACOTTA, 4)
-        addText(visuals, "lower-edit", 0.28, 0.02, 0.006, 160,
-            Component.text(if (descriptor.editor == CommandSettingEditor.TEXT) "チャットで編集" else "選択して編集"))
-        if (editable) {
-            elements.add(GestureGuiElement(
-                elementId = "lower-edit:${field.key}",
-                bounds = rect(0.28, 0.02, 1.2, 0.26),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                targetVisualId = "lower-edit-bg",
-            ))
-        }
-
-        // インベントリGUIの「コンテキスト上書き」経路も同じ個別設定領域へ
-        // 揃えます。CommandNodeのフィールド一覧には混ぜず、右ペイン下段の固定
-        // 操作として表示することで、通常設定の1列レイアウトを崩しません。
-        if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
-            addBlock(visuals, "lower-context-bg", 0.28, -0.29, 1.2, 0.20, Material.CYAN_TERRACOTTA, 4)
-            addText(visuals, "lower-context", 0.28, -0.29, 0.0055, 180, Component.text("実行コンテキストを上書き"))
-            elements.add(GestureGuiElement(
-                elementId = "lower-context",
-                bounds = rect(0.28, -0.29, 1.2, 0.20),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                targetVisualId = "lower-context-bg",
-            ))
-        }
-
-        return view(GestureLowerMode.SETTINGS, elements, visuals)
+    /** 項目名と値を別々のTextDisplayへ配置し、表示領域の分離を明示します。 */
+    private fun addValueRow(
+        visuals: MutableList<GestureGuiVisual>,
+        id: String,
+        y: Double,
+        label: String,
+        value: String,
+    ) {
+        addText(visuals, "$id-label", -0.08, y, 0.0060, 120, Component.text(label))
+        addText(visuals, "$id-value", 0.52, y, 0.0060, 170, Component.text(value))
     }
 
     /**
@@ -182,22 +204,19 @@ class GestureLowerPanel(
             return view(GestureLowerMode.SETTING_CHOICES, elements, visuals)
         }
 
-        val field = EditorMenuLayout.fields(node.type).firstOrNull { it.key == fieldKey }
+        // 専用選択中も設定タブを同じ左領域へ描画し、下部画面全体が
+        // 「右ペインだけに置き換わる」状態にならないようにします。
+        // 左ナビ・コンテキスト上書き・削除を専用選択画面でも残します。
+        // 設定タブのページャーは候補ページャーと横方向に分離します。
+        addSettingsNavigation(state, player, node, visuals, elements, pagerCenterX = -0.30)
+        val field = CommandSettingsModel.visibleFields(node).firstOrNull { it.key == fieldKey }
         val fieldLabel = field?.let { KcI18n.text(player, it.label) }
-            ?: if (fieldKey == "context") "実行コンテキスト" else fieldKey
+            ?: if (fieldKey == "context") "実行コンテキスト上書き" else fieldKey
         val fieldValue = field?.value?.invoke(node)?.render(player)
             ?: if (screen == GestureSettingScreen.CONTEXT_OVERRIDE) {
                 if (node.contextOverride == null) "すべて継承" else "一部を上書き"
             } else settingCurrentValue(node, context, screen, fieldKey, player)
-        addText(
-            visuals,
-            "setting-header",
-            0.28,
-            0.40,
-            0.0062,
-            280,
-            Component.text("$fieldLabel $fieldValue"),
-        )
+        addValueRow(visuals, "setting-header", 0.40, fieldLabel, fieldValue)
 
         val choices = settingChoices(node, context, screen, fieldKey, player)
         val pageSize = SETTING_CHOICE_PAGE_SIZE
@@ -207,7 +226,7 @@ class GestureLowerPanel(
             val column = index % 2
             val row = index / 2
             val cx = if (column == 0) -0.10 else 0.67
-            val cy = 0.22 - row * 0.15
+            val cy = 0.23 - row * SETTING_CHOICE_PITCH
             val bgId = "setting-choice-bg-$index"
             addBlock(
                 visuals,
@@ -219,7 +238,7 @@ class GestureLowerPanel(
                 if (choice.selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA,
                 4,
             )
-            addText(visuals, "setting-choice-label-$index", cx, cy - 0.018, 0.0047, 115, Component.text(choice.label))
+            addText(visuals, "setting-choice-label-$index", cx, cy - 0.015, 0.0045, 115, Component.text(choice.label))
             elements.add(GestureGuiElement(
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, SETTING_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
@@ -227,20 +246,22 @@ class GestureLowerPanel(
                 targetVisualId = bgId,
             ))
         }
-        if (pageCount > 1) addPager(visuals, elements, "setting", page, pageCount, 0.28, -0.43)
-        addBackSetting(elements, visuals)
+        if (pageCount > 1) addPager(visuals, elements, "setting", page, pageCount, 0.25, -0.43)
+        addBackSetting(elements, visuals, centerX = 0.78, width = 0.42)
         return view(GestureLowerMode.SETTING_CHOICES, elements, visuals)
     }
 
     private fun addBackSetting(
         elements: MutableList<GestureGuiElement>,
         visuals: MutableList<GestureGuiVisual>,
+        centerX: Double = 0.67,
+        width: Double = 0.66,
     ) {
-        addBlock(visuals, "setting-back-bg", 0.67, -0.43, 0.66, 0.10, Material.BROWN_CONCRETE, 4)
-        addText(visuals, "setting-back-label", 0.67, -0.43, 0.0048, 100, Component.text("戻る"))
+        addBlock(visuals, "setting-back-bg", centerX, -0.43, width, 0.10, Material.BROWN_CONCRETE, 4)
+        addText(visuals, "setting-back-label", centerX, -0.43, 0.0048, 100, Component.text("戻る"))
         elements.add(GestureGuiElement(
             elementId = "lower-setting-back",
-            bounds = rect(0.67, -0.43, 0.66, 0.10),
+            bounds = rect(centerX, -0.43, width, 0.10),
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
             targetVisualId = "setting-back-bg",
         ))
@@ -657,10 +678,12 @@ class GestureLowerPanel(
     private companion object {
         const val SETTINGS_PAGE_SIZE = 4
         const val PICKER_PAGE_SIZE = 8
-        // 2列×4行に収め、下端の「戻る」操作と候補が重ならないようにします。
-        const val SETTING_CHOICE_PAGE_SIZE = 8
+        // 2列×5行に収め、対象フィルター（10項目）を1画面で編集できます。
+        // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
+        const val SETTING_CHOICE_PAGE_SIZE = 10
         const val SETTING_CHOICE_WIDTH = 0.66
-        const val SETTING_CHOICE_HEIGHT = 0.12
+        const val SETTING_CHOICE_HEIGHT = 0.10
+        const val SETTING_CHOICE_PITCH = 0.12
         val FILTERABLE_TARGET_KINDS = setOf(
             TargetKind.NEAREST_PLAYER,
             TargetKind.NEARBY_PLAYERS,

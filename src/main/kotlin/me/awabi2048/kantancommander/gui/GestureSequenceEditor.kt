@@ -15,6 +15,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
@@ -157,10 +158,15 @@ class GestureSequenceEditor(
     internal fun isEditing(placement: DiskPlacement): Boolean = state.placement?.key == placement.key
 
     internal fun closeImmediately(ownerId: UUID) {
+        // GUIを閉じた後に遅延したチャットコールバックが設定を書き換えないよう、
+        // 画面の終了を入力セッションの終了として扱います。
+        plugin.gestureChatInput.cancel(ownerId)
         api.close(ownerId, com.awabi2048.ccsystem.api.gesturegui.GestureGuiCloseMode.IMMEDIATE)
     }
 
     fun open(player: Player) {
+        // 同一プレイヤーの再オープンは以前の入力セッションを必ず置き換えます。
+        plugin.gestureChatInput.cancel(player.uniqueId)
         api.registerOwner(player.uniqueId)
         val upper = buildUpperViewport(player)
         val lower = lowerPanel.build(state, player)
@@ -479,6 +485,46 @@ class GestureSequenceEditor(
         state.settingPage = 0
     }
 
+    /**
+     * 下部の設定タブから直接編集経路へ入ります。
+     *
+     * 以前はタブを選ぶだけで一覧を更新し、さらに「選択して編集」を押す必要が
+     * ありました。タブ自体を編集入口にすることで、インベントリGUIと同じ意味上の
+     * 設定画面へ一度の操作で遷移させます。
+     */
+    private fun openSettingsTab(player: Player, absoluteIndex: Int) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+        val fields = CommandSettingsModel.visibleFields(node)
+        if (absoluteIndex !in fields.indices) return
+
+        plugin.gestureChatInput.cancel(player.uniqueId)
+        state.settingsTab = absoluteIndex
+        state.settingsPage = absoluteIndex / SETTINGS_PAGE_SIZE
+        val field = fields[absoluteIndex]
+        // アイテムはチャット文字列ではなく、メインハンドの実体をそのまま保存します。
+        if (field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
+            clearSettingState()
+            state.lowerMode = GestureLowerMode.SETTINGS
+            applyHeldItem(player, CommandSettingContext(state.scriptId, node.id, null))
+            return
+        }
+        val descriptor = CommandSettingsModel.descriptor(node, field.key)
+        val screen = screenFor(descriptor.editor)
+        if (screen == null) {
+            clearSettingState()
+            state.lowerMode = GestureLowerMode.SETTINGS
+        } else {
+            state.settingContext = CommandSettingContext(state.scriptId, node.id, descriptor.role)
+            state.settingFieldKey = field.key
+            state.settingScreen = screen
+            state.settingParentScreen = null
+            state.settingPage = 0
+            state.lowerMode = GestureLowerMode.SETTING_CHOICES
+        }
+        updateLower(player)
+    }
+
     private fun screenFor(editor: CommandSettingEditor): GestureSettingScreen? = when (editor) {
         CommandSettingEditor.TARGET -> GestureSettingScreen.TARGET
         CommandSettingEditor.POSITION -> GestureSettingScreen.POSITION
@@ -503,6 +549,10 @@ class GestureSequenceEditor(
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
+        if (fieldKey == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
+            applyHeldItem(player, context)
+            return
+        }
         val screen = screenFor(descriptor.editor)
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目だけをチャット入力へ送ります。
@@ -521,6 +571,32 @@ class GestureSequenceEditor(
         state.settingPage = 0
         state.lowerMode = GestureLowerMode.SETTING_CHOICES
         updateLower(player)
+    }
+
+    /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
+    private fun applyHeldItem(
+        player: Player,
+        context: CommandSettingContext,
+        parameter: String = "item",
+    ): Boolean {
+        val held = player.inventory.itemInMainHand.takeUnless { it.type == Material.AIR }
+        if (held == null) {
+            player.sendMessage("設定するアイテムをメインハンドに持ってください。")
+            // 呼び出し元が専用選択画面から設定タブへ戻した直後でも、
+            // 画面上の表示を状態と同期させ、古い候補画面を残しません。
+            updateLower(player)
+            return false
+        }
+        val itemKey = held.type.key.toString()
+        val updated = updateSettingNode(player, context) { node ->
+            node.params[parameter] = itemKey
+            if (parameter == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
+                // amountはコマンドのcountと分離するため、スタック数1の実体を保存します。
+                node.params["itemData"] = ItemStackCodec.encode(held)
+            }
+        }
+        if (updated) player.sendMessage("アイテムを設定しました: $itemKey")
+        return updated
     }
 
     private fun updateSettingNode(
@@ -824,11 +900,15 @@ class GestureSequenceEditor(
                             }) updateLower(player)
                     }
                     "condition-variable", "condition-value", "condition-block", "condition-item", "condition-count" -> {
+                        if (encoded == "condition-item") {
+                            applyHeldItem(player, settingContext)
+                            updateLower(player)
+                            return
+                        }
                         val parameter = when (encoded) {
                             "condition-variable" -> "variable"
                             "condition-value" -> "value"
                             "condition-block" -> "block"
-                            "condition-item" -> "item"
                             else -> "count"
                         }
                         beginSettingInput(player, "$parameter を入力してください") { raw ->
@@ -921,6 +1001,9 @@ class GestureSequenceEditor(
 
     private fun handleUpperAction(context: GestureGuiActionContext) {
         val player = Bukkit.getPlayer(context.ownerId) ?: return
+        // 画面操作が発生した時点で、古いチャット入力を無効化します。
+        // close/open以外の遷移でも遅延コールバックが設定を書き換えないようにします。
+        plugin.gestureChatInput.cancel(player.uniqueId)
         when {
             context.elementId.startsWith("node:") -> {
                 val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node:")) }.getOrNull() ?: return
@@ -1075,11 +1158,17 @@ class GestureSequenceEditor(
                 updateLower(player)
             }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.settingsTab = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
-                updateLower(player)
+                val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
+                openSettingsTab(player, index)
             }
             context.elementId.startsWith("lower-settings-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
-                state.settingsPage = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
+                val page = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
+                state.settingsPage = page
+                // 専用選択画面から設定ページャーを押した場合も、古い専用画面を
+                // 残さず、対応するタブ一覧へ戻します。これがページング重複を防ぎます。
+                clearSettingState()
+                state.settingsTab = page * SETTINGS_PAGE_SIZE
+                state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
             }
             (context.elementId == "lower-context" || context.elementId.startsWith("lower-setting-")) &&
@@ -1405,6 +1494,11 @@ class GestureSequenceEditor(
             graphMinY = GestureEditorLayout.UPPER_GRAPH_MIN_Y,
             graphMaxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y,
         )
+    }
+
+    private companion object {
+        // GestureLowerPanelと同じ4項目単位で設定タブをページ分割します。
+        const val SETTINGS_PAGE_SIZE = 4
     }
 
 }

@@ -19,7 +19,10 @@ class GestureEditorFacade(
         val scriptId = placement.scriptId
         val world = org.bukkit.Bukkit.getWorld(placement.world)
         val anchor: Location? = if (world != null) {
-            Location(world, placement.x + 0.5, placement.y + 0.5, placement.z + 0.5)
+            // ブロック実体との視線干渉を避け、ジェスチャー画面全体を
+            // 基準位置から0.3ブロック上へ配置します。上部・下部の両画面は
+            // 同じanchorから姿勢を算出するため、相対位置は変わりません。
+            Location(world, placement.x + 0.5, placement.y + 0.5 + GESTURE_DISPLAY_VERTICAL_OFFSET, placement.z + 0.5)
         } else null
         val state = GestureEditorState(
             scriptId = scriptId,
@@ -63,5 +66,9 @@ class GestureEditorFacade(
         sessions.keys.toList().forEach { playerId ->
             sessions.remove(playerId)?.closeImmediately(playerId)
         }
+    }
+
+    private companion object {
+        const val GESTURE_DISPLAY_VERTICAL_OFFSET: Double = 0.3
     }
 }
