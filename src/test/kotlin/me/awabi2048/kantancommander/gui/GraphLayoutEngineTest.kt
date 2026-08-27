@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertDoesNotThrow
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.Test
@@ -100,7 +101,11 @@ class GraphLayoutEngineTest {
         assertEquals(trueTailPoint.x + 2, mergePoint.x)
         assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.kind)
         assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, mergePoint.y + 1)]?.kind)
-        assertEquals(falseTail.id, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.insertionTarget?.sourceId)
+        // 長さ調整用の連続経路は、false末尾の直後（挿入後ノードの直前）の
+        // 一セルだけを候補にします。MERGE直下の縦線・角は接続専用です。
+        val falseInsertionPoint = MapPoint(falseTailPoint.x + 1, falseTailPoint.y)
+        assertEquals(falseTail.id, layout.cells[falseInsertionPoint]?.insertionTarget?.sourceId)
+        assertEquals(null, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.insertionTarget)
     }
 
     @Test
@@ -140,7 +145,8 @@ class GraphLayoutEngineTest {
         val layout = GraphLayoutEngine.layout(graph)
 
         assertEquals(GraphEditor.Edge.TRUE, layout.cells[MapPoint(2, 1)]?.insertionTarget?.edge)
-        assertEquals(GraphEditor.Edge.FALSE, layout.cells[MapPoint(2, 2)]?.insertionTarget?.edge)
+        assertEquals(GraphEditor.Edge.FALSE, layout.cells[MapPoint(2, 3)]?.insertionTarget?.edge)
+        assertEquals(null, layout.cells[MapPoint(2, 2)]?.insertionTarget)
     }
 
     @Test
@@ -270,10 +276,61 @@ class GraphLayoutEngineTest {
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
         val falseY = requireNotNull(layout.nodePoints[falseTail.id]).y
 
-        val mergeSide = layout.cells[MapPoint(mergePoint.x, falseY)]
+        val mergeSide = layout.cells[MapPoint(mergePoint.x - 1, falseY)]
         assertEquals(falseTail.id, mergeSide?.insertionTarget?.sourceId)
         assertEquals(GraphEditor.Edge.NEXT, mergeSide?.insertionTarget?.edge)
         assertEquals(condition.id, mergeSide?.insertionTarget?.mergeConditionId)
+        assertEquals(null, layout.cells[MapPoint(mergePoint.x, falseY)]?.insertionTarget)
+    }
+
+    @Test
+    fun `continuous branch path exposes only the first cell after each source`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueFirst = GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val falseFirst = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        val falseTail = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val falseTailPoint = requireNotNull(layout.nodePoints[falseTail.id])
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val firstAfterTail = layout.cells[MapPoint(falseTailPoint.x + 1, falseTailPoint.y)]
+
+        assertEquals(falseTail.id, firstAfterTail?.insertionTarget?.sourceId)
+        assertEquals(GraphEditor.Edge.NEXT, firstAfterTail?.insertionTarget?.edge)
+        // MERGE側へ埋める残りの水平セル・縦線は接続だけを担い、同じ候補を持ちません。
+        ((falseTailPoint.x + 2)..mergePoint.x).forEach { x ->
+            assertEquals(null, layout.cells[MapPoint(x, falseTailPoint.y)]?.insertionTarget)
+        }
+        assertEquals(null, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.insertionTarget)
+
+        val target = requireNotNull(firstAfterTail?.insertionTarget)
+        val candidate = graph.deepCopy()
+        GraphEditor.insert(candidate, target.sourceId, target.edge, CommandType.CONDITION)
+        assertDoesNotThrow { GraphLayoutEngine.layout(candidate) }
+    }
+
+    @Test
+    fun `condition inserted at a branch head does not duplicate the parent merge`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val falseFirst = GraphEditor.append(graph, CommandType.WAIT, outer.id)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, outer.id)
+        GraphEditor.appendMerge(graph, outer.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val outerPoint = requireNotNull(layout.nodePoints[outer.id])
+        val falseY = requireNotNull(layout.nodePoints[falseFirst.id]).y
+        val branchHead = requireNotNull(
+            requireNotNull(layout.cells[MapPoint(outerPoint.x + 1, falseY)]).insertionTarget,
+        )
+        val candidate = graph.deepCopy()
+
+        GraphEditor.insert(candidate, branchHead.sourceId, branchHead.edge, CommandType.CONDITION)
+        assertDoesNotThrow { GraphLayoutEngine.layout(candidate) }
     }
 
     @Test

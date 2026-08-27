@@ -583,6 +583,15 @@ class GestureSequenceEditor(
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 val target = state.pendingInsertion
                     ?: InsertionTarget(null, GraphEditor.Edge.ENTRY)
+                // PICKERを開いている間に別の編集が発生した場合、古い座標の候補を
+                // そのまま適用しません。現在のレイアウト上でも同じセルが同じ
+                // 挿入先を示すことを確認し、連続経路の装飾セルへの誤挿入を防ぎます。
+                state.selectedInsertionPoint?.let { point ->
+                    val currentTarget = GraphLayoutEngine.layout(script.graph)
+                        .cells[point]
+                        ?.insertionTarget
+                    if (currentTarget != target) return
+                }
                 if (type == CommandType.FOR_END || (type == CommandType.MERGE &&
                         (target.mergeConditionId == null || !GraphEditor.canAppendMerge(script.graph, target.mergeConditionId)))) {
                     // 合流は対応する分岐を持つ経路以外では選択できません。
@@ -590,15 +599,24 @@ class GestureSequenceEditor(
                     updateLower(player)
                     return
                 }
+                // 変更前の取得結果を直接壊さず、レイアウト・構造検証・保存まで
+                // 一つの候補グラフで完了させます。描画不能なグラフが発生しても
+                // 保存前に破棄され、サーバーイベントへ例外を漏らしません。
+                val candidateGraph = script.graph.deepCopy()
                 val inserted = runCatching {
                     if (type == CommandType.MERGE) {
                         // 画面表示後に別操作でグラフが変わる競合にも例外を漏らしません。
-                        GraphEditor.appendMerge(script.graph, requireNotNull(target.mergeConditionId))
+                        GraphEditor.appendMerge(candidateGraph, requireNotNull(target.mergeConditionId))
                     } else {
-                        GraphEditor.insert(script.graph, target.sourceId, target.edge, type)
+                        GraphEditor.insert(candidateGraph, target.sourceId, target.edge, type)
                     }
+                }.mapCatching { insertedNode ->
+                    // 保存処理も同じ候補グラフで行い、GraphLayoutEngineの衝突検査を
+                    // 永続化前に通します。
+                    GraphLayoutEngine.layout(candidateGraph)
+                    plugin.scripts.save(script.copy(graph = candidateGraph))
+                    insertedNode
                 }.getOrNull() ?: return
-                plugin.scripts.save(script)
                 state.pendingInsertion = null
                 state.selectedInsertionPoint = null
                 // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。

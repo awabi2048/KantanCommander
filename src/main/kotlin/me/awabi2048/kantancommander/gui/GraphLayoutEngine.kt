@@ -192,6 +192,7 @@ object GraphLayoutEngine {
             var currentId: UUID? = start
             var cursorX = x
             var maximumY = y
+            var hasOpenEnd = false
             val visited = mutableSetOf<UUID>()
             while (currentId != null && currentId != stop && visited.add(currentId)) {
                 val node = graph.nodes[currentId] ?: break
@@ -210,13 +211,17 @@ object GraphLayoutEngine {
                             edge = GraphEditor.Edge.NEXT,
                             weakInsertionTarget = true,
                         )
-                    } else return Segment(cursorX, maximumY, branch.tail)
+                    } else return Segment(cursorX, maximumY, branch.tail, branch.hasOpenEnd)
                     continue
                 }
                 if (node.type == CommandType.CONDITION) {
-                    val branch = renderOpenCondition(node, cursorX, y)
+                    // 親の分岐内では、開いた条件のTRUE/FALSE枝も親の合流境界で
+                    // 停止させます。これをnullで描画すると、既存のMERGEを
+                    // 子条件の通常ノードとして二重描画してセルが衝突します。
+                    val branch = renderOpenCondition(node, cursorX, y, stop)
                     cursorX = branch.nextX
                     maximumY = maxOf(maximumY, branch.maxY)
+                    hasOpenEnd = hasOpenEnd || branch.hasOpenEnd
                     currentId = null
                     continue
                 }
@@ -245,7 +250,7 @@ object GraphLayoutEngine {
                 cursorX += 2
                 currentId = next
             }
-            return Segment(cursorX, maximumY, null)
+            return Segment(cursorX, maximumY, null, hasOpenEnd)
         }
 
         private fun renderCondition(condition: CommandNode, x: Int, y: Int): Segment {
@@ -265,9 +270,19 @@ object GraphLayoutEngine {
 
             val falseY = trueSegment.maxY + 2
             putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
-            for (verticalY in y + 1..falseY) {
-                putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
+            // FALSE枝の途中の縦線は接続専用です。挿入候補は、挿入後ノードが
+            // 実際に配置されるfalse枝先頭の水平セルへ一つだけ付与します。
+            for (verticalY in y + 1 until falseY) {
+                putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH)
             }
+            putPath(
+                x + 1,
+                falseY,
+                MapCellKind.BRANCH_PATH,
+                condition.id,
+                GraphEditor.Edge.FALSE,
+                condition.id,
+            )
             val falseStart = condition.falseNext
             val falseSegment = if (falseStart != null && falseStart != mergeId) {
                 renderSequence(falseStart, mergeId, x + 2, falseY)
@@ -282,17 +297,30 @@ object GraphLayoutEngine {
             // 接続端点になり、画面上でもMERGEアイコンの下側ポートへ経路が潜り込みます。
             val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
             val mergeNodeX = mergeX
-            val trueSource = trueSegment.tail ?: condition.id
-            val trueEdge = if (trueSegment.tail == null) GraphEditor.Edge.TRUE else GraphEditor.Edge.NEXT
-            val falseSource = falseSegment.tail ?: condition.id
-            val falseEdge = if (falseSegment.tail == null) GraphEditor.Edge.FALSE else GraphEditor.Edge.NEXT
+            // 枝の長さ調整セルへ挿入先を付けるのは、枝が単一の閉じた実行列で
+            // 終わっている場合だけです。開いた条件を含む枝は末尾位置が一意で
+            // ないため、既に描画した枝先頭の候補だけを残します。
+            val trueTarget = when {
+                trueSegment.tail != null ->
+                    InsertionTarget(trueSegment.tail, GraphEditor.Edge.NEXT, condition.id)
+                trueStart == null || trueStart == mergeId ->
+                    InsertionTarget(condition.id, GraphEditor.Edge.TRUE, condition.id)
+                else -> null
+            }
+            val falseTarget = when {
+                falseSegment.tail != null ->
+                    InsertionTarget(falseSegment.tail, GraphEditor.Edge.NEXT, condition.id)
+                falseStart == null || falseStart == mergeId ->
+                    InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
+                else -> null
+            }
             fillHorizontal(
                 trueSegment.nextX - 1,
                 mergeX - 1,
                 y,
                 MapCellKind.BRANCH_PATH,
-                trueSource,
-                trueEdge,
+                trueTarget?.sourceId,
+                trueTarget?.edge,
                 condition.id,
             )
             fillHorizontal(
@@ -300,62 +328,79 @@ object GraphLayoutEngine {
                 mergeX,
                 falseY,
                 MapCellKind.BRANCH_PATH,
-                falseSource,
-                falseEdge,
+                falseTarget?.sourceId,
+                falseTarget?.edge,
                 condition.id,
             )
+            // 合流側の縦線・角はfalse末尾からMERGEへ接続するための装飾です。
+            // false末尾の直後にある水平セルだけが、その枝へ新ノードを挿入した
+            // ときの配置位置に対応するため、縦線へ同じ挿入先を持たせません。
             for (verticalY in y + 1..falseY) {
-                putPath(
-                    mergeX,
-                    verticalY,
-                    MapCellKind.BRANCH_PATH,
-                    falseSource,
-                    falseEdge,
-                    condition.id,
-                )
+                putPath(mergeX, verticalY, MapCellKind.BRANCH_PATH)
             }
 
             val merge = graph.nodes[mergeId] ?: return Segment(mergeNodeX, falseSegment.maxY, condition.id)
             // 枝が空／短い場合でも、角セルを合流直前の経路として明示的に
             // 再設定し、「水平枝→L字の角→合流アイコン」の接続を保証します。
-            putPath(
-                mergeX - 1,
-                y,
-                MapCellKind.BRANCH_PATH,
-                trueSource,
-                trueEdge,
-                condition.id,
-            )
+            // 合流直前の角は接続専用です。候補は各枝の末尾直後の最初のセルだけ
+            // に限定し、角をクリックして同じ挿入先を重複登録しないようにします。
+            putPath(mergeX - 1, y, MapCellKind.BRANCH_PATH)
             putNode(mergeNodeX, y, merge)
             return Segment(mergeNodeX + 2, maxOf(falseSegment.maxY, falseY), merge.id)
         }
 
-        private fun renderOpenCondition(condition: CommandNode, x: Int, y: Int): Segment {
+        private fun renderOpenCondition(condition: CommandNode, x: Int, y: Int, stop: UUID?): Segment {
             putNode(x, y, condition)
             putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
             val trueStart = condition.trueNext
-            val trueSegment = if (trueStart != null) renderSequence(trueStart, null, x + 2, y)
-            else {
-                putAdd(x + 2, y, condition.id, GraphEditor.Edge.TRUE, condition.id)
-                Segment(x + 4, y, null)
+            val trueSegment = when {
+                trueStart != null && trueStart == stop -> Segment(x + 2, y, null)
+                trueStart != null -> renderSequence(trueStart, stop, x + 2, y)
+                else -> {
+                    putAdd(x + 2, y, condition.id, GraphEditor.Edge.TRUE, condition.id)
+                    Segment(x + 4, y, null, hasOpenEnd = true)
+                }
             }
-            if (trueSegment.tail != null) {
+            if (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop)) {
                 putTailAdd(trueSegment.nextX, y, trueSegment.tail, condition.id)
             }
             val falseY = trueSegment.maxY + 2
-            for (verticalY in y + 1..falseY) {
-                putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
+            // FALSE枝の縦線は接続を見せるだけの装飾です。挿入後にノードが置かれる
+            // のは縦線の末端（最初の水平セルの直前）だけなので、途中の縦セルへ
+            // 挿入候補を複製しません。
+            for (verticalY in y + 1 until falseY) {
+                putPath(x + 1, verticalY, MapCellKind.BRANCH_PATH)
             }
+            putPath(
+                x + 1,
+                falseY,
+                MapCellKind.BRANCH_PATH,
+                condition.id,
+                GraphEditor.Edge.FALSE,
+                condition.id,
+            )
             val falseStart = condition.falseNext
-            val falseSegment = if (falseStart != null) renderSequence(falseStart, null, x + 2, falseY)
-            else {
-                putAdd(x + 2, falseY, condition.id, GraphEditor.Edge.FALSE, condition.id)
-                Segment(x + 4, falseY, null)
+            val falseSegment = when {
+                falseStart != null && falseStart == stop -> Segment(x + 2, falseY, null)
+                falseStart != null -> renderSequence(falseStart, stop, x + 2, falseY)
+                else -> {
+                    putAdd(x + 2, falseY, condition.id, GraphEditor.Edge.FALSE, condition.id)
+                    Segment(x + 4, falseY, null, hasOpenEnd = true)
+                }
             }
-            if (falseSegment.tail != null) {
+            if (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop)) {
                 putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
             }
-            return Segment(maxOf(trueSegment.nextX, falseSegment.nextX), falseSegment.maxY, null)
+            val trueOpen = trueStart == null || trueSegment.hasOpenEnd ||
+                (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop))
+            val falseOpen = falseStart == null || falseSegment.hasOpenEnd ||
+                (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop))
+            return Segment(
+                maxOf(trueSegment.nextX, falseSegment.nextX),
+                falseSegment.maxY,
+                null,
+                hasOpenEnd = trueOpen || falseOpen,
+            )
         }
 
         private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
@@ -402,7 +447,12 @@ object GraphLayoutEngine {
             mergeConditionId: UUID? = null,
         ) {
             if (from > to) return
-            for (x in from..to) putPath(x, y, kind, sourceId, edge, mergeConditionId)
+            // 長さ調整で同じ論理エッジを複数セルへ描く場合でも、挿入候補は
+            // エッジ元の直後（from）の一セルだけです。後続セルへ同じ候補を
+            // 複製すると、クリック位置と挿入後ノード位置が一致せず、分岐の
+            // 交差セルで異なる候補が衝突して保存時例外になります。
+            putPath(from, y, kind, sourceId, edge, mergeConditionId)
+            for (pathX in (from + 1)..to) putPath(pathX, y, kind)
         }
 
         private fun putNode(x: Int, y: Int, node: CommandNode) {
@@ -495,5 +545,11 @@ object GraphLayoutEngine {
         }
     }
 
-    private data class Segment(val nextX: Int, val maxY: Int, val tail: UUID?)
+    private data class Segment(
+        val nextX: Int,
+        val maxY: Int,
+        val tail: UUID?,
+        /** 親構造が末尾の挿入先を補完してはいけない開いた枝を含むか。 */
+        val hasOpenEnd: Boolean = false,
+    )
 }
