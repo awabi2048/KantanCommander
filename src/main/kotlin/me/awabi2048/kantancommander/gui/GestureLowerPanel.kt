@@ -13,7 +13,15 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import org.bukkit.Bukkit
@@ -40,6 +48,7 @@ class GestureLowerPanel(
         return when (state.lowerMode) {
             GestureLowerMode.SETTINGS -> buildSettings(state, player)
             GestureLowerMode.PICKER -> buildPicker(state, player)
+            GestureLowerMode.SETTING_CHOICES -> buildSettingChoices(state, player)
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
         }
     }
@@ -55,7 +64,7 @@ class GestureLowerPanel(
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
 
-        val fields = EditorMenuLayout.fields(node.type).let { filterFields(it, node) }
+        val fields = CommandSettingsModel.visibleFields(node)
         if (fields.isEmpty()) {
             addText(visuals, "lower-hint", 0.28, 0.20, 0.010, 160, Component.text("設定項目はありません"))
             return view(GestureLowerMode.SETTINGS, elements, visuals)
@@ -102,18 +111,29 @@ class GestureLowerPanel(
 
         val field = tabs[selected]
         val value = field.value(node).render(player)
-        addText(visuals, "lower-header", 0.28, 0.43, 0.007, 200,
-            Component.text(KcI18n.text(player, field.label)))
-        addText(visuals, "lower-current-label", 0.28, 0.34, 0.0048, 200, Component.text("現在値"))
-        addText(visuals, "lower-current-value", 0.28, 0.27, 0.006, 200, Component.text(value))
-        // 値編集ボタン: チャット入力で値を確定する（ジェスチャーGUIは閉じない）
-        val editable = field.key in CHAT_EDITABLE_KEYS
+        // 設定値は「項目名 設定値」の1行に統一します。項目名・現在値・値を
+        // 別々の縦段へ置くと、画面倍率や日本語幅によって上下位置がずれるため、
+        // 意味上の1つのテキスト要素として投影します。
+        addText(
+            visuals,
+            "lower-setting-row",
+            0.28,
+            0.29,
+            0.0065,
+            280,
+            Component.text("${KcI18n.text(player, field.label)} $value"),
+        )
+        val descriptor = CommandSettingsModel.descriptor(node, field.key)
+        // 専用選択経路も常に要素化します。従来はチャット入力可能なキーだけが
+        // clickableだったため、TARGET/POSITION等が「専用選択で編集」と表示される
+        // だけで操作不能になっていました。
+        val editable = descriptor.editor != CommandSettingEditor.TEXT || field.key in CHAT_EDITABLE_KEYS
         addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.26,
             // 石系テクスチャは画面全体の配色契約に含めないため、操作可否に
             // 関係なく空色テラコッタへ統一します。編集可否は要素の有無で表現します。
             Material.CYAN_TERRACOTTA, 4)
         addText(visuals, "lower-edit", 0.28, 0.02, 0.006, 160,
-            Component.text(if (editable) "チャットで編集" else "専用選択で編集"))
+            Component.text(if (descriptor.editor == CommandSettingEditor.TEXT) "チャットで編集" else "選択して編集"))
         if (editable) {
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
@@ -123,7 +143,338 @@ class GestureLowerPanel(
             ))
         }
 
+        // インベントリGUIの「コンテキスト上書き」経路も同じ個別設定領域へ
+        // 揃えます。CommandNodeのフィールド一覧には混ぜず、右ペイン下段の固定
+        // 操作として表示することで、通常設定の1列レイアウトを崩しません。
+        if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
+            addBlock(visuals, "lower-context-bg", 0.28, -0.29, 1.2, 0.20, Material.CYAN_TERRACOTTA, 4)
+            addText(visuals, "lower-context", 0.28, -0.29, 0.0055, 180, Component.text("実行コンテキストを上書き"))
+            elements.add(GestureGuiElement(
+                elementId = "lower-context",
+                bounds = rect(0.28, -0.29, 1.2, 0.20),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = "lower-context-bg",
+            ))
+        }
+
         return view(GestureLowerMode.SETTINGS, elements, visuals)
+    }
+
+    /**
+     * 専用選択で編集する設定画面です。
+     *
+     * ここではInventoryMenuの画面IDを直接再利用せず、同じ
+     * CommandSettingEditor／CommandSettingRoleを選択肢へ投影します。これにより、
+     * どのGUIから変更しても同じCommandNodeの構造化フィールドへ保存されます。
+     * 画面上の値は設定画面と同じく「項目名 設定値」の1行を常に上部へ表示します。
+     */
+    private fun buildSettingChoices(state: GestureEditorState, player: Player): GestureGuiView {
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        val context = state.settingContext
+        val script = context?.let { plugin.scripts.load(it.scriptId) }
+        val node = context?.let { script?.graph?.nodes?.get(it.nodeId) }
+        val fieldKey = state.settingFieldKey
+        val screen = state.settingScreen
+        if (context == null || node == null || fieldKey == null || screen == null) {
+            addText(visuals, "setting-hint", 0.28, 0.20, 0.008, 220, Component.text("設定対象がありません"))
+            addBackSetting(elements, visuals)
+            return view(GestureLowerMode.SETTING_CHOICES, elements, visuals)
+        }
+
+        val field = EditorMenuLayout.fields(node.type).firstOrNull { it.key == fieldKey }
+        val fieldLabel = field?.let { KcI18n.text(player, it.label) }
+            ?: if (fieldKey == "context") "実行コンテキスト" else fieldKey
+        val fieldValue = field?.value?.invoke(node)?.render(player)
+            ?: if (screen == GestureSettingScreen.CONTEXT_OVERRIDE) {
+                if (node.contextOverride == null) "すべて継承" else "一部を上書き"
+            } else settingCurrentValue(node, context, screen, fieldKey, player)
+        addText(
+            visuals,
+            "setting-header",
+            0.28,
+            0.40,
+            0.0062,
+            280,
+            Component.text("$fieldLabel $fieldValue"),
+        )
+
+        val choices = settingChoices(node, context, screen, fieldKey, player)
+        val pageSize = SETTING_CHOICE_PAGE_SIZE
+        val pageCount = (choices.size + pageSize - 1) / pageSize
+        val page = state.settingPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        choices.drop(page * pageSize).take(pageSize).forEachIndexed { index, choice ->
+            val column = index % 2
+            val row = index / 2
+            val cx = if (column == 0) -0.10 else 0.67
+            val cy = 0.22 - row * 0.15
+            val bgId = "setting-choice-bg-$index"
+            addBlock(
+                visuals,
+                bgId,
+                cx,
+                cy,
+                SETTING_CHOICE_WIDTH,
+                SETTING_CHOICE_HEIGHT,
+                if (choice.selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA,
+                4,
+            )
+            addText(visuals, "setting-choice-label-$index", cx, cy - 0.018, 0.0047, 115, Component.text(choice.label))
+            elements.add(GestureGuiElement(
+                elementId = "lower-setting-choice:${choice.id}",
+                bounds = rect(cx, cy, SETTING_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                targetVisualId = bgId,
+            ))
+        }
+        if (pageCount > 1) addPager(visuals, elements, "setting", page, pageCount, 0.28, -0.43)
+        addBackSetting(elements, visuals)
+        return view(GestureLowerMode.SETTING_CHOICES, elements, visuals)
+    }
+
+    private fun addBackSetting(
+        elements: MutableList<GestureGuiElement>,
+        visuals: MutableList<GestureGuiVisual>,
+    ) {
+        addBlock(visuals, "setting-back-bg", 0.67, -0.43, 0.66, 0.10, Material.BROWN_CONCRETE, 4)
+        addText(visuals, "setting-back-label", 0.67, -0.43, 0.0048, 100, Component.text("戻る"))
+        elements.add(GestureGuiElement(
+            elementId = "lower-setting-back",
+            bounds = rect(0.67, -0.43, 0.66, 0.10),
+            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = "setting-back-bg",
+        ))
+    }
+
+    private data class SettingChoice(
+        val id: String,
+        val label: String,
+        val selected: Boolean = false,
+    )
+
+    private fun settingChoices(
+        node: CommandNode,
+        context: CommandSettingContext,
+        screen: GestureSettingScreen,
+        fieldKey: String,
+        player: Player,
+    ): List<SettingChoice> = when (screen) {
+        GestureSettingScreen.TARGET -> targetChoices(node, context, player)
+        GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
+        GestureSettingScreen.POSITION -> positionChoices(node, context, player)
+        GestureSettingScreen.FACING -> facingChoices(node, player)
+        GestureSettingScreen.CONDITION_KIND -> conditionKindChoices(node, player)
+        GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player)
+        GestureSettingScreen.DISPLAY_MODE -> listOf(
+            SettingChoice("display:tellraw", "チャット", node.string("mode", "tellraw") == "tellraw"),
+            SettingChoice("display:title", "タイトル", node.string("mode", "tellraw") == "title"),
+            SettingChoice("display:actionbar", "アクションバー", node.string("mode", "tellraw") == "actionbar"),
+        )
+        GestureSettingScreen.ENTITY_ACTION -> listOf(
+            SettingChoice("action:ride", "乗る", node.string("action", "ride") == "ride"),
+            SettingChoice("action:dismount", "降りる", node.string("action", "ride") == "dismount"),
+        )
+        GestureSettingScreen.VARIABLE_SCOPE -> listOf(
+            SettingChoice("scope:TEMPORARY", "一時変数", node.string("scope", VariableScope.TEMPORARY.name) == VariableScope.TEMPORARY.name),
+            SettingChoice("scope:WORLD", "ワールド内変数", node.string("scope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name),
+        )
+        GestureSettingScreen.VARIABLE_TYPE -> listOf(
+            SettingChoice("type:BOOLEAN", "真偽値", node.string("type", VariableType.BOOLEAN.name) == VariableType.BOOLEAN.name),
+            SettingChoice("type:INTEGER", "整数", node.string("type", VariableType.BOOLEAN.name) == VariableType.INTEGER.name),
+            SettingChoice("type:DECIMAL", "小数", node.string("type", VariableType.BOOLEAN.name) == VariableType.DECIMAL.name),
+            SettingChoice("type:TEXT", "文字列", node.string("type", VariableType.BOOLEAN.name) == VariableType.TEXT.name),
+            SettingChoice("type:POSITION", "位置", node.string("type", VariableType.BOOLEAN.name) == VariableType.POSITION.name),
+            SettingChoice("type:ENTITY", "エンティティ参照", node.string("type", VariableType.BOOLEAN.name) == VariableType.ENTITY.name),
+        )
+        GestureSettingScreen.VARIABLE_OPERATION -> {
+            val type = runCatching { VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name)) }
+                .getOrDefault(VariableType.BOOLEAN)
+            CommandSettingsModel.allowedVariableOperations(type).map { operation ->
+                SettingChoice("operation:${operation.name}", operationLabel(operation), node.string("operation", operation.name) == operation.name)
+            }
+        }
+        GestureSettingScreen.VARIABLE_VALUE -> buildList {
+            add(SettingChoice("value:direct", "直接入力", !node.string("value").startsWith("$")))
+            val script = plugin.scripts.load(context.scriptId)
+            val insideFor = script != null && node.string("type", VariableType.BOOLEAN.name) == VariableType.INTEGER.name &&
+                node.string("scope", VariableScope.TEMPORARY.name) != VariableScope.WORLD.name &&
+                GraphEditor.isInsideFor(script.graph, node.id, GraphEditor.Edge.NEXT)
+            if (insideFor) {
+                add(SettingChoice("value:iteration", "現在の反復値", node.string("value") == "\$current_iteration_value"))
+                add(SettingChoice("value:count", "現在のループ回数", node.string("value") == "\$current_loop_count"))
+            }
+        }
+        GestureSettingScreen.FOR_SOURCE -> listOf(
+            SettingChoice("source:FIXED", "固定値", node.string(fieldKey, "FIXED") == "FIXED"),
+            SettingChoice("source:TEMPORARY", "一時変数", node.string(fieldKey, "FIXED") == "TEMPORARY"),
+            SettingChoice("source:WORLD", "ワールド内変数", node.string(fieldKey, "FIXED") == "WORLD"),
+        )
+        GestureSettingScreen.INCLUSIVE_END -> if (node.type == CommandType.CONDITION && fieldKey == "inverted") {
+            listOf(
+                SettingChoice("inclusive:true", "反転する", node.boolean(fieldKey, false)),
+                SettingChoice("inclusive:false", "反転しない", !node.boolean(fieldKey, false)),
+            )
+        } else {
+            listOf(
+                SettingChoice("inclusive:true", "終端を含む", node.boolean(fieldKey, true)),
+                SettingChoice("inclusive:false", "終端を含まない", !node.boolean(fieldKey, true)),
+            )
+        }
+        GestureSettingScreen.CONTEXT_OVERRIDE -> listOf(
+            SettingChoice("context:executor", "実行者", node.contextOverride?.executor != null),
+            SettingChoice("context:target", "対象", node.contextOverride?.target != null),
+            SettingChoice("context:position", "位置", node.contextOverride?.position != null),
+            SettingChoice("context:facing", "向き", node.contextOverride?.facing != null),
+            SettingChoice("context:source", if (CommandSettingsModel.contextSource(node) == ContextSource.PREVIOUS) "直前コンテキスト" else "基底コンテキスト"),
+            SettingChoice("context:inherit", "すべて継承", node.contextOverride == null),
+        )
+    }
+
+    private fun targetChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
+        val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
+        val choices = listOf(
+            TargetKind.EXECUTOR to "実行者",
+            TargetKind.ACTIVATOR to "起動者",
+            TargetKind.INHERITED_TARGET to "継承対象",
+            TargetKind.NEAREST_PLAYER to "最寄りのプレイヤー",
+            TargetKind.NEARBY_PLAYERS to "周囲のプレイヤー",
+            TargetKind.ALL_PLAYERS to "全プレイヤー",
+            TargetKind.RANDOM_PLAYER to "ランダムなプレイヤー",
+            TargetKind.NEAREST_ENTITY to "最寄りのエンティティ",
+            TargetKind.NEARBY_ENTITIES to "周囲のエンティティ",
+            TargetKind.FIXED_ENTITY to "固定エンティティ",
+        ).map { (kind, label) -> SettingChoice("target:${kind.name}", label, current == kind) }
+        return if (current in FILTERABLE_TARGET_KINDS) {
+            choices + SettingChoice("open-filters", "詳細条件を編集")
+        } else choices
+    }
+
+    private fun targetFilterChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
+        val spec = CommandSettingsModel.targetSpec(node, context.role)
+            ?: me.awabi2048.kantancommander.model.TargetSpec(TargetKind.NEAREST_ENTITY)
+        fun value(parameter: String): String = when (parameter) {
+            "sort" -> when (spec.sort) {
+                TargetSort.NEAREST -> "最寄り"
+                TargetSort.FURTHEST -> "最遠"
+                TargetSort.RANDOM -> "ランダム"
+            }
+            "gameMode" -> spec.gameMode ?: "未設定"
+            "excludeExecutor" -> if (spec.excludeExecutor) "有効" else "無効"
+            "excludeActivator" -> if (spec.excludeActivator) "有効" else "無効"
+            "entityType" -> spec.entityType ?: "未設定"
+            "minimumDistance" -> spec.minimumDistance?.toString() ?: "未設定"
+            "maximumDistance" -> spec.maximumDistance?.toString() ?: "未設定"
+            "limit" -> spec.limit?.toString() ?: "未設定"
+            "tag" -> spec.tag ?: "未設定"
+            else -> spec.name ?: "未設定"
+        }
+        return listOf(
+            "entityType" to "エンティティ種別",
+            "minimumDistance" to "最小距離",
+            "maximumDistance" to "最大距離",
+            "limit" to "上限数",
+            "sort" to "並び順",
+            "gameMode" to "ゲームモード",
+            "tag" to "タグ",
+            "name" to "名前",
+            "excludeExecutor" to "実行者を除外",
+            "excludeActivator" to "起動者を除外",
+        ).map { (id, label) -> SettingChoice("filter:$id", "$label ${value(id)}") }
+    }
+
+    private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
+        val destination = context.role == CommandSettingRole.DESTINATION
+        val current = CommandSettingsModel.positionSpec(node, context.role)?.kind
+        val choices = if (destination) {
+            listOf(
+                PositionKind.COORDINATES to "座標を設定",
+                PositionKind.TARGET to "他のエンティティ",
+                PositionKind.CAPTURED to "現在位置を設定",
+            )
+        } else {
+            listOf(
+                PositionKind.CAPTURED to "現在位置",
+                PositionKind.DISK to "ディスク位置",
+                PositionKind.EXECUTOR to "実行者の位置",
+                PositionKind.TARGET to "対象の位置",
+                PositionKind.MYWORLD_SPAWN to "MyWorldスポーン",
+                PositionKind.COORDINATES to "座標",
+                PositionKind.TEMPORARY_VARIABLE to "一時変数",
+                PositionKind.WORLD_VARIABLE to "ワールド内変数",
+            )
+        }
+        return choices.map { (kind, label) -> SettingChoice("position:${kind.name}", label, current == kind) }
+    }
+
+    private fun facingChoices(node: CommandNode, player: Player): List<SettingChoice> {
+        val current = CommandSettingsModel.facingSpec(node)?.kind
+        return listOf(
+            FacingKind.INHERITED to "変更しない",
+            FacingKind.CAPTURED to "現在の向き",
+            FacingKind.EXECUTOR to "実行者の向き",
+            FacingKind.TARGET to "対象の向き",
+            FacingKind.COORDINATES to "座標を向く",
+            FacingKind.MYWORLD_SPAWN to "MyWorldスポーンを向く",
+            FacingKind.ROTATION to "数値指定",
+        ).map { (kind, label) -> SettingChoice("facing:${kind.name}", label, current == kind) }
+    }
+
+    private fun conditionKindChoices(node: CommandNode, player: Player): List<SettingChoice> =
+        listOf(
+            ConditionKind.TARGET_EXISTS to "対象の存在",
+            ConditionKind.ENTITY_STATE to "エンティティ状態",
+            ConditionKind.VARIABLE_STATE to "変数状態",
+            ConditionKind.BLOCK_STATE to "ブロック状態",
+            ConditionKind.ITEM_POSSESSION to "アイテム所持",
+        ).map { (kind, label) -> SettingChoice("condition-kind:${kind.name}", label, node.string("kind") == kind.name) }
+
+    private fun conditionDetailChoices(node: CommandNode, player: Player): List<SettingChoice> {
+        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrDefault(ConditionKind.TARGET_EXISTS)
+        return when (kind) {
+            ConditionKind.TARGET_EXISTS -> listOf(SettingChoice("condition-target", "対象", false))
+            ConditionKind.ENTITY_STATE -> listOf(
+                SettingChoice("condition-target", "対象", false),
+                SettingChoice("condition-state", "状態 ${if (node.string("state", "sneaking") == "sneaking") "スニーク中" else "地上"}"),
+            )
+            ConditionKind.VARIABLE_STATE -> listOf(
+                SettingChoice("condition-variable", "変数 ${node.string("variable").ifBlank { "未設定" }}"),
+                SettingChoice("condition-scope", "範囲 ${if (node.string("variableScope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name) "ワールド" else "一時"}"),
+                SettingChoice("condition-operator", "演算子 ${node.string("operator", "==")}"),
+                SettingChoice("condition-value", "値 ${node.string("value", "0")}"),
+            )
+            ConditionKind.BLOCK_STATE -> listOf(
+                SettingChoice("condition-position", "位置", false),
+                SettingChoice("condition-block", "ブロック ${node.string("block", "minecraft:air")}"),
+            )
+            ConditionKind.ITEM_POSSESSION -> listOf(
+                SettingChoice("condition-target", "対象", false),
+                SettingChoice("condition-item", "アイテム ${node.string("item").ifBlank { "未設定" }}"),
+                SettingChoice("condition-count", "個数 ${node.string("count", "1")}"),
+            )
+        }
+    }
+
+    private fun operationLabel(operation: VariableOperation): String = when (operation) {
+        VariableOperation.SET -> "設定"
+        VariableOperation.ADD -> "加算"
+        VariableOperation.SUBTRACT -> "減算"
+        VariableOperation.TOGGLE -> "反転"
+        VariableOperation.STORE_POSITION -> "位置を保存"
+        VariableOperation.STORE_TARGET -> "対象を保存"
+        VariableOperation.CLEAR -> "消去"
+    }
+
+    private fun settingCurrentValue(
+        node: CommandNode,
+        context: CommandSettingContext,
+        screen: GestureSettingScreen,
+        fieldKey: String,
+        player: Player,
+    ): String = when (screen) {
+        GestureSettingScreen.TARGET -> CommandSettingsModel.targetSpec(node, context.role)?.kind?.name ?: "未設定"
+        GestureSettingScreen.POSITION -> CommandSettingsModel.positionSpec(node, context.role)?.kind?.name ?: "未設定"
+        GestureSettingScreen.FACING -> CommandSettingsModel.facingSpec(node)?.kind?.name ?: "未設定"
+        else -> node.string(fieldKey).ifBlank { "未設定" }
     }
 
     /** PICKER: 左タブ列＝カテゴリ（PROCESS/CONTROL）、右詳細＝コマンド種別一覧 */
@@ -213,23 +564,6 @@ class GestureLowerPanel(
             targetVisualId = "confirm-no-bg",
         ))
         return view(GestureLowerMode.CONFIRM, elements, visuals)
-    }
-
-    private fun filterFields(fields: List<EditorField>, node: CommandNode): List<EditorField> {
-        if (node.type == CommandType.ENTITY_ACTION && node.string("action") != "ride") {
-            return fields.filterNot { it.key == "other" }
-        }
-        if (node.type == CommandType.DISPLAY_TEXT && node.string("mode") != "title") {
-            return fields.filterNot { it.key == "stay" }
-        }
-        if (node.type != CommandType.VARIABLE) return fields
-        val operation = runCatching {
-            VariableOperation.valueOf(node.string("operation"))
-        }.getOrDefault(VariableOperation.SET)
-        return fields.filterNot { field ->
-            field.key == "value" &&
-                operation !in setOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT)
-        }
     }
 
     private fun view(
@@ -323,10 +657,22 @@ class GestureLowerPanel(
     private companion object {
         const val SETTINGS_PAGE_SIZE = 4
         const val PICKER_PAGE_SIZE = 8
+        // 2列×4行に収め、下端の「戻る」操作と候補が重ならないようにします。
+        const val SETTING_CHOICE_PAGE_SIZE = 8
+        const val SETTING_CHOICE_WIDTH = 0.66
+        const val SETTING_CHOICE_HEIGHT = 0.12
+        val FILTERABLE_TARGET_KINDS = setOf(
+            TargetKind.NEAREST_PLAYER,
+            TargetKind.NEARBY_PLAYERS,
+            TargetKind.ALL_PLAYERS,
+            TargetKind.RANDOM_PLAYER,
+            TargetKind.NEAREST_ENTITY,
+            TargetKind.NEARBY_ENTITIES,
+        )
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val CHAT_EDITABLE_KEYS = setOf(
             "item", "count", "text", "stay", "ticks", "tags", "sound", "volume", "pitch",
-            "effect", "level", "seconds", "intensity", "diskId", "name", "startValue",
+            "effect", "level", "seconds", "intensity", "shakeType", "slot", "entity", "diskId", "name", "startValue",
             "endValue", "stepValue", "condition", "variable", "value",
         )
     }

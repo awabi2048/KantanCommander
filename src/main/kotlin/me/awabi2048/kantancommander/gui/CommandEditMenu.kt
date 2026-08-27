@@ -116,18 +116,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         } else null
                         updateNode(context.route) { node ->
                             val spec = TargetSpec(kind, fixedEntityId = fixedEntityId)
-                            when (context.route.payload[ROLE]) {
-                                "destination" -> {
-                                    node.destinationTargetSpec = spec
-                                    node.destinationSpec = null
-                                }
-                                "context_executor" -> node.contextOverride =
-                                    (node.contextOverride ?: ExecutionContextSpec()).copy(executor = spec)
-                                "context_target" -> node.contextOverride =
-                                    (node.contextOverride ?: ExecutionContextSpec()).copy(target = spec)
-                                "secondary_target" -> node.secondaryTargetSpec = spec
-                                else -> node.targetSpec = spec
-                            }
+                            CommandSettingsModel.setTargetSpec(
+                                node,
+                                CommandSettingRole.fromRoute(context.route.payload[ROLE]),
+                                spec,
+                            )
                         }
                         if (kind in setOf(
                                 TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS,
@@ -197,15 +190,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
                         } else PositionSpec(kind)
                         updateNode(context.route) { node ->
-                            when (context.route.payload[ROLE]) {
-                                "destination" -> {
-                                    node.destinationSpec = spec
-                                    node.destinationTargetSpec = null
-                                }
-                                "condition_position" -> node.conditionPositionSpec = spec
-                                else -> node.contextOverride =
-                                    (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
-                            }
+                            CommandSettingsModel.setPositionSpec(
+                                node,
+                                CommandSettingRole.fromRoute(context.route.payload[ROLE]),
+                                spec,
+                            )
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
@@ -238,7 +227,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
                         } else FacingSpec(kind)
                         updateNode(context.route) { node ->
-                            node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
+                            CommandSettingsModel.setFacingSpec(node, spec)
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
@@ -333,11 +322,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "contextSource") {
-                            updateNode(context.route) {
-                                it.contextSource = if (it.effectiveContextSource == ContextSource.BASE) {
-                                    ContextSource.PREVIOUS
-                                } else ContextSource.BASE
-                            }
+                            updateNode(context.route) { CommandSettingsModel.toggleContextSource(it) }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field in setOf(
@@ -494,11 +479,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Navigate(facingRoute(context.route)))
                     },
                     "source" to MenuActionHandler { context ->
-                        updateNode(context.route) {
-                            it.contextSource = if (it.effectiveContextSource == ContextSource.BASE) {
-                                ContextSource.PREVIOUS
-                            } else ContextSource.BASE
-                        }
+                        updateNode(context.route) { CommandSettingsModel.toggleContextSource(it) }
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "inherit" to MenuActionHandler { context ->
@@ -1024,31 +1005,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun settingsFields(node: CommandNode): List<EditorField> {
-        val fields = EditorMenuLayout.fields(node.type)
-        if (node.type == CommandType.ENTITY_ACTION && node.string("action") != "ride") {
-            return fields.filterNot { it.key == "other" }
-        }
-        if (node.type == CommandType.DISPLAY_TEXT && node.string("mode") != "title") {
-            return fields.filterNot { it.key == "stay" }
-        }
-        if (node.type != CommandType.VARIABLE) return fields
-        val operation = runCatching {
-            VariableOperation.valueOf(node.string("operation"))
-        }.getOrDefault(VariableOperation.SET)
-        return fields.filterNot { field ->
-            field.key == "value" &&
-                operation !in setOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT)
-        }
+        return CommandSettingsModel.visibleFields(node)
     }
 
-    private fun allowedVariableOperations(type: VariableType): List<VariableOperation> = when (type) {
-        VariableType.BOOLEAN -> listOf(VariableOperation.SET, VariableOperation.TOGGLE, VariableOperation.CLEAR)
-        VariableType.INTEGER, VariableType.DECIMAL ->
-            listOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT, VariableOperation.CLEAR)
-        VariableType.TEXT -> listOf(VariableOperation.SET, VariableOperation.CLEAR)
-        VariableType.POSITION -> listOf(VariableOperation.STORE_POSITION, VariableOperation.CLEAR)
-        VariableType.ENTITY -> listOf(VariableOperation.STORE_TARGET, VariableOperation.CLEAR)
-    }
+    private fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
+        CommandSettingsModel.allowedVariableOperations(type)
 
     private fun renderDisplayModes(player: Player): InventoryMenuView {
         val options = listOf(
@@ -1457,11 +1418,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         })
 
     private fun selectedPosition(node: CommandNode, role: String?): PositionSpec? =
-        when (role) {
-            "destination" -> node.destinationSpec
-            "condition_position" -> node.conditionPositionSpec
-            else -> node.contextOverride?.position
-        }
+        CommandSettingsModel.positionSpec(node, CommandSettingRole.fromRoute(role))
 
     private fun back() = MenuActionHandler { MenuActionResult.Success(MenuUpdate.Back) }
 
@@ -1473,28 +1430,21 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun selectedTargetSpec(route: MenuRoute): TargetSpec? {
         val node = node(route) ?: return null
-        return when (route.payload[ROLE]) {
-            "destination" -> node.destinationTargetSpec
-            "context_executor" -> node.contextOverride?.executor
-            "context_target" -> node.contextOverride?.target
-            "secondary_target" -> node.secondaryTargetSpec
-            else -> node.targetSpec
-        }
+        return CommandSettingsModel.targetSpec(
+            node,
+            CommandSettingRole.fromRoute(route.payload[ROLE]),
+        )
     }
 
     private fun updateTargetSpec(route: MenuRoute, change: (TargetSpec) -> TargetSpec) {
         updateNode(route) { node ->
             val current = selectedTargetSpec(route) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
             val updated = change(current)
-            when (route.payload[ROLE]) {
-                "destination" -> node.destinationTargetSpec = updated
-                "context_executor" -> node.contextOverride =
-                    (node.contextOverride ?: ExecutionContextSpec()).copy(executor = updated)
-                "context_target" -> node.contextOverride =
-                    (node.contextOverride ?: ExecutionContextSpec()).copy(target = updated)
-                "secondary_target" -> node.secondaryTargetSpec = updated
-                else -> node.targetSpec = updated
-            }
+            CommandSettingsModel.setTargetSpec(
+                node,
+                CommandSettingRole.fromRoute(route.payload[ROLE]),
+                updated,
+            )
         }
     }
 
@@ -1565,12 +1515,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun updateNode(route: MenuRoute, change: (CommandNode) -> Unit) {
-        val script = script(route) ?: return
-        val id = route.payload[NODE_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() } ?: return
-        val node = script.graph.nodes[id] ?: return
-        change(node)
-        plugin.scripts.save(script)
-        plugin.placements.refreshDisplaysForScript(script.id)
+        val context = CommandSettingContext.from(route) ?: return
+        CommandSettingsModel.updateNode(plugin, context, change)
     }
 
     companion object {

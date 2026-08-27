@@ -16,7 +16,19 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TargetSort
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Bukkit
 import org.bukkit.Color
@@ -55,13 +67,45 @@ data class GestureEditorState(
     var selectedInsertionCandidatePoint: MapPoint? = null,
     /** PICKERで作成するノードの配置予定位置。ズーム／パン後も同じ位置を示します。 */
     var selectedInsertionPoint: MapPoint? = null,
+    /** 個別設定画面が参照する共有コンテキスト（インベントリGUIと同じ識別情報）。 */
+    var settingContext: CommandSettingContext? = null,
+    /** 個別設定画面を開いたフィールドキー。設定保存後の表示更新に使います。 */
+    var settingFieldKey: String? = null,
+    /** 個別設定画面の現在の意味上の編集経路。 */
+    var settingScreen: GestureSettingScreen? = null,
+    /** 個別設定画面内の戻り先（条件詳細→対象選択など）。 */
+    var settingParentScreen: GestureSettingScreen? = null,
+    var settingPage: Int = 0,
 )
 
 /** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
 enum class GestureLowerMode {
     SETTINGS,
     PICKER,
+    SETTING_CHOICES,
     CONFIRM,
+}
+
+/**
+ * ジェスチャーGUI内で表示する個別設定の意味上の画面です。
+ * インベントリGUIの画面IDではなく、CommandSettingsModelの編集経路を表します。
+ */
+enum class GestureSettingScreen {
+    TARGET,
+    TARGET_FILTERS,
+    POSITION,
+    FACING,
+    CONDITION_KIND,
+    CONDITION_DETAIL,
+    DISPLAY_MODE,
+    ENTITY_ACTION,
+    VARIABLE_SCOPE,
+    VARIABLE_TYPE,
+    VARIABLE_OPERATION,
+    VARIABLE_VALUE,
+    FOR_SOURCE,
+    INCLUSIVE_END,
+    CONTEXT_OVERRIDE,
 }
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -427,6 +471,441 @@ class GestureSequenceEditor(
         ) { context -> handleUpperAction(context) }
     }
 
+    private fun clearSettingState() {
+        state.settingContext = null
+        state.settingFieldKey = null
+        state.settingScreen = null
+        state.settingParentScreen = null
+        state.settingPage = 0
+    }
+
+    private fun screenFor(editor: CommandSettingEditor): GestureSettingScreen? = when (editor) {
+        CommandSettingEditor.TARGET -> GestureSettingScreen.TARGET
+        CommandSettingEditor.POSITION -> GestureSettingScreen.POSITION
+        CommandSettingEditor.FACING -> GestureSettingScreen.FACING
+        CommandSettingEditor.CONDITION_KIND -> GestureSettingScreen.CONDITION_KIND
+        CommandSettingEditor.CONDITION_DETAIL -> GestureSettingScreen.CONDITION_DETAIL
+        CommandSettingEditor.DISPLAY_MODE -> GestureSettingScreen.DISPLAY_MODE
+        CommandSettingEditor.ENTITY_ACTION -> GestureSettingScreen.ENTITY_ACTION
+        CommandSettingEditor.VARIABLE_SCOPE -> GestureSettingScreen.VARIABLE_SCOPE
+        CommandSettingEditor.VARIABLE_TYPE -> GestureSettingScreen.VARIABLE_TYPE
+        CommandSettingEditor.VARIABLE_OPERATION -> GestureSettingScreen.VARIABLE_OPERATION
+        CommandSettingEditor.VARIABLE_VALUE -> GestureSettingScreen.VARIABLE_VALUE
+        CommandSettingEditor.FOR_SOURCE -> GestureSettingScreen.FOR_SOURCE
+        CommandSettingEditor.INCLUSIVE_END -> GestureSettingScreen.INCLUSIVE_END
+        CommandSettingEditor.CONTEXT -> GestureSettingScreen.CONTEXT_OVERRIDE
+        CommandSettingEditor.TEXT -> null
+    }
+
+    /** SETTINGSの編集ボタンから、チャット入力または専用選択へ遷移します。 */
+    private fun beginSelectedFieldEdit(player: Player, fieldKey: String) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+        val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
+        val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
+        val screen = screenFor(descriptor.editor)
+        if (screen == null) {
+            // 構造化モデルで専用画面を持たない項目だけをチャット入力へ送ります。
+            plugin.gestureChatInput.begin(player, "チャットで値を入力してください（「キャンセル」で中止）") { value ->
+                if (CommandSettingsModel.updateNode(plugin, context) { it.params[fieldKey] = value } != null) {
+                    updateUpper(player)
+                    updateLower(player)
+                }
+            }
+            return
+        }
+        state.settingContext = context
+        state.settingFieldKey = fieldKey
+        state.settingScreen = screen
+        state.settingParentScreen = null
+        state.settingPage = 0
+        state.lowerMode = GestureLowerMode.SETTING_CHOICES
+        updateLower(player)
+    }
+
+    private fun updateSettingNode(
+        player: Player,
+        context: CommandSettingContext,
+        change: (me.awabi2048.kantancommander.model.CommandNode) -> Unit,
+    ): Boolean {
+        if (CommandSettingsModel.updateNode(plugin, context, change) == null) return false
+        updateUpper(player)
+        updateLower(player)
+        return true
+    }
+
+    private fun beginSettingInput(player: Player, prompt: String, result: (String) -> Unit) {
+        plugin.gestureChatInput.begin(player, "$prompt（「キャンセル」で中止）") { raw ->
+            result(raw.trim())
+            updateUpper(player)
+            updateLower(player)
+        }
+    }
+
+    private fun parseCoordinates(raw: String): Triple<Double, Double, Double>? {
+        val values = raw.split(Regex("[ ,]+"), limit = 4).mapNotNull(String::toDoubleOrNull)
+        return if (values.size == 3) Triple(values[0], values[1], values[2]) else null
+    }
+
+    /** 専用選択画面のすべての選択を共有モデルへ適用します。 */
+    private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {
+        if (context.gesture != GestureGuiGesture.PRIMARY) return
+        if (context.elementId == "lower-setting-back") {
+            val parent = state.settingParentScreen
+            if (parent != null) {
+                state.settingScreen = parent
+                state.settingParentScreen = null
+                state.settingPage = 0
+                updateLower(player)
+            } else {
+                clearSettingState()
+                state.lowerMode = GestureLowerMode.SETTINGS
+                updateLower(player)
+            }
+            return
+        }
+        if (context.elementId.startsWith("lower-setting-page:")) {
+            state.settingPage = context.elementId.removePrefix("lower-setting-page:").toIntOrNull() ?: return
+            updateLower(player)
+            return
+        }
+        if (context.elementId == "lower-context") {
+            val nodeId = state.selectedNodeId ?: return
+            state.settingContext = CommandSettingContext(state.scriptId, nodeId, null)
+            state.settingFieldKey = "context"
+            state.settingScreen = GestureSettingScreen.CONTEXT_OVERRIDE
+            state.settingParentScreen = null
+            state.settingPage = 0
+            state.lowerMode = GestureLowerMode.SETTING_CHOICES
+            updateLower(player)
+            return
+        }
+        val encoded = context.elementId.removePrefix("lower-setting-choice:")
+        if (encoded == context.elementId) return
+        val separator = encoded.indexOf(':')
+        val group = if (separator < 0) encoded else encoded.substring(0, separator)
+        val value = if (separator < 0) "" else encoded.substring(separator + 1)
+        val settingContext = state.settingContext ?: return
+        val screen = state.settingScreen ?: return
+        val fieldKey = state.settingFieldKey ?: return
+        val script = plugin.scripts.load(settingContext.scriptId) ?: return
+        val node = script.graph.nodes[settingContext.nodeId] ?: return
+
+        fun returnToParentOrSettings() {
+            val parent = state.settingParentScreen
+            if (parent != null) {
+                state.settingScreen = parent
+                state.settingParentScreen = null
+                state.settingPage = 0
+                updateLower(player)
+            } else {
+                clearSettingState()
+                state.lowerMode = GestureLowerMode.SETTINGS
+                updateLower(player)
+            }
+        }
+
+        when (screen) {
+            GestureSettingScreen.TARGET -> {
+                if (group == "open-filters") {
+                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
+                    state.settingPage = 0
+                    updateLower(player)
+                    return
+                }
+                if (group != "target") return
+                val kind = runCatching { TargetKind.valueOf(value) }.getOrNull() ?: return
+                val fixedId = if (kind == TargetKind.FIXED_ENTITY) {
+                    player.getTargetEntity(32)?.uniqueId ?: return
+                } else null
+                // 条件詳細から対象を開いた場合だけNODE_TARGETへ切り替えます。
+                val role = if (state.settingParentScreen == GestureSettingScreen.CONDITION_DETAIL) {
+                    CommandSettingRole.NODE_TARGET
+                } else settingContext.role
+                val current = CommandSettingsModel.targetSpec(node, role)
+                    ?: TargetSpec(kind)
+                if (!updateSettingNode(player, settingContext.copy(role = role)) { target ->
+                        CommandSettingsModel.setTargetSpec(target, role, current.copy(kind = kind, fixedEntityId = fixedId))
+                    }) return
+                // インベントリGUIと同じく、距離・ソート等を持つ対象は選択直後に
+                // 詳細条件へ進みます。ネストした対象選択は呼び出し元へ戻します。
+                if (state.settingParentScreen == null && kind in setOf(
+                        TargetKind.NEAREST_PLAYER,
+                        TargetKind.NEARBY_PLAYERS,
+                        TargetKind.ALL_PLAYERS,
+                        TargetKind.RANDOM_PLAYER,
+                        TargetKind.NEAREST_ENTITY,
+                        TargetKind.NEARBY_ENTITIES,
+                    )) {
+                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
+                    state.settingPage = 0
+                    updateLower(player)
+                } else {
+                    returnToParentOrSettings()
+                }
+            }
+            GestureSettingScreen.TARGET_FILTERS -> {
+                if (group != "filter") return
+                val role = settingContext.role
+                val current = CommandSettingsModel.targetSpec(node, role) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                when (value) {
+                    "sort" -> updateSettingNode(player, settingContext) {
+                        val next = TargetSort.entries[(current.sort.ordinal + 1) % TargetSort.entries.size]
+                        CommandSettingsModel.setTargetSpec(it, role, current.copy(sort = next))
+                    }
+                    "gameMode" -> updateSettingNode(player, settingContext) {
+                        val modes = listOf(null, "SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")
+                        val next = modes[(modes.indexOf(current.gameMode) + 1).coerceAtLeast(0) % modes.size]
+                        CommandSettingsModel.setTargetSpec(it, role, current.copy(gameMode = next))
+                    }
+                    "excludeExecutor" -> updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setTargetSpec(it, role, current.copy(excludeExecutor = !current.excludeExecutor))
+                    }
+                    "excludeActivator" -> updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setTargetSpec(it, role, current.copy(excludeActivator = !current.excludeActivator))
+                    }
+                    "entityType", "minimumDistance", "maximumDistance", "limit", "tag", "name" -> {
+                        beginSettingInput(player, "$value を入力してください") { raw ->
+                            val parsed = when (value) {
+                                "minimumDistance", "maximumDistance" -> raw.takeIf(String::isNotEmpty)?.toDoubleOrNull()
+                                "limit" -> raw.takeIf(String::isNotEmpty)?.toIntOrNull()
+                                else -> raw.takeIf(String::isNotEmpty)
+                            }
+                            if (raw.isNotEmpty() && parsed == null) {
+                                player.sendMessage("入力値の形式が正しくありません。")
+                                return@beginSettingInput
+                            }
+                            updateSettingNode(player, settingContext) {
+                                val updated = when (value) {
+                                    "entityType" -> current.copy(entityType = parsed as String?)
+                                    "minimumDistance" -> current.copy(minimumDistance = parsed as Double?)
+                                    "maximumDistance" -> current.copy(maximumDistance = parsed as Double?)
+                                    "limit" -> current.copy(limit = parsed as Int?)
+                                    "tag" -> current.copy(tag = parsed as String?)
+                                    else -> current.copy(name = parsed as String?)
+                                }
+                                CommandSettingsModel.setTargetSpec(it, role, updated)
+                            }
+                        }
+                    }
+                }
+            }
+            GestureSettingScreen.POSITION -> {
+                if (group != "position") return
+                val kind = runCatching { PositionKind.valueOf(value) }.getOrNull() ?: return
+                if (kind == PositionKind.TARGET && settingContext.role == CommandSettingRole.DESTINATION) {
+                    state.settingContext = settingContext.copy(role = CommandSettingRole.DESTINATION)
+                    state.settingParentScreen = GestureSettingScreen.POSITION
+                    state.settingScreen = GestureSettingScreen.TARGET
+                    state.settingPage = 0
+                    updateLower(player)
+                    return
+                }
+                if (kind == PositionKind.COORDINATES) {
+                    beginSettingInput(player, "座標を x y z の順に入力してください") { raw ->
+                        val (x, y, z) = parseCoordinates(raw) ?: run {
+                            player.sendMessage("座標は x y z の3つの数値で入力してください。")
+                            return@beginSettingInput
+                        }
+                        updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, x = x, y = y, z = z))
+                        }
+                        returnToParentOrSettings()
+                    }
+                    return
+                }
+                if (kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
+                    beginSettingInput(player, "位置変数名を入力してください") { raw ->
+                        if (!raw.matches(Regex("[a-z0-9_.-]{1,64}"))) {
+                            player.sendMessage("変数名は英小文字・数字・._-で入力してください。")
+                            return@beginSettingInput
+                        }
+                        updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, variable = raw))
+                        }
+                        returnToParentOrSettings()
+                    }
+                    return
+                }
+                val location = player.location
+                val spec = if (kind == PositionKind.CAPTURED) {
+                    PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
+                } else PositionSpec(kind)
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setPositionSpec(it, settingContext.role, spec)
+                    }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.FACING -> {
+                if (group != "facing") return
+                val kind = runCatching { FacingKind.valueOf(value) }.getOrNull() ?: return
+                if (kind == FacingKind.COORDINATES) {
+                    beginSettingInput(player, "向く座標を x y z の順に入力してください") { raw ->
+                        val (x, y, z) = parseCoordinates(raw) ?: run {
+                            player.sendMessage("座標は x y z の3つの数値で入力してください。")
+                            return@beginSettingInput
+                        }
+                        updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, x = x, y = y, z = z))
+                        }
+                        returnToParentOrSettings()
+                    }
+                    return
+                }
+                if (kind == FacingKind.ROTATION) {
+                    beginSettingInput(player, "向きの yaw pitch を入力してください") { raw ->
+                        val values = raw.split(Regex("[ ,]+"), limit = 3).mapNotNull(String::toFloatOrNull)
+                        if (values.size != 2) {
+                            player.sendMessage("yaw と pitch の2つの数値で入力してください。")
+                            return@beginSettingInput
+                        }
+                        updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = values[0], pitch = values[1]))
+                        }
+                        returnToParentOrSettings()
+                    }
+                    return
+                }
+                val location = player.location
+                val spec = if (kind == FacingKind.CAPTURED) FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
+                else FacingSpec(kind)
+                if (updateSettingNode(player, settingContext) { CommandSettingsModel.setFacingSpec(it, spec) }) {
+                    returnToParentOrSettings()
+                }
+            }
+            GestureSettingScreen.CONDITION_KIND -> {
+                if (group != "condition-kind") return
+                val kind = runCatching { ConditionKind.valueOf(value) }.getOrNull() ?: return
+                if (updateSettingNode(player, settingContext) { it.params["kind"] = kind.name }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.CONDITION_DETAIL -> {
+                when (encoded) {
+                    "condition-target" -> {
+                        state.settingContext = settingContext.copy(role = CommandSettingRole.NODE_TARGET)
+                        state.settingParentScreen = GestureSettingScreen.CONDITION_DETAIL
+                        state.settingScreen = GestureSettingScreen.TARGET
+                        state.settingPage = 0
+                        updateLower(player)
+                    }
+                    "condition-position" -> {
+                        state.settingContext = settingContext.copy(role = CommandSettingRole.CONDITION_POSITION)
+                        state.settingParentScreen = GestureSettingScreen.CONDITION_DETAIL
+                        state.settingScreen = GestureSettingScreen.POSITION
+                        state.settingPage = 0
+                        updateLower(player)
+                    }
+                    "condition-state" -> {
+                        if (updateSettingNode(player, settingContext) {
+                                it.params["state"] = if (it.string("state", "sneaking") == "sneaking") "on_ground" else "sneaking"
+                            }) updateLower(player)
+                    }
+                    "condition-scope" -> {
+                        if (updateSettingNode(player, settingContext) {
+                                it.params["variableScope"] = if (it.string("variableScope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name) VariableScope.TEMPORARY.name else VariableScope.WORLD.name
+                            }) updateLower(player)
+                    }
+                    "condition-operator" -> {
+                        val operators = listOf("set", "unset", "==", "!=", ">", ">=", "<", "<=")
+                        if (updateSettingNode(player, settingContext) {
+                                val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
+                                it.params["operator"] = operators[(current + 1) % operators.size]
+                            }) updateLower(player)
+                    }
+                    "condition-variable", "condition-value", "condition-block", "condition-item", "condition-count" -> {
+                        val parameter = when (encoded) {
+                            "condition-variable" -> "variable"
+                            "condition-value" -> "value"
+                            "condition-block" -> "block"
+                            "condition-item" -> "item"
+                            else -> "count"
+                        }
+                        beginSettingInput(player, "$parameter を入力してください") { raw ->
+                            updateSettingNode(player, settingContext) { it.params[parameter] = raw }
+                        }
+                    }
+                }
+            }
+            GestureSettingScreen.DISPLAY_MODE -> {
+                if (group != "display" || value !in setOf("tellraw", "title", "actionbar")) return
+                if (updateSettingNode(player, settingContext) { it.params["mode"] = value }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.ENTITY_ACTION -> {
+                if (group != "action" || value !in setOf("ride", "dismount")) return
+                if (updateSettingNode(player, settingContext) { it.params["action"] = value }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.VARIABLE_SCOPE -> {
+                if (group != "scope") return
+                val scope = runCatching { VariableScope.valueOf(value) }.getOrNull() ?: return
+                if (updateSettingNode(player, settingContext) { it.params["scope"] = scope.name }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.VARIABLE_TYPE -> {
+                if (group != "type") return
+                val type = runCatching { VariableType.valueOf(value) }.getOrNull() ?: return
+                if (updateSettingNode(player, settingContext) {
+                        it.params["type"] = type.name
+                        val operation = runCatching { VariableOperation.valueOf(it.string("operation")) }.getOrNull()
+                        if (operation !in CommandSettingsModel.allowedVariableOperations(type)) {
+                            it.params["operation"] = CommandSettingsModel.allowedVariableOperations(type).first().name
+                        }
+                    }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.VARIABLE_OPERATION -> {
+                if (group != "operation") return
+                val operation = runCatching { VariableOperation.valueOf(value) }.getOrNull() ?: return
+                val type = runCatching { VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name)) }.getOrDefault(VariableType.BOOLEAN)
+                if (operation !in CommandSettingsModel.allowedVariableOperations(type)) return
+                if (updateSettingNode(player, settingContext) { it.params["operation"] = operation.name }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.VARIABLE_VALUE -> {
+                if (group != "value") return
+                when (value) {
+                    "direct" -> beginSettingInput(player, "変数の値を入力してください") { raw ->
+                        updateSettingNode(player, settingContext) { it.params["value"] = raw }
+                    }
+                    "iteration" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_iteration_value" }) returnToParentOrSettings()
+                    "count" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_loop_count" }) returnToParentOrSettings()
+                }
+            }
+            GestureSettingScreen.FOR_SOURCE -> {
+                if (group != "source" || value !in setOf("FIXED", "TEMPORARY", "WORLD")) return
+                if (updateSettingNode(player, settingContext) { it.params[fieldKey] = value }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.INCLUSIVE_END -> {
+                if (group != "inclusive") return
+                if (updateSettingNode(player, settingContext) { it.params[fieldKey] = value.toBoolean().toString() }) returnToParentOrSettings()
+            }
+            GestureSettingScreen.CONTEXT_OVERRIDE -> {
+                when (value) {
+                    "executor", "target" -> {
+                        val role = if (value == "executor") CommandSettingRole.CONTEXT_EXECUTOR else CommandSettingRole.CONTEXT_TARGET
+                        state.settingContext = settingContext.copy(role = role)
+                        state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
+                        state.settingScreen = GestureSettingScreen.TARGET
+                        state.settingPage = 0
+                        updateLower(player)
+                    }
+                    "position" -> {
+                        state.settingContext = settingContext.copy(role = CommandSettingRole.CONTEXT_POSITION)
+                        state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
+                        state.settingScreen = GestureSettingScreen.POSITION
+                        state.settingPage = 0
+                        updateLower(player)
+                    }
+                    "facing" -> {
+                        state.settingContext = settingContext.copy(role = CommandSettingRole.CONTEXT_FACING)
+                        state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
+                        state.settingScreen = GestureSettingScreen.FACING
+                        state.settingPage = 0
+                        updateLower(player)
+                    }
+                    "source" -> {
+                        if (updateSettingNode(player, settingContext) { CommandSettingsModel.toggleContextSource(it) }) updateLower(player)
+                    }
+                    "inherit" -> if (updateSettingNode(player, settingContext) { it.contextOverride = null }) returnToParentOrSettings()
+                }
+            }
+        }
+    }
+
     private fun handleUpperAction(context: GestureGuiActionContext) {
         val player = Bukkit.getPlayer(context.ownerId) ?: return
         when {
@@ -442,6 +921,7 @@ class GestureSequenceEditor(
                         state.selectedInsertionCandidatePoint = null
                         state.selectedInsertionPoint = null
                         state.pendingInsertion = null
+                        clearSettingState()
                         state.lowerMode = GestureLowerMode.SETTINGS
                         state.settingsTab = 0
                         state.settingsPage = 0
@@ -458,6 +938,7 @@ class GestureSequenceEditor(
                 state.selectedInsertionPoint = null
                 state.confirmNodeId = null
                 state.pendingInsertion = null
+                clearSettingState()
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateUpper(player)
                 updateLower(player)
@@ -550,6 +1031,7 @@ class GestureSequenceEditor(
                 }
                 state.pendingInsertion = target
                 state.selectedNodeId = null
+                clearSettingState()
                 state.selectedAddPoint = MapPoint(gx, gy)
                 state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
@@ -569,6 +1051,7 @@ class GestureSequenceEditor(
                 val target = cell.insertionTarget ?: return
                 state.pendingInsertion = target
                 state.selectedNodeId = null
+                clearSettingState()
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = clickedPoint
                 state.selectedInsertionPoint = layout.insertionPreviewPoint(clickedPoint, target) ?: clickedPoint
@@ -586,21 +1069,13 @@ class GestureSequenceEditor(
                 state.settingsPage = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
                 updateLower(player)
             }
+            (context.elementId == "lower-context" || context.elementId.startsWith("lower-setting-")) &&
+                context.gesture == GestureGuiGesture.PRIMARY -> {
+                handleSettingAction(context, player)
+            }
             context.elementId.startsWith("lower-edit:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
-                if (fieldKey !in setOf(
-                        "item", "count", "text", "stay", "ticks", "tags", "sound", "volume", "pitch",
-                        "effect", "level", "seconds", "intensity", "diskId", "name", "startValue",
-                        "endValue", "stepValue", "condition", "variable", "value",
-                    )) return
-                val script = plugin.scripts.load(state.scriptId)
-                val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) } ?: return
-                // チャット入力でフィールド値を設定する（ジェスチャーGUIは閉じない）
-                plugin.gestureChatInput.begin(player, "チャットで値を入力してください（「キャンセル」で中止）") { value ->
-                    node.params[fieldKey] = value
-                    if (script != null) plugin.scripts.save(script)
-                    updateLower(player)
-                }
+                beginSelectedFieldEdit(player, fieldKey)
             }
             context.elementId.startsWith("lower-cat:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
@@ -652,6 +1127,7 @@ class GestureSequenceEditor(
                     insertedNode
                 }.getOrNull() ?: return
                 state.pendingInsertion = null
+                clearSettingState()
                 state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
                 // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。
@@ -668,6 +1144,7 @@ class GestureSequenceEditor(
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
+                clearSettingState()
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
             }
@@ -689,6 +1166,7 @@ class GestureSequenceEditor(
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = null
                 state.selectedInsertionPoint = null
+                clearSettingState()
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
                 updateUpper(player)

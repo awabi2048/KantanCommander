@@ -1,0 +1,65 @@
+package me.awabi2048.kantancommander.gui
+
+import me.awabi2048.kantancommander.model.CommandNode
+import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+
+class CommandSettingsModelTest {
+    @Test
+    fun `target roles share inventory and gesture storage`() {
+        val node = CommandNode(type = CommandType.TELEPORT)
+        val destination = TargetSpec(TargetKind.NEAREST_PLAYER)
+
+        CommandSettingsModel.setTargetSpec(node, CommandSettingRole.DESTINATION, destination)
+
+        assertEquals(destination, node.destinationTargetSpec)
+        assertNull(node.destinationSpec)
+        assertEquals(destination, CommandSettingsModel.targetSpec(node, CommandSettingRole.DESTINATION))
+    }
+
+    @Test
+    fun `context position role does not overwrite destination`() {
+        val node = CommandNode(type = CommandType.CONTEXT)
+        val position = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
+
+        CommandSettingsModel.setPositionSpec(node, CommandSettingRole.CONTEXT_POSITION, position)
+
+        assertEquals(position, node.contextOverride?.position)
+        assertNull(node.destinationSpec)
+        assertEquals(position, CommandSettingsModel.positionSpec(node, CommandSettingRole.CONTEXT_POSITION))
+    }
+
+    @Test
+    fun `visible fields apply the same conditional rules`() {
+        val display = CommandType.DISPLAY_TEXT.newNode()
+        assertEquals(false, CommandSettingsModel.visibleFields(display).any { it.key == "stay" })
+
+        display.params["mode"] = "title"
+        assertEquals(true, CommandSettingsModel.visibleFields(display).any { it.key == "stay" })
+
+        val riding = CommandType.ENTITY_ACTION.newNode()
+        assertEquals(true, CommandSettingsModel.visibleFields(riding).any { it.key == "other" })
+        riding.params["action"] = "dismount"
+        assertEquals(false, CommandSettingsModel.visibleFields(riding).any { it.key == "other" })
+    }
+
+    @Test
+    fun `descriptor maps structured fields to shared editors`() {
+        val context = CommandSettingsModel.descriptor(CommandNode(type = CommandType.CONTEXT), "position")
+        assertEquals(CommandSettingEditor.POSITION, context.editor)
+        assertEquals(CommandSettingRole.CONTEXT_POSITION, context.role)
+
+        val condition = CommandSettingsModel.descriptor(CommandNode(type = CommandType.CONDITION), "condition")
+        assertEquals(CommandSettingEditor.CONDITION_DETAIL, condition.editor)
+
+        val variable = CommandSettingsModel.descriptor(CommandNode(type = CommandType.VARIABLE), "operation")
+        assertEquals(CommandSettingEditor.VARIABLE_OPERATION, variable.editor)
+    }
+}
