@@ -38,6 +38,70 @@ data class MapCell(
     val insertionTarget: InsertionTarget? = null,
 )
 
+/**
+ * 経路の接続判定で使うセル種別を一箇所に集約します。
+ *
+ * 画面描画側が個別に「経路らしいセル」を定義すると、レイアウトと描画の境界で
+ * ノード／追加ポイント／分岐経路の接続がずれます。論理マップ上で隣接接続を
+ * 許可する種別は、この集合だけを共有して判定します。
+ */
+internal val PATH_CELL_KINDS: Set<MapCellKind> = setOf(
+    MapCellKind.PATH,
+    MapCellKind.BRANCH_PATH,
+    MapCellKind.LOOP_RETURN_PATH,
+)
+
+internal val CONNECTABLE_CELL_KINDS: Set<MapCellKind> = PATH_CELL_KINDS + setOf(
+    MapCellKind.NODE,
+    MapCellKind.ADD,
+)
+
+/** 論理セルの隣接判定で使う4方向。描画・入力・境界投影で同じ定義を共有します。 */
+internal val ORTHOGONAL_DIRECTIONS: List<MapPoint> = listOf(
+    MapPoint(-1, 0),
+    MapPoint(1, 0),
+    MapPoint(0, -1),
+    MapPoint(0, 1),
+)
+
+/** ビューポートの境界を越えて続く、表示専用の接続情報です。 */
+data class ViewportBoundaryConnection(
+    /** ビューポート内に存在する接続端点（ローカル座標）。 */
+    val visible: MapPoint,
+    /** 可視範囲の外側にある論理上の隣接セル（ローカル座標）。 */
+    val outside: MapPoint,
+    /** 外側セルの種別。外側アイコンそのものは描画しません。 */
+    val outsideKind: MapCellKind,
+)
+
+/**
+ * アイコン・経路・入力判定が共有するビューポート投影です。
+ *
+ * `cells` は純粋に表示範囲内の論理セルだけを含みます。画面端で経路を途切れさせ
+ * ないための `boundaryConnections` は、外側のセルを「描画対象」として持ち込まず、
+ * 可視端点から外へ続く接続だけを表します。これにより、画面外のアイコンが表示
+ * されることなく、パンしても同じ論理接続が端で連続します。
+ */
+data class ViewportProjection(
+    val origin: MapPoint,
+    val width: Int,
+    val height: Int,
+    val cells: Map<MapPoint, MapCell>,
+    val boundaryConnections: Set<ViewportBoundaryConnection>,
+) {
+    fun contains(local: MapPoint): Boolean =
+        local.x in 0 until width && local.y in 0 until height
+
+    /** 可視セルまたは境界継続先が指定種別かを返します。 */
+    fun hasNeighborOfKind(local: MapPoint, kind: MapCellKind): Boolean {
+        return ORTHOGONAL_DIRECTIONS.any { direction ->
+            val neighbor = MapPoint(local.x + direction.x, local.y + direction.y)
+            cells[neighbor]?.kind == kind ||
+                boundaryConnections.any { it.visible == local && it.outside == neighbor && it.outsideKind == kind }
+        }
+    }
+}
+
 data class GraphLayout(
     val cells: Map<MapPoint, MapCell>,
     val nodePoints: Map<UUID, MapPoint>,
@@ -49,6 +113,37 @@ data class GraphLayout(
             val local = MapPoint(point.x - origin.x, point.y - origin.y)
             if (local.x in 0 until width && local.y in 0 until height) local to cell.copy(point = local) else null
         }.toMap()
+
+    /**
+     * 表示・入力で共有する投影を一度だけ生成します。
+     *
+     * `viewport` と同じ可視範囲を使い、境界の外側に接続セルがある場合だけ
+     * `boundaryConnections` を付与します。外側セル自体は投影へ追加しません。
+     */
+    fun projection(origin: MapPoint, width: Int, height: Int): ViewportProjection {
+        require(width > 0) { "viewport width must be positive" }
+        require(height > 0) { "viewport height must be positive" }
+
+        val visible = viewport(origin, width, height)
+        val boundaries = buildSet {
+            visible.forEach visibleCell@{ (local, cell) ->
+                if (cell.kind !in CONNECTABLE_CELL_KINDS) return@visibleCell
+                ORTHOGONAL_DIRECTIONS.forEach direction@{ direction ->
+                    val outside = MapPoint(local.x + direction.x, local.y + direction.y)
+                    if (outside.x in 0 until width && outside.y in 0 until height) return@direction
+
+                    val global = MapPoint(
+                        origin.x + outside.x,
+                        origin.y + outside.y,
+                    )
+                    val outsideCell = cells[global] ?: return@direction
+                    if (outsideCell.kind !in CONNECTABLE_CELL_KINDS) return@direction
+                    add(ViewportBoundaryConnection(local, outside, outsideCell.kind))
+                }
+            }
+        }
+        return ViewportProjection(origin, width, height, visible, boundaries)
+    }
 
     fun canMove(origin: MapPoint, dx: Int, dy: Int, viewportWidth: Int, viewportHeight: Int): Boolean {
         val next = MapPoint(origin.x + dx, origin.y + dy)

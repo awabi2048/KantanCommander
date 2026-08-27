@@ -51,6 +51,35 @@ class GesturePathRendererTest {
         assertEquals(2, segments.count { it.w == 0.1 && it.h == 0.1 })
     }
 
+    @Test
+    fun `boundary continuation renders a stub without rendering the outside icon`() {
+        val visibleNode = node(0, 0)
+        val visiblePath = path(1, 0)
+        val cells = mapOf(visibleNode, visiblePath)
+        val boundary = setOf(
+            ViewportBoundaryConnection(
+                visible = MapPoint(1, 0),
+                outside = MapPoint(2, 0),
+                outsideKind = MapCellKind.NODE,
+            ),
+        )
+
+        val segments = GesturePathRenderer.buildSegments(
+            cells,
+            boundaryConnections = boundary,
+            xCenter = { it.toDouble() },
+            yCenter = { it.toDouble() },
+            thickness = 0.1,
+        )
+
+        // node→画面外ノードという1接続を、3枚の帯へ分割します。
+        assertEquals(3, segments.size)
+        assertTrue(segments.all { it.w > it.h })
+        // 画面外ノード自身のアイコンは入力集合へ追加されないため、
+        // スタブの終端だけが x=2 まで到達します。
+        assertTrue(segments.maxOf { it.x + it.w / 2.0 } <= 2.0 + 1.0e-9)
+    }
+
     private fun node(x: Int, y: Int): Pair<MapPoint, MapCell> {
         val point = MapPoint(x, y)
         return point to MapCell(point, MapCellKind.NODE)

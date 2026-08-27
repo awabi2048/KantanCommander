@@ -70,7 +70,9 @@ private data class ViewportMetrics(
     val offsetY: Double,
 ) {
     fun x(local: Int): Double = GestureEditorLayout.cellCenterX(local + offsetX)
+    fun x(local: Double): Double = GestureEditorLayout.cellCenterX(local + offsetX)
     fun y(local: Int): Double = GestureEditorLayout.cellCenterY(local + offsetY)
+    fun y(local: Double): Double = GestureEditorLayout.cellCenterY(local + offsetY)
 }
 
 /**
@@ -136,7 +138,11 @@ class GestureSequenceEditor(
             metrics.columns,
             metrics.rows,
         )
-        val cells = layout.viewport(state.origin, metrics.columns, metrics.rows)
+        // アイコン・経路・経路の入力判定は必ず同じ投影を共有します。
+        // 経路だけを画面外へ拡張すると、アイコンが消えた後も帯だけ残るため、
+        // 画面外へ続く接続は projection の境界情報だけで表現します。
+        val projection = layout.projection(state.origin, metrics.columns, metrics.rows)
+        val cells = projection.cells
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
@@ -236,15 +242,12 @@ class GestureSequenceEditor(
                 }
                 MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
                     // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
-                    val hasAddNeighbor = listOf(
-                        MapPoint(localPoint.x - 1, localPoint.y), MapPoint(localPoint.x + 1, localPoint.y),
-                        MapPoint(localPoint.x, localPoint.y - 1), MapPoint(localPoint.x, localPoint.y + 1),
-                    ).any { cells[it]?.kind == MapCellKind.ADD }
+                    val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
                     val verticalBranchOnly = cell.kind == MapCellKind.BRANCH_PATH &&
-                        (cells[MapPoint(localPoint.x, localPoint.y - 1)]?.kind in CONNECTABLE_KINDS ||
-                            cells[MapPoint(localPoint.x, localPoint.y + 1)]?.kind in CONNECTABLE_KINDS) &&
-                        cells[MapPoint(localPoint.x - 1, localPoint.y)]?.kind !in CONNECTABLE_KINDS &&
-                        cells[MapPoint(localPoint.x + 1, localPoint.y)]?.kind !in CONNECTABLE_KINDS
+                        (cells[MapPoint(localPoint.x, localPoint.y - 1)]?.kind in CONNECTABLE_CELL_KINDS ||
+                            cells[MapPoint(localPoint.x, localPoint.y + 1)]?.kind in CONNECTABLE_CELL_KINDS) &&
+                        cells[MapPoint(localPoint.x - 1, localPoint.y)]?.kind !in CONNECTABLE_CELL_KINDS &&
+                        cells[MapPoint(localPoint.x + 1, localPoint.y)]?.kind !in CONNECTABLE_CELL_KINDS
                     if (!hasAddNeighbor && !verticalBranchOnly && cell.insertionTarget != null) {
                         elements.add(GestureGuiElement(
                             elementId = "path:${gx}:${gy}",
@@ -263,20 +266,18 @@ class GestureSequenceEditor(
             }
         }
 
-        // 画面境界の外側も一定幅だけ同じ論理グリッドで描画し、最後に画面矩形で
-        // 切り取ります。外側の曲がり角や分岐点を含めるため1セルでは足りません。
-        val expandedPathCells = layout.cells.mapNotNull { (global, cell) ->
-            val local = MapPoint(global.x - state.origin.x, global.y - state.origin.y)
-            if (local.x in -PATH_RENDER_MARGIN_CELLS..(metrics.columns - 1 + PATH_RENDER_MARGIN_CELLS) &&
-                local.y in -PATH_RENDER_MARGIN_CELLS..(metrics.rows - 1 + PATH_RENDER_MARGIN_CELLS)) {
-                local to cell.copy(point = local)
-            } else null
-        }.toMap()
         GesturePathRenderer.buildSegments(
-            expandedPathCells,
+            cells,
+            boundaryConnections = projection.boundaryConnections,
             xCenter = metrics::x,
             yCenter = metrics::y,
             thickness = GestureEditorLayout.PATH_THICKNESS,
+            clipBounds = GesturePathRenderer.ClipBounds(
+                minX = minOf(metrics.x(-0.5), metrics.x(metrics.columns - 0.5)),
+                maxX = maxOf(metrics.x(-0.5), metrics.x(metrics.columns - 0.5)),
+                minY = minOf(metrics.y(-0.5), metrics.y(metrics.rows - 0.5)),
+                maxY = maxOf(metrics.y(-0.5), metrics.y(metrics.rows - 0.5)),
+            ),
         ).forEach { seg ->
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
@@ -717,16 +718,4 @@ class GestureSequenceEditor(
         )
     }
 
-    private companion object {
-        /** 経路の曲がり角を画面外から取り込む論理セル余白です。 */
-        const val PATH_RENDER_MARGIN_CELLS = 2
-        /** 経路の両端になり得る要素を固定列挙し、将来の表示専用セルを誤接続しません。 */
-        val CONNECTABLE_KINDS = setOf(
-            MapCellKind.NODE,
-            MapCellKind.ADD,
-            MapCellKind.PATH,
-            MapCellKind.BRANCH_PATH,
-            MapCellKind.LOOP_RETURN_PATH,
-        )
-    }
 }

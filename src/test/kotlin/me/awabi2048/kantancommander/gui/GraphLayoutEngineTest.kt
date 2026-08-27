@@ -154,6 +154,43 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `viewport projection exposes only visible cells and explicit edge continuations`() {
+        val graph = CommandGraph.empty()
+        repeat(6) { GraphEditor.append(graph, CommandType.WAIT) }
+        val layout = GraphLayoutEngine.layout(graph)
+
+        // グローバル x=3..7 だけを表示するため、左右の接続先は範囲外になります。
+        val projection = layout.projection(MapPoint(3, 0), width = 5, height = 3)
+
+        assertTrue(projection.cells.keys.all { it.x in 0 until 5 && it.y in 0 until 3 })
+        assertTrue(projection.cells.values.none { it.kind == MapCellKind.NODE && it.nodeId == layout.cells[MapPoint(1, 1)]?.nodeId })
+        assertTrue(
+            projection.boundaryConnections.any {
+                it.visible == MapPoint(0, 1) && it.outside == MapPoint(-1, 1) && it.outsideKind == MapCellKind.PATH
+            },
+        )
+        assertTrue(
+            projection.boundaryConnections.any {
+                it.visible == MapPoint(4, 1) && it.outside == MapPoint(5, 1) && it.outsideKind == MapCellKind.PATH
+            },
+        )
+    }
+
+    @Test
+    fun `projection treats an outside add point as a boundary continuation and insertion guard`() {
+        val graph = CommandGraph.empty()
+        repeat(4) { GraphEditor.append(graph, CommandType.WAIT) }
+        val layout = GraphLayoutEngine.layout(graph)
+        val add = layout.cells.entries.single { it.value.kind == MapCellKind.ADD }
+        val origin = MapPoint(add.key.x - 1, add.key.y)
+        val projection = layout.projection(origin, width = 1, height = 1)
+
+        assertEquals(MapCellKind.PATH, projection.cells[MapPoint(0, 0)]?.kind)
+        assertEquals(MapCellKind.ADD, projection.boundaryConnections.single { it.outside == MapPoint(1, 0) }.outsideKind)
+        assertTrue(projection.hasNeighborOfKind(MapPoint(0, 0), MapCellKind.ADD))
+    }
+
+    @Test
     fun `for start body end and return path are rendered as one structure`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)
