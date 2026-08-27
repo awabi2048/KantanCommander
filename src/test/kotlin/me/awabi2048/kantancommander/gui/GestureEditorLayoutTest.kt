@@ -130,6 +130,28 @@ class GestureEditorLayoutTest {
     }
 
     @Test
+    fun `upper graph viewport uses the inner panel and leaves the control rail`() {
+        assertEquals(
+            -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+            GestureEditorLayout.UPPER_GRAPH_MIN_X,
+            1.0e-9,
+        )
+        assertEquals(
+            GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+            GestureEditorLayout.UPPER_INNER_MAX_X,
+            1.0e-9,
+        )
+        assertEquals(
+            GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+            GestureEditorLayout.UPPER_GRAPH_MAX_Y,
+            1.0e-9,
+        )
+        assertTrue(GestureEditorLayout.UPPER_GRAPH_MAX_X < GestureEditorLayout.UPPER_INNER_MAX_X)
+        assertTrue(GestureEditorLayout.UPPER_GRAPH_MAX_X > GestureEditorLayout.UPPER_GRAPH_MIN_X)
+        assertTrue(GestureEditorLayout.UPPER_GRAPH_MAX_Y > GestureEditorLayout.UPPER_GRAPH_MIN_Y)
+    }
+
+    @Test
     fun `nav and back positions are adjacent bottom-left of the cross`() {
         // back-to-startは十字の下・左に隣接: x = 十字中心x - ピッチ、y = 十字中心y - ピッチ
         assertEquals(

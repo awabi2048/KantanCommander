@@ -8,6 +8,10 @@ import kotlin.math.roundToInt
  *
  * 座標系: 画面中央原点、x右正/y上正、ブロック単位。
  * 配置はモックアップを参考にしつつ、パネル内寸・フレーム幅から全座標を再計算しています。
+ * 実際のビューポート投影は、上部内側のグラフ領域（右側のナビゲーション列を除く）へ
+ * 倍率ごとに再配分されます。固定の論理グリッド値は、純粋な経路計算と回帰テストの
+ * 基準として残し、画面上のピクセル相当寸法はGestureSequenceEditor側で同じ領域から
+ * 導出します。
  *
  * 上部パネル: 2.90×1.0607, 内寸 2.81×0.9707, 半内 1.405×0.485
  * 下部パネル: 2.1213×1.0607, 内寸 2.0313×0.9707, 半内 1.016×0.485
@@ -156,6 +160,23 @@ object GestureEditorLayout {
     /** 下部画面パネル寸法（標準） */
     const val LOWER_W: Double = 2.1213203435596424
     const val LOWER_H: Double = 1.0606601717798212
+
+    /** 上部パネルのフレーム内側。余白幅はフレーム幅と同じです。 */
+    const val UPPER_INNER_MIN_X: Double = -UPPER_W / 2.0 + FRAME_WIDTH
+    const val UPPER_INNER_MAX_X: Double = UPPER_W / 2.0 - FRAME_WIDTH
+    const val UPPER_INNER_MIN_Y: Double = -UPPER_H / 2.0 + FRAME_WIDTH
+    const val UPPER_INNER_MAX_Y: Double = UPPER_H / 2.0 - FRAME_WIDTH
+
+    /**
+     * グラフの表示可能領域。右側のナビゲーション列とフレームを予約し、
+     * マップのアイコン・経路が操作部へ重ならないようにします。
+     * 上下方向は内側全体を使用します。
+     */
+    const val UPPER_GRAPH_MIN_X: Double = UPPER_INNER_MIN_X
+    const val UPPER_GRAPH_MAX_X: Double =
+        NAV_CENTER_X - NAV_PITCH - NAV_SIZE / 2.0 - FRAME_WIDTH
+    const val UPPER_GRAPH_MIN_Y: Double = UPPER_INNER_MIN_Y
+    const val UPPER_GRAPH_MAX_Y: Double = UPPER_INNER_MAX_Y
 
     // ---- 下部1:3分割 ----
     const val TAB_CENTER_X: Double = -0.75

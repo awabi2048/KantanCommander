@@ -24,6 +24,7 @@ import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * ジェスチャーエディターの状態。プレイヤー単位で保持され、操作のたびに更新されます。
@@ -63,18 +64,33 @@ enum class GestureLowerMode {
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
-/** ズーム後も論理セル範囲と画面上の座標系を一致させる値です。 */
+/**
+ * ズーム後も論理セル範囲と画面上の座標系を一致させる値です。
+ *
+ * x/y と各寸法はズーム前の値で保持します。buildUpperViewportの最後で同じ倍率を
+ * 全マップ要素へ適用するため、アイコン・経路・当たり判定の投影が常に一致します。
+ */
 private data class ViewportMetrics(
     val zoomScale: Double,
     val columns: Int,
     val rows: Int,
-    val offsetX: Double,
-    val offsetY: Double,
+    val firstX: Double,
+    val firstY: Double,
+    val pitchX: Double,
+    val pitchY: Double,
+    val iconSize: Double,
+    val iconScale: Double,
+    val pathThickness: Double,
+    /** ズーム後のグラフ領域。最終クリップと同じ矩形を共有します。 */
+    val graphMinX: Double,
+    val graphMaxX: Double,
+    val graphMinY: Double,
+    val graphMaxY: Double,
 ) {
-    fun x(local: Int): Double = GestureEditorLayout.cellCenterX(local + offsetX)
-    fun x(local: Double): Double = GestureEditorLayout.cellCenterX(local + offsetX)
-    fun y(local: Int): Double = GestureEditorLayout.cellCenterY(local + offsetY)
-    fun y(local: Double): Double = GestureEditorLayout.cellCenterY(local + offsetY)
+    fun x(local: Int): Double = firstX + local * pitchX
+    fun x(local: Double): Double = firstX + local * pitchX
+    fun y(local: Int): Double = firstY - local * pitchY
+    fun y(local: Double): Double = firstY - local * pitchY
 }
 
 /**
@@ -177,8 +193,8 @@ class GestureSequenceEditor(
                         visuals.add(GestureGuiVisual.Block(
                             visualId = "node-bg-${node.id}",
                             x = cx, y = cy,
-                            width = GestureEditorLayout.ICON_W,
-                            height = GestureEditorLayout.ICON_H,
+                            width = metrics.iconSize,
+                            height = metrics.iconSize,
                             blockData = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
                             // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
                             layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
@@ -189,20 +205,20 @@ class GestureSequenceEditor(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
                             item = org.bukkit.inventory.ItemStack(node.type.icon),
-                            scale = GestureEditorLayout.ICON_SCALE,
+                            scale = metrics.iconScale,
                             // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
                         elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
-                            bounds = iconBounds(cx, cy),
+                            bounds = iconBounds(cx, cy, metrics.iconSize),
                             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                             targetVisualId = "node-icon-${node.id}",
                             hoverText = GestureGuiHoverText(
                                 text = net.kyori.adventure.text.Component.text(KcI18n.text(player, node.type.key)),
                                 x = cx,
-                                y = cy + GestureEditorLayout.ICON_H * 0.9,
+                                y = cy + metrics.iconSize * 0.9,
                                 size = 0.006,
                                 lineWidth = 180,
                             ),
@@ -214,8 +230,8 @@ class GestureSequenceEditor(
                     visuals.add(GestureGuiVisual.Block(
                         visualId = "add-block-$gx-$gy",
                         x = cx, y = cy,
-                        width = GestureEditorLayout.ICON_W,
-                        height = GestureEditorLayout.ICON_H,
+                        width = metrics.iconSize,
+                        height = metrics.iconSize,
                         blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
                         layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                         glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
@@ -230,13 +246,13 @@ class GestureSequenceEditor(
                     ))
                     elements.add(GestureGuiElement(
                         elementId = "add:$gx:$gy",
-                        bounds = iconBounds(cx, cy),
+                        bounds = iconBounds(cx, cy, metrics.iconSize),
                         acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                         targetVisualId = "add-plus-$gx-$gy",
                         hoverText = GestureGuiHoverText(
                             text = net.kyori.adventure.text.Component.text("クリックで追加"),
                             x = cx,
-                            y = cy + GestureEditorLayout.ICON_H * 0.9,
+                            y = cy + metrics.iconSize * 0.9,
                             size = 0.006,
                             lineWidth = 120,
                         ),
@@ -253,12 +269,12 @@ class GestureSequenceEditor(
                     if (!hasAddNeighbor && !verticalBranchOnly && cell.insertionTarget != null) {
                         elements.add(GestureGuiElement(
                             elementId = "path:${gx}:${gy}",
-                            bounds = rect(cx, cy, GestureEditorLayout.PITCH_X, GestureEditorLayout.PITCH_Y),
+                            bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
                             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                             hoverText = GestureGuiHoverText(
                                 text = net.kyori.adventure.text.Component.text("クリックで挿入"),
                                 x = cx,
-                                y = cy + GestureEditorLayout.PATH_THICKNESS,
+                                y = cy + metrics.pathThickness,
                                 size = 0.0055,
                                 lineWidth = 120,
                             ),
@@ -273,12 +289,14 @@ class GestureSequenceEditor(
             boundaryConnections = projection.boundaryConnections,
             xCenter = metrics::x,
             yCenter = metrics::y,
-            thickness = GestureEditorLayout.PATH_THICKNESS,
+            thickness = metrics.pathThickness,
             clipBounds = GesturePathRenderer.ClipBounds(
-                minX = minOf(metrics.x(-0.5), metrics.x(metrics.columns - 0.5)),
-                maxX = maxOf(metrics.x(-0.5), metrics.x(metrics.columns - 0.5)),
-                minY = minOf(metrics.y(-0.5), metrics.y(metrics.rows - 0.5)),
-                maxY = maxOf(metrics.y(-0.5), metrics.y(metrics.rows - 0.5)),
+                // 仮想境界セルをグラフ領域の端までだけ延長します。これより外側へ
+                // 経路を出さないため、ナビゲーション列との重なりが発生しません。
+                minX = GestureEditorLayout.UPPER_GRAPH_MIN_X / zoomScale,
+                maxX = GestureEditorLayout.UPPER_GRAPH_MAX_X / zoomScale,
+                minY = GestureEditorLayout.UPPER_GRAPH_MIN_Y / zoomScale,
+                maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y / zoomScale,
             ),
         ).forEach { seg ->
             visuals.add(GestureGuiVisual.Block(
@@ -305,8 +323,8 @@ class GestureSequenceEditor(
                     visualId = "path-highlight-${selectedGlobal.x}-${selectedGlobal.y}",
                     x = cx,
                     y = cy,
-                    width = GestureEditorLayout.PITCH_X * 0.86,
-                    height = GestureEditorLayout.PITCH_Y * 0.86,
+                    width = metrics.pitchX * 0.86,
+                    height = metrics.pitchY * 0.86,
                     blockData = Bukkit.createBlockData(Material.WHITE_CONCRETE),
                     layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                     glowColor = Color.YELLOW.asARGB(),
@@ -372,20 +390,25 @@ class GestureSequenceEditor(
         }
         val clippedVisuals = scaledVisuals.filter { visual ->
             if (!(visual.visualId.startsWith("node-") || visual.visualId.startsWith("add-") || visual.visualId.startsWith("path-"))) return@filter true
-            val halfW = GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH
-            val halfH = GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH
+            // マップ要素は、入力要素・経路と同じグラフ領域へクリップします。
+            // パネル全体へ別の矩形で切り取ると、ノードだけがナビ列へ流出するため、
+            // 端の継続経路もここで同じ境界に揃えます。
+            val minX = metrics.graphMinX
+            val maxX = metrics.graphMaxX
+            val minY = metrics.graphMinY
+            val maxY = metrics.graphMaxY
             val halfVisualW = when (visual) {
                 is GestureGuiVisual.Block -> visual.width / 2.0
-                is GestureGuiVisual.Item -> GestureEditorLayout.ICON_W / 2.0
-                is GestureGuiVisual.Text -> 0.06
+                is GestureGuiVisual.Item -> metrics.iconSize * zoomScale / 2.0
+                is GestureGuiVisual.Text -> 0.06 * zoomScale
             }
             val halfVisualH = when (visual) {
                 is GestureGuiVisual.Block -> visual.height / 2.0
-                is GestureGuiVisual.Item -> GestureEditorLayout.ICON_H / 2.0
-                is GestureGuiVisual.Text -> 0.04
+                is GestureGuiVisual.Item -> metrics.iconSize * zoomScale / 2.0
+                is GestureGuiVisual.Text -> 0.04 * zoomScale
             }
-            visual.x + halfVisualW >= -halfW && visual.x - halfVisualW <= halfW &&
-                visual.y + halfVisualH >= -halfH && visual.y - halfVisualH <= halfH
+            visual.x + halfVisualW >= minX && visual.x - halfVisualW <= maxX &&
+                visual.y + halfVisualH >= minY && visual.y - halfVisualH <= maxY
         }
 
         return GestureGuiView(
@@ -437,20 +460,20 @@ class GestureSequenceEditor(
             context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val next = (state.zoomLevel + 1).coerceAtMost(GestureEditorLayout.MAX_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
-                    state.zoomLevel = next
+                    setZoomLevel(next)
                     updateUpper(player)
                 }
             }
             context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val next = (state.zoomLevel - 1).coerceAtLeast(GestureEditorLayout.MIN_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
-                    state.zoomLevel = next
+                    setZoomLevel(next)
                     updateUpper(player)
                 }
             }
             context.elementId == "nav-zoom-reset" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 if (state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL) {
-                    state.zoomLevel = GestureEditorLayout.INITIAL_ZOOM_LEVEL
+                    setZoomLevel(GestureEditorLayout.INITIAL_ZOOM_LEVEL)
                     updateUpper(player)
                 }
             }
@@ -673,8 +696,8 @@ class GestureSequenceEditor(
         ) {}
     }
 
-    private fun iconBounds(cx: Double, cy: Double): GestureGuiBounds {
-        val h = GestureEditorLayout.ICON_W / 2.0
+    private fun iconBounds(cx: Double, cy: Double, size: Double): GestureGuiBounds {
+        val h = size / 2.0
         return GestureGuiBounds(cx - h, cy - h, cx + h, cy + h)
     }
 
@@ -814,15 +837,68 @@ class GestureSequenceEditor(
             state.zoomLevel.coerceIn(GestureEditorLayout.MIN_ZOOM_LEVEL, GestureEditorLayout.MAX_ZOOM_LEVEL) * 0.25)
             .coerceIn(0.25, GestureEditorLayout.DEFAULT_ZOOM)
 
+    /**
+     * 倍率変更時も現在見ている論理セルの中心を保ちます。
+     * 可視列数だけを変更して原点を固定すると、ズームアウト時にマップが片側へ
+     * 飛び、端の経路とアイコンの対応が崩れます。グラフの範囲を考慮してから
+     * 新しい表示可能範囲へ原点をclampすることで、中央基準の投影を維持します。
+     */
+    private fun setZoomLevel(level: Int) {
+        val script = plugin.scripts.load(state.scriptId) ?: run {
+            state.zoomLevel = level
+            return
+        }
+        val oldMetrics = viewportMetrics(zoomScale())
+        val centerX = state.origin.x + (oldMetrics.columns - 1) / 2.0
+        val centerY = state.origin.y + (oldMetrics.rows - 1) / 2.0
+        state.zoomLevel = level
+        val newMetrics = viewportMetrics(zoomScale())
+        state.origin = GestureEditorLayout.clampOrigin(
+            MapPoint(
+                (centerX - (newMetrics.columns - 1) / 2.0).roundToInt(),
+                (centerY - (newMetrics.rows - 1) / 2.0).roundToInt(),
+            ),
+            GraphLayoutEngine.layout(script.graph),
+            newMetrics.columns,
+            newMetrics.rows,
+        )
+    }
+
     private fun viewportMetrics(scale: Double): ViewportMetrics {
         val columns = GestureEditorLayout.viewportColumns(scale)
         val rows = GestureEditorLayout.viewportRows(scale)
+        require(scale.isFinite() && scale > 0.0) { "viewport zoom scale must be positive and finite" }
+
+        /*
+         * 表示面の実寸を先に決め、そこへ可視論理セルを等分します。
+         * 以前は固定のFIRST_COL_X/FIRST_ROW_Yを拡大縮小していたため、
+         * 10×4の論理範囲が画面中央の狭い帯に留まり、ズーム時には
+         * アイコンと経路の端点も別々に切り取られていました。
+         * ここでは「画面上の寸法」を基準にし、最後の一括scaleで戻せる
+         * ズーム前座標へ変換します。
+         */
+        val screenPitchX =
+            (GestureEditorLayout.UPPER_GRAPH_MAX_X - GestureEditorLayout.UPPER_GRAPH_MIN_X) / columns
+        val screenPitchY =
+            (GestureEditorLayout.UPPER_GRAPH_MAX_Y - GestureEditorLayout.UPPER_GRAPH_MIN_Y) / rows
+        val screenIconSize = minOf(screenPitchX, screenPitchY) * 0.9
+        val screenPathThickness = minOf(screenPitchX, screenPitchY) * 2.0 / 3.0
+        val iconScaleRatio = GestureEditorLayout.ICON_SCALE / GestureEditorLayout.ICON_W
         return ViewportMetrics(
             zoomScale = scale,
             columns = columns,
             rows = rows,
-            offsetX = GestureEditorLayout.viewportOffset(GestureEditorLayout.VIEWPORT_COLS, columns),
-            offsetY = GestureEditorLayout.viewportOffset(GestureEditorLayout.VIEWPORT_ROWS, rows),
+            firstX = (GestureEditorLayout.UPPER_GRAPH_MIN_X + screenPitchX / 2.0) / scale,
+            firstY = (GestureEditorLayout.UPPER_GRAPH_MAX_Y - screenPitchY / 2.0) / scale,
+            pitchX = screenPitchX / scale,
+            pitchY = screenPitchY / scale,
+            iconSize = screenIconSize / scale,
+            iconScale = screenIconSize * iconScaleRatio / scale,
+            pathThickness = screenPathThickness / scale,
+            graphMinX = GestureEditorLayout.UPPER_GRAPH_MIN_X,
+            graphMaxX = GestureEditorLayout.UPPER_GRAPH_MAX_X,
+            graphMinY = GestureEditorLayout.UPPER_GRAPH_MIN_Y,
+            graphMaxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y,
         )
     }
 
