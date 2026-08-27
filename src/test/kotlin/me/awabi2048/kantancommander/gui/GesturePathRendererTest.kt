@@ -80,6 +80,33 @@ class GesturePathRendererTest {
         assertTrue(segments.maxOf { it.x + it.w / 2.0 } <= 2.0 + 1.0e-9)
     }
 
+    @Test
+    fun `merge node receives a visible connector from the L junction`() {
+        val cells = mapOf(
+            node(0, 0),
+            path(1, 0),
+            path(1, 1),
+            path(1, 2),
+            node(2, 2),
+        )
+
+        val segments = GesturePathRenderer.buildSegments(
+            cells,
+            xCenter = { it.toDouble() },
+            yCenter = { it.toDouble() },
+            thickness = 0.1,
+        )
+
+        // L字の角から合流ノードまでは、独立した水平接続として描画されます。
+        val connector = segments.filter {
+            it.y == 2.0 && it.w > it.h &&
+                it.x + it.w / 2.0 <= 2.0 + 1.0e-9 &&
+                it.x - it.w / 2.0 >= 1.0 - 1.0e-9
+        }
+        assertEquals(3, connector.size)
+        assertEquals(1.0, connector.sumOf { it.w }, 1.0e-9)
+    }
+
     private fun node(x: Int, y: Int): Pair<MapPoint, MapCell> {
         val point = MapPoint(x, y)
         return point to MapCell(point, MapCellKind.NODE)

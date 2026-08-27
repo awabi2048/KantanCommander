@@ -128,6 +128,17 @@ internal object GesturePathRenderer {
             }
         }
 
+        /**
+         * ノード／追加ポイントへ入るポートは、角側の経路をトリミングしません。
+         * 角とノードの中心間をそのまま3分割することで、アイコンの背面へ潜る
+         * 接続実体を必ず残します。経路同士の角だけは従来どおり半幅を削り、
+         * 角同士の重複を防ぎます。ノード／追加ポイント側の重なりは、アイコンの
+         * 背面へ経路を潜り込ませるために意図的に許可します。
+         */
+        fun shouldTrimAt(point: MapPoint, other: MapPoint, segmentAxis: Axis): Boolean =
+            isJunction(point, segmentAxis) &&
+                allCells[other]?.kind !in setOf(MapCellKind.NODE, MapCellKind.ADD)
+
         val segments = mutableListOf<GestureEditorLayout.PathSegment>()
 
         fun emitStraight(first: MapPoint, second: MapPoint, segmentAxis: Axis) {
@@ -137,10 +148,10 @@ internal object GesturePathRenderer {
             var low = minOf(firstCoordinate, secondCoordinate)
             var high = maxOf(firstCoordinate, secondCoordinate)
             val trim = thickness / 2.0
-            if (isJunction(first, segmentAxis)) {
+            if (shouldTrimAt(first, second, segmentAxis)) {
                 if (increasing) low += trim else high -= trim
             }
-            if (isJunction(second, segmentAxis)) {
+            if (shouldTrimAt(second, first, segmentAxis)) {
                 if (increasing) high -= trim else low += trim
             }
             val length = (high - low).coerceAtLeast(0.0)

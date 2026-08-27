@@ -250,10 +250,44 @@ class GraphLayoutEngineTest {
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
         val falseY = requireNotNull(layout.nodePoints[falseTail.id]).y
 
-        val mergeSide = layout.cells[MapPoint(mergePoint.x - 1, falseY)]
+        val mergeSide = layout.cells[MapPoint(mergePoint.x - 2, falseY)]
         assertEquals(falseTail.id, mergeSide?.insertionTarget?.sourceId)
         assertEquals(GraphEditor.Edge.NEXT, mergeSide?.insertionTarget?.edge)
         assertEquals(condition.id, mergeSide?.insertionTarget?.mergeConditionId)
+    }
+
+    @Test
+    fun `L shaped merge keeps the full connector into the merge node`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val mergeY = GestureEditorLayout.cellCenterY(mergePoint.y)
+        val leftCenter = GestureEditorLayout.cellCenterX(mergePoint.x - 2)
+        val mergeCenter = GestureEditorLayout.cellCenterX(mergePoint.x)
+        val connector = GesturePathRenderer.buildSegments(
+            layout.cells,
+            xCenter = GestureEditorLayout::cellCenterX,
+            yCenter = GestureEditorLayout::cellCenterY,
+            thickness = GestureEditorLayout.PATH_THICKNESS,
+        ).filter {
+            kotlin.math.abs(it.y - mergeY) <= 1.0e-9 &&
+                it.h == GestureEditorLayout.PATH_THICKNESS &&
+                it.x - it.w / 2.0 >= leftCenter - 1.0e-9 &&
+                it.x + it.w / 2.0 <= mergeCenter + 1.0e-9
+        }
+
+        // L字の角から合流アイコン中心までの2ピッチを3枚で埋め、端点を短縮しません。
+        assertEquals(3, connector.size)
+        assertEquals(
+            mergeCenter - leftCenter,
+            connector.sumOf { it.w },
+            1.0e-9,
+        )
     }
 
     @Test
