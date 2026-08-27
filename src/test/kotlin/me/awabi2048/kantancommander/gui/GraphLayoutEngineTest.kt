@@ -82,7 +82,29 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `merge node always has a path immediately before it`() {
+    fun `unequal branches align the returning column with the longest branch merge`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val trueTail = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val falseTail = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val trueTailPoint = requireNotNull(layout.nodePoints[trueTail.id])
+        val falseTailPoint = requireNotNull(layout.nodePoints[falseTail.id])
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+
+        // 最長のTRUE枝末端から通常どおり2セル先にMERGEを置き、短いFALSE枝だけを
+        // MERGEと同じx列まで延ばして、直下から上向きに接続します。
+        assertEquals(trueTailPoint.x + 2, mergePoint.x)
+        assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.kind)
+        assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, mergePoint.y + 1)]?.kind)
+        assertEquals(falseTail.id, layout.cells[MapPoint(mergePoint.x, falseTailPoint.y)]?.insertionTarget?.sourceId)
+    }
+
+    @Test
+    fun `merge node receives the returning branch immediately below it`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.WAIT)
@@ -91,10 +113,7 @@ class GraphLayoutEngineTest {
         val layout = GraphLayoutEngine.layout(graph)
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
 
-        assertTrue(
-            layout.cells[MapPoint(mergePoint.x - 1, mergePoint.y)]?.kind in
-                setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH),
-        )
+        assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, mergePoint.y + 1)]?.kind)
     }
 
     @Test
@@ -109,6 +128,7 @@ class GraphLayoutEngineTest {
         // 枝は合流で閉じているため、追加ポイントは合流後の末尾だけです。
         assertEquals(setOf(MapPoint(mergePoint.x + 2, mergePoint.y)), addPoints)
         assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x - 1, mergePoint.y)]?.kind)
+        assertEquals(MapCellKind.BRANCH_PATH, layout.cells[MapPoint(mergePoint.x, mergePoint.y + 1)]?.kind)
         assertEquals(MapCellKind.PATH, layout.cells[MapPoint(mergePoint.x + 1, mergePoint.y)]?.kind)
     }
 
@@ -240,7 +260,7 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `merge side path inserts at the false branch tail`() {
+    fun `merge return path inserts at the false branch tail`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.WAIT)
@@ -250,14 +270,14 @@ class GraphLayoutEngineTest {
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
         val falseY = requireNotNull(layout.nodePoints[falseTail.id]).y
 
-        val mergeSide = layout.cells[MapPoint(mergePoint.x - 1, falseY)]
+        val mergeSide = layout.cells[MapPoint(mergePoint.x, falseY)]
         assertEquals(falseTail.id, mergeSide?.insertionTarget?.sourceId)
         assertEquals(GraphEditor.Edge.NEXT, mergeSide?.insertionTarget?.edge)
         assertEquals(condition.id, mergeSide?.insertionTarget?.mergeConditionId)
     }
 
     @Test
-    fun `L shaped merge keeps the full connector into the merge node`() {
+    fun `L shaped merge keeps the full vertical connector into the merge node`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.WAIT)
@@ -266,26 +286,28 @@ class GraphLayoutEngineTest {
 
         val layout = GraphLayoutEngine.layout(graph)
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
-        val mergeY = GestureEditorLayout.cellCenterY(mergePoint.y)
-        val leftCenter = GestureEditorLayout.cellCenterX(mergePoint.x - 1)
-        val mergeCenter = GestureEditorLayout.cellCenterX(mergePoint.x)
+        val mergeX = GestureEditorLayout.cellCenterX(mergePoint.x)
+        val mergeCenter = GestureEditorLayout.cellCenterY(mergePoint.y)
+        val belowCenter = GestureEditorLayout.cellCenterY(mergePoint.y + 1)
         val connector = GesturePathRenderer.buildSegments(
             layout.cells,
             xCenter = GestureEditorLayout::cellCenterX,
             yCenter = GestureEditorLayout::cellCenterY,
             thickness = GestureEditorLayout.PATH_THICKNESS,
         ).filter {
-            kotlin.math.abs(it.y - mergeY) <= 1.0e-9 &&
-                it.h == GestureEditorLayout.PATH_THICKNESS &&
-                it.x - it.w / 2.0 >= leftCenter - 1.0e-9 &&
-                it.x + it.w / 2.0 <= mergeCenter + 1.0e-9
+            kotlin.math.abs(it.x - mergeX) <= 1.0e-9 &&
+                it.w == GestureEditorLayout.PATH_THICKNESS &&
+                it.y + it.h / 2.0 > minOf(mergeCenter, belowCenter) &&
+                it.y - it.h / 2.0 < maxOf(mergeCenter, belowCenter)
         }
 
-        // L字の角から合流アイコン中心までの通常接続を3枚で埋め、端点を短縮しません。
-        assertEquals(3, connector.size)
+        // 縦線全体の3分割位置に依存せず、直下セルからMERGE中心までの被覆を検証します。
         assertEquals(
-            mergeCenter - leftCenter,
-            connector.sumOf { it.w },
+            kotlin.math.abs(belowCenter - mergeCenter),
+            connector.sumOf {
+                minOf(it.y + it.h / 2.0, maxOf(mergeCenter, belowCenter)) -
+                    maxOf(it.y - it.h / 2.0, minOf(mergeCenter, belowCenter))
+            },
             1.0e-9,
         )
     }

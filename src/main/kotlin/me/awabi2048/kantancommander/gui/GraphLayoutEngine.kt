@@ -276,11 +276,10 @@ object GraphLayoutEngine {
                 Segment(x + 2, falseY, null)
             }
 
-            // 枝が集まる角と合流ノードを隣接セルへ正しく配置します。
-            // mergeX - 1 をL字の角と合流直前の経路、
-            // mergeX を合流ノードとします。mergeX は枝末端のnextXと同じ
-            // 基準で計算するため、枝末端から合流ノードまでが通常接続と
-            // 同じ2ピッチになり、合流先が反対側へ1セルずれません。
+            // 合流ノードは最長枝の nextX に置き、通常ノード列と同じ2ピッチを保ちます。
+            // TRUE枝は従来どおり左側から直進させますが、折り返すFALSE枝は mergeX 列まで
+            // 水平に延ばしてから真上へ戻します。これにより、合流ノードの直下セルが最後の
+            // 接続端点になり、画面上でもMERGEアイコンの下側ポートへ経路が潜り込みます。
             val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX)
             val mergeNodeX = mergeX
             val trueSource = trueSegment.tail ?: condition.id
@@ -298,7 +297,7 @@ object GraphLayoutEngine {
             )
             fillHorizontal(
                 falseSegment.nextX - 1,
-                mergeX - 1,
+                mergeX,
                 falseY,
                 MapCellKind.BRANCH_PATH,
                 falseSource,
@@ -307,7 +306,7 @@ object GraphLayoutEngine {
             )
             for (verticalY in y + 1..falseY) {
                 putPath(
-                    mergeX - 1,
+                    mergeX,
                     verticalY,
                     MapCellKind.BRANCH_PATH,
                     falseSource,
