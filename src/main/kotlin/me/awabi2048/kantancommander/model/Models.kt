@@ -94,7 +94,7 @@ val CommandNode.effectiveContextSource: ContextSource
     get() = contextSource ?: ContextSource.BASE
 
 enum class TargetKind {
-    EXECUTOR, ACTIVATOR, INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
+    INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
     ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY,
 }
 
@@ -110,8 +110,6 @@ data class TargetSpec(
     val gameMode: String? = null,
     val tag: String? = null,
     val name: String? = null,
-    val excludeExecutor: Boolean = false,
-    val excludeActivator: Boolean = false,
     val fixedEntityId: UUID? = null,
 )
 

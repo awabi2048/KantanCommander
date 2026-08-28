@@ -419,8 +419,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun localizedTarget(player: Player, kind: TargetKind): String = KcI18n.text(
         player,
         when (kind) {
-            TargetKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR
-            TargetKind.ACTIVATOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIVATOR
             TargetKind.INHERITED_TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET
             TargetKind.NEAREST_PLAYER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER
             TargetKind.NEARBY_PLAYERS -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS

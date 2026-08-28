@@ -17,7 +17,7 @@ class ExecutionSemanticsTest {
     @Test
     fun `partial node context overrides only configured fields`() {
         val inherited = ExecutionContextSpec(
-            executor = TargetSpec(TargetKind.ACTIVATOR),
+            executor = TargetSpec(TargetKind.INHERITED_TARGET),
             target = TargetSpec(TargetKind.NEAREST_PLAYER),
             position = PositionSpec(PositionKind.DISK),
             facing = FacingSpec(FacingKind.INHERITED),

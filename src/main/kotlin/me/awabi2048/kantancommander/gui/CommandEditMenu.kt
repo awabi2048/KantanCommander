@@ -144,10 +144,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 ?: return@MenuActionHandler MenuActionResult.Ignored
                         } else null
                         if (!updateNode(context.route) { node ->
-                            val spec = TargetSpec(kind, fixedEntityId = fixedEntityId)
+                            // 種類の再選択は設定値確認の再訪を兼ねるため、既存の絞り込み条件を
+                            // 引き継ぐ。プレイヤー系⇔エンティティ系の切り替え時だけ、適用対象外と
+                            // なるentityTypeを初期化する。
+                            val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
+                            val current = CommandSettingsModel.targetSpec(node, role)
+                            val entityKind = kind == TargetKind.NEAREST_ENTITY || kind == TargetKind.NEARBY_ENTITIES
+                            val spec = (current ?: TargetSpec(kind)).copy(
+                                kind = kind,
+                                fixedEntityId = fixedEntityId,
+                                entityType = if (entityKind) current?.entityType else null,
+                            )
                             CommandSettingsModel.setTargetSpec(
                                 node,
-                                CommandSettingRole.fromRoute(context.route.payload[ROLE]),
+                                role,
                                 spec,
                             )
                         }) {
@@ -162,6 +172,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         } else {
                             MenuActionResult.Success(MenuUpdate.Back)
                         }
+                    },
+                    // 既に設定済みの種類を再選択せず、絞り込み条件だけを確認・編集できる
+                    // 短路経路です（設定値が「初期化される」誤解を防ぎます）。
+                    "filter" to MenuActionHandler { context ->
+                        if (selectedTargetSpec(context.route) == null) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        MenuActionResult.Success(MenuUpdate.Replace(choiceRoute(context.route, TARGET_FILTER_ID)))
                     },
                 ),
             )
@@ -187,8 +205,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }) return@MenuActionHandler MenuActionResult.Rejected(Component.text("設定を保存できませんでした。"))
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
-                    "excludeExecutor" to toggleTargetFlag(true),
-                    "excludeActivator" to toggleTargetFlag(false),
                     "entityType" to targetFilterDialog("entityType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE),
                     "minimumDistance" to targetFilterDialog("minimumDistance", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, decimal = true),
                     "maximumDistance" to targetFilterDialog("maximumDistance", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE, decimal = true),
@@ -837,9 +853,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun renderTarget(player: Player, route: MenuRoute): InventoryMenuView {
+        // 「実行者」「起動したプレイヤー」は実行モデル上の起動者が不在のため廃止しました。
+        // 絞り込み条件は既存種類の再選択なしで「詳細フィルタ」から確認・編集できます。
         val options = listOf(
-            Triple(TargetKind.EXECUTOR, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR)),
-            Triple(TargetKind.ACTIVATOR, Material.LEVER, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIVATOR)),
             Triple(TargetKind.INHERITED_TARGET, Material.TARGET, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET)),
             Triple(TargetKind.NEAREST_PLAYER, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)),
             Triple(TargetKind.NEARBY_PLAYERS, Material.FILLED_MAP, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS)),
@@ -854,6 +870,18 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 choiceElement(player, layout.itemSlots[index], option.second, option.third,
                 "select", mapOf("kind" to option.first.name))
         }.toMutableList()
+        selectedTargetSpec(route)?.let { spec ->
+            val filterTitle = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TARGET_FILTER_TITLE)
+            elements += choiceElement(
+                player = player,
+                slot = 40,
+                material = Material.COMPARATOR,
+                name = filterTitle,
+                actionId = "filter",
+                dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                dataValue = displayTarget(spec.kind).render(player),
+            )
+        }
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TARGET_TITLE)), elements)
     }
@@ -873,8 +901,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             DetailOption(Material.PLAYER_HEAD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE, "gameMode", displayGameMode(spec.gameMode)),
             DetailOption(Material.NAME_TAG, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, "tag", displayLiteral(spec.tag)),
             DetailOption(Material.OAK_SIGN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, "name", displayLiteral(spec.name)),
-            DetailOption(Material.BARRIER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXCLUDE_EXECUTOR, "excludeExecutor", displayBoolean(spec.excludeExecutor)),
-            DetailOption(Material.LEVER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXCLUDE_ACTIVATOR, "excludeActivator", displayBoolean(spec.excludeActivator)),
         )
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
@@ -899,8 +925,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         "gameMode" -> "プレイヤー対象をゲームモードで絞り込みます。未設定なら全モードです。"
         "tag" -> "指定したスコアボードタグを持つ対象だけを選びます。空欄で解除します。"
         "name" -> "対象名で絞り込みます。空欄で解除します。"
-        "excludeExecutor" -> "対象一覧から、このコマンドの実行者を除外するか切り替えます。"
-        "excludeActivator" -> "対象一覧から起動者を除外するか切り替えます。"
         else -> "距離・種類・件数などを組み合わせて実行対象を絞り込みます。"
     }
 
@@ -989,10 +1013,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             .getOrDefault(ConditionKind.TARGET_EXISTS)
         val options = when (kind) {
             ConditionKind.TARGET_EXISTS -> listOf(
-                DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.EXECUTOR)),
+                DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.INHERITED_TARGET)),
             )
             ConditionKind.ENTITY_STATE -> listOf(
-                DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.EXECUTOR)),
+                DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.INHERITED_TARGET)),
                 DetailOption(Material.LEVER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_STATE, "state", displayEntityState(node.string("state", "sneaking"))),
             )
             ConditionKind.VARIABLE_STATE -> listOf(
@@ -1011,7 +1035,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 DetailOption(Material.GRASS_BLOCK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, "block", DisplayValue.Literal(node.string("block", "minecraft:air"))),
             )
             ConditionKind.ITEM_POSSESSION -> listOf(
-                DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.EXECUTOR)),
+                DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.INHERITED_TARGET)),
                 DetailOption(
                     Material.CHEST,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION,
@@ -1212,7 +1236,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderContextOverride(player: Player, route: MenuRoute): InventoryMenuView {
         val context = node(route)?.contextOverride
         val options = listOf(
-            ContextOption(19, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR), "executor", state(player, context?.executor != null)),
+            ContextOption(19, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXECUTOR), "executor", state(player, context?.executor != null)),
             ContextOption(20, Material.TARGET, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), "target", state(player, context?.target != null)),
             ContextOption(21, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION), "position", state(player, context?.position != null)),
             ContextOption(22, Material.SPYGLASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING), "facing", state(player, context?.facing != null)),
@@ -1377,7 +1401,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         field,
                         KcI18n.component(player, definition.titleKey),
                         node.string(field, definition.defaultValue),
-                        maxLength = if (field == "text" || field == "value") 512 else 10,
+                        // 名前空間ID（minecraft:pig 等）は10文字を超えるため、エンティティ・
+                        // サウンド・エフェクト・タグは64文字まで入力できるようにする。
+                        maxLength = when (field) {
+                            "text", "value" -> 512
+                            "entity", "sound", "effect", "tags" -> 64
+                            else -> 10
+                        },
                     )
                 ),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
@@ -1699,14 +1729,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
         }
 
-    private fun toggleTargetFlag(executor: Boolean) = MenuActionHandler { context ->
-        if (!updateTargetSpec(context.route) {
-            if (executor) it.copy(excludeExecutor = !it.excludeExecutor)
-            else it.copy(excludeActivator = !it.excludeActivator)
-        }) return@MenuActionHandler MenuActionResult.Rejected(Component.text("設定を保存できませんでした。"))
-        MenuActionResult.Success(MenuUpdate.Refresh)
-    }
-
     private fun targetFilterDialog(
         parameter: String,
         titleKey: LocalizationKey<String>,
@@ -1730,7 +1752,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 id = "target-filter-$parameter",
                 title = KcI18n.component(player, titleKey),
                 body = listOf(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FILTER_BODY),
+                    // 距離は「下限/上限の帯域外を除外する」意味を、入力画面でも明示します。
+                    KcI18n.component(player, when (parameter) {
+                        "minimumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY
+                        "maximumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MAXIMUM_DISTANCE_BODY
+                        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FILTER_BODY
+                    }),
                     Component.text("現在値: ${current.ifBlank { "未設定" }}", NamedTextColor.GRAY),
                     Component.text("空欄で条件を解除します。入力値は対象の絞り込みに使用されます。", NamedTextColor.GRAY),
                 ),
@@ -2093,8 +2120,6 @@ private fun displayBoolean(value: Boolean) = DisplayValue.Localized(
 )
 
 private fun displayTarget(kind: TargetKind) = DisplayValue.Localized(when (kind) {
-    TargetKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR
-    TargetKind.ACTIVATOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIVATOR
     TargetKind.INHERITED_TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET
     TargetKind.NEAREST_PLAYER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER
     TargetKind.NEARBY_PLAYERS -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS

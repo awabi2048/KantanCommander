@@ -194,11 +194,6 @@ class VanillaDatapackExporter(
             ) {
                 errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
             }
-            listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach { spec ->
-                if (spec.excludeActivator || spec.excludeExecutor) {
-                    errors += "${script.id}/${node.id}: 実行者・起動者の動的除外は完全バニラ出力できません"
-                }
-            }
         }
         visited.remove(script.graph)
     }
@@ -278,9 +273,6 @@ class VanillaDatapackExporter(
     private fun validateContext(script: DiskScript, node: CommandNode, context: ExecutionContextSpec, errors: MutableList<String>) {
         if (context.target?.kind == TargetKind.FIXED_ENTITY || context.executor?.kind == TargetKind.FIXED_ENTITY) {
             errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
-        }
-        if (listOfNotNull(context.target, context.executor).any { it.excludeActivator || it.excludeExecutor }) {
-            errors += "${script.id}/${node.id}: 実行者・起動者の動的除外は完全バニラ出力できません"
         }
         validatePosition(script, node, context.position, errors)
         if (context.facing?.kind == FacingKind.MYWORLD_SPAWN) {
@@ -649,8 +641,8 @@ class VanillaDatapackExporter(
         "#c_${node.id.toString().replace("-", "")}"
 
     private fun conditionTarget(node: CommandNode): String {
-        val spec = node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.EXECUTOR)
-        return selector(if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) spec else spec.copy(limit = 1))
+        val spec = node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET)
+        return selector(if (spec.kind == TargetKind.INHERITED_TARGET) spec else spec.copy(limit = 1))
     }
 
     private fun lowerVariable(node: CommandNode, graph: CommandGraph): String? {
@@ -976,7 +968,7 @@ class VanillaDatapackExporter(
     }
 
     private fun selector(spec: TargetSpec): String {
-        if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) return "@s"
+        if (spec.kind == TargetKind.INHERITED_TARGET) return "@s"
         if (spec.kind == TargetKind.FIXED_ENTITY) return "@e[limit=0]"
         val base = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER -> "@a"
@@ -1011,7 +1003,7 @@ class VanillaDatapackExporter(
     }
 
     private fun singleSelector(spec: TargetSpec): String =
-        if (spec.kind in setOf(TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET)) {
+        if (spec.kind == TargetKind.INHERITED_TARGET) {
             selector(spec)
         } else {
             selector(spec.copy(limit = 1))

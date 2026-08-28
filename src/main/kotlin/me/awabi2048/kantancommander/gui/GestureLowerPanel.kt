@@ -288,8 +288,6 @@ class GestureLowerPanel(
         choice.id == "filter:gameMode" -> "プレイヤー対象をゲームモードで絞り込みます。未設定なら全モードです"
         choice.id == "filter:tag" -> "指定したスコアボードタグを持つ対象だけを選びます。空欄で解除します"
         choice.id == "filter:name" -> "対象名で絞り込みます。空欄で解除します"
-        choice.id == "filter:excludeExecutor" -> "対象一覧からこのコマンドの実行者を除外するか切り替えます"
-        choice.id == "filter:excludeActivator" -> "対象一覧から起動者を除外するか切り替えます"
         choice.id.startsWith("filter:") -> "対象の種類・距離・件数などを組み合わせて実行対象を絞り込みます"
         choice.id.startsWith("position:") -> "実行位置をこの方式へ変更します"
         choice.id.startsWith("facing:") -> "実行時の向きをこの方式へ変更します"
@@ -516,8 +514,6 @@ class GestureLowerPanel(
     private fun targetChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
         val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
         val choices = listOf(
-            TargetKind.EXECUTOR to "実行者",
-            TargetKind.ACTIVATOR to "起動者",
             TargetKind.INHERITED_TARGET to "継承対象",
             TargetKind.NEAREST_PLAYER to "最寄りのプレイヤー",
             TargetKind.NEARBY_PLAYERS to "周囲のプレイヤー",
@@ -542,8 +538,6 @@ class GestureLowerPanel(
                 TargetSort.RANDOM -> "ランダム"
             }
             "gameMode" -> spec.gameMode ?: "未設定"
-            "excludeExecutor" -> if (spec.excludeExecutor) "有効" else "無効"
-            "excludeActivator" -> if (spec.excludeActivator) "有効" else "無効"
             "entityType" -> spec.entityType ?: "未設定"
             "minimumDistance" -> spec.minimumDistance?.toString() ?: "未設定"
             "maximumDistance" -> spec.maximumDistance?.toString() ?: "未設定"
@@ -560,8 +554,6 @@ class GestureLowerPanel(
             "gameMode" to "ゲームモード",
             "tag" to "タグ",
             "name" to "名前",
-            "excludeExecutor" to "実行者を除外",
-            "excludeActivator" to "起動者を除外",
         ).map { (id, label) -> SettingChoice("filter:$id", "$label ${value(id)}") }
     }
 

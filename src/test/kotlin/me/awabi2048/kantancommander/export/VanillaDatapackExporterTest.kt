@@ -31,13 +31,13 @@ class VanillaDatapackExporterTest {
             graph.nodes.values.forEach { node ->
                 when (node.type) {
                     CommandType.TELEPORT -> {
-                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
                         if (node.destinationSpec == null && node.destinationTargetSpec == null) {
                             node.destinationSpec = PositionSpec(PositionKind.DISK)
                         }
                     }
                     CommandType.GIVE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
-                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
                         if (node.type == CommandType.GIVE_ITEM && node.string("item").isBlank()) {
                             node.params["item"] = "minecraft:stone"
                         }
@@ -58,7 +58,7 @@ class VanillaDatapackExporterTest {
                                 me.awabi2048.kantancommander.model.ConditionKind.ITEM_POSSESSION,
                             ) && node.targetSpec == null
                         ) {
-                            node.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+                            node.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
                         }
                     }
                     else -> Unit
@@ -180,7 +180,7 @@ class VanillaDatapackExporterTest {
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params["inverted"] = "true"
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
-            .targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            .targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
         store.save(script)
 
@@ -232,13 +232,13 @@ class VanillaDatapackExporterTest {
 
         val fixedSecondary = store.create(UUID.randomUUID(), "fixed-secondary")
         GraphEditor.append(fixedSecondary.graph, CommandType.ENTITY_ACTION).apply {
-            targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
             secondaryTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
         }
 
         val fixedDestination = store.create(UUID.randomUUID(), "fixed-destination")
         GraphEditor.append(fixedDestination.graph, CommandType.TELEPORT).apply {
-            targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
             destinationTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
         }
 
@@ -254,7 +254,7 @@ class VanillaDatapackExporterTest {
     fun `standalone function names stay within vanilla limits and references resolve`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "short-function-names")
-        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.EXECUTOR)
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
         GraphEditor.append(script.graph, CommandType.VARIABLE).apply {
             params.putAll(
                 mapOf(
@@ -293,7 +293,7 @@ class VanillaDatapackExporterTest {
     fun `standalone compilation namespaces do not collide between placements`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "placement-namespaces")
-        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.EXECUTOR)
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
         val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
 
         val first = assertInstanceOf(
@@ -415,7 +415,7 @@ class VanillaDatapackExporterTest {
             )
         )
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
-            .targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            .targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
 
         val compilation = VanillaDatapackExporter(store, temp.resolve("exports"))
             .compileForStandalone(script)
@@ -912,7 +912,7 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "teleport-multi")
         GraphEditor.append(script.graph, CommandType.TELEPORT).apply {
-            targetSpec = TargetSpec(TargetKind.EXECUTOR)
+            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
             destinationTargetSpec = null
             destinationSpec = PositionSpec(PositionKind.TARGET)
             contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
@@ -961,7 +961,7 @@ class VanillaDatapackExporterTest {
 
         // 条件分岐のtrue枝だけがコンテキストを設定し、合流後のPREVIOUS参照は経路ごとに内容が変わる。
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
-        condition.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+        condition.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.CONTEXT).apply {
             contextOverride = ExecutionContextSpec(position = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0))
         }
@@ -969,7 +969,7 @@ class VanillaDatapackExporterTest {
         val merge = GraphEditor.appendMerge(script.graph, condition.id)
         val follower = GraphEditor.insert(script.graph, merge.id, GraphEditor.Edge.NEXT, CommandType.DISPLAY_TEXT)
         follower.contextSource = ContextSource.PREVIOUS
-        follower.targetSpec = TargetSpec(TargetKind.EXECUTOR)
+        follower.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
 
         val failure = assertInstanceOf(
             ExportResult.Failure::class.java,

@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
+import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -593,7 +594,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         nodeTarget: TargetSpec?,
         session: ExecutionSession,
     ): List<Entity> = resolveTargetSpecs(
-        nodeTarget ?: context?.target ?: context?.executor ?: TargetSpec(TargetKind.ACTIVATOR),
+        nodeTarget ?: context?.target ?: context?.executor ?: TargetSpec(TargetKind.INHERITED_TARGET),
         session,
         context,
     )
@@ -611,13 +612,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): List<Entity> {
         val selectionOrigin = selectionOrigin(context, session) ?: return emptyList()
         val candidates: List<Entity> = when (spec.kind) {
-            TargetKind.EXECUTOR -> listOfNotNull(
-                context?.executor
-                    ?.takeUnless { it.kind == TargetKind.EXECUTOR }
-                    ?.let { resolveTargetSpec(it, session, context) }
-                    ?: session.actor
-            )
-            TargetKind.ACTIVATOR -> listOfNotNull(session.actor)
             TargetKind.INHERITED_TARGET -> listOfNotNull(
                 context?.target
                     ?.takeUnless { it.kind == TargetKind.INHERITED_TARGET }
@@ -639,7 +633,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         val defaultLimit = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY,
-            TargetKind.EXECUTOR, TargetKind.ACTIVATOR, TargetKind.INHERITED_TARGET, TargetKind.FIXED_ENTITY -> 1
+            TargetKind.INHERITED_TARGET, TargetKind.FIXED_ENTITY -> 1
             else -> Int.MAX_VALUE
         }
         return sorted.take((spec.limit ?: defaultLimit).coerceAtLeast(1))
@@ -651,8 +645,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec?,
     ): Boolean {
-        if (spec.excludeActivator && entity == session.actor) return false
-        if (spec.excludeExecutor && entity == context?.executor?.let { resolveTargetSpec(it, session, context) }) return false
+        // ディスク本体の表示実体（BlockDisplay）は設置物であり、対象選択の相手になるべきではない。
+        // すべてのエンティティ系対象から恒常的に除外する。
+        if (PlacementStore.DISPLAY_TAG in entity.scoreboardTags) return false
         if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
         if (spec.name != null && entity.name != spec.name) return false
         if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
@@ -672,9 +667,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE ->
                     resolvePosition(position, session, context)
                 PositionKind.EXECUTOR ->
-                    resolveTargetSpec(context.executor ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
+                    context?.executor?.let { resolveTargetSpec(it, session, context) }?.location
                 PositionKind.TARGET ->
-                    resolveTargetSpec(context.target ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
+                    context?.target?.let { resolveTargetSpec(it, session, context) }?.location
             }
         }
 
@@ -704,8 +699,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             spec.pitch ?: session.origin.pitch,
         )
         PositionKind.DISK -> session.origin.clone()
-        PositionKind.EXECUTOR -> resolveTargetSpec(context?.executor ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
-        PositionKind.TARGET -> resolveTargetSpec(context?.target ?: TargetSpec(TargetKind.ACTIVATOR), session, context)?.location
+        PositionKind.EXECUTOR -> context?.executor?.let { resolveTargetSpec(it, session, context) }?.location
+        PositionKind.TARGET -> context?.target?.let { resolveTargetSpec(it, session, context) }?.location
         PositionKind.MYWORLD_SPAWN -> session.origin.world.spawnLocation
         PositionKind.TEMPORARY_VARIABLE -> session.temporaryVariables[spec.variable.orEmpty()]?.position?.let {
             Location(session.origin.world, it.x, it.y, it.z, it.yaw, it.pitch)
@@ -728,20 +723,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 destination.pitch = facing.pitch ?: destination.pitch
             }
             FacingKind.EXECUTOR -> {
-                val location = resolveTargetSpec(
-                    context?.executor ?: TargetSpec(TargetKind.ACTIVATOR),
-                    session,
-                    context,
-                )?.location ?: return
+                val location = context?.executor
+                    ?.let { resolveTargetSpec(it, session, context) }
+                    ?.location ?: return
                 destination.yaw = location.yaw
                 destination.pitch = location.pitch
             }
             FacingKind.TARGET -> {
-                val location = resolveTargetSpec(
-                    context?.target ?: TargetSpec(TargetKind.ACTIVATOR),
-                    session,
-                    context,
-                )?.location ?: return
+                val location = context?.target
+                    ?.let { resolveTargetSpec(it, session, context) }
+                    ?.location ?: return
                 faceLocation(destination, location)
             }
             FacingKind.COORDINATES -> faceLocation(

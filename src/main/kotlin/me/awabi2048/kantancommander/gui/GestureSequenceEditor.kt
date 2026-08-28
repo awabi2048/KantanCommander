@@ -1232,12 +1232,6 @@ class GestureSequenceEditor(
                         val next = modes[(modes.indexOf(current.gameMode) + 1).coerceAtLeast(0) % modes.size]
                         CommandSettingsModel.setTargetSpec(it, role, current.copy(gameMode = next))
                     }
-                    "excludeExecutor" -> updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setTargetSpec(it, role, current.copy(excludeExecutor = !current.excludeExecutor))
-                    }
-                    "excludeActivator" -> updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setTargetSpec(it, role, current.copy(excludeActivator = !current.excludeActivator))
-                    }
                     "entityType", "minimumDistance", "maximumDistance", "limit", "tag", "name" -> {
                         beginSettingInput(player, "$value を入力してください") { raw ->
                             val parsed = when (value) {
