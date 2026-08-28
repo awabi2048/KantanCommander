@@ -330,9 +330,11 @@ class GestureSequenceEditor(
         val player = Bukkit.getPlayer(ownerId)
         val dialogId = activeInputDialogId
         invalidateInput()
-        if (dialogId != null && player != null) {
+        if (dialogId != null && player != null && sessionId != null) {
             runCatching {
-                CCSystem.getAPI().getMenuDialogService().closeIfCurrent(
+                api.closeExternalDialogIfCurrent(
+                    ownerId,
+                    sessionId,
                     player,
                     DIALOG_OWNER,
                     dialogId,
