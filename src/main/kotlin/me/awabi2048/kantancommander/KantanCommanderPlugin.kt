@@ -220,8 +220,8 @@ class KantanCommanderPlugin : JavaPlugin() {
             return false
         }
 
-        val actualVersion = try {
-            CCSystem.getAPI().guiRuntimeContractVersion
+        val actualVersions = try {
+            CCSystem.getAPI().guiRuntimeContractVersion to CCSystem.getAPI().gestureGuiContractVersion
         } catch (failure: LinkageError) {
             logger.severe("CC-System GUI契約版を取得できないため、Kantan Commanderを無効化します: ${failure.message}")
             server.pluginManager.disablePlugin(this)
@@ -232,10 +232,14 @@ class KantanCommanderPlugin : JavaPlugin() {
             return false
         }
 
-        if (actualVersion != REQUIRED_GUI_RUNTIME_CONTRACT_VERSION) {
+        if (
+            actualVersions.first != REQUIRED_GUI_RUNTIME_CONTRACT_VERSION ||
+            actualVersions.second != REQUIRED_GESTURE_GUI_CONTRACT_VERSION
+        ) {
             logger.severe(
                 "CC-System GUI契約版が一致しないため、Kantan Commanderを無効化します: " +
-                    "expected=$REQUIRED_GUI_RUNTIME_CONTRACT_VERSION, actual=$actualVersion",
+                    "expectedRuntime=$REQUIRED_GUI_RUNTIME_CONTRACT_VERSION, actualRuntime=${actualVersions.first}, " +
+                    "expectedGesture=$REQUIRED_GESTURE_GUI_CONTRACT_VERSION, actualGesture=${actualVersions.second}",
             )
             server.pluginManager.disablePlugin(this)
             return false
@@ -268,6 +272,7 @@ class KantanCommanderPlugin : JavaPlugin() {
 
     private companion object {
         const val REQUIRED_GUI_RUNTIME_CONTRACT_VERSION = CCSystemAPI.GUI_RUNTIME_CONTRACT_VERSION
+        const val REQUIRED_GESTURE_GUI_CONTRACT_VERSION = CCSystemAPI.GESTURE_GUI_CONTRACT_VERSION
         const val LOCALIZATION_DOMAIN = "kantan_commander_clean"
         const val REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT =
             "db17b0d2c462b309fb7caf7b3cef534c6685178ff44212e8be482fa3c896a6a8"

@@ -31,9 +31,7 @@ class GestureEditorFacade(
             origin = MapPoint(0, 0),
             anchor = anchor,
         )
-        val editor = GestureSequenceEditor(plugin, state)
-        sessions[player.uniqueId] = editor
-        editor.open(player)
+        openEditor(player, state)
     }
 
     fun open(player: Player, scriptId: UUID) {
@@ -43,9 +41,26 @@ class GestureEditorFacade(
             origin = MapPoint(0, 0),
             anchor = null,
         )
-        val editor = GestureSequenceEditor(plugin, state)
-        sessions[player.uniqueId] = editor
+        openEditor(player, state)
+    }
+
+    /**
+     * 同一プレイヤーの旧エディターを先に終了し、新エディターはopen成功後だけ登録します。
+     * 先にMapを上書きすると、open失敗時に実体のないセッションが残り、旧終了通知が
+     * 新エディターを誤って削除するためです。
+     */
+    private fun openEditor(player: Player, state: GestureEditorState) {
+        sessions.remove(player.uniqueId)?.closeImmediately(player.uniqueId)
+        val editor = GestureSequenceEditor(plugin, state, ::onSessionClosed)
         editor.open(player)
+        sessions[player.uniqueId] = editor
+    }
+
+    /** 旧セッションの終了通知が同一プレイヤーの新セッションへ干渉しないよう照合します。 */
+    private fun onSessionClosed(editor: GestureSequenceEditor, ownerId: UUID, sessionId: UUID) {
+        if (sessions[ownerId] === editor && editor.isCurrentSession(sessionId)) {
+            sessions.remove(ownerId)
+        }
     }
 
     fun handleGestureGesture(player: Player) {

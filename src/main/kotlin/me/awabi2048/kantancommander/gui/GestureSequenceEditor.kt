@@ -18,6 +18,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOpenOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionListener
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import me.awabi2048.kantancommander.KantanCommanderPlugin
@@ -171,6 +172,7 @@ private data class ViewportMetrics(
 class GestureSequenceEditor(
     private val plugin: KantanCommanderPlugin,
     private val state: GestureEditorState,
+    private val onSessionClosed: (GestureSequenceEditor, UUID, UUID) -> Unit = { _, _, _ -> },
 ) {
     private val api get() = CCSystem.getAPI().getGestureGuiService()
     // 下部画面のクリックは上部と同じハンドラで処理します（タブ切替・PICKER・CONFIRMの共通ロジック）。
@@ -179,28 +181,38 @@ class GestureSequenceEditor(
     private val UPPER_SCREEN_ID = "gesture-editor-upper"
     /** ダイアログの遅延コールバックを、GUI終了・別編集後に無効化する世代トークン。 */
     private var activeInputToken: UUID? = null
+    /** 所有権を照合して閉じるための、現在の入力Dialog ID。 */
+    private var activeInputDialogId: String? = null
     /** このエディターが所有するGesture GUIセッション。再オープン後の古い応答を遮断します。 */
     private var gestureSessionId: UUID? = null
 
     internal fun isEditing(placement: DiskPlacement): Boolean = state.placement?.key == placement.key
 
+    /** Facadeが終了通知を新しいエディターへ誤適用しないよう、現在のIDを照合します。 */
+    internal fun isCurrentSession(sessionId: UUID): Boolean = gestureSessionId == sessionId
+
+    /**
+     * CC-System側から届く終了通知を、エディターのローカル状態へ反映します。
+     * 通知経路ではCC-Systemのcloseを再度呼ばず、終了要求との再入を防ぎます。
+     */
+    internal fun onGestureSessionClosed(ownerId: UUID, sessionId: UUID) {
+        if (gestureSessionId != sessionId) return
+        detachLocalSession(ownerId, sessionId)
+    }
+
     internal fun closeImmediately(ownerId: UUID) {
         // GUIを閉じた後に遅延した入力コールバックが設定を書き換えないよう、
         // 画面の終了を入力セッションの終了として扱います。
-        val player = Bukkit.getPlayer(ownerId)
-        val hadActiveDialog = activeInputToken != null
-        invalidateInput()
-        gestureSessionId = null
-        if (hadActiveDialog && player != null) {
-            // PaperのDialogにはEscクローズ通知がないため、エディター自身が
-            // 開いた入力DialogをFキー終了時に明示的に閉じます。続けてRuntimeの
-            // 外部サスペンドも復帰し、次回のチャット／インベントリ入力へ
-            // 前回のDialog状態が漏れないようにします。別プラグインのDialogを
-            // 誤って閉じないよう、activeInputTokenがある場合だけ実行します。
-            player.closeDialog()
-            CCSystem.getAPI().getMenuRuntimeService().resumeFromExternal(player)
+        val sessionId = gestureSessionId
+        val ownsCurrentServiceSession = sessionId != null && runCatching {
+            api.snapshot(ownerId)?.sessionId == sessionId
+        }.getOrDefault(false)
+        detachLocalSession(ownerId, sessionId)
+        // 既にCC-System側で終了済み、または別プラグインのセッションへ置き換わった
+        // 場合は、ownerIdだけを根拠に別セッションを閉じてはいけません。
+        if (ownsCurrentServiceSession) {
+            api.close(ownerId, com.awabi2048.ccsystem.api.gesturegui.GestureGuiCloseMode.IMMEDIATE)
         }
-        api.close(ownerId, com.awabi2048.ccsystem.api.gesturegui.GestureGuiCloseMode.IMMEDIATE)
     }
 
     fun open(player: Player) {
@@ -209,7 +221,17 @@ class GestureSequenceEditor(
         api.registerOwner(player.uniqueId)
         val upper = buildUpperViewport(player)
         val lower = lowerPanel.build(state, player)
-        gestureSessionId = api.open(player, listOf(upper, lower), GestureGuiOpenOptions(anchor = state.anchor)).sessionId
+        val snapshot = api.open(
+            player,
+            listOf(upper, lower),
+            GestureGuiOpenOptions(
+                anchor = state.anchor,
+                sessionListener = GestureGuiSessionListener { ownerId, sessionId ->
+                    onGestureSessionClosed(ownerId, sessionId)
+                },
+            ),
+        )
+        gestureSessionId = snapshot.sessionId
     }
 
     fun updateUpper(player: Player) {
@@ -294,6 +316,42 @@ class GestureSequenceEditor(
 
     private fun invalidateInput() {
         activeInputToken = null
+        activeInputDialogId = null
+    }
+
+    /**
+     * Gestureセッション終了時のローカル状態を一箇所で解放します。
+     * DialogはIDと表示所有者をCC-System側で照合し、別機能のDialogを閉じないようにします。
+     * Facade通知はgestureSessionIdをまだ保持した状態で行い、旧通知が新エディターを
+     * 消さないようFacade側でインスタンスとセッションIDを照合できるようにします。
+     */
+    private fun detachLocalSession(ownerId: UUID, sessionId: UUID?) {
+        if (sessionId != null && gestureSessionId != sessionId) return
+        val player = Bukkit.getPlayer(ownerId)
+        val dialogId = activeInputDialogId
+        invalidateInput()
+        if (dialogId != null && player != null) {
+            runCatching {
+                CCSystem.getAPI().getMenuDialogService().closeIfCurrent(
+                    player,
+                    DIALOG_OWNER,
+                    dialogId,
+                )
+            }.onFailure { failure ->
+                // Dialog終了の失敗でGestureセッションのローカル解放を止めないよう、
+                // 失敗は記録して下のセッション終了処理を継続します。
+                plugin.logger.warning("Kantan Commanderの入力Dialog終了に失敗しました: ${failure.message}")
+            }
+        }
+        if (sessionId != null) {
+            runCatching { onSessionClosed(this, ownerId, sessionId) }
+                .onFailure { failure ->
+                    // Facade側の通知失敗でエディター自身のセッションIDを残すと、
+                    // 後続の入力を現行セッションと誤認するため、通知例外を隔離します。
+                    plugin.logger.warning("Kantan Commanderのセッション終了通知に失敗しました: ${failure.message}")
+                }
+        }
+        gestureSessionId = null
     }
 
     private fun buildUpperViewport(player: Player): GestureGuiView {
@@ -898,44 +956,67 @@ class GestureSequenceEditor(
     ) {
         invalidateInput()
         val token = UUID.randomUUID()
+        val dialogId = "gesture-input-$token"
         activeInputToken = token
-        CCSystem.getAPI().getMenuDialogService().show(
-            player,
-            MenuDialogRequest(
-                owner = "kantan-commander",
-                id = "gesture-input-$token",
-                title = Component.text("値を入力"),
-                body = body,
-                inputs = inputs,
-                confirm = MenuDialogButton(
-                    Component.text("確定", NamedTextColor.GREEN),
-                    MenuDialogHandler { target, response ->
-                        val snapshot = api.snapshot(target.uniqueId)
-                        if (target.uniqueId != player.uniqueId || activeInputToken != token || !target.isOnline || snapshot?.sessionId != gestureSessionId) {
-                            return@MenuDialogHandler MenuActionResult.Ignored
-                        }
-                        val error = runCatching { onSubmit(response) }
-                            .getOrElse { "入力を処理できませんでした。" }
-                        if (error != null) {
-                            // RejectedはCC-System側で同じダイアログを入力値付きで
-                            // 再表示するため、入力セッションを維持したまま修正できます。
-                            return@MenuDialogHandler MenuActionResult.Rejected(
-                                Component.text(error, NamedTextColor.RED),
-                            )
-                        }
-                        activeInputToken = null
-                        MenuActionResult.Success(MenuUpdate.Close)
-                    },
+        activeInputDialogId = dialogId
+        try {
+            CCSystem.getAPI().getMenuDialogService().show(
+                player,
+                MenuDialogRequest(
+                    owner = DIALOG_OWNER,
+                    id = dialogId,
+                    title = Component.text("値を入力"),
+                    body = body,
+                    inputs = inputs,
+                    confirm = MenuDialogButton(
+                        Component.text("確定", NamedTextColor.GREEN),
+                        MenuDialogHandler { target, response ->
+                            val snapshot = api.snapshot(target.uniqueId)
+                            if (
+                                target.uniqueId != player.uniqueId ||
+                                activeInputToken != token ||
+                                activeInputDialogId != dialogId ||
+                                !target.isOnline ||
+                                gestureSessionId == null ||
+                                snapshot?.sessionId != gestureSessionId
+                            ) {
+                                return@MenuDialogHandler MenuActionResult.Ignored
+                            }
+                            val error = runCatching { onSubmit(response) }
+                                .getOrElse { "入力を処理できませんでした。" }
+                            if (error != null) {
+                                // RejectedはCC-System側で同じダイアログを入力値付きで
+                                // 再表示するため、入力セッションを維持したまま修正できます。
+                                return@MenuDialogHandler MenuActionResult.Rejected(
+                                    Component.text(error, NamedTextColor.RED),
+                                )
+                            }
+                            invalidateInput()
+                            MenuActionResult.Success(MenuUpdate.Close)
+                        },
+                    ),
+                    cancel = MenuDialogButton(
+                        Component.text("キャンセル", NamedTextColor.GRAY),
+                        MenuDialogHandler { target, _ ->
+                            if (
+                                target.uniqueId != player.uniqueId ||
+                                activeInputToken != token ||
+                                activeInputDialogId != dialogId
+                            ) {
+                                return@MenuDialogHandler MenuActionResult.Ignored
+                            }
+                            invalidateInput()
+                            MenuActionResult.Success(MenuUpdate.Close)
+                        },
+                    ),
                 ),
-                cancel = MenuDialogButton(
-                    Component.text("キャンセル", NamedTextColor.GRAY),
-                    MenuDialogHandler { target, _ ->
-                        if (target.uniqueId == player.uniqueId && activeInputToken == token) activeInputToken = null
-                        MenuActionResult.Success(MenuUpdate.Close)
-                    },
-                ),
-            ),
-        )
+            )
+        } catch (failure: Throwable) {
+            // show()はPaperのDialog生成失敗を例外で返すため、表示されていないDialogを
+            // 後続のclose処理が所有中と誤認しないよう、同じ世代だけをロールバックします。
+            if (activeInputToken == token && activeInputDialogId == dialogId) invalidateInput()
+            throw failure
+        }
     }
 
     /**
@@ -2076,6 +2157,7 @@ class GestureSequenceEditor(
     private companion object {
         // GestureLowerPanelと同じ4項目単位で設定タブをページ分割します。
         const val SETTINGS_PAGE_SIZE = 4
+        const val DIALOG_OWNER = "kantan-commander"
     }
 
 }
