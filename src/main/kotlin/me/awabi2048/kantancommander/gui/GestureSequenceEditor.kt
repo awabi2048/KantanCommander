@@ -94,10 +94,12 @@ data class GestureEditorState(
     var settingContext: CommandSettingContext? = null,
     /** 個別設定画面を開いたフィールドキー。設定保存後の表示更新に使います。 */
     var settingFieldKey: String? = null,
+    /** 設定木で現在選択中の経路。画面名ではなくドメイン階層を保持します。 */
+    var settingTreePath: GestureSettingTreePath? = null,
+    /** 設定木の親子経路。子画面の戻る操作で一つ上のドメインへ戻します。 */
+    var settingRoute: List<GestureSettingFrame> = emptyList(),
     /** 個別設定画面の現在の意味上の編集経路。 */
     var settingScreen: GestureSettingScreen? = null,
-    /** 個別設定画面内の戻り先（条件詳細→対象選択など）。 */
-    var settingParentScreen: GestureSettingScreen? = null,
     var settingPage: Int = 0,
 )
 
@@ -324,24 +326,13 @@ class GestureSequenceEditor(
 
     /** 個別設定子画面を閉じて親の設定一覧へ戻します。 */
     private fun closeSettingChild(player: Player) {
-        val restoreTargetParent =
-            state.settingScreen == GestureSettingScreen.TARGET_FILTERS &&
-                state.settingParentScreen == null &&
-                state.settingContext != null
         if (settingChildOpen(player.uniqueId)) {
             api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
-        if (restoreTargetParent) {
-            // ルート対象の詳細子画面を閉じた後は、対象種別を表示する親タブへ
-            // 復帰します。コンテキストまで消すと、親に描画された種別・詳細設定の
-            // 再クリックが入力処理へ届かなくなるため、対象設定だけ保持します。
-            state.settingScreen = GestureSettingScreen.TARGET
-            state.settingPage = 0
-            state.lowerMode = GestureLowerMode.SETTINGS
-        } else {
-            clearSettingState()
-            state.lowerMode = GestureLowerMode.SETTINGS
-        }
+        // 明示的な戻る操作はpopSettingFrameを通ります。ここはノード選択や
+        // 画面切替による中断専用とし、途中の設定木を残して孤立させません。
+        clearSettingState()
+        state.lowerMode = GestureLowerMode.SETTINGS
         updateLower(player)
     }
 
@@ -702,9 +693,69 @@ class GestureSequenceEditor(
     private fun clearSettingState() {
         state.settingContext = null
         state.settingFieldKey = null
+        state.settingTreePath = null
+        state.settingRoute = emptyList()
         state.settingScreen = null
-        state.settingParentScreen = null
         state.settingPage = 0
+    }
+
+    /** 設定木の現在フレームを既存表示状態へ投影します。 */
+    private fun activateSettingFrame(
+        frame: GestureSettingFrame,
+        nodeIds: List<String> = state.settingTreePath?.nodeIds.orEmpty(),
+    ) {
+        state.settingContext = frame.context
+        state.settingFieldKey = frame.fieldKey
+        state.settingTreePath = GestureSettingTreePath(frame.fieldKey, frame.context.role, nodeIds)
+        state.settingScreen = frame.screen
+        state.settingPage = 0
+    }
+
+    /** タブから設定木のルートを開始します。 */
+    private fun startSettingRoute(frame: GestureSettingFrame) {
+        state.settingRoute = listOf(frame)
+        activateSettingFrame(frame, emptyList())
+    }
+
+    /** 現在ノードの子フレームへ進みます。物理子画面は必要なときだけ開きます。 */
+    private fun pushSettingFrame(
+        player: Player,
+        frame: GestureSettingFrame,
+        selectedNodeId: String,
+    ) {
+        val nextPath = state.settingTreePath?.enterChild(selectedNodeId)?.nodeIds.orEmpty()
+        state.settingRoute = state.settingRoute + frame
+        activateSettingFrame(frame, nextPath)
+        state.lowerMode = GestureLowerMode.SETTING_CHOICES
+        ensureSettingChild(player)
+    }
+
+    /** 直下ノードの選択を経路へ記録し、同じ項目の再クリックを判定可能にします。 */
+    private fun rememberSettingNode(nodeId: String) {
+        val path = state.settingTreePath ?: return
+        state.settingTreePath = path.selectAtDepth(state.settingRoute.size - 1, nodeId)
+    }
+
+    /** 設定木を一段戻します。ルートへ戻る時だけ物理子画面を閉じます。 */
+    private fun popSettingFrame(player: Player): Boolean {
+        if (state.settingRoute.size <= 1) {
+            closeSettingChild(player)
+            return false
+        }
+        state.settingRoute = state.settingRoute.dropLast(1)
+        val frame = state.settingRoute.last()
+        val path = state.settingTreePath?.leaveChild()?.nodeIds.orEmpty()
+        activateSettingFrame(frame, path)
+        if (state.settingRoute.size == 1) {
+            if (settingChildOpen(player.uniqueId)) {
+                api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+            }
+            state.lowerMode = GestureLowerMode.SETTINGS
+        } else {
+            state.lowerMode = GestureLowerMode.SETTING_CHOICES
+        }
+        updateLower(player)
+        return true
     }
 
     /**
@@ -724,7 +775,7 @@ class GestureSequenceEditor(
         state.settingsTab = absoluteIndex
         state.settingsPage = absoluteIndex / SETTINGS_PAGE_SIZE
         // タブ切替時は親画面を先に更新し、選択中の項目・現在値を常に残します。
-        // 構造化された詳細操作は、その直後に同じ下部画面へ重ねる子画面で行います。
+        // 木の直下の選択肢も親画面へ表示し、二段階目が必要なときだけ子画面へ進みます。
         if (settingChildOpen(player.uniqueId)) {
             api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
@@ -739,7 +790,7 @@ class GestureSequenceEditor(
             return
         }
         val descriptor = CommandSettingsModel.descriptor(node, field.key)
-        val screen = screenFor(descriptor.editor)
+        val screen = gestureSettingScreenFor(descriptor.editor)
         if (screen == null) {
             if (settingChildOpen(player.uniqueId)) {
                 api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
@@ -747,39 +798,18 @@ class GestureSequenceEditor(
             clearSettingState()
             state.lowerMode = GestureLowerMode.SETTINGS
         } else {
-            state.settingContext = CommandSettingContext(state.scriptId, node.id, descriptor.role)
-            state.settingFieldKey = field.key
-            state.settingScreen = screen
-            state.settingParentScreen = null
-            state.settingPage = 0
+            startSettingRoute(
+                GestureSettingFrame(
+                    CommandSettingContext(state.scriptId, node.id, descriptor.role),
+                    field.key,
+                    screen,
+                ),
+            )
             state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
-            if (screen != GestureSettingScreen.TARGET) {
-                // 対象種別は親画面で選ぶドメインです。距離やタグなどの詳細条件を
-                // 選択した後だけ、対象フィルター用の子画面を重ねて表示します。
-                ensureSettingChild(player)
-            }
             return
         }
         updateLower(player)
-    }
-
-    private fun screenFor(editor: CommandSettingEditor): GestureSettingScreen? = when (editor) {
-        CommandSettingEditor.TARGET -> GestureSettingScreen.TARGET
-        CommandSettingEditor.POSITION -> GestureSettingScreen.POSITION
-        CommandSettingEditor.FACING -> GestureSettingScreen.FACING
-        CommandSettingEditor.CONDITION_KIND -> GestureSettingScreen.CONDITION_KIND
-        CommandSettingEditor.CONDITION_DETAIL -> GestureSettingScreen.CONDITION_DETAIL
-        CommandSettingEditor.DISPLAY_MODE -> GestureSettingScreen.DISPLAY_MODE
-        CommandSettingEditor.ENTITY_ACTION -> GestureSettingScreen.ENTITY_ACTION
-        CommandSettingEditor.VARIABLE_SCOPE -> GestureSettingScreen.VARIABLE_SCOPE
-        CommandSettingEditor.VARIABLE_TYPE -> GestureSettingScreen.VARIABLE_TYPE
-        CommandSettingEditor.VARIABLE_OPERATION -> GestureSettingScreen.VARIABLE_OPERATION
-        CommandSettingEditor.VARIABLE_VALUE -> GestureSettingScreen.VARIABLE_VALUE
-        CommandSettingEditor.FOR_SOURCE -> GestureSettingScreen.FOR_SOURCE
-        CommandSettingEditor.INCLUSIVE_END -> GestureSettingScreen.INCLUSIVE_END
-        CommandSettingEditor.CONTEXT -> GestureSettingScreen.CONTEXT_OVERRIDE
-        CommandSettingEditor.TEXT -> null
     }
 
     /** SETTINGSの編集ボタンから、ダイアログ入力または専用選択へ遷移します。 */
@@ -798,7 +828,7 @@ class GestureSequenceEditor(
             showDisplayTimingSettingDialog(player, context, node)
             return
         }
-        val screen = screenFor(descriptor.editor)
+        val screen = gestureSettingScreenFor(descriptor.editor)
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目は、チャットを横取りせず
             // CC-System共通のダイアログで入力します。
@@ -828,18 +858,9 @@ class GestureSequenceEditor(
             }
             return
         }
-        state.settingContext = context
-        state.settingFieldKey = fieldKey
-        state.settingScreen = screen
-        state.settingParentScreen = null
-        state.settingPage = 0
+        startSettingRoute(GestureSettingFrame(context, fieldKey, screen))
         state.lowerMode = GestureLowerMode.SETTINGS
         updateLower(player)
-        if (screen != GestureSettingScreen.TARGET) {
-            // 対象タブの初期表示では「対象」と「対象種別」を同じ親画面へ残し、
-            // 距離などの設定は種別選択後に詳細子画面へ進めます。
-            ensureSettingChild(player)
-        }
     }
 
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
@@ -1222,23 +1243,8 @@ class GestureSequenceEditor(
     /** 専用選択画面のすべての選択を共有モデルへ適用します。 */
     private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {
         if (context.gesture != GestureGuiGesture.PRIMARY) return
-        if (context.elementId == "setting-child-empty") {
-            // 子画面の余白クリックは「戻る」専用ボタンと同じ状態遷移にし、
-            // 親画面の選択や下部表示を残したまま子だけを閉じます。
-            closeSettingChild(player)
-            return
-        }
         if (context.elementId == "lower-setting-back") {
-            val parent = state.settingParentScreen
-            if (parent != null) {
-                state.settingScreen = parent
-                state.settingParentScreen = null
-                state.settingPage = 0
-                state.lowerMode = GestureLowerMode.SETTING_CHOICES
-                updateLower(player)
-            } else {
-                closeSettingChild(player)
-            }
+            popSettingFrame(player)
             return
         }
         if (context.elementId.startsWith("lower-setting-page:")) {
@@ -1248,20 +1254,21 @@ class GestureSequenceEditor(
         }
         if (context.elementId == "lower-context") {
             val nodeId = state.selectedNodeId ?: return
-            // 「戻る」ボタンを置かない代わりに、現在のタブを再クリックすると
-            // 子画面を閉じて親の設定一覧へ戻れるようにします。
-            if (settingChildOpen(player.uniqueId) && state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE) {
-                closeSettingChild(player)
+            if (state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE) {
+                clearSettingState()
+                state.lowerMode = GestureLowerMode.SETTINGS
+                updateLower(player)
                 return
             }
-            state.settingContext = CommandSettingContext(state.scriptId, nodeId, null)
-            state.settingFieldKey = "context"
-            state.settingScreen = GestureSettingScreen.CONTEXT_OVERRIDE
-            state.settingParentScreen = null
-            state.settingPage = 0
+            startSettingRoute(
+                GestureSettingFrame(
+                    CommandSettingContext(state.scriptId, nodeId, null),
+                    "context",
+                    GestureSettingScreen.CONTEXT_OVERRIDE,
+                ),
+            )
             state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
-            ensureSettingChild(player)
             return
         }
         val encoded = context.elementId.removePrefix("lower-setting-choice:")
@@ -1276,17 +1283,17 @@ class GestureSequenceEditor(
         val node = script.graph.nodes[settingContext.nodeId] ?: return
 
         fun showSettingScreen(openChild: Boolean = false) {
-            state.lowerMode = GestureLowerMode.SETTING_CHOICES
+            state.lowerMode = if (settingChildOpen(player.uniqueId) || state.settingRoute.size > 1) {
+                GestureLowerMode.SETTING_CHOICES
+            } else {
+                GestureLowerMode.SETTINGS
+            }
             if (openChild && !settingChildOpen(player.uniqueId)) ensureSettingChild(player) else updateLower(player)
         }
 
         fun returnToParentOrSettings() {
-            val parent = state.settingParentScreen
-            if (parent != null) {
-                state.settingScreen = parent
-                state.settingParentScreen = null
-                state.settingPage = 0
-                showSettingScreen()
+            if (state.settingRoute.size > 1) {
+                popSettingFrame(player)
             } else {
                 if (settingChildOpen(player.uniqueId)) {
                     closeSettingChild(player)
@@ -1300,27 +1307,17 @@ class GestureSequenceEditor(
 
         when (screen) {
             GestureSettingScreen.TARGET -> {
-                if (group == "open-filters") {
-                    // ルートの対象タブでは対象種別が親画面に残るため、
-                    // 詳細設定だけを子画面へ重ねます。親をTARGETとして記録すると、
-                    // 戻る操作で対象種別を重複表示する別の子画面へ遷移してしまいます。
-                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
-                    state.settingPage = 0
-                    showSettingScreen(openChild = true)
-                    return
-                }
                 if (group != "target") return
                 val kind = runCatching { TargetKind.valueOf(value) }.getOrNull() ?: return
+                val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
+                val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                 val fixedId = if (kind == TargetKind.FIXED_ENTITY) {
                     player.getTargetEntity(32)?.uniqueId ?: run {
                         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_NO_ENTITY_IN_SIGHT))
                         return
                     }
                 } else null
-                // 条件詳細から対象を開いた場合だけNODE_TARGETへ切り替えます。
-                val role = if (state.settingParentScreen == GestureSettingScreen.CONDITION_DETAIL) {
-                    CommandSettingRole.NODE_TARGET
-                } else settingContext.role
+                val role = settingContext.role
                 val current = CommandSettingsModel.targetSpec(node, role)
                     ?: TargetSpec(kind)
                 val entityKind = kind in setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)
@@ -1335,11 +1332,16 @@ class GestureSequenceEditor(
                             ),
                         )
                 }) return
-                // ルート対象のうち詳細条件を持つ種別は、選択直後に詳細子画面へ進みます。
-                if (state.settingParentScreen == null && CommandSettingsModel.targetSupportsDetailedFilters(kind)) {
-                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
-                    state.settingPage = 0
-                    showSettingScreen(openChild = true)
+                rememberSettingNode(encoded)
+                if (wasSelected && hasChildren) {
+                    pushSettingFrame(
+                        player,
+                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
+                        encoded,
+                    )
+                } else if (hasChildren) {
+                    // 一回目は選択だけを確定し、詳細設定は再クリックで開きます。
+                    showSettingScreen()
                 } else {
                     returnToParentOrSettings()
                 }
@@ -1404,12 +1406,24 @@ class GestureSequenceEditor(
             GestureSettingScreen.POSITION -> {
                 if (group != "position") return
                 val kind = runCatching { PositionKind.valueOf(value) }.getOrNull() ?: return
+                val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
+                val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                rememberSettingNode(encoded)
                 if (kind == PositionKind.TARGET && settingContext.role == CommandSettingRole.DESTINATION) {
-                    state.settingContext = settingContext.copy(role = CommandSettingRole.DESTINATION)
-                    state.settingParentScreen = GestureSettingScreen.POSITION
-                    state.settingScreen = GestureSettingScreen.TARGET
-                    state.settingPage = 0
-                    showSettingScreen(openChild = true)
+                    if (!updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind))
+                        }) return
+                    if (wasSelected && hasChildren) {
+                        pushSettingFrame(
+                            player,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
+                            encoded,
+                        )
+                    } else if (hasChildren) {
+                        showSettingScreen()
+                    } else {
+                        returnToParentOrSettings()
+                    }
                     return
                 }
                 if (kind == PositionKind.COORDINATES) {
@@ -1499,18 +1513,40 @@ class GestureSequenceEditor(
             GestureSettingScreen.CONDITION_DETAIL -> {
                 when (encoded) {
                     "condition-target" -> {
-                        state.settingContext = settingContext.copy(role = CommandSettingRole.NODE_TARGET)
-                        state.settingParentScreen = GestureSettingScreen.CONDITION_DETAIL
-                        state.settingScreen = GestureSettingScreen.TARGET
-                        state.settingPage = 0
-                        showSettingScreen(openChild = true)
+                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
+                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                        rememberSettingNode(encoded)
+                        if (wasSelected && hasChildren) {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext.copy(role = CommandSettingRole.NODE_TARGET),
+                                    fieldKey,
+                                    GestureSettingScreen.TARGET,
+                                ),
+                                encoded,
+                            )
+                        } else {
+                            showSettingScreen()
+                        }
                     }
                     "condition-position" -> {
-                        state.settingContext = settingContext.copy(role = CommandSettingRole.CONDITION_POSITION)
-                        state.settingParentScreen = GestureSettingScreen.CONDITION_DETAIL
-                        state.settingScreen = GestureSettingScreen.POSITION
-                        state.settingPage = 0
-                        showSettingScreen(openChild = true)
+                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
+                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                        rememberSettingNode(encoded)
+                        if (wasSelected && hasChildren) {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext.copy(role = CommandSettingRole.CONDITION_POSITION),
+                                    fieldKey,
+                                    GestureSettingScreen.POSITION,
+                                ),
+                                encoded,
+                            )
+                        } else {
+                            showSettingScreen()
+                        }
                     }
                     "condition-state" -> {
                         if (updateSettingNode(player, settingContext) {
@@ -1616,25 +1652,50 @@ class GestureSequenceEditor(
                 when (value) {
                     "executor", "target" -> {
                         val role = if (value == "executor") CommandSettingRole.CONTEXT_EXECUTOR else CommandSettingRole.CONTEXT_TARGET
-                        state.settingContext = settingContext.copy(role = role)
-                        state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
-                        state.settingScreen = GestureSettingScreen.TARGET
-                        state.settingPage = 0
-                        showSettingScreen(openChild = true)
+                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
+                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                        rememberSettingNode(encoded)
+                        if (wasSelected && hasChildren) {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(settingContext.copy(role = role), fieldKey, GestureSettingScreen.TARGET),
+                                encoded,
+                            )
+                        } else {
+                            showSettingScreen()
+                        }
                     }
                     "position" -> {
-                        state.settingContext = settingContext.copy(role = CommandSettingRole.CONTEXT_POSITION)
-                        state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
-                        state.settingScreen = GestureSettingScreen.POSITION
-                        state.settingPage = 0
-                        showSettingScreen(openChild = true)
+                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
+                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                        rememberSettingNode(encoded)
+                        if (wasSelected && hasChildren) {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext.copy(role = CommandSettingRole.CONTEXT_POSITION),
+                                    fieldKey,
+                                    GestureSettingScreen.POSITION,
+                                ),
+                                encoded,
+                            )
+                        } else {
+                            showSettingScreen()
+                        }
                     }
                     "facing" -> {
-                        state.settingContext = settingContext.copy(role = CommandSettingRole.CONTEXT_FACING)
-                        state.settingParentScreen = GestureSettingScreen.CONTEXT_OVERRIDE
-                        state.settingScreen = GestureSettingScreen.FACING
-                        state.settingPage = 0
-                        showSettingScreen(openChild = true)
+                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
+                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                        rememberSettingNode(encoded)
+                        if (wasSelected && hasChildren) {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(settingContext.copy(role = CommandSettingRole.CONTEXT_FACING), fieldKey, GestureSettingScreen.FACING),
+                                encoded,
+                            )
+                        } else {
+                            showSettingScreen()
+                        }
                     }
                     "source" -> {
                         if (updateSettingNode(player, settingContext) { CommandSettingsModel.toggleContextSource(it) }) updateLower(player)
@@ -1672,8 +1733,8 @@ class GestureSequenceEditor(
                         state.settingsPage = 0
                         updateUpper(player)
                         updateLower(player)
-                        // ノード選択直後も、先頭フィールドが構造化設定なら
-                        // タブの再クリックなしで詳細子画面を表示します。
+                        // ノード選択直後は先頭フィールドを親画面へ表示します。
+                        // 詳細子画面は、木の項目を選択して再クリックしたときだけ開きます。
                         openSettingsTab(player, 0)
                     }
                     else -> Unit
@@ -1836,8 +1897,7 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
             }
-            (context.elementId == "setting-child-empty" ||
-                context.elementId == "lower-context" || context.elementId.startsWith("lower-setting-")) &&
+            (context.elementId == "lower-context" || context.elementId.startsWith("lower-setting-")) &&
                 context.gesture == GestureGuiGesture.PRIMARY -> {
                 handleSettingAction(context, player)
             }

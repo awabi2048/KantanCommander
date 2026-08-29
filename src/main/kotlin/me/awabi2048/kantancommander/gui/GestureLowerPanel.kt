@@ -30,29 +30,31 @@ import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
-import kotlin.math.sqrt
+
+/** 既存の選択肢生成を木のノードとして扱うための局所的な別名です。 */
+private typealias SettingChoice = GestureSettingTreeNode
 
 /**
- * ジェスチャーエディターの下部パネル（左右 1:3 分割型）のビュー生成を担います。
+ * ジェスチャーエディターの下部パネルのビュー生成を担います。
  *
- * - SETTINGS: 左タブ列＝設定フィールド、右詳細＝現在値＋説明。構造化項目は子画面で編集
+ * - SETTINGS: 左タブ列＝設定フィールド、右詳細＝現在値＋説明。設定木の直下は親画面で編集
  * - PICKER: 左タブ列＝コマンドカテゴリ（PROCESS/CONTROL）、右詳細＝種別一覧
  * - CONFIRM: 上部エディターが子画面（openChild・赤ガラス）として開く
  *
- * 座標は画面中央原点・ブロック単位。左列: x=-0.7975 / 右ペイン: x∈[-0.50, 1.03]。
+ * 親画面は左タブ列＋右詳細の分割型、子画面は子画面全体を使う集中型です。
+ * 座標は画面中央原点・ブロック単位です。
  */
 class GestureLowerPanel(
     private val plugin: KantanCommanderPlugin,
     private val onAction: (GestureGuiActionContext) -> Unit = {},
 ) {
     val LOWER_SCREEN_ID = "gesture-editor-lower"
-    /** 個別設定専用。親の下部画面を残したまま前面へ重ねます。 */
+    /** 個別設定専用。親の下部画面へモーダルに重ねます。 */
     val SETTING_CHILD_SCREEN_ID = "gesture-editor-setting-child"
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
 
-    /** 子画面の面積を親の約90%にする一様縮尺です（sqrt(0.9)）。 */
-    /** 子画面の面積は親の70%。集中レイアウトで該当設定に特化した寸法です。 */
-    private val SETTING_CHILD_SCALE = sqrt(0.7)
+    /** 子画面の縦横を親の50%にする一様縮尺です。 */
+    private val SETTING_CHILD_SCALE = 0.5
 
     fun build(state: GestureEditorState, player: Player): GestureGuiView {
         return when (state.lowerMode) {
@@ -63,7 +65,7 @@ class GestureLowerPanel(
         }
     }
 
-    /** 親画面を残して重ねる個別設定子画面を生成します。 */
+    /** 親のタブ列を継承せず、子画面全体で詳細設定を生成します。 */
     fun buildSettingChild(state: GestureEditorState, player: Player): GestureGuiView =
         buildSettingChoices(state, player, child = true)
 
@@ -90,33 +92,63 @@ class GestureLowerPanel(
         val selectedAbsolute = state.settingsTab.coerceIn(0, fields.lastIndex)
         val selected = if (selectedAbsolute in pageStart until pageStart + tabs.size) selectedAbsolute - pageStart else 0
         val field = tabs[selected]
-        val descriptor = CommandSettingsModel.descriptor(node, field.key)
-        val value = field.value(node).render(player)
+        val contextOverrideActive = state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE &&
+            state.settingFieldKey == "context" && state.settingContext?.nodeId == node.id
+        val descriptor = if (contextOverrideActive) {
+            CommandSettingDescriptor(CommandSettingEditor.CONTEXT)
+        } else CommandSettingsModel.descriptor(node, field.key)
+        val settingContext = state.settingContext
+            ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
+        val settingField = if (contextOverrideActive) null else field
+        val displayLabel = if (contextOverrideActive) {
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE)
+        } else KcI18n.text(player, field.label)
+        val value = if (contextOverrideActive) {
+            if (node.contextOverride == null) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERIT_ALL)
+            } else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PARTIAL_OVERRIDE)
+        } else field.value(node).render(player)
+        val settingScreen = if (contextOverrideActive) {
+            GestureSettingScreen.CONTEXT_OVERRIDE
+        } else gestureSettingScreenFor(descriptor.editor)
+        val settingChoices = settingScreen?.let { screen ->
+            settingTreeNodes(
+                node,
+                settingContext,
+                screen,
+                if (contextOverrideActive) "context" else field.key,
+                player,
+            ).map { choice ->
+                if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
+                    choice.copy(selected = true)
+                } else choice
+            }
+        }.orEmpty()
+        val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
         addDescriptionRows(
             visuals,
             player,
-            field,
+            settingField,
             null,
-            targetOnly = descriptor.editor == CommandSettingEditor.TARGET,
+            fallback = displayLabel,
+            actionFallback = if (contextOverrideActive) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE_HOVER)
+            } else null,
+            detailHint = selectedDetail
+                ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
         )
-        addValueRow(visuals, "lower-setting", 0.26, KcI18n.text(player, field.label), value)
+        addValueRow(visuals, "lower-setting", 0.26, displayLabel, value)
 
-        if (descriptor.editor == CommandSettingEditor.TARGET) {
-            // 「対象」と「対象種別」は同じ親ドメインに属するため、対象タブを
-            // 開いた時点で選択肢を表示します。距離などの絞り込みだけを、
-            // 選択後に「詳細設定」の子画面へ分離します。
-            addTargetParentChoices(
-                node,
-                CommandSettingContext(state.scriptId, node.id, descriptor.role),
-                player,
-                visuals,
-                elements,
-            )
+        if (settingScreen != null) {
+            // 設定木の直下は常に親画面へ表示します。子画面は、選択中の
+            // ノードがさらに子要素を持つ場合だけ、再クリックで開きます。
+            addSettingChoiceNodes(settingChoices, player, visuals, elements)
         }
 
-        // 専用選択項目はタブ選択時に直接開くため、ここには余分なボタンを置きません。
-        // 文字列・数値など、専用モデルを持たない項目だけダイアログ入力を表示します。
-        val heldItemSetting = field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
+        // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
+        // 文字列・数値だけを右ペインのダイアログ導線へ残し、専用子画面を増やしません。
+        val heldItemSetting = !contextOverrideActive &&
+            field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
         val mainHandAvailable = player.inventory.itemInMainHand.type != Material.AIR
         val configuredItem = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
         if (heldItemSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS)) {
@@ -174,88 +206,51 @@ class GestureLowerPanel(
     }
 
     /**
-     * 対象タブの親画面へ対象種別を配置します。
+     * 設定木の現在画面に属する直下ノードを配置します。
      *
-     * 対象種別は対象そのものの選択であり、距離・タグ・上限などのフィルター
-     * 条件とは異なるドメインです。そのため親画面には種別までを常設し、
-     * フィルター対象が選択されている場合だけ下端に詳細設定の入口を置きます。
+     * 親画面ではタブの直下を、子画面では現在選択ノードの直下を描画します。
+     * 描画側は子要素の意味を解釈せず、同じノードを選択・ホバー可能にするだけです。
      */
-    private fun addTargetParentChoices(
-        node: CommandNode,
-        context: CommandSettingContext,
+    private fun addSettingChoiceNodes(
+        choices: List<GestureSettingTreeNode>,
         player: Player,
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
+        child: Boolean = false,
     ) {
-        targetChoices(node, context, player)
-            .filterNot { it.id == "open-filters" }
-            .forEachIndexed { index, choice ->
-                val column = index % 2
-                val row = index / 2
-                val cx = if (column == 0) -0.10 else 0.67
-                val cy = TARGET_PARENT_CHOICE_TOP_Y - row * TARGET_PARENT_CHOICE_PITCH
-                val bgId = "target-choice-bg-$index"
-                addBlock(
-                    visuals,
-                    bgId,
-                    cx,
-                    cy,
-                    SETTING_CHOICE_WIDTH,
-                    SETTING_CHOICE_HEIGHT,
-                    if (choice.selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA,
-                    4,
-                )
-                addText(visuals, "target-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
-                elements.add(GestureGuiElement(
-                    elementId = "lower-setting-choice:${choice.id}",
-                    bounds = rect(cx, cy, SETTING_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
-                    acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                    targetVisualId = bgId,
-                    hoverText = singleLineHover(
-                        choice.description.ifBlank { choiceDescription(player, choice) },
-                        x = 0.28,
-                        y = ACTION_DESCRIPTION_Y,
-                    ),
-                ))
+        choices.forEachIndexed { index, choice ->
+            val column = index % 2
+            val row = index / 2
+            val cx = if (child) {
+                if (column == 0) -0.53 else 0.53
+            } else if (column == 0) -0.10 else 0.67
+            val cy = if (child) {
+                CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH
+            } else {
+                TARGET_PARENT_CHOICE_TOP_Y - row * TARGET_PARENT_CHOICE_PITCH
             }
-
-        val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
-        if (CommandSettingsModel.targetSupportsDetailedFilters(current)) {
-            // 種別の選択肢を親へ残したまま、詳細条件だけを子画面へ開くための
-            // 固定入口です。選択肢の列へ混ぜず、常に同じ位置に表示します。
-            val choice = targetChoices(node, context, player).firstOrNull { it.id == "open-filters" }
-                ?: SettingChoice(
-                    "open-filters",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_OPEN_FILTERS),
-                )
+            val width = if (child) CHILD_CHOICE_WIDTH else SETTING_CHOICE_WIDTH
+            val bgId = "setting-choice-bg-$index"
             addBlock(
                 visuals,
-                "target-details-bg",
-                0.28,
-                TARGET_PARENT_DETAILS_Y,
-                1.20,
+                bgId,
+                cx,
+                cy,
+                width,
                 SETTING_CHOICE_HEIGHT,
-                Material.BROWN_CONCRETE,
+                if (choice.selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA,
                 4,
             )
-            addText(
-                visuals,
-                "target-details-label",
-                0.28,
-                TARGET_PARENT_DETAILS_Y - 0.012,
-                0.0045,
-                180,
-                Component.text(choice.label),
-            )
+            addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
             elements.add(GestureGuiElement(
-                elementId = "lower-setting-choice:open-filters",
-                bounds = rect(0.28, TARGET_PARENT_DETAILS_Y, 1.20, SETTING_CHOICE_HEIGHT),
+                elementId = "lower-setting-choice:${choice.id}",
+                bounds = rect(cx, cy, width, SETTING_CHOICE_HEIGHT),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                targetVisualId = "target-details-bg",
+                targetVisualId = bgId,
                 hoverText = singleLineHover(
                     choice.description.ifBlank { choiceDescription(player, choice) },
-                    x = 0.28,
-                    y = ACTION_DESCRIPTION_Y,
+                    x = if (child) 0.0 else 0.28,
+                    y = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
                 ),
             ))
         }
@@ -346,16 +341,19 @@ class GestureLowerPanel(
         y: Double,
         label: String,
         value: String,
+        labelX: Double = -0.08,
+        valueX: Double = 0.52,
     ) {
-        addText(visuals, "$id-label", -0.08, y, 0.0060, 120, Component.text(label))
-        addText(visuals, "$id-value", 0.52, y, 0.0060, 170, Component.text(value))
+        addText(visuals, "$id-label", labelX, y, 0.0060, 120, Component.text(label))
+        addText(visuals, "$id-value", valueX, y, 0.0060, 170, Component.text(value))
     }
 
     /**
-     * 項目の説明を右ペインへ配置します。
-     * 対象設定だけは「対象を設定する」の位置を唯一の説明スロットとし、
-     * ホバーがない場合は対象設定の既定案内を表示します。候補のhoverは同じ座標へ
-     * 重ねるため、対象の説明が候補ごとに増殖しません。
+     * 説明ブロックを意味別の固定スロットへ配置します。
+     *
+     * 1行目は選択中タブ、2行目はそのタブでの操作、3行目は現在選択中の
+     * ノードが詳細を持つ場合だけ表示する案内です。対象だけ別レイアウトに
+     * 分岐させず、候補の説明は各要素のホバーへ同じ規則で渡します。
      */
     private fun addDescriptionRows(
         visuals: MutableList<GestureGuiVisual>,
@@ -363,31 +361,18 @@ class GestureLowerPanel(
         field: EditorField?,
         hoveredDescription: String?,
         fallback: String = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SETTINGS_FIELD_FALLBACK),
-        targetOnly: Boolean = false,
+        actionFallback: String? = null,
+        detailHint: String? = null,
+        centerX: Double = 0.28,
+        tabY: Double = 0.43,
+        hoverY: Double = ACTION_DESCRIPTION_Y,
+        detailY: Double = 0.23,
     ) {
-        if (targetOnly) {
-            addText(
-                visuals,
-                "setting-description-hover",
-                0.28,
-                ACTION_DESCRIPTION_Y,
-                0.0043,
-                280,
-                Component.text(
-                    hoveredDescription ?: KcI18n.text(
-                        player,
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_TARGET_ACTION_FALLBACK,
-                    ),
-                    NamedTextColor.GRAY,
-                ),
-            )
-            return
-        }
         addText(
             visuals,
             "setting-description-tab",
-            0.28,
-            0.43,
+            centerX,
+            tabY,
             0.0047,
             280,
             Component.text(field?.let { fieldDescription(player, it) } ?: fallback),
@@ -395,17 +380,31 @@ class GestureLowerPanel(
         addText(
             visuals,
             "setting-description-hover",
-            0.28,
-            0.36,
+            centerX,
+            hoverY,
             0.0043,
             280,
             Component.text(
                 hoveredDescription
-                    ?: field?.let { fieldActionDescription(player, it) }
-                    ?: "",
+                    ?: if (field?.key == "target") {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_TARGET_ACTION_FALLBACK)
+                    } else field?.let { fieldActionDescription(player, it) }
+                        ?: actionFallback
+                        ?: "",
                 NamedTextColor.GRAY,
             ),
         )
+        if (!detailHint.isNullOrBlank()) {
+            addText(
+                visuals,
+                "setting-description-detail",
+                centerX,
+                detailY,
+                0.0041,
+                280,
+                Component.text(detailHint, NamedTextColor.GRAY),
+            )
+        }
     }
 
     private fun fieldDescription(player: Player, field: EditorField): String =
@@ -423,7 +422,6 @@ class GestureLowerPanel(
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
     private fun choiceDescription(player: Player, choice: SettingChoice): String = when {
-        choice.id == "open-filters" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS)
         choice.id.startsWith("target:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_TARGET)
         choice.id == "filter:entityType" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE)
         choice.id == "filter:minimumDistance" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY)
@@ -465,6 +463,93 @@ class GestureLowerPanel(
         )
 
     /**
+     * 現在の設定経路における直下の木ノードを返します。
+     *
+     * `TARGET` の対象種別、`POSITION` の移動先種別、条件・コンテキストの
+     * 下位ドメインだけが必要に応じて子を持ちます。単純な列挙選択は葉として
+     * 扱い、共通の親画面へ表示して不要な子画面を作りません。
+     */
+    internal fun settingTreeNodes(
+        node: CommandNode,
+        context: CommandSettingContext,
+        screen: GestureSettingScreen,
+        fieldKey: String,
+        player: Player,
+    ): List<GestureSettingTreeNode> = when (screen) {
+        GestureSettingScreen.TARGET -> targetChoices(node, context, player)
+        GestureSettingScreen.POSITION -> positionChoices(node, context, player).map { choice ->
+            if (choice.id == "position:${PositionKind.TARGET.name}" && context.role == CommandSettingRole.DESTINATION) {
+                choice.copy(children = targetChoices(node, context.copy(role = CommandSettingRole.DESTINATION), player))
+            } else choice
+        }
+        GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player).map { choice ->
+            when (choice.id) {
+                "condition-target" -> choice.copy(
+                    selected = CommandSettingsModel.targetSpec(node, CommandSettingRole.NODE_TARGET) != null,
+                    children = targetChoices(
+                        node,
+                        context.copy(role = CommandSettingRole.NODE_TARGET),
+                        player,
+                    ),
+                )
+                "condition-position" -> choice.copy(
+                    selected = CommandSettingsModel.positionSpec(node, CommandSettingRole.CONDITION_POSITION) != null,
+                    children = positionChoices(
+                        node,
+                        context.copy(role = CommandSettingRole.CONDITION_POSITION),
+                        player,
+                    ),
+                )
+                else -> choice
+            }
+        }
+        GestureSettingScreen.CONTEXT_OVERRIDE -> settingChoices(node, context, screen, fieldKey, player).map { choice ->
+            when (choice.id) {
+                "context:executor" -> choice.copy(
+                    children = targetChoices(node, context.copy(role = CommandSettingRole.CONTEXT_EXECUTOR), player),
+                )
+                "context:target" -> choice.copy(
+                    children = targetChoices(node, context.copy(role = CommandSettingRole.CONTEXT_TARGET), player),
+                )
+                "context:position" -> choice.copy(
+                    children = positionChoices(node, context.copy(role = CommandSettingRole.CONTEXT_POSITION), player),
+                )
+                "context:facing" -> choice.copy(
+                    children = facingChoices(node, player),
+                )
+                else -> choice
+            }
+        }
+        else -> settingChoices(node, context, screen, fieldKey, player)
+    }
+
+    /** 現在の表示経路から、クリック対象が詳細子画面を持つかを判定します。 */
+    internal fun hasSettingChoiceChildren(
+        state: GestureEditorState,
+        player: Player,
+        choiceId: String,
+    ): Boolean {
+        val context = state.settingContext ?: return false
+        val screen = state.settingScreen ?: return false
+        val fieldKey = state.settingFieldKey ?: return false
+        val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId) ?: return false
+        return settingTreeNodes(node, context, screen, fieldKey, player)
+            .firstOrNull { it.id == choiceId }
+            ?.hasChildren == true
+    }
+
+    /** 木の選択状態を再利用し、初回選択と詳細再クリックを区別します。 */
+    internal fun isSettingChoiceSelected(
+        state: GestureEditorState,
+        choiceId: String,
+    ): Boolean {
+        // 永続値が選択済みでも、画面を開いた直後のクリックは「選択」と数えます。
+        // 再クリックだけを詳細子画面の入口にするため、判定は一時的な木の経路に
+        // 限定し、モデル上のselectedとは分離します。
+        return state.settingTreePath?.nodeIds?.lastOrNull() == choiceId
+    }
+
+    /**
      * 専用選択で編集する設定画面です。
      *
      * ここではInventoryMenuの画面IDを直接再利用せず、同じ
@@ -484,19 +569,10 @@ class GestureLowerPanel(
         val node = context?.let { script?.graph?.nodes?.get(it.nodeId) }
         val fieldKey = state.settingFieldKey
         val screen = state.settingScreen
-        if (child) {
-            // 子画面の余白自体も入力面にします。ボタン以外をクリックしたときに
-            // 子画面を閉じ、背面の親画面へ誤って入力が透過しないようにします。
-            elements += GestureGuiElement(
-                elementId = "setting-child-empty",
-                bounds = rect(0.0, 0.0, GestureEditorLayout.LOWER_W, GestureEditorLayout.LOWER_H),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-            )
-        }
         if (context == null || node == null || fieldKey == null || screen == null) {
-            addText(visuals, "setting-hint", 0.28, 0.20, 0.008, 220,
+            addText(visuals, "setting-hint", if (child) 0.0 else 0.28, if (child) 0.12 else 0.20, 0.008, 220,
                 Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS)))
-            addBackSetting(player, elements, visuals)
+            addBackSetting(player, elements, visuals, child = child)
             return view(GestureLowerMode.SETTING_CHOICES, elements, visuals, child = child)
         }
 
@@ -513,55 +589,63 @@ class GestureLowerPanel(
                 if (node.contextOverride == null) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERIT_ALL)
                 else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PARTIAL_OVERRIDE)
             } else settingCurrentValue(node, context, screen, fieldKey, player)
-        val targetOnly = screen == GestureSettingScreen.TARGET || screen == GestureSettingScreen.TARGET_FILTERS
-        addDescriptionRows(visuals, player, field, null, fallback = fieldLabel, targetOnly = targetOnly)
-        addValueRow(visuals, "setting-header", 0.26, fieldLabel, fieldValue)
+        val choices = settingTreeNodes(node, context, screen, fieldKey, player).map { choice ->
+            if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
+                choice.copy(selected = true)
+            } else choice
+        }
+        val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
+        addDescriptionRows(
+            visuals,
+            player,
+            field,
+            null,
+            fallback = fieldLabel,
+            detailHint = selectedDetail?.let {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS)
+            },
+            centerX = if (child) 0.0 else 0.28,
+            tabY = if (child) CHILD_TAB_DESCRIPTION_Y else 0.43,
+            hoverY = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
+            detailY = if (child) CHILD_DETAIL_HINT_Y else 0.23,
+        )
+        addValueRow(
+            visuals,
+            "setting-header",
+            if (child) CHILD_HEADER_Y else 0.26,
+            fieldLabel,
+            fieldValue,
+            labelX = if (child) -0.53 else -0.08,
+            valueX = if (child) 0.53 else 0.52,
+        )
 
-        val choices = settingChoices(node, context, screen, fieldKey, player)
         val pageSize = SETTING_CHOICE_PAGE_SIZE
         val pageCount = (choices.size + pageSize - 1) / pageSize
         val page = state.settingPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-        choices.drop(page * pageSize).take(pageSize).forEachIndexed { index, choice ->
-            val column = index % 2
-            val row = index / 2
-            val cx = if (column == 0) -0.10 else 0.67
-            val cy = 0.23 - row * SETTING_CHOICE_PITCH
-            val bgId = "setting-choice-bg-$index"
-            addBlock(
-                visuals,
-                bgId,
-                cx,
-                cy,
-                SETTING_CHOICE_WIDTH,
-                SETTING_CHOICE_HEIGHT,
-                if (choice.selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA,
-                4,
-            )
-            addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
-            elements.add(GestureGuiElement(
-                elementId = "lower-setting-choice:${choice.id}",
-                bounds = rect(cx, cy, SETTING_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
-                // 条件のアイテム設定もメインハンド実体がない場合は無効化し、
-                // 「何もしない」操作でクリック音だけが鳴る状態を防ぎます。
-                acceptedGestures = if (choice.id == "condition-item" && player.inventory.itemInMainHand.type == Material.AIR) {
-                    emptySet()
-                } else setOf(GestureGuiGesture.PRIMARY),
-                targetVisualId = bgId,
-                hoverText = singleLineHover(
-                    choice.description.ifBlank { choiceDescription(player, choice) },
-                    x = 0.28,
-                    y = if (targetOnly) ACTION_DESCRIPTION_Y else DEFAULT_HOVER_Y,
-                ),
-            ))
-        }
-        if (pageCount > 1) addPager(visuals, elements, "setting", page, pageCount, 0.25, -0.43)
-        if (screen != GestureSettingScreen.CONTEXT_OVERRIDE) {
+        addSettingChoiceNodes(
+            choices.drop(page * pageSize).take(pageSize),
+            player,
+            visuals,
+            elements,
+            child = child,
+        )
+        if (pageCount > 1) addPager(
+            visuals,
+            elements,
+            "setting",
+            page,
+            pageCount,
+            if (child) 0.0 else 0.25,
+            if (child) CHILD_PAGER_Y else -0.43,
+        )
+        if (child || screen != GestureSettingScreen.CONTEXT_OVERRIDE) {
             addBackSetting(
                 player,
                 elements,
                 visuals,
+                child = child,
                 centerX = if (child) 0.0 else 0.78,
-                width = if (child) 1.10 else 0.42,
+                width = if (child) CHILD_BACK_WIDTH else 0.42,
             )
         }
         return view(GestureLowerMode.SETTING_CHOICES, elements, visuals, child = child)
@@ -571,9 +655,11 @@ class GestureLowerPanel(
         player: Player,
         elements: MutableList<GestureGuiElement>,
         visuals: MutableList<GestureGuiVisual>,
-        centerX: Double = 0.67,
-        width: Double = 0.66,
+        child: Boolean = false,
+        centerX: Double = if (child) 0.0 else 0.67,
+        width: Double = if (child) CHILD_BACK_WIDTH else 0.66,
     ) {
+        // childフラグを引数の既定値にも反映し、戻る操作の位置を親と混同しません。
         addBlock(visuals, "setting-back-bg", centerX, -0.43, width, 0.10, Material.BROWN_CONCRETE, 4)
         addText(visuals, "setting-back-label", centerX, -0.43, 0.0048, 100,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)))
@@ -585,20 +671,13 @@ class GestureLowerPanel(
         ))
     }
 
-    private data class SettingChoice(
-        val id: String,
-        val label: String,
-        val selected: Boolean = false,
-        val description: String = "",
-    )
-
     private fun settingChoices(
         node: CommandNode,
         context: CommandSettingContext,
         screen: GestureSettingScreen,
         fieldKey: String,
         player: Player,
-    ): List<SettingChoice> = when (screen) {
+    ): List<GestureSettingTreeNode> = when (screen) {
         GestureSettingScreen.TARGET -> targetChoices(node, context, player)
         GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player)
@@ -694,7 +773,7 @@ class GestureLowerPanel(
     private fun labeled(player: Player, key: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): String =
         "${KcI18n.text(player, key)} ${value ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)}"
 
-    /** 対象種別だけを表示し、詳細条件は選択後に別の子画面へ切り替えます。 */
+    /** 対象種別を木の親ノードとして表示し、詳細条件を子ノードへぶら下げます。 */
     private fun targetChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
         val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
         val kindChoices = listOf(
@@ -706,19 +785,28 @@ class GestureLowerPanel(
             TargetKind.NEAREST_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY,
             TargetKind.NEARBY_ENTITIES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES,
             TargetKind.FIXED_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY,
-        ).map { (kind, label) -> SettingChoice("target:${kind.name}", KcI18n.text(player, label), current == kind) }
-        val detailChoice = if (CommandSettingsModel.targetSupportsDetailedFilters(current)) {
-            listOf(SettingChoice(
-                "open-filters",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_OPEN_FILTERS),
-            ))
-        } else emptyList()
-        return kindChoices + detailChoice
+        ).map { (kind, label) ->
+            SettingChoice(
+                id = "target:${kind.name}",
+                label = KcI18n.text(player, label),
+                selected = current == kind,
+                children = if (CommandSettingsModel.targetSupportsDetailedFilters(kind)) {
+                    targetFilterChoices(node, context, player, kindOverride = kind)
+                } else emptyList(),
+            )
+        }
+        return kindChoices
     }
 
-    private fun targetFilterChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
-        val spec = CommandSettingsModel.targetSpec(node, context.role)
-            ?: me.awabi2048.kantancommander.model.TargetSpec(TargetKind.NEAREST_ENTITY)
+    private fun targetFilterChoices(
+        node: CommandNode,
+        context: CommandSettingContext,
+        player: Player,
+        kindOverride: TargetKind? = null,
+    ): List<SettingChoice> {
+        val currentSpec = CommandSettingsModel.targetSpec(node, context.role)
+            ?: me.awabi2048.kantancommander.model.TargetSpec(kindOverride ?: TargetKind.NEAREST_ENTITY)
+        val spec = kindOverride?.let { currentSpec.copy(kind = it) } ?: currentSpec
         fun value(parameter: String): String? = when (parameter) {
             "sort" -> KcI18n.text(player, when (spec.sort) {
                 TargetSort.NEAREST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_NEAREST
@@ -796,9 +884,15 @@ class GestureLowerPanel(
         fun label(key: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): String =
             labeled(player, key, value)
         return when (kind) {
-            ConditionKind.TARGET_EXISTS -> listOf(SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), false))
+            ConditionKind.TARGET_EXISTS -> listOf(
+                SettingChoice(
+                    "condition-target",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                    node.targetSpec != null,
+                ),
+            )
             ConditionKind.ENTITY_STATE -> listOf(
-                SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), false),
+                SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), node.targetSpec != null),
                 SettingChoice(
                     "condition-state",
                     label(
@@ -829,11 +923,11 @@ class GestureLowerPanel(
                 SettingChoice("condition-value", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("value", "0"))),
             )
             ConditionKind.BLOCK_STATE -> listOf(
-                SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION), false),
+                SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION), node.conditionPositionSpec != null),
                 SettingChoice("condition-block", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, node.string("block", "minecraft:air"))),
             )
             ConditionKind.ITEM_POSSESSION -> listOf(
-                SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), false),
+                SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), node.targetSpec != null),
                 SettingChoice("condition-item", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION, node.string("item"))),
                 SettingChoice("condition-count", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT, node.string("count", "1"))),
             )
@@ -1220,10 +1314,19 @@ class GestureLowerPanel(
         const val SETTING_CHOICE_WIDTH = 0.66
         const val SETTING_CHOICE_HEIGHT = 0.10
         const val SETTING_CHOICE_PITCH = 0.12
-        // 親画面では上部の現在値と説明を避け、対象種別を2列4行で固定します。
+        // 親画面では上部の現在値と説明を避け、直接の設定項目を2列で表示します。
         const val TARGET_PARENT_CHOICE_TOP_Y = 0.08
         const val TARGET_PARENT_CHOICE_PITCH = 0.11
-        const val TARGET_PARENT_DETAILS_Y = -0.40
+        // 子画面は親の右ペイン座標を再利用せず、子画面全体を論理領域として使います。
+        const val CHILD_CHOICE_WIDTH = 0.92
+        const val CHILD_CHOICE_TOP_Y = 0.08
+        const val CHILD_CHOICE_PITCH = 0.12
+        const val CHILD_HEADER_Y = 0.36
+        const val CHILD_TAB_DESCRIPTION_Y = 0.29
+        const val CHILD_HOVER_Y = 0.23
+        const val CHILD_DETAIL_HINT_Y = 0.17
+        const val CHILD_PAGER_Y = -0.34
+        const val CHILD_BACK_WIDTH = 1.70
         const val ACTION_DESCRIPTION_Y = 0.36
         const val DEFAULT_HOVER_Y = 0.39
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
