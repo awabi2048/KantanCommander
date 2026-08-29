@@ -51,7 +51,8 @@ class GestureLowerPanel(
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
 
     /** 子画面の面積を親の約90%にする一様縮尺です（sqrt(0.9)）。 */
-    private val SETTING_CHILD_SCALE = sqrt(0.9)
+    /** 子画面の面積は親の70%。集中レイアウトで該当設定に特化した寸法です。 */
+    private val SETTING_CHILD_SCALE = sqrt(0.7)
 
     fun build(state: GestureEditorState, player: Player): GestureGuiView {
         return when (state.lowerMode) {
@@ -551,9 +552,13 @@ class GestureLowerPanel(
     private fun labeled(player: Player, key: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): String =
         "${KcI18n.text(player, key)} ${value ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)}"
 
+    /**
+     * 対象設定は「種別候補＋詳細条件」を1つの子画面で完結させます。
+     * 種別を確定した後に別画面へ遷移させないことで、確認・微修正の導線を短くします。
+     */
     private fun targetChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
         val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
-        val choices = listOf(
+        val kindChoices = listOf(
             TargetKind.INHERITED_TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET,
             TargetKind.NEAREST_PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
             TargetKind.NEARBY_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS,
@@ -563,9 +568,7 @@ class GestureLowerPanel(
             TargetKind.NEARBY_ENTITIES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES,
             TargetKind.FIXED_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY,
         ).map { (kind, label) -> SettingChoice("target:${kind.name}", KcI18n.text(player, label), current == kind) }
-        // 対象種別にかかわらずオプション入口を常設します。対象を変更した後に
-        // 詳細条件の導線だけ消えると、同じ設定を再び開けなくなるためです。
-        return choices + SettingChoice("open-filters", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_OPEN_FILTERS))
+        return kindChoices + targetFilterChoices(node, context, player)
     }
 
     private fun targetFilterChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
@@ -598,7 +601,9 @@ class GestureLowerPanel(
             "gameMode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE,
             "tag" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
             "name" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
-        ).map { (id, label) -> SettingChoice("filter:$id", labeled(player, label, value(id))) }
+        )
+            .filter { (id, _) -> CommandSettingsModel.targetFilterApplies(spec.kind, id) }
+            .map { (id, label) -> SettingChoice("filter:$id", labeled(player, label, value(id))) }
     }
 
     private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {

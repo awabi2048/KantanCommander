@@ -250,6 +250,25 @@ object CommandSettingsModel {
         VariableType.ENTITY -> listOf(VariableOperation.STORE_TARGET, VariableOperation.CLEAR)
     }
 
+    private val PLAYER_KINDS = setOf(
+        TargetKind.NEAREST_PLAYER,
+        TargetKind.NEARBY_PLAYERS,
+        TargetKind.ALL_PLAYERS,
+        TargetKind.RANDOM_PLAYER,
+    )
+    private val ENTITY_KINDS = setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)
+
+    /**
+     * 対象種別に対して詳細条件が意味を持つかを判定します。
+     * 実行側の解決（matches）に合わせ、プレイヤー種別へentityType、
+     * エンティティ種別へgameModeを指定しても解決しないため、GUIでは提示しません。
+     */
+    fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean = when (parameter) {
+        "entityType" -> kind in ENTITY_KINDS
+        "gameMode" -> kind in PLAYER_KINDS
+        else -> true
+    }
+
     /** インベントリ／ジェスチャー共通の保存処理です。配置済み表示も同時に更新します。 */
     fun updateNode(
         plugin: KantanCommanderPlugin,

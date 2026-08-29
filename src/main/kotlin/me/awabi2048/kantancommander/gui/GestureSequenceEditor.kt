@@ -263,7 +263,6 @@ class GestureSequenceEditor(
                 // どの表示を復元すべきか失われるためです。
                 parentScreenId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID,
                 overlayMaterial = Material.RED_STAINED_GLASS,
-                animated = false,
             ),
         )
         if (!opened) {
@@ -293,7 +292,6 @@ class GestureSequenceEditor(
             GestureGuiChildOptions(
                 parentScreenId = lowerPanel.LOWER_SCREEN_ID,
                 overlayMaterial = Material.GRAY_STAINED_GLASS,
-                animated = false,
             ),
         )
         if (!opened) {
@@ -866,7 +864,6 @@ class GestureSequenceEditor(
             GestureGuiChildOptions(
                 parentScreenId = parentId,
                 overlayMaterial = Material.RED_STAINED_GLASS,
-                animated = false,
             ),
         )
         if (!opened) {
@@ -1239,22 +1236,12 @@ class GestureSequenceEditor(
         }
 
         when (screen) {
-            GestureSettingScreen.TARGET -> {
-                if (group == "open-filters") {
-                    // 通常の対象選択から詳細条件へ進んだ場合は、戻る操作で
-                    // まず対象種別へ戻れるように直前画面を明示します。
-                    if (state.settingParentScreen == null) {
-                        state.settingParentScreen = GestureSettingScreen.TARGET
-                    }
-                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
-                    state.settingPage = 0
-                    showSettingScreen(openChild = true)
-                    return
-                }
-                if (group != "target") return
-                val kind = runCatching { TargetKind.valueOf(value) }.getOrNull() ?: return
+            GestureSettingScreen.TARGET -> if (group == "target") {                val kind = runCatching { TargetKind.valueOf(value) }.getOrNull() ?: return
                 val fixedId = if (kind == TargetKind.FIXED_ENTITY) {
-                    player.getTargetEntity(32)?.uniqueId ?: return
+                    player.getTargetEntity(32)?.uniqueId ?: run {
+                        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_NO_ENTITY_IN_SIGHT))
+                        return
+                    }
                 } else null
                 // 条件詳細から対象を開いた場合だけNODE_TARGETへ切り替えます。
                 val role = if (state.settingParentScreen == GestureSettingScreen.CONDITION_DETAIL) {
@@ -1265,28 +1252,9 @@ class GestureSequenceEditor(
                 if (!updateSettingNode(player, settingContext.copy(role = role)) { target ->
                         CommandSettingsModel.setTargetSpec(target, role, current.copy(kind = kind, fixedEntityId = fixedId))
                     }) return
-                // インベントリGUIと同じく、距離・ソート等を持つ対象は選択直後に
-                // 詳細条件へ進みます。ネストした対象選択は呼び出し元へ戻します。
-                if (state.settingParentScreen == null && kind in setOf(
-                        TargetKind.NEAREST_PLAYER,
-                        TargetKind.NEARBY_PLAYERS,
-                        TargetKind.ALL_PLAYERS,
-                        TargetKind.RANDOM_PLAYER,
-                        TargetKind.NEAREST_ENTITY,
-                        TargetKind.NEARBY_ENTITIES,
-                    )) {
-                    if (state.settingParentScreen == null) {
-                        state.settingParentScreen = GestureSettingScreen.TARGET
-                    }
-                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
-                    state.settingPage = 0
-                    showSettingScreen(openChild = true)
-                } else {
-                    returnToParentOrSettings()
-                }
-            }
-            GestureSettingScreen.TARGET_FILTERS -> {
-                if (group != "filter") return
+                // 種別と詳細条件は同一画面に並んでいるため、選択状態の再描画だけで完結します。
+                updateLower(player)
+            } else if (group == "filter") {
                 val role = settingContext.role
                 val current = CommandSettingsModel.targetSpec(node, role) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
                 when (value) {
@@ -1566,6 +1534,8 @@ class GestureSequenceEditor(
                     "inherit" -> if (updateSettingNode(player, settingContext) { it.contextOverride = null }) returnToParentOrSettings()
                 }
             }
+            // TARGET_FILTERSは対象画面へ統合したため、ここでは到達しません。
+            GestureSettingScreen.TARGET_FILTERS -> Unit
         }
     }
 

@@ -888,7 +888,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun renderTargetFilters(player: Player, route: MenuRoute): InventoryMenuView {
         val spec = selectedTargetSpec(route) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
-        val options = listOf(
+        // 種別に対して意味を持つ詳細条件だけを提示します
+        // （プレイヤー種別にentityType、エンティティ種別にgameModeは解決しないため）。
+        val allOptions = listOf(
             DetailOption(Material.ARMOR_STAND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, "entityType", displayLiteral(spec.entityType)),
             DetailOption(Material.LIME_DYE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, "minimumDistance", displayLiteral(spec.minimumDistance)),
             DetailOption(Material.RED_DYE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE, "maximumDistance", displayLiteral(spec.maximumDistance)),
@@ -902,6 +904,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             DetailOption(Material.NAME_TAG, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG, "tag", displayLiteral(spec.tag)),
             DetailOption(Material.OAK_SIGN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME, "name", displayLiteral(spec.name)),
         )
+        val options = allOptions.filter { CommandSettingsModel.targetFilterApplies(spec.kind, it.action) }
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
             choiceElement(
