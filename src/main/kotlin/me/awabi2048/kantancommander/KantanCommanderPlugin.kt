@@ -32,6 +32,16 @@ import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.plugin.java.JavaPlugin
 
+/**
+ * Kantan Commanderが要求するCC-System言語契約をビルド時・起動時で共有します。
+ *
+ * この値は表示文そのものではなく、Kantanの全ローカライズキーの構造契約です。
+ * CC-System側でキーを追加・削除したときに、Kantanの依存JARと実行時JARの世代ずれを
+ * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
+ */
+internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
+    "c508268df73c9acdee86605cfbaadc7f00b21fa10f6d4c7e5ffd75814a4aaa86"
+
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
         private set
@@ -284,7 +294,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         const val REQUIRED_GESTURE_GUI_CONTRACT_VERSION = CCSystemAPI.GESTURE_GUI_CONTRACT_VERSION
         const val LOCALIZATION_DOMAIN = "kantan_commander_clean"
         const val REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT =
-            "55d6fec58db7be89ae8dd833ecebf1a1771e0a65bf8d864be9832ae152224dba"
+            KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT
     }
 
 }

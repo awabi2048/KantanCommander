@@ -9,7 +9,7 @@ class KantanLocalizationDependencyTest {
     @Test
     fun `CC-System dependency provides the complete Kantan GUI contract`() {
         assertEquals(
-            "c508268df73c9acdee86605cfbaadc7f00b21fa10f6d4c7e5ffd75814a4aaa86",
+            KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT,
             LocalizationCatalogContract.fingerprint("kantan_commander_clean"),
         )
         assertEquals(
