@@ -247,6 +247,27 @@ object CommandSettingsModel {
         else -> node.contextOverride?.position
     }
 
+    /**
+     * 位置ドメインの現在種別を返します。
+     *
+     * 移動先だけは「座標」と「別エンティティ」が別の構造化値へ保存されます。
+     * destinationTargetSpecをPositionSpecへ詰め替えて扱うと、対象設定後に親画面の
+     * 選択色・現在値が未設定へ戻り、対象の詳細設定も別ドメインへ漏れます。
+     * 表示・選択判定はこの共通関数を使い、実データはtargetSpec/positionSpecの
+     * 各setterへ分けて保存します。
+     */
+    fun positionKind(node: CommandNode, role: CommandSettingRole?): PositionKind? = when (role) {
+        CommandSettingRole.DESTINATION -> when {
+            node.destinationTargetSpec != null -> PositionKind.TARGET
+            else -> node.destinationSpec?.kind
+        }
+        CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec?.kind
+        CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
+        CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
+        CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
+        else -> node.contextOverride?.position?.kind
+    }
+
     fun setPositionSpec(node: CommandNode, role: CommandSettingRole?, spec: PositionSpec) {
         when (role) {
             CommandSettingRole.DESTINATION -> {

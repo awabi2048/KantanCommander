@@ -785,7 +785,7 @@ class GestureLowerPanel(
             id.startsWith("block:") -> choice.selected &&
                 CommandSettingsModel.isFieldConfigured(node, "operation", context.role)
             id.startsWith("position:") -> choice.selected &&
-                CommandSettingsModel.positionSpec(node, context.role)?.kind?.name == id.removePrefix("position:")
+                CommandSettingsModel.positionKind(node, context.role)?.name == id.removePrefix("position:")
             id.startsWith("facing:") -> choice.selected &&
                 CommandSettingsModel.facingSpec(node)?.kind?.name == id.removePrefix("facing:")
             id == "condition-target" -> node.targetSpec != null
@@ -1137,7 +1137,7 @@ class GestureLowerPanel(
 
     private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
         val destination = context.role == CommandSettingRole.DESTINATION
-        val current = CommandSettingsModel.positionSpec(node, context.role)?.kind
+        val current = CommandSettingsModel.positionKind(node, context.role)
         val choices = if (destination) {
             listOf(
                 PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES_SET,
@@ -1250,7 +1250,7 @@ class GestureLowerPanel(
         // enum名を直接見せず、インベントリGUIと同じ日本語表示へ統一します。
         GestureSettingScreen.TARGET -> CommandSettingsModel.targetSpec(node, context.role)?.kind
             ?.let { targetKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-        GestureSettingScreen.POSITION -> CommandSettingsModel.positionSpec(node, context.role)?.kind
+        GestureSettingScreen.POSITION -> CommandSettingsModel.positionKind(node, context.role)
             ?.let { positionKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.FACING -> CommandSettingsModel.facingSpec(node)?.kind
             ?.let { facingKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
@@ -1428,7 +1428,10 @@ class GestureLowerPanel(
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
             targetVisualId = "confirm-no-bg",
         ))
-        return view(GestureLowerMode.CONFIRM, elements, visuals)
+        // 確認画面も詳細設定と同じ子画面契約（面積比50%）で表示します。
+        // ここだけ0.5倍の縦横指定にすると、面積比が0.25へ縮み、子画面ごとに
+        // 視線距離と操作領域が変わってしまいます。
+        return view(GestureLowerMode.CONFIRM, elements, visuals, child = true)
     }
 
     private fun view(
@@ -1448,15 +1451,15 @@ class GestureLowerPanel(
         ),
         visuals,
         panel = GestureGuiPanel(
-            width = when {
-                mode == GestureLowerMode.CONFIRM -> GestureEditorLayout.LOWER_W * 0.5
-                child -> GestureEditorLayout.LOWER_W * SETTING_CHILD_SCALE
-                else -> GestureEditorLayout.LOWER_W
+            width = if (mode == GestureLowerMode.CONFIRM || child) {
+                GestureEditorLayout.LOWER_W * SETTING_CHILD_SCALE
+            } else {
+                GestureEditorLayout.LOWER_W
             },
-            height = when {
-                mode == GestureLowerMode.CONFIRM -> GestureEditorLayout.LOWER_H * 0.5
-                child -> GestureEditorLayout.LOWER_H * SETTING_CHILD_SCALE
-                else -> GestureEditorLayout.LOWER_H
+            height = if (mode == GestureLowerMode.CONFIRM || child) {
+                GestureEditorLayout.LOWER_H * SETTING_CHILD_SCALE
+            } else {
+                GestureEditorLayout.LOWER_H
             },
             backgroundMaterial = Material.GRAY_CONCRETE,
             frameMaterial = Material.LIGHT_GRAY_CONCRETE,

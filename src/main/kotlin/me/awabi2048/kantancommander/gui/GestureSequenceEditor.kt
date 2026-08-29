@@ -1612,8 +1612,13 @@ class GestureSequenceEditor(
                 val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                 rememberSettingNode(encoded)
                 if (kind == PositionKind.TARGET && settingContext.role == CommandSettingRole.DESTINATION) {
+                    // 「移動先→別エンティティ」は位置ではなく対象ドメインです。
+                    // PositionSpec(TARGET)へ保存すると、対象の種類・距離が失われるため、
+                    // targetSpecの共通setterへ初期対象だけを渡して親子の境界を保ちます。
+                    val currentTarget = CommandSettingsModel.targetSpec(node, settingContext.role)
+                        ?: TargetSpec(TargetKind.INHERITED_TARGET)
                     if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind))
+                            CommandSettingsModel.setTargetSpec(it, settingContext.role, currentTarget)
                         }) return
                     when (settingSelectionAction(wasSelected, hasChildren)) {
                         GestureSettingSelectionAction.ENTER_CHILD -> {

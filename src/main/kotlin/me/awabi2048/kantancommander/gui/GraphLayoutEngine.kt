@@ -422,8 +422,9 @@ object GraphLayoutEngine {
                 putTailAdd(trueSegment.nextX, y, trueSegment.tail, condition.id)
             }
             val falseY = trueSegment.maxY + 2
-            // FALSE枝は条件分岐アイコンの中心列から真下へ降ろします。途中の縦線と
-            // 角は接続専用とし、挿入判定は下段の水平経路だけへ付与します。
+            // FALSE枝は条件分岐アイコンの中心列から真下へ降ろします。縦線も
+            // 水平枝と同じFALSE経路の一部なので、下段へ合流しない条件分岐でも
+            // 同じ挿入先を全高さへ付与します。
             for (verticalY in y + 1 until falseY) {
                 putPath(x, verticalY, MapCellKind.BRANCH_PATH)
             }
@@ -447,6 +448,18 @@ object GraphLayoutEngine {
             }
             if (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop)) {
                 putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
+            }
+            val falseTarget = when {
+                falseSegment.tail != null ->
+                    InsertionTarget(falseSegment.tail, GraphEditor.Edge.NEXT, condition.id)
+                falseStart == null || falseStart == stop ->
+                    InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
+                else -> null
+            }
+            if (falseTarget != null) {
+                for (verticalY in y + 1..falseY) {
+                    addInsertionTarget(MapPoint(x, verticalY), falseTarget)
+                }
             }
             val trueOpen = trueStart == null || trueSegment.hasOpenEnd ||
                 (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop))

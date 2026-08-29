@@ -24,6 +24,7 @@ class CommandSettingsModelTest {
         assertEquals(destination, node.destinationTargetSpec)
         assertNull(node.destinationSpec)
         assertEquals(destination, CommandSettingsModel.targetSpec(node, CommandSettingRole.DESTINATION))
+        assertEquals(PositionKind.TARGET, CommandSettingsModel.positionKind(node, CommandSettingRole.DESTINATION))
     }
 
     @Test

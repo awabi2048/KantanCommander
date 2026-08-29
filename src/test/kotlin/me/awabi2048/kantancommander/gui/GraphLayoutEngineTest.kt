@@ -188,7 +188,10 @@ class GraphLayoutEngineTest {
 
         assertEquals(GraphEditor.Edge.TRUE, layout.cells[MapPoint(2, 1)]?.insertionTarget?.edge)
         assertEquals(GraphEditor.Edge.FALSE, layout.cells[MapPoint(2, 3)]?.insertionTarget?.edge)
-        assertEquals(null, layout.cells[MapPoint(2, 2)]?.insertionTarget)
+        assertEquals(
+            InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id),
+            layout.cells[MapPoint(1, 2)]?.insertionTarget,
+        )
     }
 
     @Test
