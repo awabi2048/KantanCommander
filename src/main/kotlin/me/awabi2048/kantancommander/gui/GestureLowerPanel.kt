@@ -120,9 +120,8 @@ class GestureLowerPanel(
                 // クリック音も発生させません。
                 acceptedGestures = if (heldItemSetting && !mainHandAvailable) emptySet() else setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "lower-edit-bg",
-                hoverText = twoLineHover(
-                    top = fieldDescription(player, field),
-                    bottom = KcI18n.text(
+                hoverText = singleLineHover(
+                    KcI18n.text(
                         player,
                         if (heldItemSetting) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_HOVER
                         else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER,
@@ -143,9 +142,8 @@ class GestureLowerPanel(
                     emptySet()
                 } else setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "lower-item-get-bg",
-                hoverText = twoLineHover(
-                    top = fieldDescription(player, field),
-                    bottom = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
+                hoverText = singleLineHover(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
                     x = 0.28,
                     y = 0.39,
                 ),
@@ -188,9 +186,8 @@ class GestureLowerPanel(
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "tab-bg-$index",
-                hoverText = twoLineHover(
-                    top = fieldDescription(player, field),
-                    bottom = fieldActionDescription(player, field),
+                hoverText = singleLineHover(
+                    fieldActionDescription(player, field),
                     x = 0.28,
                     y = 0.39,
                 ),
@@ -209,9 +206,8 @@ class GestureLowerPanel(
                 bounds = rect(-0.7975, contextY, 0.47, 0.14),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "context-bg",
-                hoverText = twoLineHover(
-                    top = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE),
-                    bottom = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE_HOVER),
+                hoverText = singleLineHover(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE_HOVER),
                     x = 0.28,
                     y = 0.39,
                 ),
@@ -315,11 +311,15 @@ class GestureLowerPanel(
         else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DEFAULT)
     }
 
-    private fun twoLineHover(top: String, bottom: String, x: Double, y: Double): GestureGuiHoverText =
+    /**
+     * ホバーは1行1エンティティで表示します。1つのTextDisplayへ複数行を
+     * 入れると中央列揃えになり下部パネルのレイアウトが崩れるためです。
+     * 項目の説明は常設の説明ディスプレイへ集約し、ホバーは操作案内のみを
+     * 担うことで表示の重複も解消します。
+     */
+    private fun singleLineHover(text: String, x: Double, y: Double): GestureGuiHoverText =
         GestureGuiHoverText(
-            text = Component.text(top)
-                .append(Component.newline())
-                .append(Component.text(bottom, NamedTextColor.GRAY)),
+            text = Component.text(text),
             x = x,
             y = y,
             size = 0.0048,
@@ -410,9 +410,8 @@ class GestureLowerPanel(
                     emptySet()
                 } else setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = bgId,
-                hoverText = twoLineHover(
-                    top = field?.let { fieldDescription(player, it) } ?: fieldLabel,
-                    bottom = choice.description.ifBlank { choiceDescription(player, choice) },
+                hoverText = singleLineHover(
+                    choice.description.ifBlank { choiceDescription(player, choice) },
                     x = 0.28,
                     y = 0.39,
                 ),
@@ -819,9 +818,8 @@ class GestureLowerPanel(
                 bounds = rect(cx, cy, 0.72, 0.155),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "type-bg-$index",
-                hoverText = twoLineHover(
-                    top = KcI18n.text(player, type.key),
-                    bottom = KcI18n.list(player, type.descriptionKey)
+                hoverText = singleLineHover(
+                    KcI18n.list(player, type.descriptionKey)
                         .filter(String::isNotBlank)
                         .joinToString(" "),
                     x = 0.28,
@@ -978,18 +976,40 @@ class GestureLowerPanel(
         centerX: Double,
         centerY: Double,
     ) {
+        // 利用できない方向の矢印も灰色で常時表示し、ページングの存在を視覚化します。
         listOf(page - 1 to "◀", page + 1 to "▶").forEachIndexed { index, (targetPage, glyph) ->
-            if (targetPage !in 0 until pageCount) return@forEachIndexed
+            val available = targetPage in 0 until pageCount
             val x = centerX + if (index == 0) -0.12 else 0.12
             val visualId = "$id-page-$targetPage-bg"
-            addBlock(visuals, visualId, x, centerY, 0.18, 0.10, Material.CYAN_CONCRETE, 4)
-            addText(visuals, "$id-page-$targetPage-label", x, centerY, 0.005, 60, Component.text(glyph))
-            elements.add(GestureGuiElement(
-                elementId = "lower-$id-page:$targetPage",
-                bounds = rect(x, centerY, 0.18, 0.10),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                targetVisualId = visualId,
-            ))
+            addBlock(
+                visuals,
+                visualId,
+                x,
+                centerY,
+                0.18,
+                0.10,
+                if (available) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE,
+                4,
+            )
+            addText(
+                visuals,
+                "$id-page-$targetPage-label",
+                x,
+                centerY,
+                0.005,
+                60,
+                Component.text(glyph).color(
+                    if (available) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                ),
+            )
+            if (available) {
+                elements.add(GestureGuiElement(
+                    elementId = "lower-$id-page:$targetPage",
+                    bounds = rect(x, centerY, 0.18, 0.10),
+                    acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                    targetVisualId = visualId,
+                ))
+            }
         }
         addText(visuals, "$id-page-status", centerX, centerY, 0.004, 80, Component.text("${page + 1}/$pageCount"))
     }

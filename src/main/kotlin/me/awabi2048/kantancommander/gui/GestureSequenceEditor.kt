@@ -22,6 +22,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionListener
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenLayout
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
@@ -222,6 +223,11 @@ class GestureSequenceEditor(
         api.registerOwner(player.uniqueId)
         val upper = buildUpperViewport(player)
         val lower = lowerPanel.build(state, player)
+        // 主要画面の並び方向は config で選択します（既定は縦配置）。
+        // 横配置はビューポートが左、パネルが右へ並びます。
+        val layout = if (plugin.config.getBoolean("use-horizontal-gesture-layout", false)) {
+            GestureGuiScreenLayout.HORIZONTAL
+        } else GestureGuiScreenLayout.VERTICAL
         val snapshot = api.open(
             player,
             listOf(upper, lower),
@@ -230,6 +236,7 @@ class GestureSequenceEditor(
                 sessionListener = GestureGuiSessionListener { ownerId, sessionId ->
                     onGestureSessionClosed(ownerId, sessionId)
                 },
+                layout = layout,
             ),
         )
         gestureSessionId = snapshot.sessionId
@@ -263,6 +270,7 @@ class GestureSequenceEditor(
                 // どの表示を復元すべきか失われるためです。
                 parentScreenId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID,
                 overlayMaterial = Material.RED_STAINED_GLASS,
+                animated = false,
             ),
         )
         if (!opened) {
@@ -286,14 +294,25 @@ class GestureSequenceEditor(
             updateLower(player)
             return
         }
-        val opened = api.openChild(
-            player.uniqueId,
-            lowerPanel.buildSettingChild(state, player),
-            GestureGuiChildOptions(
-                parentScreenId = lowerPanel.LOWER_SCREEN_ID,
-                overlayMaterial = Material.GRAY_STAINED_GLASS,
-            ),
-        )
+        val opened = runCatching {
+            api.openChild(
+                player.uniqueId,
+                lowerPanel.buildSettingChild(state, player),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            // 子画面が開かない原因（screenId重複・深度上限など）を現場で可視化します。
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "個別設定子画面のオープンに失敗しました: script=${state.scriptId} screenId=${lowerPanel.SETTING_CHILD_SCREEN_ID}",
+                failure,
+            )
+            false
+        }
         if (!opened) {
             // セッションが終了している／子深度上限に達している等の場合は、
             // 孤立した設定状態を残さず通常の設定画面へ戻します。
@@ -864,6 +883,7 @@ class GestureSequenceEditor(
             GestureGuiChildOptions(
                 parentScreenId = parentId,
                 overlayMaterial = Material.RED_STAINED_GLASS,
+                animated = false,
             ),
         )
         if (!opened) {
@@ -2050,14 +2070,17 @@ class GestureSequenceEditor(
             } else {
                 state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
             }
+            // 利用できない操作は灰色で常時表示し、操作可能かを視線で判別できるようにします。
             visuals.add(GestureGuiVisual.Block(
                 visualId = "$id-block", x = x, y = y,
                 width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
-                blockData = Bukkit.createBlockData(Material.CYAN_CONCRETE), layer = 4,
+                blockData = Bukkit.createBlockData(if (enabled) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE), layer = 4,
             ))
             visuals.add(GestureGuiVisual.Text(
                 visualId = "$id-glyph", x = x, y = y - 0.01,
-                text = net.kyori.adventure.text.Component.text(glyph), size = 0.010, layer = 6,
+                text = net.kyori.adventure.text.Component.text(glyph).color(
+                    if (enabled) net.kyori.adventure.text.format.NamedTextColor.WHITE else net.kyori.adventure.text.format.NamedTextColor.GRAY,
+                ), size = 0.010, layer = 6,
             ))
             elements.add(GestureGuiElement(
                 elementId = id,
