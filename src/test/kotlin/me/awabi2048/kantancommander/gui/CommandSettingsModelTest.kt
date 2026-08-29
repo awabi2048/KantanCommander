@@ -41,10 +41,10 @@ class CommandSettingsModelTest {
     @Test
     fun `visible fields apply the same conditional rules`() {
         val display = CommandType.DISPLAY_TEXT.newNode()
-        assertEquals(false, CommandSettingsModel.visibleFields(display).any { it.key == "stay" })
+        assertEquals(false, CommandSettingsModel.visibleFields(display).any { it.key == "staySeconds" })
 
         display.params["mode"] = "title"
-        assertEquals(true, CommandSettingsModel.visibleFields(display).any { it.key == "stay" })
+        assertEquals(true, CommandSettingsModel.visibleFields(display).any { it.key == "staySeconds" })
 
         val riding = CommandType.ENTITY_ACTION.newNode()
         assertEquals(true, CommandSettingsModel.visibleFields(riding).any { it.key == "other" })

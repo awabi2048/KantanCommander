@@ -57,7 +57,7 @@ class ExecutableScriptValidatorTest {
             name = "timer",
             owner = UUID.randomUUID(),
             activation = ActivationMode.ALWAYS_ACTIVE,
-            timer = TimerSetting(enabled = false, intervalUnits = 0),
+            timer = TimerSetting(enabled = false, intervalSeconds = 0),
         )
         assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("タイマーオフ") })
 

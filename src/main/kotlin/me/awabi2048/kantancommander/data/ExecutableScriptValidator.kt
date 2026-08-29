@@ -11,8 +11,8 @@ import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
-import me.awabi2048.kantancommander.model.MIN_TIMER_UNITS
-import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
+import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
+import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -30,8 +30,8 @@ object ExecutableScriptValidator {
         if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
             errors += "root: タイマーオフでは常時実行を使用できません"
         }
-        if (script.timer.enabled && script.timer.intervalUnits !in MIN_TIMER_UNITS..MAX_TIMER_UNITS) {
-            errors += "root: タイマー間隔は${MIN_TIMER_UNITS}から${MAX_TIMER_UNITS}単位で指定してください"
+        if (script.timer.enabled && script.timer.intervalSeconds !in MIN_TIMER_SECONDS..MAX_TIMER_SECONDS) {
+            errors += "root: タイマー間隔は${MIN_TIMER_SECONDS}から${MAX_TIMER_SECONDS}秒で指定してください"
         }
         validateGraph(script.graph, "root", errors, Collections.newSetFromMap(IdentityHashMap()), limits)
         return errors
@@ -100,13 +100,13 @@ object ExecutableScriptValidator {
                     errors += "$path: 不明な文字列表示方式です"
                 }
                 if (node.string("mode") == "title" &&
-                    listOf("fadeIn", "stay", "fadeOut").any { node.int(it, -1) < 0 }
+                    listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").any { node.int(it, -1) < 0 }
                 ) {
-                    errors += "$path: タイトルの表示時間は0tick以上である必要があります"
+                    errors += "$path: タイトルの表示時間は0秒以上である必要があります"
                 }
             }
             CommandType.WAIT ->
-                if (node.int("ticks", 0) < 1) errors += "$path: 待機時間は1tick以上である必要があります"
+                if (node.int("seconds", 0) < 1) errors += "$path: 待機時間は1秒以上である必要があります"
             CommandType.SUMMON_ENTITY -> {
                 val key = NamespacedKey.fromString(node.string("entity"))
                 if (key == null) errors += "$path: エンティティ種類が不正です"

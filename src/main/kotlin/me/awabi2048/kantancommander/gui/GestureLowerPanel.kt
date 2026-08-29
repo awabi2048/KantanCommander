@@ -31,6 +31,7 @@ import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
+import org.bukkit.inventory.ItemStack
 import kotlin.math.sqrt
 
 /** 既存の選択肢生成を木のノードとして扱うための局所的な別名です。 */
@@ -78,8 +79,7 @@ class GestureLowerPanel(
         val script = plugin.scripts.load(state.scriptId)
         val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
         if (node == null) {
-            addText(visuals, "lower-hint", 0.0, 0.20, 0.010, 160, Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SELECT_NODE_HINT)))
-            return view(GestureLowerMode.SETTINGS, elements, visuals)
+            return buildScriptSettings(state, player, script)
         }
 
         val fields = CommandSettingsModel.visibleFields(node)
@@ -154,7 +154,10 @@ class GestureLowerPanel(
             field.key == "diskId" && node.type == CommandType.DISK_CALL
         val heldMainHandSetting = heldItemSetting || heldDiskSetting
         val mainHandAvailable = when {
-            heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
+            // 有効なクリック面を先に確保し、無効なアイテムでもハンドラへ届けます。
+            // PDC不一致をここで無効化すると、クリック音もエラー表示もなく「無反応」
+            // になるため、形式の検証はapplyHeldDisk側で行います。
+            heldDiskSetting -> player.inventory.itemInMainHand.type != Material.AIR
             heldItemSetting -> player.inventory.itemInMainHand.type != Material.AIR
             else -> false
         }
@@ -175,8 +178,8 @@ class GestureLowerPanel(
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
                 bounds = rect(0.28, 0.02, 1.2, 0.16),
-                // 空のメインハンドでは入力面自体を無効化し、CC-Systemの
-                // クリック音も発生させません。
+                // 空のメインハンドだけは入力面を無効化します。空でないアイテムは
+                // 形式不一致でもハンドラへ届け、利用者へ原因を通知できるようにします。
                 acceptedGestures = if (heldMainHandSetting && !mainHandAvailable) {
                     emptySet()
                 } else setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY),
@@ -213,6 +216,132 @@ class GestureLowerPanel(
             ))
         }
         return view(GestureLowerMode.SETTINGS, elements, visuals)
+    }
+
+    /**
+     * ノード未選択時の中央パネルです。
+     *
+     * ノード選択を促すだけではプログラム全体の設定へ到達できず、空のグラフでは
+     * 「何をすれば追加できるか」も分かりません。ここではプログラム名とタイマーを
+     * 常設の編集項目として同じ中央領域へ置き、グラフが空の場合だけ追加操作の
+     * 明示的な案内を表示します。これらはノード設定のタブ木とは別ドメインなので、
+     * ノードを選択していないときにだけ表示します。
+     */
+    private fun buildScriptSettings(
+        state: GestureEditorState,
+        player: Player,
+        script: me.awabi2048.kantancommander.model.DiskScript?,
+    ): GestureGuiView {
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        val hint = if (script?.graph?.nodes?.isEmpty() == true) {
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EMPTY_GRAPH_HINT
+        } else {
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SELECT_NODE_HINT
+        }
+        addText(
+            visuals,
+            "lower-hint",
+            0.0,
+            0.27,
+            0.008,
+            230,
+            Component.text(KcI18n.text(player, hint)),
+        )
+        if (script != null) {
+            val programNameState = if (script.name.isBlank()) {
+                GestureSettingValueState.INITIAL
+            } else {
+                GestureSettingValueState.CONFIGURED
+            }
+            addScriptSetting(
+                player = player,
+                visuals = visuals,
+                elements = elements,
+                id = "lower-script-name",
+                backgroundId = "lower-script-name-bg",
+                x = -0.38,
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROGRAM_NAME),
+                value = script.name.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) },
+                valueState = programNameState,
+                material = Material.NAME_TAG,
+            )
+            val timerState = if (script.timer.enabled) {
+                GestureSettingValueState.CONFIGURED
+            } else {
+                GestureSettingValueState.INITIAL
+            }
+            val timerValue = if (script.timer.enabled) {
+                "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED)} " +
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS,
+                        mapOf("value" to script.timer.intervalSeconds),
+                    )
+            } else {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED)
+            }
+            addScriptSetting(
+                player = player,
+                visuals = visuals,
+                elements = elements,
+                id = "lower-script-timer",
+                backgroundId = "lower-script-timer-bg",
+                x = 0.38,
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
+                value = timerValue,
+                valueState = timerState,
+                material = Material.CLOCK,
+            )
+        }
+        return view(GestureLowerMode.SETTINGS, elements, visuals)
+    }
+
+    /** プログラム全体設定のカードと入力面を共通の寸法で生成します。 */
+    private fun addScriptSetting(
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        id: String,
+        backgroundId: String,
+        x: Double,
+        label: String,
+        value: String,
+        valueState: GestureSettingValueState,
+        material: Material,
+    ) {
+        addBlock(
+            visuals,
+            backgroundId,
+            x,
+            -0.02,
+            0.68,
+            0.17,
+            GestureSettingVisualPolicy.material(
+                GestureSettingSelectionMode.MULTIPLE,
+                valueState,
+                selected = false,
+            ),
+            4,
+        )
+        visuals.add(GestureGuiVisual.Item(
+            visualId = "$id-icon",
+            x = x - 0.27,
+            y = -0.02,
+            item = ItemStack(material),
+            scale = 0.08,
+            layer = 5,
+        ))
+        addText(visuals, "$id-label", x, -0.045, 0.0052, 120, Component.text(label))
+        addText(visuals, "$id-value", x, -0.005, 0.0044, 170, Component.text(value))
+        // アイテム名は表示の識別用に使わず、設定値は常にLore／別TextDisplayへ出します。
+        // このカードも同じ規則に従い、クリック対象のNameを持たせず入力面だけを公開します。
+        elements.add(GestureGuiElement(
+            elementId = id,
+            bounds = rect(x, -0.02, 0.68, 0.17),
+            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            targetVisualId = backgroundId,
+        ))
     }
 
     /**
@@ -1503,9 +1632,9 @@ class GestureLowerPanel(
         const val DEFAULT_HOVER_Y = 0.39
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val DIALOG_EDITABLE_KEYS = setOf(
-            "item", "count", "text", "stay", "ticks", "tags", "sound", "volume", "pitch",
-            "effect", "level", "seconds", "intensity", "shakeType", "slot", "entity", "diskId", "name", "startValue",
-            "endValue", "stepValue", "condition", "variable", "value",
+            "item", "count", "text", "tags", "sound", "volume", "pitch",
+            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "shakeType", "slot", "entity", "diskId", "name", "startValue",
+            "endValue", "stepValue", "condition", "variable", "value", "block",
         )
     }
 }

@@ -86,22 +86,22 @@ internal object CommandDialogSpecs {
 
     /** 表示時間3項目の入力欄を共通仕様から生成します。 */
     fun durationInputs(player: Player, fadeIn: String, stay: String, fadeOut: String): List<MenuDialogInput.Text> {
-        val spec = requireNotNull(field("stay"))
+        val spec = requireNotNull(field("staySeconds"))
         return listOf(
             MenuDialogInput.Text(
-                "fadeIn",
+                "fadeInSeconds",
                 KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
                 fadeIn,
                 maxLength = spec.maxLength,
             ),
             MenuDialogInput.Text(
-                "stay",
+                "staySeconds",
                 KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
                 stay,
                 maxLength = spec.maxLength,
             ),
             MenuDialogInput.Text(
-                "fadeOut",
+                "fadeOutSeconds",
                 KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
                 fadeOut,
                 maxLength = spec.maxLength,
@@ -157,6 +157,15 @@ internal object CommandDialogSpecs {
     }
 
     /** 変数名（保存名）の共通仕様。 */
+    val programName = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
+        256,
+        { raw ->
+            if (raw.isBlank() || raw.length > 256) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_NAME_LENGTH else null
+        },
+    )
+
+    /** 変数名（保存名）の共通仕様。 */
     val variableName = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE,
         64,
@@ -196,8 +205,9 @@ internal object CommandDialogSpecs {
         val labelKey = when (fieldKey) {
             "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
             "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE
-            "ticks" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WAIT
-            "stay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DURATION
+            "fadeInSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN
+            "staySeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY
+            "fadeOutSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT
             "startValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_START
             "endValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_END
             "stepValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STEP
@@ -220,8 +230,8 @@ internal object CommandDialogSpecs {
             "entity", "sound", "effect", "tags" -> 64
             else -> 16
         }
-        val positiveInteger = fieldKey in setOf("count", "ticks", "level", "seconds")
-        val nonNegativeInteger = fieldKey == "stay"
+        val positiveInteger = fieldKey in setOf("count", "level", "seconds")
+        val nonNegativeInteger = fieldKey in setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
         return Spec(labelKey, maxLength) { raw ->
             val integerValue = raw.toIntOrNull()
             when {

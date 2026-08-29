@@ -11,6 +11,6 @@ limits:
   max-map-height: 256
   max-branch-depth: 32
 timer:
-  minimum-units: 1
-  maximum-units: 86400
-config_version: 2
+  minimum-seconds: 1
+  maximum-seconds: 86400
+config_version: 3

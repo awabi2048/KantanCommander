@@ -5,10 +5,10 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 import org.bukkit.Material
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 6
-const val TIMER_UNIT_TICKS = 10
-const val MIN_TIMER_UNITS = 1
-const val MAX_TIMER_UNITS = 86_400
+const val STRUCTURED_FORMAT_VERSION = 7
+const val TICKS_PER_SECOND = 20
+const val MIN_TIMER_SECONDS = 1
+const val MAX_TIMER_SECONDS = 86_400
 const val MAX_BLOCK_OPERATION_VOLUME = 32_768L
 
 data class DiskScript(
@@ -25,10 +25,11 @@ data class DiskScript(
 
 data class TimerSetting(
     var enabled: Boolean = false,
-    var intervalUnits: Int = MIN_TIMER_UNITS,
+    var intervalSeconds: Int = MIN_TIMER_SECONDS,
 ) {
-    fun normalized() = copy(intervalUnits = intervalUnits.coerceIn(MIN_TIMER_UNITS, MAX_TIMER_UNITS))
-    val intervalTicks: Long get() = intervalUnits.coerceIn(MIN_TIMER_UNITS, MAX_TIMER_UNITS) * TIMER_UNIT_TICKS.toLong()
+    fun normalized() = copy(intervalSeconds = intervalSeconds.coerceIn(MIN_TIMER_SECONDS, MAX_TIMER_SECONDS))
+    /** Minecraftの内部スケジューラへ渡すtick値は、このモデル境界でだけ算出します。 */
+    val intervalTicks: Long get() = intervalSeconds.coerceIn(MIN_TIMER_SECONDS, MAX_TIMER_SECONDS) * TICKS_PER_SECOND.toLong()
 }
 
 enum class ActivationMode(val key: LocalizationKey<String>) {
@@ -221,9 +222,9 @@ enum class CommandType(
     GIVE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM_DESCRIPTION, Material.CHEST, mapOf("count" to "1")),
     ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf("action" to "ride")),
     DISPLAY_TEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT_DESCRIPTION, Material.WRITABLE_BOOK, mapOf(
-        "mode" to "tellraw", "text" to "", "fadeIn" to "10", "stay" to "60", "fadeOut" to "10"
+        "mode" to "tellraw", "text" to "", "fadeInSeconds" to "1", "staySeconds" to "3", "fadeOutSeconds" to "1"
     )),
-    WAIT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT_DESCRIPTION, Material.CLOCK, mapOf("ticks" to "20")),
+    WAIT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT_DESCRIPTION, Material.CLOCK, mapOf("seconds" to "1")),
     SUMMON_ENTITY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY_DESCRIPTION, Material.ZOMBIE_SPAWN_EGG, mapOf(
         "entity" to "", "tags" to ""
     )),

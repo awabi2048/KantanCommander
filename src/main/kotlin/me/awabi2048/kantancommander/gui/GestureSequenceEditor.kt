@@ -43,6 +43,7 @@ import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -886,8 +887,8 @@ class GestureSequenceEditor(
             applyHeldDisk(player, context)
             return
         }
-        if (fieldKey == "stay" && node.type == CommandType.DISPLAY_TEXT) {
-            // 表示時間はfadeIn/stay/fadeOutを一組として編集し、インベントリGUIと
+        if (fieldKey == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
+            // 表示時間はfadeInSeconds/staySeconds/fadeOutSecondsを一組として編集し、インベントリGUIと
             // 同じ入力欄・最大長・0以上検証を使います。
             showDisplayTimingSettingDialog(player, context, node)
             return
@@ -968,18 +969,30 @@ class GestureSequenceEditor(
     ): Boolean {
         val diskId = KantanItemService.diskId(player.inventory.itemInMainHand)
         if (diskId == null) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_DISK_NOT_HELD))
             updateLower(player)
             return false
         }
         val disk = plugin.scripts.load(diskId)
         if (disk == null) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_DISK_NOT_HELD))
             updateLower(player)
             return false
         }
-        return updateSettingNode(player, context) { node ->
+        val updated = updateSettingNode(player, context) { node ->
             node.params["diskId"] = diskId.toString()
             node.snapshot = disk.graph.deepCopy()
         }
+        if (updated) {
+            player.sendMessage(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_DISK_SET,
+                    mapOf("disk" to disk.name),
+                ),
+            )
+        }
+        return updated
     }
 
     private fun saveHeldItem(
@@ -1138,23 +1151,120 @@ class GestureSequenceEditor(
         inputs = listOf(CommandDialogSpecs.input(player, "value", initial, spec)),
     ) { response -> onSubmit(response.textValue("value")) }
 
+    /** ノード未選択時に表示するプログラム名の設定ダイアログです。 */
+    private fun showProgramNameDialog(player: Player) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        showTextInputDialog(player, CommandDialogSpecs.programName, script.name) { raw ->
+            val value = raw.trim()
+            if (value.isBlank()) {
+                return@showTextInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+                )
+            }
+            runCatching {
+                val current = plugin.scripts.load(state.scriptId) ?: return@runCatching
+                current.name = value
+                plugin.scripts.save(current)
+            }.onFailure { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "プログラム名を保存できませんでした: script=${state.scriptId}",
+                    failure,
+                )
+            }.getOrElse {
+                return@showTextInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            }
+            updateUpper(player)
+            updateLower(player)
+            null
+        }
+    }
+
+    /** ノード未選択時のプログラムタイマーを秒単位で設定します。 */
+    private fun showTimerSettingDialog(player: Player) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        showInputDialog(
+            player = player,
+            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
+            body = listOf(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_BODY),
+                Component.text(
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
+                        mapOf(
+                            "value" to KcI18n.text(
+                                player,
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS,
+                                mapOf("value" to script.timer.intervalSeconds),
+                            ),
+                        ),
+                    ),
+                    NamedTextColor.GRAY,
+                ),
+            ),
+            inputs = listOf(
+                MenuDialogInput.Text(
+                    id = "seconds",
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTERVAL),
+                    initial = script.timer.intervalSeconds.toString(),
+                    maxLength = 6,
+                ),
+            ),
+        ) { response ->
+            val seconds = response.textValue("seconds").trim().toIntOrNull()
+            if (seconds == null || seconds !in 1..MAX_TIMER_SECONDS) {
+                return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,
+                )
+            }
+            runCatching {
+                val current = plugin.scripts.load(state.scriptId) ?: return@runCatching
+                current.timer.enabled = true
+                current.timer.intervalSeconds = seconds
+                plugin.scripts.save(current)
+                plugin.resetActivationTiming(current.id)
+                plugin.placements.refreshDisplaysForScript(current.id)
+            }.onFailure { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "タイマー設定を保存できませんでした: script=${state.scriptId}",
+                    failure,
+                )
+            }.getOrElse {
+                return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            }
+            updateUpper(player)
+            updateLower(player)
+            null
+        }
+    }
+
     /** DISPLAY_TEXTの3つの時間設定を、インベントリGUIと同じ仕様で編集します。 */
     private fun showDisplayTimingSettingDialog(
         player: Player,
         context: CommandSettingContext,
         node: me.awabi2048.kantancommander.model.CommandNode,
     ) {
-        val fadeIn = node.string("fadeIn", "10")
-        val stay = node.string("stay", "60")
-        val fadeOut = node.string("fadeOut", "10")
-        val durationSpec = requireNotNull(CommandDialogSpecs.field("stay"))
+        val fadeIn = node.string("fadeInSeconds", "1")
+        val stay = node.string("staySeconds", "3")
+        val fadeOut = node.string("fadeOutSeconds", "1")
+        val durationSpec = requireNotNull(CommandDialogSpecs.field("staySeconds"))
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
             body = CommandDialogSpecs.durationBody(player, fadeIn, stay, fadeOut),
             inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),
         ) { response ->
-            val rawValues = listOf("fadeIn", "stay", "fadeOut").associateWith { key ->
+            val rawValues = listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").associateWith { key ->
                 response.textValue(key).trim()
             }
             val validationError = rawValues.values
@@ -2004,6 +2114,12 @@ class GestureSequenceEditor(
                 state.pickerPage = 0
                 updateUpper(player)
                 updateLower(player)
+            }
+            context.elementId == "lower-script-name" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                showProgramNameDialog(player)
+            }
+            context.elementId == "lower-script-timer" && context.gesture == GestureGuiGesture.PRIMARY -> {
+                showTimerSettingDialog(player)
             }
             context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return

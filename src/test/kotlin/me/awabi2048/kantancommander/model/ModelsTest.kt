@@ -7,8 +7,8 @@ import org.junit.jupiter.api.Test
 class ModelsTest {
     @Test
     fun `timer interval is normalized to supported range`() {
-        assertEquals(10L, TimerSetting(true, 0).intervalTicks)
-        assertEquals(864_000L, TimerSetting(true, 100_000).intervalTicks)
+        assertEquals(20L, TimerSetting(true, 0).intervalTicks)
+        assertEquals(1_728_000L, TimerSetting(true, 100_000).intervalTicks)
     }
 
     @Test

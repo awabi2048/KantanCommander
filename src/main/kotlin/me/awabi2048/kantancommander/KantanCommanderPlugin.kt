@@ -72,12 +72,21 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 2,
+                    currentVersion = 3,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
                             config.set("execution.max-summoned-entities-per-world", 256)
                             config.set("execution.max-summoned-entities-server", 2048)
+                        },
+                        2 to ConfigMigration { config ->
+                            // v3からタイマー設定の保存単位を秒へ明示します。旧キーは
+                            // スキーマ上の固定値だったため、実行時の秒範囲を新しい既定値で
+                            // 置き換えてから旧キーを削除し、旧単位を再解釈しないようにします。
+                            config.set("timer.minimum-seconds", 1)
+                            config.set("timer.maximum-seconds", 86400)
+                            config.set("timer.minimum-units", null)
+                            config.set("timer.maximum-units", null)
                         },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
@@ -86,8 +95,8 @@ class KantanCommanderPlugin : JavaPlugin() {
                         require(config.getInt("execution.max-summoned-entities-per-world") >= 1)
                         require(config.getInt("execution.max-summoned-entities-server") >=
                             config.getInt("execution.max-summoned-entities-per-world"))
-                        require(config.getInt("timer.minimum-units", 1) == 1)
-                        require(config.getInt("timer.maximum-units", 86400) == 86400)
+                        require(config.getInt("timer.minimum-seconds", 1) == 1)
+                        require(config.getInt("timer.maximum-seconds", 86400) == 86400)
                         require(config.getInt("limits.max-nodes-per-disk") >= 1)
                         require(config.getInt("limits.max-map-width") >= 9)
                         require(config.getInt("limits.max-map-height") >= 3)

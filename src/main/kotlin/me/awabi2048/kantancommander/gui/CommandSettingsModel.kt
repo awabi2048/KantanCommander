@@ -100,7 +100,7 @@ data class CommandSettingDescriptor(
 object CommandSettingsModel {
     /**
      * 両GUIで同じ条件付きフィールド集合を表示します。
-     * 例えばタイトル以外のDISPLAY_TEXTからstayを隠す処理を各画面へ複製しないことで、
+     * 例えばタイトル以外のDISPLAY_TEXTからstaySecondsを隠す処理を各画面へ複製しないことで、
      * 片方だけに存在する設定項目や、選択後に参照不能になる値を防ぎます。
      */
     fun visibleFields(node: CommandNode): List<EditorField> {
@@ -109,7 +109,7 @@ object CommandSettingsModel {
             return fields.filterNot { it.key == "other" }
         }
         if (node.type == CommandType.DISPLAY_TEXT && node.string("mode") != "title") {
-            return fields.filterNot { it.key == "stay" }
+            return fields.filterNot { it.key == "staySeconds" }
         }
         if (node.type == CommandType.BLOCK_OPERATION) {
             return if (node.string("operation", "setblock") == "fill") {

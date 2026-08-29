@@ -22,6 +22,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.model.effectiveContextSource
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
@@ -110,11 +111,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             else stop(session, script, node.id, depth, "node_failed", done)
         }
         when (node.type) {
-            CommandType.WAIT -> plugin.server.scheduler.runTaskLater(
-                plugin,
-                Runnable { next(node.next, true) },
-                node.int("ticks", 20).coerceAtLeast(1).toLong(),
-            )
+            CommandType.WAIT -> {
+                // 保存・入力値は秒を正本とし、Minecraftのスケジューラ境界でだけtickへ変換します。
+                val seconds = node.int("seconds", 1).coerceAtLeast(1).toLong()
+                val waitTicks = seconds * TICKS_PER_SECOND.toLong()
+                plugin.server.scheduler.runTaskLater(
+                    plugin,
+                    Runnable { next(node.next, true) },
+                    waitTicks,
+                )
+            }
             CommandType.CONDITION -> {
                 val effectiveContext = effectiveContext(node, session)
                 val rawResult = evaluateCondition(
@@ -329,9 +335,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                             text,
                             Component.empty(),
                             Title.Times.times(
-                                Duration.ofMillis(node.int("fadeIn", 10).coerceAtLeast(0) * 50L),
-                                Duration.ofMillis(node.int("stay", 60).coerceAtLeast(0) * 50L),
-                                Duration.ofMillis(node.int("fadeOut", 10).coerceAtLeast(0) * 50L),
+                                Duration.ofMillis(node.int("fadeInSeconds", 1).coerceAtLeast(0).toLong() * 1000L),
+                                Duration.ofMillis(node.int("staySeconds", 3).coerceAtLeast(0).toLong() * 1000L),
+                                Duration.ofMillis(node.int("fadeOutSeconds", 1).coerceAtLeast(0).toLong() * 1000L),
                             ),
                         ))
                     }

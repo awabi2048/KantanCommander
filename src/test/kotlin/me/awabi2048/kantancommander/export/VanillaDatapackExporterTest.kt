@@ -766,7 +766,7 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "title")
         val title = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         title.params.putAll(
-            mapOf("mode" to "title", "text" to "hello", "fadeIn" to "3", "stay" to "17", "fadeOut" to "4")
+            mapOf("mode" to "title", "text" to "hello", "fadeInSeconds" to "3", "staySeconds" to "17", "fadeOutSeconds" to "4")
         )
 
         val success = assertInstanceOf(
@@ -776,10 +776,10 @@ class VanillaDatapackExporterTest {
         val function = success.directory
             .resolve("data/kantan/function")
             .walkTopDown()
-            .first { it.isFile && it.readText().contains("title @s times 3 17 4") }
+            .first { it.isFile && it.readText().contains("title @s times 60 340 80") }
             .readText()
 
-        assertTrue(function.contains("title @s times 3 17 4"))
+        assertTrue(function.contains("title @s times 60 340 80"))
         assertTrue(function.contains("title @s title"))
     }
 

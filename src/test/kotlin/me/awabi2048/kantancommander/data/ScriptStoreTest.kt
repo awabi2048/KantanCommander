@@ -33,6 +33,50 @@ class ScriptStoreTest {
     }
 
     @Test
+    fun `legacy tick format migrates timer and command durations to seconds`() {
+        val dir = temp.resolve("legacy-ticks").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 6,
+              "id": "$scriptId",
+              "name": "legacy",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 1,
+              "listed": true,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": true, "intervalUnits": 6},
+              "graph": {
+                "entryNodeId": "$nodeId",
+                "nodes": {
+                  "$nodeId": {
+                    "id": "$nodeId",
+                    "type": "WAIT",
+                    "params": {"ticks": "40"}
+                  }
+                }
+              }
+            }
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val migrated = requireNotNull(store.load(scriptId))
+
+        assertEquals(7, migrated.formatVersion)
+        assertEquals(3, migrated.timer.intervalSeconds)
+        assertEquals("2", migrated.graph.nodes[nodeId]?.params?.get("seconds"))
+        val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
+        assertTrue(rewritten.contains("\"formatVersion\": 7"))
+        assertTrue(rewritten.contains("\"intervalSeconds\": 3"))
+        assertTrue(!rewritten.contains("intervalUnits"))
+        assertTrue(!rewritten.contains("\"ticks\""))
+    }
+
+    @Test
     fun `legacy format is ignored`() {
         val dir = temp.resolve("structured").also(File::mkdirs)
         dir.resolve("${UUID.randomUUID()}.json").writeText("""{"formatVersion":1}""")

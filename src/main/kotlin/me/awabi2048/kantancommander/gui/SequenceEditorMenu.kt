@@ -251,7 +251,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     add(
                         GuiMenuEntryData(
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_LABEL),
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS, mapOf("value" to script.timer.intervalUnits)),
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS, mapOf("value" to script.timer.intervalSeconds)),
                             GuiValueTone.DEFAULT,
                         ),
                     )
@@ -404,7 +404,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         }
         CommandType.GIVE_ITEM -> "${node.string("item")} ×${node.int("count", 1)}"
         CommandType.DISPLAY_TEXT -> node.string("text").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
-        CommandType.WAIT -> "${node.int("ticks", 20)} tick"
+        CommandType.WAIT -> "${node.int("seconds", 1)}秒"
         CommandType.CONDITION -> runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
             ?.let { KcI18n.text(player, it.key) }
             ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)

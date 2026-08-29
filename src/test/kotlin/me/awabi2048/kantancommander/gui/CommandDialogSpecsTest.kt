@@ -43,8 +43,8 @@ class CommandDialogSpecsTest {
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
-            requireNotNull(CommandDialogSpecs.field("stay")).validate("-1"),
+            requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("-1"),
         )
-        assertNull(requireNotNull(CommandDialogSpecs.field("stay")).validate("0"))
+        assertNull(requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("0"))
     }
 }

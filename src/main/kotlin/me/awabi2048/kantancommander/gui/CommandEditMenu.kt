@@ -21,7 +21,7 @@ import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
-import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
+import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.ActivationMode
@@ -392,8 +392,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field in setOf(
-                                "count", "ticks", "text", "stay", "value", "startValue", "endValue", "stepValue",
-                                "entity", "tags", "sound", "volume", "pitch", "effect", "level", "seconds",
+                                "count", "seconds", "text", "value", "startValue", "endValue", "stepValue",
+                                "entity", "tags", "sound", "volume", "pitch", "effect", "level",
                                 "intensity", "shakeType", "slot",
                             )) {
                             showFieldDialog(context.player, context.route, field, node)
@@ -684,7 +684,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     },
                     "on" to MenuActionHandler { context ->
                         val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
-                        showTimerDialog(context.player, context.route, script.id, script.timer.intervalUnits)
+                        showTimerDialog(context.player, context.route, script.id, script.timer.intervalSeconds)
                         MenuActionResult.Success(MenuUpdate.None)
                     },
                 ),
@@ -1026,7 +1026,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             choiceElement(player, 20, Material.REDSTONE_TORCH, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED), "off"),
             choiceElement(player, 24, Material.CLOCK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED), "on",
                 dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_LABEL),
-                dataValue = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS, mapOf("value" to (script?.timer?.intervalUnits ?: 1)))),
+                dataValue = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS, mapOf("value" to (script?.timer?.intervalSeconds ?: 1)))),
             backElement(player),
         )
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER)), elements)
@@ -1256,7 +1256,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DELETE_TITLE)), elements)
     }
 
-    private fun showTimerDialog(player: Player, route: MenuRoute, scriptId: UUID, units: Int) {
+    private fun showTimerDialog(player: Player, route: MenuRoute, scriptId: UUID, seconds: Int) {
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
@@ -1265,19 +1265,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_TITLE),
                 body = listOf(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_BODY),
-                    Component.text("現在値: ${units}単位。1単位=10tickです。", NamedTextColor.GRAY),
+                    Component.text("現在値: ${seconds}秒。", NamedTextColor.GRAY),
                 ),
                 inputs = listOf(
                     MenuDialogInput.Text(
-                        "units",
+                        "seconds",
                         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTERVAL),
-                        units.toString(),
-                        maxLength = 5,
+                        seconds.toString(),
+                        maxLength = 6,
                     )
                 ),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ENABLE), MenuDialogHandler { _, response ->
-                    val value = response.textValue("units").toIntOrNull()
-                    if (value == null || value !in 1..MAX_TIMER_UNITS) {
+                    val value = response.textValue("seconds").toIntOrNull()
+                    if (value == null || value !in 1..MAX_TIMER_SECONDS) {
                         return@MenuDialogHandler MenuActionResult.Rejected(
                             KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID)
                         )
@@ -1285,7 +1285,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     val script = plugin.scripts.load(scriptId)
                         ?: return@MenuDialogHandler MenuActionResult.Ignored
                     script.timer.enabled = true
-                    script.timer.intervalUnits = value
+                    script.timer.intervalSeconds = value
                     runCatching {
                         plugin.scripts.save(script)
                         plugin.resetActivationTiming(script.id)
@@ -1338,13 +1338,18 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun showFieldDialog(player: Player, route: MenuRoute, field: String, node: CommandNode) {
-        if (field == "stay" && node.type == CommandType.DISPLAY_TEXT) {
+        if (field == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
             showDisplayTimingDialog(player, route, node)
             return
         }
         val defaultValue = when (field) {
             "count" -> "1"
-            "ticks" -> "20"
+            "seconds" -> when (node.type) {
+                CommandType.WAIT -> "1"
+                CommandType.APPLY_EFFECT -> "30"
+                CommandType.CAMERA_SHAKE -> "5"
+                else -> "1"
+            }
             "text", "value", "tags" -> ""
             "startValue", "endValue" -> "0"
             "stepValue" -> "1"
@@ -1353,7 +1358,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "volume", "pitch" -> "1.0"
             "effect" -> "minecraft:speed"
             "level" -> "1"
-            "seconds" -> "30"
             "intensity" -> "1.0"
             "shakeType" -> "positional"
             "slot" -> "HAND"
@@ -1389,10 +1393,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun showDisplayTimingDialog(player: Player, route: MenuRoute, node: CommandNode) {
-        val fadeIn = node.string("fadeIn", "10")
-        val stay = node.string("stay", "60")
-        val fadeOut = node.string("fadeOut", "10")
-        val durationSpec = requireNotNull(CommandDialogSpecs.field("stay"))
+        val fadeIn = node.string("fadeInSeconds", "1")
+        val stay = node.string("staySeconds", "3")
+        val fadeOut = node.string("fadeOutSeconds", "1")
+        val durationSpec = requireNotNull(CommandDialogSpecs.field("staySeconds"))
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
@@ -1402,7 +1406,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 body = CommandDialogSpecs.durationBody(player, fadeIn, stay, fadeOut),
                 inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val rawValues = listOf("fadeIn", "stay", "fadeOut").associateWith { key -> response.textValue(key).trim() }
+                    val rawValues = listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").associateWith { key -> response.textValue(key).trim() }
                     val validationError = rawValues.values
                         .mapNotNull { durationSpec.validate(it) }
                         .firstOrNull()
@@ -1880,9 +1884,9 @@ object EditorMenuLayout {
             },
             field("mode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODE, Material.OAK_SIGN) { displayTextMode(it.string("mode", "tellraw")) },
             field("text", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT, Material.WRITTEN_BOOK),
-            field("stay", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DURATION, Material.CLOCK),
+            field("staySeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DURATION, Material.CLOCK),
         )
-        CommandType.WAIT -> listOf(field("ticks", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WAIT, Material.CLOCK))
+        CommandType.WAIT -> listOf(field("seconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS, Material.CLOCK))
         CommandType.SUMMON_ENTITY -> listOf(
             field("entity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY, Material.ZOMBIE_SPAWN_EGG),
             field("tags", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS, Material.NAME_TAG),
@@ -2033,8 +2037,7 @@ object EditorMenuLayout {
         "other" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OTHER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OTHER
         "mode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_MODE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_MODE
         "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TEXT to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TEXT
-        "stay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_STAY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_STAY
-        "ticks" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TICKS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TICKS
+        "fadeInSeconds", "staySeconds", "fadeOutSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_STAY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_STAY
         "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY
         "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAGS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAGS
         "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND

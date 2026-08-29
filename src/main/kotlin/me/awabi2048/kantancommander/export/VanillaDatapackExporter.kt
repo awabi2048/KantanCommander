@@ -18,6 +18,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.execution.ExecutionSemantics
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.Material
@@ -438,8 +439,10 @@ class VanillaDatapackExporter(
                 }
                 else -> lower(node, graph)?.let { command ->
                     if (node.type == CommandType.DISPLAY_TEXT && node.string("mode", "tellraw") == "title") {
-                        val times = "title ${effectiveTarget(node)} times ${node.int("fadeIn", 10)} " +
-                            "${node.int("stay", 60)} ${node.int("fadeOut", 10)}"
+                        val times = "title ${effectiveTarget(node)} times " +
+                            "${node.int("fadeInSeconds", 1).coerceAtLeast(0).toLong() * TICKS_PER_SECOND} " +
+                            "${node.int("staySeconds", 3).coerceAtLeast(0).toLong() * TICKS_PER_SECOND} " +
+                            "${node.int("fadeOutSeconds", 1).coerceAtLeast(0).toLong() * TICKS_PER_SECOND}"
                         lines += nodeExportContext?.let { wrapContext(it, times) } ?: times
                     }
                     val contextual = nodeExportContext?.let { wrapContext(it, command) } ?: command
@@ -471,7 +474,7 @@ class VanillaDatapackExporter(
                 }
                 CommandType.WAIT ->
                     node.next?.let {
-                        lines += "schedule function kantan:${nodeFunction(prefix, it)} ${node.int("ticks", 20).coerceAtLeast(1)}t replace"
+                        lines += "schedule function kantan:${nodeFunction(prefix, it)} ${node.int("seconds", 1).coerceAtLeast(1).toLong() * TICKS_PER_SECOND}t replace"
                     }
                 CommandType.CONTEXT -> Unit
                 CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit

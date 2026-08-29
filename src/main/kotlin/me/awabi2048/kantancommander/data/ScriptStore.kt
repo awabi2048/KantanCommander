@@ -1,7 +1,10 @@
 package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
@@ -130,7 +133,17 @@ class ScriptStore(
     }
 
     private fun read(file: File): DiskScript? = try {
-        gson.fromJson(file.readText(Charsets.UTF_8), DiskScript::class.java)
+        val source = JsonParser.parseString(file.readText(Charsets.UTF_8)).asJsonObject
+        val sourceVersion = source["formatVersion"]?.asInt ?: return null
+        val migrated = when (sourceVersion) {
+            STRUCTURED_FORMAT_VERSION -> source
+            LEGACY_TICK_FORMAT_VERSION -> migrateLegacyTickFormat(source)
+            else -> {
+                logger.warning("未対応の構造化コマンドディスク形式を読み込みません: ${file.absolutePath} version=$sourceVersion")
+                return null
+            }
+        }
+        gson.fromJson(migrated, DiskScript::class.java)
             ?.takeIf { it.formatVersion == STRUCTURED_FORMAT_VERSION }
             ?.also { script ->
                 // 構造そのものの違反は破損データとして隔離する。
@@ -146,10 +159,60 @@ class ScriptStore(
                             "${file.absolutePath} (${limitViolations.joinToString("; ")})"
                     )
                 }
+                if (sourceVersion != STRUCTURED_FORMAT_VERSION) {
+                    // v6を読み込んだ時点でv7の正本へ書き戻し、次回以降に
+                    // 旧tick値と新しい秒値を二重解釈しないようにします。
+                    atomicWrite(file, gson.toJson(migrated))
+                    logger.info("構造化コマンドディスクを秒単位の形式へ移行しました: ${file.absolutePath}")
+                }
             }
     } catch (error: Exception) {
         quarantine(file, error)
         null
+    }
+
+    /**
+     * v6の内部単位（10tick=0.5秒）を、v7の秒単位へ一度だけ変換します。
+     * 保存済みJSONを直接新モデルへ流し込むと旧ticksキーが黙って無視されるため、
+     * フォーマットバージョンを分岐させた明示移行にしています。
+     */
+    private fun migrateLegacyTickFormat(source: JsonObject): JsonObject {
+        val migrated = source.deepCopy()
+        migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        migrated["timer"]?.asJsonObject?.let { timer ->
+            val units = timer["intervalUnits"]?.asInt ?: 1
+            val seconds = ((units.toLong() + 1L) / 2L)
+                .coerceIn(1L, MAX_TIMER_SECONDS.toLong())
+            timer.addProperty("intervalSeconds", seconds.toInt())
+            timer.remove("intervalUnits")
+        }
+        migrateGraphTimes(migrated["graph"]?.asJsonObject)
+        return migrated
+    }
+
+    private fun migrateGraphTimes(graph: JsonObject?) {
+        val nodes = graph?.get("nodes")?.asJsonObject ?: return
+        nodes.entrySet().forEach { (_, element) ->
+            val node = element.asJsonObject
+            val params = node["params"]?.asJsonObject
+            when (node["type"]?.asString) {
+                "WAIT" -> migrateTicksParam(params, "ticks", "seconds")
+                "DISPLAY_TEXT" -> {
+                    migrateTicksParam(params, "fadeIn", "fadeInSeconds")
+                    migrateTicksParam(params, "stay", "staySeconds")
+                    migrateTicksParam(params, "fadeOut", "fadeOutSeconds")
+                }
+            }
+            migrateGraphTimes(node["snapshot"]?.asJsonObject)
+        }
+    }
+
+    private fun migrateTicksParam(params: JsonObject?, oldKey: String, newKey: String) {
+        val raw = params?.get(oldKey)?.asString ?: return
+        val ticks = raw.toLongOrNull() ?: return
+        val seconds = if (ticks <= 0L) 0L else (ticks + 19L) / 20L
+        params.addProperty(newKey, seconds)
+        params.remove(oldKey)
     }
 
     private fun quarantine(file: File, error: Exception) {
@@ -201,6 +264,7 @@ class ScriptStore(
     }
 
     private companion object {
+        private const val LEGACY_TICK_FORMAT_VERSION = 6
         /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
         private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
 
