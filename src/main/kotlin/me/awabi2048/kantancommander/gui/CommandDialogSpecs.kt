@@ -64,6 +64,51 @@ internal object CommandDialogSpecs {
             maxLength = spec.maxLength,
         )
 
+    /** 表示時間ダイアログの本文を両GUIで共有します。 */
+    fun durationBody(player: Player, fadeIn: String, stay: String, fadeOut: String): List<Component> {
+        val current = listOf(
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN)}=$fadeIn",
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY)}=$stay",
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT)}=$fadeOut",
+        ).joinToString(", ")
+        return listOf(
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_BODY),
+            Component.text(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
+                    mapOf("value" to current),
+                ),
+                NamedTextColor.GRAY,
+            ),
+        )
+    }
+
+    /** 表示時間3項目の入力欄を共通仕様から生成します。 */
+    fun durationInputs(player: Player, fadeIn: String, stay: String, fadeOut: String): List<MenuDialogInput.Text> {
+        val spec = requireNotNull(field("stay"))
+        return listOf(
+            MenuDialogInput.Text(
+                "fadeIn",
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
+                fadeIn,
+                maxLength = spec.maxLength,
+            ),
+            MenuDialogInput.Text(
+                "stay",
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
+                stay,
+                maxLength = spec.maxLength,
+            ),
+            MenuDialogInput.Text(
+                "fadeOut",
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
+                fadeOut,
+                maxLength = spec.maxLength,
+            ),
+        )
+    }
+
     /** 対象フィルタ系。空欄は「指定解除」として常に合格です。 */
     fun targetFilter(parameter: String): Spec? = when (parameter) {
         "entityType" -> Spec(
@@ -176,12 +221,16 @@ internal object CommandDialogSpecs {
             else -> 16
         }
         val positiveInteger = fieldKey in setOf("count", "ticks", "level", "seconds")
+        val nonNegativeInteger = fieldKey == "stay"
         return Spec(labelKey, maxLength) { raw ->
+            val integerValue = raw.toIntOrNull()
             when {
-                positiveInteger && (raw.toIntOrNull() ?: 0) < 1 ->
+                positiveInteger && (integerValue ?: 0) < 1 ->
                     // Specはプレイヤー非依存のため、{field}を要求するキーは使わず、
                     // 両GUIで同じプレースホルダーなしのエラーを返します。
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
+                nonNegativeInteger && (integerValue == null || integerValue < 0) ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID
                 fieldKey in setOf("entity", "sound", "effect") && NamespacedKey.fromString(raw) == null ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 fieldKey == "tags" && raw.split(',').map(String::trim).filter(String::isNotEmpty)

@@ -41,5 +41,10 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STEP_ZERO,
             requireNotNull(CommandDialogSpecs.field("stepValue", "FIXED")).validate("0"),
         )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
+            requireNotNull(CommandDialogSpecs.field("stay")).validate("-1"),
+        )
+        assertNull(requireNotNull(CommandDialogSpecs.field("stay")).validate("0"))
     }
 }

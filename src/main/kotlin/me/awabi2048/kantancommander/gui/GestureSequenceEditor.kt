@@ -776,6 +776,12 @@ class GestureSequenceEditor(
             applyHeldItem(player, context)
             return
         }
+        if (fieldKey == "stay" && node.type == CommandType.DISPLAY_TEXT) {
+            // 表示時間はfadeIn/stay/fadeOutを一組として編集し、インベントリGUIと
+            // 同じ入力欄・最大長・0以上検証を使います。
+            showDisplayTimingSettingDialog(player, context, node)
+            return
+        }
         val screen = screenFor(descriptor.editor)
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目は、チャットを横取りせず
@@ -986,6 +992,40 @@ class GestureSequenceEditor(
         inputs = listOf(CommandDialogSpecs.input(player, "value", initial, spec)),
     ) { response -> onSubmit(response.textValue("value")) }
 
+    /** DISPLAY_TEXTの3つの時間設定を、インベントリGUIと同じ仕様で編集します。 */
+    private fun showDisplayTimingSettingDialog(
+        player: Player,
+        context: CommandSettingContext,
+        node: me.awabi2048.kantancommander.model.CommandNode,
+    ) {
+        val fadeIn = node.string("fadeIn", "10")
+        val stay = node.string("stay", "60")
+        val fadeOut = node.string("fadeOut", "10")
+        val durationSpec = requireNotNull(CommandDialogSpecs.field("stay"))
+        showInputDialog(
+            player = player,
+            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
+            body = CommandDialogSpecs.durationBody(player, fadeIn, stay, fadeOut),
+            inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),
+        ) { response ->
+            val rawValues = listOf("fadeIn", "stay", "fadeOut").associateWith { key ->
+                response.textValue(key).trim()
+            }
+            val validationError = rawValues.values
+                .mapNotNull { durationSpec.validate(it) }
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val values = rawValues.mapValues { (_, value) -> requireNotNull(value.toIntOrNull()) }
+            if (!updateSettingNode(player, context) { command ->
+                    values.forEach { (key, value) -> command.params[key] = value.toString() }
+                }
+            ) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            null
+        }
+    }
+
     /**
      * 複数値の設定は入力欄を分割します（座標X/Y/Z、yaw/pitchなど）。
      * 連結文字列を1欄で受けると、どの値が不正かをユーザーが特定できず、
@@ -995,6 +1035,7 @@ class GestureSequenceEditor(
         player: Player,
         body: List<Component>,
         inputs: List<MenuDialogInput>,
+        title: Component = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE)),
         onSubmit: (MenuDialogResponse) -> String?,
     ) {
         invalidateInput()
@@ -1008,7 +1049,7 @@ class GestureSequenceEditor(
                 MenuDialogRequest(
                     owner = DIALOG_OWNER,
                     id = dialogId,
-                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE)),
+                    title = title,
                     body = body,
                     inputs = inputs,
                     confirm = MenuDialogButton(

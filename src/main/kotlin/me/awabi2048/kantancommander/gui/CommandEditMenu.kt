@@ -1324,31 +1324,25 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun showDisplayTimingDialog(player: Player, route: MenuRoute, node: CommandNode) {
+        val fadeIn = node.string("fadeIn", "10")
+        val stay = node.string("stay", "60")
+        val fadeOut = node.string("fadeOut", "10")
+        val durationSpec = requireNotNull(CommandDialogSpecs.field("stay"))
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
                 owner = SequenceEditorMenu.OWNER,
                 id = "display-timing",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
-                body = listOf(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_BODY),
-                    Component.text(
-                        "現在値: fadeIn=${node.string("fadeIn", "10")}, stay=${node.string("stay", "60")}, fadeOut=${node.string("fadeOut", "10")} tick",
-                        NamedTextColor.GRAY,
-                    ),
-                ),
-                inputs = listOf(
-                    MenuDialogInput.Text("fadeIn", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN), node.string("fadeIn", "10")),
-                    MenuDialogInput.Text("stay", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY), node.string("stay", "60")),
-                    MenuDialogInput.Text("fadeOut", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT), node.string("fadeOut", "10")),
-                ),
+                body = CommandDialogSpecs.durationBody(player, fadeIn, stay, fadeOut),
+                inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val values = listOf("fadeIn", "stay", "fadeOut").associateWith { response.textValue(it).toIntOrNull() }
-                    if (values.values.any { it == null || it < 0 }) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(
-                            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID)
-                        )
-                    }
+                    val rawValues = listOf("fadeIn", "stay", "fadeOut").associateWith { key -> response.textValue(key).trim() }
+                    val validationError = rawValues.values
+                        .mapNotNull { durationSpec.validate(it) }
+                        .firstOrNull()
+                    if (validationError != null) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                    val values = rawValues.mapValues { (_, value) -> requireNotNull(value.toIntOrNull()) }
                     if (!updateNode(route) { command ->
                         values.forEach { (key, value) -> command.params[key] = value.toString() }
                     }) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
