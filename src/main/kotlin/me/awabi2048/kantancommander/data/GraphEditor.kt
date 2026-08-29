@@ -11,6 +11,33 @@ import java.util.UUID
 object GraphEditor {
     enum class Edge { ENTRY, NEXT, TRUE, FALSE, FOR_BODY }
 
+    /**
+     * ビューポート上の左右入れ替え操作で使う方向です。
+     *
+     * グラフは表示座標を保存しないため、左右のボタンは座標だけを動かすのではなく、
+     * 同一の直列経路にある実行単位の `next` 関係を入れ替えます。条件分岐やforの
+     * ペアを途中で分解しないよう、構造ノードはこの操作の対象外にします。
+     */
+    enum class ReorderDirection { LEFT, RIGHT }
+
+    /**
+     * 同一直列経路にある隣接ノードを入れ替えます。
+     *
+     * 条件分岐／合流／for開始・終了は、分岐やペアの構造を一組で扱う別操作が必要です。
+     * それらを単純な `next` 入れ替えへ通すと、TRUE/FALSEの意味やforの対応関係を壊す
+     * ため、ここでは安全側に拒否します。通常実行ノードとbreak/continueは、親が
+     * 分岐の枝であっても同じ枝内の隣接ノードとして入れ替えられます。
+     */
+    fun swapAdjacent(graph: CommandGraph, nodeId: UUID, direction: ReorderDirection): Boolean {
+        val node = graph.nodes[nodeId] ?: return false
+        if (!isLinearReorderable(node)) return false
+
+        return when (direction) {
+            ReorderDirection.LEFT -> swapWithPrevious(graph, node)
+            ReorderDirection.RIGHT -> swapWithNext(graph, node)
+        }
+    }
+
     fun canAppendMerge(graph: CommandGraph?, conditionId: UUID?): Boolean {
         val currentGraph = graph ?: return false
         val condition = conditionId?.let { currentGraph.nodes[it] } ?: return false
@@ -194,6 +221,62 @@ object GraphEditor {
         } else {
             source.next = target
         }
+    }
+
+    private fun swapWithPrevious(graph: CommandGraph, node: CommandNode): Boolean {
+        val incoming = incomingExecutionLink(graph, node.id) ?: return false
+        // 最初の枝要素を条件分岐そのものと入れ替えることはできません。
+        if (incoming.edge != Edge.NEXT) return false
+        val previous = incoming.sourceId?.let(graph.nodes::get) ?: return false
+        if (!isLinearReorderable(previous)) return false
+        val after = node.next
+
+        val previousIncoming = incomingExecutionLink(graph, previous.id)
+        // previousがグラフ入口なら、入口IDだけを差し替えます。そうでなければ
+        // previousへ入っていた同じ実行エッジをnodeへ向け直します。
+        setExecutionLink(graph, previousIncoming, node.id)
+        node.next = previous.id
+        previous.next = after
+        return true
+    }
+
+    private fun swapWithNext(graph: CommandGraph, node: CommandNode): Boolean {
+        val nextId = node.next ?: return false
+        val next = graph.nodes[nextId] ?: return false
+        if (!isLinearReorderable(next)) return false
+        val incoming = incomingExecutionLink(graph, node.id) ?: return false
+
+        setExecutionLink(graph, incoming, next.id)
+        node.next = next.next
+        next.next = node.id
+        return true
+    }
+
+    private fun isLinearReorderable(node: CommandNode): Boolean = node.type !in setOf(
+        CommandType.CONDITION,
+        CommandType.MERGE,
+        CommandType.FOR_START,
+        CommandType.FOR_END,
+    )
+
+    private data class ExecutionLink(val sourceId: UUID?, val edge: Edge)
+
+    /** ペア参照は実行順ではないため除外し、実行エッジだけを収集します。 */
+    private fun incomingExecutionLink(graph: CommandGraph, target: UUID): ExecutionLink? {
+        val links = buildList {
+            if (graph.entryNodeId == target) add(ExecutionLink(null, Edge.ENTRY))
+            graph.nodes.values.forEach { source ->
+                if (source.next == target) add(ExecutionLink(source.id, Edge.NEXT))
+                if (source.trueNext == target) add(ExecutionLink(source.id, Edge.TRUE))
+                if (source.falseNext == target) add(ExecutionLink(source.id, Edge.FALSE))
+            }
+        }
+        return links.singleOrNull()
+    }
+
+    private fun setExecutionLink(graph: CommandGraph, link: ExecutionLink?, target: UUID?) {
+        val resolved = link ?: error("実行エッジが一意に解決できません")
+        setEdge(graph, resolved.sourceId, resolved.edge, target)
     }
 
     private fun deleteSimple(graph: CommandGraph, node: CommandNode): Boolean {

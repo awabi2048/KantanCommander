@@ -9,6 +9,54 @@ import org.junit.jupiter.api.Test
 
 class GraphEditorTest {
     @Test
+    fun `adjacent reorder swaps execution order without changing node identity`() {
+        val graph = CommandGraph.empty()
+        val first = GraphEditor.append(graph, CommandType.WAIT)
+        val second = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val third = GraphEditor.append(graph, CommandType.GIVE_ITEM)
+
+        assertTrue(GraphEditor.swapAdjacent(graph, second.id, GraphEditor.ReorderDirection.LEFT))
+        assertEquals(second.id, graph.entryNodeId)
+        assertEquals(first.id, second.next)
+        assertEquals(third.id, first.next)
+
+        assertTrue(GraphEditor.swapAdjacent(graph, second.id, GraphEditor.ReorderDirection.RIGHT))
+        assertEquals(first.id, graph.entryNodeId)
+        assertEquals(second.id, first.next)
+        assertEquals(third.id, second.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `adjacent reorder works within a branch but does not exchange branch meaning`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueNode = GraphEditor.append(graph, CommandType.WAIT)
+        val falseFirst = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val falseSecond = GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        assertTrue(GraphEditor.swapAdjacent(graph, falseSecond.id, GraphEditor.ReorderDirection.LEFT))
+        assertEquals(falseSecond.id, condition.falseNext)
+        assertEquals(falseFirst.id, falseSecond.next)
+        assertEquals(merge.id, falseFirst.next)
+        assertEquals(trueNode.id, condition.trueNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `structural nodes and branch boundary cannot be reordered as simple nodes`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val branchNode = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        GraphEditor.appendMerge(graph, condition.id)
+
+        assertEquals(false, GraphEditor.swapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.RIGHT))
+        assertEquals(false, GraphEditor.swapAdjacent(graph, branchNode.id, GraphEditor.ReorderDirection.LEFT))
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
     fun `false branch keeps insertion order`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
