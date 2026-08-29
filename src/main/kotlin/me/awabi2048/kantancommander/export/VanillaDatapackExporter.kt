@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -103,6 +104,21 @@ class VanillaDatapackExporter(
                 CommandType.ENTITY_ACTION -> if (node.string("action") !in setOf("ride", "dismount")) {
                     errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
+                CommandType.BLOCK_OPERATION -> {
+                    val block = Material.matchMaterial(node.string("block"))
+                    if (!node.string("block").startsWith("minecraft:") || block == null || block == Material.AIR) {
+                        errors += "${script.id}/${node.id}: 完全バニラ出力できない配置ブロックです"
+                    }
+                    when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
+                        BlockOperationMode.SETBLOCK -> validatePosition(script, node, node.blockPositionSpec, errors)
+                        BlockOperationMode.FILL -> {
+                            validatePosition(script, node, node.blockFromSpec, errors)
+                            validatePosition(script, node, node.blockToSpec, errors)
+                        }
+                        null -> errors += "${script.id}/${node.id}: 不明なブロック操作方式です"
+                    }
+                }
+                CommandType.ENTITY_DELETE -> Unit
                 CommandType.TELEPORT -> if (node.string("world").isNotBlank()) {
                     errors += "${script.id}/${node.id}: 出力先ワールドを検証できない固定ワールド参照です"
                 } else {
@@ -500,6 +516,8 @@ class VanillaDatapackExporter(
         CommandType.CAMERA_SHAKE -> null
         CommandType.EQUIP_ITEM ->
             "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with ${node.string("item")}"
+        CommandType.BLOCK_OPERATION -> blockOperationCommand(node)
+        CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
         CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node, graph)
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
@@ -860,6 +878,45 @@ class VanillaDatapackExporter(
                 PositionKind.WORLD_VARIABLE -> error("unsupported structured teleport destination")
             }
         }
+    }
+
+    /** ブロック操作固有の位置指定を、座標または実行位置へ静的に展開します。 */
+    private fun blockOperationCommand(node: CommandNode): String {
+        val block = node.string("block")
+        return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
+            BlockOperationMode.SETBLOCK -> {
+                val position = requireNotNull(node.blockPositionSpec)
+                val anchor = blockAnchor(node, position)
+                "${anchor.prefix}setblock ${anchor.coordinates} $block"
+            }
+            BlockOperationMode.FILL -> {
+                val from = blockAnchor(node, requireNotNull(node.blockFromSpec))
+                val to = blockAnchor(node, requireNotNull(node.blockToSpec))
+                require(from.prefix == to.prefix) {
+                    "fillの始点と終点は同じ基準位置で指定してください"
+                }
+                "${from.prefix}fill ${from.coordinates} ${to.coordinates} $block"
+            }
+            null -> error("unknown block operation")
+        }
+    }
+
+    private data class BlockAnchor(val prefix: String, val coordinates: String)
+
+    private fun blockAnchor(node: CommandNode, spec: me.awabi2048.kantancommander.model.PositionSpec): BlockAnchor = when (spec.kind) {
+        PositionKind.CAPTURED, PositionKind.COORDINATES -> BlockAnchor(
+            "",
+            "${spec.x ?: error("block x is missing")} ${spec.y ?: error("block y is missing")} ${spec.z ?: error("block z is missing")}",
+        )
+        PositionKind.DISK -> BlockAnchor("", "~ ~ ~")
+        PositionKind.EXECUTOR -> BlockAnchor("execute at @s run ", "~ ~ ~")
+        PositionKind.TARGET -> BlockAnchor(
+            "execute at ${singleSelector(node.contextOverride?.target ?: node.targetSpec ?: error("block target is missing"))} run ",
+            "~ ~ ~",
+        )
+        PositionKind.MYWORLD_SPAWN,
+        PositionKind.TEMPORARY_VARIABLE,
+        PositionKind.WORLD_VARIABLE -> error("unsupported structured block position")
     }
 
     private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()

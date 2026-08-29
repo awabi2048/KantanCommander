@@ -21,10 +21,10 @@ class KantanItemPolicyTest {
     }
 
     @Test
-    fun `disk opens with right click and never places by shift right click`() {
+    fun `disk never opens an editor from direct hand interaction`() {
         listOf(Action.RIGHT_CLICK_AIR, Action.RIGHT_CLICK_BLOCK).forEach { action ->
             assertEquals(
-                KantanItemAction.OPEN,
+                KantanItemAction.NONE,
                 KantanItemPolicy.itemAction(KantanItemKind.DISK, action, sneaking = false),
             )
             // ディスクによる設置（Shift+右クリック）は仕様として廃止している。

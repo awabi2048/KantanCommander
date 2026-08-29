@@ -9,7 +9,7 @@ class MenuSlotDistributionTest {
     fun `command picker keeps one empty row above and below a fixed fourteen-slot area`() {
         assertEquals(54, CommandPickerLayoutPolicy.SIZE)
         assertEquals((19..25).toList() + (28..34).toList(), CommandPickerLayoutPolicy.itemSlots)
-        assertEquals(listOf(49, 51), CommandPickerLayoutPolicy.categorySlots)
+        assertEquals(listOf(47, 49, 51), CommandPickerLayoutPolicy.categorySlots)
         assertEquals(45, CommandPickerLayoutPolicy.BACK_SLOT)
     }
 

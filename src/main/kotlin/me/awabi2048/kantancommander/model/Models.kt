@@ -9,6 +9,7 @@ const val STRUCTURED_FORMAT_VERSION = 6
 const val TIMER_UNIT_TICKS = 10
 const val MIN_TIMER_UNITS = 1
 const val MAX_TIMER_UNITS = 86_400
+const val MAX_BLOCK_OPERATION_VOLUME = 32_768L
 
 data class DiskScript(
     val formatVersion: Int = STRUCTURED_FORMAT_VERSION,
@@ -58,6 +59,9 @@ data class CommandGraph(
                 destinationSpec = node.destinationSpec?.copy(),
                 destinationTargetSpec = node.destinationTargetSpec?.copy(),
                 conditionPositionSpec = node.conditionPositionSpec?.copy(),
+                blockPositionSpec = node.blockPositionSpec?.copy(),
+                blockFromSpec = node.blockFromSpec?.copy(),
+                blockToSpec = node.blockToSpec?.copy(),
                 snapshot = node.snapshot?.deepCopy(),
             )
         }
@@ -86,6 +90,11 @@ data class CommandNode(
     var destinationSpec: PositionSpec? = null,
     var destinationTargetSpec: TargetSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
+    /** ブロック操作の単一配置位置（setblock相当）。 */
+    var blockPositionSpec: PositionSpec? = null,
+    /** ブロック操作の範囲始点・終点（fill相当）。 */
+    var blockFromSpec: PositionSpec? = null,
+    var blockToSpec: PositionSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
     /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
     var contextSource: ContextSource? = ContextSource.BASE,
@@ -106,6 +115,17 @@ data class CommandNode(
 }
 
 enum class ContextSource { BASE, PREVIOUS }
+
+/** ブロック操作が実行時に採用する配置方式です。保存値は明示的な小文字文字列にします。 */
+enum class BlockOperationMode(val value: String) {
+    SETBLOCK("setblock"),
+    FILL("fill"),
+    ;
+
+    companion object {
+        fun from(value: String?): BlockOperationMode? = entries.firstOrNull { it.value == value }
+    }
+}
 
 val CommandNode.effectiveContextSource: ContextSource
     get() = contextSource ?: ContextSource.BASE
@@ -219,6 +239,10 @@ enum class CommandType(
     EQUIP_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM_DESCRIPTION, Material.IRON_CHESTPLATE, mapOf(
         "slot" to "HAND", "item" to ""
     )),
+    BLOCK_OPERATION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BLOCK_OPERATION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BLOCK_OPERATION_DESCRIPTION, Material.BRICKS, mapOf(
+        "operation" to "setblock", "block" to ""
+    )),
+    ENTITY_DELETE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONDITION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
         "kind" to ConditionKind.TARGET_EXISTS.name,
         "inverted" to "false",

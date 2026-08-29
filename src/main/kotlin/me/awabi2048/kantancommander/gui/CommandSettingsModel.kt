@@ -36,6 +36,9 @@ enum class CommandSettingRole(val routeValue: String) {
     CONTEXT_POSITION("context_position"),
     CONDITION_POSITION("condition_position"),
     CONTEXT_FACING("context_facing"),
+    BLOCK_POSITION("block_position"),
+    BLOCK_FROM("block_from"),
+    BLOCK_TO("block_to"),
     ;
 
     companion object {
@@ -81,6 +84,7 @@ enum class CommandSettingEditor {
     FOR_SOURCE,
     INCLUSIVE_END,
     CONTEXT,
+    BLOCK_OPERATION,
 }
 
 data class CommandSettingDescriptor(
@@ -106,6 +110,13 @@ object CommandSettingsModel {
         }
         if (node.type == CommandType.DISPLAY_TEXT && node.string("mode") != "title") {
             return fields.filterNot { it.key == "stay" }
+        }
+        if (node.type == CommandType.BLOCK_OPERATION) {
+            return if (node.string("operation", "setblock") == "fill") {
+                fields.filterNot { it.key == "position" }
+            } else {
+                fields.filterNot { it.key == "from" || it.key == "to" }
+            }
         }
         if (node.type != CommandType.VARIABLE) return fields
         val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
@@ -166,6 +177,16 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.DISK_CALL -> text()
+        CommandType.BLOCK_OPERATION -> when (fieldKey) {
+            "operation" -> CommandSettingDescriptor(CommandSettingEditor.BLOCK_OPERATION)
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_POSITION)
+            "from" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_FROM)
+            "to" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_TO)
+            else -> text()
+        }
+        CommandType.ENTITY_DELETE -> if (fieldKey == "target") {
+            CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+        } else text()
         CommandType.VARIABLE -> when (fieldKey) {
             "scope" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_SCOPE)
             "type" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
@@ -220,6 +241,9 @@ object CommandSettingsModel {
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec
+        CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
+        CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
+        CommandSettingRole.BLOCK_TO -> node.blockToSpec
         else -> node.contextOverride?.position
     }
 
@@ -230,6 +254,9 @@ object CommandSettingsModel {
                 node.destinationTargetSpec = null
             }
             CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec = spec
+            CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec = spec
+            CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
+            CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
             else -> node.contextOverride =
                 (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
         }
@@ -237,6 +264,9 @@ object CommandSettingsModel {
             when (role) {
                 CommandSettingRole.DESTINATION -> "destination"
                 CommandSettingRole.CONDITION_POSITION -> "condition"
+                CommandSettingRole.BLOCK_POSITION -> "position"
+                CommandSettingRole.BLOCK_FROM -> "from"
+                CommandSettingRole.BLOCK_TO -> "to"
                 else -> "position"
             },
         )
@@ -281,8 +311,11 @@ object CommandSettingsModel {
             "position" -> when (role) {
                 CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec != null
                 CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position != null
+                CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec != null
                 else -> node.contextOverride?.position != null
             }
+            "from" -> node.blockFromSpec != null
+            "to" -> node.blockToSpec != null
             "facing" -> node.contextOverride?.facing != null
             "context" -> node.contextOverride != null || node.effectiveContextSource != ContextSource.BASE
             "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()

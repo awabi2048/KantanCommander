@@ -9,6 +9,8 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.BlockOperationMode
+import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.MIN_TIMER_UNITS
 import me.awabi2048.kantancommander.model.MAX_TIMER_UNITS
 import me.awabi2048.kantancommander.model.FacingKind
@@ -58,7 +60,14 @@ object ExecutableScriptValidator {
         listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach {
             validateTarget(it, path, errors)
         }
-        listOfNotNull(node.destinationSpec, node.conditionPositionSpec, node.contextOverride?.position).forEach {
+        listOfNotNull(
+            node.destinationSpec,
+            node.conditionPositionSpec,
+            node.blockPositionSpec,
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.contextOverride?.position,
+        ).forEach {
             validatePosition(it, path, errors)
         }
         node.contextOverride?.let { context ->
@@ -128,6 +137,38 @@ object ExecutableScriptValidator {
                 }
                 if (Material.matchMaterial(node.string("item")) == null) errors += "$path: 装備アイテムが未設定です"
             }
+            CommandType.BLOCK_OPERATION -> {
+                val operation = BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))
+                if (operation == null) {
+                    errors += "$path: ブロック操作方式が不正です"
+                }
+                val block = Material.matchMaterial(node.string("block"))
+                if (block == null || block == Material.AIR) {
+                    errors += "$path: 配置ブロックが未設定または不正です"
+                }
+                when (operation) {
+                    BlockOperationMode.SETBLOCK -> {
+                        if (node.blockPositionSpec == null) errors += "$path: ブロック配置位置が未設定です"
+                    }
+                    BlockOperationMode.FILL -> {
+                        val from = node.blockFromSpec
+                        val to = node.blockToSpec
+                        if (from == null) errors += "$path: 範囲配置の始点が未設定です"
+                        if (to == null) errors += "$path: 範囲配置の終点が未設定です"
+                        if (from != null && to != null) {
+                            blockVolume(from, to)?.let { volume ->
+                                if (volume > MAX_BLOCK_OPERATION_VOLUME) {
+                                    errors += "$path: 範囲配置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください"
+                                }
+                            }
+                        }
+                    }
+                    null -> Unit
+                }
+            }
+            CommandType.ENTITY_DELETE -> {
+                if (node.targetSpec == null) errors += "$path: 削除対象が未設定です"
+            }
             CommandType.CONDITION -> validateCondition(node, path, errors)
             CommandType.CONTEXT -> if (node.contextOverride == null) errors += "$path: コンテキストが未設定です"
             CommandType.DISK_CALL -> if (node.snapshot == null) errors += "$path: 呼び出すディスク内容が未設定です"
@@ -186,6 +227,25 @@ object ExecutableScriptValidator {
         if (spec.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION) &&
             (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)
         ) errors += "$path: 向きが未設定または有限値ではありません"
+    }
+
+    /** 座標値が静的な場合だけ、実行前にfillの上限を判定します。 */
+    private fun blockVolume(from: PositionSpec, to: PositionSpec): Long? {
+        val coordinates = listOf(from.x, from.y, from.z, to.x, to.y, to.z)
+        if (coordinates.any { it?.isFinite() != true }) return null
+        val sizes = listOf(
+            kotlin.math.abs(kotlin.math.floor(to.x!!) - kotlin.math.floor(from.x!!)) + 1.0,
+            kotlin.math.abs(kotlin.math.floor(to.y!!) - kotlin.math.floor(from.y!!)) + 1.0,
+            kotlin.math.abs(kotlin.math.floor(to.z!!) - kotlin.math.floor(from.z!!)) + 1.0,
+        )
+        if (sizes.any { it > Long.MAX_VALUE.toDouble() }) return Long.MAX_VALUE
+        return sizes.fold(1L) { total, size ->
+            if (total > MAX_BLOCK_OPERATION_VOLUME / size.toLong().coerceAtLeast(1L)) {
+                MAX_BLOCK_OPERATION_VOLUME + 1
+            } else {
+                total * size.toLong()
+            }
+        }
     }
 
     private fun validateCondition(node: CommandNode, path: String, errors: MutableList<String>) {

@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -119,6 +120,27 @@ class VanillaDatapackExporterTest {
         assertTrue(body.contains("effect give"))
         assertTrue(body.contains("item replace entity"))
         assertTrue(result.warnings.any { it.contains("カメラ揺れ") })
+    }
+
+    @Test
+    fun `block operation and entity deletion lower to vanilla commands`() {
+        val store = ScriptStore(temp.resolve("block-commands"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "block commands")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["block"] = "minecraft:stone"
+            blockPositionSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        }
+        GraphEditor.append(script.graph, CommandType.ENTITY_DELETE).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("setblock 1.0 2.0 3.0 minecraft:stone"))
+        assertTrue(body.contains("kill @e["))
     }
 
     @Test

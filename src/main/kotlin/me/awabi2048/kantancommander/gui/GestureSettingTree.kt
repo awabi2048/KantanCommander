@@ -132,5 +132,6 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.FOR_SOURCE -> GestureSettingScreen.FOR_SOURCE
     CommandSettingEditor.INCLUSIVE_END -> GestureSettingScreen.INCLUSIVE_END
     CommandSettingEditor.CONTEXT -> GestureSettingScreen.CONTEXT_OVERRIDE
+    CommandSettingEditor.BLOCK_OPERATION -> GestureSettingScreen.BLOCK_OPERATION
     CommandSettingEditor.TEXT -> null
 }

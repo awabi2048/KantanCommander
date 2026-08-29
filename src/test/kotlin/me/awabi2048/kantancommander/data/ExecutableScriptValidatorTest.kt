@@ -12,6 +12,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.BlockOperationMode
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -170,5 +171,30 @@ class ExecutableScriptValidatorTest {
         assertTrue(
             ExecutableScriptValidator.validate(script).any { it.contains("ループ値はワールド内変数へ保存できません") },
         )
+    }
+
+    @Test
+    fun `block operations and entity deletion require their structured inputs`() {
+        val script = DiskScript(name = "new-operations", owner = UUID.randomUUID())
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION)
+        GraphEditor.append(script.graph, CommandType.ENTITY_DELETE)
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.contains("配置ブロック") })
+        assertTrue(errors.any { it.contains("ブロック配置位置") })
+        assertTrue(errors.any { it.contains("削除対象") })
+    }
+
+    @Test
+    fun `fill rejects a statically oversized volume`() {
+        val script = DiskScript(name = "large-fill", owner = UUID.randomUUID())
+        val fill = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION)
+        fill.params["operation"] = BlockOperationMode.FILL.value
+        fill.params["block"] = "minecraft:stone"
+        fill.blockFromSpec = PositionSpec(PositionKind.COORDINATES, 0.0, 0.0, 0.0)
+        fill.blockToSpec = PositionSpec(PositionKind.COORDINATES, 100.0, 100.0, 100.0)
+
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("32768") })
     }
 }

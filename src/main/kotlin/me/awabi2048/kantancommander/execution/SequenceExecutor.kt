@@ -6,6 +6,8 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.BlockOperationMode
+import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -403,6 +405,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 applicable.forEach { it.setItem(slot, template.clone()) }
                 true
             }
+            CommandType.BLOCK_OPERATION -> executeBlockOperation(node, session, effectiveContext)
+            CommandType.ENTITY_DELETE -> {
+                val removable = targets.filterNot { PlacementStore.DISPLAY_TAG in it.scoreboardTags }
+                if (removable.isEmpty()) return false
+                removable.forEach(Entity::remove)
+                true
+            }
             else -> true
         }
         if (success) session.previousContext = effectiveContext
@@ -427,6 +436,54 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
         }
         return true
+    }
+
+    /**
+     * ブロック操作をBukkitのブロック更新へ一元化します。
+     *
+     * setblock/fill相当の入力は、座標解決・ワールド一致・件数上限を同じ境界で
+     * 検証してから更新します。fillを無制限に受け付けると、1ノードだけでサーバー
+     * メインスレッドを長時間占有できるため、実行時にも上限を再確認します。
+     */
+    private fun executeBlockOperation(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): Boolean {
+        val material = Material.matchMaterial(node.string("block"))
+            ?.takeIf { it != Material.AIR }
+            ?: return false
+        return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
+            BlockOperationMode.SETBLOCK -> {
+                val location = node.blockPositionSpec?.let { resolvePosition(it, session, context) } ?: return false
+                location.block.setType(material, false)
+                true
+            }
+            BlockOperationMode.FILL -> {
+                val from = node.blockFromSpec?.let { resolvePosition(it, session, context) } ?: return false
+                val to = node.blockToSpec?.let { resolvePosition(it, session, context) } ?: return false
+                if (from.world != to.world) return false
+                val minX = minOf(from.blockX, to.blockX)
+                val maxX = maxOf(from.blockX, to.blockX)
+                val minY = minOf(from.blockY, to.blockY)
+                val maxY = maxOf(from.blockY, to.blockY)
+                val minZ = minOf(from.blockZ, to.blockZ)
+                val maxZ = maxOf(from.blockZ, to.blockZ)
+                val volume = (maxX.toLong() - minX.toLong() + 1L) *
+                    (maxY.toLong() - minY.toLong() + 1L) *
+                    (maxZ.toLong() - minZ.toLong() + 1L)
+                if (volume !in 1L..MAX_BLOCK_OPERATION_VOLUME) return false
+                for (x in minX..maxX) {
+                    for (y in minY..maxY) {
+                        for (z in minZ..maxZ) {
+                            from.world.getBlockAt(x, y, z).setType(material, false)
+                        }
+                    }
+                }
+                true
+            }
+            null -> false
+        }
     }
 
     private fun evaluateCondition(

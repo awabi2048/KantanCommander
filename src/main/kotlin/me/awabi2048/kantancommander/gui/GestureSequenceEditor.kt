@@ -137,6 +137,7 @@ enum class GestureSettingScreen {
     FOR_SOURCE,
     INCLUSIVE_END,
     CONTEXT_OVERRIDE,
+    BLOCK_OPERATION,
 }
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -1688,6 +1689,10 @@ class GestureSequenceEditor(
             GestureSettingScreen.DISPLAY_MODE -> {
                 if (group != "display" || value !in setOf("tellraw", "title", "actionbar")) return
                 if (updateSettingNode(player, settingContext) { it.params["mode"] = value }) showSettingScreen()
+            }
+            GestureSettingScreen.BLOCK_OPERATION -> {
+                if (group != "block" || value !in setOf("setblock", "fill")) return
+                if (updateSettingNode(player, settingContext) { it.params["operation"] = value }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_ACTION -> {
                 if (group != "action" || value !in setOf("ride", "dismount")) return

@@ -653,6 +653,8 @@ class GestureLowerPanel(
                 context.role,
                 id.removePrefix("filter:"),
             )
+            id.startsWith("block:") -> choice.selected &&
+                CommandSettingsModel.isFieldConfigured(node, "operation", context.role)
             id.startsWith("position:") -> choice.selected &&
                 CommandSettingsModel.positionSpec(node, context.role)?.kind?.name == id.removePrefix("position:")
             id.startsWith("facing:") -> choice.selected &&
@@ -841,6 +843,18 @@ class GestureLowerPanel(
             SettingChoice("display:tellraw", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHAT), node.string("mode", "tellraw") == "tellraw"),
             SettingChoice("display:title", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TITLE), node.string("mode", "tellraw") == "title"),
             SettingChoice("display:actionbar", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIONBAR), node.string("mode", "tellraw") == "actionbar"),
+        )
+        GestureSettingScreen.BLOCK_OPERATION -> listOf(
+            SettingChoice(
+                "block:setblock",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BLOCK_SETBLOCK),
+                node.string("operation", "setblock") == "setblock",
+            ),
+            SettingChoice(
+                "block:fill",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BLOCK_FILL),
+                node.string("operation", "setblock") == "fill",
+            ),
         )
         GestureSettingScreen.ENTITY_ACTION -> listOf(
             SettingChoice("action:ride", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE), node.string("action", "ride") == "ride"),

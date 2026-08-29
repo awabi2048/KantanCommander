@@ -12,6 +12,7 @@ class CommandMenuPresentationTest {
         assertEquals(CommandType.entries.toSet(), CommandType.entries.groupBy(CommandPresentationPolicy::category).values.flatten().toSet())
         assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.PROCESS)
         assertTrue(CommandType.CONDITION.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
+        assertTrue(CommandType.DISK_CALL.let(CommandPresentationPolicy::category) == CommandCategory.EXTERNAL_DISK)
     }
 
     @Test

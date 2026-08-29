@@ -28,6 +28,13 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val diskId = KantanItemService.diskId(item)
         val clickedPlacement = event.clickedBlock?.let { plugin.placements.find(it.location) }
 
+        if (itemKind == KantanItemKind.DISK && event.action == Action.RIGHT_CLICK_BLOCK && clickedPlacement == null) {
+            // ディスク単体から編集画面を開く導線を廃止します。配置物を正しく
+            // 解決できない右クリックでは、通常ブロックのGUIへフォールバックしません。
+            event.isCancelled = true
+            return
+        }
+
         if (
             clickedPlacement != null &&
             event.action == Action.RIGHT_CLICK_BLOCK &&

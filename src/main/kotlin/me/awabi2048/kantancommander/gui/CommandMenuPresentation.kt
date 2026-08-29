@@ -12,6 +12,7 @@ internal enum class CommandCategory(
 ) {
     PROCESS("process", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS_DESCRIPTION),
     CONTROL("control", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL_DESCRIPTION),
+    EXTERNAL_DISK("external_disk", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EXTERNAL_DISK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EXTERNAL_DISK_DESCRIPTION),
     ;
 
     companion object {
@@ -34,7 +35,8 @@ internal object CommandPresentationPolicy {
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
         CommandType.EQUIP_ITEM,
-        CommandType.DISK_CALL,
+        CommandType.BLOCK_OPERATION,
+        CommandType.ENTITY_DELETE,
         CommandType.VARIABLE,
         -> CommandCategory.PROCESS
 
@@ -47,6 +49,8 @@ internal object CommandPresentationPolicy {
         CommandType.BREAK,
         CommandType.CONTINUE,
         -> CommandCategory.CONTROL
+
+        CommandType.DISK_CALL -> CommandCategory.EXTERNAL_DISK
     }
 
     fun supportsContextOverride(type: CommandType): Boolean = when (type) {
@@ -59,6 +63,8 @@ internal object CommandPresentationPolicy {
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
         CommandType.EQUIP_ITEM,
+        CommandType.BLOCK_OPERATION,
+        CommandType.ENTITY_DELETE,
         CommandType.CONDITION,
         CommandType.DISK_CALL,
         CommandType.VARIABLE,

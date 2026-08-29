@@ -316,6 +316,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(choiceRoute(context.route, CONDITION_DETAIL_ID))
                             )
                         }
+                        if (field == "operation" && node.type == CommandType.BLOCK_OPERATION) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, BLOCK_OPERATION_ID))
+                            )
+                        }
+                        if (field == "block" && node.type == CommandType.BLOCK_OPERATION) {
+                            val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                            plugin.itemSelection.beginMaterial(context.player, scriptId, node.id, context.route, "block")
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
                         if (field == "inverted" && node.type == CommandType.CONDITION) {
                             if (!updateNode(context.route) { it.params["inverted"] = (!it.boolean("inverted")).toString() }) {
                                 return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -396,6 +406,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "target" || field == "subject" -> targetRoute(context.route, "node_target")
                             field == "other" && node.type == CommandType.ENTITY_ACTION ->
                                 targetRoute(context.route, "secondary_target")
+                            field == "position" && node.type == CommandType.BLOCK_OPERATION ->
+                                positionRoute(context.route, "block_position")
+                            field == "from" && node.type == CommandType.BLOCK_OPERATION ->
+                                positionRoute(context.route, "block_from")
+                            field == "to" && node.type == CommandType.BLOCK_OPERATION ->
+                                positionRoute(context.route, "block_to")
                             field == "position" -> positionRoute(context.route, "context_position")
                             field == "facing" -> facingRoute(context.route)
                             field == "context" -> choiceRoute(context.route, CONTEXT_OVERRIDE_ID)
@@ -562,6 +578,27 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!updateNode(context.route) { it.params["mode"] = mode }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                BLOCK_OPERATION_ID,
+                renderer = { renderBlockOperations(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val operation = context.payload["operation"]
+                            ?.takeIf { it == "setblock" || it == "fill" }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.route) { it.params["operation"] = operation }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
@@ -742,7 +779,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             elements += KcGui.menuEntry(
                 player = player,
                 slot = CommandPickerLayoutPolicy.categorySlots[index],
-                material = if (option == CommandCategory.PROCESS) Material.COMMAND_BLOCK else Material.CHAIN_COMMAND_BLOCK,
+                material = when (option) {
+                    CommandCategory.PROCESS -> Material.COMMAND_BLOCK
+                    CommandCategory.CONTROL -> Material.CHAIN_COMMAND_BLOCK
+                    CommandCategory.EXTERNAL_DISK -> Material.MUSIC_DISC_13
+                },
                 name = KcI18n.text(player, option.labelKey),
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(player, option.descriptionKey),
@@ -1155,6 +1196,30 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }.toMutableList()
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISPLAY_MODE_TITLE)), elements)
+    }
+
+    private fun renderBlockOperations(player: Player): InventoryMenuView {
+        val options = listOf(
+            Triple("setblock", Material.BRICKS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BLOCK_SETBLOCK)),
+            Triple("fill", Material.BRICKS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BLOCK_FILL)),
+        )
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("operation" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION)),
+            elements,
+        )
     }
 
     private fun renderContextOverride(player: Player, route: MenuRoute): InventoryMenuView {
@@ -1677,6 +1742,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val VARIABLE_OPERATION_ID = "variable_operation"
         private const val VARIABLE_VALUE_ID = "variable_value"
         private const val DISPLAY_MODE_ID = "display_mode"
+        private const val BLOCK_OPERATION_ID = "block_operation"
         private const val CONTEXT_OVERRIDE_ID = "context_override"
         private const val DELETE_ID = "delete_command"
         private const val TARGET_ID = "target_settings"
@@ -1843,6 +1909,56 @@ object EditorMenuLayout {
             field("slot", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT, Material.ARMOR_STAND) { displayEquipmentSlot(it.string("slot")) },
             field("item", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM, Material.CHEST),
         )
+        CommandType.BLOCK_OPERATION -> listOf(
+            field(
+                "operation",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION,
+                Material.BRICKS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_OPERATION,
+            ) {
+                displayBlockOperation(it.string("operation", "setblock"))
+            },
+            field(
+                "block",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK,
+                Material.BRICKS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK,
+            ),
+            field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_POSITION,
+            ) {
+                it.blockPositionSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+            field(
+                "from",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_FROM,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_FROM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_FROM,
+            ) {
+                it.blockFromSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+            field(
+                "to",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_TO,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_TO,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_TO,
+            ) {
+                it.blockToSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+        )
+        CommandType.ENTITY_DELETE -> listOf(
+            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.PLAYER_HEAD) {
+                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
+            },
+        )
         CommandType.CONDITION -> listOf(
             field("inverted", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INVERTED, Material.REDSTONE_TORCH) { displayBoolean(it.boolean("inverted")) },
             field("kind", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_KIND, Material.COMPARATOR) { displayCondition(it.string("kind")) },
@@ -1892,10 +2008,19 @@ object EditorMenuLayout {
         key: String,
         label: LocalizationKey<String>,
         material: Material,
+        descriptionKey: LocalizationKey<List<String>>? = null,
+        actionKey: LocalizationKey<String>? = null,
         value: (CommandNode) -> DisplayValue = { displayLiteral(it.string(key)) },
     ): EditorField {
         val (description, action) = fieldPresentation(key)
-        return EditorField(key, label, material, description, action, value)
+        return EditorField(
+            key,
+            label,
+            material,
+            descriptionKey ?: description,
+            actionKey ?: action,
+            value,
+        )
     }
 
     /** JSONパラメータ名と表示用キーを明示対応させ、翻訳キーの文字列合成を禁止します。 */
@@ -1924,6 +2049,9 @@ object EditorMenuLayout {
         "inverted" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_INVERTED to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_INVERTED
         "kind" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_KIND to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_KIND
         "condition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONDITION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CONDITION
+        "block" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK
+        "from" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_FROM to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_FROM
+        "to" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_TO to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_TO
         "executor" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EXECUTOR to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EXECUTOR
         "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION
         "facing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FACING
@@ -2022,6 +2150,14 @@ private fun displayVariableValue(value: String) = when (value) {
 
 private fun displayEntityAction(value: String) = DisplayValue.Localized(
     if (value == "dismount") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE,
+)
+
+private fun displayBlockOperation(value: String) = DisplayValue.Localized(
+    if (value == "fill") {
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BLOCK_FILL
+    } else {
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BLOCK_SETBLOCK
+    },
 )
 
 private fun displayTextMode(value: String) = DisplayValue.Localized(when (value) {

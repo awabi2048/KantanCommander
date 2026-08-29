@@ -2,7 +2,6 @@ package me.awabi2048.kantancommander.item
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import com.awabi2048.ccsystem.CCSystem
-import com.awabi2048.ccsystem.api.gui.GuiLoreFrame
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiLoreSpec
 import io.papermc.paper.datacomponent.DataComponentTypes
@@ -13,7 +12,6 @@ import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import net.kyori.adventure.text.format.TextDecoration
-import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.entity.Player
@@ -105,37 +103,15 @@ object KantanItemService {
         item.unsetData(DataComponentTypes.CONSUMABLE)
     }
 
-    private fun composeLore(lines: List<GuiLoreLine>): GuiLoreSpec {
-        val actions = lines.filterIsInstance<GuiLoreLine.Interaction>()
-        val base = lines.filterNot { it is GuiLoreLine.Interaction }
-        return CCSystem.getAPI().getLoreService().compose(
-            if (base.isEmpty()) GuiLoreSpec.None else GuiLoreSpec.Rich(base, GuiLoreFrame.BOTH),
-            actions,
-        )
-    }
-
     private fun updateLore(item: ItemStack, script: DiskScript, player: Player) {
         item.editMeta { meta ->
-            val ownerName = Bukkit.getOfflinePlayer(script.owner).name ?: script.owner.toString().take(8)
             val lore = CCSystem.getAPI().getLoreService().render(
-                composeLore(
+                GuiLoreSpec.Rich(
                     listOf(
                         GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROGRAM_NAME), script.name, "§f"),
                         GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_OWNER), ownerName, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_TRIGGER), KcI18n.text(player, script.activation.key), "§f"),
-                        GuiLoreLine.Spacer,
-                        me.awabi2048.kantancommander.gui.KcGui.action(
-                            player,
-                            "lore.click.right",
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_EDIT),
-                        ),
-                        me.awabi2048.kantancommander.gui.KcGui.action(
-                            player,
-                            "lore.click.right",
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_ACTION_WRITE),
-                        ),
                     ),
+                    com.awabi2048.ccsystem.api.gui.GuiLoreFrame.NONE,
                 ),
             )
             meta.lore(lore)

@@ -100,4 +100,19 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "maximumDistance"))
         assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "sort"))
     }
+
+    @Test
+    fun `block operation exposes only the position domain for the selected mode`() {
+        val node = CommandType.BLOCK_OPERATION.newNode()
+
+        assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "position" })
+        assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "from" })
+        assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "to" })
+
+        node.params["operation"] = "fill"
+        assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "position" })
+        assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "from" })
+        assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "to" })
+        assertEquals(CommandSettingRole.BLOCK_FROM, CommandSettingsModel.descriptor(node, "from").role)
+    }
 }

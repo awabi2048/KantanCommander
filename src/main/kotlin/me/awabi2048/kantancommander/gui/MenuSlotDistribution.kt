@@ -8,7 +8,9 @@ internal object CommandPickerLayoutPolicy {
     const val SIZE = 54
     const val BACK_SLOT = 45
     val itemSlots: List<Int> = (19..25).toList() + (28..34).toList()
-    val categorySlots: List<Int> = listOf(49, 51)
+    // 戻る(45)と干渉しない最下段の3枠を固定し、カテゴリ追加時も本文の
+    // コマンド候補位置が動かないようにします。
+    val categorySlots: List<Int> = listOf(47, 49, 51)
 }
 
 /**
