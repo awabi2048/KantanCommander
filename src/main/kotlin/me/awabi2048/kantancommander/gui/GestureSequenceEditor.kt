@@ -21,6 +21,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionListener
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
@@ -359,7 +360,7 @@ class GestureSequenceEditor(
     private fun buildUpperViewport(player: Player): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
         val layout = runCatching { GraphLayoutEngine.layout(script.graph) }
-            .getOrElse { return layoutErrorView() }
+            .getOrElse { return layoutErrorView(player) }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
@@ -423,8 +424,14 @@ class GestureSequenceEditor(
                             else -> Material.LIGHT_GRAY_CONCRETE
                         }
                         val statusLine = when {
-                            incomplete -> Component.text("⚠️ 設定が完了していません！", NamedTextColor.RED)
-                            hasContextOverride -> Component.text("コンテキストの上書きがあります", NamedTextColor.AQUA)
+                            incomplete -> Component.text(
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_INCOMPLETE),
+                                NamedTextColor.RED,
+                            )
+                            hasContextOverride -> Component.text(
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_STATUS),
+                                NamedTextColor.AQUA,
+                            )
                             else -> null
                         }
                         val hoverText = Component.text(KcI18n.text(player, node.type.key)).let { firstLine ->
@@ -491,7 +498,9 @@ class GestureSequenceEditor(
                         acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                         targetVisualId = "add-plus-$gx-$gy",
                         hoverText = GestureGuiHoverText(
-                            text = net.kyori.adventure.text.Component.text("クリックで追加"),
+                            text = net.kyori.adventure.text.Component.text(
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_ADD),
+                            ),
                             x = cx,
                             y = cy + metrics.iconSize * 0.9,
                             size = 0.006,
@@ -513,7 +522,9 @@ class GestureSequenceEditor(
                             bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
                             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                             hoverText = GestureGuiHoverText(
-                                text = net.kyori.adventure.text.Component.text("クリックで挿入"),
+                                text = net.kyori.adventure.text.Component.text(
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_INSERT),
+                                ),
                                 x = cx,
                                 y = cy + metrics.pathThickness,
                                 size = 0.0055,
@@ -601,8 +612,8 @@ class GestureSequenceEditor(
             targetVisualId = "back-label",
         ))
 
-        addZoomControls(visuals, elements)
-        addCloseButton(visuals, elements)
+        addZoomControls(player, visuals, elements)
+        addCloseButton(player, visuals, elements)
 
         // ズームはビューポート内容とその当たり判定だけを同じ倍率で変換します。
         val scaledVisuals = visuals.map { visual ->
@@ -754,10 +765,23 @@ class GestureSequenceEditor(
                 .firstOrNull { it.key == fieldKey }
                 ?.let { KcI18n.text(player, it.label) }
                 ?: fieldKey
-            showTextInputDialog(player, "${fieldLabel}を入力してください", node.string(fieldKey)) { value ->
+            // インベントリGUIのshowFieldDialogと同一の maxLength・検証を使います。
+            val spec = CommandDialogSpecs.field(fieldKey)
+                ?: CommandDialogSpecs.Spec(
+                    com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+                    512,
+                )
+            val prompt = KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_VALUE_INPUT_SUFFIX,
+                mapOf("label" to fieldLabel),
+            )
+            showTextInputDialog(player, prompt, node.string(fieldKey), maxLength = spec.maxLength) { value ->
+                val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
+                if (validationError != null) return@showTextInputDialog KcI18n.text(player, validationError)
                 val updated = CommandSettingsModel.updateNode(plugin, context) { it.params[fieldKey] = value }
                 if (updated == null) {
-                    "設定を保存できませんでした。"
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                 } else {
                     updateUpper(player)
                     updateLower(player)
@@ -813,7 +837,7 @@ class GestureSequenceEditor(
             // コンポーネントを含むシリアライズ結果を保存します。
             if (parameter == "item") node.params["itemData"] = itemData
         }
-        if (updated) player.sendMessage("アイテムを設定しました: $itemKey")
+        if (updated) player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_SET, mapOf("item" to itemKey)))
         return updated
     }
 
@@ -873,7 +897,7 @@ class GestureSequenceEditor(
         }.getOrDefault(false)
         if (!saved) {
             // 確認子画面を閉じず、再試行できるよう保留中のItemStackを維持します。
-            player.sendMessage("アイテムを保存できませんでした。もう一度お試しください。")
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_ITEM_SAVE_RETRY))
             return
         }
         state.pendingItemContext = null
@@ -881,7 +905,7 @@ class GestureSequenceEditor(
         state.pendingItemData = null
         state.confirmKind = GestureConfirmKind.DELETE
         api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
-        player.sendMessage("アイテムを上書きしました: $itemKey")
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_OVERWRITTEN, mapOf("item" to itemKey)))
         state.lowerMode = if (settingChildOpen(player.uniqueId) && state.settingContext != null) {
             GestureLowerMode.SETTING_CHOICES
         } else {
@@ -912,9 +936,21 @@ class GestureSequenceEditor(
         return true
     }
 
-    private fun beginSettingInput(player: Player, prompt: String, result: (String) -> String?) {
-        showTextInputDialog(player, prompt) { raw ->
-            val error = result(raw.trim())
+    /**
+     * 共通入力仕様（CommandDialogSpecs）に沿った単一テキスト入力です。
+     * プロンプト・maxLength・検証をインベントリGUIと同一に保ちます。
+     */
+    private fun beginSettingInput(player: Player, spec: CommandDialogSpecs.Spec, result: (String) -> String?) {
+        val prompt = KcI18n.text(
+            player,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_VALUE_INPUT_SUFFIX,
+            mapOf("label" to KcI18n.text(player, spec.labelKey)),
+        )
+        showTextInputDialog(player, prompt, maxLength = spec.maxLength) { raw ->
+            val value = raw.trim()
+            val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
+            if (validationError != null) return@showTextInputDialog KcI18n.text(player, validationError)
+            val error = result(value)
             if (error != null) return@showTextInputDialog error
             updateUpper(player)
             updateLower(player)
@@ -933,12 +969,21 @@ class GestureSequenceEditor(
         player = player,
         body = listOf(
             Component.text(prompt),
-            Component.text(if (initial.isBlank()) "現在値: 未設定" else "現在値: $initial", NamedTextColor.GRAY),
+            Component.text(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
+                    mapOf(
+                        "value" to initial.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) },
+                    ),
+                ),
+                NamedTextColor.GRAY,
+            ),
         ),
         inputs = listOf(
             MenuDialogInput.Text(
                 id = "value",
-                label = Component.text("入力値"),
+                label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_LABEL)),
                 initial = initial,
                 maxLength = maxLength,
             ),
@@ -967,11 +1012,11 @@ class GestureSequenceEditor(
                 MenuDialogRequest(
                     owner = DIALOG_OWNER,
                     id = dialogId,
-                    title = Component.text("値を入力"),
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE)),
                     body = body,
                     inputs = inputs,
                     confirm = MenuDialogButton(
-                        Component.text("確定", NamedTextColor.GREEN),
+                        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
                         MenuDialogHandler { target, response ->
                             val snapshot = api.snapshot(target.uniqueId)
                             if (
@@ -985,7 +1030,7 @@ class GestureSequenceEditor(
                                 return@MenuDialogHandler MenuActionResult.Ignored
                             }
                             val error = runCatching { onSubmit(response) }
-                                .getOrElse { "入力を処理できませんでした。" }
+                                .getOrElse { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT) }
                             if (error != null) {
                                 // RejectedはCC-System側で同じダイアログを入力値付きで
                                 // 再表示するため、入力セッションを維持したまま修正できます。
@@ -998,7 +1043,7 @@ class GestureSequenceEditor(
                         },
                     ),
                     cancel = MenuDialogButton(
-                        Component.text("キャンセル", NamedTextColor.GRAY),
+                        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_CANCEL),
                         MenuDialogHandler { target, _ ->
                             if (
                                 target.uniqueId != player.uniqueId ||
@@ -1038,8 +1083,15 @@ class GestureSequenceEditor(
         showInputDialog(
             player = player,
             body = listOf(
-                Component.text("座標をX/Y/Zそれぞれに入力してください。"),
-                Component.text("現在値: X=$x Y=$y Z=$z", NamedTextColor.GRAY),
+                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_COORDINATE_PROMPT)),
+                Component.text(
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_COORDINATE_CURRENT,
+                        mapOf("x" to x.toString(), "y" to y.toString(), "z" to z.toString()),
+                    ),
+                    NamedTextColor.GRAY,
+                ),
             ),
             inputs = listOf(
                 MenuDialogInput.Text("x", Component.text("X"), x.toString(), maxLength = 64),
@@ -1051,7 +1103,7 @@ class GestureSequenceEditor(
             val yValue = response.textValue("y").trim().toDoubleOrNull()?.takeIf(Double::isFinite)
             val zValue = response.textValue("z").trim().toDoubleOrNull()?.takeIf(Double::isFinite)
             if (xValue == null || yValue == null || zValue == null) {
-                return@showInputDialog "X/Y/Zは有限な数値で入力してください。"
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_COORDINATE_INVALID)
             }
             onSubmit(xValue, yValue, zValue)
         }
@@ -1067,8 +1119,15 @@ class GestureSequenceEditor(
         showInputDialog(
             player = player,
             body = listOf(
-                Component.text("回転角をyaw/pitchそれぞれに入力してください。"),
-                Component.text("現在値: yaw=$yaw pitch=$pitch", NamedTextColor.GRAY),
+                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_ROTATION_PROMPT)),
+                Component.text(
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_ROTATION_CURRENT,
+                        mapOf("yaw" to yaw.toString(), "pitch" to pitch.toString()),
+                    ),
+                    NamedTextColor.GRAY,
+                ),
             ),
             inputs = listOf(
                 MenuDialogInput.Text("yaw", Component.text("Yaw"), yaw.toString(), maxLength = 64),
@@ -1078,7 +1137,7 @@ class GestureSequenceEditor(
             val yawValue = response.textValue("yaw").trim().toFloatOrNull()?.takeIf(Float::isFinite)
             val pitchValue = response.textValue("pitch").trim().toFloatOrNull()?.takeIf(Float::isFinite)
             if (yawValue == null || pitchValue == null) {
-                return@showInputDialog "Yaw/Pitchは有限な数値で入力してください。"
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_ROTATION_INVALID)
             }
             onSubmit(yawValue, pitchValue)
         }
@@ -1093,9 +1152,17 @@ class GestureSequenceEditor(
         return Triple(values[0]!!, values[1]!!, values[2]!!)
     }
 
+    /** 条件詳細の子設定IDを保存先のparamsキーへ変換します。 */
+    private fun specSaveKey(encoded: String): String = when (encoded) {
+        "condition-variable" -> "variable"
+        "condition-value" -> "value"
+        "condition-block" -> "block"
+        "condition-count" -> "count"
+        else -> encoded
+    }
+
     /** 専用選択画面のすべての選択を共有モデルへ適用します。 */
-    private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {
-        if (context.gesture != GestureGuiGesture.PRIMARY) return
+    private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {        if (context.gesture != GestureGuiGesture.PRIMARY) return
         if (context.elementId == "setting-child-empty") {
             // 子画面の余白クリックは「戻る」専用ボタンと同じ状態遷移にし、
             // 親画面の選択や下部表示を残したまま子だけを閉じます。
@@ -1233,32 +1300,35 @@ class GestureSequenceEditor(
                         CommandSettingsModel.setTargetSpec(it, role, current.copy(gameMode = next))
                     }
                     "entityType", "minimumDistance", "maximumDistance", "limit", "tag", "name" -> {
-                        beginSettingInput(player, "$value を入力してください") { raw ->
+                        // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
+                        val spec = CommandDialogSpecs.targetFilter(value)
+                            ?: return
+                        beginSettingInput(player, spec) { raw ->
                             val parsed = when (value) {
                                 "minimumDistance", "maximumDistance" -> raw.takeIf(String::isNotEmpty)
                                     ?.toDoubleOrNull()?.takeIf(Double::isFinite)
                                 "limit" -> raw.takeIf(String::isNotEmpty)?.toIntOrNull()
                                 else -> raw.takeIf(String::isNotEmpty)
                             }
-                            val invalidRange = when (value) {
-                                "minimumDistance", "maximumDistance" -> (parsed as? Double)?.let { it < 0.0 } == true
-                                "limit" -> (parsed as? Int)?.let { it < 1 } == true
-                                else -> false
+                            val updated = when (value) {
+                                "entityType" -> current.copy(entityType = parsed as String?)
+                                "minimumDistance" -> current.copy(minimumDistance = parsed as Double?)
+                                "maximumDistance" -> current.copy(maximumDistance = parsed as Double?)
+                                "limit" -> current.copy(limit = parsed as Int?)
+                                "tag" -> current.copy(tag = parsed as String?)
+                                else -> current.copy(name = parsed as String?)
                             }
-                            if (raw.isNotEmpty() && (parsed == null || invalidRange)) {
-                                return@beginSettingInput "入力値の形式が正しくありません。"
+                            if (updated.minimumDistance != null && updated.maximumDistance != null &&
+                                updated.minimumDistance > updated.maximumDistance
+                            ) {
+                                return@beginSettingInput KcI18n.text(
+                                    player,
+                                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_MINIMUM_ABOVE_MAXIMUM,
+                                )
                             }
                             if (!updateSettingNode(player, settingContext) {
-                                val updated = when (value) {
-                                    "entityType" -> current.copy(entityType = parsed as String?)
-                                    "minimumDistance" -> current.copy(minimumDistance = parsed as Double?)
-                                    "maximumDistance" -> current.copy(maximumDistance = parsed as Double?)
-                                    "limit" -> current.copy(limit = parsed as Int?)
-                                    "tag" -> current.copy(tag = parsed as String?)
-                                    else -> current.copy(name = parsed as String?)
-                                }
                                 CommandSettingsModel.setTargetSpec(it, role, updated)
-                            }) return@beginSettingInput "設定を保存できませんでした。"
+                            }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                             null
                         }
                     }
@@ -1285,20 +1355,17 @@ class GestureSequenceEditor(
                     ) { x, y, z ->
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, x = x, y = y, z = z))
-                        }) return@showCoordinateSettingDialog "設定を保存できませんでした。"
+                        }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         returnToParentOrSettings()
                         null
                     }
                     return
                 }
                 if (kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
-                    beginSettingInput(player, "位置変数名を入力してください") { raw ->
-                        if (!raw.matches(Regex("[a-z0-9_.-]{1,64}"))) {
-                            return@beginSettingInput "変数名は英小文字・数字・._-で入力してください。"
-                        }
+                    beginSettingInput(player, CommandDialogSpecs.variableName) { raw ->
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, variable = raw))
-                        }) return@beginSettingInput "設定を保存できませんでした。"
+                        }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         returnToParentOrSettings()
                         null
                     }
@@ -1325,7 +1392,7 @@ class GestureSequenceEditor(
                     ) { x, y, z ->
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, x = x, y = y, z = z))
-                        }) return@showCoordinateSettingDialog "設定を保存できませんでした。"
+                        }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         returnToParentOrSettings()
                         null
                     }
@@ -1340,7 +1407,7 @@ class GestureSequenceEditor(
                     ) { yaw, pitch ->
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = yaw, pitch = pitch))
-                        }) return@showRotationSettingDialog "設定を保存できませんでした。"
+                        }) return@showRotationSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         returnToParentOrSettings()
                         null
                     }
@@ -1397,15 +1464,22 @@ class GestureSequenceEditor(
                             updateLower(player)
                             return
                         }
-                        val parameter = when (encoded) {
-                            "condition-variable" -> "variable"
-                            "condition-value" -> "value"
-                            "condition-block" -> "block"
-                            else -> "count"
+                        // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
+                        val spec = when (encoded) {
+                            "condition-variable" -> CommandDialogSpecs.variableName
+                            "condition-value" -> CommandDialogSpecs.signedInteger
+                            "condition-block" -> CommandDialogSpecs.block
+                            "condition-count" -> CommandDialogSpecs.field("count")
+                                ?: CommandDialogSpecs.Spec(
+                                    com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT,
+                                    10,
+                                    { raw -> if ((raw.toIntOrNull() ?: 0) < 1) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null },
+                                )
+                            else -> return
                         }
-                        beginSettingInput(player, "$parameter を入力してください") { raw ->
-                            if (!updateSettingNode(player, settingContext) { it.params[parameter] = raw }) {
-                                "設定を保存できませんでした。"
+                        beginSettingInput(player, spec) { raw ->
+                            if (!updateSettingNode(player, settingContext) { it.params[specSaveKey(encoded)] = raw }) {
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                             } else null
                         }
                     }
@@ -1445,9 +1519,9 @@ class GestureSequenceEditor(
             GestureSettingScreen.VARIABLE_VALUE -> {
                 if (group != "value") return
                 when (value) {
-                    "direct" -> beginSettingInput(player, "変数の値を入力してください") { raw ->
+                    "direct" -> beginSettingInput(player, CommandDialogSpecs.field("value") ?: return) { raw ->
                         if (!updateSettingNode(player, settingContext) { it.params["value"] = raw }) {
-                            "設定を保存できませんでした。"
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         } else null
                     }
                     "iteration" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_iteration_value" }) returnToParentOrSettings()
@@ -1698,7 +1772,7 @@ class GestureSequenceEditor(
                 player.inventory.addItem(item.clone()).values.forEach { overflow ->
                     player.world.dropItemNaturally(player.location, overflow)
                 }
-                player.sendMessage("設定中のアイテムを取得しました。")
+                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_TAKEN))
             }
             context.elementId.startsWith("lower-cat:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
@@ -1849,13 +1923,13 @@ class GestureSequenceEditor(
     }
 
     /** 不正な保存グラフでメニュー全体をクラッシュさせず、操作不能な警告面を返します。 */
-    private fun layoutErrorView(): GestureGuiView {
+    private fun layoutErrorView(player: Player): GestureGuiView {
         val visuals = listOf(
             GestureGuiVisual.Text(
                 visualId = "viewport-error-title",
                 x = 0.0,
                 y = 0.10,
-                text = Component.text("コマンド経路を表示できません", NamedTextColor.RED),
+                text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_UPPER_RENDER), NamedTextColor.RED),
                 size = 0.008,
                 lineWidth = 260,
             ),
@@ -1863,7 +1937,7 @@ class GestureSequenceEditor(
                 visualId = "viewport-error-detail",
                 x = 0.0,
                 y = -0.02,
-                text = Component.text("設定を確認してから再度開いてください", NamedTextColor.GRAY),
+                text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT), NamedTextColor.GRAY),
                 size = 0.005,
                 lineWidth = 260,
             ),
@@ -1997,7 +2071,7 @@ class GestureSequenceEditor(
     }
 
     /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
-    private fun addZoomControls(visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
+    private fun addZoomControls(player: Player, visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
         listOf("nav-zoom-in" to "＋", "nav-zoom-out" to "−").forEachIndexed { index, (id, glyph) ->
             val x = GestureEditorLayout.ZOOM_X
             val y = GestureEditorLayout.ZOOM_TOP_Y + index * GestureEditorLayout.ZOOM_PITCH
@@ -2043,7 +2117,7 @@ class GestureSequenceEditor(
     }
 
     /** 画面右上へ配置する明示的な終了導線です。 */
-    private fun addCloseButton(visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
+    private fun addCloseButton(player: Player, visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
         val x = GestureEditorLayout.CLOSE_X
         val y = GestureEditorLayout.CLOSE_Y
         val size = GestureEditorLayout.CLOSE_SIZE
@@ -2070,7 +2144,7 @@ class GestureSequenceEditor(
             acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
             targetVisualId = "nav-close-glyph",
             hoverText = GestureGuiHoverText(
-                text = net.kyori.adventure.text.Component.text("閉じる"),
+                text = net.kyori.adventure.text.Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)),
                 x = x,
                 y = y - size,
                 size = 0.0055,

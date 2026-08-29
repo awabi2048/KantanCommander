@@ -275,7 +275,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         const val REQUIRED_GESTURE_GUI_CONTRACT_VERSION = CCSystemAPI.GESTURE_GUI_CONTRACT_VERSION
         const val LOCALIZATION_DOMAIN = "kantan_commander_clean"
         const val REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT =
-            "e0c949d2b2107272ddfe4e6cd7ca709efe7d215e056038cd4ac40f5e86953740"
+            "c16675df0b1ff44598f0abb98f2574759a286648c58f9f4c354d0323074818d6"
     }
 
 }

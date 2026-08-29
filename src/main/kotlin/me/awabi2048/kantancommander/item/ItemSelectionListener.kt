@@ -2,7 +2,9 @@ package me.awabi2048.kantancommander.item
 
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.MenuRoute
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
@@ -73,8 +75,12 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
 
     @EventHandler
     fun onClose(event: InventoryCloseEvent) {
-        // Closing the menu is the explicit cancellation path; no item is changed.
-        selections.remove(event.player.uniqueId)
+        // メニューを閉じることは明示的なキャンセル。アイテムは変更されないが、
+        // 無音で失敗すると「設定できない」と誤解されるため通知します。
+        val player = event.player as? Player ?: return
+        if (selections.remove(player.uniqueId) != null) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_ITEM_SELECTION_CANCELLED))
+        }
     }
 
     private fun cancel(player: Player) {
