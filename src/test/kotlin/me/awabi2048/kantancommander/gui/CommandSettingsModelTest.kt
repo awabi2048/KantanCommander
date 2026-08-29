@@ -9,7 +9,9 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 
 class CommandSettingsModelTest {
     @Test
@@ -61,5 +63,20 @@ class CommandSettingsModelTest {
 
         val variable = CommandSettingsModel.descriptor(CommandNode(type = CommandType.VARIABLE), "operation")
         assertEquals(CommandSettingEditor.VARIABLE_OPERATION, variable.editor)
+    }
+
+    @Test
+    fun `target kind and detailed filter domains are explicitly separated`() {
+        val giveItem = CommandType.GIVE_ITEM.newNode()
+        assertEquals("target", CommandSettingsModel.visibleFields(giveItem).first().key)
+        assertEquals(
+            CommandSettingEditor.TARGET,
+            CommandSettingsModel.descriptor(giveItem, "target").editor,
+        )
+
+        assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEARBY_ENTITIES))
+        assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEAREST_PLAYER))
+        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
+        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(null))
     }
 }

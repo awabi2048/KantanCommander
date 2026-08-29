@@ -667,9 +667,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE ->
                     resolvePosition(position, session, context)
                 PositionKind.EXECUTOR ->
-                    context?.executor?.let { resolveTargetSpec(it, session, context) }?.location
+                    context.executor?.let { resolveTargetSpec(it, session, context) }?.location
                 PositionKind.TARGET ->
-                    context?.target?.let { resolveTargetSpec(it, session, context) }?.location
+                    context.target?.let { resolveTargetSpec(it, session, context) }?.location
             }
         }
 

@@ -23,6 +23,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenLayout
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVerticalSlot
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
@@ -223,13 +224,9 @@ class GestureSequenceEditor(
         api.registerOwner(player.uniqueId)
         val upper = buildUpperViewport(player)
         val lower = lowerPanel.build(state, player)
-        // 主要画面の並び方向は config で選択します（Kantan Commanderの既定は左右配置）。
-        // 横配置はビューポートが左、パネルが右へ並びます。
-        // 左右配置を既定にし、既存configへキーがまだ追記されていない環境でも
-        // 新しい画面仕様を確実に選択します。明示的なfalseだけは縦配置を残します。
-        val layout = if (plugin.config.getBoolean("use-horizontal-gesture-layout", true)) {
-            GestureGuiScreenLayout.HORIZONTAL
-        } else GestureGuiScreenLayout.VERTICAL
+        // 主要画面は3画面縦配置の上・中スロットへ置きます。下スロットを
+        // ダミーviewで埋めないことで、不要な背景だけが下へ表示されることを防ぎます。
+        val layout = GestureGuiScreenLayout.VERTICAL
         val snapshot = api.open(
             player,
             listOf(upper, lower),
@@ -239,6 +236,7 @@ class GestureSequenceEditor(
                     onGestureSessionClosed(ownerId, sessionId)
                 },
                 layout = layout,
+                verticalSlots = listOf(GestureGuiVerticalSlot.TOP, GestureGuiVerticalSlot.MIDDLE),
             ),
         )
         gestureSessionId = snapshot.sessionId
@@ -326,11 +324,24 @@ class GestureSequenceEditor(
 
     /** 個別設定子画面を閉じて親の設定一覧へ戻します。 */
     private fun closeSettingChild(player: Player) {
+        val restoreTargetParent =
+            state.settingScreen == GestureSettingScreen.TARGET_FILTERS &&
+                state.settingParentScreen == null &&
+                state.settingContext != null
         if (settingChildOpen(player.uniqueId)) {
             api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
-        clearSettingState()
-        state.lowerMode = GestureLowerMode.SETTINGS
+        if (restoreTargetParent) {
+            // ルート対象の詳細子画面を閉じた後は、対象種別を表示する親タブへ
+            // 復帰します。コンテキストまで消すと、親に描画された種別・詳細設定の
+            // 再クリックが入力処理へ届かなくなるため、対象設定だけ保持します。
+            state.settingScreen = GestureSettingScreen.TARGET
+            state.settingPage = 0
+            state.lowerMode = GestureLowerMode.SETTINGS
+        } else {
+            clearSettingState()
+            state.lowerMode = GestureLowerMode.SETTINGS
+        }
         updateLower(player)
     }
 
@@ -712,8 +723,8 @@ class GestureSequenceEditor(
         invalidateInput()
         state.settingsTab = absoluteIndex
         state.settingsPage = absoluteIndex / SETTINGS_PAGE_SIZE
-        // タブ切替は親画面内の表示更新だけに留めます。子画面は、タブ内の
-        // 詳細候補（対象フィルタやコンテキストの構成要素）へ進むときだけ開きます。
+        // タブ切替時は親画面を先に更新し、選択中の項目・現在値を常に残します。
+        // 構造化された詳細操作は、その直後に同じ下部画面へ重ねる子画面で行います。
         if (settingChildOpen(player.uniqueId)) {
             api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
@@ -741,8 +752,13 @@ class GestureSequenceEditor(
             state.settingScreen = screen
             state.settingParentScreen = null
             state.settingPage = 0
-            state.lowerMode = GestureLowerMode.SETTING_CHOICES
+            state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
+            if (screen != GestureSettingScreen.TARGET) {
+                // 対象種別は親画面で選ぶドメインです。距離やタグなどの詳細条件を
+                // 選択した後だけ、対象フィルター用の子画面を重ねて表示します。
+                ensureSettingChild(player)
+            }
             return
         }
         updateLower(player)
@@ -817,8 +833,13 @@ class GestureSequenceEditor(
         state.settingScreen = screen
         state.settingParentScreen = null
         state.settingPage = 0
-        state.lowerMode = GestureLowerMode.SETTING_CHOICES
+        state.lowerMode = GestureLowerMode.SETTINGS
         updateLower(player)
+        if (screen != GestureSettingScreen.TARGET) {
+            // 対象タブの初期表示では「対象」と「対象種別」を同じ親画面へ残し、
+            // 距離などの設定は種別選択後に詳細子画面へ進めます。
+            ensureSettingChild(player)
+        }
     }
 
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
@@ -1199,7 +1220,8 @@ class GestureSequenceEditor(
     }
 
     /** 専用選択画面のすべての選択を共有モデルへ適用します。 */
-    private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {        if (context.gesture != GestureGuiGesture.PRIMARY) return
+    private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {
+        if (context.gesture != GestureGuiGesture.PRIMARY) return
         if (context.elementId == "setting-child-empty") {
             // 子画面の余白クリックは「戻る」専用ボタンと同じ状態遷移にし、
             // 親画面の選択や下部表示を残したまま子だけを閉じます。
@@ -1237,8 +1259,9 @@ class GestureSequenceEditor(
             state.settingScreen = GestureSettingScreen.CONTEXT_OVERRIDE
             state.settingParentScreen = null
             state.settingPage = 0
-            state.lowerMode = GestureLowerMode.SETTING_CHOICES
+            state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
+            ensureSettingChild(player)
             return
         }
         val encoded = context.elementId.removePrefix("lower-setting-choice:")
@@ -1276,7 +1299,18 @@ class GestureSequenceEditor(
         }
 
         when (screen) {
-            GestureSettingScreen.TARGET -> if (group == "target") {                val kind = runCatching { TargetKind.valueOf(value) }.getOrNull() ?: return
+            GestureSettingScreen.TARGET -> {
+                if (group == "open-filters") {
+                    // ルートの対象タブでは対象種別が親画面に残るため、
+                    // 詳細設定だけを子画面へ重ねます。親をTARGETとして記録すると、
+                    // 戻る操作で対象種別を重複表示する別の子画面へ遷移してしまいます。
+                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
+                    state.settingPage = 0
+                    showSettingScreen(openChild = true)
+                    return
+                }
+                if (group != "target") return
+                val kind = runCatching { TargetKind.valueOf(value) }.getOrNull() ?: return
                 val fixedId = if (kind == TargetKind.FIXED_ENTITY) {
                     player.getTargetEntity(32)?.uniqueId ?: run {
                         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_NO_ENTITY_IN_SIGHT))
@@ -1289,12 +1323,29 @@ class GestureSequenceEditor(
                 } else settingContext.role
                 val current = CommandSettingsModel.targetSpec(node, role)
                     ?: TargetSpec(kind)
+                val entityKind = kind in setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)
                 if (!updateSettingNode(player, settingContext.copy(role = role)) { target ->
-                        CommandSettingsModel.setTargetSpec(target, role, current.copy(kind = kind, fixedEntityId = fixedId))
-                    }) return
-                // 種別と詳細条件は同一画面に並んでいるため、選択状態の再描画だけで完結します。
-                updateLower(player)
-            } else if (group == "filter") {
+                        CommandSettingsModel.setTargetSpec(
+                            target,
+                            role,
+                            current.copy(
+                                kind = kind,
+                                fixedEntityId = fixedId,
+                                entityType = if (entityKind) current.entityType else null,
+                            ),
+                        )
+                }) return
+                // ルート対象のうち詳細条件を持つ種別は、選択直後に詳細子画面へ進みます。
+                if (state.settingParentScreen == null && CommandSettingsModel.targetSupportsDetailedFilters(kind)) {
+                    state.settingScreen = GestureSettingScreen.TARGET_FILTERS
+                    state.settingPage = 0
+                    showSettingScreen(openChild = true)
+                } else {
+                    returnToParentOrSettings()
+                }
+            }
+            GestureSettingScreen.TARGET_FILTERS -> {
+                if (group != "filter") return
                 val role = settingContext.role
                 val current = CommandSettingsModel.targetSpec(node, role) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
                 when (value) {
@@ -1591,8 +1642,6 @@ class GestureSequenceEditor(
                     "inherit" -> if (updateSettingNode(player, settingContext) { it.contextOverride = null }) returnToParentOrSettings()
                 }
             }
-            // TARGET_FILTERSは対象画面へ統合したため、ここでは到達しません。
-            GestureSettingScreen.TARGET_FILTERS -> Unit
         }
     }
 
@@ -1623,6 +1672,9 @@ class GestureSequenceEditor(
                         state.settingsPage = 0
                         updateUpper(player)
                         updateLower(player)
+                        // ノード選択直後も、先頭フィールドが構造化設定なら
+                        // タブの再クリックなしで詳細子画面を表示します。
+                        openSettingsTab(player, 0)
                     }
                     else -> Unit
                 }
@@ -1784,11 +1836,13 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
             }
-            (context.elementId == "lower-context" || context.elementId.startsWith("lower-setting-")) &&
+            (context.elementId == "setting-child-empty" ||
+                context.elementId == "lower-context" || context.elementId.startsWith("lower-setting-")) &&
                 context.gesture == GestureGuiGesture.PRIMARY -> {
                 handleSettingAction(context, player)
             }
-            context.elementId.startsWith("lower-edit:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("lower-edit:") &&
+                context.gesture in setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY) -> {
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
                 beginSelectedFieldEdit(player, fieldKey)
             }
@@ -1865,6 +1919,9 @@ class GestureSequenceEditor(
                 state.settingsPage = 0
                 updateUpper(player)
                 updateLower(player)
+                // 新規追加時も既存ノード選択時と同じ初期表示経路を通し、
+                // 「タブだけ選択されて詳細が空」の状態を作りません。
+                openSettingsTab(player, 0)
             }
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 if (settingChildOpen(player.uniqueId)) {

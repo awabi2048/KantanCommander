@@ -269,6 +269,14 @@ object CommandSettingsModel {
         else -> true
     }
 
+    /**
+     * 対象種別と詳細条件の境界を共有します。
+     * 親画面の種別選択後に詳細子画面へ進めるかを、描画側と入力状態遷移側で
+     * 別々に持つと、表示された「詳細設定」が開けない対象が生まれるためです。
+     */
+    fun targetSupportsDetailedFilters(kind: TargetKind?): Boolean =
+        kind?.let { it in FILTERABLE_TARGET_KINDS } == true
+
     /** インベントリ／ジェスチャー共通の保存処理です。配置済み表示も同時に更新します。 */
     fun updateNode(
         plugin: KantanCommanderPlugin,
@@ -293,4 +301,13 @@ object CommandSettingsModel {
     }
 
     private fun text() = CommandSettingDescriptor(CommandSettingEditor.TEXT)
+
+    private val FILTERABLE_TARGET_KINDS = setOf(
+        TargetKind.NEAREST_PLAYER,
+        TargetKind.NEARBY_PLAYERS,
+        TargetKind.ALL_PLAYERS,
+        TargetKind.RANDOM_PLAYER,
+        TargetKind.NEAREST_ENTITY,
+        TargetKind.NEARBY_ENTITIES,
+    )
 }
