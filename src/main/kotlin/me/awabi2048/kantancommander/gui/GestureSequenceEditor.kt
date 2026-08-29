@@ -1199,7 +1199,7 @@ class GestureSequenceEditor(
                         mapOf(
                             "value" to KcI18n.text(
                                 player,
-                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS,
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS,
                                 mapOf("value" to script.timer.intervalSeconds),
                             ),
                         ),

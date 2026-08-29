@@ -47,4 +47,16 @@ class CommandDialogSpecsTest {
         )
         assertNull(requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("0"))
     }
+
+    @Test
+    fun `block field uses the same material validation in every gui`() {
+        val block = requireNotNull(CommandDialogSpecs.field("block"))
+
+        assertEquals(64, block.maxLength)
+        assertNull(block.validate("minecraft:stone"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            block.validate("not a block id"),
+        )
+    }
 }

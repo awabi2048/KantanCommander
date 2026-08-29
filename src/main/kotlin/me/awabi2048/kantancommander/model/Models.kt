@@ -235,7 +235,7 @@ enum class CommandType(
         "effect" to "", "level" to "1", "seconds" to "30"
     )),
     CAMERA_SHAKE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CAMERA_SHAKE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CAMERA_SHAKE_DESCRIPTION, Material.SPYGLASS, mapOf(
-        "intensity" to "1.0", "seconds" to "5.0", "shakeType" to "positional"
+        "intensity" to "1.0", "seconds" to "5", "shakeType" to "positional"
     )),
     EQUIP_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM_DESCRIPTION, Material.IRON_CHESTPLATE, mapOf(
         "slot" to "HAND", "item" to ""

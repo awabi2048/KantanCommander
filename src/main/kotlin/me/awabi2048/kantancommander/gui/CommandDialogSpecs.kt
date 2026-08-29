@@ -156,7 +156,7 @@ internal object CommandDialogSpecs {
         else -> null
     }
 
-    /** 変数名（保存名）の共通仕様。 */
+    /** プログラム名の共通仕様。 */
     val programName = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
         256,
@@ -202,6 +202,10 @@ internal object CommandDialogSpecs {
      * 新しい入力項目は必ずこの一覧へ追加します。
      */
     fun field(fieldKey: String, valueSource: String? = null): Spec? {
+        // ブロック入力は条件設定とブロック操作で同じID検証を使います。
+        // ここを通常の文字列入力へ流すと、ジェスチャーGUIだけが任意文字列を
+        // 保存でき、インベントリGUIとの入力契約が分岐してしまいます。
+        if (fieldKey == "block") return block
         val labelKey = when (fieldKey) {
             "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
             "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE

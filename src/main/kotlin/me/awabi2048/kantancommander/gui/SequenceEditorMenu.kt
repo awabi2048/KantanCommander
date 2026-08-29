@@ -251,7 +251,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     add(
                         GuiMenuEntryData(
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_LABEL),
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_UNITS, mapOf("value" to script.timer.intervalSeconds)),
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS, mapOf("value" to script.timer.intervalSeconds)),
                             GuiValueTone.DEFAULT,
                         ),
                     )
