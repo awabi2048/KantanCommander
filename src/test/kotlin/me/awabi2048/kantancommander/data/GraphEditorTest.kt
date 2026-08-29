@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -25,6 +26,22 @@ class GraphEditorTest {
         assertEquals(second.id, first.next)
         assertEquals(third.id, second.next)
         assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `swap availability matches structural and branch boundaries`() {
+        val graph = CommandGraph.empty()
+        val first = GraphEditor.append(graph, CommandType.WAIT)
+        val second = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        GraphEditor.appendMerge(graph, condition.id)
+
+        assertFalse(GraphEditor.canSwapAdjacent(graph, first.id, GraphEditor.ReorderDirection.LEFT))
+        assertTrue(GraphEditor.canSwapAdjacent(graph, first.id, GraphEditor.ReorderDirection.RIGHT))
+        assertTrue(GraphEditor.canSwapAdjacent(graph, second.id, GraphEditor.ReorderDirection.LEFT))
+        assertFalse(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.RIGHT))
     }
 
     @Test

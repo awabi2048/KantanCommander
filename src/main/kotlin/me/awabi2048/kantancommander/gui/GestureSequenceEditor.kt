@@ -493,6 +493,55 @@ class GestureSequenceEditor(
                                 lineWidth = 180,
                             ),
                         ))
+                        if (isSelected && node.type !in setOf(
+                                CommandType.CONDITION,
+                                CommandType.MERGE,
+                                CommandType.FOR_START,
+                                CommandType.FOR_END,
+                            )) {
+                            val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
+                            val reorderY = cy - metrics.iconSize / 2.0 - reorderSize / 2.0 - 0.008
+                            val reorderOffset = reorderSize * 0.78
+                            listOf(
+                                GraphEditor.ReorderDirection.LEFT to "←",
+                                GraphEditor.ReorderDirection.RIGHT to "→",
+                            ).forEach { (direction, glyph) ->
+                                val enabled = GraphEditor.canSwapAdjacent(script.graph, node.id, direction)
+                                val x = cx + if (direction == GraphEditor.ReorderDirection.LEFT) -reorderOffset else reorderOffset
+                                val directionName = direction.name.lowercase()
+                                visuals.add(GestureGuiVisual.Block(
+                                    visualId = "node-reorder-$directionName-bg-${node.id}",
+                                    x = x,
+                                    y = reorderY,
+                                    width = reorderSize,
+                                    height = reorderSize,
+                                    blockData = Bukkit.createBlockData(
+                                        if (enabled) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE,
+                                    ),
+                                    layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
+                                ))
+                                visuals.add(GestureGuiVisual.Text(
+                                    visualId = "node-reorder-$directionName-glyph-${node.id}",
+                                    x = x,
+                                    y = reorderY - 0.006,
+                                    text = Component.text(glyph).color(
+                                        if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                                    ),
+                                    size = 0.007,
+                                    layer = GestureEditorLayout.ICON_LAYER,
+                                ))
+                                elements.add(GestureGuiElement(
+                                    elementId = "node-reorder:$directionName:${node.id}",
+                                    bounds = iconBounds(x, reorderY, reorderSize),
+                                    acceptedGestures = if (enabled) {
+                                        setOf(GestureGuiGesture.PRIMARY)
+                                    } else {
+                                        emptySet()
+                                    },
+                                    targetVisualId = "node-reorder-$directionName-glyph-${node.id}",
+                                ))
+                            }
+                        }
                     }
                 }
                 MapCellKind.ADD -> {
@@ -533,12 +582,7 @@ class GestureSequenceEditor(
                 MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
                     // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
                     val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
-                    val verticalBranchOnly = cell.kind == MapCellKind.BRANCH_PATH &&
-                        (cells[MapPoint(localPoint.x, localPoint.y - 1)]?.kind in CONNECTABLE_CELL_KINDS ||
-                            cells[MapPoint(localPoint.x, localPoint.y + 1)]?.kind in CONNECTABLE_CELL_KINDS) &&
-                        cells[MapPoint(localPoint.x - 1, localPoint.y)]?.kind !in CONNECTABLE_CELL_KINDS &&
-                        cells[MapPoint(localPoint.x + 1, localPoint.y)]?.kind !in CONNECTABLE_CELL_KINDS
-                    if (!hasAddNeighbor && !verticalBranchOnly && cell.insertionTarget != null) {
+                    if (!hasAddNeighbor && cell.insertionTarget != null) {
                         elements.add(GestureGuiElement(
                             elementId = "path:${gx}:${gy}",
                             bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
@@ -582,29 +626,42 @@ class GestureSequenceEditor(
             ))
         }
 
-        // 経路をクリックしてPICKERへ移った場合は、クリック元の経路ではなく、
-        // 作成後に新ノードが配置される位置を背景側だけ発光させます。経路素材や
-        // 既存アイコン自体の色は変更しません。連続経路上のどのセルをクリックしても
-        // 同じ挿入先エッジへ入るため、ハイライト位置はクリックセルから切り離します。
-        state.selectedInsertionPoint?.let { selectedGlobal ->
+        // 経路をクリックしてPICKERへ移った場合は、確定前の追加候補位置を
+        // 既存経路の上へ仮アイコンとして表示します。クリック元と実際の挿入先が
+        // 異なる水平経路でも、候補位置を独立した「＋」として示すことで、
+        // どこへ追加されるかを選択中に確認できます。キャンセル時はstateを
+        // nullへ戻すため、この表示も同時に消えます。
+        val insertionCandidate = listOfNotNull(
+            state.selectedInsertionPoint,
+            state.selectedInsertionCandidatePoint,
+        ).firstOrNull { selectedGlobal ->
+            projection.contains(MapPoint(selectedGlobal.x - state.origin.x, selectedGlobal.y - state.origin.y))
+        }
+        insertionCandidate?.let { selectedGlobal ->
             val local = MapPoint(
                 selectedGlobal.x - state.origin.x,
                 selectedGlobal.y - state.origin.y,
             )
-            if (projection.contains(local)) {
-                val cx = metrics.x(local.x)
-                val cy = metrics.y(local.y)
-                visuals.add(GestureGuiVisual.Block(
-                    visualId = "path-highlight-preview-${selectedGlobal.x}-${selectedGlobal.y}",
-                    x = cx,
-                    y = cy,
-                    width = metrics.iconSize,
-                    height = metrics.iconSize,
-                    blockData = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
-                    layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
-                    glowColor = Color.YELLOW.asARGB(),
-                ))
-            }
+            val cx = metrics.x(local.x)
+            val cy = metrics.y(local.y)
+            visuals.add(GestureGuiVisual.Block(
+                visualId = "path-insertion-candidate-bg-${selectedGlobal.x}-${selectedGlobal.y}",
+                x = cx,
+                y = cy,
+                width = metrics.iconSize,
+                height = metrics.iconSize,
+                blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                layer = GestureEditorLayout.ICON_BACKGROUND_LAYER + 1,
+                glowColor = Color.YELLOW.asARGB(),
+            ))
+            visuals.add(GestureGuiVisual.Text(
+                visualId = "path-insertion-candidate-plus-${selectedGlobal.x}-${selectedGlobal.y}",
+                x = cx,
+                y = cy,
+                text = Component.text("+"),
+                size = 0.012,
+                layer = GestureEditorLayout.ICON_LAYER + 1,
+            ))
         }
 
         addNavigation(visuals, elements)
@@ -651,7 +708,8 @@ class GestureSequenceEditor(
             } else visual
         }
         val scaledElements = elements.map { element ->
-            if (element.elementId.startsWith("node:") || element.elementId.startsWith("add:") || element.elementId.startsWith("path:")) {
+            if (element.elementId.startsWith("node:") || element.elementId.startsWith("node-reorder:") ||
+                element.elementId.startsWith("add:") || element.elementId.startsWith("path:")) {
                 val hover = element.hoverText
                 element.copy(
                     bounds = scaleBounds(element.bounds, zoomScale),
@@ -1749,6 +1807,31 @@ class GestureSequenceEditor(
         // close/open以外の遷移でも遅延コールバックが設定を書き換えないようにします。
         invalidateInput()
         when {
+            context.elementId.startsWith("node-reorder:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+                val encoded = context.elementId.removePrefix("node-reorder:")
+                val directionName = encoded.substringBefore(":")
+                val nodeId = runCatching { UUID.fromString(encoded.substringAfter(":")) }.getOrNull() ?: return
+                val direction = runCatching {
+                    GraphEditor.ReorderDirection.valueOf(directionName.uppercase())
+                }.getOrNull() ?: return
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val candidateGraph = script.graph.deepCopy()
+                if (!GraphEditor.swapAdjacent(candidateGraph, nodeId, direction)) return
+                runCatching {
+                    GraphLayoutEngine.layout(candidateGraph)
+                    plugin.scripts.save(script.copy(graph = candidateGraph))
+                }.onFailure { failure ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "ノード入れ替えを保存できませんでした: script=${script.id} node=$nodeId direction=$direction",
+                        failure,
+                    )
+                }.getOrElse { return }
+                // 入れ替え後も同じノードを選択し続け、設定パネルの対象を失わせません。
+                state.selectedNodeId = nodeId
+                updateUpper(player)
+                updateLower(player)
+            }
             context.elementId.startsWith("node:") -> {
                 val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node:")) }.getOrNull() ?: return
                 // 画面更新後に削除されたノードからの遅延入力は、選択も効果音も発生させません。

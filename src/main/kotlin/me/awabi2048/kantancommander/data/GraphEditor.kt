@@ -38,6 +38,23 @@ object GraphEditor {
         }
     }
 
+    /** 表示前に左右ボタンを有効化できるかを、グラフを変更せず判定します。 */
+    fun canSwapAdjacent(graph: CommandGraph, nodeId: UUID, direction: ReorderDirection): Boolean {
+        val node = graph.nodes[nodeId] ?: return false
+        if (!isLinearReorderable(node)) return false
+        return when (direction) {
+            ReorderDirection.LEFT -> {
+                val incoming = incomingExecutionLink(graph, node.id) ?: return false
+                incoming.edge == Edge.NEXT &&
+                    incoming.sourceId?.let(graph.nodes::get)?.let(::isLinearReorderable) == true
+            }
+            ReorderDirection.RIGHT -> {
+                val next = node.next?.let(graph.nodes::get) ?: return false
+                isLinearReorderable(next) && incomingExecutionLink(graph, node.id) != null
+            }
+        }
+    }
+
     fun canAppendMerge(graph: CommandGraph?, conditionId: UUID?): Boolean {
         val currentGraph = graph ?: return false
         val condition = conditionId?.let { currentGraph.nodes[it] } ?: return false

@@ -358,6 +358,15 @@ object GraphLayoutEngine {
                     InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
                 else -> null
             }
+            // 分岐の縦幹もFALSE枝へ属する実行経路です。従来は接続専用として
+            // 挿入先を持たせていなかったため、縦幹をクリックしても無反応でした。
+            // 水平枝と同じedgeへ解決し、どの高さからでも同じFALSE枝の直後へ
+            // 挿入できるようにします。
+            if (falseTarget != null) {
+                for (verticalY in y + 1..falseY) {
+                    addInsertionTarget(MapPoint(x, verticalY), falseTarget)
+                }
+            }
             fillHorizontal(
                 trueSegment.mainNextX - 1,
                 mergeX - 1,
@@ -380,6 +389,11 @@ object GraphLayoutEngine {
             // 水平部分は全セルが同じ挿入判定領域ですが、縦線へは候補を持たせません。
             for (verticalY in y + 1..falseY) {
                 putPath(mergeX, verticalY, MapCellKind.BRANCH_PATH)
+            }
+            if (falseTarget != null) {
+                for (verticalY in y + 1..falseY) {
+                    addInsertionTarget(MapPoint(mergeX, verticalY), falseTarget)
+                }
             }
 
             val merge = graph.nodes[mergeId] ?: return Segment(mergeNodeX, falseSegment.maxY, condition.id)
@@ -537,6 +551,16 @@ object GraphLayoutEngine {
             val resolvedTarget = mergeInsertionTarget(point, existing?.insertionTarget, incomingTarget)
             ensureCapacity(point)
             cells[point] = MapCell(point, resolvedKind, insertionTarget = resolvedTarget)
+        }
+
+        /** 既に描画済みの縦経路へ、同じ実行エッジの挿入候補を後付けします。 */
+        private fun addInsertionTarget(point: MapPoint, target: InsertionTarget) {
+            val existing = cells[point] ?: return
+            check(existing.kind in PATH_CELL_KINDS) {
+                "縦経路の挿入判定対象が経路セルではありません: point=$point existing=$existing"
+            }
+            val resolved = mergeInsertionTarget(point, existing.insertionTarget, target)
+            cells[point] = existing.copy(insertionTarget = resolved)
         }
 
         private fun putAdd(

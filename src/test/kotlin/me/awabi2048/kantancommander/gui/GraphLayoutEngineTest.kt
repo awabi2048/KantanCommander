@@ -357,6 +357,32 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `vertical branch and merge paths expose the same false-branch insertion target`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val falseNode = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val conditionPoint = requireNotNull(layout.nodePoints[condition.id])
+        val falsePoint = requireNotNull(layout.nodePoints[falseNode.id])
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+
+        val branchStem = layout.cells[MapPoint(conditionPoint.x, conditionPoint.y + 1)]
+        assertEquals(
+            InsertionTarget(falseNode.id, GraphEditor.Edge.NEXT, condition.id),
+            branchStem?.insertionTarget,
+        )
+
+        val mergeStem = layout.cells[MapPoint(mergePoint.x, falsePoint.y - 1)]
+        assertEquals(
+            InsertionTarget(falseNode.id, GraphEditor.Edge.NEXT, condition.id),
+            mergeStem?.insertionTarget,
+        )
+    }
+
+    @Test
     fun `insertion preview points to the new node center instead of clicked path cell`() {
         val graph = CommandGraph.empty()
         val first = GraphEditor.append(graph, CommandType.WAIT)
