@@ -30,6 +30,7 @@ import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Material
 import org.bukkit.entity.Player
+import kotlin.math.sqrt
 
 /** 既存の選択肢生成を木のノードとして扱うための局所的な別名です。 */
 private typealias SettingChoice = GestureSettingTreeNode
@@ -53,8 +54,8 @@ class GestureLowerPanel(
     val SETTING_CHILD_SCREEN_ID = "gesture-editor-setting-child"
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
 
-    /** 子画面の縦横を親の50%にする一様縮尺です。 */
-    private val SETTING_CHILD_SCALE = 0.5
+    /** 子画面の面積を親の50%にするための縦横縮尺です。 */
+    private val SETTING_CHILD_SCALE = sqrt(0.5)
 
     fun build(state: GestureEditorState, player: Player): GestureGuiView {
         return when (state.lowerMode) {
@@ -129,7 +130,6 @@ class GestureLowerPanel(
             visuals,
             player,
             settingField,
-            null,
             fallback = displayLabel,
             actionFallback = if (contextOverrideActive) {
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE_HOVER)
@@ -137,7 +137,7 @@ class GestureLowerPanel(
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
         )
-        addValueRow(visuals, "lower-setting", 0.26, displayLabel, value)
+        addValueRow(visuals, "lower-setting", SETTING_VALUE_Y, displayLabel, value)
 
         if (settingScreen != null) {
             // 設定木の直下は常に親画面へ表示します。子画面は、選択中の
@@ -181,6 +181,7 @@ class GestureLowerPanel(
                     ),
                     x = 0.28,
                     y = 0.39,
+                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
                 ),
             ))
         }
@@ -199,6 +200,7 @@ class GestureLowerPanel(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
                     x = 0.28,
                     y = 0.39,
+                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
                 ),
             ))
         }
@@ -242,16 +244,21 @@ class GestureLowerPanel(
                 4,
             )
             addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
+            val hoverDescription = choice.description.takeIf(String::isNotBlank)
+                ?: choiceDescription(player, choice)
             elements.add(GestureGuiElement(
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, width, SETTING_CHOICE_HEIGHT),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = bgId,
-                hoverText = singleLineHover(
-                    choice.description.ifBlank { choiceDescription(player, choice) },
-                    x = if (child) 0.0 else 0.28,
-                    y = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
-                ),
+                hoverText = hoverDescription?.let {
+                    singleLineHover(
+                        it,
+                        x = if (child) 0.0 else 0.28,
+                        y = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
+                        replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                    )
+                },
             ))
         }
     }
@@ -294,6 +301,7 @@ class GestureLowerPanel(
                     fieldActionDescription(player, field),
                     x = 0.28,
                     y = descriptionY(node, field),
+                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
                 ),
             ))
         }
@@ -314,6 +322,7 @@ class GestureLowerPanel(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE_HOVER),
                     x = 0.28,
                     y = 0.39,
+                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
                 ),
             ))
         }
@@ -359,14 +368,13 @@ class GestureLowerPanel(
         visuals: MutableList<GestureGuiVisual>,
         player: Player,
         field: EditorField?,
-        hoveredDescription: String?,
         fallback: String = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SETTINGS_FIELD_FALLBACK),
         actionFallback: String? = null,
         detailHint: String? = null,
         centerX: Double = 0.28,
         tabY: Double = 0.43,
         hoverY: Double = ACTION_DESCRIPTION_Y,
-        detailY: Double = 0.23,
+        detailY: Double = SETTING_DETAIL_HINT_Y,
     ) {
         addText(
             visuals,
@@ -385,12 +393,11 @@ class GestureLowerPanel(
             0.0043,
             280,
             Component.text(
-                hoveredDescription
-                    ?: if (field?.key == "target") {
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_TARGET_ACTION_FALLBACK)
-                    } else field?.let { fieldActionDescription(player, it) }
-                        ?: actionFallback
-                        ?: "",
+                if (field?.key == "target") {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_TARGET_ACTION_FALLBACK)
+                } else field?.let { fieldActionDescription(player, it) }
+                    ?: actionFallback
+                    ?: "",
                 NamedTextColor.GRAY,
             ),
         )
@@ -421,8 +428,10 @@ class GestureLowerPanel(
         } else DEFAULT_HOVER_Y
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
-    private fun choiceDescription(player: Player, choice: SettingChoice): String = when {
-        choice.id.startsWith("target:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_TARGET)
+    private fun choiceDescription(player: Player, choice: SettingChoice): String? = when {
+        // 対象種別はタブ説明と既定の操作案内で十分です。各候補へ同じ
+        // 「対象種別を設定します」を付けると、説明スロットの情報が重複します。
+        choice.id.startsWith("target:") -> null
         choice.id == "filter:entityType" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE)
         choice.id == "filter:minimumDistance" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY)
         choice.id == "filter:maximumDistance" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MAXIMUM_DISTANCE_BODY)
@@ -450,16 +459,22 @@ class GestureLowerPanel(
     /**
      * ホバーは1行1エンティティで表示します。1つのTextDisplayへ複数行を
      * 入れると中央列揃えになり下部パネルのレイアウトが崩れるためです。
-     * 項目の説明は常設の説明ディスプレイへ集約し、ホバーは操作案内のみを
-     * 担うことで表示の重複も解消します。
+     * 項目固有の説明は常設の説明ディスプレイと同じスロットを置換し、
+     * 既定案内との重複を解消します。
      */
-    private fun singleLineHover(text: String, x: Double, y: Double): GestureGuiHoverText =
+    private fun singleLineHover(
+        text: String,
+        x: Double,
+        y: Double,
+        replacesVisualId: String? = null,
+    ): GestureGuiHoverText =
         GestureGuiHoverText(
             text = Component.text(text),
             x = x,
             y = y,
             size = 0.0048,
             lineWidth = 280,
+            replacesVisualId = replacesVisualId,
         )
 
     /**
@@ -599,7 +614,6 @@ class GestureLowerPanel(
             visuals,
             player,
             field,
-            null,
             fallback = fieldLabel,
             detailHint = selectedDetail?.let {
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS)
@@ -607,12 +621,12 @@ class GestureLowerPanel(
             centerX = if (child) 0.0 else 0.28,
             tabY = if (child) CHILD_TAB_DESCRIPTION_Y else 0.43,
             hoverY = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
-            detailY = if (child) CHILD_DETAIL_HINT_Y else 0.23,
+            detailY = if (child) CHILD_DETAIL_HINT_Y else SETTING_DETAIL_HINT_Y,
         )
         addValueRow(
             visuals,
             "setting-header",
-            if (child) CHILD_HEADER_Y else 0.26,
+            if (child) CHILD_HEADER_Y else SETTING_VALUE_Y,
             fieldLabel,
             fieldValue,
             labelX = if (child) -0.53 else -0.08,
@@ -1306,6 +1320,11 @@ class GestureLowerPanel(
         )
 
     private companion object {
+        const val SETTING_DESCRIPTION_HOVER_ID = "setting-description-hover"
+        // 値行と詳細案内を0.10ブロック以上離し、長いTextDisplayの折返しが
+        // 互いの領域へ侵入しないようにします。
+        const val SETTING_VALUE_Y = 0.27
+        const val SETTING_DETAIL_HINT_Y = 0.17
         const val SETTINGS_PAGE_SIZE = 4
         const val PICKER_PAGE_SIZE = 8
         // 2列×5行に収め、対象フィルター（10項目）を1画面で編集できます。
@@ -1324,7 +1343,7 @@ class GestureLowerPanel(
         const val CHILD_HEADER_Y = 0.36
         const val CHILD_TAB_DESCRIPTION_Y = 0.29
         const val CHILD_HOVER_Y = 0.23
-        const val CHILD_DETAIL_HINT_Y = 0.17
+        const val CHILD_DETAIL_HINT_Y = 0.14
         const val CHILD_PAGER_Y = -0.34
         const val CHILD_BACK_WIDTH = 1.70
         const val ACTION_DESCRIPTION_Y = 0.36

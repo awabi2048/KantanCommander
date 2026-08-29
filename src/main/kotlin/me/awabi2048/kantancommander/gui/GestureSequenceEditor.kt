@@ -1291,20 +1291,6 @@ class GestureSequenceEditor(
             if (openChild && !settingChildOpen(player.uniqueId)) ensureSettingChild(player) else updateLower(player)
         }
 
-        fun returnToParentOrSettings() {
-            if (state.settingRoute.size > 1) {
-                popSettingFrame(player)
-            } else {
-                if (settingChildOpen(player.uniqueId)) {
-                    closeSettingChild(player)
-                } else {
-                    clearSettingState()
-                    state.lowerMode = GestureLowerMode.SETTINGS
-                    updateLower(player)
-                }
-            }
-        }
-
         when (screen) {
             GestureSettingScreen.TARGET -> {
                 if (group != "target") return
@@ -1333,17 +1319,19 @@ class GestureSequenceEditor(
                         )
                 }) return
                 rememberSettingNode(encoded)
-                if (wasSelected && hasChildren) {
-                    pushSettingFrame(
-                        player,
-                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
-                        encoded,
-                    )
-                } else if (hasChildren) {
-                    // 一回目は選択だけを確定し、詳細設定は再クリックで開きます。
-                    showSettingScreen()
-                } else {
-                    returnToParentOrSettings()
+                when (settingSelectionAction(wasSelected, hasChildren)) {
+                    GestureSettingSelectionAction.ENTER_CHILD -> {
+                        pushSettingFrame(
+                            player,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
+                            encoded,
+                        )
+                    }
+                    GestureSettingSelectionAction.STAY_ON_FRAME -> {
+                        // 一回目の選択および葉の選択では現在の設定木を維持します。
+                        // 兄弟項目を続けて選べる状態にし、戻る操作だけで親へ戻します。
+                        showSettingScreen()
+                    }
                 }
             }
             GestureSettingScreen.TARGET_FILTERS -> {
@@ -1413,16 +1401,15 @@ class GestureSequenceEditor(
                     if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind))
                         }) return
-                    if (wasSelected && hasChildren) {
-                        pushSettingFrame(
-                            player,
-                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
-                            encoded,
-                        )
-                    } else if (hasChildren) {
-                        showSettingScreen()
-                    } else {
-                        returnToParentOrSettings()
+                    when (settingSelectionAction(wasSelected, hasChildren)) {
+                        GestureSettingSelectionAction.ENTER_CHILD -> {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
+                                encoded,
+                            )
+                        }
+                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
                     }
                     return
                 }
@@ -1437,7 +1424,7 @@ class GestureSequenceEditor(
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, x = x, y = y, z = z))
                         }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        returnToParentOrSettings()
+                        showSettingScreen()
                         null
                     }
                     return
@@ -1451,7 +1438,7 @@ class GestureSequenceEditor(
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, variable = raw))
                         }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        returnToParentOrSettings()
+                        showSettingScreen()
                         null
                     }
                     return
@@ -1462,7 +1449,7 @@ class GestureSequenceEditor(
                 } else PositionSpec(kind)
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setPositionSpec(it, settingContext.role, spec)
-                    }) returnToParentOrSettings()
+                    }) showSettingScreen()
             }
             GestureSettingScreen.FACING -> {
                 if (group != "facing") return
@@ -1478,7 +1465,7 @@ class GestureSequenceEditor(
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, x = x, y = y, z = z))
                         }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        returnToParentOrSettings()
+                        showSettingScreen()
                         null
                     }
                     return
@@ -1493,7 +1480,7 @@ class GestureSequenceEditor(
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = yaw, pitch = pitch))
                         }) return@showRotationSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        returnToParentOrSettings()
+                        showSettingScreen()
                         null
                     }
                     return
@@ -1502,13 +1489,13 @@ class GestureSequenceEditor(
                 val spec = if (kind == FacingKind.CAPTURED) FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
                 else FacingSpec(kind)
                 if (updateSettingNode(player, settingContext) { CommandSettingsModel.setFacingSpec(it, spec) }) {
-                    returnToParentOrSettings()
+                    showSettingScreen()
                 }
             }
             GestureSettingScreen.CONDITION_KIND -> {
                 if (group != "condition-kind") return
                 val kind = runCatching { ConditionKind.valueOf(value) }.getOrNull() ?: return
-                if (updateSettingNode(player, settingContext) { it.params["kind"] = kind.name }) returnToParentOrSettings()
+                if (updateSettingNode(player, settingContext) { it.params["kind"] = kind.name }) showSettingScreen()
             }
             GestureSettingScreen.CONDITION_DETAIL -> {
                 when (encoded) {
@@ -1516,36 +1503,38 @@ class GestureSequenceEditor(
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
                         val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                         rememberSettingNode(encoded)
-                        if (wasSelected && hasChildren) {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(
-                                    settingContext.copy(role = CommandSettingRole.NODE_TARGET),
-                                    fieldKey,
-                                    GestureSettingScreen.TARGET,
-                                ),
-                                encoded,
-                            )
-                        } else {
-                            showSettingScreen()
+                        when (settingSelectionAction(wasSelected, hasChildren)) {
+                            GestureSettingSelectionAction.ENTER_CHILD -> {
+                                pushSettingFrame(
+                                    player,
+                                    GestureSettingFrame(
+                                        settingContext.copy(role = CommandSettingRole.NODE_TARGET),
+                                        fieldKey,
+                                        GestureSettingScreen.TARGET,
+                                    ),
+                                    encoded,
+                                )
+                            }
+                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
                         }
                     }
                     "condition-position" -> {
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
                         val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                         rememberSettingNode(encoded)
-                        if (wasSelected && hasChildren) {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(
-                                    settingContext.copy(role = CommandSettingRole.CONDITION_POSITION),
-                                    fieldKey,
-                                    GestureSettingScreen.POSITION,
-                                ),
-                                encoded,
-                            )
-                        } else {
-                            showSettingScreen()
+                        when (settingSelectionAction(wasSelected, hasChildren)) {
+                            GestureSettingSelectionAction.ENTER_CHILD -> {
+                                pushSettingFrame(
+                                    player,
+                                    GestureSettingFrame(
+                                        settingContext.copy(role = CommandSettingRole.CONDITION_POSITION),
+                                        fieldKey,
+                                        GestureSettingScreen.POSITION,
+                                    ),
+                                    encoded,
+                                )
+                            }
+                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
                         }
                     }
                     "condition-state" -> {
@@ -1595,16 +1584,16 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.DISPLAY_MODE -> {
                 if (group != "display" || value !in setOf("tellraw", "title", "actionbar")) return
-                if (updateSettingNode(player, settingContext) { it.params["mode"] = value }) returnToParentOrSettings()
+                if (updateSettingNode(player, settingContext) { it.params["mode"] = value }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_ACTION -> {
                 if (group != "action" || value !in setOf("ride", "dismount")) return
-                if (updateSettingNode(player, settingContext) { it.params["action"] = value }) returnToParentOrSettings()
+                if (updateSettingNode(player, settingContext) { it.params["action"] = value }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_SCOPE -> {
                 if (group != "scope") return
                 val scope = runCatching { VariableScope.valueOf(value) }.getOrNull() ?: return
-                if (updateSettingNode(player, settingContext) { it.params["scope"] = scope.name }) returnToParentOrSettings()
+                if (updateSettingNode(player, settingContext) { it.params["scope"] = scope.name }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_TYPE -> {
                 if (group != "type") return
@@ -1615,14 +1604,14 @@ class GestureSequenceEditor(
                         if (operation !in CommandSettingsModel.allowedVariableOperations(type)) {
                             it.params["operation"] = CommandSettingsModel.allowedVariableOperations(type).first().name
                         }
-                    }) returnToParentOrSettings()
+                    }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_OPERATION -> {
                 if (group != "operation") return
                 val operation = runCatching { VariableOperation.valueOf(value) }.getOrNull() ?: return
                 val type = runCatching { VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name)) }.getOrDefault(VariableType.BOOLEAN)
                 if (operation !in CommandSettingsModel.allowedVariableOperations(type)) return
-                if (updateSettingNode(player, settingContext) { it.params["operation"] = operation.name }) returnToParentOrSettings()
+                if (updateSettingNode(player, settingContext) { it.params["operation"] = operation.name }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_VALUE -> {
                 if (group != "value") return
@@ -1636,17 +1625,17 @@ class GestureSequenceEditor(
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         } else null
                     }
-                    "iteration" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_iteration_value" }) returnToParentOrSettings()
-                    "count" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_loop_count" }) returnToParentOrSettings()
+                    "iteration" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_iteration_value" }) showSettingScreen()
+                    "count" -> if (updateSettingNode(player, settingContext) { it.params["value"] = "\$current_loop_count" }) showSettingScreen()
                 }
             }
             GestureSettingScreen.FOR_SOURCE -> {
                 if (group != "source" || value !in setOf("FIXED", "TEMPORARY", "WORLD")) return
-                if (updateSettingNode(player, settingContext) { it.params[fieldKey] = value }) returnToParentOrSettings()
+                if (updateSettingNode(player, settingContext) { it.params[fieldKey] = value }) showSettingScreen()
             }
             GestureSettingScreen.INCLUSIVE_END -> {
                 if (group != "inclusive") return
-                if (updateSettingNode(player, settingContext) { it.params[fieldKey] = value.toBoolean().toString() }) returnToParentOrSettings()
+                if (updateSettingNode(player, settingContext) { it.params[fieldKey] = value.toBoolean().toString() }) showSettingScreen()
             }
             GestureSettingScreen.CONTEXT_OVERRIDE -> {
                 when (value) {
@@ -1655,52 +1644,55 @@ class GestureSequenceEditor(
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
                         val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                         rememberSettingNode(encoded)
-                        if (wasSelected && hasChildren) {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(settingContext.copy(role = role), fieldKey, GestureSettingScreen.TARGET),
-                                encoded,
-                            )
-                        } else {
-                            showSettingScreen()
+                        when (settingSelectionAction(wasSelected, hasChildren)) {
+                            GestureSettingSelectionAction.ENTER_CHILD -> {
+                                pushSettingFrame(
+                                    player,
+                                    GestureSettingFrame(settingContext.copy(role = role), fieldKey, GestureSettingScreen.TARGET),
+                                    encoded,
+                                )
+                            }
+                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
                         }
                     }
                     "position" -> {
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
                         val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                         rememberSettingNode(encoded)
-                        if (wasSelected && hasChildren) {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(
-                                    settingContext.copy(role = CommandSettingRole.CONTEXT_POSITION),
-                                    fieldKey,
-                                    GestureSettingScreen.POSITION,
-                                ),
-                                encoded,
-                            )
-                        } else {
-                            showSettingScreen()
+                        when (settingSelectionAction(wasSelected, hasChildren)) {
+                            GestureSettingSelectionAction.ENTER_CHILD -> {
+                                pushSettingFrame(
+                                    player,
+                                    GestureSettingFrame(
+                                        settingContext.copy(role = CommandSettingRole.CONTEXT_POSITION),
+                                        fieldKey,
+                                        GestureSettingScreen.POSITION,
+                                    ),
+                                    encoded,
+                                )
+                            }
+                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
                         }
                     }
                     "facing" -> {
                         val wasSelected = lowerPanel.isSettingChoiceSelected(state, encoded)
                         val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                         rememberSettingNode(encoded)
-                        if (wasSelected && hasChildren) {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(settingContext.copy(role = CommandSettingRole.CONTEXT_FACING), fieldKey, GestureSettingScreen.FACING),
-                                encoded,
-                            )
-                        } else {
-                            showSettingScreen()
+                        when (settingSelectionAction(wasSelected, hasChildren)) {
+                            GestureSettingSelectionAction.ENTER_CHILD -> {
+                                pushSettingFrame(
+                                    player,
+                                    GestureSettingFrame(settingContext.copy(role = CommandSettingRole.CONTEXT_FACING), fieldKey, GestureSettingScreen.FACING),
+                                    encoded,
+                                )
+                            }
+                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
                         }
                     }
                     "source" -> {
                         if (updateSettingNode(player, settingContext) { CommandSettingsModel.toggleContextSource(it) }) updateLower(player)
                     }
-                    "inherit" -> if (updateSettingNode(player, settingContext) { it.contextOverride = null }) returnToParentOrSettings()
+                    "inherit" -> if (updateSettingNode(player, settingContext) { it.contextOverride = null }) showSettingScreen()
                 }
             }
         }

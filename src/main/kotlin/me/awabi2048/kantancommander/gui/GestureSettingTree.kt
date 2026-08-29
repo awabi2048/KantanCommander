@@ -45,6 +45,28 @@ data class GestureSettingTreePath(
     fun leaveChild(): GestureSettingTreePath = copy(nodeIds = nodeIds.dropLast(1))
 }
 
+/**
+ * 設定木の直下項目を押した後の共通遷移です。
+ *
+ * 一回目のクリックは選択状態の更新だけを行い、子を持つ同じ項目を再クリック
+ * した場合だけ子フレームへ進みます。葉を選んだ後も現在フレームに留めるため、
+ * 兄弟項目の選択可能性を画面種類ごとに変えません。
+ */
+internal enum class GestureSettingSelectionAction {
+    STAY_ON_FRAME,
+    ENTER_CHILD,
+}
+
+internal fun settingSelectionAction(
+    wasSelected: Boolean,
+    hasChildren: Boolean,
+): GestureSettingSelectionAction =
+    if (wasSelected && hasChildren) {
+        GestureSettingSelectionAction.ENTER_CHILD
+    } else {
+        GestureSettingSelectionAction.STAY_ON_FRAME
+    }
+
 /** 詳細子画面をまたぐための設定木上の1フレームです。 */
 data class GestureSettingFrame(
     val context: CommandSettingContext,

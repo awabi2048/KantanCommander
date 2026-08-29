@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -35,5 +36,25 @@ class GestureSettingTreeTest {
         assertEquals(listOf("target:NEAREST_PLAYER", "filter:minimumDistance"), nested.nodeIds)
         assertEquals(listOf("target:NEAREST_PLAYER", "filter:maximumDistance"), sibling.nodeIds)
         assertEquals(root, nested.leaveChild())
+    }
+
+    @Test
+    fun `selection stays on the current frame except for a second click on a branch`() {
+        assertSame(
+            GestureSettingSelectionAction.STAY_ON_FRAME,
+            settingSelectionAction(wasSelected = false, hasChildren = false),
+        )
+        assertSame(
+            GestureSettingSelectionAction.STAY_ON_FRAME,
+            settingSelectionAction(wasSelected = false, hasChildren = true),
+        )
+        assertSame(
+            GestureSettingSelectionAction.STAY_ON_FRAME,
+            settingSelectionAction(wasSelected = true, hasChildren = false),
+        )
+        assertSame(
+            GestureSettingSelectionAction.ENTER_CHILD,
+            settingSelectionAction(wasSelected = true, hasChildren = true),
+        )
     }
 }
