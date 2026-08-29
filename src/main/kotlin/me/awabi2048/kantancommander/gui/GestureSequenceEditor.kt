@@ -223,9 +223,11 @@ class GestureSequenceEditor(
         api.registerOwner(player.uniqueId)
         val upper = buildUpperViewport(player)
         val lower = lowerPanel.build(state, player)
-        // 主要画面の並び方向は config で選択します（既定は縦配置）。
+        // 主要画面の並び方向は config で選択します（Kantan Commanderの既定は左右配置）。
         // 横配置はビューポートが左、パネルが右へ並びます。
-        val layout = if (plugin.config.getBoolean("use-horizontal-gesture-layout", false)) {
+        // 左右配置を既定にし、既存configへキーがまだ追記されていない環境でも
+        // 新しい画面仕様を確実に選択します。明示的なfalseだけは縦配置を残します。
+        val layout = if (plugin.config.getBoolean("use-horizontal-gesture-layout", true)) {
             GestureGuiScreenLayout.HORIZONTAL
         } else GestureGuiScreenLayout.VERTICAL
         val snapshot = api.open(
@@ -778,22 +780,19 @@ class GestureSequenceEditor(
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目は、チャットを横取りせず
             // CC-System共通のダイアログで入力します。
-            val fieldLabel = CommandSettingsModel.visibleFields(node)
-                .firstOrNull { it.key == fieldKey }
-                ?.let { KcI18n.text(player, it.label) }
-                ?: fieldKey
             // インベントリGUIのshowFieldDialogと同一の maxLength・検証を使います。
-            val spec = CommandDialogSpecs.field(fieldKey)
+            val valueSource = if (fieldKey in setOf("startValue", "endValue", "stepValue")) {
+                node.string(fieldKey.removeSuffix("Value") + "Source", "FIXED")
+            } else null
+            val spec = CommandDialogSpecs.field(fieldKey, valueSource)
                 ?: CommandDialogSpecs.Spec(
                     com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
                     512,
                 )
-            val prompt = KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_VALUE_INPUT_SUFFIX,
-                mapOf("label" to fieldLabel),
-            )
-            showTextInputDialog(player, prompt, node.string(fieldKey), maxLength = spec.maxLength) { value ->
+            showTextInputDialog(player, spec, node.string(fieldKey)) { raw ->
+                // SETTINGS 経由の入力と同じく、前後空白を正規化してから検証・保存します。
+                // 同一フィールドを上段・下段のどちらから編集しても結果が変わらないようにします。
+                val value = raw.trim()
                 val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
                 if (validationError != null) return@showTextInputDialog KcI18n.text(player, validationError)
                 val updated = CommandSettingsModel.updateNode(plugin, context) { it.params[fieldKey] = value }
@@ -957,13 +956,13 @@ class GestureSequenceEditor(
      * 共通入力仕様（CommandDialogSpecs）に沿った単一テキスト入力です。
      * プロンプト・maxLength・検証をインベントリGUIと同一に保ちます。
      */
-    private fun beginSettingInput(player: Player, spec: CommandDialogSpecs.Spec, result: (String) -> String?) {
-        val prompt = KcI18n.text(
-            player,
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_VALUE_INPUT_SUFFIX,
-            mapOf("label" to KcI18n.text(player, spec.labelKey)),
-        )
-        showTextInputDialog(player, prompt, maxLength = spec.maxLength) { raw ->
+    private fun beginSettingInput(
+        player: Player,
+        spec: CommandDialogSpecs.Spec,
+        initial: String = "",
+        result: (String) -> String?,
+    ) {
+        showTextInputDialog(player, spec, initial) { raw ->
             val value = raw.trim()
             val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
             if (validationError != null) return@showTextInputDialog KcI18n.text(player, validationError)
@@ -978,33 +977,13 @@ class GestureSequenceEditor(
     /** 単一文字列の入力を共通ダイアログへ委譲します。 */
     private fun showTextInputDialog(
         player: Player,
-        prompt: String,
+        spec: CommandDialogSpecs.Spec,
         initial: String = "",
-        maxLength: Int = 512,
         onSubmit: (String) -> String?,
     ) = showInputDialog(
         player = player,
-        body = listOf(
-            Component.text(prompt),
-            Component.text(
-                KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
-                    mapOf(
-                        "value" to initial.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) },
-                    ),
-                ),
-                NamedTextColor.GRAY,
-            ),
-        ),
-        inputs = listOf(
-            MenuDialogInput.Text(
-                id = "value",
-                label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_LABEL)),
-                initial = initial,
-                maxLength = maxLength,
-            ),
-        ),
+        body = CommandDialogSpecs.body(player, spec, initial),
+        inputs = listOf(CommandDialogSpecs.input(player, "value", initial, spec)),
     ) { response -> onSubmit(response.textValue("value")) }
 
     /**
@@ -1291,7 +1270,15 @@ class GestureSequenceEditor(
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = CommandDialogSpecs.targetFilter(value)
                             ?: return
-                        beginSettingInput(player, spec) { raw ->
+                        val initial = when (value) {
+                            "minimumDistance" -> current.minimumDistance?.toString()
+                            "maximumDistance" -> current.maximumDistance?.toString()
+                            "limit" -> current.limit?.toString()
+                            "entityType" -> current.entityType
+                            "tag" -> current.tag
+                            else -> current.name
+                        }.orEmpty()
+                        beginSettingInput(player, spec, initial) { raw ->
                             val parsed = when (value) {
                                 "minimumDistance", "maximumDistance" -> raw.takeIf(String::isNotEmpty)
                                     ?.toDoubleOrNull()?.takeIf(Double::isFinite)
@@ -1350,7 +1337,11 @@ class GestureSequenceEditor(
                     return
                 }
                 if (kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
-                    beginSettingInput(player, CommandDialogSpecs.variableName) { raw ->
+                    beginSettingInput(
+                        player,
+                        CommandDialogSpecs.variableName,
+                        CommandSettingsModel.positionSpec(node, settingContext.role)?.variable.orEmpty(),
+                    ) { raw ->
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, variable = raw))
                         }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
@@ -1465,8 +1456,9 @@ class GestureSequenceEditor(
                                 )
                             else -> return
                         }
-                        beginSettingInput(player, spec) { raw ->
-                            if (!updateSettingNode(player, settingContext) { it.params[specSaveKey(encoded)] = raw }) {
+                        val saveKey = specSaveKey(encoded)
+                        beginSettingInput(player, spec, node.string(saveKey)) { raw ->
+                            if (!updateSettingNode(player, settingContext) { it.params[saveKey] = raw }) {
                                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                             } else null
                         }
@@ -1507,7 +1499,11 @@ class GestureSequenceEditor(
             GestureSettingScreen.VARIABLE_VALUE -> {
                 if (group != "value") return
                 when (value) {
-                    "direct" -> beginSettingInput(player, CommandDialogSpecs.field("value") ?: return) { raw ->
+                    "direct" -> beginSettingInput(
+                        player,
+                        CommandDialogSpecs.field("value") ?: return,
+                        node.string("value"),
+                    ) { raw ->
                         if (!updateSettingNode(player, settingContext) { it.params["value"] = raw }) {
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         } else null

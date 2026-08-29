@@ -1,8 +1,13 @@
 package me.awabi2048.kantancommander.gui
 
+import com.awabi2048.ccsystem.api.gui.MenuDialogInput
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.util.KcI18n
+import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.NamespacedKey
+import org.bukkit.entity.Player
 
 /**
  * インベントリGUI／ジェスチャーGUIで同一のテキスト入力仕様を提供します。
@@ -21,6 +26,43 @@ internal object CommandDialogSpecs {
         /** 空欄以外の入力へ適用する検証。null なら合格、キーはエラーメッセージ。 */
         val validate: (String) -> LocalizationKey<String>? = { null },
     )
+
+    /**
+     * 単一テキスト入力の共通表示を生成します。
+     *
+     * Inventory GUIとGesture GUIが個別にbodyや入力欄を組み立てると、
+     * プロンプト、現在値、入力欄ラベルが再び分岐します。表示形式もこの
+     * 仕様オブジェクトから生成し、入力値の意味とUIの表現を同じ境界に置きます。
+     */
+    fun prompt(player: Player, spec: Spec): String = KcI18n.text(
+        player,
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_VALUE_INPUT_SUFFIX,
+        mapOf("label" to KcI18n.text(player, spec.labelKey)),
+    )
+
+    fun body(player: Player, spec: Spec, current: String): List<Component> = listOf(
+        Component.text(prompt(player, spec)),
+        Component.text(
+            KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
+                mapOf(
+                    "value" to current.ifBlank {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+                    },
+                ),
+            ),
+            NamedTextColor.GRAY,
+        ),
+    )
+
+    fun input(player: Player, id: String, initial: String, spec: Spec): MenuDialogInput.Text =
+        MenuDialogInput.Text(
+            id = id,
+            label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_LABEL)),
+            initial = initial,
+            maxLength = spec.maxLength,
+        )
 
     /** 対象フィルタ系。空欄は「指定解除」として常に合格です。 */
     fun targetFilter(parameter: String): Spec? = when (parameter) {
@@ -98,17 +140,27 @@ internal object CommandDialogSpecs {
         },
     )
 
-    /** フィールド入力系（インベントリGUIの欄別maxLength・正整数検証と同一仕様）。 */
-    fun field(fieldKey: String): Spec? {
+    /**
+     * フィールド入力系（インベントリGUIとジェスチャーGUIで共有）。
+     *
+     * ここには両GUIが直接編集できる全フィールドを列挙します。未登録の
+     * フィールドを呼び出し側の既定値へ落とすとmaxLengthや検証が分岐するため、
+     * 新しい入力項目は必ずこの一覧へ追加します。
+     */
+    fun field(fieldKey: String, valueSource: String? = null): Spec? {
         val labelKey = when (fieldKey) {
             "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
             "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE
+            "ticks" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WAIT
+            "stay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DURATION
+            "startValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_START
+            "endValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_END
+            "stepValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STEP
             "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY
             "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
             "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
             "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS
             "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT
-            "ticks" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WAIT
             "level" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL
             "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS
             "volume" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME
@@ -125,9 +177,31 @@ internal object CommandDialogSpecs {
         }
         val positiveInteger = fieldKey in setOf("count", "ticks", "level", "seconds")
         return Spec(labelKey, maxLength) { raw ->
-            if (positiveInteger && (raw.toIntOrNull() ?: 0) < 1) {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID
-            } else null
+            when {
+                positiveInteger && (raw.toIntOrNull() ?: 0) < 1 ->
+                    // Specはプレイヤー非依存のため、{field}を要求するキーは使わず、
+                    // 両GUIで同じプレースホルダーなしのエラーを返します。
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
+                fieldKey in setOf("entity", "sound", "effect") && NamespacedKey.fromString(raw) == null ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                fieldKey == "tags" && raw.split(',').map(String::trim).filter(String::isNotEmpty)
+                    .any { !it.matches(Regex("[A-Za-z0-9_.:+-]{1,64}")) } ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
+                fieldKey == "slot" && raw !in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET") ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                fieldKey == "volume" && (raw.toDoubleOrNull()?.takeIf(Double::isFinite)?.let { it in 0.0..2.0 } != true) ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                fieldKey == "pitch" && (raw.toDoubleOrNull()?.takeIf(Double::isFinite)?.let { it in 0.5..2.0 } != true) ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                fieldKey == "intensity" && (raw.toDoubleOrNull()?.takeIf(Double::isFinite)?.let { it in 0.1..4.0 } != true) ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                fieldKey in setOf("startValue", "endValue", "stepValue") && valueSource == "FIXED" &&
+                    raw.toLongOrNull() == null ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
+                fieldKey == "stepValue" && valueSource == "FIXED" && raw.toLongOrNull() == 0L ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STEP_ZERO
+                else -> null
+            }
         }
     }
 }

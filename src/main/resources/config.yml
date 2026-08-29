@@ -1,7 +1,7 @@
 default-disk-name: "Kantan Disk"
 use-gesture-editor: false
-# ジェスチャーGUIの主要画面を左右に並べる（falseのままなら縦配置）。
-use-horizontal-gesture-layout: false
+# ジェスチャーGUIの主要画面を左右に並べる（falseにすると従来の縦配置）。
+use-horizontal-gesture-layout: true
 execution:
   max-nodes-per-activation: 1024
   max-disk-call-depth: 3

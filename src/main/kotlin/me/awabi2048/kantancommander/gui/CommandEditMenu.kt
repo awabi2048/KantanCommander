@@ -46,7 +46,6 @@ import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
-import org.bukkit.NamespacedKey
 import org.bukkit.Sound
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
@@ -205,12 +204,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
-                    "entityType" to targetFilterDialog("entityType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE),
-                    "minimumDistance" to targetFilterDialog("minimumDistance", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, decimal = true),
-                    "maximumDistance" to targetFilterDialog("maximumDistance", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE, decimal = true),
-                    "limit" to targetFilterDialog("limit", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT, integer = true),
-                    "tag" to targetFilterDialog("tag", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG),
-                    "name" to targetFilterDialog("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME),
+                    "entityType" to targetFilterDialog("entityType"),
+                    "minimumDistance" to targetFilterDialog("minimumDistance"),
+                    "maximumDistance" to targetFilterDialog("maximumDistance"),
+                    "limit" to targetFilterDialog("limit"),
+                    "tag" to targetFilterDialog("tag"),
+                    "name" to targetFilterDialog("name"),
                 ),
             )
         )
@@ -428,8 +427,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             context.player,
                             context.route,
                             "variable",
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_VARIABLE_TITLE,
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_VARIABLE_BODY,
+                            CommandDialogSpecs.variableName,
                         )
                         MenuActionResult.Success(MenuUpdate.None)
                     },
@@ -455,9 +453,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             context.player,
                             context.route,
                             "value",
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_VALUE_TITLE,
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_VALUE_BODY,
-                            signedInteger = true,
+                            CommandDialogSpecs.signedInteger,
                         )
                         MenuActionResult.Success(MenuUpdate.None)
                     },
@@ -911,25 +907,28 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 player, layout.itemSlots[index], option.material,
                 KcI18n.text(player, option.nameKey), option.action,
                 dataLabel = KcI18n.text(player, option.nameKey), dataValue = option.value.render(player),
-                description = listOf(targetFilterDescription(option.action)),
+                description = listOf(targetFilterDescription(player, option.action)),
             )
         }.toMutableList()
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TARGET_FILTER_TITLE)), elements)
     }
 
-    /** 絞り込み項目ごとの意味を一覧画面にも表示し、入力ダイアログだけに説明を閉じ込めません。 */
-    private fun targetFilterDescription(parameter: String): String = when (parameter) {
-        "entityType" -> "対象に含めるエンティティ種別を minecraft:zombie の形式で指定します。"
-        "minimumDistance" -> "実行位置からこの距離以上にいる対象だけを選びます。空欄で制限しません。"
-        "maximumDistance" -> "実行位置からこの距離以下にいる対象だけを選びます。空欄で制限しません。"
-        "limit" -> "候補から選ぶ最大件数です。空欄で制限せず、指定する場合は1以上の整数にします。"
-        "sort" -> "複数の対象があるときの選択順を、最寄り・最遠・ランダムから切り替えます。"
-        "gameMode" -> "プレイヤー対象をゲームモードで絞り込みます。未設定なら全モードです。"
-        "tag" -> "指定したスコアボードタグを持つ対象だけを選びます。空欄で解除します。"
-        "name" -> "対象名で絞り込みます。空欄で解除します。"
-        else -> "距離・種類・件数などを組み合わせて実行対象を絞り込みます。"
-    }
+    /** 絞り込み項目の説明もジェスチャーGUIと同じカタログから生成します。 */
+    private fun targetFilterDescription(player: Player, parameter: String): String = KcI18n.text(
+        player,
+        when (parameter) {
+            "entityType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE
+            "minimumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY
+            "maximumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MAXIMUM_DISTANCE_BODY
+            "limit" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_LIMIT
+            "sort" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_SORT
+            "gameMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_GAME_MODE
+            "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_TAG
+            "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_NAME
+            else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_DEFAULT
+        },
+    )
 
     private fun renderPosition(player: Player, route: MenuRoute): InventoryMenuView {
         val destination = route.payload[ROLE] == "destination"
@@ -1244,30 +1243,21 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun showVariableNameDialog(player: Player, route: MenuRoute, currentName: String) {
+        val spec = CommandDialogSpecs.variableName
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
                 owner = SequenceEditorMenu.OWNER,
                 id = "variable-name",
-                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_TITLE),
-                body = listOf(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_BODY),
-                    Component.text("現在値: ${currentName.ifBlank { "未設定" }}", NamedTextColor.GRAY),
-                    Component.text("英小文字・数字・._-の1〜64文字で指定します。", NamedTextColor.GRAY),
-                ),
-                inputs = listOf(
-                    MenuDialogInput.Text(
-                        "name",
-                        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_NAME),
-                        currentName,
-                        maxLength = 64,
-                    )
-                ),
+                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                body = CommandDialogSpecs.body(player, spec, currentName),
+                inputs = listOf(CommandDialogSpecs.input(player, "name", currentName, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     val name = response.textValue("name").trim().lowercase()
-                    if (!name.matches(Regex("[a-z0-9_.-]{1,64}"))) {
+                    val validationError = name.takeIf(String::isNotEmpty)?.let(spec.validate)
+                    if (validationError != null) {
                         return@MenuDialogHandler MenuActionResult.Rejected(
-                            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_INVALID)
+                            KcI18n.component(player, validationError),
                         )
                     }
                     if (!updateNode(route) { it.params["name"] = name }) {
@@ -1287,88 +1277,41 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             showDisplayTimingDialog(player, route, node)
             return
         }
-        val definition = when (field) {
-            "count" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_COUNT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_COUNT_BODY, "1", true)
-            "ticks" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TICKS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TICKS_BODY, "20", true)
-            "text" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TEXT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TEXT_BODY, "", false)
-            "value" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VALUE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VALUE_BODY, "", false)
-            "startValue" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_START, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_START_BODY, "0", false)
-            "endValue" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_END, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_END_BODY, "0", false)
-            "stepValue" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_STEP, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_STEP_BODY, "1", false)
-            "entity" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_ENTITY_BODY, "minecraft:pig", false)
-            "tags" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TAGS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TAGS_BODY, "", false)
-            "sound" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SOUND_BODY, "minecraft:block.note_block.harp", false)
-            "volume" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY, "1.0", false)
-            "pitch" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH_BODY, "1.0", false)
-            "effect" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_EFFECT_BODY, "minecraft:speed", false)
-            "level" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_LEVEL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_LEVEL_BODY, "1", true)
-            "seconds" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SECONDS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SECONDS_BODY, "30", true)
-            "intensity" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_INTENSITY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_INTENSITY_BODY, "1.0", false)
-            "shakeType" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SHAKE_TYPE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SHAKE_TYPE_BODY, "positional", false)
-            "slot" -> FieldDialogDefinition(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_EQUIPMENT_SLOT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_EQUIPMENT_SLOT_BODY, "HAND", false)
+        val defaultValue = when (field) {
+            "count" -> "1"
+            "ticks" -> "20"
+            "text", "value", "tags" -> ""
+            "startValue", "endValue" -> "0"
+            "stepValue" -> "1"
+            "entity" -> "minecraft:pig"
+            "sound" -> "minecraft:block.note_block.harp"
+            "volume", "pitch" -> "1.0"
+            "effect" -> "minecraft:speed"
+            "level" -> "1"
+            "seconds" -> "30"
+            "intensity" -> "1.0"
+            "shakeType" -> "positional"
+            "slot" -> "HAND"
             else -> return
         }
-        val title = KcI18n.text(player, definition.titleKey)
-        val currentValue = node.string(field, definition.defaultValue)
+        val valueSource = if (field in setOf("startValue", "endValue", "stepValue")) {
+            node.string(field.removeSuffix("Value") + "Source", "FIXED")
+        } else null
+        val spec = CommandDialogSpecs.field(field, valueSource) ?: return
+        val currentValue = node.string(field, defaultValue)
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
                 owner = SequenceEditorMenu.OWNER,
                 id = "field-$field",
-                title = KcI18n.component(player, definition.titleKey),
-                body = listOf(
-                    KcI18n.component(player, definition.bodyKey),
-                    Component.text("現在値: ${currentValue.ifBlank { "未設定" }}", NamedTextColor.GRAY),
-                    Component.text("この値はコマンド実行時にそのまま使用されます。入力内容を確認して確定してください。", NamedTextColor.GRAY),
-                ),
-                inputs = listOf(
-                    MenuDialogInput.Text(
-                        field,
-                        KcI18n.component(player, definition.titleKey),
-                        node.string(field, definition.defaultValue),
-                        // 名前空間ID（minecraft:pig 等）は10文字を超えるため、エンティティ・
-                        // サウンド・エフェクト・タグは64文字まで入力できるようにする。
-                        maxLength = when (field) {
-                            "text", "value" -> 512
-                            "entity", "sound", "effect", "tags" -> 64
-                            else -> 10
-                        },
-                    )
-                ),
+                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                body = CommandDialogSpecs.body(player, spec, currentValue),
+                inputs = listOf(CommandDialogSpecs.input(player, field, currentValue, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val value = response.textValue(field)
-                    if (definition.positiveInteger && (value.toIntOrNull() ?: 0) < 1) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(
-                            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID, mapOf("field" to title))
-                        )
-                    }
-                    if (field in setOf("startValue", "endValue", "stepValue")) {
-                        val source = node.string(field.removeSuffix("Value") + "Source", "FIXED")
-                        if (source == "FIXED" && value.toLongOrNull() == null) {
-                            return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID))
-                        }
-                        if (field == "stepValue" && source == "FIXED" && value.toLongOrNull() == 0L) {
-                            return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STEP_ZERO))
-                        }
-                    }
-                    val numericRange = when (field) {
-                        "volume" -> value.toDoubleOrNull()?.takeIf(Double::isFinite)?.takeIf { it in 0.0..2.0 }
-                        "pitch" -> value.toDoubleOrNull()?.takeIf(Double::isFinite)?.takeIf { it in 0.5..2.0 }
-                        "intensity" -> value.toDoubleOrNull()?.takeIf(Double::isFinite)?.takeIf { it in 0.1..4.0 }
-                        else -> null
-                    }
-                    if (field in setOf("volume", "pitch", "intensity") && numericRange == null) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("数値の範囲が正しくありません。"))
-                    }
-                    if (field in setOf("entity", "sound", "effect") && NamespacedKey.fromString(value) == null) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("IDは minecraft:zombie の形式で入力してください。"))
-                    }
-                    if (field == "slot" && value !in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("装備スロットが正しくありません。"))
-                    }
-                    if (field == "tags" && value.split(',').map(String::trim).filter(String::isNotEmpty)
-                            .any { !it.matches(Regex("[A-Za-z0-9_.:+-]{1,64}")) }) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("タグは英数字と . _ : + - の形式で指定してください。"))
+                    val value = response.textValue(field).trim()
+                    val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
+                    if (validationError != null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
                     }
                     if (!updateNode(route) { it.params[field] = value }) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -1420,9 +1363,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         player: Player,
         route: MenuRoute,
         parameter: String,
-        titleKey: LocalizationKey<String>,
-        bodyKey: LocalizationKey<String>,
-        signedInteger: Boolean = false,
+        spec: CommandDialogSpecs.Spec,
     ) {
         val current = node(route)?.string(parameter).orEmpty()
         CCSystem.getAPI().getMenuDialogService().show(
@@ -1430,16 +1371,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             MenuDialogRequest(
                 owner = SequenceEditorMenu.OWNER,
                 id = "parameter-$parameter",
-                title = KcI18n.component(player, titleKey),
-                body = listOf(
-                    KcI18n.component(player, bodyKey),
-                    Component.text("現在値: ${current.ifBlank { "未設定" }}", NamedTextColor.GRAY),
-                ),
-                inputs = listOf(MenuDialogInput.Text(parameter, KcI18n.component(player, titleKey), current, maxLength = 64)),
+                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                body = CommandDialogSpecs.body(player, spec, current),
+                inputs = listOf(CommandDialogSpecs.input(player, parameter, current, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val value = response.textValue(parameter)
-                    if (signedInteger && value.toLongOrNull() == null) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID))
+                    val value = response.textValue(parameter).trim()
+                    val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
+                    if (validationError != null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
                     }
                     if (!updateNode(route) { it.params[parameter] = value }) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -1480,24 +1419,21 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun showPositionVariableDialog(player: Player, route: MenuRoute, kind: PositionKind) {
         val current = node(route)?.let { selectedPosition(it, route.payload[ROLE]) }?.variable.orEmpty()
+        val spec = CommandDialogSpecs.variableName
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
                 owner = SequenceEditorMenu.OWNER,
                 id = "position-variable",
-                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITION_VARIABLE_TITLE),
-                body = listOf(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITION_VARIABLE_BODY),
-                    Component.text("現在値: ${current.ifBlank { "未設定" }}", NamedTextColor.GRAY),
-                ),
-                inputs = listOf(
-                    MenuDialogInput.Text("name", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_NAME), current, maxLength = 64)
-                ),
+                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                body = CommandDialogSpecs.body(player, spec, current),
+                inputs = listOf(CommandDialogSpecs.input(player, "name", current, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     val name = response.textValue("name").trim().lowercase()
-                    if (!name.matches(Regex("[a-z0-9_.-]{1,64}"))) {
+                    val validationError = name.takeIf(String::isNotEmpty)?.let(spec.validate)
+                    if (validationError != null) {
                         return@MenuDialogHandler MenuActionResult.Rejected(
-                            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_INVALID)
+                            KcI18n.component(player, validationError),
                         )
                     }
                     if (!updateNode(route) { command ->
@@ -1656,12 +1592,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun targetFilterDialog(
         parameter: String,
-        titleKey: LocalizationKey<String>,
-        decimal: Boolean = false,
-        integer: Boolean = false,
     ) = MenuActionHandler { context ->
         val player = context.player
         val currentSpec = selectedTargetSpec(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+        val inputSpec = CommandDialogSpecs.targetFilter(parameter) ?: return@MenuActionHandler MenuActionResult.Ignored
         val current = when (parameter) {
             "entityType" -> currentSpec.entityType
             "minimumDistance" -> currentSpec.minimumDistance?.toString()
@@ -1675,37 +1609,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             MenuDialogRequest(
                 owner = SequenceEditorMenu.OWNER,
                 id = "target-filter-$parameter",
-                title = KcI18n.component(player, titleKey),
-                body = listOf(
-                    // 距離は「下限/上限の帯域外を除外する」意味を、入力画面でも明示します。
-                    KcI18n.component(player, when (parameter) {
-                        "minimumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY
-                        "maximumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MAXIMUM_DISTANCE_BODY
-                        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FILTER_BODY
-                    }),
-                    Component.text("現在値: ${current.ifBlank { "未設定" }}", NamedTextColor.GRAY),
-                    Component.text("空欄で条件を解除します。入力値は対象の絞り込みに使用されます。", NamedTextColor.GRAY),
-                ),
-                inputs = listOf(MenuDialogInput.Text(parameter, KcI18n.component(player, titleKey), current, maxLength = 64)),
+                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                body = CommandDialogSpecs.body(player, inputSpec, current),
+                inputs = listOf(CommandDialogSpecs.input(player, parameter, current, inputSpec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     val raw = response.textValue(parameter).trim().takeIf(String::isNotEmpty)
+                    val validationError = raw?.let(inputSpec.validate)
+                    if (validationError != null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                    }
                     val decimalValue = raw?.toDoubleOrNull()?.takeIf(Double::isFinite)
                     val integerValue = raw?.toIntOrNull()
-                    if (decimal && raw != null && (decimalValue == null || decimalValue < 0.0)) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID))
-                    }
-                    if (integer && raw != null && (integerValue == null || integerValue < 1)) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID))
-                    }
-                    if (parameter == "entityType" && raw != null && NamespacedKey.fromString(raw) == null) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("エンティティ種別は minecraft:zombie の形式で入力してください。"))
-                    }
-                    if (parameter == "tag" && raw != null && !raw.matches(Regex("[A-Za-z0-9_.:+-]{1,64}"))) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("タグは英数字と . _ : + - の1〜64文字で入力してください。"))
-                    }
-                    if (parameter == "name" && raw != null && raw.length > 256) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(Component.text("名前は256文字以内で入力してください。"))
-                    }
                     val updated = when (parameter) {
                         "minimumDistance" -> currentSpec.copy(minimumDistance = decimalValue)
                         "maximumDistance" -> currentSpec.copy(maximumDistance = decimalValue)
@@ -1826,12 +1740,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 }
 
-private data class FieldDialogDefinition(
-    val titleKey: LocalizationKey<String>,
-    val bodyKey: LocalizationKey<String>,
-    val defaultValue: String,
-    val positiveInteger: Boolean,
-)
 
 private data class ContextOption(
     val slot: Int,
