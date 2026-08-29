@@ -1648,9 +1648,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return script.graph.nodes[id]
     }
 
-    private fun updateNode(route: MenuRoute, change: (CommandNode) -> Unit): Boolean {
+    private fun updateNode(
+        route: MenuRoute,
+        configuredFields: Set<String> = emptySet(),
+        change: (CommandNode) -> Unit,
+    ): Boolean {
         val context = CommandSettingContext.from(route) ?: return false
-        return runCatching { CommandSettingsModel.updateNode(plugin, context, change) != null }
+        return runCatching {
+            CommandSettingsModel.updateNode(plugin, context, configuredFields, change) != null
+        }
             .onFailure { failure ->
                 plugin.logger.log(
                     java.util.logging.Level.WARNING,

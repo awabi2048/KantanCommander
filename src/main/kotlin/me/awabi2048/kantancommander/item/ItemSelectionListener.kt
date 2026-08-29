@@ -50,14 +50,20 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
                 // 付与・装備とも数量・Name/Lore等を含む実体をスナップショット保存します。
                 node.params["item"] = selected.type.key.toString()
                 node.params["itemData"] = ItemStackCodec.encode(selected)
+                node.markConfigured("item")
             }
             SelectionKind.DISK -> {
                 val selectedId = KantanItemService.diskId(selected) ?: return cancel(player)
                 val selectedScript = plugin.scripts.load(selectedId) ?: return cancel(player)
                 node.params["diskId"] = selectedId.toString()
                 node.snapshot = selectedScript.graph.deepCopy()
+                node.markConfigured("diskId")
             }
-            SelectionKind.MATERIAL -> node.params[selection.parameter ?: return] = selected.type.key.toString()
+            SelectionKind.MATERIAL -> {
+                val parameter = selection.parameter ?: return
+                node.params[parameter] = selected.type.key.toString()
+                node.markConfigured(parameter)
+            }
         }
         runCatching { plugin.scripts.save(script.copy(graph = candidateGraph)) }
             .onFailure { failure ->

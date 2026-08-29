@@ -79,4 +79,25 @@ class CommandSettingsModelTest {
         assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
         assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(null))
     }
+
+    @Test
+    fun `configured state preserves explicit selection of a default value`() {
+        val node = CommandType.GIVE_ITEM.newNode()
+
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "count"))
+        node.markConfigured("count")
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "count"))
+    }
+
+    @Test
+    fun `target filter state is independent for multi-select details`() {
+        val node = CommandType.GIVE_ITEM.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 12.0)
+        }
+
+        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "minimumDistance"))
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "maximumDistance"))
+        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "sort"))
+    }
 }

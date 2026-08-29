@@ -1,5 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
+import org.bukkit.Material
+
 /**
  * ジェスチャー設定を意味上の木として表す選択肢です。
  *
@@ -13,6 +15,10 @@ data class GestureSettingTreeNode(
     val selected: Boolean = false,
     val description: String = "",
     val children: List<GestureSettingTreeNode> = emptyList(),
+    /** 選択肢の意味。択一と複数選択可能な設定を同じ木で表現します。 */
+    val selectionMode: GestureSettingSelectionMode = GestureSettingSelectionMode.EXCLUSIVE,
+    /** 現在値が初期値のままか、明示設定済みかを表します。 */
+    val valueState: GestureSettingValueState = GestureSettingValueState.INITIAL,
 ) {
     val hasChildren: Boolean
         get() = children.isNotEmpty()
@@ -20,6 +26,42 @@ data class GestureSettingTreeNode(
     fun find(nodeId: String): GestureSettingTreeNode? {
         if (id == nodeId) return this
         return children.firstNotNullOfOrNull { it.find(nodeId) }
+    }
+}
+
+/** 設定ドメインが許す選択方式。表示色だけでなく入力契約の基準にもします。 */
+enum class GestureSettingSelectionMode {
+    EXCLUSIVE,
+    MULTIPLE,
+}
+
+/** 設定値の状態。初期値と明示設定済みを色・文言へ同時に投影します。 */
+enum class GestureSettingValueState {
+    INITIAL,
+    CONFIGURED,
+}
+
+/**
+ * 設定カードの表示規則を一箇所へ集約します。
+ *
+ * concrete / terracotta の明暗だけに意味を詰め込まず、選択方式は色相、値状態は
+ * 明暗、現在選択中はコンクリートという三つの軸へ分けます。設定タブと詳細選択肢が
+ * 同じ規則を使うため、画面ごとの色分岐が増えません。
+ */
+internal object GestureSettingVisualPolicy {
+    fun material(
+        selectionMode: GestureSettingSelectionMode,
+        valueState: GestureSettingValueState,
+        selected: Boolean,
+    ): Material = when (selectionMode) {
+        GestureSettingSelectionMode.EXCLUSIVE -> when (valueState) {
+            GestureSettingValueState.CONFIGURED -> if (selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA
+            GestureSettingValueState.INITIAL -> if (selected) Material.LIGHT_BLUE_CONCRETE else Material.LIGHT_BLUE_TERRACOTTA
+        }
+        GestureSettingSelectionMode.MULTIPLE -> when (valueState) {
+            GestureSettingValueState.CONFIGURED -> if (selected) Material.PURPLE_CONCRETE else Material.PURPLE_TERRACOTTA
+            GestureSettingValueState.INITIAL -> if (selected) Material.MAGENTA_CONCRETE else Material.MAGENTA_TERRACOTTA
+        }
     }
 }
 

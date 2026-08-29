@@ -13,6 +13,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
@@ -149,9 +150,16 @@ class GestureLowerPanel(
         // 文字列・数値だけを右ペインのダイアログ導線へ残し、専用子画面を増やしません。
         val heldItemSetting = !contextOverrideActive &&
             field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
-        val mainHandAvailable = player.inventory.itemInMainHand.type != Material.AIR
+        val heldDiskSetting = !contextOverrideActive &&
+            field.key == "diskId" && node.type == CommandType.DISK_CALL
+        val heldMainHandSetting = heldItemSetting || heldDiskSetting
+        val mainHandAvailable = when {
+            heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
+            heldItemSetting -> player.inventory.itemInMainHand.type != Material.AIR
+            else -> false
+        }
         val configuredItem = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
-        if (heldItemSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS)) {
+        if (heldMainHandSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS)) {
             addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.16, Material.CYAN_TERRACOTTA, 4)
             addText(
                 visuals,
@@ -160,7 +168,7 @@ class GestureLowerPanel(
                 0.02,
                 0.0055,
                 180,
-                Component.text(KcI18n.text(player, if (heldItemSetting) {
+                Component.text(KcI18n.text(player, if (heldMainHandSetting) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
                 } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_VALUE)),
             )
@@ -169,14 +177,14 @@ class GestureLowerPanel(
                 bounds = rect(0.28, 0.02, 1.2, 0.16),
                 // 空のメインハンドでは入力面自体を無効化し、CC-Systemの
                 // クリック音も発生させません。
-                acceptedGestures = if (heldItemSetting && !mainHandAvailable) {
+                acceptedGestures = if (heldMainHandSetting && !mainHandAvailable) {
                     emptySet()
                 } else setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY),
                 targetVisualId = "lower-edit-bg",
                 hoverText = singleLineHover(
                     KcI18n.text(
                         player,
-                        if (heldItemSetting) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_HOVER
+                        if (heldMainHandSetting) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_HOVER
                         else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER,
                     ),
                     x = 0.28,
@@ -240,7 +248,11 @@ class GestureLowerPanel(
                 cy,
                 width,
                 SETTING_CHOICE_HEIGHT,
-                if (choice.selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA,
+                GestureSettingVisualPolicy.material(
+                    choice.selectionMode,
+                    choice.valueState,
+                    choice.selected,
+                ),
                 4,
             )
             addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
@@ -288,8 +300,25 @@ class GestureLowerPanel(
         tabs.forEachIndexed { index, field ->
             val cy = 0.38 - index * 0.17
             val on = index == selected
-            addBlock(visuals, "tab-bg-$index", -0.7975, cy, 0.47, 0.15,
-                if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4)
+            val fieldState = if (CommandSettingsModel.isFieldConfigured(node, field.key)) {
+                GestureSettingValueState.CONFIGURED
+            } else {
+                GestureSettingValueState.INITIAL
+            }
+            addBlock(
+                visuals,
+                "tab-bg-$index",
+                -0.7975,
+                cy,
+                0.47,
+                0.15,
+                GestureSettingVisualPolicy.material(
+                    GestureSettingSelectionMode.EXCLUSIVE,
+                    fieldState,
+                    on,
+                ),
+                4,
+            )
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, field.label)))
             elements.add(GestureGuiElement(
@@ -297,20 +326,31 @@ class GestureLowerPanel(
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "tab-bg-$index",
-                hoverText = singleLineHover(
-                    fieldActionDescription(player, field),
-                    x = 0.28,
-                    y = descriptionY(node, field),
-                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
-                ),
             ))
         }
 
         val contextY = -0.29
         if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
             val activeContext = state.settingFieldKey == "context" && state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE
-            addBlock(visuals, "context-bg", -0.7975, contextY, 0.47, 0.14,
-                if (activeContext) Material.YELLOW_CONCRETE else Material.YELLOW_TERRACOTTA, 4)
+            val contextState = if (CommandSettingsModel.isFieldConfigured(node, "context")) {
+                GestureSettingValueState.CONFIGURED
+            } else {
+                GestureSettingValueState.INITIAL
+            }
+            addBlock(
+                visuals,
+                "context-bg",
+                -0.7975,
+                contextY,
+                0.47,
+                0.14,
+                GestureSettingVisualPolicy.material(
+                    GestureSettingSelectionMode.MULTIPLE,
+                    contextState,
+                    activeContext,
+                ),
+                4,
+            )
             addText(visuals, "context-label", -0.7975, contextY - 0.018, 0.0045, 110,
                 Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE)))
             elements.add(GestureGuiElement(
@@ -318,12 +358,6 @@ class GestureLowerPanel(
                 bounds = rect(-0.7975, contextY, 0.47, 0.14),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "context-bg",
-                hoverText = singleLineHover(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE_HOVER),
-                    x = 0.28,
-                    y = 0.39,
-                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
-                ),
             ))
         }
 
@@ -490,6 +524,15 @@ class GestureLowerPanel(
         screen: GestureSettingScreen,
         fieldKey: String,
         player: Player,
+    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player)
+        .map { decorateSettingChoice(node, context, fieldKey, it) }
+
+    private fun rawSettingTreeNodes(
+        node: CommandNode,
+        context: CommandSettingContext,
+        screen: GestureSettingScreen,
+        fieldKey: String,
+        player: Player,
     ): List<GestureSettingTreeNode> = when (screen) {
         GestureSettingScreen.TARGET -> targetChoices(node, context, player)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player).map { choice ->
@@ -536,6 +579,102 @@ class GestureLowerPanel(
             }
         }
         else -> settingChoices(node, context, screen, fieldKey, player)
+    }
+
+    /**
+     * 生の選択肢へドメインの選択方式と値状態を付与します。
+     * 子要素も同じ規則で再帰的に装飾し、対象・位置・コンテキストの役割が
+     * 入れ替わっても表示側が個別の画面分岐を持たないようにします。
+     */
+    private fun decorateSettingChoice(
+        node: CommandNode,
+        context: CommandSettingContext,
+        fieldKey: String,
+        choice: GestureSettingTreeNode,
+        parentId: String? = null,
+    ): GestureSettingTreeNode {
+        val childContext = when (choice.id) {
+            "context:executor" -> context.copy(role = CommandSettingRole.CONTEXT_EXECUTOR)
+            "context:target" -> context.copy(role = CommandSettingRole.CONTEXT_TARGET)
+            "context:position" -> context.copy(role = CommandSettingRole.CONTEXT_POSITION)
+            "context:facing" -> context.copy(role = CommandSettingRole.CONTEXT_FACING)
+            "condition-target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
+            "condition-position" -> context.copy(role = CommandSettingRole.CONDITION_POSITION)
+            "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
+            else -> context
+        }
+        val effectiveContext = when {
+            parentId == "context:executor" -> context.copy(role = CommandSettingRole.CONTEXT_EXECUTOR)
+            parentId == "context:target" -> context.copy(role = CommandSettingRole.CONTEXT_TARGET)
+            parentId == "context:position" -> context.copy(role = CommandSettingRole.CONTEXT_POSITION)
+            parentId == "condition-target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
+            parentId == "condition-position" -> context.copy(role = CommandSettingRole.CONDITION_POSITION)
+            parentId == "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
+            else -> childContext
+        }
+        val configured = settingChoiceConfigured(node, effectiveContext, fieldKey, choice)
+        return choice.copy(
+            selectionMode = settingSelectionMode(choice.id),
+            valueState = if (configured) {
+                GestureSettingValueState.CONFIGURED
+            } else {
+                GestureSettingValueState.INITIAL
+            },
+            children = choice.children.map {
+                decorateSettingChoice(node, effectiveContext, fieldKey, it, choice.id)
+            },
+        )
+    }
+
+    private fun settingSelectionMode(choiceId: String): GestureSettingSelectionMode = when {
+        choiceId.startsWith("filter:") -> GestureSettingSelectionMode.MULTIPLE
+        choiceId in setOf(
+            "context:executor",
+            "context:target",
+            "context:position",
+            "context:facing",
+        ) -> GestureSettingSelectionMode.MULTIPLE
+        choiceId.startsWith("condition-") && choiceId != "condition-kind" -> GestureSettingSelectionMode.MULTIPLE
+        else -> GestureSettingSelectionMode.EXCLUSIVE
+    }
+
+    private fun settingChoiceConfigured(
+        node: CommandNode,
+        context: CommandSettingContext,
+        fieldKey: String,
+        choice: GestureSettingTreeNode,
+    ): Boolean {
+        val id = choice.id
+        return when {
+            id.startsWith("target:") -> choice.selected &&
+                CommandSettingsModel.targetSpec(node, context.role)?.kind?.name == id.removePrefix("target:")
+            id.startsWith("filter:") -> CommandSettingsModel.isTargetFilterConfigured(
+                node,
+                context.role,
+                id.removePrefix("filter:"),
+            )
+            id.startsWith("position:") -> choice.selected &&
+                CommandSettingsModel.positionSpec(node, context.role)?.kind?.name == id.removePrefix("position:")
+            id.startsWith("facing:") -> choice.selected &&
+                CommandSettingsModel.facingSpec(node)?.kind?.name == id.removePrefix("facing:")
+            id == "condition-target" -> node.targetSpec != null
+            id == "condition-position" -> node.conditionPositionSpec != null
+            id == "context:executor" -> node.contextOverride?.executor != null
+            id == "context:target" -> node.contextOverride?.target != null
+            id == "context:position" -> node.contextOverride?.position != null
+            id == "context:facing" -> node.contextOverride?.facing != null
+            id == "context:source" -> CommandSettingsModel.contextSource(node) != ContextSource.BASE
+            id == "context:inherit" -> node.contextOverride != null
+            id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "state")
+            id.startsWith("condition-variable") -> CommandSettingsModel.isFieldConfigured(node, "variable")
+            id.startsWith("condition-scope") -> CommandSettingsModel.isFieldConfigured(node, "variableScope")
+            id.startsWith("condition-operator") -> CommandSettingsModel.isFieldConfigured(node, "operator")
+            id.startsWith("condition-value") -> CommandSettingsModel.isFieldConfigured(node, "value")
+            id.startsWith("condition-block") -> CommandSettingsModel.isFieldConfigured(node, "block")
+            id.startsWith("condition-count") -> CommandSettingsModel.isFieldConfigured(node, "count")
+            id.startsWith("condition-item") -> CommandSettingsModel.isFieldConfigured(node, "item")
+            else -> choice.selected && CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)
+        }
     }
 
     /** 現在の表示経路から、クリック対象が詳細子画面を持つかを判定します。 */

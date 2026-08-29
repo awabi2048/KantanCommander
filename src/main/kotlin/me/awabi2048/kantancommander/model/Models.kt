@@ -51,6 +51,7 @@ data class CommandGraph(
         nodes.forEach { (id, node) ->
             copied[id] = node.copy(
                 params = node.params.toMutableMap(),
+                configuredFields = node.configuredFields?.toMutableSet(),
                 contextOverride = node.contextOverride?.copy(),
                 targetSpec = node.targetSpec?.copy(),
                 secondaryTargetSpec = node.secondaryTargetSpec?.copy(),
@@ -68,6 +69,14 @@ data class CommandNode(
     val id: UUID = UUID.randomUUID(),
     val type: CommandType,
     val params: MutableMap<String, String> = linkedMapOf(),
+    /**
+     * ユーザーが明示的に操作した設定項目です。
+     *
+     * paramsの値がコマンド既定値と同じでも「操作して設定した」状態を失わない
+     * よう、値そのものとは別に保持します。旧JSONにはこの項目が存在しないため
+     * nullableにし、読み込み直後はCommandSettingsModelが値から安全に推定します。
+     */
+    var configuredFields: MutableSet<String>? = null,
     var next: UUID? = null,
     var trueNext: UUID? = null,
     var falseNext: UUID? = null,
@@ -86,6 +95,14 @@ data class CommandNode(
     fun int(key: String, default: Int = 0) = params[key]?.toIntOrNull() ?: default
     fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
     fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
+
+    fun isExplicitlyConfigured(key: String): Boolean = configuredFields?.contains(key) == true
+
+    fun markConfigured(vararg keys: String) {
+        if (keys.isEmpty()) return
+        val fields = configuredFields ?: linkedSetOf<String>().also { configuredFields = it }
+        fields += keys
+    }
 }
 
 enum class ContextSource { BASE, PREVIOUS }

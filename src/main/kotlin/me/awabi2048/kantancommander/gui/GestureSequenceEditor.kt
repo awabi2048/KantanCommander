@@ -28,6 +28,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.item.ItemStackCodec
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
@@ -822,6 +823,10 @@ class GestureSequenceEditor(
             applyHeldItem(player, context)
             return
         }
+        if (fieldKey == "diskId" && node.type == CommandType.DISK_CALL) {
+            applyHeldDisk(player, context)
+            return
+        }
         if (fieldKey == "stay" && node.type == CommandType.DISPLAY_TEXT) {
             // 表示時間はfadeIn/stay/fadeOutを一組として編集し、インベントリGUIと
             // 同じ入力欄・最大長・0以上検証を使います。
@@ -847,7 +852,12 @@ class GestureSequenceEditor(
                 val value = raw.trim()
                 val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
                 if (validationError != null) return@showTextInputDialog KcI18n.text(player, validationError)
-                val updated = CommandSettingsModel.updateNode(plugin, context) { it.params[fieldKey] = value }
+                val updated = CommandSettingsModel.updateNode(
+                    plugin,
+                    context,
+                    configuredFields = setOf(fieldKey),
+                    change = { it.params[fieldKey] = value },
+                )
                 if (updated == null) {
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                 } else {
@@ -886,6 +896,31 @@ class GestureSequenceEditor(
             return false
         }
         return saveHeldItem(player, context, parameter, itemKey, itemData)
+    }
+
+    /**
+     * 外部ディスクもアイテム付与と同じメインハンド入力で設定します。
+     * ディスクUUIDだけを保存すると元ディスクの変更で実行内容が変わるため、
+     * 挿入時点の独立スナップショットを同時に保持し、後続実行を安定させます。
+     */
+    private fun applyHeldDisk(
+        player: Player,
+        context: CommandSettingContext,
+    ): Boolean {
+        val diskId = KantanItemService.diskId(player.inventory.itemInMainHand)
+        if (diskId == null) {
+            updateLower(player)
+            return false
+        }
+        val disk = plugin.scripts.load(diskId)
+        if (disk == null) {
+            updateLower(player)
+            return false
+        }
+        return updateSettingNode(player, context) { node ->
+            node.params["diskId"] = diskId.toString()
+            node.snapshot = disk.graph.deepCopy()
+        }
     }
 
     private fun saveHeldItem(
@@ -948,10 +983,15 @@ class GestureSequenceEditor(
         val itemKey = state.pendingItemKey ?: return
         val itemData = state.pendingItemData ?: return
         val saved = runCatching {
-            CommandSettingsModel.updateNode(plugin, context) { node ->
-                node.params["item"] = itemKey
-                node.params["itemData"] = itemData
-            } != null
+            CommandSettingsModel.updateNode(
+                plugin,
+                context,
+                configuredFields = setOf("item"),
+                change = { node ->
+                    node.params["item"] = itemKey
+                    node.params["itemData"] = itemData
+                },
+            ) != null
         }.onFailure { failure ->
             plugin.logger.log(
                 java.util.logging.Level.WARNING,
@@ -986,7 +1026,12 @@ class GestureSequenceEditor(
         change: (me.awabi2048.kantancommander.model.CommandNode) -> Unit,
     ): Boolean {
         val saved = runCatching {
-            CommandSettingsModel.updateNode(plugin, context, change) != null
+            CommandSettingsModel.updateNode(
+                plugin,
+                context,
+                configuredFields = setOfNotNull(state.settingFieldKey),
+                change = change,
+            ) != null
         }.onFailure { failure ->
             plugin.logger.log(
                 java.util.logging.Level.WARNING,

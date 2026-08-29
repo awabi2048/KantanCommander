@@ -12,6 +12,7 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
@@ -205,6 +206,15 @@ object CommandSettingsModel {
             CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = spec
             else -> node.targetSpec = spec
         }
+        node.markConfigured(
+            when (role) {
+                CommandSettingRole.DESTINATION -> "destination"
+                CommandSettingRole.SECONDARY_TARGET -> "other"
+                CommandSettingRole.CONTEXT_EXECUTOR -> "executor"
+                CommandSettingRole.CONTEXT_TARGET -> "target"
+                else -> "target"
+            },
+        )
     }
 
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
@@ -223,12 +233,20 @@ object CommandSettingsModel {
             else -> node.contextOverride =
                 (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
         }
+        node.markConfigured(
+            when (role) {
+                CommandSettingRole.DESTINATION -> "destination"
+                CommandSettingRole.CONDITION_POSITION -> "condition"
+                else -> "position"
+            },
+        )
     }
 
     fun facingSpec(node: CommandNode): FacingSpec? = node.contextOverride?.facing
 
     fun setFacingSpec(node: CommandNode, spec: FacingSpec) {
         node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
+        node.markConfigured("facing")
     }
 
     fun contextSource(node: CommandNode): ContextSource = node.effectiveContextSource
@@ -239,7 +257,71 @@ object CommandSettingsModel {
         } else {
             ContextSource.BASE
         }
+        node.markConfigured("context")
     }
+
+    /**
+     * 設定画面で表示する値の状態を、文字列値と構造化値の両方から一元判定します。
+     *
+     * 既存JSONにはconfiguredFieldsがないため、まず構造化値／既定値との差を推定し、
+     * 新しい画面から明示的に既定値を選んだ場合だけCommandNodeの明示記録を優先します。
+     * これにより、過去データを一律「未設定」と表示する退行を避けられます。
+     */
+    fun isFieldConfigured(
+        node: CommandNode,
+        fieldKey: String,
+        role: CommandSettingRole? = null,
+    ): Boolean {
+        if (node.isExplicitlyConfigured(fieldKey)) return true
+        return when (fieldKey) {
+            "target" -> targetSpec(node, role) != null
+            "destination" -> node.destinationSpec != null || node.destinationTargetSpec != null
+            "other" -> node.secondaryTargetSpec != null
+            "executor" -> node.contextOverride?.executor != null
+            "position" -> when (role) {
+                CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec != null
+                CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position != null
+                else -> node.contextOverride?.position != null
+            }
+            "facing" -> node.contextOverride?.facing != null
+            "context" -> node.contextOverride != null || node.effectiveContextSource != ContextSource.BASE
+            "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+            "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
+            "condition" -> conditionDetailConfigured(node)
+            else -> {
+                val value = node.params[fieldKey] ?: return false
+                value.isNotBlank() && value != node.type.defaults[fieldKey]
+            }
+        }
+    }
+
+    /** 対象の詳細条件は各項目が独立して設定されるため、複数選択色へ投影します。 */
+    fun isTargetFilterConfigured(
+        node: CommandNode,
+        role: CommandSettingRole?,
+        parameter: String,
+    ): Boolean {
+        val spec = targetSpec(node, role) ?: return false
+        if (node.isExplicitlyConfigured("target.$parameter")) return true
+        return when (parameter) {
+            "entityType" -> !spec.entityType.isNullOrBlank()
+            "minimumDistance" -> spec.minimumDistance != null
+            "maximumDistance" -> spec.maximumDistance != null
+            "limit" -> spec.limit != null
+            "sort" -> spec.sort != TargetSort.NEAREST
+            "gameMode" -> !spec.gameMode.isNullOrBlank()
+            "tag" -> !spec.tag.isNullOrBlank()
+            "name" -> !spec.name.isNullOrBlank()
+            else -> false
+        }
+    }
+
+    private fun conditionDetailConfigured(node: CommandNode): Boolean =
+        node.targetSpec != null || node.conditionPositionSpec != null ||
+            node.params.any { (key, value) ->
+                key in setOf("state", "variable", "variableScope", "operator", "value", "block", "count", "item") &&
+                    value.isNotBlank() && value != node.type.defaults[key]
+            }
 
     fun allowedVariableOperations(type: VariableType): List<VariableOperation> = when (type) {
         VariableType.BOOLEAN -> listOf(VariableOperation.SET, VariableOperation.TOGGLE, VariableOperation.CLEAR)
@@ -281,11 +363,13 @@ object CommandSettingsModel {
     fun updateNode(
         plugin: KantanCommanderPlugin,
         context: CommandSettingContext,
+        configuredFields: Set<String> = emptySet(),
         change: (CommandNode) -> Unit,
     ): CommandNode? {
         val script = plugin.scripts.load(context.scriptId) ?: return null
         val node = script.graph.nodes[context.nodeId] ?: return null
         change(node)
+        node.markConfigured(*configuredFields.toTypedArray())
         plugin.scripts.save(script)
         // 表示体の再生成は永続化成功後の補助処理です。ここで失敗しても
         // 設定値そのものは保存済みなので、入力イベントへ例外を戻さず次回復元へ委ねます。

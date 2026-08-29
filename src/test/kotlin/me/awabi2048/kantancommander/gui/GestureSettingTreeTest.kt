@@ -57,4 +57,24 @@ class GestureSettingTreeTest {
             settingSelectionAction(wasSelected = true, hasChildren = true),
         )
     }
+
+    @Test
+    fun `visual policy separates selection cardinality and value state`() {
+        assertEquals(
+            org.bukkit.Material.CYAN_CONCRETE,
+            GestureSettingVisualPolicy.material(
+                GestureSettingSelectionMode.EXCLUSIVE,
+                GestureSettingValueState.CONFIGURED,
+                selected = true,
+            ),
+        )
+        assertEquals(
+            org.bukkit.Material.MAGENTA_TERRACOTTA,
+            GestureSettingVisualPolicy.material(
+                GestureSettingSelectionMode.MULTIPLE,
+                GestureSettingValueState.INITIAL,
+                selected = false,
+            ),
+        )
+    }
 }
