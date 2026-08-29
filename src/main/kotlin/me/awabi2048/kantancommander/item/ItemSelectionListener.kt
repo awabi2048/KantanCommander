@@ -15,6 +15,10 @@ import java.util.UUID
 class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listener {
     private val selections = mutableMapOf<UUID, Selection>()
 
+    fun begin(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
+        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.ITEM)
+    }
+
     fun beginDisk(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
         selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.DISK)
     }
@@ -40,6 +44,11 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         val candidateGraph = script.graph.deepCopy()
         val node = candidateGraph.nodes[selection.nodeId] ?: return cancel(player)
         when (selection.kind) {
+            SelectionKind.ITEM -> {
+                // 付与・装備とも数量・Name/Lore等を含む実体をスナップショット保存します。
+                node.params["item"] = selected.type.key.toString()
+                node.params["itemData"] = ItemStackCodec.encode(selected)
+            }
             SelectionKind.DISK -> {
                 val selectedId = KantanItemService.diskId(selected) ?: return cancel(player)
                 val selectedScript = plugin.scripts.load(selectedId) ?: return cancel(player)
@@ -72,7 +81,7 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         selections.remove(player.uniqueId)
     }
 
-    private enum class SelectionKind { DISK, MATERIAL }
+    private enum class SelectionKind { ITEM, DISK, MATERIAL }
 
     private data class Selection(
         val scriptId: UUID,

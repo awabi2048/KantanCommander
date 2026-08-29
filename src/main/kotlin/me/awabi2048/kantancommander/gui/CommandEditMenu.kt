@@ -296,11 +296,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (field == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
-                            // アイテム設定は条件設定・ジェスチャーGUIと同じく、
-                            // メインハンドの実体をスナップショット保存します。インベントリ
-                            // 選択画面へ迂回すると数量・Name/Lore等が失われ、GUIごとに
-                            // 上書き確認の有無も変わるため、ここで旧経路を廃止します。
-                            return@MenuActionHandler setMainHandItem(context, "item")
+                            // 付与アイテムはインベントリ内の実物をクリックして選択する
+                            // 旧方式へ戻します（インベントリGUIの標準選択導線）。
+                            val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                            plugin.itemSelection.begin(context.player, scriptId, node.id, context.route)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         if (field == "diskId" && node.type == CommandType.DISK_CALL) {
                             val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -467,8 +467,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         )
                     },
                     "block" to materialSelection("block"),
-                    // 条件のアイテムも実体を保存する共通経路へ統一します。
-                    "item" to setMainHandItemAction("item"),
+                    // 条件のアイテムもインベントリ内クリック選択へ統一します。
+                    "item" to materialSelection("item"),
                     "count" to MenuActionHandler { context ->
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         showFieldDialog(context.player, context.route, "count", node)
@@ -1085,84 +1085,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
         MenuActionResult.Success(MenuUpdate.Back)
     }
-
-    /**
-     * メインハンドのアイテムを設定するインベントリGUI用アクションです。
-     *
-     * アイテム選択専用インベントリは、表示名・Lore・数量・エンチャント・
-     * データコンポーネントを別経路へ変換するため、GIVE_ITEM/EQUIP_ITEMと
-     * 条件アイテムで保存内容が揺れていました。実体をそのままcodecへ渡し、
-     * Gesture GUIと同じparams(item/itemData)へ保存します。
-     */
-    private fun setMainHandItemAction(parameter: String) = MenuActionHandler { context ->
-        setMainHandItem(context, parameter)
-    }
-
-    private fun setMainHandItem(context: MenuActionContext, parameter: String): MenuActionResult {
-        val held = context.player.inventory.itemInMainHand
-            .takeUnless { it.type == Material.AIR }
-            ?.clone()
-            ?: return MenuActionResult.Ignored
-        val route = context.route
-        val currentNode = node(route) ?: return MenuActionResult.Ignored
-        val itemKey = held.type.key.toString()
-        val itemData = ItemStackCodec.encode(held)
-        val current = configuredItem(currentNode)
-        if (current != null) {
-            showItemOverwriteDialog(context.player, route, parameter, current, held)
-            return MenuActionResult.Success(MenuUpdate.None)
-        }
-        if (!updateNode(route) { command ->
-                command.params[parameter] = itemKey
-                command.params["itemData"] = itemData
-            }) {
-            return MenuActionResult.Rejected(Component.text("設定を保存できませんでした。"))
-        }
-        return MenuActionResult.Success(MenuUpdate.Replace(route))
-    }
-
-    private fun configuredItem(node: CommandNode): ItemStack? =
-        (ItemStackCodec.decode(node.string("itemData"))
-            ?: Material.matchMaterial(node.string("item"))?.let(::ItemStack))
-            ?.takeUnless { it.type == Material.AIR }
-
-    private fun showItemOverwriteDialog(
-        player: Player,
-        route: MenuRoute,
-        parameter: String,
-        current: ItemStack,
-        replacement: ItemStack,
-    ) {
-        CCSystem.getAPI().getMenuDialogService().show(
-            player,
-            MenuDialogRequest(
-                owner = SequenceEditorMenu.OWNER,
-                id = "item-overwrite-${route.payload[NODE_ID] ?: parameter}",
-                title = Component.text("設定中のアイテムを上書きしますか？"),
-                body = listOf(
-                    Component.text("現在: ${itemSummary(current)}", NamedTextColor.GRAY),
-                    Component.text("変更後: ${itemSummary(replacement)}", NamedTextColor.YELLOW),
-                    Component.text("数量・Name/Lore・エンチャント等を含む実体を置き換えます。"),
-                ),
-                confirm = MenuDialogButton(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
-                    MenuDialogHandler { _, _ ->
-                        if (!updateNode(route) { command ->
-                                command.params[parameter] = replacement.type.key.toString()
-                                command.params["itemData"] = ItemStackCodec.encode(replacement)
-                            }) {
-                            return@MenuDialogHandler MenuActionResult.Rejected(Component.text("設定を保存できませんでした。"))
-                        }
-                        MenuActionResult.Success(MenuUpdate.Replace(route))
-                    },
-                ),
-                cancel = dialogCancel(player, route),
-            ),
-        )
-    }
-
-    private fun itemSummary(item: ItemStack): String =
-        "${item.type.key} ×${item.amount}"
 
     private fun materialSelection(parameter: String) = MenuActionHandler { context ->
         val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
