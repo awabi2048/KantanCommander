@@ -149,8 +149,7 @@ internal object CommandDialogSpecs {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             64,
             { raw ->
-                val value = raw.toIntOrNull()
-                if (value == null || value < 1) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID else null
+                if (!isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID else null
             },
         )
         "tag" -> Spec(
@@ -196,6 +195,19 @@ internal object CommandDialogSpecs {
         64,
         { raw -> if (raw.toLongOrNull() == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID else null },
     )
+
+    /**
+     * 正の整数として扱う入力の共通判定です。
+     *
+     * `toIntOrNull() > 0` だけでは `+1` を受け入れてしまい、入力形式が
+     * 「符号付き整数」になります。個数・上限・秒数は符号を持たないため、
+     * ASCII数字だけを許可し、保存先のInt範囲も同時に検証します。
+     */
+    internal fun isPositiveInteger(raw: String): Boolean =
+        raw.matches(Regex("[0-9]+")) && raw.toIntOrNull()?.let { it > 0 } == true
+
+    private fun isNonNegativeInteger(raw: String): Boolean =
+        raw.matches(Regex("[0-9]+")) && raw.toIntOrNull()?.let { it >= 0 } == true
 
     /** ブロックID（条件のブロック状態など）。マテリアルとして解決できることを検証します。 */
     val block = Spec(
@@ -251,13 +263,12 @@ internal object CommandDialogSpecs {
         val positiveInteger = fieldKey in setOf("count", "level", "seconds")
         val nonNegativeInteger = fieldKey in setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
         return Spec(labelKey, maxLength) { raw ->
-            val integerValue = raw.toIntOrNull()
             when {
-                positiveInteger && (integerValue ?: 0) < 1 ->
+                positiveInteger && !isPositiveInteger(raw) ->
                     // Specはプレイヤー非依存のため、{field}を要求するキーは使わず、
                     // 両GUIで同じプレースホルダーなしのエラーを返します。
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
-                nonNegativeInteger && (integerValue == null || integerValue < 0) ->
+                nonNegativeInteger && !isNonNegativeInteger(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID
                 fieldKey in setOf("entity", "sound", "effect") && !registeredFieldId(fieldKey, raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT

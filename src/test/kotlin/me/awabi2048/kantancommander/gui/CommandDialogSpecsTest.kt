@@ -21,6 +21,7 @@ class CommandDialogSpecsTest {
         assertNull(name.validate(""))
         assertNull(limit.validate("1"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID, limit.validate("0"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID, limit.validate("+1"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_ENTITY_TYPE_FORMAT, entityType.validate("bad id"))
     }
 
@@ -34,6 +35,10 @@ class CommandDialogSpecsTest {
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
+            requireNotNull(CommandDialogSpecs.field("count")).validate("+1"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
             requireNotNull(CommandDialogSpecs.field("startValue", "FIXED")).validate("not-a-number"),
         )
         assertNull(requireNotNull(CommandDialogSpecs.field("startValue", "TEMPORARY")).validate("variable_name"))
@@ -44,6 +49,10 @@ class CommandDialogSpecsTest {
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
             requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("-1"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
+            requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("+1"),
         )
         assertNull(requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("0"))
     }

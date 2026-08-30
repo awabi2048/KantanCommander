@@ -1446,8 +1446,9 @@ class GestureSequenceEditor(
                 ),
             ),
         ) { response ->
-            val seconds = response.textValue("seconds").trim().toIntOrNull()
-            if (seconds == null || seconds !in 1..MAX_TIMER_SECONDS) {
+            val rawSeconds = response.textValue("seconds").trim()
+            val seconds = rawSeconds.toIntOrNull()
+            if (!CommandDialogSpecs.isPositiveInteger(rawSeconds) || seconds == null || seconds !in 1..MAX_TIMER_SECONDS) {
                 return@showInputDialog KcI18n.text(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,

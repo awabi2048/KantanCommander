@@ -1333,8 +1333,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     )
                 ),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ENABLE), MenuDialogHandler { _, response ->
-                    val value = response.textValue("seconds").toIntOrNull()
-                    if (value == null || value !in 1..MAX_TIMER_SECONDS) {
+                    val rawValue = response.textValue("seconds").trim()
+                    val value = rawValue.toIntOrNull()
+                    if (!CommandDialogSpecs.isPositiveInteger(rawValue) || value == null || value !in 1..MAX_TIMER_SECONDS) {
                         return@MenuDialogHandler MenuActionResult.Rejected(
                             KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID)
                         )

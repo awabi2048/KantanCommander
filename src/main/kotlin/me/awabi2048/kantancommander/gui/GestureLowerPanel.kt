@@ -392,13 +392,7 @@ class GestureLowerPanel(
                 cy,
                 width,
                 SETTING_CHOICE_HEIGHT,
-                if (choice.enabled) {
-                    GestureSettingVisualPolicy.material(
-                        choice.selectionMode,
-                        choice.valueState,
-                        choice.selected,
-                    )
-                } else Material.GRAY_STAINED_GLASS,
+                settingChoiceMaterial(choice),
                 4,
             )
             addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
@@ -423,6 +417,25 @@ class GestureLowerPanel(
             ))
         }
     }
+
+    /**
+     * 無効な対象継承だけは薄灰色コンクリートで表します。
+     *
+     * 他の無効項目まで同じ素材へ変えると既存の無効状態の意味が変わるため、
+     * 「前置き対象がないため選べない」状態だけを明示的に区別します。
+     */
+    private fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
+        if (choice.enabled) {
+            GestureSettingVisualPolicy.material(
+                choice.selectionMode,
+                choice.valueState,
+                choice.selected,
+            )
+        } else if (choice.id == "target:${TargetCategory.INHERITED.name}") {
+            Material.LIGHT_GRAY_CONCRETE
+        } else {
+            Material.GRAY_STAINED_GLASS
+        }
 
     /**
      * 設定タブと固定操作を親の設定画面で描画します。
@@ -478,7 +491,10 @@ class GestureLowerPanel(
             ))
         }
 
-        val contextY = -0.29
+        // コンテキスト上書きも設定フィールドと同じ左タブ列へ連続配置します。
+        // 固定Yへ置くとフィールド数が少ないコマンドだけ空白が生じ、カードではなく
+        // 別操作に見えるため、タブの次の行をそのまま使います。
+        val contextY = 0.38 - tabs.size * 0.17
         if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
             val activeContext = state.settingFieldKey == "context" && state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE
             val contextState = if (CommandSettingsModel.isFieldConfigured(node, "context")) {
@@ -492,9 +508,9 @@ class GestureLowerPanel(
                 -0.7975,
                 contextY,
                 0.47,
-                0.14,
+                0.15,
                 GestureSettingVisualPolicy.material(
-                    GestureSettingSelectionMode.MULTIPLE,
+                    GestureSettingSelectionMode.EXCLUSIVE,
                     contextState,
                     activeContext,
                 ),
@@ -504,7 +520,7 @@ class GestureLowerPanel(
                 Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE)))
             elements.add(GestureGuiElement(
                 elementId = "lower-context",
-                bounds = rect(-0.7975, contextY, 0.47, 0.14),
+                bounds = rect(-0.7975, contextY, 0.47, 0.15),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "context-bg",
             ))
@@ -1192,13 +1208,7 @@ class GestureLowerPanel(
                 cy,
                 width,
                 SETTING_CHOICE_HEIGHT,
-                if (choice.enabled) {
-                    GestureSettingVisualPolicy.material(
-                        choice.selectionMode,
-                        choice.valueState,
-                        choice.selected,
-                    )
-                } else Material.GRAY_STAINED_GLASS,
+                settingChoiceMaterial(choice),
                 4,
             )
             addText(
@@ -1258,13 +1268,10 @@ class GestureLowerPanel(
                 }
             }
         }
-        val kindChoices = CommandSettingsModel.targetKinds(CommandSettingsModel.targetCategory(spec.kind)).map { kind ->
-            SettingChoice(
-                id = "kind:${kind.name}",
-                label = targetKindLabel(player, kind),
-                selected = spec.kind == kind,
-            )
-        }
+        // Targetの上位画面で旧細分類（最も近い／全員／固定エンティティ等）は
+        // 3カテゴリへ統一して削除しました。ここでは詳細条件だけを残し、削除済み
+        // の選択肢を詳細画面へ再掲しないようにします。距離・上限数・名前等の既存
+        // の詳細設定は変更しません。
         val filterChoices = listOf(
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
@@ -1276,7 +1283,7 @@ class GestureLowerPanel(
         )
             .filter { (id, _) -> CommandSettingsModel.targetFilterApplies(spec.kind, id) }
             .map { (id, label) -> SettingChoice("filter:$id", labeled(player, label, value(id))) }
-        return kindChoices + filterChoices
+        return filterChoices
     }
 
     private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
@@ -1777,9 +1784,9 @@ class GestureLowerPanel(
         const val CHILD_BACK_WIDTH = 1.70
         const val ACTION_DESCRIPTION_Y = 0.36
         const val DEFAULT_HOVER_Y = 0.39
-        // 下部パネル右端（内側最大x=1.016）へ3枚を等間隔で収めます。
+        // 右端へ寄りすぎないよう、内側に余白を残して3枚を等間隔で収めます。
         const val POSITION_TARGET_CHOICE_WIDTH = 0.27
-        const val POSITION_TARGET_CHOICE_START_X = 0.28
+        const val POSITION_TARGET_CHOICE_START_X = 0.14
         const val POSITION_TARGET_CHOICE_PITCH = 0.30
         const val POSITION_TARGET_CHOICE_Y = -0.25
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
