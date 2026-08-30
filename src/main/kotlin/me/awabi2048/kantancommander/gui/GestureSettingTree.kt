@@ -13,6 +13,8 @@ data class GestureSettingTreeNode(
     val id: String,
     val label: String,
     val selected: Boolean = false,
+    /** 実行前提を満たさない選択肢は表示したまま操作だけを無効化します。 */
+    val enabled: Boolean = true,
     val description: String = "",
     val children: List<GestureSettingTreeNode> = emptyList(),
     /** 選択肢の意味。択一と複数選択可能な設定を同じ木で表現します。 */

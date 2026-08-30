@@ -40,7 +40,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "42d26918d4b2f2256dddeaebbb934d1a48779faf011a16c73af75a4d012d6465"
+    "9a2c5bf6dd9ea4474afd32d29cfd08fde8c5d333e9fb8b87bc78021ca3f12db7"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -82,7 +82,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 3,
+                    currentVersion = 4,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -97,6 +97,11 @@ class KantanCommanderPlugin : JavaPlugin() {
                             config.set("timer.maximum-seconds", 86400)
                             config.set("timer.minimum-units", null)
                             config.set("timer.maximum-units", null)
+                        },
+                        3 to ConfigMigration { config ->
+                            // プログラム名の既定値は作成者名から生成するため、旧来の
+                            // 旧ディスク名設定を残すと利用者が古い名称へ戻せてしまいます。
+                            config.set("default-disk-name", null)
                         },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->

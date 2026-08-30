@@ -21,7 +21,7 @@ import java.util.UUID
 
 /**
  * Kantan Commanderのアイテム種別。
- * 拡張コマンドブロック（設置用・常に未設定）とコマンドディスク（内容出力用・常に書き込み済み）の2種に分離する。
+ * 拡張コマンドブロック（設置用・常に未設定）とプログラムディスク（内容出力用・常に書き込み済み）の2種に分離する。
  */
 enum class KantanItemKind { NONE, BLOCK, DISK }
 
@@ -36,7 +36,7 @@ object KantanItemService {
      * 通常のブロック配置判定（BlockPlaceEvent）を使うため、実体素材をINFESTED_STONEへ変更している。
      */
     private val blockMaterial = Material.INFESTED_STONE
-    /** コマンドディスクはカスタムアイテムの慣習に合わせ、見た目用の毒じゃがいもを基底とする。 */
+    /** プログラムディスクはカスタムアイテムの慣習に合わせ、見た目用の毒じゃがいもを基底とする。 */
     private val diskMaterial = Material.POISONOUS_POTATO
 
     /**
@@ -56,7 +56,7 @@ object KantanItemService {
         return item
     }
 
-    /** 書き込み済みのコマンドディスクを生成する。内容はスクリプトの独立コピーを参照する。 */
+    /** 書き込み済みのプログラムディスクを生成する。内容はスクリプトの独立コピーを参照する。 */
     fun createDisk(script: DiskScript, player: Player): ItemStack {
         val item = ItemStack(diskMaterial, 1)
         item.editMeta { meta ->
@@ -86,7 +86,7 @@ object KantanItemService {
 
     fun isKantanItem(item: ItemStack?): Boolean = kind(item) != KantanItemKind.NONE
 
-    /** コマンドディスクが参照するスクリプトUUID。拡張コマンドブロックや無関係アイテムではnull。 */
+    /** プログラムディスクが参照するスクリプトUUID。拡張コマンドブロックや無関係アイテムではnull。 */
     fun diskId(item: ItemStack?): UUID? {
         if (kind(item) != KantanItemKind.DISK) return null
         val meta = item?.itemMeta ?: return null

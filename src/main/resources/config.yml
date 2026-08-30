@@ -1,4 +1,3 @@
-default-disk-name: "Kantan Disk"
 use-gesture-editor: false
 execution:
   max-nodes-per-activation: 1024

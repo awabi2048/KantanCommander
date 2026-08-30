@@ -7,11 +7,11 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-    <version>26.830.19</version>
+    <version>26.831.1</version>
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>
-    <description>MyWorld-scoped structured command disk editor</description>
+    <description>MyWorld-scoped structured program disk editor</description>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -51,7 +51,7 @@
         <dependency>
             <groupId>com.awabi2048</groupId>
 <artifactId>CC-System</artifactId>
-            <version>26.830.14</version>
+            <version>26.831.1</version>
             <scope>provided</scope>
         </dependency>
         <dependency>

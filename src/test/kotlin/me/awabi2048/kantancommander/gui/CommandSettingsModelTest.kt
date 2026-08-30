@@ -91,8 +91,19 @@ class CommandSettingsModelTest {
 
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEARBY_ENTITIES))
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEAREST_PLAYER))
-        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
+        assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
         assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(null))
+        assertEquals(
+            listOf(
+                TargetKind.NEAREST_PLAYER,
+                TargetKind.NEARBY_PLAYERS,
+                TargetKind.ALL_PLAYERS,
+                TargetKind.RANDOM_PLAYER,
+            ),
+            CommandSettingsModel.targetKinds(TargetCategory.PLAYER),
+        )
+        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.NEAREST_PLAYER, "kind"))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.INHERITED_TARGET, "kind"))
     }
 
     @Test
@@ -111,8 +122,7 @@ class CommandSettingsModelTest {
             targetSpec = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 12.0)
         }
 
-        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "minimumDistance"))
-        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "maximumDistance"))
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "distance"))
         assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "sort"))
     }
 

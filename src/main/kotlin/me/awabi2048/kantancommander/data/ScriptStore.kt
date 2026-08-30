@@ -116,7 +116,7 @@ class ScriptStore(
         if (isInHistory) return
         val target = file(id)
         if (target.exists() && !target.delete()) {
-            throw IllegalStateException("コマンドディスクを削除できません: ${target.absolutePath}")
+            throw IllegalStateException("プログラムディスクを削除できません: ${target.absolutePath}")
         }
         cache.remove(id)
     }
@@ -277,7 +277,7 @@ class ScriptStore(
             // 消失／部分書込みになるため、非原子的な代替は行いません。
             // 一時ファイルだけを破棄して既存正本を保ち、呼び出し側へ失敗を返します。
             runCatching { Files.deleteIfExists(temporary.toPath()) }
-            throw IllegalStateException("コマンドディスクを原子的に保存できないファイルシステムです", failure)
+            throw IllegalStateException("プログラムディスクを原子的に保存できないファイルシステムです", failure)
         }
     }
 
@@ -288,7 +288,7 @@ class ScriptStore(
             STRUCTURED_FORMAT_VERSION -> source
             LEGACY_TICK_FORMAT_VERSION -> migrateLegacyTickFormat(source)
             else -> {
-                logger.warning("未対応の構造化コマンドディスク形式を読み込みません: ${file.absolutePath} version=$sourceVersion")
+                logger.warning("未対応の構造化プログラムディスク形式を読み込みません: ${file.absolutePath} version=$sourceVersion")
                 return null
             }
         }
@@ -304,7 +304,7 @@ class ScriptStore(
                 val limitViolations = validateRecursively(script.graph, limits)
                 if (limitViolations.isNotEmpty()) {
                     logger.warning(
-                        "設定上限を超える保存済みコマンドディスクを読み込みました（隔離していません）: " +
+                        "設定上限を超える保存済みプログラムディスクを読み込みました（隔離していません）: " +
                             "${file.absolutePath} (${limitViolations.joinToString("; ")})"
                     )
                 }
@@ -312,7 +312,7 @@ class ScriptStore(
                     // v6を読み込んだ時点でv7の正本へ書き戻し、次回以降に
                     // 旧tick値と新しい秒値を二重解釈しないようにします。
                     atomicWrite(file, gson.toJson(migrated))
-                    logger.info("構造化コマンドディスクを秒単位の形式へ移行しました: ${file.absolutePath}")
+                    logger.info("構造化プログラムディスクを秒単位の形式へ移行しました: ${file.absolutePath}")
                 }
             }
     } catch (error: Exception) {
@@ -368,7 +368,7 @@ class ScriptStore(
         val quarantine = dir.resolve("corrupt").also(File::mkdirs)
         val target = quarantine.resolve("${file.nameWithoutExtension}-${System.currentTimeMillis()}.json")
         runCatching { Files.move(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-        logger.log(Level.WARNING, "構造化コマンドディスクを隔離しました: ${file.absolutePath}", error)
+        logger.log(Level.WARNING, "構造化プログラムディスクを隔離しました: ${file.absolutePath}", error)
     }
 
     private fun validateRecursively(

@@ -141,7 +141,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     fun open(player: Player, scriptId: UUID) = runtime.open(player, route(scriptId))
     fun open(player: Player, placement: DiskPlacement) = runtime.open(player, route(placement))
 
-    /** 空の拡張コマンドブロックへコマンドディスクの内容を書き込む確認画面を開く。 */
+    /** 空の拡張コマンドブロックへプログラムディスクの内容を書き込む確認画面を開く。 */
     fun openWriteConfirm(player: Player, placement: DiskPlacement, diskId: UUID) =
         runtime.open(
             player,
@@ -486,7 +486,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    /** コマンドディスクの内容で、空の拡張コマンドブロックを上書きする確認画面。 */
+    /** プログラムディスクの内容で、空の拡張コマンドブロックを上書きする確認画面。 */
     private fun renderWriteConfirm(player: Player, route: MenuRoute): InventoryMenuView {
         val elements = listOf(
             KcGui.menuEntry(
@@ -526,7 +526,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    /** 空の拡張コマンドブロックのスクリプトを、コマンドディスクの内容で上書きする。 */
+    /** 空の拡張コマンドブロックのスクリプトを、プログラムディスクの内容で上書きする。 */
     private fun overwritePlacement(player: Player, placement: DiskPlacement, diskScriptId: UUID): Boolean {
         if (!plugin.placementAccess.canManage(player, placement.world)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))

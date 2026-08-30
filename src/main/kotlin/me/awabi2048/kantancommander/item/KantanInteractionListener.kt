@@ -94,7 +94,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
                 return
             }
-            // コマンドディスク挿入は常に既存の書き込み確認へ送り、Gesture GUIを開かない。
+            // プログラムディスク挿入は常に既存の書き込み確認へ送り、Gesture GUIを開かない。
             if (itemKind == KantanItemKind.DISK) {
                 val diskScriptId = diskId ?: return
                 plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
@@ -144,7 +144,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
     }
 
-    /** 拡張コマンドブロックの破壊。管理権限があれば内容をコマンドディスクとして出力して撤去する。 */
+    /** 拡張コマンドブロックの破壊。管理権限があれば内容をプログラムディスクとして出力して撤去する。 */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onBlockBreak(event: BlockBreakEvent) {
         val block = event.block
@@ -188,9 +188,11 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return false
         }
 
+        // 配置直後の初期名は設定値ではなく作成者を明示します。ライブラリ／履歴から
+        // 複製した後も、元の作成者とプログラム名を識別できるようにするためです。
         val placedScript = plugin.scripts.createPlacement(
             player.uniqueId,
-            plugin.config.getString("default-disk-name", "Kantan Disk") ?: "Kantan Disk",
+            "${player.name}のプログラム",
         )
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
@@ -274,7 +276,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         })
     }
 
-    /** 破壊時の後始末。内容をコマンドディスクとして出力し、表示・配置・スクリプトを削除する。 */
+    /** 破壊時の後始末。内容をプログラムディスクとして出力し、表示・配置・スクリプトを削除する。 */
     private fun outputDiskAndRemove(player: Player, block: Block, placement: DiskPlacement) {
         val world = block.world
         // 破壊音・パーティクルは、イベントキャンセル下でもバニラがクライアントへ送信するため自前では再生しない。
@@ -297,7 +299,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                     runCatching { plugin.scripts.delete(copiedScript.id) }
                     plugin.logger.log(
                         java.util.logging.Level.INFO,
-                        "破壊時のコマンドディスク生成に失敗: location=${block.location}, script=${copiedScript.id}",
+                        "破壊時のプログラムディスク生成に失敗: location=${block.location}, script=${copiedScript.id}",
                         error,
                     )
                     outputScript = null

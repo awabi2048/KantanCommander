@@ -56,14 +56,13 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 val scriptId = context.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                     ?: return@handle MenuActionResult.Ignored
                 val script = plugin.scripts.load(scriptId) ?: return@handle MenuActionResult.Ignored
-                if (context.click.isRightClick) {
-                    MenuActionResult.Success(MenuUpdate.Navigate(SequenceEditorMenu.route(script.id)))
-                } else {
-                    val copy = plugin.scripts.copyForItem(script)
-                    context.player.inventory.addItem(KantanItemService.createDisk(copy, context.player)).values
-                        .forEach { context.player.world.dropItem(context.player.location, it) }
-                    MenuActionResult.Success(MenuUpdate.None)
-                }
+                // ライブラリ／履歴は「保存済み内容を取得する一覧」です。ここから元の
+                // 正本を直接編集できるようにすると、履歴関係とライブラリ関係が意図せず
+                // 書き換わるため、左右どちらのクリックでも必ず独立したディスクを複製します。
+                val copy = plugin.scripts.copyForItem(script)
+                context.player.inventory.addItem(KantanItemService.createDisk(copy, context.player)).values
+                    .forEach { context.player.world.dropItem(context.player.location, it) }
+                MenuActionResult.Success(MenuUpdate.None)
             },
         ),
     )
@@ -92,9 +91,10 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 ),
                 role = GuiElementRole.CONTENT,
                 actions = listOf(
-                    GuiMenuActionIntent.LeftRight(
-                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ACTION_GET), mapOf(SCRIPT_ID to script.id.toString())),
-                        GuiMenuActionIntent.AnyClick(ACTION_SELECT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ACTION_EDIT), mapOf(SCRIPT_ID to script.id.toString())),
+                    GuiMenuActionIntent.AnyClick(
+                        ACTION_SELECT,
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ACTION_GET),
+                        mapOf(SCRIPT_ID to script.id.toString()),
                     ),
                 ),
             )

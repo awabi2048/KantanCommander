@@ -49,6 +49,13 @@ enum class CommandSettingRole(val routeValue: String) {
     }
 }
 
+/** UIで統一表示する対象の大分類です。実行モデルのTargetKindとは分離します。 */
+enum class TargetCategory {
+    INHERITED,
+    PLAYER,
+    NON_PLAYER_ENTITY,
+}
+
 /** インベントリ／ジェスチャー双方で共有する設定対象の識別子です。 */
 data class CommandSettingContext(
     val scriptId: UUID,
@@ -100,6 +107,80 @@ data class CommandSettingDescriptor(
  * インベントリGUIのルートとジェスチャーGUIの選択画面が同じ役割を受け取ります。
  */
 object CommandSettingsModel {
+    private val PLAYER_KINDS = setOf(
+        TargetKind.NEAREST_PLAYER,
+        TargetKind.NEARBY_PLAYERS,
+        TargetKind.ALL_PLAYERS,
+        TargetKind.RANDOM_PLAYER,
+    )
+    private val ENTITY_KINDS = setOf(
+        TargetKind.NEAREST_ENTITY,
+        TargetKind.NEARBY_ENTITIES,
+        TargetKind.FIXED_ENTITY,
+    )
+
+    /** 実行時の細分類を、GUIで表示する三つの対象大分類へ写像します。 */
+    fun targetCategory(kind: TargetKind?): TargetCategory = when (kind) {
+        TargetKind.INHERITED_TARGET, null -> TargetCategory.INHERITED
+        in PLAYER_KINDS -> TargetCategory.PLAYER
+        else -> TargetCategory.NON_PLAYER_ENTITY
+    }
+
+    /** 大分類を初めて選んだときに採用する実行モデル上の既定種別です。 */
+    fun defaultTargetKind(category: TargetCategory): TargetKind = when (category) {
+        TargetCategory.INHERITED -> TargetKind.INHERITED_TARGET
+        TargetCategory.PLAYER -> TargetKind.NEAREST_PLAYER
+        TargetCategory.NON_PLAYER_ENTITY -> TargetKind.NEAREST_ENTITY
+    }
+
+    /** 大分類の詳細画面で選択できる実行モデル上の細分類を返します。 */
+    fun targetKinds(category: TargetCategory): List<TargetKind> = when (category) {
+        TargetCategory.INHERITED -> emptyList()
+        TargetCategory.PLAYER -> listOf(
+            TargetKind.NEAREST_PLAYER,
+            TargetKind.NEARBY_PLAYERS,
+            TargetKind.ALL_PLAYERS,
+            TargetKind.RANDOM_PLAYER,
+        )
+        TargetCategory.NON_PLAYER_ENTITY -> listOf(
+            TargetKind.NEAREST_ENTITY,
+            TargetKind.NEARBY_ENTITIES,
+            TargetKind.FIXED_ENTITY,
+        )
+    }
+
+    /** 既存の細分類を維持したまま大分類だけを表示するための所属判定です。 */
+    fun targetCategoryMatches(kind: TargetKind?, category: TargetCategory): Boolean =
+        targetCategory(kind) == category
+
+    /**
+     * 現在ノードより前の実行経路に、継承対象として利用できる対象設定があるかを返します。
+     * LinkedHashMapの挿入順は実行順を保証しないため、entryからnext/trueNextを辿ります。
+     * ループはvisitedで止め、現在ノード自身の設定を「前の設定」と誤認しません。
+     */
+    fun hasPriorTargetContext(graph: me.awabi2048.kantancommander.model.CommandGraph, nodeId: UUID): Boolean {
+        val entry = graph.entryNodeId ?: return false
+        val visited = mutableSetOf<UUID>()
+        fun establishesTarget(node: CommandNode): Boolean =
+            node.targetSpec?.kind?.let { it != TargetKind.INHERITED_TARGET } == true ||
+                node.contextOverride?.target?.kind?.let { it != TargetKind.INHERITED_TARGET } == true
+        fun visit(currentId: UUID): Boolean {
+            if (currentId == nodeId) return false
+            if (!visited.add(currentId)) return false
+            val node = graph.nodes[currentId] ?: return false
+            if (establishesTarget(node)) return true
+            return listOfNotNull(node.next, node.trueNext, node.falseNext).any(::visit)
+        }
+        return visit(entry)
+    }
+
+    /** 対象の大分類を選択可能にする条件（継承だけは前置き設定を要求）です。 */
+    fun targetCategoryAvailable(
+        graph: me.awabi2048.kantancommander.model.CommandGraph,
+        nodeId: UUID,
+        category: TargetCategory,
+    ): Boolean = category != TargetCategory.INHERITED || hasPriorTargetContext(graph, nodeId)
+
     /**
      * 両GUIで同じ条件付きフィールド集合を表示します。
      * 例えば時間設定に対応しないDISPLAY_TEXTからstaySecondsを隠す処理を各画面へ複製しないことで、
@@ -373,9 +454,9 @@ object CommandSettingsModel {
         val spec = targetSpec(node, role) ?: return false
         if (node.isExplicitlyConfigured("target.$parameter")) return true
         return when (parameter) {
+            "kind" -> spec.kind != TargetKind.INHERITED_TARGET
             "entityType" -> !spec.entityType.isNullOrBlank()
-            "minimumDistance" -> spec.minimumDistance != null
-            "maximumDistance" -> spec.maximumDistance != null
+            "distance" -> spec.minimumDistance != null || spec.maximumDistance != null
             "limit" -> spec.limit != null
             "sort" -> spec.sort != TargetSort.NEAREST
             "gameMode" -> !spec.gameMode.isNullOrBlank()
@@ -401,20 +482,13 @@ object CommandSettingsModel {
         VariableType.ENTITY -> listOf(VariableOperation.STORE_TARGET, VariableOperation.CLEAR)
     }
 
-    private val PLAYER_KINDS = setOf(
-        TargetKind.NEAREST_PLAYER,
-        TargetKind.NEARBY_PLAYERS,
-        TargetKind.ALL_PLAYERS,
-        TargetKind.RANDOM_PLAYER,
-    )
-    private val ENTITY_KINDS = setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)
-
     /**
      * 対象種別に対して詳細条件が意味を持つかを判定します。
      * 実行側の解決（matches）に合わせ、プレイヤー種別へentityType、
      * エンティティ種別へgameModeを指定しても解決しないため、GUIでは提示しません。
      */
     fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean = when (parameter) {
+        "kind" -> kind != null && kind != TargetKind.INHERITED_TARGET
         "entityType" -> kind in ENTITY_KINDS
         "gameMode" -> kind in PLAYER_KINDS
         else -> true
@@ -456,12 +530,5 @@ object CommandSettingsModel {
 
     private fun text() = CommandSettingDescriptor(CommandSettingEditor.TEXT)
 
-    private val FILTERABLE_TARGET_KINDS = setOf(
-        TargetKind.NEAREST_PLAYER,
-        TargetKind.NEARBY_PLAYERS,
-        TargetKind.ALL_PLAYERS,
-        TargetKind.RANDOM_PLAYER,
-        TargetKind.NEAREST_ENTITY,
-        TargetKind.NEARBY_ENTITIES,
-    )
+    private val FILTERABLE_TARGET_KINDS = PLAYER_KINDS + ENTITY_KINDS
 }

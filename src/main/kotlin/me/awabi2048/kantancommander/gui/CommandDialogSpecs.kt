@@ -7,6 +7,8 @@ import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.NamespacedKey
+import org.bukkit.Registry
+import org.bukkit.Keyed
 import org.bukkit.entity.Player
 
 /**
@@ -128,14 +130,13 @@ internal object CommandDialogSpecs {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             64,
             { raw ->
-                if (NamespacedKey.fromString(raw) == null) {
+                if (!registeredFieldId("entityType", raw)) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_ENTITY_TYPE_FORMAT
                 } else null
             },
         )
-        "minimumDistance", "maximumDistance" -> Spec(
-            if (parameter == "minimumDistance") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE
-            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE,
+        "distance" -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
             64,
             { raw ->
                 val value = raw.toDoubleOrNull()
@@ -258,7 +259,7 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
                 nonNegativeInteger && (integerValue == null || integerValue < 0) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID
-                fieldKey in setOf("entity", "sound", "effect") && NamespacedKey.fromString(raw) == null ->
+                fieldKey in setOf("entity", "sound", "effect") && !registeredFieldId(fieldKey, raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 fieldKey == "tags" && raw.split(',').map(String::trim).filter(String::isNotEmpty)
                     .any { !it.matches(Regex("[A-Za-z0-9_.:+-]{1,64}")) } ->
@@ -279,5 +280,89 @@ internal object CommandDialogSpecs {
                 else -> null
             }
         }
+    }
+
+    /** 一覧から選択できる入力項目だけを候補提示の対象にします。 */
+    fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect")
+
+    /**
+     * 入力中の文字列に近い登録IDを最大5件返します。
+     * Paper Dialogはキー入力ごとのコールバックを提供しないため、呼び出し側は
+     * 「候補を表示」ボタン押下時の最新値を渡します。完全一致→前方一致→
+     * 部分一致→編集距離の順で安定ソートし、空欄では候補を返しません。
+     */
+    fun suggestions(fieldKey: String, query: String, limit: Int = 5): List<String> {
+        val normalized = query.trim().lowercase()
+        if (normalized.isEmpty() || !supportsSuggestions(fieldKey)) return emptyList()
+        val values = registeredValues(fieldKey)
+        return values.asSequence()
+            .map { value ->
+                val candidate = value.lowercase()
+                val rank = when {
+                    candidate == normalized -> 0
+                    candidate.startsWith(normalized) -> 1
+                    candidate.contains(normalized) -> 2
+                    else -> 3
+                }
+                Triple(rank, levenshtein(candidate, normalized), value)
+            }
+            .sortedWith(compareBy<Triple<Int, Int, String>> { it.first }
+                .thenBy { it.second }
+                .thenBy { it.third })
+            .take(limit.coerceAtLeast(0))
+            .map { it.third }
+            .toList()
+    }
+
+    private fun registeredFieldId(fieldKey: String, raw: String): Boolean {
+        val syntaxValid = NamespacedKey.fromString(raw.trim().lowercase()) != null
+        if (!syntaxValid) return false
+        // PaperのRegistryはサーバー起動前に参照できないため、単体テストや
+        // 起動前の設定検証では構文検証へフォールバックします。実サーバー上では
+        // 登録済みIDまで確認し、存在しない名前空間キーを保存させません。
+        return runCatching {
+            when (fieldKey) {
+                "entity", "entityType" -> registeredId(Registry.ENTITY_TYPE, raw)
+                "sound" -> registeredId(Registry.SOUNDS, raw)
+                "effect" -> registeredId(Registry.POTION_EFFECT_TYPE, raw)
+                else -> false
+            }
+        }.getOrElse { true }
+    }
+
+    private fun registeredValues(fieldKey: String): List<String> = runCatching {
+        when (fieldKey) {
+            // Registry.keyStream() は要素側の非推奨 Keyed.key プロパティを経由せず、
+            // Paper 26.1.2 が提供する登録IDの公式ストリームをそのまま利用します。
+            "entity", "entityType" -> Registry.ENTITY_TYPE.keyStream().map { it.toString() }.toList()
+            "sound" -> Registry.SOUNDS.keyStream().map { it.toString() }.toList()
+            "effect" -> Registry.POTION_EFFECT_TYPE.keyStream().map { it.toString() }.toList()
+            else -> emptyList()
+        }.distinct().sorted()
+    }.getOrElse { emptyList() }
+
+    private fun <T : Keyed> registeredId(registry: Registry<T>, raw: String): Boolean {
+        val key = NamespacedKey.fromString(raw.trim().lowercase()) ?: return false
+        return registry.get(key) != null
+    }
+
+    private fun levenshtein(first: String, second: String): Int {
+        if (first == second) return 0
+        if (first.isEmpty()) return second.length
+        if (second.isEmpty()) return first.length
+        var previous = IntArray(second.length + 1) { it }
+        for (i in first.indices) {
+            val current = IntArray(second.length + 1)
+            current[0] = i + 1
+            for (j in second.indices) {
+                current[j + 1] = minOf(
+                    current[j] + 1,
+                    previous[j + 1] + 1,
+                    previous[j] + if (first[i] == second[j]) 0 else 1,
+                )
+            }
+            previous = current
+        }
+        return previous[second.length]
     }
 }

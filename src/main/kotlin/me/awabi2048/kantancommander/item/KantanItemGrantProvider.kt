@@ -8,7 +8,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 
 /**
  * 配布対象は拡張コマンドブロックだけとする。
- * コマンドディスクは内容を明示的に出力した場合にのみ生成されるため、配布定義を持たない。
+ * プログラムディスクは内容を明示的に出力した場合にのみ生成されるため、配布定義を持たない。
  */
 class KantanItemGrantProvider(
     private val plugin: KantanCommanderPlugin

@@ -136,8 +136,25 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 actions = mapOf(
                     "back" to back(),
                     "select" to MenuActionHandler { context ->
-                        val kind = context.payload["kind"]?.let { runCatching { TargetKind.valueOf(it) }.getOrNull() }
+                        val routeRole = CommandSettingRole.fromRoute(context.route.payload[ROLE])
+                        val current = selectedTargetSpec(context.route)
+                        val category = context.payload["category"]
+                            ?.let { runCatching { TargetCategory.valueOf(it) }.getOrNull() }
+                            ?: context.payload["kind"]
+                                ?.let { runCatching { TargetKind.valueOf(it) }.getOrNull() }
+                                ?.let(CommandSettingsModel::targetCategory)
                             ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!CommandSettingsModel.targetCategoryAvailable(script.graph, node.id, category)) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        val currentKind = current?.kind
+                        val kind = if (CommandSettingsModel.targetCategoryMatches(currentKind, category)) {
+                            currentKind ?: CommandSettingsModel.defaultTargetKind(category)
+                        } else {
+                            CommandSettingsModel.defaultTargetKind(category)
+                        }
                         val fixedEntityId = if (kind == TargetKind.FIXED_ENTITY) {
                             context.player.getTargetEntity(32)?.uniqueId
                                 ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -146,7 +163,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             // 種類の再選択は設定値確認の再訪を兼ねるため、既存の絞り込み条件を
                             // 引き継ぐ。プレイヤー系⇔エンティティ系の切り替え時だけ、適用対象外と
                             // なるentityTypeを初期化する。
-                            val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
+                            val role = routeRole
                             val current = CommandSettingsModel.targetSpec(node, role)
                             val entityKind = kind == TargetKind.NEAREST_ENTITY || kind == TargetKind.NEARBY_ENTITIES
                             val spec = (current ?: TargetSpec(kind)).copy(
@@ -162,11 +179,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
-                        if (kind in setOf(
-                                TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS,
-                                TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES,
-                            )
-                        ) {
+                        if (CommandSettingsModel.targetSupportsDetailedFilters(kind)) {
                             MenuActionResult.Success(MenuUpdate.Replace(choiceRoute(context.route, TARGET_FILTER_ID)))
                         } else {
                             MenuActionResult.Success(MenuUpdate.Back)
@@ -190,6 +203,26 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderTargetFilters(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
+                    "kind" to MenuActionHandler { context ->
+                        val current = selectedTargetSpec(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val category = CommandSettingsModel.targetCategory(current.kind)
+                        val kinds = CommandSettingsModel.targetKinds(category)
+                        if (kinds.isEmpty()) return@MenuActionHandler MenuActionResult.Ignored
+                        val currentIndex = kinds.indexOf(current.kind).coerceAtLeast(-1)
+                        val nextKind = kinds[(currentIndex + 1) % kinds.size]
+                        val fixedId = if (nextKind == TargetKind.FIXED_ENTITY) {
+                            context.player.getTargetEntity(32)?.uniqueId
+                                ?: return@MenuActionHandler MenuActionResult.Ignored
+                        } else null
+                        if (!updateTargetSpec(context.player, context.route) { spec ->
+                            spec.copy(
+                                kind = nextKind,
+                                fixedEntityId = fixedId,
+                                entityType = if (nextKind in setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)) spec.entityType else null,
+                            )
+                        }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
                     "sort" to MenuActionHandler { context ->
                         if (!updateTargetSpec(context.player, context.route) { spec ->
                             spec.copy(sort = TargetSort.entries[(spec.sort.ordinal + 1) % TargetSort.entries.size])
@@ -205,8 +238,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "entityType" to targetFilterDialog("entityType"),
-                    "minimumDistance" to targetFilterDialog("minimumDistance"),
-                    "maximumDistance" to targetFilterDialog("maximumDistance"),
+                    "distance" to targetFilterDialog("distance"),
                     "limit" to targetFilterDialog("limit"),
                     "tag" to targetFilterDialog("tag"),
                     "name" to targetFilterDialog("name"),
@@ -221,10 +253,24 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 actions = mapOf(
                     "back" to back(),
                     "select" to MenuActionHandler { context ->
-                        val kind = context.payload["kind"]?.let { runCatching { PositionKind.valueOf(it) }.getOrNull() }
-                            ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (kind == PositionKind.COORDINATES) {
-                            showPositionDialog(context.player, context.route)
+                    val kind = context.payload["kind"]?.let { runCatching { PositionKind.valueOf(it) }.getOrNull() }
+                        ?: return@MenuActionHandler MenuActionResult.Ignored
+                    val currentKind = node(context.route)?.let { CommandSettingsModel.positionKind(it, CommandSettingRole.fromRoute(context.route.payload[ROLE])) }
+                    if (kind == PositionKind.COORDINATES) {
+                        // 座標は「選択」と「入力」を別操作にします。未選択からの
+                        // クリックでは座標方式だけを確定し、次のクリックでDialogを開きます。
+                        if (currentKind != PositionKind.COORDINATES) {
+                            val location = context.player.location
+                            if (!updateNode(context.player, context.route) { node ->
+                                CommandSettingsModel.setPositionSpec(
+                                    node,
+                                    CommandSettingRole.fromRoute(context.route.payload[ROLE]),
+                                    PositionSpec(PositionKind.COORDINATES, location.x, location.y, location.z),
+                                )
+                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Replace(context.route))
+                        }
+                        showPositionDialog(context.player, context.route)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         if (kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
@@ -819,20 +865,21 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         dataValue: String? = null,
         description: List<String>? = null,
         style: GuiNameStyle = GuiNameStyle.PRIMARY,
+        enabled: Boolean = true,
     ): MenuElement = KcGui.menuEntry(
         player = player,
         slot = slot,
-        material = material,
+        material = if (enabled) material else Material.GRAY_STAINED_GLASS,
         name = name,
         style = style,
         description = description
             ?: KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CHOICE_DESCRIPTION, mapOf("value" to name)),
         data = if (dataLabel == null || dataValue == null) emptyList() else listOf(GuiMenuEntryData(dataLabel, dataValue)),
-        actions = listOf(GuiMenuActionIntent.AnyClick(
+        actions = if (enabled) listOf(GuiMenuActionIntent.AnyClick(
             actionId = actionId,
             label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECT_ACTION),
             payload = payload,
-        )),
+        )) else emptyList(),
     )
 
     private fun renderSettings(player: Player, route: MenuRoute): InventoryMenuView {
@@ -890,22 +937,32 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun renderTarget(player: Player, route: MenuRoute): InventoryMenuView {
-        // 「実行者」「起動したプレイヤー」は実行モデル上の起動者が不在のため廃止しました。
-        // 絞り込み条件は既存種類の再選択なしで「詳細フィルタ」から確認・編集できます。
+        // 実行モデルの細分類（最も近い／周囲／全員など）は大分類の詳細設定へ
+        // まとめ、ここでは仕様上の三択だけを表示します。
+        val node = node(route)
+        val graph = script(route)?.graph
         val options = listOf(
-            Triple(TargetKind.INHERITED_TARGET, Material.TARGET, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET)),
-            Triple(TargetKind.NEAREST_PLAYER, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)),
-            Triple(TargetKind.NEARBY_PLAYERS, Material.FILLED_MAP, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS)),
-            Triple(TargetKind.ALL_PLAYERS, Material.MAP, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL_PLAYERS)),
-            Triple(TargetKind.RANDOM_PLAYER, Material.ENDER_EYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RANDOM_PLAYER)),
-            Triple(TargetKind.NEAREST_ENTITY, Material.ARMOR_STAND, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY)),
-            Triple(TargetKind.NEARBY_ENTITIES, Material.LEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES)),
-            Triple(TargetKind.FIXED_ENTITY, Material.ARMOR_STAND, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY)),
+            Triple(TargetCategory.INHERITED, Material.TARGET, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET)),
+            Triple(TargetCategory.PLAYER, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)),
+            Triple(TargetCategory.NON_PLAYER_ENTITY, Material.ARMOR_STAND, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY)),
         )
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
-                choiceElement(player, layout.itemSlots[index], option.second, option.third,
-                "select", mapOf("kind" to option.first.name))
+            val enabled = node?.let { currentNode ->
+                graph?.let { currentGraph ->
+                    CommandSettingsModel.targetCategoryAvailable(currentGraph, currentNode.id, option.first)
+                } ?: false
+            } ?: option.first != TargetCategory.INHERITED
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("category" to option.first.name),
+                enabled = enabled,
+                style = if (enabled) GuiNameStyle.PRIMARY else GuiNameStyle.MUTED,
+            )
         }.toMutableList()
         selectedTargetSpec(route)?.let { spec ->
             val filterTitle = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TARGET_FILTER_TITLE)
@@ -928,9 +985,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         // 種別に対して意味を持つ詳細条件だけを提示します
         // （プレイヤー種別にentityType、エンティティ種別にgameModeは解決しないため）。
         val allOptions = listOf(
+            DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "kind", displayTarget(spec.kind)),
             DetailOption(Material.ARMOR_STAND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, "entityType", displayLiteral(spec.entityType)),
-            DetailOption(Material.LIME_DYE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, "minimumDistance", displayLiteral(spec.minimumDistance)),
-            DetailOption(Material.RED_DYE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE, "maximumDistance", displayLiteral(spec.maximumDistance)),
+            DetailOption(Material.COMPARATOR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, "distance", displayLiteral(displayDistance(spec.minimumDistance, spec.maximumDistance))),
             DetailOption(Material.REPEATER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT, "limit", displayLiteral(spec.limit)),
             DetailOption(Material.COMPARATOR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT, "sort", DisplayValue.Localized(when (spec.sort) {
                 TargetSort.NEAREST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_NEAREST
@@ -959,9 +1016,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun targetFilterDescription(player: Player, parameter: String): String = KcI18n.text(
         player,
         when (parameter) {
+            "kind" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_DEFAULT
             "entityType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE
-            "minimumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY
-            "maximumDistance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MAXIMUM_DISTANCE_BODY
+            "distance" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY
             "limit" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_LIMIT
             "sort" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_SORT
             "gameMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_GAME_MODE
@@ -1337,7 +1394,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    private fun showFieldDialog(player: Player, route: MenuRoute, field: String, node: CommandNode) {
+    private fun showFieldDialog(
+        player: Player,
+        route: MenuRoute,
+        field: String,
+        node: CommandNode,
+        initialOverride: String? = null,
+        candidateValues: List<String> = emptyList(),
+    ) {
         if (field == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
             showDisplayTimingDialog(player, route, node)
             return
@@ -1367,7 +1431,45 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             node.string(field.removeSuffix("Value") + "Source", "FIXED")
         } else null
         val spec = CommandDialogSpecs.field(field, valueSource) ?: return
-        val currentValue = node.string(field, defaultValue)
+        val currentValue = initialOverride ?: node.string(field, defaultValue)
+        val candidateButtons = buildList {
+            if (CommandDialogSpecs.supportsSuggestions(field)) {
+                add(MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_CANDIDATES),
+                    MenuDialogHandler { _, response ->
+                        val query = response.textValue(field).trim()
+                        showFieldDialog(
+                            player = player,
+                            route = route,
+                            field = field,
+                            node = node,
+                            initialOverride = query,
+                            candidateValues = CommandDialogSpecs.suggestions(field, query),
+                        )
+                        // 入力値を引き継いだ新しいDialogを同期表示するため、元の
+                        // Dialogを外部入力へ戻す処理は行いません。
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ))
+            }
+            candidateValues.forEach { candidate ->
+                add(MenuDialogButton(
+                    Component.text(candidate),
+                    MenuDialogHandler { _, _ ->
+                        val validationError = spec.validate(candidate)
+                        if (validationError != null) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                        }
+                        if (!updateNode(player, route) { it.params[field] = candidate }) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(
+                                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Replace(route))
+                    },
+                ))
+            }
+        }
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
@@ -1377,7 +1479,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 body = CommandDialogSpecs.body(player, spec, currentValue),
                 inputs = listOf(CommandDialogSpecs.input(player, field, currentValue, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val value = response.textValue(field).trim()
+                    val value = response.textValue(field).trim().let {
+                        // Registry IDは大文字入力でも保存形式を正規化し、候補ボタンと
+                        // 手入力で同じ実行値になるようにします。
+                        if (CommandDialogSpecs.supportsSuggestions(field)) it.lowercase() else it
+                    }
                     val validationError = value.takeIf(String::isNotEmpty)?.let(spec.validate)
                     if (validationError != null) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
@@ -1388,6 +1494,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
                 cancel = dialogCancel(player, route),
+                additionalActions = candidateButtons,
+                columns = if (candidateButtons.size > 1) 2 else 1,
             )
         )
     }
@@ -1659,20 +1767,76 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
         }
 
-    private fun targetFilterDialog(
+    private fun targetFilterDialog(parameter: String) = MenuActionHandler { context ->
+        openTargetFilterDialog(context.player, context.route, parameter)
+        MenuActionResult.Success(MenuUpdate.None)
+    }
+
+    private fun openTargetFilterDialog(
+        player: Player,
+        route: MenuRoute,
         parameter: String,
-    ) = MenuActionHandler { context ->
-        val player = context.player
-        val currentSpec = selectedTargetSpec(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
-        val inputSpec = CommandDialogSpecs.targetFilter(parameter) ?: return@MenuActionHandler MenuActionResult.Ignored
+        initialOverride: String? = null,
+        candidateValues: List<String> = emptyList(),
+    ): MenuActionResult {
+        val currentSpec = selectedTargetSpec(route) ?: return MenuActionResult.Ignored
+        val inputSpec = CommandDialogSpecs.targetFilter(parameter) ?: return MenuActionResult.Ignored
         val current = when (parameter) {
             "entityType" -> currentSpec.entityType
-            "minimumDistance" -> currentSpec.minimumDistance?.toString()
-            "maximumDistance" -> currentSpec.maximumDistance?.toString()
+            "distance" -> displayDistance(currentSpec.minimumDistance, currentSpec.maximumDistance)
             "limit" -> currentSpec.limit?.toString()
             "tag" -> currentSpec.tag
             else -> currentSpec.name
-        }.orEmpty()
+        }.orEmpty().let { initialOverride ?: it }
+        val inputs = if (parameter == "distance") {
+            listOf(
+                MenuDialogInput.Text(
+                    "minimum",
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
+                    currentSpec.minimumDistance?.toString().orEmpty(),
+                    maxLength = inputSpec.maxLength,
+                ),
+                MenuDialogInput.Text(
+                    "maximum",
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE),
+                    currentSpec.maximumDistance?.toString().orEmpty(),
+                    maxLength = inputSpec.maxLength,
+                ),
+            )
+        } else {
+            listOf(CommandDialogSpecs.input(player, parameter, current, inputSpec))
+        }
+        val candidateButtons = buildList {
+            if (CommandDialogSpecs.supportsSuggestions(parameter)) {
+                add(MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_CANDIDATES),
+                    MenuDialogHandler { _, response ->
+                        val query = response.textValue(parameter).trim()
+                        openTargetFilterDialog(
+                            player,
+                            route,
+                            parameter,
+                            initialOverride = query,
+                            candidateValues = CommandDialogSpecs.suggestions(parameter, query),
+                        )
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ))
+            }
+            candidateValues.forEach { candidate ->
+                add(MenuDialogButton(
+                    Component.text(candidate),
+                    MenuDialogHandler { _, _ ->
+                        if (!updateTargetSpec(player, route) { spec -> spec.copy(entityType = candidate) }) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(
+                                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Replace(route))
+                    },
+                ))
+            }
+        }
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
@@ -1680,39 +1844,54 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 id = "target-filter-$parameter",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
                 body = CommandDialogSpecs.body(player, inputSpec, current),
-                inputs = listOf(CommandDialogSpecs.input(player, parameter, current, inputSpec)),
+                inputs = inputs,
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val raw = response.textValue(parameter).trim().takeIf(String::isNotEmpty)
-                    val validationError = raw?.let(inputSpec.validate)
-                    if (validationError != null) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
-                    }
-                    val decimalValue = raw?.toDoubleOrNull()?.takeIf(Double::isFinite)
-                    val integerValue = raw?.toIntOrNull()
-                    val updated = when (parameter) {
-                        "minimumDistance" -> currentSpec.copy(minimumDistance = decimalValue)
-                        "maximumDistance" -> currentSpec.copy(maximumDistance = decimalValue)
-                        "limit" -> currentSpec.copy(limit = integerValue)
-                        "entityType" -> currentSpec.copy(entityType = raw)
-                        "tag" -> currentSpec.copy(tag = raw)
-                        else -> currentSpec.copy(name = raw)
+                    val updated = if (parameter == "distance") {
+                        val minimumRaw = response.textValue("minimum").trim().takeIf(String::isNotEmpty)
+                        val maximumRaw = response.textValue("maximum").trim().takeIf(String::isNotEmpty)
+                        val validationError = listOfNotNull(minimumRaw, maximumRaw)
+                            .mapNotNull(inputSpec.validate)
+                            .firstOrNull()
+                        if (validationError != null) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                        }
+                        currentSpec.copy(
+                            minimumDistance = minimumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite),
+                            maximumDistance = maximumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite),
+                        )
+                    } else {
+                        val raw = response.textValue(parameter).trim().takeIf(String::isNotEmpty)
+                        val validationError = raw?.let(inputSpec.validate)
+                        if (validationError != null) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                        }
+                        val decimalValue = raw?.toDoubleOrNull()?.takeIf(Double::isFinite)
+                        val integerValue = raw?.toIntOrNull()
+                        when (parameter) {
+                            "limit" -> currentSpec.copy(limit = integerValue)
+                            "entityType" -> currentSpec.copy(entityType = raw?.lowercase())
+                            "tag" -> currentSpec.copy(tag = raw)
+                            else -> currentSpec.copy(name = raw)
+                        }
                     }
                     if (updated.minimumDistance != null && updated.maximumDistance != null &&
                         updated.minimumDistance > updated.maximumDistance
                     ) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_MINIMUM_ABOVE_MAXIMUM))
                     }
-                    if (!updateTargetSpec(context.player, context.route) { _ ->
+                    if (!updateTargetSpec(player, route) { _ ->
                         updated
                     }) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     }
-                    MenuActionResult.Success(MenuUpdate.Replace(context.route))
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
-                cancel = dialogCancel(player, context.route),
+                cancel = dialogCancel(player, route),
+                additionalActions = candidateButtons,
+                columns = if (candidateButtons.size > 1) 2 else 1,
             )
         )
-        MenuActionResult.Success(MenuUpdate.None)
+        return MenuActionResult.Success(MenuUpdate.None)
     }
 
     private fun script(route: MenuRoute) = scriptId(route)?.let(plugin.scripts::load)
@@ -2168,6 +2347,14 @@ object EditorMenuLayout {
 
 private fun displayLiteral(value: Any?): DisplayValue = value?.toString()?.takeIf(String::isNotBlank)
     ?.let(DisplayValue::Literal) ?: displayUnset()
+
+private fun displayDistance(minimum: Double?, maximum: Double?): String? {
+    if (minimum == null && maximum == null) return null
+    fun format(value: Double?): String = value?.let {
+        if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+    }.orEmpty()
+    return "${format(minimum)}..${format(maximum)}"
+}
 
 private fun displayUnset() = DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
 private fun displayBoolean(value: Boolean) = DisplayValue.Localized(
