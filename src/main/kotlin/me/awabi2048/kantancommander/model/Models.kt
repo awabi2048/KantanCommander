@@ -298,6 +298,41 @@ enum class CommandType(
     fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
 }
 
+/**
+ * ノード自身へ実行コンテキストを上書きできるかを表すドメイン契約です。
+ *
+ * CONTEXTは専用コマンドとしてコンテキストを生成するため、この契約の対象外です。
+ * VARIABLEも、値の読み書きと実行位置・対象の選択を一つの設定へ混在させないため、
+ * ノード単位の上書きを持ちません。GUIだけで隠すと保存済みデータや実行経路に
+ * 同じ機能が残るため、検証・実行・エクスポートもこの契約を参照します。
+ */
+fun CommandType.supportsContextOverride(): Boolean = when (this) {
+    CommandType.TELEPORT,
+    CommandType.GIVE_ITEM,
+    CommandType.ENTITY_ACTION,
+    CommandType.DISPLAY_TEXT,
+    CommandType.SUMMON_ENTITY,
+    CommandType.PLAY_SOUND,
+    CommandType.APPLY_EFFECT,
+    CommandType.CAMERA_SHAKE,
+    CommandType.EQUIP_ITEM,
+    CommandType.BLOCK_OPERATION,
+    CommandType.ENTITY_DELETE,
+    CommandType.CONDITION,
+    CommandType.DISK_CALL,
+    -> true
+
+    CommandType.WAIT,
+    CommandType.CONTEXT,
+    CommandType.VARIABLE,
+    CommandType.MERGE,
+    CommandType.FOR_START,
+    CommandType.FOR_END,
+    CommandType.BREAK,
+    CommandType.CONTINUE,
+    -> false
+}
+
 data class DiskPlacement(
     val world: String,
     val x: Int,

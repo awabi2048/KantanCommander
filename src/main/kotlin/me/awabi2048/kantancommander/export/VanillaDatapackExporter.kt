@@ -20,6 +20,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.model.supportsContextOverride
 import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.execution.ExecutionSemantics
 import me.awabi2048.kantancommander.item.ItemStackCodec
@@ -206,7 +207,12 @@ class VanillaDatapackExporter(
             if (resolveExportContext(script.graph, node).second) {
                 errors += "${script.id}/${node.id}: 直前コンテキスト(PREVIOUS)の継承内容が経路ごとに確定しないため、完全バニラ出力できません"
             }
-            node.contextOverride?.let { validateContext(script, node, it, errors) }
+            val hasContextState = node.contextOverride != null || node.effectiveContextSource != ContextSource.BASE
+            if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
+                errors += "${script.id}/${node.id}: ${node.type} では実行コンテキストを設定できません"
+            } else {
+                node.contextOverride?.let { validateContext(script, node, it, errors) }
+            }
             validatePosition(script, node, node.conditionPositionSpec, errors)
             if (listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec)
                     .any { it.kind == TargetKind.FIXED_ENTITY }
@@ -548,6 +554,10 @@ class VanillaDatapackExporter(
         graph: CommandGraph,
         node: CommandNode,
     ): Pair<ExecutionContextSpec?, Boolean> {
+        // VARIABLEはCONTEXTコマンド／現在の実行文脈をそのまま受け取り、ノード自身の
+        // contextOverrideやPREVIOUS指定を解釈しません。検証で旧状態は拒否しますが、
+        // 防御的にもエクスポート経路へ混入させないようここで遮断します。
+        if (node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) return null to false
         if (node.effectiveContextSource != ContextSource.PREVIOUS) {
             return ExecutionSemantics.mergeContexts(null, node.contextOverride) to false
         }
@@ -571,6 +581,7 @@ class VanillaDatapackExporter(
 
     /** ノード自身の有効コンテキスト。PREVIOUS指定時は先行ノードの直前実行値を単一候補として解決します。 */
     private fun ownExportContext(graph: CommandGraph, current: CommandNode): ExecutionContextSpec? {
+        if (current.type != CommandType.CONTEXT && !current.type.supportsContextOverride()) return null
         if (current.effectiveContextSource != ContextSource.PREVIOUS) {
             return ExecutionSemantics.mergeContexts(null, current.contextOverride)
         }

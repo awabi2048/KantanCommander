@@ -19,6 +19,7 @@ class CommandMenuPresentationTest {
     fun `context footer excludes context and control-only nodes`() {
         assertTrue(CommandPresentationPolicy.supportsContextOverride(CommandType.GIVE_ITEM))
         assertTrue(CommandPresentationPolicy.supportsContextOverride(CommandType.CONDITION))
+        assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.VARIABLE))
         assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.CONTEXT))
         assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.FOR_START))
         CommandType.entries.forEach { type ->

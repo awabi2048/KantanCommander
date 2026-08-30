@@ -20,6 +20,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.model.supportsContextOverride
 import java.util.UUID
 
 /**
@@ -311,6 +312,12 @@ object CommandSettingsModel {
     }
 
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
+        check(
+            role !in setOf(CommandSettingRole.CONTEXT_EXECUTOR, CommandSettingRole.CONTEXT_TARGET) ||
+                node.type == CommandType.CONTEXT || node.type.supportsContextOverride()
+        ) {
+            "${node.type} は実行コンテキスト上書きを持てません"
+        }
         when (role) {
             CommandSettingRole.DESTINATION -> {
                 node.destinationTargetSpec = spec
@@ -365,6 +372,9 @@ object CommandSettingsModel {
     }
 
     fun setPositionSpec(node: CommandNode, role: CommandSettingRole?, spec: PositionSpec) {
+        check(role != CommandSettingRole.CONTEXT_POSITION || node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
+            "${node.type} は実行コンテキスト上書きを持てません"
+        }
         when (role) {
             CommandSettingRole.DESTINATION -> {
                 node.destinationSpec = spec
@@ -392,6 +402,9 @@ object CommandSettingsModel {
     fun facingSpec(node: CommandNode): FacingSpec? = node.contextOverride?.facing
 
     fun setFacingSpec(node: CommandNode, spec: FacingSpec) {
+        check(node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
+            "${node.type} は実行コンテキスト上書きを持てません"
+        }
         node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
         node.markConfigured("facing")
     }
@@ -399,6 +412,9 @@ object CommandSettingsModel {
     fun contextSource(node: CommandNode): ContextSource = node.effectiveContextSource
 
     fun toggleContextSource(node: CommandNode) {
+        check(node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
+            "${node.type} は実行コンテキスト上書きを持てません"
+        }
         node.contextSource = if (node.effectiveContextSource == ContextSource.BASE) {
             ContextSource.PREVIOUS
         } else {

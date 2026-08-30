@@ -152,13 +152,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
             }
             CommandType.VARIABLE -> {
-                val effectiveContext = effectiveContext(node, session)
+                // VARIABLEはノード自身のコンテキスト上書きを持たず、現在の実行文脈だけを使います。
+                // 対象・位置の取得を値操作へ直接追加すると、CONTEXTコマンドとの責務境界が崩れ、
+                // GUIだけでなくエクスポート時の実行順序も別仕様になってしまいます。
+                val inheritedContext = session.context
                 val success = executeVariable(
                     node,
                     session,
-                    effectiveContext,
+                    inheritedContext,
                 )
-                if (success) session.previousContext = effectiveContext
+                if (success) session.previousContext = inheritedContext
                 next(node.next, success)
             }
             CommandType.MERGE -> next(node.next, true)
@@ -549,7 +552,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun executeVariable(
         node: CommandNode,
         session: ExecutionSession,
-        effectiveContext: ExecutionContextSpec?,
+        inheritedContext: ExecutionContextSpec?,
     ): Boolean = runCatching {
         val name = node.string("name")
         val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
@@ -587,15 +590,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             VariableOperation.TOGGLE -> WorldVariableValue(VariableType.BOOLEAN, booleanValue = !(current?.booleanValue ?: false))
             VariableOperation.STORE_POSITION -> WorldVariableValue(
                 VariableType.POSITION,
-                position = (effectiveContext?.position?.let {
-                    resolvePosition(it, session, effectiveContext)
-                } ?: if (effectiveContext?.position == null) session.origin else return false).let {
+                position = (inheritedContext?.position?.let {
+                    resolvePosition(it, session, inheritedContext)
+                } ?: if (inheritedContext?.position == null) session.origin else return false).let {
                     SavedPosition(it.x, it.y, it.z, it.yaw, it.pitch)
                 },
             )
             VariableOperation.STORE_TARGET -> WorldVariableValue(
                 VariableType.ENTITY,
-                entityId = resolveTarget(effectiveContext, node.targetSpec, session)?.uniqueId ?: return false,
+                entityId = resolveTarget(inheritedContext, node.targetSpec, session)?.uniqueId ?: return false,
             )
             VariableOperation.CLEAR -> return false
         }

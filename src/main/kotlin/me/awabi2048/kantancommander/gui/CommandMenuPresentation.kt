@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.gui
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.supportsContextOverride
 
 /** コマンド選択画面で、実処理と実行順序の制御を混在させないための表示分類です。 */
 internal enum class CommandCategory(
@@ -53,32 +54,7 @@ internal object CommandPresentationPolicy {
         CommandType.DISK_CALL -> CommandCategory.EXTERNAL_DISK
     }
 
-    fun supportsContextOverride(type: CommandType): Boolean = when (type) {
-        CommandType.TELEPORT,
-        CommandType.GIVE_ITEM,
-        CommandType.ENTITY_ACTION,
-        CommandType.DISPLAY_TEXT,
-        CommandType.SUMMON_ENTITY,
-        CommandType.PLAY_SOUND,
-        CommandType.APPLY_EFFECT,
-        CommandType.CAMERA_SHAKE,
-        CommandType.EQUIP_ITEM,
-        CommandType.BLOCK_OPERATION,
-        CommandType.ENTITY_DELETE,
-        CommandType.CONDITION,
-        CommandType.DISK_CALL,
-        CommandType.VARIABLE,
-        -> true
-
-        CommandType.WAIT,
-        CommandType.CONTEXT,
-        CommandType.MERGE,
-        CommandType.FOR_START,
-        CommandType.FOR_END,
-        CommandType.BREAK,
-        CommandType.CONTINUE,
-        -> false
-    }
+    fun supportsContextOverride(type: CommandType): Boolean = type.supportsContextOverride()
 }
 
 /** 設定数が多いコマンドは、意味上の組を崩さない専用配置を使用します。 */

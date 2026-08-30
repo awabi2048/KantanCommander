@@ -9,8 +9,10 @@ import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.supportsContextOverride
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.BlockOperationMode
+import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
@@ -20,6 +22,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.effectiveContextSource
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import java.util.Collections
@@ -58,6 +61,10 @@ object ExecutableScriptValidator {
     }
 
     private fun validateNode(node: CommandNode, path: String, errors: MutableList<String>) {
+        val hasContextState = node.contextOverride != null || node.effectiveContextSource != ContextSource.BASE
+        if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
+            errors += "$path: ${node.type} では実行コンテキストを設定できません"
+        }
         listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach {
             validateTarget(it, path, errors)
         }

@@ -13,6 +13,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.BlockOperationMode
+import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -48,6 +49,25 @@ class ExecutableScriptValidatorTest {
 
         assertTrue(
             ExecutableScriptValidator.validate(script).any { it.contains("切替は真偽値だけ") }
+        )
+    }
+
+    @Test
+    fun `variable rejects per-node execution context`() {
+        val script = DiskScript(name = "variable-context", owner = UUID.randomUUID())
+        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
+        variable.params.putAll(
+            mapOf(
+                "name" to "value",
+                "type" to VariableType.INTEGER.name,
+                "operation" to VariableOperation.SET.name,
+                "value" to "1",
+            )
+        )
+        variable.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any { it.contains("実行コンテキストを設定できません") },
         )
     }
 
