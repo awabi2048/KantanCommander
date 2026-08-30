@@ -15,4 +15,15 @@ class PlacementAccessRulesTest {
     fun `ordinary player without MyWorld build permission cannot manage`() {
         assertFalse(PlacementAccessRules.canManage(admin = false, canBuildInWorld = false))
     }
+
+    @Test
+    fun `disabled extended command block tool denies even an admin`() {
+        assertFalse(
+            PlacementAccessRules.canManage(
+                admin = true,
+                canBuildInWorld = true,
+                extendedCommandBlockEnabled = false,
+            ),
+        )
+    }
 }

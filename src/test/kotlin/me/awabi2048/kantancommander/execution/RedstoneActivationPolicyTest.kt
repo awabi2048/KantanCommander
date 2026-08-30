@@ -87,6 +87,20 @@ class RedstoneActivationPolicyTest {
     }
 
     @Test
+    fun `power mask changes direction without creating a second rising edge`() {
+        val state = RedstoneRuntimeState()
+        val key = "world,1,2,3"
+
+        // 6面の入力はORした通電状態で立ち上がりを判定します。
+        assertFalse(state.observePower(key, 0))
+        assertFalse(state.observePower(key, 1 shl 2))
+        // 北面から東面へ切り替わっても、通電中のままなので新しい立ち上がりではありません。
+        assertTrue(state.observePower(key, 1 shl 4))
+        assertTrue(state.observePower(key, 0))
+        assertFalse(state.observePower(key, 1 shl 5))
+    }
+
+    @Test
     fun `timer anchor and power edge reset when configuration or placement is removed`() {
         val state = RedstoneRuntimeState()
         val id = UUID.randomUUID()

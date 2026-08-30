@@ -17,7 +17,12 @@ data class DiskScript(
     var name: String,
     val owner: UUID,
     val createdAt: Long = System.currentTimeMillis(),
-    var listed: Boolean = true,
+    /**
+     * 旧形式の一覧フラグです。現在のライブラリ／履歴の正本はScriptStoreの
+     * 関係ファイルであり、この値は移行時だけ読み取ってfalseへ正規化します。
+     */
+    @Deprecated("Use ScriptStore library/history relations")
+    var listed: Boolean = false,
     var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
     var timer: TimerSetting = TimerSetting(),
     var graph: CommandGraph = CommandGraph.empty(),

@@ -65,7 +65,7 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
                 node.markConfigured(parameter)
             }
         }
-        runCatching { plugin.scripts.save(script.copy(graph = candidateGraph)) }
+        runCatching { plugin.scripts.save(script.copy(graph = candidateGraph), player.uniqueId) }
             .onFailure { failure ->
                 selections.remove(player.uniqueId)
                 plugin.logger.log(

@@ -254,6 +254,11 @@ class GestureSequenceEditor(
                 },
                 layout = layout,
                 verticalSlots = listOf(GestureGuiVerticalSlot.TOP, GestureGuiVerticalSlot.MIDDLE),
+                // KantanのGesture GUIでは右クリックを操作に使わず、Interactionの腕振りも抑制します。
+                // Inventory GUIのクリック仕様には影響させません。
+                secondaryInputEnabled = false,
+                // 画面外を含む左右クリックを外部ブロック／エンティティへ漏らしません。
+                suppressWorldClicks = true,
             ),
         )
         gestureSessionId = snapshot.sessionId
@@ -1288,7 +1293,7 @@ class GestureSequenceEditor(
             runCatching {
                 val current = plugin.scripts.load(state.scriptId) ?: return@runCatching
                 current.name = value
-                plugin.scripts.save(current)
+                plugin.scripts.save(current, player.uniqueId)
             }.onFailure { failure ->
                 plugin.logger.log(
                     java.util.logging.Level.WARNING,
@@ -1350,7 +1355,7 @@ class GestureSequenceEditor(
                 val current = plugin.scripts.load(state.scriptId) ?: return@runCatching
                 current.timer.enabled = true
                 current.timer.intervalSeconds = seconds
-                plugin.scripts.save(current)
+                plugin.scripts.save(current, player.uniqueId)
                 plugin.resetActivationTiming(current.id)
                 plugin.placements.refreshDisplaysForScript(current.id)
             }.onFailure { failure ->
@@ -2068,7 +2073,7 @@ class GestureSequenceEditor(
                 if (!GraphEditor.swapAdjacent(candidateGraph, nodeId, direction)) return
                 runCatching {
                     GraphLayoutEngine.layout(candidateGraph)
-                    plugin.scripts.save(script.copy(graph = candidateGraph))
+                    plugin.scripts.save(script.copy(graph = candidateGraph), player.uniqueId)
                 }.onFailure { failure ->
                     plugin.logger.log(
                         java.util.logging.Level.WARNING,
@@ -2337,7 +2342,7 @@ class GestureSequenceEditor(
                     // 保存処理も同じ候補グラフで行い、GraphLayoutEngineの衝突検査を
                     // 永続化前に通します。
                     GraphLayoutEngine.layout(candidateGraph)
-                    plugin.scripts.save(script.copy(graph = candidateGraph))
+                    plugin.scripts.save(script.copy(graph = candidateGraph), player.uniqueId)
                     insertedNode
                  }.getOrNull() ?: return
                 // コマンド追加の完了音は永続化が成功した後だけ再生します。
@@ -2390,7 +2395,7 @@ class GestureSequenceEditor(
                 // 通過した内容だけを正本へ保存します。失敗時は選択状態を保持します。
                 val candidateGraph = script.graph.deepCopy()
                 if (!GraphEditor.delete(candidateGraph, nodeId)) return
-                runCatching { plugin.scripts.save(script.copy(graph = candidateGraph)) }
+                runCatching { plugin.scripts.save(script.copy(graph = candidateGraph), player.uniqueId) }
                     .onFailure { failure ->
                         plugin.logger.log(
                             java.util.logging.Level.WARNING,

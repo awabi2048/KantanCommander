@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
 import org.bukkit.Location
 import org.bukkit.entity.Player
+import org.bukkit.permissions.PermissionAttachment
 import java.util.UUID
 
 /**
@@ -14,6 +15,7 @@ class GestureEditorFacade(
     val plugin: KantanCommanderPlugin,
 ) {
     private val sessions = mutableMapOf<UUID, GestureSequenceEditor>()
+    private val externalEditorSuppressions = mutableMapOf<UUID, PermissionAttachment>()
 
     fun open(player: Player, placement: DiskPlacement) {
         val scriptId = placement.scriptId
@@ -50,9 +52,16 @@ class GestureEditorFacade(
      * 新エディターを誤って削除するためです。
      */
     private fun openEditor(player: Player, state: GestureEditorState) {
-        sessions.remove(player.uniqueId)?.closeImmediately(player.uniqueId)
+        sessions.remove(player.uniqueId)?.let {
+            it.closeImmediately(player.uniqueId)
+            releaseExternalEditorSuppression(player.uniqueId)
+        }
+        installExternalEditorSuppression(player)
         val editor = GestureSequenceEditor(plugin, state, ::onSessionClosed)
-        editor.open(player)
+        runCatching { editor.open(player) }.onFailure {
+            releaseExternalEditorSuppression(player.uniqueId)
+            throw it
+        }
         sessions[player.uniqueId] = editor
     }
 
@@ -60,6 +69,7 @@ class GestureEditorFacade(
     private fun onSessionClosed(editor: GestureSequenceEditor, ownerId: UUID, sessionId: UUID) {
         if (sessions[ownerId] === editor && editor.isCurrentSession(sessionId)) {
             sessions.remove(ownerId)
+            releaseExternalEditorSuppression(ownerId)
         }
     }
 
@@ -69,22 +79,64 @@ class GestureEditorFacade(
 
     fun close(player: Player) {
         sessions.remove(player.uniqueId)?.closeImmediately(player.uniqueId)
+        releaseExternalEditorSuppression(player.uniqueId)
     }
 
     /** 配置ブロック破壊時に、その配置を編集中の全プレイヤーを即時終了させます。 */
     fun closeForPlacement(placement: DiskPlacement) {
         sessions.filterValues { it.isEditing(placement) }.keys.toList().forEach { playerId ->
             sessions.remove(playerId)?.closeImmediately(playerId)
+            releaseExternalEditorSuppression(playerId)
         }
     }
 
     fun closeAll() {
         sessions.keys.toList().forEach { playerId ->
             sessions.remove(playerId)?.closeImmediately(playerId)
+            releaseExternalEditorSuppression(playerId)
         }
+    }
+
+    /**
+     * Kantanの編集入口を処理するイベントより前に呼び出し、EASの同一右クリックから
+     * 新しいSessionが開始されるのを防ぎます。EASにはキャンセル済みイベントを無視して
+     * 所持ワンドと権限だけで開始する経路があるため、イベントキャンセルより先に必要です。
+     */
+    internal fun prepareExternalEditorSuppression(player: Player) {
+        installExternalEditorSuppression(player)
+    }
+
+    /** 開始判定用の一時抑制を、Gestureエディターが開かなかった場合だけ解除します。 */
+    internal fun releaseExternalEditorSuppressionIfClosed(playerId: UUID) {
+        if (playerId !in sessions) releaseExternalEditorSuppression(playerId)
+    }
+
+    /**
+     * EASはPlayerInteractEventがキャンセル済みでも、所持ワンドと権限だけで
+     * Sessionを開始します。そのため、Gesture GUIの開始前に編集権限を一時的に
+     * 拒否し、終了時に必ずAttachmentを外して元の権限へ戻します。Axiom側は
+     * Display GizmoをCC-Systemが個別に隠すため、ここではEASの開始条件だけを扱います。
+     */
+    private fun installExternalEditorSuppression(player: Player) {
+        if (!plugin.server.pluginManager.isPluginEnabled(EASY_ARMOR_STANDS_PLUGIN)) return
+        releaseExternalEditorSuppression(player.uniqueId)
+        val attachment = player.addAttachment(plugin)
+        attachment.setPermission(EAS_EDIT_PERMISSION, false)
+        externalEditorSuppressions[player.uniqueId] = attachment
+    }
+
+    private fun releaseExternalEditorSuppression(playerId: UUID) {
+        val attachment = externalEditorSuppressions.remove(playerId) ?: return
+        val player = org.bukkit.Bukkit.getPlayer(playerId) ?: return
+        runCatching { player.removeAttachment(attachment) }
+            .onFailure { failure ->
+                plugin.logger.warning("外部エンティティ編集権限の復元に失敗しました: player=$playerId: ${failure.message}")
+            }
     }
 
     private companion object {
         const val GESTURE_DISPLAY_VERTICAL_OFFSET: Double = 0.8
+        const val EASY_ARMOR_STANDS_PLUGIN = "EasyArmorStands"
+        const val EAS_EDIT_PERMISSION = "easyarmorstands.edit"
     }
 }

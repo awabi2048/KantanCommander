@@ -13,13 +13,22 @@ import org.bukkit.entity.Player
 class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
         when (args.getOrNull(0)?.lowercase()) {
-            "programs" -> {
+            "library", "programs" -> {
                 val player = sender as? Player ?: return true
                 CCSystem.getAPI().getMenuCommandService().open(
                     player,
                     player,
-                    "kantan:programs",
+                    "kantan:library",
                     emptyMap()
+                )
+            }
+            "history" -> {
+                val player = sender as? Player ?: return true
+                CCSystem.getAPI().getMenuCommandService().open(
+                    player,
+                    player,
+                    "kantan:history",
+                    emptyMap(),
                 )
             }
             "placed" -> listPlaced(sender, args.getOrNull(1)?.toIntOrNull() ?: 1)
@@ -87,7 +96,7 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
 
     override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): List<String> {
         return when (args.size) {
-            1 -> listOf("programs", "placed", "reload", "gesture", "help").filter { it.startsWith(args[0], true) }
+            1 -> listOf("library", "history", "placed", "reload", "gesture", "help").filter { it.startsWith(args[0], true) }
             2 -> if (args[0].equals("gesture", true)) listOf("on", "off").filter { it.startsWith(args[1], true) } else emptyList()
             else -> emptyList()
         }

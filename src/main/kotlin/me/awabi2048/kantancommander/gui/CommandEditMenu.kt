@@ -99,7 +99,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 GraphEditor.insert(candidateGraph, sourceId, edge, type)
                             }
                         }.mapCatching { inserted ->
-                            plugin.scripts.save(script.copy(graph = candidateGraph))
+                            plugin.scripts.save(script.copy(graph = candidateGraph), context.player.uniqueId)
                             inserted
                         }.getOrElse { failure ->
                             plugin.logger.log(
@@ -142,7 +142,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             context.player.getTargetEntity(32)?.uniqueId
                                 ?: return@MenuActionHandler MenuActionResult.Ignored
                         } else null
-                        if (!updateNode(context.route) { node ->
+                        if (!updateNode(context.player, context.route) { node ->
                             // 種類の再選択は設定値確認の再訪を兼ねるため、既存の絞り込み条件を
                             // 引き継ぐ。プレイヤー系⇔エンティティ系の切り替え時だけ、適用対象外と
                             // なるentityTypeを初期化する。
@@ -191,14 +191,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 actions = mapOf(
                     "back" to back(),
                     "sort" to MenuActionHandler { context ->
-                        if (!updateTargetSpec(context.route) { spec ->
+                        if (!updateTargetSpec(context.player, context.route) { spec ->
                             spec.copy(sort = TargetSort.entries[(spec.sort.ordinal + 1) % TargetSort.entries.size])
                         }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "gameMode" to MenuActionHandler { context ->
                         val modes = listOf(null, "SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")
-                        if (!updateTargetSpec(context.route) { spec ->
+                        if (!updateTargetSpec(context.player, context.route) { spec ->
                             val next = (modes.indexOf(spec.gameMode) + 1).coerceAtLeast(0) % modes.size
                             spec.copy(gameMode = modes[next])
                         }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -235,7 +235,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val spec = if (kind == PositionKind.CAPTURED) {
                             PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
                         } else PositionSpec(kind)
-                        if (!updateNode(context.route) { node ->
+                        if (!updateNode(context.player, context.route) { node ->
                             CommandSettingsModel.setPositionSpec(
                                 node,
                                 CommandSettingRole.fromRoute(context.route.payload[ROLE]),
@@ -274,7 +274,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val spec = if (kind == FacingKind.CAPTURED) {
                             FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
                         } else FacingSpec(kind)
-                        if (!updateNode(context.route) { node ->
+                        if (!updateNode(context.player, context.route) { node ->
                             CommandSettingsModel.setFacingSpec(node, spec)
                         }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -327,20 +327,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         if (field == "inverted" && node.type == CommandType.CONDITION) {
-                            if (!updateNode(context.route) { it.params["inverted"] = (!it.boolean("inverted")).toString() }) {
+                            if (!updateNode(context.player, context.route) { it.params["inverted"] = (!it.boolean("inverted")).toString() }) {
                                 return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "scope" && node.type == CommandType.VARIABLE) {
-                            if (!updateNode(context.route) {
+                            if (!updateNode(context.player, context.route) {
                                 it.params["scope"] = if (it.string("scope") == "WORLD") "TEMPORARY" else "WORLD"
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field.endsWith("Source") && node.type == CommandType.FOR_START) {
                             // 参照元は固定値→一時変数→ワールド内変数の3択を循環する（仕様10.2）。
-                            if (!updateNode(context.route) {
+                            if (!updateNode(context.player, context.route) {
                                 it.params[field] = when (it.string(field, "FIXED")) {
                                     "TEMPORARY" -> "WORLD"
                                     "WORLD" -> "FIXED"
@@ -350,7 +350,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "inclusiveEnd" && node.type == CommandType.FOR_START) {
-                            if (!updateNode(context.route) {
+                            if (!updateNode(context.player, context.route) {
                                 it.params["inclusiveEnd"] = (!it.boolean("inclusiveEnd", true)).toString()
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
@@ -380,13 +380,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         if (field == "action" && node.type == CommandType.ENTITY_ACTION) {
-                            if (!updateNode(context.route) {
+                            if (!updateNode(context.player, context.route) {
                                 it.params["action"] = if (it.string("action", "ride") == "ride") "dismount" else "ride"
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "contextSource") {
-                            if (!updateNode(context.route) { CommandSettingsModel.toggleContextSource(it) }) {
+                            if (!updateNode(context.player, context.route) { CommandSettingsModel.toggleContextSource(it) }) {
                                 return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
@@ -433,7 +433,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Navigate(targetRoute(context.route, "node_target")))
                     },
                     "state" to MenuActionHandler { context ->
-                        if (!updateNode(context.route) {
+                        if (!updateNode(context.player, context.route) {
                             it.params["state"] = if (it.string("state", "sneaking") == "sneaking") "on_ground" else "sneaking"
                         }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         MenuActionResult.Success(MenuUpdate.Refresh)
@@ -448,7 +448,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.None)
                     },
                     "scope" to MenuActionHandler { context ->
-                        if (!updateNode(context.route) {
+                        if (!updateNode(context.player, context.route) {
                             it.params["variableScope"] =
                                 if (it.string("variableScope") == VariableScope.WORLD.name) {
                                     VariableScope.TEMPORARY.name
@@ -458,7 +458,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     },
                     "operator" to MenuActionHandler { context ->
                         val operators = listOf("set", "unset", "==", "!=", ">", ">=", "<", "<=")
-                        if (!updateNode(context.route) {
+                        if (!updateNode(context.player, context.route) {
                             val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                             it.params["operator"] = operators[(current + 1) % operators.size]
                         }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -517,7 +517,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val kind = context.payload["kind"]
                             ?.let { runCatching { ConditionKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.route) { it.params["kind"] = kind.name }) {
+                        if (!updateNode(context.player, context.route) { it.params["kind"] = kind.name }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
@@ -551,13 +551,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Navigate(facingRoute(context.route)))
                     },
                     "source" to MenuActionHandler { context ->
-                        if (!updateNode(context.route) { CommandSettingsModel.toggleContextSource(it) }) {
+                        if (!updateNode(context.player, context.route) { CommandSettingsModel.toggleContextSource(it) }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "inherit" to MenuActionHandler { context ->
-                        if (!updateNode(context.route) { it.contextOverride = null }) {
+                        if (!updateNode(context.player, context.route) { it.contextOverride = null }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
@@ -576,7 +576,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val mode = context.payload["mode"]
                             ?.takeIf { it in setOf("tellraw", "title", "actionbar") }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.route) { it.params["mode"] = mode }) {
+                        if (!updateNode(context.player, context.route) { it.params["mode"] = mode }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
@@ -595,7 +595,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val operation = context.payload["operation"]
                             ?.takeIf { it == "setblock" || it == "fill" }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.route) { it.params["operation"] = operation }) {
+                        if (!updateNode(context.player, context.route) { it.params["operation"] = operation }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
                             )
@@ -616,7 +616,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val type = context.payload["type"]
                             ?.let { runCatching { VariableType.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.route) {
+                        if (!updateNode(context.player, context.route) {
                             it.params["type"] = type.name
                             val current = runCatching {
                                 VariableOperation.valueOf(it.string("operation"))
@@ -649,7 +649,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (operation !in allowedVariableOperations(type)) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (!updateNode(context.route) { it.params["operation"] = operation.name }) {
+                        if (!updateNode(context.player, context.route) { it.params["operation"] = operation.name }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
@@ -669,7 +669,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         script.timer.enabled = false
                         script.activation = ActivationMode.NEEDS_REDSTONE
                         runCatching {
-                            plugin.scripts.save(script)
+                            plugin.scripts.save(script, context.player.uniqueId)
                             plugin.resetActivationTiming(script.id)
                             plugin.placements.refreshDisplaysForScript(script.id)
                         }.getOrElse { failure ->
@@ -706,7 +706,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         // 整合性や描画セル衝突で保存に失敗しても、表示中の正本を壊しません。
                         val candidateGraph = script.graph.deepCopy()
                         if (!GraphEditor.delete(candidateGraph, nodeId)) return@MenuActionHandler MenuActionResult.Ignored
-                        runCatching { plugin.scripts.save(script.copy(graph = candidateGraph)) }
+                        runCatching { plugin.scripts.save(script.copy(graph = candidateGraph), context.player.uniqueId) }
                             .getOrElse { failure ->
                                 plugin.logger.log(
                                     java.util.logging.Level.WARNING,
@@ -1123,7 +1123,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun setVariableValue(value: String) = MenuActionHandler { context ->
-        if (!updateNode(context.route) { it.params["value"] = value }) {
+        if (!updateNode(context.player, context.route) { it.params["value"] = value }) {
             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
         }
         MenuActionResult.Success(MenuUpdate.Back)
@@ -1287,7 +1287,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     script.timer.enabled = true
                     script.timer.intervalSeconds = value
                     runCatching {
-                        plugin.scripts.save(script)
+                        plugin.scripts.save(script, player.uniqueId)
                         plugin.resetActivationTiming(script.id)
                         plugin.placements.refreshDisplaysForScript(script.id)
                     }.getOrElse { failure ->
@@ -1325,7 +1325,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             KcI18n.component(player, validationError),
                         )
                     }
-                    if (!updateNode(route) { it.params["name"] = name }) {
+                    if (!updateNode(player, route) { it.params["name"] = name }) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
@@ -1382,7 +1382,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     if (validationError != null) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
                     }
-                    if (!updateNode(route) { it.params[field] = value }) {
+                    if (!updateNode(player, route) { it.params[field] = value }) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
@@ -1418,7 +1418,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         .firstOrNull()
                     if (validationError != null) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
                     val values = rawValues.mapValues { (_, value) -> requireNotNull(value.toIntOrNull()) }
-                    if (!updateNode(route) { command ->
+                    if (!updateNode(player, route) { command ->
                         values.forEach { (key, value) -> command.params[key] = value.toString() }
                     }) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     MenuActionResult.Success(MenuUpdate.Replace(route))
@@ -1449,7 +1449,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     if (validationError != null) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
                     }
-                    if (!updateNode(route) { it.params[parameter] = value }) {
+                    if (!updateNode(player, route) { it.params[parameter] = value }) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
@@ -1471,7 +1471,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             currentY = current?.y ?: location.y,
             currentZ = current?.z ?: location.z,
         ) { x, y, z ->
-            updateNode(route) { command ->
+            updateNode(player, route) { command ->
                 val spec = PositionSpec(PositionKind.COORDINATES, x, y, z)
                 when (route.payload[ROLE]) {
                     "destination" -> {
@@ -1505,7 +1505,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             KcI18n.component(player, validationError),
                         )
                     }
-                    if (!updateNode(route) { command ->
+                    if (!updateNode(player, route) { command ->
                         val spec = PositionSpec(kind, variable = name)
                         when (route.payload[ROLE]) {
                             "destination" -> {
@@ -1536,7 +1536,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             currentY = current?.y ?: location.y,
             currentZ = current?.z ?: location.z,
         ) { x, y, z ->
-            updateNode(route) { command ->
+            updateNode(player, route) { command ->
                 command.contextOverride = (command.contextOverride ?: ExecutionContextSpec()).copy(
                     facing = FacingSpec(FacingKind.COORDINATES, x = x, y = y, z = z)
                 )
@@ -1567,7 +1567,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     if (yaw == null || pitch == null || !yaw.isFinite() || !pitch.isFinite()) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID))
                     }
-                    if (!updateNode(route) { command ->
+                    if (!updateNode(player, route) { command ->
                         command.contextOverride = (command.contextOverride ?: ExecutionContextSpec()).copy(
                             facing = FacingSpec(FacingKind.ROTATION, yaw = yaw, pitch = pitch)
                         )
@@ -1648,8 +1648,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
-    private fun updateTargetSpec(route: MenuRoute, change: (TargetSpec) -> TargetSpec): Boolean =
-        updateNode(route) { node ->
+    private fun updateTargetSpec(player: Player, route: MenuRoute, change: (TargetSpec) -> TargetSpec): Boolean =
+        updateNode(player, route) { node ->
             val current = selectedTargetSpec(route) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
             val updated = change(current)
             CommandSettingsModel.setTargetSpec(
@@ -1702,7 +1702,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     ) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_MINIMUM_ABOVE_MAXIMUM))
                     }
-                    if (!updateTargetSpec(context.route) { _ ->
+                    if (!updateTargetSpec(context.player, context.route) { _ ->
                         updated
                     }) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -1724,13 +1724,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun updateNode(
+        player: Player,
         route: MenuRoute,
         configuredFields: Set<String> = emptySet(),
         change: (CommandNode) -> Unit,
     ): Boolean {
         val context = CommandSettingContext.from(route) ?: return false
         return runCatching {
-            CommandSettingsModel.updateNode(plugin, context, configuredFields, change) != null
+            CommandSettingsModel.updateNode(
+                plugin,
+                context,
+                configuredFields,
+                editorId = player.uniqueId,
+                change = change,
+            ) != null
         }
             .onFailure { failure ->
                 plugin.logger.log(

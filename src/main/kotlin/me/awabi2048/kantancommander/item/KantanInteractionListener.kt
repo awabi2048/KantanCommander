@@ -21,6 +21,22 @@ import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.inventory.EquipmentSlot
 
 class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Listener {
+    /**
+     * EASのSessionListener（通常優先度）より先に、Kantanブロック操作の右クリックを
+     * 判定します。EASはPlayerInteractEventがキャンセル済みでもSessionを開始し得るため、
+     * HIGH優先度の本処理だけでは「ワンドを持った瞬間のUI」を防げません。
+     */
+    @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
+    fun suppressExternalEditorStart(event: PlayerInteractEvent) {
+        if (event.action != Action.RIGHT_CLICK_BLOCK || event.player.isSneaking) return
+        val clicked = event.clickedBlock ?: return
+        if (plugin.placements.find(clicked.location) == null) return
+        plugin.gestureEditor.prepareExternalEditorSuppression(event.player)
+        plugin.server.scheduler.runTask(plugin, Runnable {
+            plugin.gestureEditor.releaseExternalEditorSuppressionIfClosed(event.player.uniqueId)
+        })
+    }
+
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onInteract(event: PlayerInteractEvent) {
         val player = event.player

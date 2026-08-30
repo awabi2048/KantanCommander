@@ -14,6 +14,7 @@ import java.io.File
 import java.util.UUID
 import java.util.logging.Logger
 
+@Suppress("DEPRECATION")
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
@@ -199,5 +200,37 @@ class ScriptStoreTest {
 
         val untouched = store.createPlacement(UUID.randomUUID(), "default")
         assertTrue(!requireNotNull(store.load(untouched.id)).hasDiskContent())
+    }
+
+    @Test
+    fun `library and history are independent relations and history survives library removal`() {
+        val dir = temp.resolve("relations")
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val owner = UUID.randomUUID()
+        val editor = UUID.randomUUID()
+        val otherEditor = UUID.randomUUID()
+        val script = store.createPlacement(owner, "placement")
+
+        // 編集者ごとに同じ正本UUIDを履歴へ登録できます。
+        store.save(requireNotNull(store.load(script.id)).apply { name = "edited" }, editor)
+        store.recordHistory(otherEditor, script.id)
+        assertEquals(listOf(script.id), store.listHistory(editor).map { it.id })
+        assertEquals(listOf(script.id), store.listHistory(otherEditor).map { it.id })
+        assertTrue(store.listLibrary(owner).isEmpty())
+
+        store.addToLibrary(owner, script.id)
+        assertEquals(listOf(script.id), store.listLibrary(owner).map { it.id })
+        store.removeFromLibrary(owner, script.id)
+        assertTrue(store.listLibrary(owner).isEmpty())
+        assertEquals(listOf(script.id), store.listHistory(editor).map { it.id })
+
+        // 配置撤去のdeleteは履歴の正本を残します。
+        store.delete(script.id)
+        assertEquals(listOf(script.id), store.listHistory(editor).map { it.id })
+        assertEquals("edited", requireNotNull(store.load(script.id)).name)
+
+        // 再生成したStoreでも関係と正本を復元できます。
+        val reopened = ScriptStore(dir, Logger.getAnonymousLogger())
+        assertEquals(listOf(script.id), reopened.listHistory(otherEditor).map { it.id })
     }
 }

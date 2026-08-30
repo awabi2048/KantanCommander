@@ -67,7 +67,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@handler MenuActionResult.Ignored
                         if (!script.timer.enabled) return@handler MenuActionResult.Ignored
                         script.activation = script.activation.toggled(true)
-                        runCatching { plugin.scripts.save(script) }.getOrElse { failure ->
+                        runCatching { plugin.scripts.save(script, context.player.uniqueId) }.getOrElse { failure ->
                             plugin.logger.log(
                                 java.util.logging.Level.WARNING,
                                 "実行方式の変更を保存できませんでした: script=${script.id}",
@@ -544,7 +544,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             graph = diskScript.graph.deepCopy(),
             contentModified = diskScript.contentModified,
         )
-        runCatching { plugin.scripts.save(candidate) }
+        runCatching { plugin.scripts.save(candidate, player.uniqueId) }
             .onFailure { failure ->
                 plugin.logger.log(
                     java.util.logging.Level.WARNING,

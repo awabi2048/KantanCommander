@@ -24,46 +24,56 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
     private val runtime = CCSystem.getAPI().getMenuRuntimeService()
 
     init {
-        runtime.register(
-            InventoryMenuDefinition(
-                owner = OWNER,
-                id = MENU_ID,
-                renderer = { context -> render(context.player, context.route) },
-                actions = mapOf(
-                    ACTION_PREVIOUS to handle { context ->
-                        val page = context.route.payload[PAGE]?.toIntOrNull() ?: 0
-                        MenuActionResult.Success(MenuUpdate.Replace(route(page - 1)))
-                    },
-                    ACTION_NEXT to handle { context ->
-                        val page = context.route.payload[PAGE]?.toIntOrNull() ?: 0
-                        MenuActionResult.Success(MenuUpdate.Replace(route(page + 1)))
-                    },
-                    ACTION_CLOSE to handle { MenuActionResult.Success(MenuUpdate.Close) },
-                    ACTION_SELECT to handle { context ->
-                        val scriptId = context.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                            ?: return@handle MenuActionResult.Ignored
-                        val script = plugin.scripts.load(scriptId) ?: return@handle MenuActionResult.Ignored
-                        if (context.click.isRightClick) {
-                            MenuActionResult.Success(MenuUpdate.Navigate(SequenceEditorMenu.route(script.id)))
-                        } else {
-                            val copy = plugin.scripts.copyForItem(script)
-                            context.player.inventory.addItem(KantanItemService.createDisk(copy, context.player)).values
-                                .forEach { context.player.world.dropItem(context.player.location, it) }
-                            MenuActionResult.Success(MenuUpdate.None)
-                        }
-                    },
-                ),
-            )
-        )
+        Source.entries.forEach { source -> runtime.register(definition(source)) }
     }
 
-    fun open(player: Player, page: Int = 0) {
-        runtime.open(player, route(page))
+    /** 旧メニュー呼び出しはライブラリへ収束させます。履歴は専用コマンドから開きます。 */
+    fun open(player: Player, page: Int = 0) = openLibrary(player, page)
+
+    fun openLibrary(player: Player, page: Int = 0) {
+        runtime.open(player, route(Source.LIBRARY, page))
     }
 
-    private fun render(player: Player, route: MenuRoute): InventoryMenuView {
+    fun openHistory(player: Player, page: Int = 0) {
+        runtime.open(player, route(Source.HISTORY, page))
+    }
+
+    private fun definition(source: Source): InventoryMenuDefinition = InventoryMenuDefinition(
+        owner = OWNER,
+        id = source.menuId,
+        renderer = { context -> render(context.player, context.route, source) },
+        actions = mapOf(
+            ACTION_PREVIOUS to handle { context ->
+                val page = context.route.payload[PAGE]?.toIntOrNull() ?: 0
+                MenuActionResult.Success(MenuUpdate.Replace(route(source, page - 1)))
+            },
+            ACTION_NEXT to handle { context ->
+                val page = context.route.payload[PAGE]?.toIntOrNull() ?: 0
+                MenuActionResult.Success(MenuUpdate.Replace(route(source, page + 1)))
+            },
+            ACTION_CLOSE to handle { MenuActionResult.Success(MenuUpdate.Close) },
+            ACTION_SELECT to handle { context ->
+                val scriptId = context.payload[SCRIPT_ID]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                    ?: return@handle MenuActionResult.Ignored
+                val script = plugin.scripts.load(scriptId) ?: return@handle MenuActionResult.Ignored
+                if (context.click.isRightClick) {
+                    MenuActionResult.Success(MenuUpdate.Navigate(SequenceEditorMenu.route(script.id)))
+                } else {
+                    val copy = plugin.scripts.copyForItem(script)
+                    context.player.inventory.addItem(KantanItemService.createDisk(copy, context.player)).values
+                        .forEach { context.player.world.dropItem(context.player.location, it) }
+                    MenuActionResult.Success(MenuUpdate.None)
+                }
+            },
+        ),
+    )
+
+    private fun render(player: Player, route: MenuRoute, source: Source): InventoryMenuView {
         val layout = KcGui.layouts.pagedList54()
-        val scripts = plugin.scripts.listOwned(player.uniqueId)
+        val scripts = when (source) {
+            Source.LIBRARY -> plugin.scripts.listLibrary(player.uniqueId)
+            Source.HISTORY -> plugin.scripts.listHistory(player.uniqueId)
+        }
         val total = ((scripts.size + layout.itemSlots.size - 1) / layout.itemSlots.size).coerceAtLeast(1)
         val page = (route.payload[PAGE]?.toIntOrNull() ?: 0).coerceIn(0, total - 1)
         val elements = mutableListOf<MenuElement>()
@@ -122,7 +132,8 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
 
     companion object {
         const val OWNER = "kantan"
-        const val MENU_ID = "programs"
+        const val MENU_ID = "library"
+        const val HISTORY_MENU_ID = "history"
         private const val PAGE = "page"
         private const val SCRIPT_ID = "scriptId"
         private const val ACTION_PREVIOUS = "previous"
@@ -130,6 +141,14 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
         private const val ACTION_CLOSE = "close"
         private const val ACTION_SELECT = "select"
 
-        fun route(page: Int = 0) = MenuRoute(OWNER, MENU_ID, mapOf(PAGE to page.coerceAtLeast(0).toString()))
+        fun route(page: Int = 0) = route(Source.LIBRARY, page)
+
+        private fun route(source: Source, page: Int = 0) =
+            MenuRoute(OWNER, source.menuId, mapOf(PAGE to page.coerceAtLeast(0).toString()))
+    }
+
+    private enum class Source(val menuId: String) {
+        LIBRARY(MENU_ID),
+        HISTORY(HISTORY_MENU_ID),
     }
 }

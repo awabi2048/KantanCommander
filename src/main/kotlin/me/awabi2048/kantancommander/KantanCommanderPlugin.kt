@@ -136,19 +136,24 @@ class KantanCommanderPlugin : JavaPlugin() {
 
         programListMenu = ProgramListMenu(this)
         CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan")
-        CCSystem.getAPI().getMenuCommandService().register(
-            PublicMenuDefinition(
-                owner = "kantan",
-                id = "programs",
-                permission = "kankoma.use",
-                targetPolicy = MenuTargetPolicy.SELF_ONLY,
-                argumentKeys = setOf("page"),
-                opener = { player, arguments ->
-                    programListMenu.open(player, arguments["page"]?.toIntOrNull() ?: 0)
-                    true
-                }
+        listOf(
+            "library" to programListMenu::openLibrary,
+            "history" to programListMenu::openHistory,
+        ).forEach { (id, opener) ->
+            CCSystem.getAPI().getMenuCommandService().register(
+                PublicMenuDefinition(
+                    owner = "kantan",
+                    id = id,
+                    permission = "kankoma.use",
+                    targetPolicy = MenuTargetPolicy.SELF_ONLY,
+                    argumentKeys = setOf("page"),
+                    opener = { player, arguments ->
+                        opener(player, arguments["page"]?.toIntOrNull() ?: 0)
+                        true
+                    },
+                ),
             )
-        )
+        }
         itemSelection = ItemSelectionListener(this)
         editorMenu = SequenceEditorMenu(this)
         commandEditMenu = CommandEditMenu(this)

@@ -433,13 +433,14 @@ object CommandSettingsModel {
         plugin: KantanCommanderPlugin,
         context: CommandSettingContext,
         configuredFields: Set<String> = emptySet(),
+        editorId: UUID? = null,
         change: (CommandNode) -> Unit,
     ): CommandNode? {
         val script = plugin.scripts.load(context.scriptId) ?: return null
         val node = script.graph.nodes[context.nodeId] ?: return null
         change(node)
         node.markConfigured(*configuredFields.toTypedArray())
-        plugin.scripts.save(script)
+        plugin.scripts.save(script, editorId)
         // 表示体の再生成は永続化成功後の補助処理です。ここで失敗しても
         // 設定値そのものは保存済みなので、入力イベントへ例外を戻さず次回復元へ委ねます。
         runCatching { plugin.placements.refreshDisplaysForScript(script.id) }

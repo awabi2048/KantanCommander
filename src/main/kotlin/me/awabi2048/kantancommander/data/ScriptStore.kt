@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.DiskScript
@@ -23,6 +24,9 @@ class ScriptStore(
     private val limits: GraphLimits = GraphLimits(),
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
+    private val relationFile = dir.resolve("relations.json")
+    private val libraryPrograms = linkedMapOf<UUID, LinkedHashSet<UUID>>()
+    private val historyPrograms = linkedMapOf<UUID, LinkedHashSet<UUID>>()
 
     /**
      * 保存済み内容の正本キャッシュ。レッドストーン監視のようにtick単位で参照される
@@ -33,10 +37,15 @@ class ScriptStore(
 
     init {
         dir.mkdirs()
+        loadRelations()
+        migrateLegacyListedPrograms()
     }
 
     fun create(owner: UUID, name: String): DiskScript =
-        DiskScript(name = name, owner = owner).also(::save)
+        DiskScript(name = name, owner = owner).also {
+            save(it)
+            addToLibrary(owner, it.id)
+        }
 
     fun createPlacement(
         owner: UUID,
@@ -65,17 +74,24 @@ class ScriptStore(
             name = name,
             owner = owner,
             createdAt = System.currentTimeMillis(),
-            listed = true,
+            listed = false,
             graph = source.graph.deepCopy(),
-        ).also(::save)
+        ).also {
+            save(it)
+            addToLibrary(owner, it.id)
+        }
 
     /** 保存済み内容の独立コピーを返す。呼び出し側が変更しても保存済み正本へ波及しない。 */
     fun load(id: UUID): DiskScript? = cached(id)?.deepCopy()
 
-    fun save(script: DiskScript) {
+    @Suppress("DEPRECATION")
+    fun save(script: DiskScript, editorId: UUID? = null) {
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
+        // 旧listedフラグを一覧の正本として再出力しないよう、保存境界で必ず
+        // 関係ファイル方式へ正規化します。
+        script.listed = false
         val previous = cache[script.id]
         if (previous != null && !sameEditableContent(previous, script)) {
             // 名前・タイマーだけの編集も、ノード編集と同じくディスク内容です。
@@ -86,9 +102,18 @@ class ScriptStore(
         atomicWrite(file(script.id), gson.toJson(script))
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
         cache[script.id] = script.deepCopy()
+        editorId?.let { recordHistory(it, script.id) }
     }
 
     fun delete(id: UUID) {
+        // 履歴は「編集したプログラム」を無条件で追跡するため、配置撤去や
+        // ライブラリからの除外だけで正本を消してはなりません。履歴に残る間は
+        // ライブラリ関係だけを外し、JSONと履歴関係を保持します。
+        val isInHistory = historyPrograms.values.any { id in it }
+        libraryPrograms.values.forEach { it.remove(id) }
+        libraryPrograms.entries.removeIf { it.value.isEmpty() }
+        writeRelations()
+        if (isInHistory) return
         val target = file(id)
         if (target.exists() && !target.delete()) {
             throw IllegalStateException("コマンドディスクを削除できません: ${target.absolutePath}")
@@ -106,7 +131,112 @@ class ScriptStore(
             ?.sortedBy(DiskScript::createdAt)
             ?: emptyList()
 
-    fun listOwned(owner: UUID): List<DiskScript> = listAll().filter { it.owner == owner && it.listed }
+    /** 旧API名。実体は新しいライブラリ関係を参照します。 */
+    fun listOwned(owner: UUID): List<DiskScript> = listLibrary(owner)
+
+    /** プレイヤーが明示的にライブラリへ保存したプログラムを返します。 */
+    fun listLibrary(playerId: UUID): List<DiskScript> =
+        resolveRelations(libraryPrograms[playerId])
+
+    /** プレイヤーが編集したプログラムを、直近に編集した順で返します。 */
+    fun listHistory(playerId: UUID): List<DiskScript> =
+        resolveRelations(historyPrograms[playerId]).asReversed()
+
+    /** 編集成功時にプレイヤーとプログラムの関係を一件だけ記録します。 */
+    fun recordHistory(playerId: UUID, scriptId: UUID): Boolean {
+        if (cached(scriptId) == null) return false
+        val entries = historyPrograms.getOrPut(playerId) { linkedSetOf() }
+        // LinkedHashSetの末尾を最新編集位置として利用します。版管理は行いません。
+        entries.remove(scriptId)
+        entries += scriptId
+        writeRelations()
+        return true
+    }
+
+    /** 既存プログラムをプレイヤーのライブラリへ明示登録します。 */
+    fun addToLibrary(playerId: UUID, scriptId: UUID): Boolean {
+        if (cached(scriptId) == null) return false
+        libraryPrograms.getOrPut(playerId) { linkedSetOf() } += scriptId
+        writeRelations()
+        return true
+    }
+
+    /** ライブラリから外してもプログラム正本や履歴は削除しません。 */
+    fun removeFromLibrary(playerId: UUID, scriptId: UUID): Boolean {
+        val entries = libraryPrograms[playerId] ?: return false
+        val removed = entries.remove(scriptId)
+        if (entries.isEmpty()) libraryPrograms.remove(playerId)
+        if (removed) writeRelations()
+        return removed
+    }
+
+    /** 一覧から取得するディスクは正本UUIDを維持し、履歴の同一プログラム関係を壊しません。 */
+    fun referenceForItem(source: DiskScript): DiskScript = source.deepCopy()
+
+    private fun resolveRelations(ids: Set<UUID>?): List<DiskScript> =
+        ids.orEmpty().mapNotNull { cached(it)?.deepCopy() }
+
+    private fun loadRelations() {
+        if (!relationFile.isFile) return
+        runCatching {
+            val root = JsonParser.parseString(relationFile.readText(Charsets.UTF_8)).asJsonObject
+            readRelation(root["library"], libraryPrograms)
+            readRelation(root["history"], historyPrograms)
+        }.onFailure { error ->
+            logger.warning("プログラムのライブラリ／履歴関係を読み込めないため空として扱います: ${relationFile.absolutePath}: ${error.message}")
+            libraryPrograms.clear()
+            historyPrograms.clear()
+        }
+    }
+
+    private fun readRelation(value: com.google.gson.JsonElement?, target: MutableMap<UUID, LinkedHashSet<UUID>>) {
+        val root = value?.takeIf { it.isJsonObject }?.asJsonObject ?: return
+        root.entrySet().forEach { (playerRaw, idsRaw) ->
+            val playerId = runCatching { UUID.fromString(playerRaw) }.getOrNull() ?: return@forEach
+            val ids = idsRaw.takeIf { it.isJsonArray }?.asJsonArray
+                ?.mapNotNull { entry -> runCatching { UUID.fromString(entry.asString) }.getOrNull() }
+                ?.toCollection(linkedSetOf())
+                ?: return@forEach
+            if (ids.isNotEmpty()) target[playerId] = ids
+        }
+    }
+
+    private fun writeRelations() {
+        val root = JsonObject()
+        root.add("library", writeRelation(libraryPrograms))
+        root.add("history", writeRelation(historyPrograms))
+        atomicWrite(relationFile, gson.toJson(root))
+    }
+
+    private fun writeRelation(source: Map<UUID, LinkedHashSet<UUID>>): JsonObject {
+        val root = JsonObject()
+        source.filterValues { it.isNotEmpty() }.forEach { (playerId, ids) ->
+            val array = JsonArray()
+            ids.forEach { array.add(it.toString()) }
+            root.add(playerId.toString(), array)
+        }
+        return root
+    }
+
+    /** listed=trueの旧形式を初回だけライブラリ関係へ移行します。 */
+    @Suppress("DEPRECATION")
+    private fun migrateLegacyListedPrograms() {
+        var changed = false
+        dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
+            ?.forEach { file ->
+                val id = runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull() ?: return@forEach
+                val script = cached(id) ?: return@forEach
+                if (script.listed) {
+                    val entries = libraryPrograms.getOrPut(script.owner) { linkedSetOf() }
+                    changed = entries.add(script.id) || changed
+                    // 移行済みマーカーを消すことで、利用者が後からライブラリから
+                    // 外したプログラムを次回起動時に再登録しないようにします。
+                    script.listed = false
+                    atomicWrite(file(id), gson.toJson(script))
+                }
+            }
+        if (changed) writeRelations()
+    }
 
     private fun cached(id: UUID): DiskScript? {
         cache[id]?.let { return it }
