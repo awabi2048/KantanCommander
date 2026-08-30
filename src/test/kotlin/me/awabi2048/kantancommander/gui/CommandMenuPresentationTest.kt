@@ -43,7 +43,8 @@ class CommandMenuPresentationTest {
         )
         assertEquals(54, CommandSettingsSlotPolicy.size(CommandType.VARIABLE))
         assertEquals(45, CommandSettingsSlotPolicy.backSlot(CommandType.VARIABLE))
-        assertEquals(49, CommandSettingsSlotPolicy.contextSlot(CommandType.VARIABLE))
+        assertEquals(54, CommandSettingsSlotPolicy.size(CommandType.APPLY_EFFECT, 5))
+        assertEquals(45, CommandSettingsSlotPolicy.backSlot(CommandType.APPLY_EFFECT, 5))
         assertEquals(
             listOf(10, 11, 12, 19, 20, 21, 28),
             CommandSettingsSlotPolicy.slots(

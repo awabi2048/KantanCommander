@@ -59,6 +59,7 @@ internal object CommandPresentationPolicy {
 
 /** 設定数が多いコマンドは、意味上の組を崩さない専用配置を使用します。 */
 internal object CommandSettingsSlotPolicy {
+    private val fiveFieldSlots = listOf(19, 20, 21, 28, 29)
     private val variableSlots = mapOf(
         "scope" to 19,
         "name" to 20,
@@ -85,12 +86,15 @@ internal object CommandSettingsSlotPolicy {
         if (dedicated != null) {
             return fieldKeys.map { key -> requireNotNull(dedicated[key]) { "専用配置が未定義です: type=$type field=$key" } }
         }
-        return DistributedSettingSlots.slots(fieldKeys.size)
+        return when (fieldKeys.size) {
+            in 1..4 -> DistributedSettingSlots.slots(fieldKeys.size)
+            5 -> fiveFieldSlots
+            else -> error("設定フィールドの専用配置が未定義です: type=$type count=${fieldKeys.size}")
+        }
     }
 
-    fun size(type: CommandType): Int = if (type == CommandType.VARIABLE) 54 else 45
+    fun size(type: CommandType, fieldCount: Int? = null): Int =
+        if (type == CommandType.VARIABLE || fieldCount?.let { it > 4 } == true) 54 else 45
 
-    fun backSlot(type: CommandType): Int = size(type) - 9
-
-    fun contextSlot(type: CommandType): Int = size(type) - 5
+    fun backSlot(type: CommandType, fieldCount: Int? = null): Int = size(type, fieldCount) - 9
 }

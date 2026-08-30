@@ -73,6 +73,16 @@ class CommandSettingsModelTest {
         assertEquals(CommandSettingEditor.POSITION, context.editor)
         assertEquals(CommandSettingRole.CONTEXT_POSITION, context.role)
 
+        val nodeContext = CommandType.APPLY_EFFECT.newNode()
+        assertTrue(CommandSettingsModel.visibleFields(nodeContext).any { it.key == "context" })
+        assertEquals(
+            CommandSettingEditor.CONTEXT,
+            CommandSettingsModel.descriptor(nodeContext, "context").editor,
+        )
+
+        val variableContext = CommandType.VARIABLE.newNode()
+        assertFalse(CommandSettingsModel.visibleFields(variableContext).any { it.key == "context" })
+
         val condition = CommandSettingsModel.descriptor(CommandNode(type = CommandType.CONDITION), "condition")
         assertEquals(CommandSettingEditor.CONDITION_DETAIL, condition.editor)
 

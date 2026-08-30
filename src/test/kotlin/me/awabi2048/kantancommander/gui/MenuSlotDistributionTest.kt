@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.gui
 
+import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -31,5 +32,12 @@ class MenuSlotDistributionTest {
         assertEquals(listOf(19, 20), DistributedSettingSlots.slots(2))
         assertEquals(listOf(19, 20, 21), DistributedSettingSlots.slots(3))
         assertEquals(listOf(19, 20, 21, 22), DistributedSettingSlots.slots(4))
+        assertEquals(
+            listOf(19, 20, 21, 28, 29),
+            CommandSettingsSlotPolicy.slots(
+                CommandType.APPLY_EFFECT,
+                listOf("target", "effect", "level", "seconds", "context"),
+            ),
+        )
     }
 }

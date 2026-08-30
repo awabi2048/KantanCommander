@@ -887,7 +887,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS)), listOf(backElement(player)))
         val fields = settingsFields(node)
         val slots = CommandSettingsSlotPolicy.slots(node.type, fields.map(EditorField::key))
-        val menuSize = CommandSettingsSlotPolicy.size(node.type)
+        val menuSize = CommandSettingsSlotPolicy.size(node.type, fields.size)
         val elements = fields.mapIndexed { index, field ->
             KcGui.menuEntry(
                 player = player,
@@ -907,28 +907,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 )),
             )
         }.toMutableList()
-        if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
-            val configured = node.contextOverride != null
-            elements += KcGui.menuEntry(
-                player = player,
-                slot = CommandSettingsSlotPolicy.contextSlot(node.type),
-                material = Material.RECOVERY_COMPASS,
-                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONTEXT),
-                style = GuiNameStyle.PRIMARY,
-                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONTEXT),
-                data = listOf(GuiMenuEntryData(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONTEXT_APPLICATION),
-                    KcI18n.text(player, if (configured) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED),
-                    if (configured) GuiValueTone.SUCCESS else GuiValueTone.MUTED,
-                )),
-                actions = listOf(GuiMenuActionIntent.AnyClick(
-                    actionId = "field",
-                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CONTEXT),
-                    payload = mapOf("field" to "context"),
-                )),
-            )
-        }
-        elements += backElement(player, CommandSettingsSlotPolicy.backSlot(node.type))
+        elements += backElement(player, CommandSettingsSlotPolicy.backSlot(node.type, fields.size))
         return InventoryMenuView(
             menuSize,
             KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS_NAMED, mapOf("command" to KcI18n.text(player, node.type.key)))),

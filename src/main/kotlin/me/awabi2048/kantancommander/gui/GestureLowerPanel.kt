@@ -94,31 +94,18 @@ class GestureLowerPanel(
         val selectedAbsolute = state.settingsTab.coerceIn(0, fields.lastIndex)
         val selected = if (selectedAbsolute in pageStart until pageStart + tabs.size) selectedAbsolute - pageStart else 0
         val field = tabs[selected]
-        val contextOverrideActive = state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE &&
-            state.settingFieldKey == "context" && state.settingContext?.nodeId == node.id
-        val descriptor = if (contextOverrideActive) {
-            CommandSettingDescriptor(CommandSettingEditor.CONTEXT)
-        } else CommandSettingsModel.descriptor(node, field.key)
+        val descriptor = CommandSettingsModel.descriptor(node, field.key)
         val settingContext = state.settingContext
             ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
-        val settingField = if (contextOverrideActive) null else field
-        val displayLabel = if (contextOverrideActive) {
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE)
-        } else KcI18n.text(player, field.label)
-        val value = if (contextOverrideActive) {
-            if (node.contextOverride == null) {
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERIT_ALL)
-            } else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PARTIAL_OVERRIDE)
-        } else field.value(node).render(player)
-        val settingScreen = if (contextOverrideActive) {
-            GestureSettingScreen.CONTEXT_OVERRIDE
-        } else gestureSettingScreenFor(descriptor.editor)
+        val displayLabel = KcI18n.text(player, field.label)
+        val value = field.value(node).render(player)
+        val settingScreen = gestureSettingScreenFor(descriptor.editor)
         val settingChoices = settingScreen?.let { screen ->
             settingTreeNodes(
                 node,
                 settingContext,
                 screen,
-                if (contextOverrideActive) "context" else field.key,
+                field.key,
                 player,
             ).map { choice ->
                 if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
@@ -130,11 +117,8 @@ class GestureLowerPanel(
         addDescriptionRows(
             visuals,
             player,
-            settingField,
+            field,
             fallback = displayLabel,
-            actionFallback = if (contextOverrideActive) {
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE_HOVER)
-            } else null,
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
         )
@@ -164,12 +148,18 @@ class GestureLowerPanel(
 
         // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
         // 文字列・数値だけを右ペインのダイアログ導線へ残し、専用子画面を増やしません。
-        val heldItemSetting = !contextOverrideActive &&
-            field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
-        val heldDiskSetting = !contextOverrideActive &&
-            field.key == "diskId" && node.type == CommandType.DISK_CALL
+        val heldItemSetting = field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
+        val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
         val heldMainHandSetting = heldItemSetting || heldDiskSetting
-        if (heldMainHandSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS)) {
+        val dialogInputSetting = !heldMainHandSetting &&
+            descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS
+        if (heldMainHandSetting || dialogInputSetting) {
+            // ダイアログ入力欄は、上の既存アクション説明（例:「待機する秒数を設定する」）
+            // を唯一の設定入口にします。下の既存 lower-edit の枠・寸法・装飾は説明表示へ
+            // 再利用し、設定用の見た目を別位置へ増設しないようにします。
+            val editVisualText = if (heldMainHandSetting) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
+            } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER
             addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.16, Material.CYAN_TERRACOTTA, 4)
             addText(
                 visuals,
@@ -178,13 +168,15 @@ class GestureLowerPanel(
                 0.02,
                 0.0055,
                 180,
-                Component.text(KcI18n.text(player, if (heldMainHandSetting) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
-                } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_VALUE)),
+                Component.text(KcI18n.text(player, editVisualText)),
             )
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
-                bounds = rect(0.28, 0.02, 1.2, 0.16),
+                // メインハンド設定だけは従来どおり下部の枠を操作します。通常の文字列・
+                // 数値入力は、既存の説明行を押下領域として再利用します。
+                bounds = if (heldMainHandSetting) {
+                    rect(0.28, 0.02, 1.2, 0.16)
+                } else rect(0.28, ACTION_DESCRIPTION_Y, 1.2, 0.16),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
                 // 空集合を焼き付けず、クリック時点のガードで判定します。空手時は
                 // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
@@ -194,7 +186,7 @@ class GestureLowerPanel(
                 gestureGuard = if (heldMainHandSetting) {
                     { actor, _ -> GestureGuiClickPolicy.hasMainHandItem(actor) }
                 } else null,
-                targetVisualId = "lower-edit-bg",
+                targetVisualId = if (heldMainHandSetting) "lower-edit-bg" else SETTING_DESCRIPTION_HOVER_ID,
                 hoverText = singleLineHover(
                     KcI18n.text(
                         player,
@@ -491,40 +483,6 @@ class GestureLowerPanel(
             ))
         }
 
-        // コンテキスト上書きも設定フィールドと同じ左タブ列へ連続配置します。
-        // 固定Yへ置くとフィールド数が少ないコマンドだけ空白が生じ、カードではなく
-        // 別操作に見えるため、タブの次の行をそのまま使います。
-        val contextY = 0.38 - tabs.size * 0.17
-        if (CommandPresentationPolicy.supportsContextOverride(node.type)) {
-            val activeContext = state.settingFieldKey == "context" && state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE
-            val contextState = if (CommandSettingsModel.isFieldConfigured(node, "context")) {
-                GestureSettingValueState.CONFIGURED
-            } else {
-                GestureSettingValueState.INITIAL
-            }
-            addBlock(
-                visuals,
-                "context-bg",
-                -0.7975,
-                contextY,
-                0.47,
-                0.15,
-                GestureSettingVisualPolicy.material(
-                    GestureSettingSelectionMode.EXCLUSIVE,
-                    contextState,
-                    activeContext,
-                ),
-                4,
-            )
-            addText(visuals, "context-label", -0.7975, contextY - 0.018, 0.0045, 110,
-                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE)))
-            elements.add(GestureGuiElement(
-                elementId = "lower-context",
-                bounds = rect(-0.7975, contextY, 0.47, 0.15),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                targetVisualId = "context-bg",
-            ))
-        }
 
         val deleteY = -0.43
         addBlock(visuals, "delete-bg", -0.7975, deleteY, 0.47, 0.10, Material.RED_CONCRETE, 4)
@@ -932,15 +890,9 @@ class GestureLowerPanel(
         // 親のタブ・コンテキスト・削除操作を重ねて表示しません。
         if (!child) addSettingsNavigation(state, player, node, visuals, elements, pagerCenterX = -0.30)
         val field = CommandSettingsModel.visibleFields(node).firstOrNull { it.key == fieldKey }
-        val fieldLabel = field?.let { KcI18n.text(player, it.label) }
-            ?: if (fieldKey == "context") {
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONTEXT_OVERRIDE)
-            } else fieldKey
+        val fieldLabel = field?.let { KcI18n.text(player, it.label) } ?: fieldKey
         val fieldValue = field?.value?.invoke(node)?.render(player)
-            ?: if (screen == GestureSettingScreen.CONTEXT_OVERRIDE) {
-                if (node.contextOverride == null) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERIT_ALL)
-                else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PARTIAL_OVERRIDE)
-            } else settingCurrentValue(node, context, screen, fieldKey, player)
+            ?: settingCurrentValue(node, context, screen, fieldKey, player)
         val choices = settingTreeNodes(node, context, screen, fieldKey, player).map { choice ->
             if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
                 choice.copy(selected = true)
@@ -997,16 +949,14 @@ class GestureLowerPanel(
             if (child) 0.0 else 0.25,
             if (child) CHILD_PAGER_Y else -0.43,
         )
-        if (child || screen != GestureSettingScreen.CONTEXT_OVERRIDE) {
-            addBackSetting(
-                player,
-                elements,
-                visuals,
-                child = child,
-                centerX = if (child) 0.0 else 0.78,
-                width = if (child) CHILD_BACK_WIDTH else 0.42,
-            )
-        }
+        addBackSetting(
+            player,
+            elements,
+            visuals,
+            child = child,
+            centerX = if (child) 0.0 else 0.78,
+            width = if (child) CHILD_BACK_WIDTH else 0.42,
+        )
         return view(GestureLowerMode.SETTING_CHOICES, elements, visuals, child = child)
     }
 

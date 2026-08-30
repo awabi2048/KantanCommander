@@ -1707,25 +1707,6 @@ class GestureSequenceEditor(
             updateLower(player)
             return
         }
-        if (context.elementId == "lower-context") {
-            val nodeId = state.selectedNodeId ?: return
-            if (state.settingScreen == GestureSettingScreen.CONTEXT_OVERRIDE) {
-                clearSettingState()
-                state.lowerMode = GestureLowerMode.SETTINGS
-                updateLower(player)
-                return
-            }
-            startSettingRoute(
-                GestureSettingFrame(
-                    CommandSettingContext(state.scriptId, nodeId, null),
-                    "context",
-                    GestureSettingScreen.CONTEXT_OVERRIDE,
-                ),
-            )
-            state.lowerMode = GestureLowerMode.SETTINGS
-            updateLower(player)
-            return
-        }
         val encoded = context.elementId.removePrefix("lower-setting-choice:")
         if (encoded == context.elementId) return
         val separator = encoded.indexOf(':')
@@ -2443,7 +2424,7 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
             }
-            (context.elementId == "lower-context" || context.elementId.startsWith("lower-setting-")) &&
+            context.elementId.startsWith("lower-setting-") &&
                 context.gesture == GestureGuiGesture.PRIMARY -> {
                 handleSettingAction(context, player)
             }

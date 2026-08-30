@@ -202,32 +202,44 @@ object CommandSettingsModel {
                 )
             } else field
         }
-        if (node.type == CommandType.ENTITY_ACTION && node.string("action") != "ride") {
-            return fields.filterNot { it.key == "other" }
-        }
-        if (node.type == CommandType.DISPLAY_TEXT && !DisplayTextTimingPolicy.supports(node)) {
-            return fields.filterNot { it.key == "staySeconds" }
-        }
-        if (node.type == CommandType.BLOCK_OPERATION) {
-            return if (node.string("operation", "setblock") == "fill") {
-                fields.filterNot { it.key == "position" }
-            } else {
-                fields.filterNot { it.key == "from" || it.key == "to" }
+        val conditionalFields = when {
+            node.type == CommandType.ENTITY_ACTION && node.string("action") != "ride" ->
+                fields.filterNot { it.key == "other" }
+            node.type == CommandType.DISPLAY_TEXT && !DisplayTextTimingPolicy.supports(node) ->
+                fields.filterNot { it.key == "staySeconds" }
+            node.type == CommandType.BLOCK_OPERATION ->
+                if (node.string("operation", "setblock") == "fill") {
+                    fields.filterNot { it.key == "position" }
+                } else {
+                    fields.filterNot { it.key == "from" || it.key == "to" }
+                }
+            node.type == CommandType.VARIABLE -> {
+                val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
+                    .getOrDefault(VariableOperation.SET)
+                fields.filterNot { field ->
+                    field.key == "value" && operation !in setOf(
+                        VariableOperation.SET,
+                        VariableOperation.ADD,
+                        VariableOperation.SUBTRACT,
+                    )
+                }
             }
+            else -> fields
         }
-        if (node.type != CommandType.VARIABLE) return fields
-        val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
-            .getOrDefault(VariableOperation.SET)
-        return fields.filterNot { field ->
-            field.key == "value" && operation !in setOf(
-                VariableOperation.SET,
-                VariableOperation.ADD,
-                VariableOperation.SUBTRACT,
-            )
+        // コンテキスト設定も通常フィールドへ投影し、Inventory/Gestureのどちらから開いても
+        // 同じ表示・選択・保存契約を通ります。VARIABLEはドメイン契約で対象外です。
+        return if (node.type.supportsContextOverride()) {
+            conditionalFields + contextField()
+        } else {
+            conditionalFields
         }
     }
 
-    fun descriptor(node: CommandNode, fieldKey: String): CommandSettingDescriptor = when (node.type) {
+    fun descriptor(node: CommandNode, fieldKey: String): CommandSettingDescriptor {
+        if (fieldKey == "context" && node.type.supportsContextOverride()) {
+            return CommandSettingDescriptor(CommandSettingEditor.CONTEXT)
+        }
+        return when (node.type) {
         CommandType.TELEPORT -> when (fieldKey) {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
             "destination" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.DESTINATION)
@@ -301,6 +313,7 @@ object CommandSettingsModel {
         CommandType.BREAK,
         CommandType.CONTINUE,
         -> text()
+        }
     }
 
     fun targetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? = when (role) {
@@ -545,6 +558,23 @@ object CommandSettingsModel {
     }
 
     private fun text() = CommandSettingDescriptor(CommandSettingEditor.TEXT)
+
+    private fun contextField() = EditorField(
+        key = "context",
+        label = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONTEXT,
+        material = CommandType.CONTEXT.icon,
+        descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONTEXT,
+        actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CONTEXT,
+        value = { node ->
+            DisplayValue.Localized(
+                if (isFieldConfigured(node, "context")) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED
+                },
+            )
+        },
+    )
 
     private val FILTERABLE_TARGET_KINDS = PLAYER_KINDS + ENTITY_KINDS
 }
