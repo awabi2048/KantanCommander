@@ -145,6 +145,22 @@ class GestureLowerPanel(
             // ノードがさらに子要素を持つ場合だけ、再クリックで開きます。
             addSettingChoiceNodes(settingChoices, player, visuals, elements)
         }
+        // 「移動先→ほかのエンティティ」は親のSETTINGS画面から選択します。
+        // 子画面側だけへ対象三分類を追加すると、最初の選択直後に親画面へ残る
+        // 実際の表示経路では候補が消え、保存済みの対象設定も再編集できません。
+        // 親画面でもposition:TARGETの選択状態を共通モデルから読み取り、子画面と
+        // 同じ右下領域へ描画します。
+        val destinationTarget = if (
+            settingScreen == GestureSettingScreen.POSITION &&
+            settingContext.role == CommandSettingRole.DESTINATION
+        ) {
+            settingChoices.firstOrNull {
+                it.id == "position:${PositionKind.TARGET.name}" && it.selected
+            }
+        } else null
+        destinationTarget?.let {
+            addLowerRightTargetChoiceNodes(it.children, player, visuals, elements)
+        }
 
         // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
         // 文字列・数値だけを右ペインのダイアログ導線へ残し、専用子画面を増やしません。

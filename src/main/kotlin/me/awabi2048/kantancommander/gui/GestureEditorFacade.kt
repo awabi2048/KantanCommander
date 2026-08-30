@@ -58,11 +58,23 @@ class GestureEditorFacade(
         }
         installExternalEditorSuppression(player)
         val editor = GestureSequenceEditor(plugin, state, ::onSessionClosed)
-        runCatching { editor.open(player) }.onFailure {
+        val opened = runCatching {
+            editor.open(player)
+            true
+        }.getOrElse { failure ->
             releaseExternalEditorSuppression(player.uniqueId)
-            throw it
+            // PlayerInteractEventから呼ばれる編集入口で例外を再送すると、ブロック操作
+            // イベント全体がサーバーERRORになり、次のクリックまで同じ競合を繰り返します。
+            // 入力claim競合はCC-System側で所有者を保護したうえで失敗するため、ここでは
+            // 画面を開けなかった事実をログへ残し、イベントへ例外を漏らしません。
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "Gesture GUIを開けませんでした: player=${player.uniqueId}, script=${state.scriptId}",
+                failure,
+            )
+            false
         }
-        sessions[player.uniqueId] = editor
+        if (opened) sessions[player.uniqueId] = editor
     }
 
     /** 旧セッションの終了通知が同一プレイヤーの新セッションへ干渉しないよう照合します。 */
