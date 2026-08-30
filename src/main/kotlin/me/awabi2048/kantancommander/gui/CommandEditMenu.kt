@@ -515,7 +515,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             context.player,
                             context.route,
                             "value",
-                            CommandDialogSpecs.signedInteger,
+                            CommandDialogSpecs.conditionValue,
                         )
                         MenuActionResult.Success(MenuUpdate.None)
                     },
@@ -1431,7 +1431,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val valueSource = if (field in setOf("startValue", "endValue", "stepValue")) {
             node.string(field.removeSuffix("Value") + "Source", "FIXED")
         } else null
-        val spec = CommandDialogSpecs.field(field, valueSource) ?: return
+        val spec = CommandDialogSpecs.field(node, field, valueSource) ?: return
         val currentValue = initialOverride ?: node.string(field, defaultValue)
         val candidateButtons = buildList {
             if (CommandDialogSpecs.supportsSuggestions(field)) {
@@ -1505,7 +1505,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val fadeIn = node.string("fadeInSeconds", "1")
         val stay = node.string("staySeconds", "3")
         val fadeOut = node.string("fadeOutSeconds", "1")
-        val durationSpec = requireNotNull(CommandDialogSpecs.field("staySeconds"))
+        val durationSpec = requireNotNull(CommandDialogSpecs.field(node, "staySeconds"))
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(

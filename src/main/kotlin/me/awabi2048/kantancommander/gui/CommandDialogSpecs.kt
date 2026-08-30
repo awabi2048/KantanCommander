@@ -3,6 +3,10 @@ package me.awabi2048.kantancommander.gui
 import com.awabi2048.ccsystem.api.gui.MenuDialogInput
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.model.CommandNode
+import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -141,7 +145,7 @@ internal object CommandDialogSpecs {
             { raw ->
                 val value = raw.toDoubleOrNull()
                 if (value == null || !value.isFinite() || value < 0.0) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID
                 } else null
             },
         )
@@ -149,7 +153,7 @@ internal object CommandDialogSpecs {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             64,
             { raw ->
-                if (!isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID else null
+                if (!isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null
             },
         )
         "tag" -> Spec(
@@ -195,6 +199,60 @@ internal object CommandDialogSpecs {
         64,
         { raw -> if (raw.toLongOrNull() == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID else null },
     )
+
+    /** 条件値は参照先変数の型に従うため、入力欄では文字列を保持します。 */
+    val conditionValue = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        512,
+    )
+
+    /**
+     * コマンド種別を含めてフィールド入力仕様を解決します。
+     *
+     * 同じ `seconds` でもWAIT／効果／カメラシェイクで保存型と許容範囲が異なるため、
+     * フィールド名だけを渡す旧経路は既定値・共通文字列用として残し、新しい編集経路は
+     * 必ずCommandNodeを渡します。これによりInventory GUIとGesture GUIが別々の分岐で
+     * 数値型を解釈する状態を防ぎます。
+     */
+    fun field(
+        node: CommandNode,
+        fieldKey: String,
+        valueSource: String? = null,
+    ): Spec? {
+        if (fieldKey == "value" && node.type == CommandType.VARIABLE) {
+            val type = runCatching { VariableType.valueOf(node.string("type")) }
+                .getOrDefault(VariableType.BOOLEAN)
+            val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
+                .getOrDefault(VariableOperation.SET)
+            return variableValue(type, operation)
+        }
+        return when (node.type) {
+            CommandType.WAIT -> if (fieldKey == "seconds") {
+                positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS)
+            } else field(fieldKey, valueSource)
+            CommandType.APPLY_EFFECT -> when (fieldKey) {
+                "level" -> integerRange(
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL,
+                    1..255,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_LEVEL_INVALID,
+                )
+                "seconds" -> integerRange(
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
+                    1..MAX_EFFECT_SECONDS,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_EFFECT_SECONDS_INVALID,
+                )
+                else -> field(fieldKey, valueSource)
+            }
+            CommandType.CAMERA_SHAKE -> if (fieldKey == "seconds") {
+                decimalRange(
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
+                    1.0..10.0,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CAMERA_SHAKE_SECONDS_INVALID,
+                )
+            } else field(fieldKey, valueSource)
+            else -> field(fieldKey, valueSource)
+        }
+    }
 
     /**
      * 正の整数として扱う入力の共通判定です。
@@ -265,9 +323,7 @@ internal object CommandDialogSpecs {
         return Spec(labelKey, maxLength) { raw ->
             when {
                 positiveInteger && !isPositiveInteger(raw) ->
-                    // Specはプレイヤー非依存のため、{field}を要求するキーは使わず、
-                    // 両GUIで同じプレースホルダーなしのエラーを返します。
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID
                 nonNegativeInteger && !isNonNegativeInteger(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID
                 fieldKey in setOf("entity", "sound", "effect") && !registeredFieldId(fieldKey, raw) ->
@@ -291,6 +347,57 @@ internal object CommandDialogSpecs {
                 else -> null
             }
         }
+    }
+
+    /** 正の整数を受け付ける仕様を、個数・秒数・上限で共有します。 */
+    private fun positiveInteger(labelKey: LocalizationKey<String>): Spec = Spec(
+        labelKey,
+        16,
+        { raw -> if (!isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null },
+    )
+
+    /** 実行側のInt範囲まで入力時に確認し、保存後にだけ失敗する値を作りません。 */
+    private fun integerRange(
+        labelKey: LocalizationKey<String>,
+        range: IntRange,
+        invalidKey: LocalizationKey<String>,
+    ): Spec = Spec(labelKey, 16) { raw ->
+        val value = if (raw.matches(Regex("[0-9]+"))) raw.toIntOrNull() else null
+        if (value == null || value !in range) invalidKey else null
+    }
+
+    /** 小数を許可する実行値は、整数仕様へ誤って流さないよう専用化します。 */
+    private fun decimalRange(
+        labelKey: LocalizationKey<String>,
+        range: ClosedFloatingPointRange<Double>,
+        invalidKey: LocalizationKey<String>,
+    ): Spec = Spec(labelKey, 16) { raw ->
+        val value = raw.toDoubleOrNull()
+        if (value == null || !value.isFinite() || value !in range) invalidKey else null
+    }
+
+    /** 変数操作の保存値を、実行時parseVariableと同じ型境界で検証します。 */
+    private fun variableValue(type: VariableType, operation: VariableOperation): Spec {
+        val base = requireNotNull(field("value"))
+        if (operation !in setOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT)) {
+            return base
+        }
+        return base.copy(validate = { raw ->
+            when (type) {
+                VariableType.BOOLEAN ->
+                    if (raw.toBooleanStrictOrNull() == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
+                VariableType.INTEGER ->
+                    if (raw == CURRENT_ITERATION_VALUE || raw == CURRENT_LOOP_COUNT || raw.toLongOrNull() != null) {
+                        null
+                    } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
+                VariableType.DECIMAL ->
+                    if (raw.toDoubleOrNull()?.isFinite() == true) null
+                    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                VariableType.TEXT -> null
+                VariableType.POSITION, VariableType.ENTITY ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            }
+        })
     }
 
     /** 一覧から選択できる入力項目だけを候補提示の対象にします。 */
@@ -338,7 +445,11 @@ internal object CommandDialogSpecs {
                 "effect" -> registeredId(Registry.POTION_EFFECT_TYPE, raw)
                 else -> false
             }
-        }.getOrElse { true }
+        }.getOrElse {
+            // 登録表を読めない場合に未知IDを保存すると、表示側と実行側で
+            // 「設定済み」の意味が分かれます。構文検証だけへ戻さず、失敗として扱います。
+            false
+        }
     }
 
     private fun registeredValues(fieldKey: String): List<String> = runCatching {
@@ -376,4 +487,8 @@ internal object CommandDialogSpecs {
         }
         return previous[second.length]
     }
+
+    private const val MAX_EFFECT_SECONDS = 86_400
+    private const val CURRENT_ITERATION_VALUE = "\$current_iteration_value"
+    private const val CURRENT_LOOP_COUNT = "\$current_loop_count"
 }

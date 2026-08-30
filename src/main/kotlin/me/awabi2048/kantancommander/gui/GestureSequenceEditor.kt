@@ -1025,7 +1025,7 @@ class GestureSequenceEditor(
             val valueSource = if (fieldKey in setOf("startValue", "endValue", "stepValue")) {
                 node.string(fieldKey.removeSuffix("Value") + "Source", "FIXED")
             } else null
-            val spec = CommandDialogSpecs.field(fieldKey, valueSource)
+            val spec = CommandDialogSpecs.field(node, fieldKey, valueSource)
                 ?: CommandDialogSpecs.Spec(
                     com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
                     512,
@@ -1295,7 +1295,7 @@ class GestureSequenceEditor(
             val minimumValue = minimumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite)
             val maximumValue = maximumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite)
             if ((minimumRaw != null && minimumValue == null) || (maximumRaw != null && maximumValue == null)) {
-                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID)
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID)
             }
             if (minimumValue != null && maximumValue != null && minimumValue > maximumValue) {
                 return@showInputDialog KcI18n.text(
@@ -1488,7 +1488,7 @@ class GestureSequenceEditor(
         val fadeIn = node.string("fadeInSeconds", "1")
         val stay = node.string("staySeconds", "3")
         val fadeOut = node.string("fadeOutSeconds", "1")
-        val durationSpec = requireNotNull(CommandDialogSpecs.field("staySeconds"))
+        val durationSpec = requireNotNull(CommandDialogSpecs.field(node, "staySeconds"))
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
@@ -2082,9 +2082,9 @@ class GestureSequenceEditor(
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = when (encoded) {
                             "condition-variable" -> CommandDialogSpecs.variableName
-                            "condition-value" -> CommandDialogSpecs.signedInteger
+                            "condition-value" -> CommandDialogSpecs.conditionValue
                             "condition-block" -> CommandDialogSpecs.block
-                            "condition-count" -> CommandDialogSpecs.field("count")
+                            "condition-count" -> CommandDialogSpecs.field(node, "count")
                                 ?: CommandDialogSpecs.Spec(
                                     com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT,
                                     10,
@@ -2141,7 +2141,7 @@ class GestureSequenceEditor(
                 when (value) {
                     "direct" -> beginSettingInput(
                         player,
-                        CommandDialogSpecs.field("value") ?: return,
+                        CommandDialogSpecs.field(node, "value") ?: return,
                         node.string("value"),
                     ) { raw ->
                         if (!updateSettingNode(player, settingContext) { it.params["value"] = raw }) {
