@@ -1853,9 +1853,13 @@ object EditorMenuLayout {
     fun fields(type: CommandType): List<EditorField> {
         val fields = when (type) {
         CommandType.TELEPORT -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
-            },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TELEPORT_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TELEPORT_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("destination", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESTINATION, Material.COMPASS) {
                 it.destinationTargetSpec?.kind?.let(::displayTarget)
                     ?: it.destinationSpec?.kind?.let(::displayPosition)
@@ -1863,30 +1867,62 @@ object EditorMenuLayout {
             },
         )
         CommandType.GIVE_ITEM -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GIVE_TARGET, Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
-            },
-            field("item", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM, Material.CHEST),
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GIVE_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_GIVE_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_GIVE_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field(
+                "item",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM,
+                Material.CHEST,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_GIVE_ITEM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_GIVE_ITEM,
+            ),
             field("count", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT, Material.DIAMOND),
         )
         CommandType.ENTITY_ACTION -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
-            },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_ACTION_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_ACTION_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("action", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION, Material.SADDLE) { displayEntityAction(it.string("action", "ride")) },
             field("other", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OTHER, Material.ANVIL) {
                 it.secondaryTargetSpec?.kind?.let(::displayTarget) ?: displayUnset()
             },
         )
         CommandType.DISPLAY_TEXT -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISPLAY_TARGET, Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
-            },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISPLAY_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("mode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODE, Material.OAK_SIGN) { displayTextMode(it.string("mode", "tellraw")) },
             field("text", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT, Material.WRITTEN_BOOK),
-            field("staySeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DURATION, Material.CLOCK),
+            field(
+                "staySeconds",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DURATION,
+                Material.CLOCK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_DURATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_DURATION,
+            ),
         )
-        CommandType.WAIT -> listOf(field("seconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS, Material.CLOCK))
+        CommandType.WAIT -> listOf(
+            field(
+                "seconds",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
+                Material.CLOCK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_WAIT_SECONDS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_WAIT_SECONDS,
+            ),
+        )
         CommandType.SUMMON_ENTITY -> listOf(
             field("entity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY, Material.ZOMBIE_SPAWN_EGG),
             field("tags", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS, Material.NAME_TAG),
@@ -1897,21 +1933,57 @@ object EditorMenuLayout {
             field("pitch", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH, Material.NOTE_BLOCK),
         )
         CommandType.APPLY_EFFECT -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.PLAYER_HEAD) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EFFECT_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EFFECT_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT, Material.POTION),
             field("level", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL, Material.GLOWSTONE_DUST),
-            field("seconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS, Material.CLOCK),
+            field(
+                "seconds",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
+                Material.CLOCK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EFFECT_SECONDS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EFFECT_SECONDS,
+            ),
         )
         CommandType.CAMERA_SHAKE -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.PLAYER_HEAD) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CAMERA_SHAKE_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CAMERA_SHAKE_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("intensity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INTENSITY, Material.SPYGLASS),
-            field("seconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS, Material.CLOCK),
+            field(
+                "seconds",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
+                Material.CLOCK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CAMERA_SHAKE_SECONDS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CAMERA_SHAKE_SECONDS,
+            ),
             field("shakeType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SHAKE_TYPE, Material.COMPASS) { displayShakeType(it.string("shakeType")) },
         )
         CommandType.EQUIP_ITEM -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.PLAYER_HEAD) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EQUIP_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EQUIP_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("slot", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT, Material.ARMOR_STAND) { displayEquipmentSlot(it.string("slot")) },
-            field("item", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM, Material.CHEST),
+            field(
+                "item",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM,
+                Material.CHEST,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EQUIP_ITEM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EQUIP_ITEM,
+            ),
         )
         CommandType.BLOCK_OPERATION -> listOf(
             field(
@@ -1959,9 +2031,13 @@ object EditorMenuLayout {
             },
         )
         CommandType.ENTITY_DELETE -> listOf(
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.PLAYER_HEAD) {
-                it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset()
-            },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_DELETE_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_DELETE_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
         )
         CommandType.CONDITION -> listOf(
             field("inverted", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INVERTED, Material.REDSTONE_TORCH) { displayBoolean(it.boolean("inverted")) },
@@ -1972,9 +2048,13 @@ object EditorMenuLayout {
             field("executor", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXECUTOR, Material.PLAYER_HEAD) {
                 it.contextOverride?.executor?.kind?.let(::displayTarget) ?: displayUnset()
             },
-            field("target", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, Material.TARGET) {
-                it.contextOverride?.target?.kind?.let(::displayTarget) ?: displayUnset()
-            },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.TARGET,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONTEXT_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CONTEXT_TARGET,
+            ) { it.contextOverride?.target?.kind?.let(::displayTarget) ?: displayUnset() },
             field("position", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, Material.COMPASS) {
                 it.contextOverride?.position?.kind?.let(::displayPosition) ?: displayUnset()
             },
@@ -2016,28 +2096,27 @@ object EditorMenuLayout {
         actionKey: LocalizationKey<String>? = null,
         value: (CommandNode) -> DisplayValue = { displayLiteral(it.string(key)) },
     ): EditorField {
-        val (description, action) = fieldPresentation(key)
+        val defaultPresentation = if (descriptionKey == null || actionKey == null) {
+            fieldPresentation(key)
+        } else null
         return EditorField(
             key,
             label,
             material,
-            descriptionKey ?: description,
-            actionKey ?: action,
+            descriptionKey ?: requireNotNull(defaultPresentation).first,
+            actionKey ?: requireNotNull(defaultPresentation).second,
             value,
         )
     }
 
     /** JSONパラメータ名と表示用キーを明示対応させ、翻訳キーの文字列合成を禁止します。 */
     private fun fieldPresentation(key: String): Pair<LocalizationKey<List<String>>, LocalizationKey<String>> = when (key) {
-        "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TARGET
         "destination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DESTINATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DESTINATION
-        "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ITEM to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ITEM
         "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_COUNT to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_COUNT
         "action" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ACTION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ACTION
         "other" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OTHER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OTHER
         "mode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_MODE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_MODE
         "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TEXT to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TEXT
-        "fadeInSeconds", "staySeconds", "fadeOutSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_STAY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_STAY
         "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY
         "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAGS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAGS
         "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND
@@ -2045,7 +2124,6 @@ object EditorMenuLayout {
         "pitch" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PITCH to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PITCH
         "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EFFECT to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EFFECT
         "level" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_LEVEL to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_LEVEL
-        "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SECONDS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SECONDS
         "intensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_INTENSITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_INTENSITY
         "shakeType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SHAKETYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SHAKETYPE
         "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SLOT to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SLOT

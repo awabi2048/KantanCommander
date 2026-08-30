@@ -182,6 +182,8 @@ class GestureLowerPanel(
                 // 形式不一致でもハンドラへ届け、利用者へ原因を通知できるようにします。
                 acceptedGestures = if (heldMainHandSetting && !mainHandAvailable) {
                     emptySet()
+                } else if (heldMainHandSetting) {
+                    GestureGuiClickPolicy.MAIN_HAND
                 } else setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY),
                 targetVisualId = "lower-edit-bg",
                 hoverText = singleLineHover(

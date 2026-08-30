@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.hasDiskContent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -175,5 +176,28 @@ class ScriptStoreTest {
 
         val second = requireNotNull(store.load(script.id))
         assertTrue(second.graph.nodes.values.all { it.string("text").isBlank() })
+    }
+
+    @Test
+    fun `metadata-only edits are retained as disk output content`() {
+        val store = ScriptStore(temp.resolve("metadata-edits"), Logger.getAnonymousLogger())
+
+        val renamed = store.createPlacement(UUID.randomUUID(), "default")
+        val renamedEdit = requireNotNull(store.load(renamed.id)).apply { name = "renamed" }
+        store.save(renamedEdit)
+        assertTrue(requireNotNull(store.load(renamed.id)).hasDiskContent())
+        assertTrue(requireNotNull(store.load(renamed.id)).graph.nodes.isEmpty())
+
+        val timed = store.createPlacement(UUID.randomUUID(), "default")
+        val timedEdit = requireNotNull(store.load(timed.id)).apply {
+            timer.enabled = true
+            timer.intervalSeconds = 5
+        }
+        store.save(timedEdit)
+        assertTrue(requireNotNull(store.load(timed.id)).hasDiskContent())
+        assertTrue(requireNotNull(store.load(timed.id)).graph.nodes.isEmpty())
+
+        val untouched = store.createPlacement(UUID.randomUUID(), "default")
+        assertTrue(!requireNotNull(store.load(untouched.id)).hasDiskContent())
     }
 }

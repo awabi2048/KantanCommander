@@ -21,7 +21,17 @@ data class DiskScript(
     var activation: ActivationMode = ActivationMode.NEEDS_REDSTONE,
     var timer: TimerSetting = TimerSetting(),
     var graph: CommandGraph = CommandGraph.empty(),
+    /**
+     * ノードを持たないスクリプトでも、プログラム名またはタイマーを明示的に
+     * 編集したことを保持します。配置からのディスク出力可否は値の非空判定では
+     * なく、この編集状態とグラフの両方を共通判定するため、初期配置の既定名を
+     * 誤って「内容あり」と扱いません。旧JSONには存在しないためfalseで復元します。
+     */
+    var contentModified: Boolean = false,
 )
+
+/** 配置された拡張コマンドブロックからディスクへ出力できる内容があるかを判定します。 */
+fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotEmpty()
 
 data class TimerSetting(
     var enabled: Boolean = false,

@@ -31,6 +31,7 @@ import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -312,7 +313,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val currentPlacement = placement(route)
         if (currentPlacement != null) {
             val placementScript = scriptId(route)?.let(plugin.scripts::load)
-            val hasContent = placementScript?.graph?.nodes?.isNotEmpty() == true
+            val hasContent = placementScript?.hasDiskContent() == true
             if (hasContent) {
                 elements += KcGui.menuEntry(
                     player = player,
@@ -541,6 +542,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             activation = diskScript.activation,
             timer = diskScript.timer.copy(),
             graph = diskScript.graph.deepCopy(),
+            contentModified = diskScript.contentModified,
         )
         runCatching { plugin.scripts.save(candidate) }
             .onFailure { failure ->
@@ -566,8 +568,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun outputDisk(player: Player, placement: DiskPlacement): Boolean {
         val source = plugin.scripts.load(placement.scriptId) ?: return false
-        // 内容が空の場合はディスク出力の対象外とする。
-        if (source.graph.nodes.isEmpty()) return false
+        // ノードがなくても、名前またはタイマーを明示編集したスクリプトは出力対象です。
+        if (!source.hasDiskContent()) return false
         if (!plugin.placementAccess.canManage(player, placement.world)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
             return false

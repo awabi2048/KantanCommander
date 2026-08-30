@@ -63,4 +63,32 @@ class EditorMenuLayoutTest {
         assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE), loopValues["startSource"])
         assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE), loopValues["endSource"])
     }
+
+    @Test
+    fun `shared parameter names use domain-specific explanations`() {
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TELEPORT_TARGET,
+            EditorMenuLayout.fields(CommandType.TELEPORT).single { it.key == "target" }.descriptionKey,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_GIVE_TARGET,
+            EditorMenuLayout.fields(CommandType.GIVE_ITEM).single { it.key == "target" }.descriptionKey,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_DURATION,
+            EditorMenuLayout.fields(CommandType.DISPLAY_TEXT).single { it.key == "staySeconds" }.descriptionKey,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_WAIT_SECONDS,
+            EditorMenuLayout.fields(CommandType.WAIT).single { it.key == "seconds" }.descriptionKey,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EFFECT_SECONDS,
+            EditorMenuLayout.fields(CommandType.APPLY_EFFECT).single { it.key == "seconds" }.descriptionKey,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CAMERA_SHAKE_SECONDS,
+            EditorMenuLayout.fields(CommandType.CAMERA_SHAKE).single { it.key == "seconds" }.descriptionKey,
+        )
+    }
 }

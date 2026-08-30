@@ -3,6 +3,7 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Bukkit
@@ -235,8 +236,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val source = plugin.scripts.load(placement.scriptId)
         var outputScript: me.awabi2048.kantancommander.model.DiskScript? = null
         var outputItem: org.bukkit.inventory.ItemStack? = null
-        // 内容が空の場合はディスクを出力せず破壊のみ行う。
-        if (source != null && source.graph.nodes.isNotEmpty()) {
+        // ノードがなくても、名前またはタイマーを明示編集したスクリプトは出力します。
+        if (source?.hasDiskContent() == true) {
             val copiedScript = runCatching { plugin.scripts.copyForItem(source) }.getOrElse { error ->
                 plugin.logger.log(
                     java.util.logging.Level.INFO,

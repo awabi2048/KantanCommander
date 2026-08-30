@@ -76,6 +76,13 @@ class ScriptStore(
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
+        val previous = cache[script.id]
+        if (previous != null && !sameEditableContent(previous, script)) {
+            // 名前・タイマーだけの編集も、ノード編集と同じくディスク内容です。
+            // 呼び出し元ごとにフラグを立てるとインベントリGUIとジェスチャーGUIで
+            // 漏れが生じるため、保存正本を確定するこの一点で差分を記録します。
+            script.contentModified = true
+        }
         atomicWrite(file(script.id), gson.toJson(script))
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
         cache[script.id] = script.deepCopy()
@@ -109,7 +116,19 @@ class ScriptStore(
         return loaded
     }
 
-    private fun DiskScript.deepCopy(): DiskScript = copy(graph = graph.deepCopy())
+    private fun DiskScript.deepCopy(): DiskScript = copy(
+        // TimerSettingは可変データなので、グラフだけをコピーするとload()後の
+        // タイマー編集が保存済みキャッシュへ直接波及し、差分追跡をすり抜けます。
+        timer = timer.copy(),
+        graph = graph.deepCopy(),
+    )
+
+    /** 識別子・所有者・一覧公開状態・作成時刻を除いた利用者編集部分を比較します。 */
+    private fun sameEditableContent(left: DiskScript, right: DiskScript): Boolean =
+        left.name == right.name &&
+            left.activation == right.activation &&
+            left.timer == right.timer &&
+            left.graph == right.graph
 
     private fun file(id: UUID) = dir.resolve("$id.json")
 

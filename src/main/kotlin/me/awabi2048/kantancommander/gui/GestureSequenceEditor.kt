@@ -979,7 +979,7 @@ class GestureSequenceEditor(
             updateLower(player)
             return false
         }
-        val updated = updateSettingNode(player, context) { node ->
+        val updated = updateSettingNode(player, context, configuredFields = setOf("diskId")) { node ->
             node.params["diskId"] = diskId.toString()
             node.snapshot = disk.graph.deepCopy()
         }
@@ -1002,7 +1002,7 @@ class GestureSequenceEditor(
         itemKey: String,
         itemData: String,
     ): Boolean {
-        val updated = updateSettingNode(player, context) { node ->
+        val updated = updateSettingNode(player, context, configuredFields = setOf(parameter)) { node ->
             node.params[parameter] = itemKey
             // アイテム名だけでなく、数量・Name/Lore・エンチャント・データ
             // コンポーネントを含むシリアライズ結果を保存します。
@@ -1095,13 +1095,17 @@ class GestureSequenceEditor(
     private fun updateSettingNode(
         player: Player,
         context: CommandSettingContext,
+        configuredFields: Set<String> = emptySet(),
         change: (me.awabi2048.kantancommander.model.CommandNode) -> Unit,
     ): Boolean {
         val saved = runCatching {
             CommandSettingsModel.updateNode(
                 plugin,
                 context,
-                configuredFields = setOfNotNull(state.settingFieldKey),
+                // タブ選択直後は画面を常に親設定へ戻すためsettingFieldKeyが空に
+                // なります。設定済み判定はUI状態に依存させず、実際に変更した
+                // 項目を呼び出し元から明示します。
+                configuredFields = configuredFields.ifEmpty { setOfNotNull(state.settingFieldKey) },
                 change = change,
             ) != null
         }.onFailure { failure ->
@@ -2148,7 +2152,7 @@ class GestureSequenceEditor(
                 handleSettingAction(context, player)
             }
             context.elementId.startsWith("lower-edit:") &&
-                context.gesture in setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY) -> {
+                context.gesture in GestureGuiClickPolicy.MAIN_HAND -> {
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
                 beginSelectedFieldEdit(player, fieldKey)
             }
