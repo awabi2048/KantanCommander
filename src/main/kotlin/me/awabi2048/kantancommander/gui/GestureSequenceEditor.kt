@@ -1265,7 +1265,13 @@ class GestureSequenceEditor(
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
-            body = CommandDialogSpecs.durationBody(player, fadeIn, stay, fadeOut),
+            body = CommandDialogSpecs.durationBody(
+                player,
+                fadeIn,
+                stay,
+                fadeOut,
+                node.string("mode", "tellraw"),
+            ),
             inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),
         ) { response ->
             val rawValues = listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").associateWith { key ->

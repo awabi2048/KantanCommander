@@ -22,6 +22,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.model.effectiveContextSource
 import net.kyori.adventure.text.Component
@@ -43,6 +44,8 @@ import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.inventory.EquipmentSlot
 
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
+    private val timedActionBar = TimedActionBarService(plugin)
+
     fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
         val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
             MyWorldManagerApi.getWorldRepository()?.findByWorldName(origin.world.name)
@@ -331,18 +334,26 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 if (players.isEmpty()) return false
                 val text = Component.text(node.string("text"))
                 when (node.string("mode", "tellraw")) {
-                    "title" -> players.forEach { player -> player.showTitle(Title.title(
-                            text,
-                            Component.empty(),
-                            Title.Times.times(
-                                Duration.ofMillis(node.int("fadeInSeconds", 1).coerceAtLeast(0).toLong() * 1000L),
-                                Duration.ofMillis(node.int("staySeconds", 3).coerceAtLeast(0).toLong() * 1000L),
-                                Duration.ofMillis(node.int("fadeOutSeconds", 1).coerceAtLeast(0).toLong() * 1000L),
-                            ),
-                        ))
+                    "title" -> players.forEach { player ->
+                        timedActionBar.cancel(player, clear = true)
+                        val timing = DisplayTextTiming.from(node)
+                        player.showTitle(Title.title(
+                                text,
+                                Component.empty(),
+                                Title.Times.times(
+                                    Duration.ofSeconds(timing.fadeInSeconds.coerceAtLeast(0).toLong()),
+                                    Duration.ofSeconds(timing.staySeconds.coerceAtLeast(0).toLong()),
+                                    Duration.ofSeconds(timing.fadeOutSeconds.coerceAtLeast(0).toLong()),
+                                ),
+                            ))
                     }
-                    "actionbar" -> players.forEach { it.sendActionBar(text) }
-                    else -> players.forEach { it.sendMessage(text) }
+                    "actionbar" -> players.forEach { player ->
+                        timedActionBar.show(player, text, DisplayTextTiming.from(node))
+                    }
+                    else -> players.forEach { player ->
+                        timedActionBar.cancel(player, clear = true)
+                        player.sendMessage(text)
+                    }
                 }
                 true
             }

@@ -174,6 +174,27 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `actionbar durations are validated like title durations`() {
+        val script = DiskScript(name = "actionbar-duration", owner = UUID.randomUUID())
+        val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        actionbar.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        actionbar.params.putAll(
+            mapOf(
+                "mode" to "actionbar",
+                "fadeInSeconds" to "-1",
+                "staySeconds" to "3",
+                "fadeOutSeconds" to "1",
+            )
+        )
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.contains("タイトル／アクションバーの表示時間")
+            }
+        )
+    }
+
+    @Test
     fun `block operations and entity deletion require their structured inputs`() {
         val script = DiskScript(name = "new-operations", owner = UUID.randomUUID())
         GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION)

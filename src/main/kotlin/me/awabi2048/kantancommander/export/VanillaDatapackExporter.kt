@@ -9,6 +9,8 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.DisplayTextTiming
+import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
@@ -438,11 +440,12 @@ class VanillaDatapackExporter(
                     )
                 }
                 else -> lower(node, graph)?.let { command ->
-                    if (node.type == CommandType.DISPLAY_TEXT && node.string("mode", "tellraw") == "title") {
+                    if (node.type == CommandType.DISPLAY_TEXT && DisplayTextTimingPolicy.supports(node)) {
+                        val timing = DisplayTextTiming.from(node)
                         val times = "title ${effectiveTarget(node)} times " +
-                            "${node.int("fadeInSeconds", 1).coerceAtLeast(0).toLong() * TICKS_PER_SECOND} " +
-                            "${node.int("staySeconds", 3).coerceAtLeast(0).toLong() * TICKS_PER_SECOND} " +
-                            "${node.int("fadeOutSeconds", 1).coerceAtLeast(0).toLong() * TICKS_PER_SECOND}"
+                            "${timing.fadeInTicks} " +
+                            "${timing.stayTicks} " +
+                            "${timing.fadeOutTicks}"
                         lines += nodeExportContext?.let { wrapContext(it, times) } ?: times
                     }
                     val contextual = nodeExportContext?.let { wrapContext(it, command) } ?: command

@@ -784,6 +784,29 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `actionbar export preserves configured durations`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "actionbar")
+        val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        actionbar.params.putAll(
+            mapOf("mode" to "actionbar", "text" to "hello", "fadeInSeconds" to "2", "staySeconds" to "6", "fadeOutSeconds" to "3")
+        )
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        val function = success.directory
+            .resolve("data/kantan/function")
+            .walkTopDown()
+            .first { it.isFile && it.readText().contains("title @s times 40 120 60") }
+            .readText()
+
+        assertTrue(function.contains("title @s times 40 120 60"))
+        assertTrue(function.contains("title @s actionbar"))
+    }
+
+    @Test
     fun `integer arithmetic and for increments stop before scoreboard overflow`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "overflow-guards")

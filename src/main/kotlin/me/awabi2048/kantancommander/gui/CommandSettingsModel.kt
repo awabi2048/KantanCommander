@@ -1,11 +1,13 @@
 package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.api.gui.MenuRoute
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
@@ -100,15 +102,28 @@ data class CommandSettingDescriptor(
 object CommandSettingsModel {
     /**
      * 両GUIで同じ条件付きフィールド集合を表示します。
-     * 例えばタイトル以外のDISPLAY_TEXTからstaySecondsを隠す処理を各画面へ複製しないことで、
+     * 例えば時間設定に対応しないDISPLAY_TEXTからstaySecondsを隠す処理を各画面へ複製しないことで、
      * 片方だけに存在する設定項目や、選択後に参照不能になる値を防ぎます。
      */
     fun visibleFields(node: CommandNode): List<EditorField> {
-        val fields = EditorMenuLayout.fields(node.type)
+        // 表示方式ごとの説明は同じ「時間設定」項目でも意味が異なります。
+        // フィールド集合を返す段階で文言も文脈化し、インベントリGUIとジェスチャーGUIの
+        // どちらでもタイトル用の説明がアクションバーへ誤表示されないようにします。
+        val fields = EditorMenuLayout.fields(node.type).map { field ->
+            if (node.type == CommandType.DISPLAY_TEXT &&
+                field.key == "staySeconds" &&
+                node.string("mode", "tellraw") == "actionbar"
+            ) {
+                field.copy(
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_ACTIONBAR_DURATION,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_ACTIONBAR_DURATION,
+                )
+            } else field
+        }
         if (node.type == CommandType.ENTITY_ACTION && node.string("action") != "ride") {
             return fields.filterNot { it.key == "other" }
         }
-        if (node.type == CommandType.DISPLAY_TEXT && node.string("mode") != "title") {
+        if (node.type == CommandType.DISPLAY_TEXT && !DisplayTextTimingPolicy.supports(node)) {
             return fields.filterNot { it.key == "staySeconds" }
         }
         if (node.type == CommandType.BLOCK_OPERATION) {

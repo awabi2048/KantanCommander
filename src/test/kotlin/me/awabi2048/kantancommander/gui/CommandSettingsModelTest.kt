@@ -47,6 +47,20 @@ class CommandSettingsModelTest {
         display.params["mode"] = "title"
         assertEquals(true, CommandSettingsModel.visibleFields(display).any { it.key == "staySeconds" })
 
+        display.params["mode"] = "actionbar"
+        val actionbarDuration = CommandSettingsModel.visibleFields(display).single { it.key == "staySeconds" }
+        assertEquals(true, CommandSettingsModel.visibleFields(display).any { it.key == "staySeconds" })
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_ACTIONBAR_DURATION,
+            actionbarDuration.descriptionKey,
+        )
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_ACTIONBAR_DURATION,
+            actionbarDuration.actionKey,
+        )
+
         val riding = CommandType.ENTITY_ACTION.newNode()
         assertEquals(true, CommandSettingsModel.visibleFields(riding).any { it.key == "other" })
         riding.params["action"] = "dismount"

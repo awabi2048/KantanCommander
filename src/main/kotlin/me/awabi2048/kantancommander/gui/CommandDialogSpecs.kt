@@ -64,15 +64,28 @@ internal object CommandDialogSpecs {
             maxLength = spec.maxLength,
         )
 
-    /** 表示時間ダイアログの本文を両GUIで共有します。 */
-    fun durationBody(player: Player, fadeIn: String, stay: String, fadeOut: String): List<Component> {
+    /** 表示方式ごとの説明を使い分けた表示時間ダイアログ本文を生成します。 */
+    fun durationBody(
+        player: Player,
+        fadeIn: String,
+        stay: String,
+        fadeOut: String,
+        mode: String,
+    ): List<Component> {
         val current = listOf(
             "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN)}=$fadeIn",
             "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY)}=$stay",
             "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT)}=$fadeOut",
         ).joinToString(", ")
         return listOf(
-            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_BODY),
+            KcI18n.component(
+                player,
+                if (mode == "actionbar") {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ACTIONBAR_DURATION_BODY
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_BODY
+                },
+            ),
             Component.text(
                 KcI18n.text(
                     player,

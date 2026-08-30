@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
@@ -99,10 +100,10 @@ object ExecutableScriptValidator {
                 if (node.string("mode") !in setOf("tellraw", "title", "actionbar")) {
                     errors += "$path: 不明な文字列表示方式です"
                 }
-                if (node.string("mode") == "title" &&
+                if (DisplayTextTimingPolicy.supports(node) &&
                     listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").any { node.int(it, -1) < 0 }
                 ) {
-                    errors += "$path: タイトルの表示時間は0秒以上である必要があります"
+                    errors += "$path: タイトル／アクションバーの表示時間は0秒以上である必要があります"
                 }
             }
             CommandType.WAIT ->
