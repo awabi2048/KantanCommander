@@ -18,6 +18,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOpenOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionState
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionListener
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
@@ -54,6 +55,7 @@ import org.bukkit.Material
 import org.bukkit.Sound
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
+import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
 import kotlin.math.roundToInt
 
@@ -193,6 +195,16 @@ class GestureSequenceEditor(
     private var activeInputDialogId: String? = null
     /** このエディターが所有するGesture GUIセッション。再オープン後の古い応答を遮断します。 */
     private var gestureSessionId: UUID? = null
+    /**
+     * OPENING中に拒否された画面更新を、セッション単位でACTIVE後へ持ち越します。
+     * updateScreenのBooleanを捨てると、ローカル状態だけが進んで表示側が古いままになるため、
+     * 画面ごとに保留フラグを持ち、再試行時は保存済みviewではなく最新stateから再生成します。
+     */
+    private var pendingUpperRender = false
+    private var pendingLowerRender = false
+    private var renderRetryTask: BukkitTask? = null
+    private var renderRetrySessionId: UUID? = null
+    private var renderRetryAttempts = 0
 
     internal fun isEditing(placement: DiskPlacement): Boolean = state.placement?.key == placement.key
 
@@ -247,18 +259,119 @@ class GestureSequenceEditor(
         gestureSessionId = snapshot.sessionId
     }
 
-    fun updateUpper(player: Player) {
-        api.updateScreen(player.uniqueId, buildUpperViewport(player))
+    fun updateUpper(player: Player): Boolean {
+        return updateScreen(player, buildUpperViewport(player), RenderTarget.UPPER)
     }
 
-    fun updateLower(player: Player) {
+    fun updateLower(player: Player): Boolean {
         val childOpen = settingChildOpen(player.uniqueId)
         val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
             lowerPanel.buildSettingChild(state, player)
         } else {
             lowerPanel.build(state, player)
         }
-        api.updateScreen(player.uniqueId, view)
+        return updateScreen(player, view, RenderTarget.LOWER)
+    }
+
+    /**
+     * 画面差し替えの結果を必ず扱います。OPENING中だけはCC-Systemの仕様上失敗するため、
+     * セッションIDを固定した再試行へ送り、ACTIVEなのに失敗した場合は異常として記録します。
+     */
+    private fun updateScreen(player: Player, view: GestureGuiView, target: RenderTarget): Boolean {
+        val updated = api.updateScreen(player.uniqueId, view)
+        if (updated) {
+            clearPendingRender(target)
+            return true
+        }
+        markPendingRender(player, target)
+        return false
+    }
+
+    private fun markPendingRender(player: Player, target: RenderTarget) {
+        when (target) {
+            RenderTarget.UPPER -> pendingUpperRender = true
+            RenderTarget.LOWER -> pendingLowerRender = true
+        }
+        val snapshot = api.snapshot(player.uniqueId)
+        val sessionId = gestureSessionId
+        if (sessionId == null || snapshot?.sessionId != sessionId) return
+        if (snapshot.state != GestureGuiSessionState.OPENING) {
+            plugin.logger.warning(
+                "ジェスチャーGUIの画面更新が拒否されました: target=$target state=${snapshot.state} " +
+                    "session=$sessionId",
+            )
+            return
+        }
+        if (renderRetryTask != null && renderRetrySessionId == sessionId) return
+        cancelRenderRetry(clearPending = false)
+        renderRetrySessionId = sessionId
+        renderRetryAttempts = 0
+        renderRetryTask = Bukkit.getScheduler().runTaskTimer(plugin, Runnable {
+            retryPendingRender(player, sessionId)
+        }, 1L, 1L)
+    }
+
+    /** OPENING完了後に、保留した画面だけを最新ローカル状態から再生成します。 */
+    private fun retryPendingRender(player: Player, sessionId: UUID) {
+        val snapshot = api.snapshot(player.uniqueId)
+        if (gestureSessionId != sessionId || snapshot?.sessionId != sessionId) {
+            cancelRenderRetry()
+            return
+        }
+        if (snapshot.state != GestureGuiSessionState.ACTIVE) {
+            renderRetryAttempts++
+            if (renderRetryAttempts >= MAX_RENDER_RETRY_TICKS) {
+                plugin.logger.warning(
+                    "ジェスチャーGUIの画面更新を再試行上限で打ち切りました: session=$sessionId state=${snapshot.state}",
+                )
+                cancelRenderRetry()
+            }
+            return
+        }
+
+        if (pendingUpperRender) {
+            if (api.updateScreen(player.uniqueId, buildUpperViewport(player))) pendingUpperRender = false
+        }
+        if (pendingLowerRender) {
+            val childOpen = settingChildOpen(player.uniqueId)
+            val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
+                lowerPanel.buildSettingChild(state, player)
+            } else {
+                lowerPanel.build(state, player)
+            }
+            if (api.updateScreen(player.uniqueId, view)) pendingLowerRender = false
+        }
+        if (!pendingUpperRender && !pendingLowerRender) {
+            cancelRenderRetry(clearPending = false)
+        } else {
+            // ACTIVE後も対象画面が見つからない場合は、毎tick無限再試行せず異常を残します。
+            plugin.logger.warning("ACTIVE後もジェスチャーGUIの画面更新に失敗しました: session=$sessionId")
+            cancelRenderRetry()
+        }
+    }
+
+    private fun clearPendingRender(target: RenderTarget) {
+        when (target) {
+            RenderTarget.UPPER -> pendingUpperRender = false
+            RenderTarget.LOWER -> pendingLowerRender = false
+        }
+        if (!pendingUpperRender && !pendingLowerRender) cancelRenderRetry(clearPending = false)
+    }
+
+    private fun cancelRenderRetry(clearPending: Boolean = true) {
+        renderRetryTask?.cancel()
+        renderRetryTask = null
+        renderRetrySessionId = null
+        renderRetryAttempts = 0
+        if (clearPending) {
+            pendingUpperRender = false
+            pendingLowerRender = false
+        }
+    }
+
+    private enum class RenderTarget {
+        UPPER,
+        LOWER,
     }
 
     fun openConfirmChild(player: Player) {
@@ -355,6 +468,8 @@ class GestureSequenceEditor(
         val player = Bukkit.getPlayer(ownerId)
         val dialogId = activeInputDialogId
         invalidateInput()
+        // 古いセッションの再試行が新セッションの画面を上書きしないよう、終了時に必ず破棄します。
+        cancelRenderRetry()
         if (dialogId != null && player != null && sessionId != null) {
             runCatching {
                 api.closeExternalDialogIfCurrent(
@@ -535,10 +650,14 @@ class GestureSequenceEditor(
                                 elements.add(GestureGuiElement(
                                     elementId = "node-reorder:$directionName:${node.id}",
                                     bounds = iconBounds(x, reorderY, reorderSize),
-                                    acceptedGestures = if (enabled) {
-                                        setOf(GestureGuiGesture.PRIMARY)
-                                    } else {
-                                        emptySet()
+                                    // 隣接ノードの状態は他の操作や外部保存で変わり得るため、
+                                    // 描画時のenabledを入力可否へ固定しません。クリック時に
+                                    // 最新グラフを再取得し、表示更新なしでも誤操作を防ぎます。
+                                    acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                                    gestureGuard = { _, _ ->
+                                        plugin.scripts.load(state.scriptId)?.graph?.let { currentGraph ->
+                                            GraphEditor.canSwapAdjacent(currentGraph, node.id, direction)
+                                        } == true
                                     },
                                     targetVisualId = "node-reorder-$directionName-glyph-${node.id}",
                                 ))
@@ -2495,8 +2614,16 @@ class GestureSequenceEditor(
             elements.add(GestureGuiElement(
                 elementId = id,
                 bounds = navBounds(x, y, GestureEditorLayout.ZOOM_SIZE),
-                // 上限／下限では要素を無効化し、クリック音を含めて何もしません。
-                acceptedGestures = if (enabled) setOf(GestureGuiGesture.PRIMARY) else emptySet(),
+                // 上限／下限はstateの変更後もクリック時点で再判定し、古いviewが
+                // 残った場合にも誤操作と効果音を発生させません。
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                gestureGuard = { _, _ ->
+                    if (id == "nav-zoom-in") {
+                        state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
+                    } else {
+                        state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
+                    }
+                },
                 targetVisualId = "$id-glyph",
             ))
         }
@@ -2514,7 +2641,8 @@ class GestureSequenceEditor(
         elements.add(GestureGuiElement(
             elementId = "nav-zoom-reset",
             bounds = navBounds(GestureEditorLayout.ZOOM_X, resetY, GestureEditorLayout.ZOOM_SIZE),
-            acceptedGestures = if (resetEnabled) setOf(GestureGuiGesture.PRIMARY) else emptySet(),
+            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            gestureGuard = { _, _ -> state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL },
             targetVisualId = "nav-zoom-reset-glyph",
         ))
     }
@@ -2631,6 +2759,8 @@ class GestureSequenceEditor(
         // GestureLowerPanelと同じ4項目単位で設定タブをページ分割します。
         const val SETTINGS_PAGE_SIZE = 4
         const val DIALOG_OWNER = "kantan-commander"
+        /** CC-SystemのOPENING完了待ちを吸収する上限（13tickのアニメーションより長くします）。 */
+        const val MAX_RENDER_RETRY_TICKS = 20
     }
 
 }

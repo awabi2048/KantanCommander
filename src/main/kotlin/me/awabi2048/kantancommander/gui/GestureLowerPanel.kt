@@ -153,15 +153,6 @@ class GestureLowerPanel(
         val heldDiskSetting = !contextOverrideActive &&
             field.key == "diskId" && node.type == CommandType.DISK_CALL
         val heldMainHandSetting = heldItemSetting || heldDiskSetting
-        val mainHandAvailable = when {
-            // 有効なクリック面を先に確保し、無効なアイテムでもハンドラへ届けます。
-            // PDC不一致をここで無効化すると、クリック音もエラー表示もなく「無反応」
-            // になるため、形式の検証はapplyHeldDisk側で行います。
-            heldDiskSetting -> player.inventory.itemInMainHand.type != Material.AIR
-            heldItemSetting -> player.inventory.itemInMainHand.type != Material.AIR
-            else -> false
-        }
-        val configuredItem = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
         if (heldMainHandSetting || (descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS)) {
             addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.16, Material.CYAN_TERRACOTTA, 4)
             addText(
@@ -178,13 +169,15 @@ class GestureLowerPanel(
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
                 bounds = rect(0.28, 0.02, 1.2, 0.16),
-                // 空のメインハンドだけは入力面を無効化します。空でないアイテムは
-                // 形式不一致でもハンドラへ届け、利用者へ原因を通知できるようにします。
-                acceptedGestures = if (heldMainHandSetting && !mainHandAvailable) {
-                    emptySet()
-                } else if (heldMainHandSetting) {
+                // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
+                // 空集合を焼き付けず、クリック時点のガードで判定します。空手時は
+                // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
+                acceptedGestures = if (heldMainHandSetting) {
                     GestureGuiClickPolicy.MAIN_HAND
                 } else setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY),
+                gestureGuard = if (heldMainHandSetting) {
+                    { actor, _ -> GestureGuiClickPolicy.hasMainHandItem(actor) }
+                } else null,
                 targetVisualId = "lower-edit-bg",
                 hoverText = singleLineHover(
                     KcI18n.text(
@@ -204,10 +197,14 @@ class GestureLowerPanel(
             elements.add(GestureGuiElement(
                 elementId = "lower-item-get",
                 bounds = rect(0.28, -0.15, 1.2, 0.12),
-                // 設定値がない取得ボタンは入力面を作らず、効果音を含めて無操作にします。
-                acceptedGestures = if (!configuredItem) {
-                    emptySet()
-                } else setOf(GestureGuiGesture.PRIMARY),
+                // 設定有無は外部保存や別経路の更新でも変わるため、表示時のBooleanを
+                // acceptedGesturesへ固定せず、クリック時点で最新ノードを確認します。
+                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                gestureGuard = { _, _ ->
+                    plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                        current.string("item").isNotBlank() || current.string("itemData").isNotBlank()
+                    } == true
+                },
                 targetVisualId = "lower-item-get-bg",
                 hoverText = singleLineHover(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),

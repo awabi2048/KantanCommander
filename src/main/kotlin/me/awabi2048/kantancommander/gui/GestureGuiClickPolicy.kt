@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
+import org.bukkit.Material
+import org.bukkit.entity.Player
 
 /**
  * クリック可能なメインハンド設定が受け付ける入力を一箇所で定義します。
@@ -15,4 +17,11 @@ internal object GestureGuiClickPolicy {
         GestureGuiGesture.SHIFT_PRIMARY,
         GestureGuiGesture.SHIFT_SECONDARY,
     )
+
+    /** メインハンド入力の可否は画面生成時ではなく、実際のクリック時に判定します。 */
+    fun hasMainHandItem(player: Player): Boolean =
+        hasMainHandItem(player.inventory.itemInMainHand.type)
+
+    /** Paperオブジェクトへ依存しない判定本体です。入力ポリシーの回帰テストにも使います。 */
+    fun hasMainHandItem(material: Material): Boolean = material != Material.AIR
 }
