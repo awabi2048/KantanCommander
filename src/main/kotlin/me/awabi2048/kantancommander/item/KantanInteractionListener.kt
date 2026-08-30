@@ -43,6 +43,14 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         ) {
             // 拡張コマンドブロックを手に持った右クリックは通常のブロック配置を優先し、編集画面を開かない。
             if (itemKind == KantanItemKind.BLOCK) return
+            // GUIを開く経路はイベントをキャンセルするため、バニラが送る腕振りが
+            // 発生しません。実際に編集／ディスク挿入を受け付ける右クリックだけ、
+            // 使用した手に対応するスイングを明示的に送って操作の成立を見せます。
+            if (event.hand == EquipmentSlot.OFF_HAND) {
+                player.swingOffHand()
+            } else {
+                player.swingMainHand()
+            }
             event.isCancelled = true
             val script = plugin.scripts.load(clickedPlacement.scriptId) ?: return
             if (!plugin.placementAccess.canManage(player, clickedPlacement.world)) {
