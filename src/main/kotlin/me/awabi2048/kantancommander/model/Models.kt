@@ -128,6 +128,13 @@ data class CommandNode(
         val fields = configuredFields ?: linkedSetOf<String>().also { configuredFields = it }
         fields += keys
     }
+
+    /** 明示設定の記録を解除し、初期値へ戻した状態を表示へ正しく伝えます。 */
+    fun clearConfigured(vararg keys: String) {
+        if (keys.isEmpty()) return
+        configuredFields?.removeAll(keys.toSet())
+        if (configuredFields?.isEmpty() == true) configuredFields = null
+    }
 }
 
 enum class ContextSource { BASE, PREVIOUS }

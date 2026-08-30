@@ -92,8 +92,6 @@ data class GestureEditorState(
     var selectedAddPoint: MapPoint? = null,
     /** PICKERへ遷移した経路上で実際にクリックされた判定セル。競合検証に使います。 */
     var selectedInsertionCandidatePoint: MapPoint? = null,
-    /** PICKERで作成するノードの配置予定位置。ズーム／パン後も同じ位置を示します。 */
-    var selectedInsertionPoint: MapPoint? = null,
     /** 個別設定画面が参照する共有コンテキスト（インベントリGUIと同じ識別情報）。 */
     var settingContext: CommandSettingContext? = null,
     /** 個別設定画面を開いたフィールドキー。設定保存後の表示更新に使います。 */
@@ -503,8 +501,17 @@ class GestureSequenceEditor(
 
     private fun buildUpperViewport(player: Player): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
-        val layout = runCatching { GraphLayoutEngine.layout(script.graph) }
+        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }
             .getOrElse { return layoutErrorView(player) }
+        // 挿入先を選択中は、実グラフへ仮ノードを適用したレイアウトを使います。
+        // クリック元の経路セルから座標だけを推測すると、後続ノードが右へ移動する
+        // 実際の挿入結果と候補アイコンがずれるため、表示・経路・幅を同じ仮想グラフ
+        // から生成します。
+        val insertionPreview = state.pendingInsertion?.let { target ->
+            GraphLayoutEngine.previewInsertion(script.graph, target)
+        }
+        val renderGraph = insertionPreview?.graph ?: script.graph
+        val layout = insertionPreview?.layout ?: persistedLayout
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
@@ -553,8 +560,8 @@ class GestureSequenceEditor(
             val cy = metrics.y(rowIndex)
             when (cell.kind) {
                 MapCellKind.NODE -> {
-                    val node = cell.nodeId?.let { script.graph.nodes[it] }
-                    if (node != null) {
+                    val node = cell.nodeId?.let { renderGraph.nodes[it] }
+                    if (node != null && node.id != insertionPreview?.insertedNodeId) {
                         val isSelected = state.selectedNodeId == node.id
                         val glowColor = if (isSelected) Color.YELLOW.asARGB() else null
                         val incomplete = node.id in incompleteNodeIds
@@ -602,20 +609,22 @@ class GestureSequenceEditor(
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
-                        elements.add(GestureGuiElement(
-                            elementId = "node:${node.id}",
-                            bounds = iconBounds(cx, cy, metrics.iconSize),
-                            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                            targetVisualId = "node-icon-${node.id}",
-                            hoverText = GestureGuiHoverText(
-                                text = hoverText,
-                                x = cx,
-                                y = cy + metrics.iconSize * 0.9,
-                                size = 0.006,
-                                lineWidth = 180,
-                            ),
-                        ))
-                        if (isSelected && node.type !in setOf(
+                        if (insertionPreview == null) {
+                            elements.add(GestureGuiElement(
+                                elementId = "node:${node.id}",
+                                bounds = iconBounds(cx, cy, metrics.iconSize),
+                                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                                targetVisualId = "node-icon-${node.id}",
+                                hoverText = GestureGuiHoverText(
+                                    text = hoverText,
+                                    x = cx,
+                                    y = cy + metrics.iconSize * 0.9,
+                                    size = 0.006,
+                                    lineWidth = 180,
+                                ),
+                            ))
+                        }
+                        if (insertionPreview == null && isSelected && node.type !in setOf(
                                 CommandType.CONDITION,
                                 CommandType.MERGE,
                                 CommandType.FOR_START,
@@ -638,7 +647,7 @@ class GestureSequenceEditor(
                                     width = reorderSize,
                                     height = reorderSize,
                                     blockData = Bukkit.createBlockData(
-                                        if (enabled) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE,
+                                        if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                                     ),
                                     layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                                 ))
@@ -671,7 +680,7 @@ class GestureSequenceEditor(
                     }
                 }
                 MapCellKind.ADD -> {
-                    val isSelected = state.selectedAddPoint == MapPoint(gx, gy)
+                    val isSelected = insertionPreview == null && state.selectedAddPoint == MapPoint(gx, gy)
                     visuals.add(GestureGuiVisual.Block(
                         visualId = "add-block-$gx-$gy",
                         x = cx, y = cy,
@@ -689,26 +698,28 @@ class GestureSequenceEditor(
                         size = 0.012,
                         layer = GestureEditorLayout.ICON_LAYER,
                     ))
-                    elements.add(GestureGuiElement(
-                        elementId = "add:$gx:$gy",
-                        bounds = iconBounds(cx, cy, metrics.iconSize),
-                        acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-                        targetVisualId = "add-plus-$gx-$gy",
-                        hoverText = GestureGuiHoverText(
-                            text = net.kyori.adventure.text.Component.text(
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_ADD),
+                    if (insertionPreview == null) {
+                        elements.add(GestureGuiElement(
+                            elementId = "add:$gx:$gy",
+                            bounds = iconBounds(cx, cy, metrics.iconSize),
+                            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                            targetVisualId = "add-plus-$gx-$gy",
+                            hoverText = GestureGuiHoverText(
+                                text = net.kyori.adventure.text.Component.text(
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_ADD),
+                                ),
+                                x = cx,
+                                y = cy + metrics.iconSize * 0.9,
+                                size = 0.006,
+                                lineWidth = 120,
                             ),
-                            x = cx,
-                            y = cy + metrics.iconSize * 0.9,
-                            size = 0.006,
-                            lineWidth = 120,
-                        ),
-                    ))
+                        ))
+                    }
                 }
                 MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
                     // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
                     val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
-                    if (!hasAddNeighbor && cell.insertionTarget != null) {
+                    if (insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
                         elements.add(GestureGuiElement(
                             elementId = "path:${gx}:${gy}",
                             bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
@@ -752,17 +763,14 @@ class GestureSequenceEditor(
             ))
         }
 
-        // 経路をクリックしてPICKERへ移った場合は、確定前の追加候補位置を
-        // 既存経路の上へ仮アイコンとして表示します。クリック元と実際の挿入先が
-        // 異なる水平経路でも、候補位置を独立した「＋」として示すことで、
-        // どこへ追加されるかを選択中に確認できます。キャンセル時はstateを
-        // nullへ戻すため、この表示も同時に消えます。
-        val insertionCandidate = listOfNotNull(
-            state.selectedInsertionPoint,
-            state.selectedInsertionCandidatePoint,
-        ).firstOrNull { selectedGlobal ->
+        // 経路をクリックしてPICKERへ移った場合は、仮ノードを含むレイアウト上の
+        // 実際の挿入位置へ候補アイコンを置きます。仮ノード自体の標準アイコンは
+        // 上で描画せず、ここで「＋」と黄色ハイライトへ差し替えます。これにより、
+        // クリック元と異なる位置へ移動する後続コマンドも同じプレビュー上で確認できます。
+        val insertionCandidate = insertionPreview?.layout?.nodePoints?.get(insertionPreview.insertedNodeId)
+            ?.takeIf { selectedGlobal ->
             projection.contains(MapPoint(selectedGlobal.x - state.origin.x, selectedGlobal.y - state.origin.y))
-        }
+            }
         insertionCandidate?.let { selectedGlobal ->
             val local = MapPoint(
                 selectedGlobal.x - state.origin.x,
@@ -790,7 +798,7 @@ class GestureSequenceEditor(
             ))
         }
 
-        addNavigation(visuals, elements)
+        addNavigation(visuals, elements, layout, metrics.columns, metrics.rows)
 
         // back-to-start（十字の下・左に隣接）
         visuals.add(GestureGuiVisual.Block(
@@ -2196,7 +2204,9 @@ class GestureSequenceEditor(
                     "source" -> {
                         if (updateSettingNode(player, settingContext) { CommandSettingsModel.toggleContextSource(it) }) updateLower(player)
                     }
-                    "inherit" -> if (updateSettingNode(player, settingContext) { it.contextOverride = null }) showSettingScreen()
+                    "inherit" -> if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.clearContextOverride(it)
+                    }) showSettingScreen()
                 }
             }
         }
@@ -2246,7 +2256,6 @@ class GestureSequenceEditor(
                         state.selectedNodeId = nodeId
                         state.selectedAddPoint = null
                         state.selectedInsertionCandidatePoint = null
-                        state.selectedInsertionPoint = null
                         state.pendingInsertion = null
                         clearSettingState()
                         state.lowerMode = GestureLowerMode.SETTINGS
@@ -2268,7 +2277,6 @@ class GestureSequenceEditor(
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = null
-                state.selectedInsertionPoint = null
                 state.confirmNodeId = null
                 state.pendingInsertion = null
                 clearSettingState()
@@ -2305,8 +2313,7 @@ class GestureSequenceEditor(
                     "nav-right" -> MapPoint(1, 0)
                     else -> return
                 }
-                val script = plugin.scripts.load(state.scriptId) ?: return
-                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return
+                val layout = currentViewportLayout() ?: return
                 val metrics = viewportMetrics(zoomScale())
                 val nextOrigin = GestureEditorLayout.clampOrigin(
                     MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
@@ -2345,7 +2352,6 @@ class GestureSequenceEditor(
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = null
-                state.selectedInsertionPoint = null
                 updateUpper(player)
                 updateLower(player)
             }
@@ -2371,7 +2377,6 @@ class GestureSequenceEditor(
                 clearSettingState()
                 state.selectedAddPoint = MapPoint(gx, gy)
                 state.selectedInsertionCandidatePoint = null
-                state.selectedInsertionPoint = null
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
@@ -2394,7 +2399,6 @@ class GestureSequenceEditor(
                 clearSettingState()
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = clickedPoint
-                state.selectedInsertionPoint = layout.insertionPreviewPoint(clickedPoint, target) ?: clickedPoint
                 state.lowerMode = GestureLowerMode.PICKER
                 state.pickerCategory = 0
                 state.pickerPage = 0
@@ -2497,7 +2501,6 @@ class GestureSequenceEditor(
                 state.pendingInsertion = null
                 clearSettingState()
                 state.selectedInsertionCandidatePoint = null
-                state.selectedInsertionPoint = null
                 // 新規作成したコマンドを即座に選択し、下部設定パネルへ編集対象を引き継ぎます。
                 state.selectedNodeId = inserted.id
                 state.selectedAddPoint = null
@@ -2517,7 +2520,6 @@ class GestureSequenceEditor(
                 state.pendingInsertion = null
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = null
-                state.selectedInsertionPoint = null
                 clearSettingState()
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
@@ -2559,7 +2561,6 @@ class GestureSequenceEditor(
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = null
-                state.selectedInsertionPoint = null
                 clearSettingState()
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
@@ -2705,7 +2706,13 @@ class GestureSequenceEditor(
         GestureGuiBounds(bounds.minX * scale, bounds.minY * scale, bounds.maxX * scale, bounds.maxY * scale)
 
     /** 十字ナビゲーション（75%サイズ・右下） */
-    private fun addNavigation(visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
+    private fun addNavigation(
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        layout: GraphLayout,
+        viewportWidth: Int,
+        viewportHeight: Int,
+    ) {
         val s = GestureEditorLayout.NAV_SIZE
         val p = GestureEditorLayout.NAV_PITCH
         val cx = GestureEditorLayout.NAV_CENTER_X
@@ -2718,17 +2725,23 @@ class GestureSequenceEditor(
         ).forEach { quad ->
             val nx = cx + quad.second * p
             val ny = cy + quad.third * p
+            val delta = MapPoint(quad.second, -quad.third)
+            val enabled = layout.canMove(state.origin, delta.x, delta.y, viewportWidth, viewportHeight)
             visuals.add(GestureGuiVisual.Block(
                 visualId = "${quad.first}-block",
                 x = nx, y = ny,
                 width = s, height = s,
-                blockData = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                blockData = Bukkit.createBlockData(
+                    if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                ),
                 layer = 4,
             ))
             visuals.add(GestureGuiVisual.Text(
                 visualId = "${quad.first}-glyph",
                 x = nx, y = ny - 0.01,
-                text = net.kyori.adventure.text.Component.text(quad.fourth),
+                text = net.kyori.adventure.text.Component.text(quad.fourth).color(
+                    if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                ),
                 size = 0.011,
                 layer = 6,
             ))
@@ -2736,9 +2749,28 @@ class GestureSequenceEditor(
                 elementId = quad.first,
                 bounds = navBounds(nx, ny, s),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                // 表示後のパンや挿入候補の変化も入力時点で再評価し、無効化された
+                // ナビゲーションでは効果音・Actionを発生させません。
+                gestureGuard = { _, _ -> canMoveCurrentViewport(delta) },
                 targetVisualId = "${quad.first}-glyph",
             ))
         }
+    }
+
+    /** 表示中の仮想挿入状態を含め、現在のビューポート移動可否を再計算します。 */
+    private fun canMoveCurrentViewport(delta: MapPoint): Boolean {
+        val layout = currentViewportLayout() ?: return false
+        val metrics = viewportMetrics(zoomScale())
+        return layout.canMove(state.origin, delta.x, delta.y, metrics.columns, metrics.rows)
+    }
+
+    /** 描画・ナビゲーション入力で共有する、現在の永続／仮想レイアウトです。 */
+    private fun currentViewportLayout(): GraphLayout? {
+        val script = plugin.scripts.load(state.scriptId) ?: return null
+        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return null
+        return state.pendingInsertion?.let { target ->
+            GraphLayoutEngine.previewInsertion(script.graph, target)?.layout
+        } ?: persistedLayout
     }
 
     /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
@@ -2755,7 +2787,9 @@ class GestureSequenceEditor(
             visuals.add(GestureGuiVisual.Block(
                 visualId = "$id-block", x = x, y = y,
                 width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
-                blockData = Bukkit.createBlockData(if (enabled) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE), layer = 4,
+                blockData = Bukkit.createBlockData(
+                    if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                ), layer = 4,
             ))
             visuals.add(GestureGuiVisual.Text(
                 visualId = "$id-glyph", x = x, y = y - 0.01,
@@ -2784,11 +2818,15 @@ class GestureSequenceEditor(
         visuals.add(GestureGuiVisual.Block(
             visualId = "nav-zoom-reset-block", x = GestureEditorLayout.ZOOM_X, y = resetY,
             width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
-            blockData = Bukkit.createBlockData(Material.BROWN_CONCRETE), layer = 4,
+            blockData = Bukkit.createBlockData(
+                if (resetEnabled) Material.BROWN_CONCRETE else DisabledGuiVisualPolicy.material,
+            ), layer = 4,
         ))
         visuals.add(GestureGuiVisual.Text(
             visualId = "nav-zoom-reset-glyph", x = GestureEditorLayout.ZOOM_X, y = resetY - 0.01,
-            text = net.kyori.adventure.text.Component.text("↺"), size = 0.009, layer = 6,
+            text = net.kyori.adventure.text.Component.text("↺").color(
+                if (resetEnabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+            ), size = 0.009, layer = 6,
         ))
         elements.add(GestureGuiElement(
             elementId = "nav-zoom-reset",

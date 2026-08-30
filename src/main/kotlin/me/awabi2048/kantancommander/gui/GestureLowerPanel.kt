@@ -410,12 +410,7 @@ class GestureLowerPanel(
         }
     }
 
-    /**
-     * 無効な対象継承だけは薄灰色コンクリートで表します。
-     *
-     * 他の無効項目まで同じ素材へ変えると既存の無効状態の意味が変わるため、
-     * 「前置き対象がないため選べない」状態だけを明示的に区別します。
-     */
+    /** 操作不能な設定候補は、候補の種類にかかわらず薄灰色コンクリートで表します。 */
     private fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
         if (choice.enabled) {
             GestureSettingVisualPolicy.material(
@@ -423,10 +418,8 @@ class GestureLowerPanel(
                 choice.valueState,
                 choice.selected,
             )
-        } else if (choice.id == "target:${TargetCategory.INHERITED.name}") {
-            Material.LIGHT_GRAY_CONCRETE
         } else {
-            Material.GRAY_STAINED_GLASS
+            DisabledGuiVisualPolicy.material
         }
 
     /**
@@ -1628,7 +1621,7 @@ class GestureLowerPanel(
                 centerY,
                 0.18,
                 0.10,
-                if (available) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE,
+                if (available) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                 4,
             )
             addText(

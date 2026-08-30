@@ -6,7 +6,6 @@ import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
-import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.Test
@@ -386,17 +385,43 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `insertion preview points to the new node center instead of clicked path cell`() {
+    fun `every vertical condition segment uses the same target as its horizontal false branch`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val falseFirst = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        val falseTail = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val conditionPoint = requireNotNull(layout.nodePoints[condition.id])
+        val falsePoint = requireNotNull(layout.nodePoints[falseFirst.id])
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val expected = InsertionTarget(falseTail.id, GraphEditor.Edge.NEXT, condition.id)
+
+        assertTrue(falsePoint.y > conditionPoint.y + 1)
+        (conditionPoint.y + 1..falsePoint.y).forEach { y ->
+            assertEquals(expected, layout.cells[MapPoint(conditionPoint.x, y)]?.insertionTarget)
+            assertEquals(expected, layout.cells[MapPoint(mergePoint.x, y)]?.insertionTarget)
+        }
+    }
+
+    @Test
+    fun `insertion preview relayouts the graph before highlighting the new node`() {
         val graph = CommandGraph.empty()
         val first = GraphEditor.append(graph, CommandType.WAIT)
-        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val second = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
         val layout = GraphLayoutEngine.layout(graph)
         val pathPoint = MapPoint(2, 1)
         val target = requireNotNull(layout.cells[pathPoint]?.insertionTarget)
+        val preview = requireNotNull(GraphLayoutEngine.previewInsertion(graph, target))
 
-        assertEquals(MapPoint(3, 1), layout.insertionPreviewPoint(pathPoint, target))
-        assertNotEquals(pathPoint, layout.insertionPreviewPoint(pathPoint, target))
+        assertEquals(MapPoint(3, 1), preview.layout.nodePoints[preview.insertedNodeId])
+        assertEquals(MapPoint(5, 1), preview.layout.nodePoints[second.id])
         assertEquals(first.id, target.sourceId)
+        assertEquals(2, graph.nodes.size)
+        assertEquals(3, preview.graph.nodes.size)
     }
 
     @Test

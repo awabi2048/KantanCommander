@@ -436,6 +436,18 @@ object CommandSettingsModel {
         node.markConfigured("context")
     }
 
+    /** コンテキスト設定を「すべて継承」へ戻す共通操作です。 */
+    fun clearContextOverride(node: CommandNode) {
+        check(node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
+            "${node.type} は実行コンテキスト上書きを持てません"
+        }
+        node.contextOverride = null
+        // 上書き本体だけ消してPREVIOUSを残すと、表示は「全継承」でも実行時には
+        // 直前文脈を選び続けます。入力の意味と実行結果を一致させるため、継承元もBASEへ戻します。
+        node.contextSource = ContextSource.BASE
+        node.clearConfigured("context")
+    }
+
     /**
      * 設定画面で表示する値の状態を、文字列値と構造化値の両方から一元判定します。
      *

@@ -40,6 +40,20 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `clearing context resets both override values and source selection`() {
+        val node = CommandType.APPLY_EFFECT.newNode().apply {
+            contextOverride = ExecutionContextSpec()
+            contextSource = me.awabi2048.kantancommander.model.ContextSource.PREVIOUS
+        }
+
+        CommandSettingsModel.clearContextOverride(node)
+
+        assertNull(node.contextOverride)
+        assertEquals(me.awabi2048.kantancommander.model.ContextSource.BASE, node.contextSource)
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "context"))
+    }
+
+    @Test
     fun `visible fields apply the same conditional rules`() {
         val display = CommandType.DISPLAY_TEXT.newNode()
         assertEquals(false, CommandSettingsModel.visibleFields(display).any { it.key == "staySeconds" })

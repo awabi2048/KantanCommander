@@ -145,20 +145,6 @@ data class GraphLayout(
         return ViewportProjection(origin, width, height, visible, boundaries)
     }
 
-    /**
-     * 挿入候補をクリックしたとき、新しく作成するノードが配置される論理座標を返します。
-     *
-     * 水平経路は表示上の都合で複数セルに延長されることがありますが、編集操作の意味は
-     * どのセルをクリックしても同じエッジ直後への挿入です。そのため、ハイライトはクリック
-     * 元セルではなく、エッジ元から2セル先（新ノードの中心）へ表示します。FALSE枝だけは
-     * 枝の行が条件分岐のTRUE枝の高さに依存するため、クリックした候補セルの行を引き継ぎます。
-     */
-    fun insertionPreviewPoint(clickedPoint: MapPoint, target: InsertionTarget): MapPoint? {
-        if (target.edge == GraphEditor.Edge.ENTRY) return clickedPoint
-        val sourcePoint = target.sourceId?.let(nodePoints::get) ?: return null
-        return MapPoint(sourcePoint.x + 2, clickedPoint.y)
-    }
-
     fun canMove(origin: MapPoint, dx: Int, dy: Int, viewportWidth: Int, viewportHeight: Int): Boolean {
         val next = MapPoint(origin.x + dx, origin.y + dy)
         if (next.x < 0 || next.y < 0) return false
@@ -167,6 +153,13 @@ data class GraphLayout(
         return next != origin
     }
 }
+
+/** 実グラフへ未保存の仮ノードを挿入した状態と、その対応レイアウトです。 */
+data class InsertionPreview(
+    val graph: CommandGraph,
+    val layout: GraphLayout,
+    val insertedNodeId: UUID,
+)
 
 /**
  * 永続化されたグラフだけから、余白を含む論理マップを毎回再構築します。
@@ -192,6 +185,29 @@ object GraphLayoutEngine {
             width = maxX + 2,
             height = maxY + 2,
         )
+    }
+
+    /**
+     * 挿入候補を、実際に仮ノードを含むグラフとしてレイアウトします。
+     *
+     * クリック元セルから座標を推測すると、挿入後に右へ移動する後続ノードと
+     * ハイライトがずれます。保存前のコピーへGraphEditorの実処理を適用し、
+     * 本番描画と同じレイアウトエンジンを通すことで、後続のノード・経路・幅を
+     * すべて同じ論理状態から生成します。仮ノード自体は呼び出し側で記号表示へ
+     * 差し替えるため、WAITを実行したり保存したりすることはありません。
+     */
+    fun previewInsertion(
+        graph: CommandGraph,
+        target: InsertionTarget,
+        placeholderType: CommandType = CommandType.WAIT,
+    ): InsertionPreview? {
+        if (placeholderType == CommandType.MERGE || placeholderType == CommandType.FOR_END) return null
+        val candidate = graph.deepCopy()
+        val inserted = runCatching {
+            GraphEditor.insert(candidate, target.sourceId, target.edge, placeholderType)
+        }.getOrNull() ?: return null
+        val previewLayout = runCatching { layout(candidate) }.getOrNull() ?: return null
+        return InsertionPreview(candidate, previewLayout, inserted.id)
     }
 
     private class Builder(
@@ -303,14 +319,10 @@ object GraphLayoutEngine {
             }
 
             val falseY = trueSegment.maxY + 2
-            putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
             // FALSE枝は条件分岐アイコンの中心列から真下へ降ろします。これにより、
             // 「分岐ノードの下側からfalse鎖が出る」という接続方向を論理マップでも
             // 保証します。縦線と角は接続専用で、挿入候補は下段の水平経路へ付与します。
-            for (verticalY in y + 1 until falseY) {
-                putPath(x, verticalY, MapCellKind.BRANCH_PATH)
-            }
-            putPath(x, falseY, MapCellKind.BRANCH_PATH)
+            putVerticalBranchPath(x, y + 1, falseY)
             putPath(
                 x + 1,
                 falseY,
@@ -362,11 +374,7 @@ object GraphLayoutEngine {
             // 挿入先を持たせていなかったため、縦幹をクリックしても無反応でした。
             // 水平枝と同じedgeへ解決し、どの高さからでも同じFALSE枝の直後へ
             // 挿入できるようにします。
-            if (falseTarget != null) {
-                for (verticalY in y + 1..falseY) {
-                    addInsertionTarget(MapPoint(x, verticalY), falseTarget)
-                }
-            }
+            markVerticalInsertionTarget(x, y + 1, falseY, falseTarget)
             fillHorizontal(
                 trueSegment.mainNextX - 1,
                 mergeX - 1,
@@ -385,16 +393,10 @@ object GraphLayoutEngine {
                 falseTarget?.edge,
                 condition.id,
             )
-            // 合流側の縦線・角はfalse末尾からMERGEへ接続するための装飾です。
-            // 水平部分は全セルが同じ挿入判定領域ですが、縦線へは候補を持たせません。
-            for (verticalY in y + 1..falseY) {
-                putPath(mergeX, verticalY, MapCellKind.BRANCH_PATH)
-            }
-            if (falseTarget != null) {
-                for (verticalY in y + 1..falseY) {
-                    addInsertionTarget(MapPoint(mergeX, verticalY), falseTarget)
-                }
-            }
+            // 合流側の縦線・角もfalse末尾からMERGEへ接続するFALSE経路の一部です。
+            // 水平部分と同じ挿入判定領域を全セルへ付与し、縦横で操作仕様を揃えます。
+            putVerticalBranchPath(mergeX, y + 1, falseY)
+            markVerticalInsertionTarget(mergeX, y + 1, falseY, falseTarget)
 
             val merge = graph.nodes[mergeId] ?: return Segment(mergeNodeX, falseSegment.maxY, condition.id)
             // 枝が空／短い場合でも、角セルを合流直前の経路として明示的に
@@ -425,10 +427,7 @@ object GraphLayoutEngine {
             // FALSE枝は条件分岐アイコンの中心列から真下へ降ろします。縦線も
             // 水平枝と同じFALSE経路の一部なので、下段へ合流しない条件分岐でも
             // 同じ挿入先を全高さへ付与します。
-            for (verticalY in y + 1 until falseY) {
-                putPath(x, verticalY, MapCellKind.BRANCH_PATH)
-            }
-            putPath(x, falseY, MapCellKind.BRANCH_PATH)
+            putVerticalBranchPath(x, y + 1, falseY)
             putPath(
                 x + 1,
                 falseY,
@@ -456,11 +455,7 @@ object GraphLayoutEngine {
                     InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
                 else -> null
             }
-            if (falseTarget != null) {
-                for (verticalY in y + 1..falseY) {
-                    addInsertionTarget(MapPoint(x, verticalY), falseTarget)
-                }
-            }
+            markVerticalInsertionTarget(x, y + 1, falseY, falseTarget)
             val trueOpen = trueStart == null || trueSegment.hasOpenEnd ||
                 (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop))
             val falseOpen = falseStart == null || falseSegment.hasOpenEnd ||
@@ -522,10 +517,31 @@ object GraphLayoutEngine {
             if (from > to) return
             // 長さ調整で同じ論理エッジを複数セルへ描く場合は、from..to の全セルを
             // 同じ挿入判定領域として扱います。クリック位置に依存して挿入位置が変わる
-            // と見た目とデータ構造が乖離するため、挿入先は sourceId/edge で統一し、
-            // 実際の新ノード位置は GraphLayout.insertionPreviewPoint で示します。
+            // と見た目とデータ構造が乖離するため、挿入先はsourceId/edgeで統一し、
+            // 実際の新ノード位置は仮ノードを含むGraphLayoutから取得します。
             for (pathX in from..to) {
                 putPath(pathX, y, kind, sourceId, edge, mergeConditionId)
+            }
+        }
+
+        /** 分岐の縦経路を水平経路と同じセル種別で生成します。 */
+        private fun putVerticalBranchPath(x: Int, fromY: Int, toY: Int) {
+            if (fromY > toY) return
+            for (verticalY in fromY..toY) {
+                putPath(x, verticalY, MapCellKind.BRANCH_PATH)
+            }
+        }
+
+        /** 縦経路上の全セルへ、対応する水平枝と同じ挿入先を付与します。 */
+        private fun markVerticalInsertionTarget(
+            x: Int,
+            fromY: Int,
+            toY: Int,
+            target: InsertionTarget?,
+        ) {
+            if (target == null || fromY > toY) return
+            for (verticalY in fromY..toY) {
+                addInsertionTarget(MapPoint(x, verticalY), target)
             }
         }
 

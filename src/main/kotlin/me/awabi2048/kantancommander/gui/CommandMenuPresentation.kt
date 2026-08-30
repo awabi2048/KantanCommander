@@ -4,6 +4,12 @@ import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.supportsContextOverride
+import org.bukkit.Material
+
+/** 操作不能な選択肢の見た目を両GUIで統一します。効果音の有無は入力契約側で制御します。 */
+internal object DisabledGuiVisualPolicy {
+    val material: Material = Material.LIGHT_GRAY_CONCRETE
+}
 
 /** コマンド選択画面で、実処理と実行順序の制御を混在させないための表示分類です。 */
 internal enum class CommandCategory(

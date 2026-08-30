@@ -123,7 +123,8 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 actions = listOf(GuiMenuActionIntent.AnyClick(actionId, name)),
             )
         } else {
-            KcGui.entry(player, slot, Material.BARRIER, "", role = GuiElementRole.DECORATION)
+            // ページ外の選択肢も位置を維持したまま、無効状態の共通素材で示します。
+            KcGui.entry(player, slot, DisabledGuiVisualPolicy.material, "", role = GuiElementRole.DECORATION)
         }
     }
 

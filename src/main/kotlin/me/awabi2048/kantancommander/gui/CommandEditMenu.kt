@@ -28,7 +28,6 @@ import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
-import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -603,7 +602,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "inherit" to MenuActionHandler { context ->
-                        if (!updateNode(context.player, context.route) { it.contextOverride = null }) {
+                        if (!updateNode(context.player, context.route) { CommandSettingsModel.clearContextOverride(it) }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
@@ -869,7 +868,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     ): MenuElement = KcGui.menuEntry(
         player = player,
         slot = slot,
-        material = if (enabled) material else Material.GRAY_STAINED_GLASS,
+        material = if (enabled) material else DisabledGuiVisualPolicy.material,
         name = name,
         style = style,
         description = description
@@ -1560,16 +1559,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             currentZ = current?.z ?: location.z,
         ) { x, y, z ->
             updateNode(player, route) { command ->
-                val spec = PositionSpec(PositionKind.COORDINATES, x, y, z)
-                when (route.payload[ROLE]) {
-                    "destination" -> {
-                        command.destinationSpec = spec
-                        command.destinationTargetSpec = null
-                    }
-                    "condition_position" -> command.conditionPositionSpec = spec
-                    else -> command.contextOverride =
-                        (command.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
-                }
+                CommandSettingsModel.setPositionSpec(
+                    command,
+                    CommandSettingRole.fromRoute(route.payload[ROLE]),
+                    PositionSpec(PositionKind.COORDINATES, x, y, z),
+                )
             }
         }
     }
@@ -1594,16 +1588,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         )
                     }
                     if (!updateNode(player, route) { command ->
-                        val spec = PositionSpec(kind, variable = name)
-                        when (route.payload[ROLE]) {
-                            "destination" -> {
-                                command.destinationSpec = spec
-                                command.destinationTargetSpec = null
-                            }
-                            "condition_position" -> command.conditionPositionSpec = spec
-                            else -> command.contextOverride =
-                                (command.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
-                        }
+                        CommandSettingsModel.setPositionSpec(
+                            command,
+                            CommandSettingRole.fromRoute(route.payload[ROLE]),
+                            PositionSpec(kind, variable = name),
+                        )
                     }) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 }),
@@ -1625,8 +1614,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             currentZ = current?.z ?: location.z,
         ) { x, y, z ->
             updateNode(player, route) { command ->
-                command.contextOverride = (command.contextOverride ?: ExecutionContextSpec()).copy(
-                    facing = FacingSpec(FacingKind.COORDINATES, x = x, y = y, z = z)
+                CommandSettingsModel.setFacingSpec(
+                    command,
+                    FacingSpec(FacingKind.COORDINATES, x = x, y = y, z = z),
                 )
             }
         }
@@ -1656,8 +1646,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID))
                     }
                     if (!updateNode(player, route) { command ->
-                        command.contextOverride = (command.contextOverride ?: ExecutionContextSpec()).copy(
-                            facing = FacingSpec(FacingKind.ROTATION, yaw = yaw, pitch = pitch)
+                        CommandSettingsModel.setFacingSpec(
+                            command,
+                            FacingSpec(FacingKind.ROTATION, yaw = yaw, pitch = pitch),
                         )
                     }) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     MenuActionResult.Success(MenuUpdate.Replace(route))
