@@ -31,6 +31,14 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         if (event.action != Action.RIGHT_CLICK_BLOCK || event.player.isSneaking) return
         val clicked = event.clickedBlock ?: return
         if (plugin.placements.find(clicked.location) == null) return
+        if (event.hand != EquipmentSlot.HAND) {
+            // 右クリックはメインハンドだけをKantanの編集入口として扱います。
+            // オフハンドの同一入力は、EASやバニラのブロック操作へ漏らしません。
+            event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
+            event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
+            event.isCancelled = true
+            return
+        }
         plugin.gestureEditor.prepareExternalEditorSuppression(event.player)
         plugin.server.scheduler.runTask(plugin, Runnable {
             plugin.gestureEditor.releaseExternalEditorSuppressionIfClosed(event.player.uniqueId)
@@ -44,6 +52,19 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val itemKind = KantanItemService.kind(item)
         val diskId = KantanItemService.diskId(item)
         val clickedPlacement = event.clickedBlock?.let { plugin.placements.find(it.location) }
+
+        if (
+            event.action == Action.RIGHT_CLICK_BLOCK &&
+            event.hand != EquipmentSlot.HAND &&
+            clickedPlacement != null
+        ) {
+            // PlayerInteractEventは手ごとに発火するため、オフハンド側では編集／書き込みを
+            // 一切再評価しません。LOWESTのEAS抑制と同じく、外部のブロック使用も止めます。
+            event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
+            event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
+            event.isCancelled = true
+            return
+        }
 
         if (itemKind == KantanItemKind.DISK && event.action == Action.RIGHT_CLICK_BLOCK && clickedPlacement == null) {
             // ディスク単体から編集画面を開く導線を廃止します。配置物を正しく

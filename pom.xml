@@ -7,7 +7,7 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-    <version>26.830.18</version>
+    <version>26.830.19</version>
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>
@@ -51,7 +51,7 @@
         <dependency>
             <groupId>com.awabi2048</groupId>
 <artifactId>CC-System</artifactId>
-            <version>26.830.13</version>
+            <version>26.830.14</version>
             <scope>provided</scope>
         </dependency>
         <dependency>
