@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -40,6 +41,18 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `position lookup never silently falls back to context for another role`() {
+        val node = CommandType.APPLY_EFFECT.newNode().apply {
+            contextOverride = ExecutionContextSpec(
+                position = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0),
+            )
+        }
+
+        assertNull(CommandSettingsModel.positionSpec(node, CommandSettingRole.NODE_TARGET))
+        assertNull(CommandSettingsModel.positionKind(node, CommandSettingRole.NODE_TARGET))
+    }
+
+    @Test
     fun `clearing context resets both override values and source selection`() {
         val node = CommandType.APPLY_EFFECT.newNode().apply {
             contextOverride = ExecutionContextSpec()
@@ -51,6 +64,52 @@ class CommandSettingsModelTest {
         assertNull(node.contextOverride)
         assertEquals(me.awabi2048.kantancommander.model.ContextSource.BASE, node.contextSource)
         assertFalse(CommandSettingsModel.isFieldConfigured(node, "context"))
+    }
+
+    @Test
+    fun `context fields use a separate configured namespace from node target`() {
+        val node = CommandType.APPLY_EFFECT.newNode()
+        val target = TargetSpec(TargetKind.NEAREST_PLAYER)
+        val contextTarget = TargetSpec(TargetKind.ALL_PLAYERS)
+
+        CommandSettingsModel.setTargetSpec(node, null, target)
+        CommandSettingsModel.setTargetSpec(node, CommandSettingRole.CONTEXT_TARGET, contextTarget)
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target"))
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.CONTEXT_TARGET))
+
+        CommandSettingsModel.clearContextOverride(node)
+
+        assertEquals(target, node.targetSpec)
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target"))
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.CONTEXT_TARGET))
+    }
+
+    @Test
+    fun `clearing context removes nested configured detail state`() {
+        val node = CommandType.APPLY_EFFECT.newNode().apply {
+            markConfigured("target", "context.target", "context.target.entityType", "context.position")
+            contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.NEAREST_ENTITY))
+        }
+
+        CommandSettingsModel.clearContextOverride(node)
+
+        assertEquals(setOf("target"), node.configuredFields)
+    }
+
+    @Test
+    fun `context source returning to base clears its configured marker`() {
+        val node = CommandType.APPLY_EFFECT.newNode()
+
+        CommandSettingsModel.toggleContextSource(node)
+        assertEquals(ContextSource.PREVIOUS, node.contextSource)
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "context"))
+
+        CommandSettingsModel.toggleContextSource(node)
+
+        assertEquals(ContextSource.BASE, node.contextSource)
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "context"))
+        assertFalse(node.isExplicitlyConfigured("context"))
     }
 
     @Test

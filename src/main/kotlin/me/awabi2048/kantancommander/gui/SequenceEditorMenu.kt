@@ -66,8 +66,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         val script = scriptId(context.route)?.let(plugin.scripts::load)
                             ?: return@handler MenuActionResult.Ignored
                         if (!script.timer.enabled) return@handler MenuActionResult.Ignored
-                        script.activation = script.activation.toggled(true)
-                        runCatching { plugin.scripts.save(script, context.player.uniqueId) }.getOrElse { failure ->
+                        val updated = runCatching {
+                            CommandSettingsModel.toggleActivation(
+                                plugin,
+                                script.id,
+                                context.player.uniqueId,
+                            )
+                        }.getOrElse { failure ->
                             plugin.logger.log(
                                 java.util.logging.Level.WARNING,
                                 "実行方式の変更を保存できませんでした: script=${script.id}",
@@ -75,6 +80,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             )
                             return@handler MenuActionResult.Rejected(Component.text("設定を保存できませんでした。"))
                         }
+                        if (!updated) return@handler MenuActionResult.Ignored
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                     "timer" to handler { context ->

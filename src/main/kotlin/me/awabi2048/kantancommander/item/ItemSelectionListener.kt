@@ -4,6 +4,8 @@ import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.gui.CommandSettingContext
+import me.awabi2048.kantancommander.gui.CommandSettingsModel
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -42,39 +44,40 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         if (event.clickedInventory != player.inventory) return
         event.isCancelled = true
         val selected = event.currentItem?.takeUnless { it.type == Material.AIR } ?: return
-        val script = plugin.scripts.load(selection.scriptId) ?: return cancel(player)
-        val candidateGraph = script.graph.deepCopy()
-        val node = candidateGraph.nodes[selection.nodeId] ?: return cancel(player)
-        when (selection.kind) {
-            SelectionKind.ITEM -> {
-                // 付与・装備とも数量・Name/Lore等を含む実体をスナップショット保存します。
-                node.params["item"] = selected.type.key.toString()
-                node.params["itemData"] = ItemStackCodec.encode(selected)
-                node.markConfigured("item")
+        val selectedDisk = if (selection.kind == SelectionKind.DISK) {
+            val selectedId = KantanItemService.diskId(selected) ?: return cancel(player)
+            val selectedScript = plugin.scripts.load(selectedId) ?: return cancel(player)
+            selectedId to selectedScript.graph.deepCopy()
+        } else null
+        val context = CommandSettingContext(selection.scriptId, selection.nodeId)
+        val savedNode = runCatching {
+            CommandSettingsModel.updateNode(plugin, context, editorId = player.uniqueId) { node ->
+                when (selection.kind) {
+                    SelectionKind.ITEM -> {
+                        // 付与・装備とも数量・Name/Lore等を含む実体をスナップショット保存します。
+                        CommandSettingsModel.setParameter(node, "item", selected.type.key.toString())
+                        CommandSettingsModel.setParameter(node, "itemData", ItemStackCodec.encode(selected))
+                    }
+                    SelectionKind.DISK -> {
+                        val (selectedId, selectedGraph) = requireNotNull(selectedDisk)
+                        CommandSettingsModel.setParameter(node, "diskId", selectedId.toString())
+                        node.snapshot = selectedGraph
+                    }
+                    SelectionKind.MATERIAL -> {
+                        val parameter = requireNotNull(selection.parameter)
+                        CommandSettingsModel.setParameter(node, parameter, selected.type.key.toString())
+                    }
+                }
             }
-            SelectionKind.DISK -> {
-                val selectedId = KantanItemService.diskId(selected) ?: return cancel(player)
-                val selectedScript = plugin.scripts.load(selectedId) ?: return cancel(player)
-                node.params["diskId"] = selectedId.toString()
-                node.snapshot = selectedScript.graph.deepCopy()
-                node.markConfigured("diskId")
-            }
-            SelectionKind.MATERIAL -> {
-                val parameter = selection.parameter ?: return
-                node.params[parameter] = selected.type.key.toString()
-                node.markConfigured(parameter)
-            }
-        }
-        runCatching { plugin.scripts.save(script.copy(graph = candidateGraph), player.uniqueId) }
-            .onFailure { failure ->
-                selections.remove(player.uniqueId)
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "アイテム／素材選択の保存に失敗しました: script=${selection.scriptId} node=${selection.nodeId}",
-                    failure,
-                )
-            }
-            .getOrElse { return }
+        }.onFailure { failure ->
+            selections.remove(player.uniqueId)
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "アイテム／素材選択の保存に失敗しました: script=${selection.scriptId} node=${selection.nodeId}",
+                failure,
+            )
+        }.getOrNull()
+        if (savedNode == null) return cancel(player)
         selections.remove(player.uniqueId)
         CCSystem.getAPI().getMenuRuntimeService().open(player, selection.returnRoute)
     }

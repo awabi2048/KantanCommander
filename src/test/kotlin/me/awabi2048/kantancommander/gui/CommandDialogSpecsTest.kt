@@ -2,10 +2,12 @@ package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -73,6 +75,10 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
             requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validate("+1"),
         )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
+            requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validateInput(""),
+        )
         assertNull(requireNotNull(CommandDialogSpecs.field(shake, "seconds")).validate("1.5"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_LEVEL_INVALID,
@@ -83,11 +89,41 @@ class CommandDialogSpecsTest {
             params["type"] = VariableType.DECIMAL.name
             params["operation"] = VariableOperation.SET.name
         }
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_VARIABLE_NAME,
+            requireNotNull(CommandDialogSpecs.field(variable, "name")).validate("VariableName"),
+        )
         assertNull(requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("1.5"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
             requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("not-a-number"),
         )
+    }
+
+    @Test
+    fun `timer and multi-value dialogs share strict finite input boundaries`() {
+        assertEquals(6, CommandDialogSpecs.timerSeconds.maxLength)
+        assertNull(CommandDialogSpecs.timerSeconds.validate("1"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,
+            CommandDialogSpecs.timerSeconds.validate("+1"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,
+            CommandDialogSpecs.timerSeconds.validate("86401"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,
+            CommandDialogSpecs.timerSeconds.validateInput(""),
+        )
+        val displayTiming = requireNotNull(CommandDialogSpecs.field(CommandType.DISPLAY_TEXT.newNode(), "staySeconds"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
+            displayTiming.validateInput(""),
+        )
+        assertEquals(1.5, CommandDialogSpecs.finiteDouble("1.5"))
+        assertNull(CommandDialogSpecs.finiteDouble("NaN"))
+        assertNull(CommandDialogSpecs.finiteFloat("Infinity"))
     }
 
     @Test
@@ -100,5 +136,34 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
             block.validate("not a block id"),
         )
+    }
+
+    @Test
+    fun `block operation and condition use their runtime material contracts`() {
+        val placement = requireNotNull(CommandDialogSpecs.field(CommandType.BLOCK_OPERATION.newNode(), "block"))
+        val condition = requireNotNull(CommandDialogSpecs.field(CommandType.CONDITION.newNode(), "block"))
+
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            placement.validate("minecraft:air"),
+        )
+        assertNull(condition.validate("minecraft:air"))
+    }
+
+    @Test
+    fun `namespaced input normalization is shared by both editors`() {
+        assertEquals("minecraft:stone", CommandDialogSpecs.normalize("entityType", " MINECRAFT:STONE "))
+        assertEquals("Text", CommandDialogSpecs.normalize("text", " Text "))
+        assertTrue(CommandValueRules.isSoundId("resourcepack:custom.sound"))
+    }
+
+    @Test
+    fun `unsigned integer parser is shared by input and execution contracts`() {
+        assertEquals(1, CommandValueRules.parsePositiveInt("1"))
+        assertNull(CommandValueRules.parsePositiveInt("+1"))
+        assertNull(CommandValueRules.parsePositiveInt("0"))
+        assertNull(CommandValueRules.parsePositiveInt("2147483648"))
+        assertEquals(0, CommandValueRules.parseNonNegativeInt("0"))
+        assertNull(CommandValueRules.parseNonNegativeInt("+1"))
     }
 }

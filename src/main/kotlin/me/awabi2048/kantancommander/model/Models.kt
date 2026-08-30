@@ -135,6 +135,13 @@ data class CommandNode(
         configuredFields?.removeAll(keys.toSet())
         if (configuredFields?.isEmpty() == true) configuredFields = null
     }
+
+    /** 名前空間化された明示設定をまとめて消し、古い詳細フラグを残しません。 */
+    fun clearConfiguredPrefix(prefix: String) {
+        if (prefix.isEmpty()) return
+        configuredFields?.removeIf { it.startsWith(prefix) }
+        if (configuredFields?.isEmpty() == true) configuredFields = null
+    }
 }
 
 enum class ContextSource { BASE, PREVIOUS }
@@ -202,7 +209,13 @@ data class ExecutionContextSpec(
     val target: TargetSpec? = null,
     val position: PositionSpec? = null,
     val facing: FacingSpec? = null,
-)
+) {
+    /** 空のコンテキストは設定値ではなく、未設定と同じ意味になります。 */
+    fun hasAnySetting(): Boolean = executor != null || target != null || position != null || facing != null
+}
+
+/** 実効値を持つノード単位コンテキストだけを「上書きあり」と判定します。 */
+fun CommandNode.hasContextOverride(): Boolean = contextOverride?.hasAnySetting() == true
 
 enum class ConditionKind(val key: LocalizationKey<String>) {
     TARGET_EXISTS(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS),

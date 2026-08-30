@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
@@ -23,8 +24,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.effectiveContextSource
-import org.bukkit.Material
-import org.bukkit.NamespacedKey
+import me.awabi2048.kantancommander.model.hasContextOverride
 import java.util.Collections
 import java.util.IdentityHashMap
 
@@ -61,7 +61,7 @@ object ExecutableScriptValidator {
     }
 
     private fun validateNode(node: CommandNode, path: String, errors: MutableList<String>) {
-        val hasContextState = node.contextOverride != null || node.effectiveContextSource != ContextSource.BASE
+        val hasContextState = node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
         if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
             errors += "$path: ${node.type} では実行コンテキストを設定できません"
         }
@@ -91,8 +91,10 @@ object ExecutableScriptValidator {
             }
             CommandType.GIVE_ITEM -> {
                 if (node.targetSpec == null) errors += "$path: 対象が未設定です"
-                if (Material.matchMaterial(node.string("item")) == null) errors += "$path: アイテムが未設定です"
-                if (node.int("count", 0) < 1) errors += "$path: 個数は1以上である必要があります"
+                if (CommandValueRules.material(node.string("item"), allowAir = false) == null) errors += "$path: アイテムが未設定です"
+                if (CommandValueRules.parsePositiveInt(node.string("count")) == null) {
+                    errors += "$path: 個数は1以上である必要があります"
+                }
             }
             CommandType.ENTITY_ACTION -> {
                 if (node.targetSpec == null) errors += "$path: 対象が未設定です"
@@ -108,29 +110,34 @@ object ExecutableScriptValidator {
                     errors += "$path: 不明な文字列表示方式です"
                 }
                 if (DisplayTextTimingPolicy.supports(node) &&
-                    listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").any { node.int(it, -1) < 0 }
+                    listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
+                        .any { CommandValueRules.parseNonNegativeInt(node.string(it)) == null }
                 ) {
                     errors += "$path: タイトル／アクションバーの表示時間は0秒以上である必要があります"
                 }
             }
             CommandType.WAIT ->
-                if (node.int("seconds", 0) < 1) errors += "$path: 待機時間は1秒以上である必要があります"
+                if (CommandValueRules.parsePositiveInt(node.string("seconds")) == null) {
+                    errors += "$path: 待機時間は1秒以上である必要があります"
+                }
             CommandType.SUMMON_ENTITY -> {
-                val key = NamespacedKey.fromString(node.string("entity"))
-                if (key == null) errors += "$path: エンティティ種類が不正です"
+                if (!CommandValueRules.isEntityTypeId(node.string("entity"))) errors += "$path: エンティティ種類が不正です"
                 val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
-                if (tags.any { !it.matches(Regex("[A-Za-z0-9_.:+-]{1,64}")) }) errors += "$path: 召喚タグが不正です"
+                if (tags.any { !CommandValueRules.isTag(it) }) errors += "$path: 召喚タグが不正です"
             }
             CommandType.PLAY_SOUND -> {
-                if (NamespacedKey.fromString(node.string("sound")) == null) errors += "$path: サウンドIDが不正です"
+                if (!CommandValueRules.isSoundId(node.string("sound"))) errors += "$path: サウンドIDが不正です"
                 if (node.double("volume", -1.0) !in 0.0..2.0) errors += "$path: 音量は0.0〜2.0の範囲です"
                 if (node.double("pitch", -1.0) !in 0.5..2.0) errors += "$path: ピッチは0.5〜2.0の範囲です"
             }
             CommandType.APPLY_EFFECT -> {
-                val key = NamespacedKey.fromString(node.string("effect"))
-                if (key == null) errors += "$path: エフェクト種類が不正です"
-                if (node.int("level", 0) !in 1..255) errors += "$path: エフェクトレベルは1〜255の範囲です"
-                if (node.int("seconds", 0) !in 1..86_400) errors += "$path: 効果時間は1〜86400秒の範囲です"
+                if (!CommandValueRules.isEffectId(node.string("effect"))) errors += "$path: エフェクト種類が不正です"
+                if (CommandValueRules.parsePositiveInt(node.string("level")) !in 1..255) {
+                    errors += "$path: エフェクトレベルは1〜255の範囲です"
+                }
+                if (CommandValueRules.parsePositiveInt(node.string("seconds")) !in 1..86_400) {
+                    errors += "$path: 効果時間は1〜86400秒の範囲です"
+                }
             }
             CommandType.CAMERA_SHAKE -> {
                 if (node.double("intensity", -1.0) !in 0.1..4.0) errors += "$path: 揺れの強さは0.1〜4.0の範囲です"
@@ -143,15 +150,14 @@ object ExecutableScriptValidator {
                 if (node.string("slot") !in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")) {
                     errors += "$path: 装備スロットが不正です"
                 }
-                if (Material.matchMaterial(node.string("item")) == null) errors += "$path: 装備アイテムが未設定です"
+                if (CommandValueRules.material(node.string("item"), allowAir = false) == null) errors += "$path: 装備アイテムが未設定です"
             }
             CommandType.BLOCK_OPERATION -> {
                 val operation = BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))
                 if (operation == null) {
                     errors += "$path: ブロック操作方式が不正です"
                 }
-                val block = Material.matchMaterial(node.string("block"))
-                if (block == null || block == Material.AIR) {
+                if (CommandValueRules.placementMaterial(node.string("block")) == null) {
                     errors += "$path: 配置ブロックが未設定または不正です"
                 }
                 when (operation) {
@@ -178,7 +184,7 @@ object ExecutableScriptValidator {
                 if (node.targetSpec == null) errors += "$path: 削除対象が未設定です"
             }
             CommandType.CONDITION -> validateCondition(node, path, errors)
-            CommandType.CONTEXT -> if (node.contextOverride == null) errors += "$path: コンテキストが未設定です"
+            CommandType.CONTEXT -> if (!node.hasContextOverride()) errors += "$path: コンテキストが未設定です"
             CommandType.DISK_CALL -> if (node.snapshot == null) errors += "$path: 呼び出すディスク内容が未設定です"
             CommandType.VARIABLE -> validateVariable(node, path, errors)
             CommandType.FOR_START -> validateFor(node, path, errors)
@@ -191,7 +197,7 @@ object ExecutableScriptValidator {
             errors += "$path: 固定エンティティが未設定です"
         }
         spec.entityType?.takeIf(String::isNotBlank)?.let { raw ->
-            if (NamespacedKey.fromString(raw) == null) errors += "$path: エンティティ種別が不正です"
+            if (!CommandValueRules.isEntityTypeId(raw)) errors += "$path: エンティティ種別が不正です"
         }
         spec.gameMode?.takeIf(String::isNotBlank)?.let { mode ->
             if (mode.uppercase() !in setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) {
@@ -199,7 +205,7 @@ object ExecutableScriptValidator {
             }
         }
         spec.tag?.takeIf(String::isNotBlank)?.let { tag ->
-            if (!tag.matches(Regex("[A-Za-z0-9_.:+-]{1,64}"))) errors += "$path: タグが不正です"
+            if (!CommandValueRules.isTag(tag)) errors += "$path: タグが不正です"
         }
         spec.name?.let { name ->
             if (name.length > 256) errors += "$path: エンティティ名が長すぎます"
@@ -224,7 +230,7 @@ object ExecutableScriptValidator {
             (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)
         ) errors += "$path: 捕捉した向きが未設定または有限値ではありません"
         if (spec.kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE) &&
-            !spec.variable.orEmpty().matches(Regex("[a-z0-9_.-]{1,64}"))
+            !CommandValueRules.isVariableName(spec.variable.orEmpty())
         ) errors += "$path: 位置変数名が不正です"
     }
 
@@ -279,17 +285,17 @@ object ExecutableScriptValidator {
                 }
             }
             ConditionKind.BLOCK_STATE ->
-                if (Material.matchMaterial(node.string("block")) == null) errors += "$path: ブロックが未設定です"
+                if (CommandValueRules.material(node.string("block")) == null) errors += "$path: ブロックが未設定です"
             ConditionKind.ITEM_POSSESSION -> {
                 if (node.targetSpec == null) errors += "$path: 条件の対象が未設定です"
-                if (Material.matchMaterial(node.string("item")) == null) errors += "$path: アイテムが未設定です"
+                if (CommandValueRules.material(node.string("item"), allowAir = false) == null) errors += "$path: アイテムが未設定です"
                 if (node.int("count", 0) < 1) errors += "$path: 必要個数は1以上である必要があります"
             }
         }
     }
 
     private fun validateVariable(node: CommandNode, path: String, errors: MutableList<String>) {
-        if (!node.string("name").matches(Regex("[a-z0-9_.-]{1,64}"))) errors += "$path: 変数名が不正です"
+        if (!CommandValueRules.isVariableName(node.string("name"))) errors += "$path: 変数名が不正です"
         val type = runCatching { VariableType.valueOf(node.string("type")) }.getOrNull()
         val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }.getOrNull()
         if (type == null) errors += "$path: 変数型が不正です"

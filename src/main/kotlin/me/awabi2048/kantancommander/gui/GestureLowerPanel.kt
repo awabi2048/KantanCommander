@@ -151,16 +151,30 @@ class GestureLowerPanel(
         val heldItemSetting = field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
         val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
         val heldMainHandSetting = heldItemSetting || heldDiskSetting
+        val heldMainHandAvailable = when {
+            heldItemSetting -> GestureGuiClickPolicy.hasMainHandItem(player)
+            heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
+            else -> true
+        }
         val dialogInputSetting = !heldMainHandSetting &&
             descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS
         if (heldMainHandSetting || dialogInputSetting) {
-            // ダイアログ入力欄は、上の既存アクション説明（例:「待機する秒数を設定する」）
-            // を唯一の設定入口にします。下の既存 lower-edit の枠・寸法・装飾は説明表示へ
-            // 再利用し、設定用の見た目を別位置へ増設しないようにします。
+            // ダイアログ入力欄は、既存 lower-edit（例:「待機する秒数を設定する」）
+            // の位置を唯一の設定入口として再利用します。同じ枠・寸法・装飾で入力方法を
+            // 表示し、上のアクション説明行や新しい配置へ設定導線を増やしません。
             val editVisualText = if (heldMainHandSetting) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
             } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER
-            addBlock(visuals, "lower-edit-bg", 0.28, 0.02, 1.2, 0.16, Material.CYAN_TERRACOTTA, 4)
+            addBlock(
+                visuals,
+                "lower-edit-bg",
+                0.28,
+                0.02,
+                1.2,
+                0.16,
+                if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
+                4,
+            )
             addText(
                 visuals,
                 "lower-edit",
@@ -172,11 +186,10 @@ class GestureLowerPanel(
             )
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
-                // メインハンド設定だけは従来どおり下部の枠を操作します。通常の文字列・
-                // 数値入力は、既存の説明行を押下領域として再利用します。
-                bounds = if (heldMainHandSetting) {
-                    rect(0.28, 0.02, 1.2, 0.16)
-                } else rect(0.28, ACTION_DESCRIPTION_Y, 1.2, 0.16),
+                // すべてのダイアログ入力を既存のlower-edit枠へ集約します。
+                // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
+                // 開ける二重導線にはしません。
+                bounds = rect(0.28, 0.02, 1.2, 0.16),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
                 // 空集合を焼き付けず、クリック時点のガードで判定します。空手時は
                 // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
@@ -184,9 +197,15 @@ class GestureLowerPanel(
                     GestureGuiClickPolicy.MAIN_HAND
                 } else setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY),
                 gestureGuard = if (heldMainHandSetting) {
-                    { actor, _ -> GestureGuiClickPolicy.hasMainHandItem(actor) }
+                    { actor, _ ->
+                        if (heldDiskSetting) {
+                            KantanItemService.diskId(actor.inventory.itemInMainHand) != null
+                        } else {
+                            GestureGuiClickPolicy.hasMainHandItem(actor)
+                        }
+                    }
                 } else null,
-                targetVisualId = if (heldMainHandSetting) "lower-edit-bg" else SETTING_DESCRIPTION_HOVER_ID,
+                targetVisualId = "lower-edit-bg",
                 hoverText = singleLineHover(
                     KcI18n.text(
                         player,
@@ -200,7 +219,17 @@ class GestureLowerPanel(
             ))
         }
         if (heldItemSetting) {
-            addBlock(visuals, "lower-item-get-bg", 0.28, -0.15, 1.2, 0.12, Material.BROWN_CONCRETE, 4)
+            val itemConfigured = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+            addBlock(
+                visuals,
+                "lower-item-get-bg",
+                0.28,
+                -0.15,
+                1.2,
+                0.12,
+                if (itemConfigured) Material.BROWN_CONCRETE else DisabledGuiVisualPolicy.material,
+                4,
+            )
             addText(visuals, "lower-item-get", 0.28, -0.15, 0.0048, 180, Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM)))
             elements.add(GestureGuiElement(
                 elementId = "lower-item-get",
@@ -667,7 +696,11 @@ class GestureLowerPanel(
         GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player).map { choice ->
             when (choice.id) {
                 "condition-target" -> choice.copy(
-                    selected = CommandSettingsModel.targetSpec(node, CommandSettingRole.NODE_TARGET) != null,
+                    selected = CommandSettingsModel.isFieldConfigured(
+                        node,
+                        "target",
+                        CommandSettingRole.NODE_TARGET,
+                    ),
                     children = targetChoices(
                         node,
                         context.copy(role = CommandSettingRole.NODE_TARGET),
@@ -675,7 +708,11 @@ class GestureLowerPanel(
                     ),
                 )
                 "condition-position" -> choice.copy(
-                    selected = CommandSettingsModel.positionSpec(node, CommandSettingRole.CONDITION_POSITION) != null,
+                    selected = CommandSettingsModel.isFieldConfigured(
+                        node,
+                        "position",
+                        CommandSettingRole.CONDITION_POSITION,
+                    ),
                     children = positionChoices(
                         node,
                         context.copy(role = CommandSettingRole.CONDITION_POSITION),
@@ -786,14 +823,38 @@ class GestureLowerPanel(
                 CommandSettingsModel.positionKind(node, context.role)?.name == id.removePrefix("position:")
             id.startsWith("facing:") -> choice.selected &&
                 CommandSettingsModel.facingSpec(node)?.kind?.name == id.removePrefix("facing:")
-            id == "condition-target" -> node.targetSpec != null
-            id == "condition-position" -> node.conditionPositionSpec != null
-            id == "context:executor" -> node.contextOverride?.executor != null
-            id == "context:target" -> node.contextOverride?.target != null
-            id == "context:position" -> node.contextOverride?.position != null
-            id == "context:facing" -> node.contextOverride?.facing != null
+            id == "condition-target" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "target",
+                CommandSettingRole.NODE_TARGET,
+            )
+            id == "condition-position" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "position",
+                CommandSettingRole.CONDITION_POSITION,
+            )
+            id == "context:executor" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "executor",
+                CommandSettingRole.CONTEXT_EXECUTOR,
+            )
+            id == "context:target" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "target",
+                CommandSettingRole.CONTEXT_TARGET,
+            )
+            id == "context:position" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "position",
+                CommandSettingRole.CONTEXT_POSITION,
+            )
+            id == "context:facing" -> CommandSettingsModel.isFieldConfigured(
+                node,
+                "facing",
+                CommandSettingRole.CONTEXT_FACING,
+            )
             id == "context:source" -> CommandSettingsModel.contextSource(node) != ContextSource.BASE
-            id == "context:inherit" -> node.contextOverride != null
+            id == "context:inherit" -> !CommandSettingsModel.isFieldConfigured(node, "context")
             id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "state")
             id.startsWith("condition-variable") -> CommandSettingsModel.isFieldConfigured(node, "variable")
             id.startsWith("condition-scope") -> CommandSettingsModel.isFieldConfigured(node, "variableScope")
@@ -1066,10 +1127,26 @@ class GestureLowerPanel(
             )
         }
         GestureSettingScreen.CONTEXT_OVERRIDE -> listOf(
-            SettingChoice("context:executor", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXECUTOR), node.contextOverride?.executor != null),
-            SettingChoice("context:target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), node.contextOverride?.target != null),
-            SettingChoice("context:position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION), node.contextOverride?.position != null),
-            SettingChoice("context:facing", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING), node.contextOverride?.facing != null),
+            SettingChoice(
+                "context:executor",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXECUTOR),
+                CommandSettingsModel.isFieldConfigured(node, "executor", CommandSettingRole.CONTEXT_EXECUTOR),
+            ),
+            SettingChoice(
+                "context:target",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.CONTEXT_TARGET),
+            ),
+            SettingChoice(
+                "context:position",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION),
+                CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.CONTEXT_POSITION),
+            ),
+            SettingChoice(
+                "context:facing",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING),
+                CommandSettingsModel.isFieldConfigured(node, "facing", CommandSettingRole.CONTEXT_FACING),
+            ),
             SettingChoice(
                 "context:source",
                 KcI18n.text(
@@ -1079,7 +1156,11 @@ class GestureLowerPanel(
                     } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTEXT_BASE,
                 ),
             ),
-            SettingChoice("context:inherit", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERIT_ALL), node.contextOverride == null),
+            SettingChoice(
+                "context:inherit",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERIT_ALL),
+                !CommandSettingsModel.isFieldConfigured(node, "context"),
+            ),
         )
     }
 

@@ -72,6 +72,17 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `empty context command is incomplete`() {
+        val script = DiskScript(name = "empty-context", owner = UUID.randomUUID())
+        val context = GraphEditor.append(script.graph, CommandType.CONTEXT)
+        context.contextOverride = ExecutionContextSpec()
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any { it.contains("コンテキストが未設定") },
+        )
+    }
+
+    @Test
     fun `always active and interval require an enabled valid timer`() {
         val script = DiskScript(
             name = "timer",

@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.ConditionKind
@@ -28,7 +29,6 @@ import me.awabi2048.kantancommander.model.effectiveContextSource
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
-import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
 import org.bukkit.SoundCategory
@@ -116,7 +116,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         when (node.type) {
             CommandType.WAIT -> {
                 // 保存・入力値は秒を正本とし、Minecraftのスケジューラ境界でだけtickへ変換します。
-                val seconds = node.int("seconds", 1).coerceAtLeast(1).toLong()
+                val seconds = CommandValueRules.parsePositiveInt(node.string("seconds"))?.toLong()
+                    ?: return stop(session, script, node.id, depth, "invalid_wait_seconds", done)
                 val waitTicks = seconds * TICKS_PER_SECOND.toLong()
                 plugin.server.scheduler.runTaskLater(
                     plugin,
@@ -313,11 +314,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.GIVE_ITEM -> {
                 val players = targets.filterIsInstance<Player>()
                 if (players.isEmpty()) return false
-                val material = Material.matchMaterial(node.string("item")) ?: return false
+                val material = CommandValueRules.material(node.string("item"), allowAir = false) ?: return false
                 val template = ItemStackCodec.decode(node.string("itemData"))
                     ?: ItemStack(material)
-                val count = node.int("count", 1)
-                if (count < 1) return false
+                val count = CommandValueRules.parsePositiveInt(node.string("count")) ?: return false
                 players.all { player -> giveItem(player, template, count) }
             }
             CommandType.ENTITY_ACTION -> {
@@ -395,11 +395,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val effect = Registry.EFFECT.get(key) ?: return false
                 val applicable = targets.filterIsInstance<LivingEntity>()
                 if (applicable.isEmpty()) return false
+                val seconds = CommandValueRules.parsePositiveInt(node.string("seconds")) ?: return false
+                val level = CommandValueRules.parsePositiveInt(node.string("level")) ?: return false
                 applicable.forEach {
                     it.addPotionEffect(org.bukkit.potion.PotionEffect(
                         effect,
-                        node.int("seconds", 30) * 20,
-                        node.int("level", 1) - 1,
+                        seconds * 20,
+                        level - 1,
                     ))
                 }
                 true
@@ -417,7 +419,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 true
             }
             CommandType.EQUIP_ITEM -> {
-                val material = Material.matchMaterial(node.string("item")) ?: return false
+                val material = CommandValueRules.material(node.string("item"), allowAir = false) ?: return false
                 val template = ItemStackCodec.decode(node.string("itemData")) ?: ItemStack(material)
                 val slot = runCatching { EquipmentSlot.valueOf(node.string("slot")) }.getOrNull() ?: return false
                 val applicable = targets.filterIsInstance<LivingEntity>().mapNotNull { it.equipment }
@@ -470,9 +472,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec?,
     ): Boolean {
-        val material = Material.matchMaterial(node.string("block"))
-            ?.takeIf { it != Material.AIR }
-            ?: return false
+        val material = CommandValueRules.placementMaterial(node.string("block")) ?: return false
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
                 val location = node.blockPositionSpec?.let { resolvePosition(it, session, context) } ?: return false
@@ -539,11 +539,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         resolvePosition(context.position, session, context) ?: return false
                     else -> session.origin
                 }
-                location.world == session.origin.world && location.block.type == Material.matchMaterial(node.string("block"))
+                location.world == session.origin.world &&
+                    location.block.type == CommandValueRules.material(node.string("block"))
             }
             ConditionKind.ITEM_POSSESSION -> {
                 val player = target as? Player ?: return false
-                val material = Material.matchMaterial(node.string("item")) ?: return false
+                val material = CommandValueRules.material(node.string("item"), allowAir = false) ?: return false
                 player.inventory.contains(material, node.int("count", 1).coerceAtLeast(1))
             }
         }
@@ -896,7 +897,7 @@ internal object ExecutionSemantics {
         inherited: ExecutionContextSpec?,
         override: ExecutionContextSpec?,
     ): ExecutionContextSpec? {
-        if (override == null) return inherited
+        if (override == null || !override.hasAnySetting()) return inherited
         if (inherited == null) return override
         return ExecutionContextSpec(
             executor = override.executor ?: inherited.executor,

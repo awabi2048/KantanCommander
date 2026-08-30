@@ -30,9 +30,11 @@ data class DisplayTextTiming(
 
     companion object {
         fun from(node: CommandNode): DisplayTextTiming = DisplayTextTiming(
-            fadeInSeconds = node.int("fadeInSeconds", 1),
-            staySeconds = node.int("staySeconds", 3),
-            fadeOutSeconds = node.int("fadeOutSeconds", 1),
+            // 実行前検証は符号なし整数を要求します。ここでも同じパーサーを使い、
+            // 直接呼び出された場合に「+1」だけ別の値として解釈しないようにします。
+            fadeInSeconds = CommandValueRules.parseNonNegativeInt(node.string("fadeInSeconds")) ?: 1,
+            staySeconds = CommandValueRules.parseNonNegativeInt(node.string("staySeconds")) ?: 3,
+            fadeOutSeconds = CommandValueRules.parseNonNegativeInt(node.string("fadeOutSeconds")) ?: 1,
         )
     }
 }

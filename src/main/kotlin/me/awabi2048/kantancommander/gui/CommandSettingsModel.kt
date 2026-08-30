@@ -3,14 +3,19 @@ package me.awabi2048.kantancommander.gui
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
+import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
@@ -20,6 +25,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.model.hasContextOverride
 import me.awabi2048.kantancommander.model.supportsContextOverride
 import java.util.UUID
 
@@ -316,6 +322,24 @@ object CommandSettingsModel {
         }
     }
 
+    /**
+     * 文字列パラメータの書き込みも、両GUIが同じドメイン入口を通ります。
+     *
+     * 構造化値だけを共通setterへ寄せても、条件・表示・変数などのparamsだけが
+     * 画面ごとの直接代入に残ると、明示設定の記録や将来の検証を再び分岐させます。
+     * 文字列値の保存と「ユーザーが設定した」状態をここで同時に扱います。
+     */
+    fun setParameter(node: CommandNode, key: String, value: String) {
+        require(key.isNotBlank()) { "設定キーが空です" }
+        node.params[key] = value
+        node.markConfigured(key)
+    }
+
+    /** 複数の文字列パラメータを同じ明示設定契約で保存します。 */
+    fun setParameters(node: CommandNode, values: Map<String, String>) {
+        values.forEach { (key, value) -> setParameter(node, key, value) }
+    }
+
     fun targetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationTargetSpec
         CommandSettingRole.CONTEXT_EXECUTOR -> node.contextOverride?.executor
@@ -343,24 +367,17 @@ object CommandSettingsModel {
             CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = spec
             else -> node.targetSpec = spec
         }
-        node.markConfigured(
-            when (role) {
-                CommandSettingRole.DESTINATION -> "destination"
-                CommandSettingRole.SECONDARY_TARGET -> "other"
-                CommandSettingRole.CONTEXT_EXECUTOR -> "executor"
-                CommandSettingRole.CONTEXT_TARGET -> "target"
-                else -> "target"
-            },
-        )
+        node.markConfigured(configuredFieldKey("target", role))
     }
 
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec
+        CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
         CommandSettingRole.BLOCK_TO -> node.blockToSpec
-        else -> node.contextOverride?.position
+        else -> null
     }
 
     /**
@@ -378,10 +395,11 @@ object CommandSettingsModel {
             else -> node.destinationSpec?.kind
         }
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec?.kind
+        CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position?.kind
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
-        else -> node.contextOverride?.position?.kind
+        else -> null
     }
 
     fun setPositionSpec(node: CommandNode, role: CommandSettingRole?, spec: PositionSpec) {
@@ -394,22 +412,14 @@ object CommandSettingsModel {
                 node.destinationTargetSpec = null
             }
             CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec = spec
+            CommandSettingRole.CONTEXT_POSITION -> node.contextOverride =
+                (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
             CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec = spec
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
-            else -> node.contextOverride =
-                (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
+            else -> error("${node.type} の位置設定役割が不正です: $role")
         }
-        node.markConfigured(
-            when (role) {
-                CommandSettingRole.DESTINATION -> "destination"
-                CommandSettingRole.CONDITION_POSITION -> "condition"
-                CommandSettingRole.BLOCK_POSITION -> "position"
-                CommandSettingRole.BLOCK_FROM -> "from"
-                CommandSettingRole.BLOCK_TO -> "to"
-                else -> "position"
-            },
-        )
+        node.markConfigured(configuredFieldKey("position", role))
     }
 
     fun facingSpec(node: CommandNode): FacingSpec? = node.contextOverride?.facing
@@ -419,7 +429,7 @@ object CommandSettingsModel {
             "${node.type} は実行コンテキスト上書きを持てません"
         }
         node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
-        node.markConfigured("facing")
+        node.markConfigured(configuredFieldKey("facing", CommandSettingRole.CONTEXT_FACING))
     }
 
     fun contextSource(node: CommandNode): ContextSource = node.effectiveContextSource
@@ -428,12 +438,19 @@ object CommandSettingsModel {
         check(node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
             "${node.type} は実行コンテキスト上書きを持てません"
         }
-        node.contextSource = if (node.effectiveContextSource == ContextSource.BASE) {
+        val source = if (node.effectiveContextSource == ContextSource.BASE) {
             ContextSource.PREVIOUS
         } else {
             ContextSource.BASE
         }
-        node.markConfigured("context")
+        node.contextSource = source
+        // BASEは「すべて継承」の実効状態です。明示フラグだけを残すと、値がBASEへ
+        // 戻ったあとも設定済みと表示されるため、選択状態を実効値から一貫して導出します。
+        if (source == ContextSource.BASE) {
+            node.clearConfigured(configuredFieldKey("context", null))
+        } else {
+            node.markConfigured(configuredFieldKey("context", null))
+        }
     }
 
     /** コンテキスト設定を「すべて継承」へ戻す共通操作です。 */
@@ -446,6 +463,7 @@ object CommandSettingsModel {
         // 直前文脈を選び続けます。入力の意味と実行結果を一致させるため、継承元もBASEへ戻します。
         node.contextSource = ContextSource.BASE
         node.clearConfigured("context")
+        node.clearConfiguredPrefix("context.")
     }
 
     /**
@@ -460,13 +478,22 @@ object CommandSettingsModel {
         fieldKey: String,
         role: CommandSettingRole? = null,
     ): Boolean {
-        if (node.isExplicitlyConfigured(fieldKey)) return true
+        // roleを省略したInventoryの一覧描画でも、コマンド型から保存先を復元します。
+        // これをしないとBLOCK_OPERATIONのpositionがコンテキスト位置として判定され、
+        // InventoryとGestureで同じ値を表示していても選択状態だけがずれます。
+        val effectiveRole = role ?: descriptor(node, fieldKey).role
+        // contextはcontextSource/contextOverrideの実効値からだけ判定します。履歴的な
+        // 明示フラグを先に見ると、BASEへ戻した選択が「設定済み」として残ります。
+        if (fieldKey == "context") {
+            return node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
+        }
+        if (node.isExplicitlyConfigured(configuredFieldKey(fieldKey, effectiveRole))) return true
         return when (fieldKey) {
-            "target" -> targetSpec(node, role) != null
+            "target" -> targetSpec(node, effectiveRole) != null
             "destination" -> node.destinationSpec != null || node.destinationTargetSpec != null
             "other" -> node.secondaryTargetSpec != null
             "executor" -> node.contextOverride?.executor != null
-            "position" -> when (role) {
+            "position" -> when (effectiveRole) {
                 CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec != null
                 CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position != null
                 CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec != null
@@ -475,7 +502,6 @@ object CommandSettingsModel {
             "from" -> node.blockFromSpec != null
             "to" -> node.blockToSpec != null
             "facing" -> node.contextOverride?.facing != null
-            "context" -> node.contextOverride != null || node.effectiveContextSource != ContextSource.BASE
             "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
             "condition" -> conditionDetailConfigured(node)
@@ -493,7 +519,7 @@ object CommandSettingsModel {
         parameter: String,
     ): Boolean {
         val spec = targetSpec(node, role) ?: return false
-        if (node.isExplicitlyConfigured("target.$parameter")) return true
+        if (node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))) return true
         return when (parameter) {
             "kind" -> spec.kind != TargetKind.INHERITED_TARGET
             "entityType" -> !spec.entityType.isNullOrBlank()
@@ -543,33 +569,152 @@ object CommandSettingsModel {
     fun targetSupportsDetailedFilters(kind: TargetKind?): Boolean =
         kind?.let { it in FILTERABLE_TARGET_KINDS } == true
 
-    /** インベントリ／ジェスチャー共通の保存処理です。配置済み表示も同時に更新します。 */
+    /**
+     * プログラム全体の編集を共通保存境界へ通します。
+     *
+     * 名前・タイマー・有効化方式を画面ごとに直接保存すると、変更履歴・配置表示・
+     * 実行時状態の更新順序が分岐します。ここで正本の独立コピーを読み込み、保存後
+     * の補助処理も共通化します。
+     */
+    fun updateScript(
+        plugin: KantanCommanderPlugin,
+        scriptId: UUID,
+        editorId: UUID? = null,
+        afterSave: (DiskScript) -> Unit = {},
+        change: (DiskScript) -> Unit,
+    ): Boolean {
+        val script = plugin.scripts.load(scriptId) ?: return false
+        change(script)
+        plugin.scripts.save(script, editorId)
+        afterSave(script)
+        refreshDisplays(plugin, script.id)
+        return true
+    }
+
+    /** インベントリ／ジェスチャー共通のグラフ更新処理です。 */
+    fun <T : Any> updateGraph(
+        plugin: KantanCommanderPlugin,
+        scriptId: UUID,
+        editorId: UUID? = null,
+        change: (CommandGraph) -> T?,
+    ): T? {
+        val script = plugin.scripts.load(scriptId) ?: return null
+        val candidateGraph = script.graph.deepCopy()
+        val result = change(candidateGraph) ?: return null
+        // 描画セルの衝突・幅・高さ検証を保存前に必ず通し、両GUIの経路編集で
+        // 「保存後にだけ描画不能になる」差を作りません。
+        GraphLayoutEngine.layout(candidateGraph)
+        plugin.scripts.save(script.copy(graph = candidateGraph), editorId)
+        refreshDisplays(plugin, script.id)
+        return result
+    }
+
+    /** インベントリ／ジェスチャー共通のノード保存処理です。配置済み表示も更新します。 */
     fun updateNode(
         plugin: KantanCommanderPlugin,
         context: CommandSettingContext,
         configuredFields: Set<String> = emptySet(),
         editorId: UUID? = null,
         change: (CommandNode) -> Unit,
-    ): CommandNode? {
-        val script = plugin.scripts.load(context.scriptId) ?: return null
-        val node = script.graph.nodes[context.nodeId] ?: return null
-        change(node)
-        node.markConfigured(*configuredFields.toTypedArray())
-        plugin.scripts.save(script, editorId)
-        // 表示体の再生成は永続化成功後の補助処理です。ここで失敗しても
-        // 設定値そのものは保存済みなので、入力イベントへ例外を戻さず次回復元へ委ねます。
-        runCatching { plugin.placements.refreshDisplaysForScript(script.id) }
+    ): CommandNode? = updateGraph(plugin, context.scriptId, editorId) { graph ->
+        graph.nodes[context.nodeId]?.also { node ->
+            change(node)
+            node.markConfigured(
+                *configuredFields
+                    .map { configuredFieldKey(it, context.role) }
+                    .toTypedArray(),
+            )
+        }
+    }
+
+    /** プログラム名を両GUI共通の更新入口から変更します。 */
+    fun updateScriptName(
+        plugin: KantanCommanderPlugin,
+        scriptId: UUID,
+        name: String,
+        editorId: UUID? = null,
+    ): Boolean {
+        require(name.isNotBlank()) { "プログラム名が空です" }
+        return updateScript(plugin, scriptId, editorId) { it.name = name }
+    }
+
+    /**
+     * プログラム全体設定であるタイマーも、両GUIが同じ保存境界を通ります。
+     *
+     * タイマー値だけを各画面で更新すると、間隔変更時の再登録や無効化時の
+     * ALWAYS_ACTIVE解除が片方から抜けます。ノード設定と同じく、読み込み・検証・
+     * 保存・実行時登録更新・表示更新を一つの操作として扱います。
+     */
+    fun updateTimer(
+        plugin: KantanCommanderPlugin,
+        scriptId: UUID,
+        enabled: Boolean,
+        intervalSeconds: Int? = null,
+        editorId: UUID? = null,
+    ): Boolean {
+        return updateScript(
+            plugin,
+            scriptId,
+            editorId,
+            afterSave = { plugin.resetActivationTiming(it.id) },
+        ) { script ->
+            if (enabled) {
+                val seconds = requireNotNull(intervalSeconds) { "タイマー有効化には間隔が必要です" }
+                require(seconds in MIN_TIMER_SECONDS..MAX_TIMER_SECONDS) {
+                    "タイマー間隔は${MIN_TIMER_SECONDS}から${MAX_TIMER_SECONDS}秒で指定してください"
+                }
+                script.timer.intervalSeconds = seconds
+            }
+            script.timer.enabled = enabled
+            if (!enabled) script.activation = ActivationMode.NEEDS_REDSTONE
+        }
+    }
+
+    /** タイマー有効時の実行方式切替も、プログラム共通の保存境界へ通します。 */
+    fun toggleActivation(
+        plugin: KantanCommanderPlugin,
+        scriptId: UUID,
+        editorId: UUID? = null,
+    ): Boolean {
+        return updateScript(plugin, scriptId, editorId) { script ->
+            check(script.timer.enabled) { "タイマーが無効なため実行方式を変更できません" }
+            script.activation = script.activation.toggled(timerEnabled = true)
+        }
+    }
+
+    /** 保存成功後だけ配置表示を更新し、補助表示の失敗を設定保存へ波及させません。 */
+    private fun refreshDisplays(plugin: KantanCommanderPlugin, scriptId: UUID) {
+        runCatching { plugin.placements.refreshDisplaysForScript(scriptId) }
             .onFailure { failure ->
                 plugin.logger.log(
                     java.util.logging.Level.WARNING,
-                    "設定保存後の配置表示更新に失敗しました: script=${script.id}",
+                    "設定保存後の配置表示更新に失敗しました: script=$scriptId",
                     failure,
                 )
             }
-        return node
     }
 
     private fun text() = CommandSettingDescriptor(CommandSettingEditor.TEXT)
+
+    /** 構造化フィールドの明示設定キーを、保存先の役割ごとに名前空間化します。 */
+    private fun configuredFieldKey(fieldKey: String, role: CommandSettingRole?): String = when (role) {
+        CommandSettingRole.CONTEXT_EXECUTOR -> if (fieldKey.startsWith("target.")) {
+            "context.executor.${fieldKey.removePrefix("target.")}"
+        } else "context.executor"
+        CommandSettingRole.CONTEXT_TARGET -> if (fieldKey.startsWith("target.")) {
+            "context.$fieldKey"
+        } else "context.target"
+        CommandSettingRole.CONTEXT_POSITION -> "context.position"
+        CommandSettingRole.CONTEXT_FACING -> "context.facing"
+        CommandSettingRole.CONDITION_POSITION -> "condition.position"
+        CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
+            "destination.$fieldKey"
+        } else "destination"
+        CommandSettingRole.SECONDARY_TARGET -> if (fieldKey.startsWith("target.")) {
+            "other.$fieldKey"
+        } else "other"
+        else -> fieldKey
+    }
 
     private fun contextField() = EditorField(
         key = "context",

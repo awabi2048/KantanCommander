@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.DiskScript
@@ -20,11 +21,11 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
+import me.awabi2048.kantancommander.model.hasContextOverride
 import me.awabi2048.kantancommander.model.supportsContextOverride
 import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.execution.ExecutionSemantics
 import me.awabi2048.kantancommander.item.ItemStackCodec
-import org.bukkit.Material
 import java.io.File
 import java.math.BigInteger
 import java.util.Collections
@@ -97,7 +98,7 @@ class VanillaDatapackExporter(
             when (node.type) {
                 CommandType.GIVE_ITEM -> {
                     val item = node.string("item")
-                    if (!item.startsWith("minecraft:") || Material.matchMaterial(item) == null) {
+                    if (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null) {
                         errors += "${script.id}/${node.id}: バニラに存在しないアイテムです: $item"
                     }
                     val itemData = node.string("itemData")
@@ -109,8 +110,8 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
                 CommandType.BLOCK_OPERATION -> {
-                    val block = Material.matchMaterial(node.string("block"))
-                    if (!node.string("block").startsWith("minecraft:") || block == null || block == Material.AIR) {
+                    val block = CommandValueRules.placementMaterial(node.string("block"))
+                    if (!node.string("block").startsWith("minecraft:") || block == null) {
                         errors += "${script.id}/${node.id}: 完全バニラ出力できない配置ブロックです"
                     }
                     when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
@@ -207,7 +208,7 @@ class VanillaDatapackExporter(
             if (resolveExportContext(script.graph, node).second) {
                 errors += "${script.id}/${node.id}: 直前コンテキスト(PREVIOUS)の継承内容が経路ごとに確定しないため、完全バニラ出力できません"
             }
-            val hasContextState = node.contextOverride != null || node.effectiveContextSource != ContextSource.BASE
+            val hasContextState = node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
             if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
                 errors += "${script.id}/${node.id}: ${node.type} では実行コンテキストを設定できません"
             } else {
