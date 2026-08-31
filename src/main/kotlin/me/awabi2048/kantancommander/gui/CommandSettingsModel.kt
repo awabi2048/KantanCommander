@@ -161,24 +161,36 @@ object CommandSettingsModel {
         targetCategory(kind) == category
 
     /**
-     * 現在ノードより前の実行経路に、継承対象として利用できる対象設定があるかを返します。
-     * LinkedHashMapの挿入順は実行順を保証しないため、entryからnext/trueNextを辿ります。
-     * ループはvisitedで止め、現在ノード自身の設定を「前の設定」と誤認しません。
+     * 現在ノードより前の実行経路に、継承できる対象が用意されているかを返します。
+     *
+     * 実行時はCONTEXTコマンドが確定した対象（session.context.target）だけが
+     * INHERITED_TARGETの参照先になります。通常コマンドのtargetSpecは自分自身の
+     * 実行にしか使われず文脈へ入らないため、ここでもCONTEXTコマンドだけを
+     * 「対象の確立」とみなします。条件分岐は、いずれかの経路で確立されていれば
+     * 選択できるany-pathの評価とし、CONTEXTコマンドが明示的にINHERITED対象を
+     * 設定した場合は参照先が消えるため確立状態を解除します。
      */
     fun hasPriorTargetContext(graph: me.awabi2048.kantancommander.model.CommandGraph, nodeId: UUID): Boolean {
         val entry = graph.entryNodeId ?: return false
         val visited = mutableSetOf<UUID>()
-        fun establishesTarget(node: CommandNode): Boolean =
-            node.targetSpec?.kind?.let { it != TargetKind.INHERITED_TARGET } == true ||
-                node.contextOverride?.target?.kind?.let { it != TargetKind.INHERITED_TARGET } == true
-        fun visit(currentId: UUID): Boolean {
-            if (currentId == nodeId) return false
+        fun visit(currentId: UUID, established: Boolean): Boolean {
+            if (currentId == nodeId) return established
             if (!visited.add(currentId)) return false
-            val node = graph.nodes[currentId] ?: return false
-            if (establishesTarget(node)) return true
-            return listOfNotNull(node.next, node.trueNext, node.falseNext).any(::visit)
+            val node = graph.nodes[currentId] ?: return established
+            val nextEstablished = when {
+                node.type != CommandType.CONTEXT -> established
+                else -> {
+                    val overrideTarget = node.contextOverride?.target
+                    when {
+                        overrideTarget == null -> established
+                        else -> overrideTarget.kind != TargetKind.INHERITED_TARGET
+                    }
+                }
+            }
+            return listOfNotNull(node.next, node.trueNext, node.falseNext)
+                .any { visit(it, nextEstablished) }
         }
-        return visit(entry)
+        return visit(entry, established = false)
     }
 
     /** 対象の大分類を選択可能にする条件（継承だけは前置き設定を要求）です。 */
