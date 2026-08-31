@@ -50,7 +50,6 @@ import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
 import org.bukkit.Color
-import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.Sound
 import org.bukkit.entity.Player
@@ -69,7 +68,6 @@ data class GestureEditorState(
     /** ビューポート表示倍率。初期値は最大倍率、縮小25%まで25%刻みで許可します。 */
     var zoomLevel: Int = GestureEditorLayout.INITIAL_ZOOM_LEVEL,
     var selectedNodeId: UUID? = null,
-    var anchor: Location? = null,
     /** 下部パネルの表示モード */
     var lowerMode: GestureLowerMode = GestureLowerMode.SETTINGS,
     /** SETTINGSで選択中のフィールドインデックス */
@@ -246,7 +244,9 @@ class GestureSequenceEditor(
             player,
             listOf(upper, lower),
             GestureGuiOpenOptions(
-                anchor = state.anchor,
+                // 固定アンカーを渡さず、CC-Systemのプレイヤー追従モードを使います。
+                // 追従モードの初回poseはplayer.eyeLocationから生成されるため、
+                // エディターを開いた時点のプレイヤーの高さが初期表示位置になります。
                 sessionListener = GestureGuiSessionListener { ownerId, sessionId ->
                     onGestureSessionClosed(ownerId, sessionId)
                 },
