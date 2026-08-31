@@ -254,6 +254,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.logger.info(
                 "設置直後に配置ブロックが消失したため配置を撤去: placement=${placement.key}, material=${block.type}",
             )
+            // 実体が先に消えた場合は、対象側へ残った特殊接続を台帳の現状態に
+            // 基づいて解除します。以降の台帳削除が失敗しても、ガラスではないため
+            // 通常のバニラ接続へ戻せます。
+            plugin.refreshRedstoneTopologyAround(block)
             val removed = runCatching {
                 plugin.placements.remove(world, placement.x, placement.y, placement.z)
             }.getOrElse { failure ->
@@ -330,6 +334,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
         plugin.placements.removeDisplay(world, removed.displayId)
         block.setType(Material.AIR, false)
+        // ブロックを物理更新なしで消すため、隣接ダストに残る拡張ブロック向けの
+        // 特殊接続を明示的にバニラ形状へ戻します。
+        plugin.refreshRedstoneTopologyAround(block)
         if (source != null) {
             runCatching { plugin.scripts.delete(source.id) }
                 .onFailure { failure ->
