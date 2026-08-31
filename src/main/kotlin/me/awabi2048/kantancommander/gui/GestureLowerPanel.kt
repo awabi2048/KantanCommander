@@ -230,9 +230,8 @@ class GestureLowerPanel(
                         if (heldMainHandSetting) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_HOVER
                         else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER,
                     ),
-                    x = 0.28,
-                    y = ACTION_DESCRIPTION_Y,
-                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
                 ),
             ))
         }
@@ -263,9 +262,8 @@ class GestureLowerPanel(
                 targetVisualId = "lower-item-get-bg",
                 hoverText = singleLineHover(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
-                    x = 0.28,
-                    y = ACTION_DESCRIPTION_Y,
-                    replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
                 ),
             ))
         }
@@ -403,8 +401,8 @@ class GestureLowerPanel(
             hoverText = if (attention) {
                 singleLineHover(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_INCOMPLETE),
-                    x = x,
-                    y = ACTION_DESCRIPTION_Y,
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
                 )
             } else null,
         ))
@@ -458,12 +456,18 @@ class GestureLowerPanel(
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
                 hoverText = hoverDescription?.let {
-                    singleLineHover(
-                        it,
-                        x = if (child) 0.0 else 0.28,
-                        y = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
-                        replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
-                    )
+                    if (child) {
+                        // 子画面は詳細設定に集中するため、説明スロットの置換を維持します。
+                        singleLineHover(
+                            it,
+                            x = 0.0,
+                            y = CHILD_HOVER_Y,
+                            replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                        )
+                    } else {
+                        // 親画面では説明と対になる画面下段のスロットへ表示します。
+                        singleLineHover(it, x = HOVER_SLOT_X, y = HOVER_SLOT_Y)
+                    }
                 },
             ))
         }
@@ -650,22 +654,29 @@ class GestureLowerPanel(
     private fun attentionWarningHover(player: Player): GestureGuiHoverText =
         singleLineHover(
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_INCOMPLETE),
-            x = 0.28,
-            y = ACTION_DESCRIPTION_Y,
-            replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+            x = HOVER_SLOT_X,
+            y = HOVER_SLOT_Y,
         )
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
     private fun choiceDescription(player: Player, choice: SettingChoice): String? = when {
-        // 対象の三分類はホバー中の項目名を説明位置へ表示します。固定の
-        // 「コマンドの対象を設定します」を重ねず、現在どの候補を見ているかを示します。
+        // 対象の三分類は、ラベルと同一の文面ではなく項目の説明を表示します。
         choice.id == "target:${TargetCategory.INHERITED.name}" ->
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET)
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_INHERITED_TARGET)
         choice.id == "target:${TargetCategory.PLAYER.name}" ->
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PLAYER_TARGET)
         choice.id == "target:${TargetCategory.NON_PLAYER_ENTITY.name}" ->
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY)
-        choice.id.startsWith("kind:") -> choice.label
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ENTITY_TARGET)
+        // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します。
+        choice.id.startsWith("condition-kind:") -> conditionKindDescription(player, choice.id)
+        choice.id == "context:executor" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EXECUTOR)
+        choice.id == "context:target" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONTEXT_TARGET)
+        choice.id == "context:position" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION)
+        choice.id == "context:facing" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING)
+        choice.id == "context:source" ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_SOURCE)
+        choice.id == "context:inherit" ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_INHERIT)
         choice.id == "filter:entityType" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE)
         choice.id == "filter:distance" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY)
         choice.id == "filter:limit" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_LIMIT)
@@ -676,7 +687,6 @@ class GestureLowerPanel(
         choice.id.startsWith("filter:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_DEFAULT)
         choice.id.startsWith("position:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_POSITION)
         choice.id.startsWith("facing:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FACING)
-        choice.id.startsWith("context:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_CONTEXT)
         choice.id.startsWith("condition-") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_CONDITION)
         choice.id.startsWith("display:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DISPLAY)
         choice.id.startsWith("action:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_ACTION)
@@ -688,12 +698,37 @@ class GestureLowerPanel(
         choice.id.startsWith("inclusive:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_INCLUSIVE)
         else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DEFAULT)
     }
+    /** 条件種別の選択肢ID（condition-kind:<KIND>）から、種別ごとの説明へ解決します。 */
+    private fun conditionKindDescription(player: Player, choiceId: String): String? =
+        when (runCatching { ConditionKind.valueOf(choiceId.removePrefix("condition-kind:")) }.getOrNull()) {
+            ConditionKind.TARGET_EXISTS ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS)
+            ConditionKind.ENTITY_STATE ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_ENTITY_STATE)
+            ConditionKind.VARIABLE_STATE ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE)
+            ConditionKind.BLOCK_STATE ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE)
+            ConditionKind.ITEM_POSSESSION ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_ITEM_POSSESSION)
+            null -> null
+        }
+
+    /** 項目の説明（テキストリスト）を、ホバー用の1文へ連結します。 */
+    private fun fieldDescriptionText(
+        player: Player,
+        key: com.awabi2048.ccsystem.api.localization.LocalizationKey<List<String>>,
+    ): String = KcI18n.list(player, key)
+        .filter(String::isNotBlank)
+        .joinToString(" ")
+        .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DEFAULT) }
 
     /**
      * ホバーは1行1エンティティで表示します。1つのTextDisplayへ複数行を
      * 入れると中央列揃えになり下部パネルのレイアウトが崩れるためです。
-     * 位置と寸法は常設の灰色説明スロットへ合わせ、replacesVisualIdで
-     * 置き換えることで、ホバー中に別の白文字が上へ重なることを防ぎます。
+     * 親画面では常設の灰色説明と対になる画面下段のスロットへ表示し、
+     * 説明を置き換えません。子画面のみ、従来どおり説明スロットの置換を
+     * 使います（replacesVisualId）。
      */
     private fun singleLineHover(
         text: String,
@@ -1349,9 +1384,8 @@ class GestureLowerPanel(
                 hoverText = hoverDescription?.let {
                     singleLineHover(
                         it,
-                        x = 0.28,
-                        y = ACTION_DESCRIPTION_Y,
-                        replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
                     )
                 },
             )
@@ -1621,15 +1655,14 @@ class GestureLowerPanel(
                 bounds = rect(cx, cy, 0.72, 0.155),
                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "type-bg-$index",
-                // コマンド種別の説明は、灰色のカテゴリ説明スロットを置き換えて
-                // 同じ位置へ表示します。ホバー中の白文字が説明と重複しないようにします。
+                // コマンド種別の説明は、説明と対になる画面下段のスロットへ
+                // 表示します。カテゴリ説明は常設のため置き換えません。
                 hoverText = singleLineHover(
                     KcI18n.list(player, type.descriptionKey)
                         .filter(String::isNotBlank)
                         .joinToString(" "),
-                    x = 0.28,
-                    y = ACTION_DESCRIPTION_Y,
-                    replacesVisualId = "picker-description-body",
+                    x = HOVER_SLOT_X,
+                    y = PICKER_HOVER_SLOT_Y,
                 ),
             ))
         }
@@ -1884,7 +1917,8 @@ class GestureLowerPanel(
         const val SETTING_VALUE_Y = 0.27
         const val SETTING_DETAIL_HINT_Y = 0.17
         const val SETTINGS_PAGE_SIZE = 4
-        const val PICKER_PAGE_SIZE = 8
+        // PICKERは説明と対になる下段ホバースロットを確保するため、2列×3行へ縮小します。
+        const val PICKER_PAGE_SIZE = 6
         // 2列×5行に収め、対象フィルター（10項目）を1画面で編集できます。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
         const val SETTING_CHOICE_PAGE_SIZE = 10
@@ -1904,6 +1938,13 @@ class GestureLowerPanel(
         const val CHILD_PAGER_Y = -0.34
         const val CHILD_BACK_WIDTH = 1.70
         const val ACTION_DESCRIPTION_Y = 0.36
+        // 親画面のホバー説明は、常設の灰色説明（ACTION_DESCRIPTION_Y）と対になる
+        // 画面下段のスロットへ表示します。操作行（-0.43）や対象カード（-0.25）と
+        // 重ならない位置です。
+        const val HOVER_SLOT_X = 0.28
+        const val HOVER_SLOT_Y = -0.35
+        // PICKERの下段はページャー（0.28, -0.48）があるため、その上へ置きます。
+        const val PICKER_HOVER_SLOT_Y = -0.38
         // 「ほかのエンティティ」の対象三分類は、右ペインの選択カード領域
         // （SETTING_CHOICE 2列と同じスパン）を3等分し、設定タブ（0.47×0.15）と
         // およそ同じ寸法で配置します。
