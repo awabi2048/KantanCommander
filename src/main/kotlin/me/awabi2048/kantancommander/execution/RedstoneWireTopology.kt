@@ -81,13 +81,16 @@ internal class RedstoneWireTopology(
         val vanillaConnections = HORIZONTAL_FACES.associateWith { face ->
             vanillaConnection(wireBlock, face)
         }
-        val adjacentDustFaces = HORIZONTAL_FACES
-            .filter { face -> wireBlock.getRelative(face).type == Material.REDSTONE_WIRE }
-            .toSet()
+        // 4方向に別のダストがあるかではなく、座標ごとのバニラ接続結果を使います。
+        // これにより、未通電のレバーやボタンなど「接続はできるが現在は電力0」の
+        // ブロックも、ダストと同じく十字形判定へ反映できます。
+        val adjacentConnectableFaces = vanillaConnections
+            .filterValues { connection -> connection != RedstoneWire.Connection.NONE }
+            .keys
         val desired = resolveHorizontalConnections(
             vanillaConnections = vanillaConnections,
             extendedTargetFaces = extendedTargetFaces,
-            adjacentDustFaces = adjacentDustFaces,
+            adjacentConnectableFaces = adjacentConnectableFaces,
         )
 
         applyConnections(wireBlock, wire, desired)
@@ -223,15 +226,15 @@ internal class RedstoneWireTopology(
          * バニラ再計算結果へ拡張ブロックの例外だけを重ねます。
          *
          * 26.1.2のRedStoneWireBlockは、4方向に接続先がない配置時にcrossStateを基準
-         * として形状を確定します。拡張ブロックに隣接し、かつ4方向に別のダストがない
-         * 場合もその十字形を維持します。別のダストがある場合は、拡張ブロック側の
-         * 面だけを追加し、残りはバニラと同じ軸補完規則で決めます。
+         * として形状を確定します。拡張ブロックに隣接し、かつ4方向に別の接続可能な
+         * ブロックがない場合もその十字形を維持します。接続可能なブロックがある場合は、
+         * 拡張ブロック側の面だけを追加し、残りはバニラと同じ軸補完規則で決めます。
          * 4面すべてを返すことで、現在のBlockDataに残った余分な接続を持ち越しません。
          */
         internal fun resolveHorizontalConnections(
             vanillaConnections: Map<BlockFace, RedstoneWire.Connection>,
             extendedTargetFaces: Set<BlockFace>,
-            adjacentDustFaces: Set<BlockFace> = emptySet(),
+            adjacentConnectableFaces: Set<BlockFace> = emptySet(),
         ): Map<BlockFace, RedstoneWire.Connection> {
             if (extendedTargetFaces.isEmpty()) {
                 return HORIZONTAL_FACES.associateWith { face ->
@@ -239,8 +242,9 @@ internal class RedstoneWireTopology(
                 }
             }
 
-            // 別のダストが4方向にない場合は、26.1.2の配置時仕様に合わせて十字形にします。
-            if (adjacentDustFaces.isEmpty()) {
+            // 別の接続可能なブロックが4方向にない場合は、26.1.2の配置時仕様に
+            // 合わせて十字形にします。拡張ブロック自身はこの集合へ含めません。
+            if (adjacentConnectableFaces.isEmpty()) {
                 return HORIZONTAL_FACES.associateWith { RedstoneWire.Connection.SIDE }
             }
 

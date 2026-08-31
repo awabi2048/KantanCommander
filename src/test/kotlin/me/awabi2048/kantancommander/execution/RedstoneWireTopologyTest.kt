@@ -11,14 +11,14 @@ class RedstoneWireTopologyTest {
         val actual = RedstoneWireTopology.resolveHorizontalConnections(
             vanillaConnections = horizontalConnections(RedstoneWire.Connection.NONE),
             extendedTargetFaces = setOf(BlockFace.NORTH),
-            adjacentDustFaces = emptySet(),
+            adjacentConnectableFaces = emptySet(),
         )
 
         assertEquals(horizontalConnections(RedstoneWire.Connection.SIDE), actual)
     }
 
     @Test
-    fun `extended target adds only its face when another dust is present`() {
+    fun `extended target adds only its face when another redstone-connectable block is present`() {
         val vanilla = mapOf(
             BlockFace.NORTH to RedstoneWire.Connection.NONE,
             BlockFace.SOUTH to RedstoneWire.Connection.NONE,
@@ -29,7 +29,7 @@ class RedstoneWireTopologyTest {
         val actual = RedstoneWireTopology.resolveHorizontalConnections(
             vanillaConnections = vanilla,
             extendedTargetFaces = setOf(BlockFace.NORTH),
-            adjacentDustFaces = setOf(BlockFace.EAST),
+            adjacentConnectableFaces = setOf(BlockFace.EAST),
         )
 
         assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.NORTH])
@@ -52,7 +52,7 @@ class RedstoneWireTopologyTest {
             RedstoneWireTopology.resolveHorizontalConnections(
                 vanillaConnections = vanilla,
                 extendedTargetFaces = emptySet(),
-                adjacentDustFaces = emptySet(),
+                adjacentConnectableFaces = emptySet(),
             ),
         )
     }
@@ -62,7 +62,7 @@ class RedstoneWireTopologyTest {
         val actual = RedstoneWireTopology.resolveHorizontalConnections(
             vanillaConnections = horizontalConnections(RedstoneWire.Connection.NONE),
             extendedTargetFaces = setOf(BlockFace.EAST, BlockFace.WEST),
-            adjacentDustFaces = emptySet(),
+            adjacentConnectableFaces = emptySet(),
         )
 
         assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.NORTH])
