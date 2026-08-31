@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
+import org.bukkit.Location
 import org.bukkit.entity.Player
 import org.bukkit.permissions.PermissionAttachment
 import java.util.UUID
@@ -17,10 +18,20 @@ class GestureEditorFacade(
     private val externalEditorSuppressions = mutableMapOf<UUID, PermissionAttachment>()
 
     fun open(player: Player, placement: DiskPlacement) {
+        val scriptId = placement.scriptId
+        val world = org.bukkit.Bukkit.getWorld(placement.world)
+        val anchor: Location? = if (world != null) {
+            // ブロック実体との視線干渉を避け、ジェスチャー画面全体を
+            // 基準位置から合計0.8ブロック上へ配置します（従来の0.3ブロックに
+            // 今回の追加0.5ブロックを加算）。上部・下部の両画面は
+            // 同じanchorから姿勢を算出するため、相対位置は変わりません。
+            Location(world, placement.x + 0.5, placement.y + 0.5 + GESTURE_DISPLAY_VERTICAL_OFFSET, placement.z + 0.5)
+        } else null
         val state = GestureEditorState(
-            scriptId = placement.scriptId,
+            scriptId = scriptId,
             placement = placement,
             origin = MapPoint(0, 0),
+            anchor = anchor,
         )
         openEditor(player, state)
     }
@@ -30,6 +41,7 @@ class GestureEditorFacade(
             scriptId = scriptId,
             placement = null,
             origin = MapPoint(0, 0),
+            anchor = null,
         )
         openEditor(player, state)
     }
@@ -135,6 +147,7 @@ class GestureEditorFacade(
     }
 
     private companion object {
+        const val GESTURE_DISPLAY_VERTICAL_OFFSET: Double = 0.8
         const val EASY_ARMOR_STANDS_PLUGIN = "EasyArmorStands"
         const val EAS_EDIT_PERMISSION = "easyarmorstands.edit"
     }
