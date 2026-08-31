@@ -370,11 +370,12 @@ object GraphLayoutEngine {
                     InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
                 else -> null
             }
-            // 分岐の縦幹もFALSE枝へ属する実行経路です。従来は接続専用として
-            // 挿入先を持たせていなかったため、縦幹をクリックしても無反応でした。
-            // 水平枝と同じedgeへ解決し、どの高さからでも同じFALSE枝の直後へ
-            // 挿入できるようにします。
-            markVerticalInsertionTarget(x, y + 1, falseY, falseTarget)
+            // 条件直下の縦幹は、FALSE枝の先頭への挿入を受け付けます（開いた枝・
+            // 閉じた枝で共通）。空枝では追加ボタンが枝への追加を担うため、
+            // 縦幹は接続専用になります。
+            val falseStemTarget = if (falseStart == null || falseStart == mergeId) null
+                else InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
+            markVerticalInsertionTarget(x, y + 1, falseY, falseStemTarget)
             fillHorizontal(
                 trueSegment.mainNextX - 1,
                 mergeX - 1,
@@ -448,18 +449,12 @@ object GraphLayoutEngine {
             if (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop)) {
                 putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
             }
-            // 縦幹の挿入判定は、枝が親の合流で閉じる場合（追加ボタンなし）だけ
-            // 横セルと同じく保持します。開いた枝（枝末端に追加ボタンあり）では
-            // 追加ボタンが同一の挿入先を提供するため、縦幹を接続専用にします。
-            val falseTarget = when {
-                falseSegment.tail != null && stop != null &&
-                    graph.nodes[falseSegment.tail]?.next == stop ->
-                    InsertionTarget(falseSegment.tail, GraphEditor.Edge.NEXT, condition.id)
-                falseStart != null && falseStart == stop ->
-                    InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
-                else -> null
-            }
-            markVerticalInsertionTarget(x, y + 1, falseY, falseTarget)
+            // 条件直下の縦幹は、FALSE枝の先頭への挿入を受け付けます（開いた枝・
+            // 閉じた枝で共通）。空枝（枝の先頭にノードがなく、追加ボタンが枝への
+            // 追加を担う場合）では、縦幹は接続専用になります。
+            val falseStemTarget = if (falseStart == null || falseStart == stop) null
+                else InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
+            markVerticalInsertionTarget(x, y + 1, falseY, falseStemTarget)
             val trueOpen = trueStart == null || trueSegment.hasOpenEnd ||
                 (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop))
             val falseOpen = falseStart == null || falseSegment.hasOpenEnd ||
@@ -537,10 +532,10 @@ object GraphLayoutEngine {
         }
 
         /**
-         * 閉じた枝（合流で閉じ、追加ボタンを持たない枝。親の合流で閉じる
-         * 未合流条件の枝を含む）の縦経路へ、対応する水平枝と同じ挿入先を付与します。
-         * 開いた枝は枝末端の追加ボタンが同一の挿入先を提供するため、縦経路を
-         * 接続専用にします（renderOpenCondition参照）。
+         * 条件直下の縦経路へ、FALSE枝の先頭への挿入先を付与します。
+         * 空枝（枝の先頭にノードがなく、追加ボタンが枝への追加を担う場合）は
+         * 接続専用にします。合流側の縦幹は、枝末端への挿入を担うため呼び出し側が
+         * 横経路と同じターゲットを渡します（renderCondition参照）。
          */
         private fun markVerticalInsertionTarget(
             x: Int,
