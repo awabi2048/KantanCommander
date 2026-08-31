@@ -580,14 +580,17 @@ object CommandSettingsModel {
         plugin: KantanCommanderPlugin,
         scriptId: UUID,
         editorId: UUID? = null,
+        expectedRevision: Long? = null,
         afterSave: (DiskScript) -> Unit = {},
         change: (DiskScript) -> Unit,
     ): Boolean {
-        val script = plugin.scripts.load(scriptId) ?: return false
-        change(script)
-        plugin.scripts.save(script, editorId)
+        val script = plugin.scripts.update(scriptId, editorId, expectedRevision) { current ->
+            change(current)
+            current
+        } ?: return false
         afterSave(script)
         refreshDisplays(plugin, script.id)
+        plugin.gestureEditor.refreshForScript(script.id)
         return true
     }
 
@@ -596,17 +599,21 @@ object CommandSettingsModel {
         plugin: KantanCommanderPlugin,
         scriptId: UUID,
         editorId: UUID? = null,
+        expectedRevision: Long? = null,
         change: (CommandGraph) -> T?,
     ): T? {
-        val script = plugin.scripts.load(scriptId) ?: return null
-        val candidateGraph = script.graph.deepCopy()
-        val result = change(candidateGraph) ?: return null
-        // 描画セルの衝突・幅・高さ検証を保存前に必ず通し、両GUIの経路編集で
-        // 「保存後にだけ描画不能になる」差を作りません。
-        GraphLayoutEngine.layout(candidateGraph)
-        plugin.scripts.save(script.copy(graph = candidateGraph), editorId)
-        refreshDisplays(plugin, script.id)
-        return result
+        val updated = plugin.scripts.update(scriptId, editorId, expectedRevision) { script ->
+            val candidateGraph = script.graph.deepCopy()
+            val result = change(candidateGraph) ?: return@update null
+            // 描画セルの衝突・幅・高さ検証を保存前に必ず通し、両GUIの経路編集で
+            // 「保存後にだけ描画不能になる」差を作りません。
+            GraphLayoutEngine.layout(candidateGraph)
+            script.graph = candidateGraph
+            result
+        } ?: return null
+        refreshDisplays(plugin, scriptId)
+        plugin.gestureEditor.refreshForScript(scriptId)
+        return updated
     }
 
     /** インベントリ／ジェスチャー共通のノード保存処理です。配置済み表示も更新します。 */
@@ -615,8 +622,9 @@ object CommandSettingsModel {
         context: CommandSettingContext,
         configuredFields: Set<String> = emptySet(),
         editorId: UUID? = null,
+        expectedRevision: Long? = null,
         change: (CommandNode) -> Unit,
-    ): CommandNode? = updateGraph(plugin, context.scriptId, editorId) { graph ->
+    ): CommandNode? = updateGraph(plugin, context.scriptId, editorId, expectedRevision) { graph ->
         graph.nodes[context.nodeId]?.also { node ->
             change(node)
             node.markConfigured(
@@ -633,9 +641,10 @@ object CommandSettingsModel {
         scriptId: UUID,
         name: String,
         editorId: UUID? = null,
+        expectedRevision: Long? = null,
     ): Boolean {
         require(name.isNotBlank()) { "プログラム名が空です" }
-        return updateScript(plugin, scriptId, editorId) { it.name = name }
+        return updateScript(plugin, scriptId, editorId, expectedRevision = expectedRevision) { it.name = name }
     }
 
     /**
@@ -651,11 +660,13 @@ object CommandSettingsModel {
         enabled: Boolean,
         intervalSeconds: Int? = null,
         editorId: UUID? = null,
+        expectedRevision: Long? = null,
     ): Boolean {
         return updateScript(
             plugin,
             scriptId,
             editorId,
+            expectedRevision = expectedRevision,
             afterSave = { plugin.resetActivationTiming(it.id) },
         ) { script ->
             if (enabled) {
@@ -675,8 +686,9 @@ object CommandSettingsModel {
         plugin: KantanCommanderPlugin,
         scriptId: UUID,
         editorId: UUID? = null,
+        expectedRevision: Long? = null,
     ): Boolean {
-        return updateScript(plugin, scriptId, editorId) { script ->
+        return updateScript(plugin, scriptId, editorId, expectedRevision = expectedRevision) { script ->
             check(script.timer.enabled) { "タイマーが無効なため実行方式を変更できません" }
             script.activation = script.activation.toggled(timerEnabled = true)
         }

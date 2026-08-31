@@ -27,6 +27,11 @@ data class DiskScript(
     var timer: TimerSetting = TimerSetting(),
     var graph: CommandGraph = CommandGraph.empty(),
     /**
+     * 同じプログラムを複数画面から編集する際の楽観的競合検出値です。
+     * 旧JSONには存在しないため0で復元し、ScriptStoreの保存境界で進めます。
+     */
+    var revision: Long = 0L,
+    /**
      * ノードを持たないスクリプトでも、プログラム名またはタイマーを明示的に
      * 編集したことを保持します。配置からのディスク出力可否は値の非空判定では
      * なく、この編集状態とグラフの両方を共通判定するため、初期配置の既定名を

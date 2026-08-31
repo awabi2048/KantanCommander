@@ -15,8 +15,11 @@ import java.nio.file.StandardCopyOption
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
 import java.util.logging.Level
 import java.util.logging.Logger
+import kotlin.concurrent.withLock
 
 class ScriptStore(
     private val dir: File,
@@ -33,7 +36,15 @@ class ScriptStore(
      * [load]が、参照ごとにJSON解析と構造検証を繰り返さないようにするためのもの。
      * 正本は検証に通った時点の内容のみを採用し、[load]経由では独立コピーを渡す。
      */
-    private val cache = mutableMapOf<UUID, DiskScript>()
+    private val cache = ConcurrentHashMap<UUID, DiskScript>()
+    /**
+     * 読み込み・変更・検証・保存を同じロックへ束ねます。ファイル置換だけを
+     * atomicにしても、2つの画面が古いコピーを保存すれば後勝ちで変更を失うため、
+     * プログラム単位のread-modify-write全体を直列化します。
+     */
+    private val scriptLocks = ConcurrentHashMap<UUID, ReentrantLock>()
+    /** 関係JSONを複数の保存処理から同時に更新しても、片方の履歴を失わないためのロックです。 */
+    private val relationLock = ReentrantLock()
 
     init {
         dir.mkdirs()
@@ -57,6 +68,7 @@ class ScriptStore(
             id = UUID.randomUUID(),
             createdAt = System.currentTimeMillis(),
             listed = false,
+            revision = 0L,
             graph = source.graph.deepCopy(),
         ).also(::save)
 
@@ -65,6 +77,7 @@ class ScriptStore(
             id = UUID.randomUUID(),
             createdAt = System.currentTimeMillis(),
             listed = false,
+            revision = 0L,
             graph = source.graph.deepCopy(),
         ).also(::save)
 
@@ -75,6 +88,7 @@ class ScriptStore(
             owner = owner,
             createdAt = System.currentTimeMillis(),
             listed = false,
+            revision = 0L,
             graph = source.graph.deepCopy(),
         ).also {
             save(it)
@@ -82,38 +96,79 @@ class ScriptStore(
         }
 
     /** 保存済み内容の独立コピーを返す。呼び出し側が変更しても保存済み正本へ波及しない。 */
-    fun load(id: UUID): DiskScript? = cached(id)?.deepCopy()
+    fun load(id: UUID): DiskScript? = withScriptLock(id) { cached(id)?.deepCopy() }
+
+    /**
+     * 最新の正本をロック内で取得し、変更・検証・保存まで一度だけ行います。
+     * expectedRevisionを指定した場合、画面表示後に別の編集が成功していれば
+     * 保存せずnullを返します。削除確認や入力Dialogの古い応答を安全に無効化する
+     * 共通境界として、Gesture／Inventory双方から利用します。
+     */
+    fun <T : Any> update(
+        id: UUID,
+        editorId: UUID? = null,
+        expectedRevision: Long? = null,
+        change: (DiskScript) -> T?,
+    ): T? = withScriptLock(id) {
+        val script = cached(id)?.deepCopy() ?: return@withScriptLock null
+        if (expectedRevision != null && script.revision != expectedRevision) {
+            return@withScriptLock null
+        }
+        val result = change(script) ?: return@withScriptLock null
+        saveLocked(script, editorId)
+        result
+    }
 
     @Suppress("DEPRECATION")
     fun save(script: DiskScript, editorId: UUID? = null) {
+        withScriptLock(script.id) {
+            saveLocked(script, editorId)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun saveLocked(script: DiskScript, editorId: UUID?) {
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
+        require(script.revision >= 0L) { "unsupported negative script revision" }
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
         // 旧listedフラグを一覧の正本として再出力しないよう、保存境界で必ず
         // 関係ファイル方式へ正規化します。
         script.listed = false
         val previous = cache[script.id]
+        if (previous != null && script.revision != previous.revision) {
+            throw java.util.ConcurrentModificationException(
+                "プログラムディスクが別の編集で更新されています: id=${script.id} " +
+                    "expected=${script.revision} actual=${previous.revision}",
+            )
+        }
         if (previous != null && !sameEditableContent(previous, script)) {
             // 名前・タイマーだけの編集も、ノード編集と同じくディスク内容です。
             // 呼び出し元ごとにフラグを立てるとインベントリGUIとジェスチャーGUIで
             // 漏れが生じるため、保存正本を確定するこの一点で差分を記録します。
             script.contentModified = true
         }
+        // 保存成功ごとに単調増加させ、Dialog開始時の正本世代と比較できるようにします。
+        script.revision = (previous?.revision ?: script.revision).inc()
         atomicWrite(file(script.id), gson.toJson(script))
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
         cache[script.id] = script.deepCopy()
         editorId?.let { recordHistory(it, script.id) }
     }
 
-    fun delete(id: UUID) {
-        // 履歴は「編集したプログラム」を無条件で追跡するため、配置撤去や
+    fun delete(id: UUID) = withScriptLock(id) {
+        // 履歴は「編集したプログラム」を無条件に追跡するため、配置撤去や
         // ライブラリからの除外だけで正本を消してはなりません。履歴に残る間は
         // ライブラリ関係だけを外し、JSONと履歴関係を保持します。
-        val isInHistory = historyPrograms.values.any { id in it }
-        libraryPrograms.values.forEach { it.remove(id) }
-        libraryPrograms.entries.removeIf { it.value.isEmpty() }
-        writeRelations()
-        if (isInHistory) return
+        // ノード保存と削除も同じプログラムロックへ束ね、削除途中に古い編集結果が
+        // 復活したり、削除直後の保存が正本を再生成したりする競合を防ぎます。
+        val isInHistory = relationLock.withLock { historyPrograms.values.any { id in it } }
+        relationLock.withLock {
+            libraryPrograms.values.forEach { it.remove(id) }
+            libraryPrograms.entries.removeIf { it.value.isEmpty() }
+            writeRelationsLocked()
+        }
+        if (isInHistory) return@withScriptLock
         val target = file(id)
         if (target.exists() && !target.delete()) {
             throw IllegalStateException("プログラムディスクを削除できません: ${target.absolutePath}")
@@ -136,38 +191,44 @@ class ScriptStore(
 
     /** プレイヤーが明示的にライブラリへ保存したプログラムを返します。 */
     fun listLibrary(playerId: UUID): List<DiskScript> =
-        resolveRelations(libraryPrograms[playerId])
+        relationLock.withLock { resolveRelations(libraryPrograms[playerId]) }
 
     /** プレイヤーが編集したプログラムを、直近に編集した順で返します。 */
     fun listHistory(playerId: UUID): List<DiskScript> =
-        resolveRelations(historyPrograms[playerId]).asReversed()
+        relationLock.withLock { resolveRelations(historyPrograms[playerId]).asReversed() }
 
     /** 編集成功時にプレイヤーとプログラムの関係を一件だけ記録します。 */
     fun recordHistory(playerId: UUID, scriptId: UUID): Boolean {
         if (cached(scriptId) == null) return false
-        val entries = historyPrograms.getOrPut(playerId) { linkedSetOf() }
-        // LinkedHashSetの末尾を最新編集位置として利用します。版管理は行いません。
-        entries.remove(scriptId)
-        entries += scriptId
-        writeRelations()
-        return true
+        return relationLock.withLock {
+            val entries = historyPrograms.getOrPut(playerId) { linkedSetOf() }
+            // LinkedHashSetの末尾を最新編集位置として利用します。版管理は行いません。
+            entries.remove(scriptId)
+            entries += scriptId
+            writeRelationsLocked()
+            true
+        }
     }
 
     /** 既存プログラムをプレイヤーのライブラリへ明示登録します。 */
     fun addToLibrary(playerId: UUID, scriptId: UUID): Boolean {
         if (cached(scriptId) == null) return false
-        libraryPrograms.getOrPut(playerId) { linkedSetOf() } += scriptId
-        writeRelations()
-        return true
+        return relationLock.withLock {
+            libraryPrograms.getOrPut(playerId) { linkedSetOf() } += scriptId
+            writeRelationsLocked()
+            true
+        }
     }
 
     /** ライブラリから外してもプログラム正本や履歴は削除しません。 */
     fun removeFromLibrary(playerId: UUID, scriptId: UUID): Boolean {
-        val entries = libraryPrograms[playerId] ?: return false
-        val removed = entries.remove(scriptId)
-        if (entries.isEmpty()) libraryPrograms.remove(playerId)
-        if (removed) writeRelations()
-        return removed
+        return relationLock.withLock {
+            val entries = libraryPrograms[playerId] ?: return@withLock false
+            val removed = entries.remove(scriptId)
+            if (entries.isEmpty()) libraryPrograms.remove(playerId)
+            if (removed) writeRelationsLocked()
+            removed
+        }
     }
 
     /** 一覧から取得するディスクは正本UUIDを維持し、履歴の同一プログラム関係を壊しません。 */
@@ -202,6 +263,10 @@ class ScriptStore(
     }
 
     private fun writeRelations() {
+        relationLock.withLock { writeRelationsLocked() }
+    }
+
+    private fun writeRelationsLocked() {
         val root = JsonObject()
         root.add("library", writeRelation(libraryPrograms))
         root.add("history", writeRelation(historyPrograms))
@@ -237,6 +302,9 @@ class ScriptStore(
             }
         if (changed) writeRelations()
     }
+
+    private fun <T> withScriptLock(id: UUID, action: () -> T): T =
+        scriptLocks.computeIfAbsent(id) { ReentrantLock() }.withLock(action)
 
     private fun cached(id: UUID): DiskScript? {
         cache[id]?.let { return it }

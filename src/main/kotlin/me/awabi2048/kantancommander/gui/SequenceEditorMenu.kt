@@ -538,19 +538,20 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
             return false
         }
-        val placementScript = plugin.scripts.load(placement.scriptId) ?: return false
-        // 書き込み対象は内容が空の拡張コマンドブロックだけに限定する。
-        if (placementScript.graph.nodes.isNotEmpty()) return false
         val diskScript = plugin.scripts.load(diskScriptId) ?: return false
-
-        val candidate = placementScript.copy(
-            name = diskScript.name,
-            activation = diskScript.activation,
-            timer = diskScript.timer.copy(),
-            graph = diskScript.graph.deepCopy(),
-            contentModified = diskScript.contentModified,
-        )
-        runCatching { plugin.scripts.save(candidate, player.uniqueId) }
+        // 空判定からコピー保存までを同じプログラムロックへ束ね、Gesture GUIの
+        // 同時編集が間に入っても、空ではない配置へ古いディスク内容を上書きしません。
+        val written = runCatching {
+            plugin.scripts.update(placement.scriptId, player.uniqueId) { placementScript ->
+                if (placementScript.graph.nodes.isNotEmpty()) return@update null
+                placementScript.name = diskScript.name
+                placementScript.activation = diskScript.activation
+                placementScript.timer = diskScript.timer.copy()
+                placementScript.graph = diskScript.graph.deepCopy()
+                placementScript.contentModified = diskScript.contentModified
+                true
+            }
+        }
             .onFailure { failure ->
                 plugin.logger.log(
                     java.util.logging.Level.WARNING,
@@ -558,9 +559,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     failure,
                 )
             }
-            .getOrElse { return false }
-        plugin.resetActivationTiming(placementScript.id)
-        runCatching { plugin.placements.refreshDisplaysForScript(placementScript.id) }
+            .getOrElse { return false } == true
+        if (!written) return false
+        plugin.resetActivationTiming(placement.scriptId)
+        runCatching { plugin.placements.refreshDisplaysForScript(placement.scriptId) }
             .onFailure { failure ->
                 plugin.logger.log(
                     java.util.logging.Level.WARNING,
@@ -568,6 +570,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     failure,
                 )
             }
+        // インベントリ経路からの書き込みも、同じプログラムを開いているGesture画面へ
+        // 即時配布します。これを省くと、表示は古いままでも次の保存時にCASだけが
+        // 失敗し、利用者には競合理由が見えない状態になります。
+        plugin.gestureEditor.refreshForScript(placement.scriptId)
         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_WRITTEN))
         return true
     }

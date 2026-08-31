@@ -89,11 +89,18 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 player.swingMainHand()
             }
             event.isCancelled = true
-            val script = plugin.scripts.load(clickedPlacement.scriptId) ?: return
-            if (!plugin.placementAccess.canManage(player, clickedPlacement.world)) {
+            val canManagePlacement = plugin.placementAccess.canManage(player, clickedPlacement.world)
+            // 既存のGesture画面を操作するだけの第三者には、設置・破壊・
+            // ディスク書き込みを許可しません。共有GUIへの参加経路だけを
+            // 建築権限から分離します。
+            val canOperateExistingGesture =
+                itemKind != KantanItemKind.DISK &&
+                    plugin.gestureEditor.canOperateExisting(player, clickedPlacement)
+            if (!canManagePlacement && !canOperateExistingGesture) {
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
                 return
             }
+            if (canOperateExistingGesture && !canManagePlacement) return
             // プログラムディスク挿入は常に既存の書き込み確認へ送り、Gesture GUIを開かない。
             if (itemKind == KantanItemKind.DISK) {
                 val diskScriptId = diskId ?: return
@@ -254,6 +261,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.logger.info(
                 "設置直後に配置ブロックが消失したため配置を撤去: placement=${placement.key}, material=${block.type}",
             )
+            // 配置が外部要因で消えた場合も、編集中のEntity・入力claim・Dialogを
+            // 先に閉じて、削除済みスクリプトへ遅延入力が届かないようにします。
+            plugin.gestureEditor.closeForPlacement(placement)
             // 実体が先に消えた場合は、対象側へ残った特殊接続を台帳の現状態に
             // 基づいて解除します。以降の台帳削除が失敗しても、ガラスではないため
             // 通常のバニラ接続へ戻せます。

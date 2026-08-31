@@ -9,6 +9,7 @@ import com.awabi2048.ccsystem.api.gui.MenuDialogRequest
 import com.awabi2048.ccsystem.api.gui.MenuDialogResponse
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiAccess
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiAccessPolicy
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiBounds
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiChildOptions
@@ -45,6 +46,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.hasContextOverride
+import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -183,14 +185,41 @@ class GestureSequenceEditor(
     private val onSessionClosed: (GestureSequenceEditor, UUID, UUID) -> Unit = { _, _, _ -> },
 ) {
     private val api get() = CCSystem.getAPI().getGestureGuiService()
+    /** Gesture GUIの所有者です。共有画面でも保存正本と子画面はこのUUIDへ紐付けます。 */
+    private var sessionOwnerId: UUID? = null
+    /** 保存処理が完了するまで有効な、最後に表示／確認した正本世代です。 */
+    private var observedRevision: Long? = null
+    /**
+     * 外部Dialogは操作者ごとに独立させます。同じ共有画面でAが入力中にBが別の
+     * Dialogを開いても、Aの入力を閉じてしまうと「同時編集」ではなく、入力開始順
+     * だけで他人の操作を失わせます。各Dialogは保存時に自身の世代をCASします。
+     */
+    private data class ActiveInput(
+        val token: UUID,
+        val dialogId: String,
+        val expectedRevision: Long?,
+    )
+
+    private val activeInputs = mutableMapOf<UUID, ActiveInput>()
+    /** 配置編集だけを共有画面にし、ディスク編集は従来どおり所有者限定にします。 */
+    private val screenAccess = if (state.placement != null) {
+        GestureGuiAccess.PUBLIC
+    } else {
+        GestureGuiAccess.OWNER_ONLY
+    }
+    /** MWM-Chanponのワールド単位ツール権限を入力受付時点で再確認します。 */
+    private val screenAccessPolicy = state.placement?.let {
+        GestureGuiAccessPolicy(::canOperateSharedActor)
+    }
     // 下部画面のクリックは上部と同じハンドラで処理します（タブ切替・PICKER・CONFIRMの共通ロジック）。
-    private val lowerPanel = GestureLowerPanel(plugin, onAction = { ctx -> handleUpperAction(ctx) })
+    private val lowerPanel = GestureLowerPanel(
+        plugin,
+        onAction = { ctx -> handleUpperAction(ctx) },
+        screenAccess = screenAccess,
+        screenAccessPolicy = screenAccessPolicy,
+    )
 
     private val UPPER_SCREEN_ID = "gesture-editor-upper"
-    /** ダイアログの遅延コールバックを、GUI終了・別編集後に無効化する世代トークン。 */
-    private var activeInputToken: UUID? = null
-    /** 所有権を照合して閉じるための、現在の入力Dialog ID。 */
-    private var activeInputDialogId: String? = null
     /** このエディターが所有するGesture GUIセッション。再オープン後の古い応答を遮断します。 */
     private var gestureSessionId: UUID? = null
     /**
@@ -204,7 +233,81 @@ class GestureSequenceEditor(
     private var renderRetrySessionId: UUID? = null
     private var renderRetryAttempts = 0
 
+    private fun canOperateSharedActor(ownerId: UUID, actorId: UUID): Boolean {
+        if (actorId == ownerId) return true
+        val placement = state.placement ?: return false
+        val owner = Bukkit.getPlayer(ownerId) ?: return false
+        val actor = Bukkit.getPlayer(actorId) ?: return false
+        // ツール権限はMWM-Chanponが現在ワールドへ一時付与するノードです。
+        // 建築権限は要求しません。今回の要件では、既存ブロックを編集する
+        // 「共有GUI操作」と、配置物を設置・破壊する「管理操作」を分離します。
+        return actor.world.uid == owner.world.uid &&
+            actor.world.name == placement.world &&
+            actor.hasPermission(PlacementAccessPolicy.EXTENDED_COMMAND_BLOCK_PERMISSION)
+    }
+
+    internal fun canOperateSharedActor(player: Player): Boolean =
+        sessionOwnerId?.let { canOperateSharedActor(it, player.uniqueId) } == true
+
+    private fun ownerIdFor(player: Player): UUID = sessionOwnerId ?: player.uniqueId
+
+    private fun ownerPlayerFor(player: Player): Player =
+        sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: player
+
+    private fun expectedMutationRevision(player: Player): Long? =
+        activeInputs[player.uniqueId]?.expectedRevision ?: observedRevision
+
     internal fun isEditing(placement: DiskPlacement): Boolean = state.placement?.key == placement.key
+
+    internal fun isEditingScript(scriptId: UUID): Boolean = state.scriptId == scriptId
+
+    /**
+     * 同じプログラムを開いている別エディターへ保存結果を配布します。
+     * 選択中ノードが削除されていた場合は、古い設定経路・挿入候補・確認対象を
+     * まとめて破棄し、削除済みUUIDへ後続入力が届かないようにします。
+     */
+    internal fun refreshFromStore() {
+        val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
+        val current = plugin.scripts.load(state.scriptId) ?: return
+        val previousRevision = observedRevision
+        if (activeInputs.isNotEmpty() && previousRevision != null && previousRevision != current.revision) {
+            // 別操作者の保存結果を受け取った時点で、表示中のDialogも古い入力です。
+            // CASだけで拒否すると、利用者が何度も同じ古いDialogを送信できるため、
+            // 物理Dialogを閉じて最新画面から再選択させます。
+            invalidateInputs()
+        }
+        observedRevision = current.revision
+        val selectedNodeMissing = state.selectedNodeId?.let { it !in current.graph.nodes } == true
+        val confirmedNodeMissing = state.confirmNodeId?.let { it !in current.graph.nodes } == true
+        val settingNodeMissing = state.settingContext?.nodeId?.let { it !in current.graph.nodes } == true
+        if (selectedNodeMissing || confirmedNodeMissing || settingNodeMissing) {
+            invalidateInputs()
+            state.selectedNodeId = null
+            state.confirmNodeId = null
+            state.pendingInsertion = null
+            state.selectedAddPoint = null
+            state.selectedInsertionCandidatePoint = null
+            clearSettingState()
+            state.lowerMode = GestureLowerMode.SETTINGS
+            api.closeChild(owner.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
+            api.closeChild(owner.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+        } else {
+            val target = state.pendingInsertion
+            if (target != null && (
+                    (target.sourceId != null && target.sourceId !in current.graph.nodes) ||
+                        (target.mergeConditionId != null && target.mergeConditionId !in current.graph.nodes)
+                    )) {
+                invalidateInputs()
+                state.pendingInsertion = null
+                state.selectedAddPoint = null
+                state.selectedInsertionCandidatePoint = null
+                clearSettingState()
+                state.lowerMode = GestureLowerMode.SETTINGS
+            }
+        }
+        updateUpper(owner)
+        updateLower(owner)
+    }
 
     /** Facadeが終了通知を新しいエディターへ誤適用しないよう、現在のIDを照合します。 */
     internal fun isCurrentSession(sessionId: UUID): Boolean = gestureSessionId == sessionId
@@ -235,7 +338,8 @@ class GestureSequenceEditor(
 
     fun open(player: Player) {
         // 同一プレイヤーの再オープンは以前の入力セッションを必ず置き換えます。
-        invalidateInput()
+        invalidateInputs()
+        sessionOwnerId = player.uniqueId
         api.registerOwner(player.uniqueId)
         val upper = buildUpperViewport(player)
         val lower = lowerPanel.build(state, player)
@@ -263,17 +367,19 @@ class GestureSequenceEditor(
     }
 
     fun updateUpper(player: Player): Boolean {
-        return updateScreen(player, buildUpperViewport(player), RenderTarget.UPPER)
+        val owner = ownerPlayerFor(player)
+        return updateScreen(owner, buildUpperViewport(owner), RenderTarget.UPPER)
     }
 
     fun updateLower(player: Player): Boolean {
-        val childOpen = settingChildOpen(player.uniqueId)
+        val owner = ownerPlayerFor(player)
+        val childOpen = settingChildOpen(owner.uniqueId)
         val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
-            lowerPanel.buildSettingChild(state, player)
+            lowerPanel.buildSettingChild(state, owner)
         } else {
-            lowerPanel.build(state, player)
+            lowerPanel.build(state, owner)
         }
-        return updateScreen(player, view, RenderTarget.LOWER)
+        return updateScreen(owner, view, RenderTarget.LOWER)
     }
 
     /**
@@ -281,12 +387,13 @@ class GestureSequenceEditor(
      * セッションIDを固定した再試行へ送り、ACTIVEなのに失敗した場合は異常として記録します。
      */
     private fun updateScreen(player: Player, view: GestureGuiView, target: RenderTarget): Boolean {
-        val updated = api.updateScreen(player.uniqueId, view)
+        val owner = ownerPlayerFor(player)
+        val updated = api.updateScreen(owner.uniqueId, view)
         if (updated) {
             clearPendingRender(target)
             return true
         }
-        markPendingRender(player, target)
+        markPendingRender(owner, target)
         return false
     }
 
@@ -295,7 +402,7 @@ class GestureSequenceEditor(
             RenderTarget.UPPER -> pendingUpperRender = true
             RenderTarget.LOWER -> pendingLowerRender = true
         }
-        val snapshot = api.snapshot(player.uniqueId)
+        val snapshot = api.snapshot(ownerIdFor(player))
         val sessionId = gestureSessionId
         if (sessionId == null || snapshot?.sessionId != sessionId) return
         if (snapshot.state != GestureGuiSessionState.OPENING) {
@@ -316,7 +423,7 @@ class GestureSequenceEditor(
 
     /** OPENING完了後に、保留した画面だけを最新ローカル状態から再生成します。 */
     private fun retryPendingRender(player: Player, sessionId: UUID) {
-        val snapshot = api.snapshot(player.uniqueId)
+        val snapshot = api.snapshot(ownerIdFor(player))
         if (gestureSessionId != sessionId || snapshot?.sessionId != sessionId) {
             cancelRenderRetry()
             return
@@ -333,16 +440,18 @@ class GestureSequenceEditor(
         }
 
         if (pendingUpperRender) {
-            if (api.updateScreen(player.uniqueId, buildUpperViewport(player))) pendingUpperRender = false
+            val owner = ownerPlayerFor(player)
+            if (api.updateScreen(owner.uniqueId, buildUpperViewport(owner))) pendingUpperRender = false
         }
         if (pendingLowerRender) {
-            val childOpen = settingChildOpen(player.uniqueId)
+            val owner = ownerPlayerFor(player)
+            val childOpen = settingChildOpen(owner.uniqueId)
             val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
-                lowerPanel.buildSettingChild(state, player)
+                lowerPanel.buildSettingChild(state, owner)
             } else {
-                lowerPanel.build(state, player)
+                lowerPanel.build(state, owner)
             }
-            if (api.updateScreen(player.uniqueId, view)) pendingLowerRender = false
+            if (api.updateScreen(owner.uniqueId, view)) pendingLowerRender = false
         }
         if (!pendingUpperRender && !pendingLowerRender) {
             cancelRenderRetry(clearPending = false)
@@ -378,12 +487,13 @@ class GestureSequenceEditor(
     }
 
     fun openConfirmChild(player: Player) {
-        if (api.snapshot(player.uniqueId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
-        val settingChildWasOpen = settingChildOpen(player.uniqueId)
+        val ownerId = ownerIdFor(player)
+        if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
+        val settingChildWasOpen = settingChildOpen(ownerId)
         state.lowerMode = GestureLowerMode.CONFIRM
-        val view = lowerPanel.build(state, player)
+        val view = lowerPanel.build(state, ownerPlayerFor(player))
         val opened = api.openChild(
-            player.uniqueId,
+            ownerId,
             view,
             GestureGuiChildOptions(
                 // 個別設定中の確認は、その子画面のさらに前面に置きます。
@@ -411,14 +521,15 @@ class GestureSequenceEditor(
     /** 個別設定子画面を開き、既に開いている場合は差分更新だけを行います。 */
     private fun ensureSettingChild(player: Player) {
         state.lowerMode = GestureLowerMode.SETTING_CHOICES
-        if (settingChildOpen(player.uniqueId)) {
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
             updateLower(player)
             return
         }
         val opened = runCatching {
             api.openChild(
-                player.uniqueId,
-                lowerPanel.buildSettingChild(state, player),
+                ownerId,
+                lowerPanel.buildSettingChild(state, ownerPlayerFor(player)),
                 GestureGuiChildOptions(
                     parentScreenId = lowerPanel.LOWER_SCREEN_ID,
                     overlayMaterial = Material.GRAY_STAINED_GLASS,
@@ -445,8 +556,9 @@ class GestureSequenceEditor(
 
     /** 個別設定子画面を閉じて親の設定一覧へ戻します。 */
     private fun closeSettingChild(player: Player) {
-        if (settingChildOpen(player.uniqueId)) {
-            api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
         // 明示的な戻る操作はpopSettingFrameを通ります。ここはノード選択や
         // 画面切替による中断専用とし、途中の設定木を残して孤立させません。
@@ -455,9 +567,42 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    private fun invalidateInput() {
-        activeInputToken = null
-        activeInputDialogId = null
+    /** 指定操作者のDialog世代だけを破棄します。成功／キャンセル後の通常経路で使います。 */
+    private fun clearInputState(playerId: UUID, token: UUID? = null) {
+        val current = activeInputs[playerId] ?: return
+        if (token != null && current.token != token) return
+        activeInputs.remove(playerId)
+    }
+
+    /**
+     * 現在のDialogを物理的にも閉じてから入力世代を破棄します。
+     * 共有Gesture画面ではDialogの操作者とセッション所有者が異なるため、
+     * 両者を混同して古いDialogを残さないようにします。
+     */
+    private fun invalidateInput(playerId: UUID) {
+        val input = activeInputs.remove(playerId) ?: return
+        val sessionId = gestureSessionId
+        val ownerId = sessionOwnerId
+        if (sessionId != null && ownerId != null) {
+            Bukkit.getPlayer(playerId)?.let { player ->
+                runCatching {
+                    api.closeExternalDialogIfCurrent(
+                        ownerId,
+                        sessionId,
+                        player,
+                        DIALOG_OWNER,
+                        input.dialogId,
+                    )
+                }.onFailure { failure ->
+                    plugin.logger.warning("Kantan Commanderの入力Dialog終了に失敗しました: ${failure.message}")
+                }
+            }
+        }
+    }
+
+    /** セッション終了や共有正本の再同期時に、全操作者の古いDialogを回収します。 */
+    private fun invalidateInputs() {
+        activeInputs.keys.toList().forEach(::invalidateInput)
     }
 
     /**
@@ -468,26 +613,9 @@ class GestureSequenceEditor(
      */
     private fun detachLocalSession(ownerId: UUID, sessionId: UUID?) {
         if (sessionId != null && gestureSessionId != sessionId) return
-        val player = Bukkit.getPlayer(ownerId)
-        val dialogId = activeInputDialogId
-        invalidateInput()
+        invalidateInputs()
         // 古いセッションの再試行が新セッションの画面を上書きしないよう、終了時に必ず破棄します。
         cancelRenderRetry()
-        if (dialogId != null && player != null && sessionId != null) {
-            runCatching {
-                api.closeExternalDialogIfCurrent(
-                    ownerId,
-                    sessionId,
-                    player,
-                    DIALOG_OWNER,
-                    dialogId,
-                )
-            }.onFailure { failure ->
-                // Dialog終了の失敗でGestureセッションのローカル解放を止めないよう、
-                // 失敗は記録して下のセッション終了処理を継続します。
-                plugin.logger.warning("Kantan Commanderの入力Dialog終了に失敗しました: ${failure.message}")
-            }
-        }
         if (sessionId != null) {
             runCatching { onSessionClosed(this, ownerId, sessionId) }
                 .onFailure { failure ->
@@ -497,10 +625,13 @@ class GestureSequenceEditor(
                 }
         }
         gestureSessionId = null
+        sessionOwnerId = null
+        observedRevision = null
     }
 
     private fun buildUpperViewport(player: Player): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
+        observedRevision = script.revision
         val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }
             .getOrElse { return layoutErrorView(player) }
         // 挿入先を選択中は、実グラフへ仮ノードを適用したレイアウトを使います。
@@ -868,7 +999,12 @@ class GestureSequenceEditor(
         }
 
         return GestureGuiView(
-            GestureGuiScreenDefinition(UPPER_SCREEN_ID, finalElements, access = GestureGuiAccess.OWNER_ONLY),
+            GestureGuiScreenDefinition(
+                UPPER_SCREEN_ID,
+                finalElements,
+                access = screenAccess,
+                accessPolicy = screenAccessPolicy,
+            ),
             clippedVisuals,
             panel = GestureGuiPanel(
                 width = GestureEditorLayout.UPPER_W,
@@ -937,8 +1073,9 @@ class GestureSequenceEditor(
         val path = state.settingTreePath?.leaveChild()?.nodeIds.orEmpty()
         activateSettingFrame(frame, path)
         if (state.settingRoute.size == 1) {
-            if (settingChildOpen(player.uniqueId)) {
-                api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+            val ownerId = ownerIdFor(player)
+            if (settingChildOpen(ownerId)) {
+                api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
             }
             state.lowerMode = GestureLowerMode.SETTINGS
         } else {
@@ -957,17 +1094,19 @@ class GestureSequenceEditor(
      */
     private fun openSettingsTab(player: Player, absoluteIndex: Int) {
         val script = plugin.scripts.load(state.scriptId) ?: return
+        observedRevision = script.revision
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
         val fields = CommandSettingsModel.visibleFields(node)
         if (absoluteIndex !in fields.indices) return
 
-        invalidateInput()
+        invalidateInput(player.uniqueId)
         state.settingsTab = absoluteIndex
         state.settingsPage = absoluteIndex / SETTINGS_PAGE_SIZE
         // タブ切替時は親画面を先に更新し、選択中の項目・現在値を常に残します。
         // 木の直下の選択肢も親画面へ表示し、二段階目が必要なときだけ子画面へ進みます。
-        if (settingChildOpen(player.uniqueId)) {
-            api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
         val field = fields[absoluteIndex]
         // アイテムタブの選択は表示だけを切り替えます。タブを開いただけで
@@ -982,8 +1121,8 @@ class GestureSequenceEditor(
         val descriptor = CommandSettingsModel.descriptor(node, field.key)
         val screen = gestureSettingScreenFor(descriptor.editor)
         if (screen == null) {
-            if (settingChildOpen(player.uniqueId)) {
-                api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+            if (settingChildOpen(ownerId)) {
+                api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
             }
             clearSettingState()
             state.lowerMode = GestureLowerMode.SETTINGS
@@ -1005,6 +1144,7 @@ class GestureSequenceEditor(
     /** SETTINGSの編集ボタンから、ダイアログ入力または専用選択へ遷移します。 */
     private fun beginSelectedFieldEdit(player: Player, fieldKey: String) {
         val script = plugin.scripts.load(state.scriptId) ?: return
+        observedRevision = script.revision
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
@@ -1155,8 +1295,9 @@ class GestureSequenceEditor(
         itemKey: String,
         itemData: String,
     ) {
-        if (api.snapshot(player.uniqueId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
-        val parentId = if (settingChildOpen(player.uniqueId)) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val ownerId = ownerIdFor(player)
+        if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
+        val parentId = if (settingChildOpen(ownerId)) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
         state.confirmKind = GestureConfirmKind.ITEM_OVERWRITE
         state.confirmNodeId = null
         state.pendingItemContext = context
@@ -1164,8 +1305,8 @@ class GestureSequenceEditor(
         state.pendingItemData = itemData
         state.lowerMode = GestureLowerMode.CONFIRM
         val opened = api.openChild(
-            player.uniqueId,
-            lowerPanel.build(state, player),
+            ownerId,
+            lowerPanel.build(state, ownerPlayerFor(player)),
             GestureGuiChildOptions(
                 parentScreenId = parentId,
                 overlayMaterial = Material.RED_STAINED_GLASS,
@@ -1191,6 +1332,8 @@ class GestureSequenceEditor(
                 plugin,
                 context,
                 configuredFields = setOf("item"),
+                editorId = player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
                 change = { node ->
                     CommandSettingsModel.setParameter(node, "item", itemKey)
                     CommandSettingsModel.setParameter(node, "itemData", itemData)
@@ -1212,9 +1355,10 @@ class GestureSequenceEditor(
         state.pendingItemKey = null
         state.pendingItemData = null
         state.confirmKind = GestureConfirmKind.DELETE
-        api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
+        val ownerId = ownerIdFor(player)
+        api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_OVERWRITTEN, mapOf("item" to itemKey)))
-        state.lowerMode = if (settingChildOpen(player.uniqueId) && state.settingContext != null) {
+        state.lowerMode = if (settingChildOpen(ownerId) && state.settingContext != null) {
             GestureLowerMode.SETTING_CHOICES
         } else {
             clearSettingState()
@@ -1234,10 +1378,12 @@ class GestureSequenceEditor(
             CommandSettingsModel.updateNode(
                 plugin,
                 context,
+                editorId = player.uniqueId,
                 // タブ選択直後は画面を常に親設定へ戻すためsettingFieldKeyが空に
                 // なります。設定済み判定はUI状態に依存させず、実際に変更した
                 // 項目を呼び出し元から明示します。
                 configuredFields = configuredFields.ifEmpty { setOfNotNull(state.settingFieldKey) },
+                expectedRevision = expectedMutationRevision(player),
                 change = change,
             ) != null
         }.onFailure { failure ->
@@ -1340,7 +1486,12 @@ class GestureSequenceEditor(
             if (suggestionParameter != null && CommandDialogSpecs.supportsSuggestions(suggestionParameter)) {
                 add(MenuDialogButton(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_CANDIDATES),
-                    MenuDialogHandler { _, response ->
+                        MenuDialogHandler { target, response ->
+                        val ownerId = ownerIdFor(player)
+                        if (target.uniqueId != player.uniqueId || !canOperateSharedActor(ownerId, target.uniqueId)) {
+                            if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                            return@MenuDialogHandler MenuActionResult.Ignored
+                        }
                         val query = response.textValue("value").trim()
                         showTextInputDialog(
                             player = player,
@@ -1357,7 +1508,13 @@ class GestureSequenceEditor(
             candidateValues.forEach { candidate ->
                 add(MenuDialogButton(
                     Component.text(candidate),
-                    MenuDialogHandler { _, _ ->
+                    MenuDialogHandler { target, _ ->
+                        if (target.uniqueId != player.uniqueId ||
+                            !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                        ) {
+                            if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                            return@MenuDialogHandler MenuActionResult.Ignored
+                        }
                         val value = CommandDialogSpecs.normalize(suggestionParameter.orEmpty(), candidate)
                         val validationError = spec.validateInput(value)
                         if (validationError != null) {
@@ -1393,6 +1550,7 @@ class GestureSequenceEditor(
     /** ノード未選択時に表示するプログラム名の設定ダイアログです。 */
     private fun showProgramNameDialog(player: Player) {
         val script = plugin.scripts.load(state.scriptId) ?: return
+        observedRevision = script.revision
         showTextInputDialog(player, CommandDialogSpecs.programName, script.name) { raw ->
             val value = raw.trim()
             val updated = runCatching {
@@ -1401,6 +1559,7 @@ class GestureSequenceEditor(
                     state.scriptId,
                     value,
                     player.uniqueId,
+                    expectedRevision = expectedMutationRevision(player),
                 )
             }.getOrElse { failure ->
                 plugin.logger.log(
@@ -1428,6 +1587,7 @@ class GestureSequenceEditor(
     /** ノード未選択時のプログラムタイマーを秒単位で設定します。 */
     private fun showTimerSettingDialog(player: Player) {
         val script = plugin.scripts.load(state.scriptId) ?: return
+        observedRevision = script.revision
         val timerSpec = CommandDialogSpecs.timerSeconds
         showInputDialog(
             player = player,
@@ -1448,6 +1608,7 @@ class GestureSequenceEditor(
                     enabled = true,
                     intervalSeconds = seconds,
                     editorId = player.uniqueId,
+                    expectedRevision = expectedMutationRevision(player),
                 )
             }.getOrElse { failure ->
                 plugin.logger.log(
@@ -1529,11 +1690,10 @@ class GestureSequenceEditor(
         columns: Int = 1,
         onSubmit: (MenuDialogResponse) -> String?,
     ) {
-        invalidateInput()
+        invalidateInput(player.uniqueId)
         val token = UUID.randomUUID()
         val dialogId = "gesture-input-$token"
-        activeInputToken = token
-        activeInputDialogId = dialogId
+        activeInputs[player.uniqueId] = ActiveInput(token, dialogId, observedRevision)
         try {
             CCSystem.getAPI().getMenuDialogService().show(
                 player,
@@ -1548,14 +1708,25 @@ class GestureSequenceEditor(
                     confirm = MenuDialogButton(
                         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
                         MenuDialogHandler { target, response ->
-                            val snapshot = api.snapshot(target.uniqueId)
+                            val snapshot = api.snapshot(ownerIdFor(player))
+                            val active = activeInputs[player.uniqueId]
+                            if (
+                                target.uniqueId == player.uniqueId &&
+                                active?.token == token &&
+                                active.dialogId == dialogId &&
+                                !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                            ) {
+                                invalidateInput(player.uniqueId)
+                                return@MenuDialogHandler MenuActionResult.Ignored
+                            }
                             if (
                                 target.uniqueId != player.uniqueId ||
-                                activeInputToken != token ||
-                                activeInputDialogId != dialogId ||
+                                active?.token != token ||
+                                active.dialogId != dialogId ||
                                 !target.isOnline ||
                                 gestureSessionId == null ||
-                                snapshot?.sessionId != gestureSessionId
+                                snapshot?.sessionId != gestureSessionId ||
+                                !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
                             ) {
                                 return@MenuDialogHandler MenuActionResult.Ignored
                             }
@@ -1568,7 +1739,7 @@ class GestureSequenceEditor(
                                     Component.text(error, NamedTextColor.RED),
                                 )
                             }
-                            invalidateInput()
+                            clearInputState(player.uniqueId, token)
                             MenuActionResult.Success(MenuUpdate.Close)
                         },
                     ),
@@ -1577,12 +1748,12 @@ class GestureSequenceEditor(
                         MenuDialogHandler { target, _ ->
                             if (
                                 target.uniqueId != player.uniqueId ||
-                                activeInputToken != token ||
-                                activeInputDialogId != dialogId
+                                activeInputs[player.uniqueId]?.token != token ||
+                                activeInputs[player.uniqueId]?.dialogId != dialogId
                             ) {
                                 return@MenuDialogHandler MenuActionResult.Ignored
                             }
-                            invalidateInput()
+                            clearInputState(player.uniqueId, token)
                             MenuActionResult.Success(MenuUpdate.Close)
                         },
                     ),
@@ -1591,7 +1762,7 @@ class GestureSequenceEditor(
         } catch (failure: Throwable) {
             // show()はPaperのDialog生成失敗を例外で返すため、表示されていないDialogを
             // 後続のclose処理が所有中と誤認しないよう、同じ世代だけをロールバックします。
-            if (activeInputToken == token && activeInputDialogId == dialogId) invalidateInput()
+            if (activeInputs[player.uniqueId]?.token == token) invalidateInput(player.uniqueId)
             throw failure
         }
     }
@@ -1658,6 +1829,7 @@ class GestureSequenceEditor(
     /** 専用選択画面のすべての選択を共有モデルへ適用します。 */
     private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {
         if (context.gesture != GestureGuiGesture.PRIMARY) return
+        val ownerId = ownerIdFor(player)
         if (context.elementId == "lower-setting-back") {
             popSettingFrame(player)
             return
@@ -1676,15 +1848,16 @@ class GestureSequenceEditor(
         val screen = state.settingScreen ?: return
         val fieldKey = state.settingFieldKey ?: return
         val script = plugin.scripts.load(settingContext.scriptId) ?: return
+        observedRevision = script.revision
         val node = script.graph.nodes[settingContext.nodeId] ?: return
 
         fun showSettingScreen(openChild: Boolean = false) {
-            state.lowerMode = if (settingChildOpen(player.uniqueId) || state.settingRoute.size > 1) {
+            state.lowerMode = if (settingChildOpen(ownerId) || state.settingRoute.size > 1) {
                 GestureLowerMode.SETTING_CHOICES
             } else {
                 GestureLowerMode.SETTINGS
             }
-            if (openChild && !settingChildOpen(player.uniqueId)) ensureSettingChild(player) else updateLower(player)
+            if (openChild && !settingChildOpen(ownerId)) ensureSettingChild(player) else updateLower(player)
         }
 
         /**
@@ -1788,10 +1961,12 @@ class GestureSequenceEditor(
                                 current.maximumDistance,
                             ) { minimum, maximum ->
                                 if (!updateSettingNode(player, settingContext) {
+                                        val latest = CommandSettingsModel.targetSpec(it, role)
+                                            ?: TargetSpec(current.kind)
                                         CommandSettingsModel.setTargetSpec(
                                             it,
                                             role,
-                                            current.copy(
+                                            latest.copy(
                                                 minimumDistance = minimum,
                                                 maximumDistance = maximum,
                                             ),
@@ -1821,13 +1996,15 @@ class GestureSequenceEditor(
                                 "limit" -> raw.takeIf(String::isNotEmpty)?.toIntOrNull()
                                 else -> raw.takeIf(String::isNotEmpty)
                             }
-                            val updated = when (value) {
-                                "entityType" -> current.copy(entityType = parsed as String?)
-                                "limit" -> current.copy(limit = parsed as Int?)
-                                "tag" -> current.copy(tag = parsed as String?)
-                                else -> current.copy(name = parsed as String?)
-                            }
                             if (!updateSettingNode(player, settingContext) {
+                                val latest = CommandSettingsModel.targetSpec(it, role)
+                                    ?: TargetSpec(current.kind)
+                                val updated = when (value) {
+                                    "entityType" -> latest.copy(entityType = parsed as String?)
+                                    "limit" -> latest.copy(limit = parsed as Int?)
+                                    "tag" -> latest.copy(tag = parsed as String?)
+                                    else -> latest.copy(name = parsed as String?)
+                                }
                                 CommandSettingsModel.setTargetSpec(it, role, updated)
                             }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                             null
@@ -2201,10 +2378,12 @@ class GestureSequenceEditor(
     }
 
     private fun handleUpperAction(context: GestureGuiActionContext) {
-        val player = Bukkit.getPlayer(context.ownerId) ?: return
+        val player = Bukkit.getPlayer(context.actorId) ?: return
+        val ownerId = context.ownerId
+        if (!canOperateSharedActor(ownerId, context.actorId)) return
         // 画面操作が発生した時点で、古いダイアログ入力を無効化します。
         // close/open以外の遷移でも遅延コールバックが設定を書き換えないようにします。
-        invalidateInput()
+        invalidateInput(player.uniqueId)
         when {
             context.elementId.startsWith("node-reorder:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val encoded = context.elementId.removePrefix("node-reorder:")
@@ -2214,7 +2393,12 @@ class GestureSequenceEditor(
                     GraphEditor.ReorderDirection.valueOf(directionName.uppercase())
                 }.getOrNull() ?: return
                 val reordered = runCatching {
-                    CommandSettingsModel.updateGraph(plugin, state.scriptId, player.uniqueId) { candidateGraph ->
+                    CommandSettingsModel.updateGraph(
+                        plugin,
+                        state.scriptId,
+                        player.uniqueId,
+                        expectedRevision = expectedMutationRevision(player),
+                    ) { candidateGraph ->
                         if (GraphEditor.swapAdjacent(candidateGraph, nodeId, direction)) true else null
                     }
                 }.getOrElse { failure ->
@@ -2238,8 +2422,8 @@ class GestureSequenceEditor(
                 if (script.graph.nodes[nodeId] == null) return
                 when (context.gesture) {
                     GestureGuiGesture.PRIMARY -> {
-                        if (settingChildOpen(player.uniqueId)) {
-                            api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                        if (settingChildOpen(ownerId)) {
+                            api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                         }
                         state.selectedNodeId = nodeId
                         state.selectedAddPoint = null
@@ -2259,8 +2443,8 @@ class GestureSequenceEditor(
                 }
             }
             context.elementId == "viewport-empty" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                if (settingChildOpen(player.uniqueId)) {
-                    api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                if (settingChildOpen(ownerId)) {
+                    api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 }
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
@@ -2346,8 +2530,8 @@ class GestureSequenceEditor(
             context.elementId.startsWith("add:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 // addポイントの挿入先情報を保持し、下部をPICKERへ切り替える
                 val script = plugin.scripts.load(state.scriptId) ?: return
-                if (settingChildOpen(player.uniqueId)) {
-                    api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                if (settingChildOpen(ownerId)) {
+                    api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 }
                 val gx = context.elementId.removePrefix("add:").substringBefore(":").toIntOrNull() ?: return
                 val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
@@ -2373,8 +2557,8 @@ class GestureSequenceEditor(
             }
             context.elementId.startsWith("path:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return
-                if (settingChildOpen(player.uniqueId)) {
-                    api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                if (settingChildOpen(ownerId)) {
+                    api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 }
                 val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
                 if (point.size != 2) return
@@ -2405,8 +2589,8 @@ class GestureSequenceEditor(
             }
             context.elementId.startsWith("lower-settings-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
                 val page = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
-                if (settingChildOpen(player.uniqueId)) {
-                    api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                if (settingChildOpen(ownerId)) {
+                    api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 }
                 state.settingsPage = page
                 // 専用選択画面から設定ページャーを押した場合も、古い専用画面を
@@ -2447,6 +2631,7 @@ class GestureSequenceEditor(
                 val typeName = context.elementId.removePrefix("lower-type:")
                 val type = runCatching { CommandType.valueOf(typeName) }.getOrNull() ?: return
                 val script = plugin.scripts.load(state.scriptId) ?: return
+                observedRevision = script.revision
                 val target = state.pendingInsertion
                     ?: InsertionTarget(null, GraphEditor.Edge.ENTRY)
                 // PICKERを開いている間に別の編集が発生した場合、古い座標の候補を
@@ -2470,7 +2655,12 @@ class GestureSequenceEditor(
                 // 構造検証・保存・配置表示更新まで完了させます。描画不能なグラフが
                 // 発生しても保存前に破棄され、サーバーイベントへ例外を漏らしません。
                 val inserted = runCatching {
-                    CommandSettingsModel.updateGraph(plugin, script.id, player.uniqueId) { candidateGraph ->
+                    CommandSettingsModel.updateGraph(
+                        plugin,
+                        script.id,
+                        player.uniqueId,
+                        expectedRevision = expectedMutationRevision(player),
+                    ) { candidateGraph ->
                         if (type == CommandType.MERGE) {
                             // 画面表示後に別操作でグラフが変わる競合にも例外を漏らしません。
                             if (!GraphEditor.canAppendMerge(candidateGraph, target.mergeConditionId)) {
@@ -2488,8 +2678,14 @@ class GestureSequenceEditor(
                         "コマンド挿入を保存できませんでした: script=${script.id} type=$type",
                         failure,
                     )
+                    refreshFromStore()
                     return
-                } ?: return
+                } ?: run {
+                    // 直前に別プレイヤーが構造を変更した場合、古い挿入候補を
+                    // そのまま再適用せず、最新グラフを表示して選び直させます。
+                    refreshFromStore()
+                    return
+                }
                 // コマンド追加の完了音は永続化が成功した後だけ再生します。
                 player.playSound(player.location, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 2.0f)
                 state.pendingInsertion = null
@@ -2508,8 +2704,8 @@ class GestureSequenceEditor(
                 openSettingsTab(player, 0)
             }
             context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                if (settingChildOpen(player.uniqueId)) {
-                    api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                if (settingChildOpen(ownerId)) {
+                    api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 }
                 state.pendingInsertion = null
                 state.selectedAddPoint = null
@@ -2520,7 +2716,13 @@ class GestureSequenceEditor(
             }
             context.elementId == "nav-close" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 // 右上の閉じる操作は、親・子画面と入力claimをまとめて即時解放します。
-                closeImmediately(player.uniqueId)
+                if (context.actorId == ownerId) {
+                    closeImmediately(ownerId)
+                } else {
+                    // 共有画面の第三者が押しても、所有者の編集セッション全体は
+                    // 閉じず、その第三者の入力claimだけを解放します。
+                    api.leave(context.actorId)
+                }
             }
             context.elementId == "lower-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
                 state.confirmNodeId = state.selectedNodeId ?: return
@@ -2534,10 +2736,16 @@ class GestureSequenceEditor(
                 }
                 val nodeId = state.confirmNodeId ?: return
                 val script = plugin.scripts.load(state.scriptId) ?: return
+                observedRevision = script.revision
                 // 確認後の削除も共通グラフ更新境界へ適用し、分岐・合流のレイアウト
                 // 検証を通過した内容だけを正本へ保存します。失敗時は選択状態を保持します。
                 val deleted = runCatching {
-                    CommandSettingsModel.updateGraph(plugin, script.id, player.uniqueId) { candidateGraph ->
+                    CommandSettingsModel.updateGraph(
+                        plugin,
+                        script.id,
+                        player.uniqueId,
+                        expectedRevision = expectedMutationRevision(player),
+                    ) { candidateGraph ->
                         if (GraphEditor.delete(candidateGraph, nodeId)) true else null
                     }
                 }.getOrElse { failure ->
@@ -2546,12 +2754,24 @@ class GestureSequenceEditor(
                             "ジェスチャーGUIからのコマンド削除を保存できませんでした: script=${script.id} node=$nodeId",
                             failure,
                         )
+                        refreshFromStore()
                         return
                     }
-                if (deleted != true) return
+                if (deleted != true) {
+                    // 他プレイヤーが先に削除したノードの確認を二重適用しません。
+                    // 確認子画面と古い設定対象を閉じ、最新状態へ戻します。
+                    state.confirmNodeId = null
+                    state.confirmKind = GestureConfirmKind.DELETE
+                    state.selectedNodeId = null
+                    clearSettingState()
+                    state.lowerMode = GestureLowerMode.SETTINGS
+                    api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
+                    refreshFromStore()
+                    return
+                }
                 // 削除確認を開いただけでは鳴らさず、保存成功後に削除音を再生します。
                 player.playSound(player.location, Sound.BLOCK_BAMBOO_HIT, 1.0f, 1.0f)
-                val settingChildWasOpen = settingChildOpen(player.uniqueId)
+                val settingChildWasOpen = settingChildOpen(ownerId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE
                 state.selectedNodeId = null
@@ -2559,19 +2779,19 @@ class GestureSequenceEditor(
                 state.selectedInsertionCandidatePoint = null
                 clearSettingState()
                 state.lowerMode = GestureLowerMode.SETTINGS
-                api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
-                if (settingChildWasOpen) api.closeChild(player.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
+                if (settingChildWasOpen) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 updateUpper(player)
                 updateLower(player)
             }
             context.elementId == "confirm-cancel" && context.gesture == GestureGuiGesture.PRIMARY -> {
-                val settingChildWasOpen = settingChildOpen(player.uniqueId)
+                val settingChildWasOpen = settingChildOpen(ownerId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE
                 state.pendingItemContext = null
                 state.pendingItemKey = null
                 state.pendingItemData = null
-                api.closeChild(player.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
+                api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
                 state.lowerMode = if (settingChildWasOpen && state.settingContext != null) {
                     GestureLowerMode.SETTING_CHOICES
                 } else {
@@ -2585,7 +2805,12 @@ class GestureSequenceEditor(
 
     private fun emptyView(): GestureGuiView {
         return GestureGuiView(
-            GestureGuiScreenDefinition(UPPER_SCREEN_ID, emptyList(), access = GestureGuiAccess.OWNER_ONLY),
+            GestureGuiScreenDefinition(
+                UPPER_SCREEN_ID,
+                emptyList(),
+                access = screenAccess,
+                accessPolicy = screenAccessPolicy,
+            ),
             emptyList(),
         ) {}
     }
@@ -2611,7 +2836,12 @@ class GestureSequenceEditor(
             ),
         )
         return GestureGuiView(
-            GestureGuiScreenDefinition(UPPER_SCREEN_ID, emptyList(), access = GestureGuiAccess.OWNER_ONLY),
+            GestureGuiScreenDefinition(
+                UPPER_SCREEN_ID,
+                emptyList(),
+                access = screenAccess,
+                accessPolicy = screenAccessPolicy,
+            ),
             visuals,
             panel = GestureGuiPanel(
                 width = GestureEditorLayout.UPPER_W,

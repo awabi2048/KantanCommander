@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.hasDiskContent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -12,6 +13,9 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 import java.util.logging.Logger
 
 @Suppress("DEPRECATION")
@@ -32,6 +36,101 @@ class ScriptStoreTest {
         copy.graph.nodes[node.id]?.params?.set("text", "changed")
         assertEquals("", loaded.graph.nodes[node.id]?.string("text"))
         assertNotEquals(script.id, copy.id)
+    }
+
+    @Test
+    fun `revision rejects stale saves and compare and set updates`() {
+        val store = ScriptStore(temp.resolve("revisions"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "revision")
+        val first = requireNotNull(store.load(script.id))
+        val stale = requireNotNull(store.load(script.id))
+
+        first.name = "first"
+        store.save(first)
+        assertEquals(first.revision, requireNotNull(store.load(script.id)).revision)
+
+        stale.name = "stale"
+        assertThrows(java.util.ConcurrentModificationException::class.java) {
+            store.save(stale)
+        }
+        assertEquals("first", requireNotNull(store.load(script.id)).name)
+
+        val expected = requireNotNull(store.load(script.id)).revision
+        assertTrue(
+            store.update(script.id, expectedRevision = expected) {
+                it.name = "compare-and-set"
+                true
+            } == true,
+        )
+        assertNull(
+            store.update(script.id, expectedRevision = expected) {
+                it.name = "must-not-win"
+                true
+            },
+        )
+        assertEquals("compare-and-set", requireNotNull(store.load(script.id)).name)
+    }
+
+    @Test
+    fun `concurrent updates serialize read modify write and preserve independent node edits`() {
+        val store = ScriptStore(temp.resolve("concurrent"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "concurrent")
+        val first = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        val second = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val start = CyclicBarrier(2)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            val futures = listOf(
+                executor.submit<Boolean?> {
+                    start.await()
+                    store.update(script.id) {
+                        it.graph.nodes[first.id]?.params?.set("text", "left")
+                        true
+                    }
+                },
+                executor.submit<Boolean?> {
+                    start.await()
+                    store.update(script.id) {
+                        it.graph.nodes[second.id]?.params?.set("text", "right")
+                        true
+                    }
+                },
+            )
+            futures.forEach { future ->
+                assertTrue(future.get(10, TimeUnit.SECONDS) == true)
+            }
+        } finally {
+            executor.shutdownNow()
+        }
+
+        val updated = requireNotNull(store.load(script.id))
+        assertEquals("left", updated.graph.nodes[first.id]?.string("text"))
+        assertEquals("right", updated.graph.nodes[second.id]?.string("text"))
+    }
+
+    @Test
+    fun `stale node deletion cannot remove a node after another editor saves`() {
+        val store = ScriptStore(temp.resolve("stale-delete"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "stale-delete")
+        val node = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        store.save(script)
+
+        val deleteView = requireNotNull(store.load(script.id))
+        val otherView = requireNotNull(store.load(script.id)).apply {
+            graph.nodes[node.id]?.params?.set("text", "keep")
+        }
+        store.save(otherView)
+
+        assertNull(
+            store.update(script.id, expectedRevision = deleteView.revision) {
+                if (GraphEditor.delete(it.graph, node.id)) true else null
+            },
+        )
+        val current = requireNotNull(store.load(script.id))
+        assertTrue(node.id in current.graph.nodes)
+        assertEquals("keep", current.graph.nodes[node.id]?.string("text"))
     }
 
     @Test
