@@ -116,6 +116,24 @@ enum class GestureLowerMode {
     CONFIRM,
 }
 
+/**
+ * 実行前検証を下部パネルの「要確認」表示へ投影するための情報です。
+ *
+ * 検証結果を構造化エラーから要約し、ノードごとの要確認タブ（fieldKey）集合と、
+ * スクリプト全体のタイマー要確認だけを画面側へ渡します。表示側がエラー文言を
+ * 解析して意味を推測しないよう、この集約が唯一の受け渡し経路になります。
+ */
+data class GestureAttentionState(
+    /** ノードID → そのノードで要確認となっている設定タブ（fieldKey）の集合。 */
+    val fieldKeysByNode: Map<UUID, Set<String>> = emptyMap(),
+    /** プログラムタイマー（スクリプト全体設定）が要確認か。 */
+    val timer: Boolean = false,
+) {
+    companion object {
+        val EMPTY = GestureAttentionState()
+    }
+}
+
 enum class GestureConfirmKind {
     DELETE,
     ITEM_OVERWRITE,
@@ -375,12 +393,33 @@ class GestureSequenceEditor(
     fun updateLower(player: Player): Boolean {
         val owner = ownerPlayerFor(player)
         val childOpen = settingChildOpen(owner.uniqueId)
+        val attention = attentionState()
         val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
-            lowerPanel.buildSettingChild(state, owner)
+            lowerPanel.buildSettingChild(state, owner, attention)
         } else {
-            lowerPanel.build(state, owner)
+            lowerPanel.build(state, owner, attention)
         }
         return updateScreen(owner, view, RenderTarget.LOWER)
+    }
+
+    /**
+     * 実行前検証を、下部パネルの「要確認」表示用の情報へ要約します。
+     *
+     * 構造化エラー（nodeId/fieldKeys）をそのまま集約するため、表示側でエラー文言を
+     * 解析する必要はありません。snapshot内のエラーは主グラフのノードへ対応しないため、
+     * 存在しないノードIDは除外します。
+     */
+    private fun attentionState(): GestureAttentionState {
+        val script = plugin.scripts.load(state.scriptId) ?: return GestureAttentionState.EMPTY
+        val errors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+        val fieldKeysByNode = errors
+            .filter { it.nodeId != null && it.nodeId in script.graph.nodes }
+            .groupBy({ it.nodeId!! }) { it.fieldKeys }
+            .mapValues { (_, keys) -> keys.flatten().toSet() }
+        return GestureAttentionState(
+            fieldKeysByNode = fieldKeysByNode,
+            timer = errors.any { it.nodeId == null && "timer" in it.fieldKeys },
+        )
     }
 
     /**
@@ -448,9 +487,9 @@ class GestureSequenceEditor(
             val owner = ownerPlayerFor(player)
             val childOpen = settingChildOpen(owner.uniqueId)
             val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
-                lowerPanel.buildSettingChild(state, owner)
+                lowerPanel.buildSettingChild(state, owner, attentionState())
             } else {
-                lowerPanel.build(state, owner)
+                lowerPanel.build(state, owner, attentionState())
             }
             if (api.updateScreen(owner.uniqueId, view)) pendingLowerRender = false
         }

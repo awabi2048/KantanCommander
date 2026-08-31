@@ -21,6 +21,8 @@ data class GestureSettingTreeNode(
     val selectionMode: GestureSettingSelectionMode = GestureSettingSelectionMode.EXCLUSIVE,
     /** 現在値が初期値のままか、明示設定済みかを表します。 */
     val valueState: GestureSettingValueState = GestureSettingValueState.INITIAL,
+    /** 実行前検証で要確認（未設定・不正）と判定された設定に属するかを表します。 */
+    val attention: Boolean = false,
 ) {
     val hasChildren: Boolean
         get() = children.isNotEmpty()
@@ -55,14 +57,22 @@ internal object GestureSettingVisualPolicy {
         selectionMode: GestureSettingSelectionMode,
         valueState: GestureSettingValueState,
         selected: Boolean,
-    ): Material = when (selectionMode) {
-        GestureSettingSelectionMode.EXCLUSIVE -> when (valueState) {
-            GestureSettingValueState.CONFIGURED -> if (selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA
-            GestureSettingValueState.INITIAL -> if (selected) Material.LIGHT_BLUE_CONCRETE else Material.LIGHT_BLUE_TERRACOTTA
+        attention: Boolean = false,
+    ): Material {
+        // 要確認状態は選択方式・値状態より優先します。実行に必要な設定が
+        // 未設定・不正であることを、水色（初期値）とは別の赤で通知します。
+        if (attention) {
+            return if (selected) Material.RED_CONCRETE else Material.RED_TERRACOTTA
         }
-        GestureSettingSelectionMode.MULTIPLE -> when (valueState) {
-            GestureSettingValueState.CONFIGURED -> if (selected) Material.PURPLE_CONCRETE else Material.PURPLE_TERRACOTTA
-            GestureSettingValueState.INITIAL -> if (selected) Material.MAGENTA_CONCRETE else Material.MAGENTA_TERRACOTTA
+        return when (selectionMode) {
+            GestureSettingSelectionMode.EXCLUSIVE -> when (valueState) {
+                GestureSettingValueState.CONFIGURED -> if (selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA
+                GestureSettingValueState.INITIAL -> if (selected) Material.LIGHT_BLUE_CONCRETE else Material.LIGHT_BLUE_TERRACOTTA
+            }
+            GestureSettingSelectionMode.MULTIPLE -> when (valueState) {
+                GestureSettingValueState.CONFIGURED -> if (selected) Material.PURPLE_CONCRETE else Material.PURPLE_TERRACOTTA
+                GestureSettingValueState.INITIAL -> if (selected) Material.MAGENTA_CONCRETE else Material.MAGENTA_TERRACOTTA
+            }
         }
     }
 }

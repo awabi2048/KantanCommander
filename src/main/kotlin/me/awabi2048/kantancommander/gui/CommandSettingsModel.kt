@@ -36,18 +36,18 @@ import java.util.UUID
  * 同じ分岐を複製すると、対象／位置／向きの保存先がずれます。このenumを両GUIの
  * 中間表現として使い、画面固有のルート文字列をドメインの役割へ変換します。
  */
-enum class CommandSettingRole(val routeValue: String) {
-    NODE_TARGET("node_target"),
-    DESTINATION("destination"),
-    SECONDARY_TARGET("secondary_target"),
-    CONTEXT_EXECUTOR("context_executor"),
-    CONTEXT_TARGET("context_target"),
-    CONTEXT_POSITION("context_position"),
-    CONDITION_POSITION("condition_position"),
-    CONTEXT_FACING("context_facing"),
-    BLOCK_POSITION("block_position"),
-    BLOCK_FROM("block_from"),
-    BLOCK_TO("block_to"),
+enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
+    NODE_TARGET("node_target", "target"),
+    DESTINATION("destination", "destination"),
+    SECONDARY_TARGET("secondary_target", "other"),
+    CONTEXT_EXECUTOR("context_executor", "executor"),
+    CONTEXT_TARGET("context_target", "target"),
+    CONTEXT_POSITION("context_position", "position"),
+    CONDITION_POSITION("condition_position", "condition"),
+    CONTEXT_FACING("context_facing", "facing"),
+    BLOCK_POSITION("block_position", "position"),
+    BLOCK_FROM("block_from", "from"),
+    BLOCK_TO("block_to", "to"),
     ;
 
     companion object {
