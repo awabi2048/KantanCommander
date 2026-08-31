@@ -193,6 +193,27 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `nested condition whose false branch closes at the parent merge keeps its stem target`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val merge = GraphEditor.appendMerge(graph, outer.id)
+        // 外側FALSE枝の先頭へ、まだ合流を持たない内側条件を挿入する。
+        // insertは内側条件のFALSE枝を開いた状態で作るため、外側の合流で
+        // 閉じるよう手動で接続します（追加ボタンのない閉じた枝）。
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+        graph.nodes.getValue(inner.id).falseNext = merge.id
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val innerPoint = requireNotNull(layout.nodePoints[inner.id])
+
+        // 閉じた枝では、縦幹にも横セルと同じ挿入判定を保持します。
+        assertEquals(
+            InsertionTarget(inner.id, GraphEditor.Edge.FALSE, inner.id),
+            layout.cells[MapPoint(innerPoint.x, innerPoint.y + 1)]?.insertionTarget,
+        )
+    }
+
+    @Test
     fun `tail add points are connected to their preceding command`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
