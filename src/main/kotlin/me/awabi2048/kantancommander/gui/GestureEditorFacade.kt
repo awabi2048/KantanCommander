@@ -18,6 +18,16 @@ class GestureEditorFacade(
     private val externalEditorSuppressions = mutableMapOf<UUID, PermissionAttachment>()
 
     fun open(player: Player, placement: DiskPlacement) {
+        // 同じ配置を複数人が開いた場合は新しい所有者画面を作らず、最初の
+        // Gestureセッションを共有します。別セッションを作ると表示・選択状態が
+        // 分岐し、第三者操作の入力先も共有できなくなるためです。
+        if (sessions.values.any { it.isEditing(placement) }) {
+            // この呼び出しはKantanInteractionListenerのLOWEST抑制後にも到達します。
+            // 別配置を所有中のプレイヤーが共有画面を覗いただけなのに、EASの編集権限を
+            // 残したままにしないよう、開始しなかった経路はここで即時解除します。
+            releaseExternalEditorSuppression(player.uniqueId)
+            return
+        }
         val scriptId = placement.scriptId
         val world = org.bukkit.Bukkit.getWorld(placement.world)
         val anchor: Location? = if (world != null) {
@@ -34,6 +44,18 @@ class GestureEditorFacade(
             anchor = anchor,
         )
         openEditor(player, state)
+    }
+
+    /** 既存の配置Gesture画面へ、ツール権限だけで参加できるかを判定します。 */
+    fun canOperateExisting(player: Player, placement: DiskPlacement): Boolean =
+        sessions.values.firstOrNull { it.isEditing(placement) }?.canOperateSharedActor(player) == true
+
+    /** 保存通知を同じプログラムを開いている全エディターへ配布します。 */
+    internal fun refreshForScript(scriptId: UUID) {
+        sessions.values
+            .filter { it.isEditingScript(scriptId) }
+            .toList()
+            .forEach { it.refreshFromStore() }
     }
 
     fun open(player: Player, scriptId: UUID) {
