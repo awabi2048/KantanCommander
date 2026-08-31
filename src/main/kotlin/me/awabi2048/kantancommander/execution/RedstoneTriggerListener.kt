@@ -20,8 +20,8 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
     private val wireTopology = RedstoneWireTopology(::isExtendedCommandBlock)
 
     fun start() {
-        // プラグイン再起動時も、保存済みの側面ダストを現行の接続仕様へ
-        // 一度だけ補正してから監視を開始します。以後の変更は物理更新イベントで追従します。
+        // プラグイン再起動時も、保存済みの拡張ブロック隣接ダストだけを現行の接続仕様へ
+        // 一度だけ補正してから監視を開始します。通常のダストはバニラへ任せます。
         Bukkit.getScheduler().runTask(plugin, Runnable {
             plugin.placements.all().forEach { placement ->
                 val world = Bukkit.getWorld(placement.world) ?: return@forEach
@@ -39,7 +39,7 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
             if (!PlacedBlockMaterials.isPlacedBlock(block.type)) {
                 // コマンドや外部プラグインで実体だけが置き換えられた場合も、
                 // 台帳に残った特殊接続を次の監視周期でバニラ形状へ戻します。
-                wireTopology.refreshAround(block)
+                wireTopology.restoreAfterExtendedRemoval(block)
                 return@forEach
             }
             val script = plugin.scripts.load(placement.scriptId) ?: return@forEach
@@ -73,11 +73,7 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         runtimeState.forget(placementKey, scriptId)
     }
 
-    /**
-     * 拡張ブロック周辺のダスト形状を、周囲のワールド状態から再計算します。
-     * バニラが信号源として認識しないガラスだけは、台帳上の拡張ブロックに限って
-     * 信号源相当の接続先として扱います。
-     */
+    /** 拡張ブロックに隣接するダストだけを、周囲のワールド状態から再計算します。 */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onBlockPlace(event: BlockPlaceEvent) {
         if (event.block.type != Material.REDSTONE_WIRE && !isExtendedCommandBlock(event.block)) return
@@ -95,9 +91,9 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         PlacedBlockMaterials.isPlacedBlock(block.type) &&
             plugin.placements.isRegistered(block.world, block.x, block.y, block.z)
 
-    /** 拡張ブロックを撤去した直後など、イベント外からも周辺形状を再計算します。 */
+    /** 拡張ブロック撤去後など、イベント外から隣接ダストをバニラ形状へ戻します。 */
     internal fun refreshDustTopologyAround(block: Block) {
-        wireTopology.refreshAround(block)
+        wireTopology.restoreAfterExtendedRemoval(block)
     }
 
     private fun incomingPowerMask(block: Block): Int = POWER_FACES.mapIndexedNotNull { index, face ->

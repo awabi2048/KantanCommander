@@ -7,17 +7,34 @@ import org.junit.jupiter.api.Test
 
 class RedstoneWireTopologyTest {
     @Test
-    fun `extended target replaces only its face and clears stale extra connections`() {
-        val vanilla = horizontalConnections(RedstoneWire.Connection.NONE)
+    fun `isolated dust next to extended target keeps the placement cross shape`() {
+        val actual = RedstoneWireTopology.resolveHorizontalConnections(
+            vanillaConnections = horizontalConnections(RedstoneWire.Connection.NONE),
+            extendedTargetFaces = setOf(BlockFace.NORTH),
+            adjacentDustFaces = emptySet(),
+        )
+
+        assertEquals(horizontalConnections(RedstoneWire.Connection.SIDE), actual)
+    }
+
+    @Test
+    fun `extended target adds only its face when another dust is present`() {
+        val vanilla = mapOf(
+            BlockFace.NORTH to RedstoneWire.Connection.NONE,
+            BlockFace.SOUTH to RedstoneWire.Connection.NONE,
+            BlockFace.EAST to RedstoneWire.Connection.SIDE,
+            BlockFace.WEST to RedstoneWire.Connection.NONE,
+        )
 
         val actual = RedstoneWireTopology.resolveHorizontalConnections(
             vanillaConnections = vanilla,
             extendedTargetFaces = setOf(BlockFace.NORTH),
+            adjacentDustFaces = setOf(BlockFace.EAST),
         )
 
         assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.NORTH])
         assertEquals(RedstoneWire.Connection.NONE, actual[BlockFace.SOUTH])
-        assertEquals(RedstoneWire.Connection.NONE, actual[BlockFace.EAST])
+        assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.EAST])
         assertEquals(RedstoneWire.Connection.NONE, actual[BlockFace.WEST])
     }
 
@@ -32,7 +49,11 @@ class RedstoneWireTopologyTest {
 
         assertEquals(
             vanilla,
-            RedstoneWireTopology.resolveHorizontalConnections(vanilla, emptySet()),
+            RedstoneWireTopology.resolveHorizontalConnections(
+                vanillaConnections = vanilla,
+                extendedTargetFaces = emptySet(),
+                adjacentDustFaces = emptySet(),
+            ),
         )
     }
 
@@ -41,10 +62,11 @@ class RedstoneWireTopologyTest {
         val actual = RedstoneWireTopology.resolveHorizontalConnections(
             vanillaConnections = horizontalConnections(RedstoneWire.Connection.NONE),
             extendedTargetFaces = setOf(BlockFace.EAST, BlockFace.WEST),
+            adjacentDustFaces = emptySet(),
         )
 
-        assertEquals(RedstoneWire.Connection.NONE, actual[BlockFace.NORTH])
-        assertEquals(RedstoneWire.Connection.NONE, actual[BlockFace.SOUTH])
+        assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.NORTH])
+        assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.SOUTH])
         assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.EAST])
         assertEquals(RedstoneWire.Connection.SIDE, actual[BlockFace.WEST])
     }
