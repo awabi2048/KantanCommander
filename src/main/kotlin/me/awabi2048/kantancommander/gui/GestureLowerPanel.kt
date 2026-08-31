@@ -213,7 +213,7 @@ class GestureLowerPanel(
                 // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
                 acceptedGestures = if (heldMainHandSetting) {
                     GestureGuiClickPolicy.MAIN_HAND
-                } else setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY),
+                } else GestureGuiClickPolicy.CLICK,
                 gestureGuard = if (heldMainHandSetting) {
                     { actor, _ ->
                         if (heldDiskSetting) {
@@ -254,7 +254,7 @@ class GestureLowerPanel(
                 bounds = rect(0.28, -0.15, 1.2, 0.12),
                 // 設定有無は外部保存や別経路の更新でも変わるため、表示時のBooleanを
                 // acceptedGesturesへ固定せず、クリック時点で最新ノードを確認します。
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 gestureGuard = { _, _ ->
                     plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
                         current.string("item").isNotBlank() || current.string("itemData").isNotBlank()
@@ -397,7 +397,7 @@ class GestureLowerPanel(
         elements.add(GestureGuiElement(
             elementId = id,
             bounds = rect(x, -0.02, 0.68, 0.17),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = backgroundId,
             // 赤カードは状態名をホバーでも示します（色だけの通知を避ける規則）。
             hoverText = if (attention) {
@@ -453,7 +453,7 @@ class GestureLowerPanel(
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, width, SETTING_CHOICE_HEIGHT),
                 acceptedGestures = if (choice.enabled) {
-                    setOf(GestureGuiGesture.PRIMARY)
+                    GestureGuiClickPolicy.CLICK
                 } else emptySet(),
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
@@ -534,7 +534,7 @@ class GestureLowerPanel(
             elements.add(GestureGuiElement(
                 elementId = "lower-tab:${pageStart + index}",
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "tab-bg-$index",
                 // 要確認タブは色だけでなく状態名も示します。ホバー中は操作説明欄を
                 // 置き換えて警告を表示し、どのタブが未完了かを文面で伝えます。
@@ -552,7 +552,7 @@ class GestureLowerPanel(
         elements.add(GestureGuiElement(
             elementId = "lower-delete",
             bounds = rect(-0.7975, deleteY, 0.47, 0.10),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "delete-bg",
         ))
         // ページャーは左ナビと右ペインの境界に置きます。専用選択画面では
@@ -1119,7 +1119,7 @@ class GestureLowerPanel(
         elements.add(GestureGuiElement(
             elementId = "lower-setting-back",
             bounds = rect(centerX, -0.43, width, 0.10),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "setting-back-bg",
         ))
     }
@@ -1341,7 +1341,7 @@ class GestureLowerPanel(
                 // 通常の設定カードと統一します。
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, width, SETTING_CHOICE_HEIGHT),
-                acceptedGestures = if (choice.enabled) setOf(GestureGuiGesture.PRIMARY) else emptySet(),
+                acceptedGestures = if (choice.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
                 hoverText = hoverDescription?.let {
@@ -1569,7 +1569,7 @@ class GestureLowerPanel(
             elements.add(GestureGuiElement(
                 elementId = "lower-cat:$index",
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "cat-bg-$index",
             ))
         }
@@ -1580,7 +1580,7 @@ class GestureLowerPanel(
         elements.add(GestureGuiElement(
             elementId = "lower-close-picker",
             bounds = rect(-0.7975, closeCy, 0.47, 0.15),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "lower-close-bg",
         ))
 
@@ -1617,7 +1617,7 @@ class GestureLowerPanel(
             elements.add(GestureGuiElement(
                 elementId = "lower-type:${type.name}",
                 bounds = rect(cx, cy, 0.72, 0.155),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "type-bg-$index",
                 // コマンド種別の説明は、灰色のカテゴリ説明スロットを置き換えて
                 // 同じ位置へ表示します。ホバー中の白文字が説明と重複しないようにします。
@@ -1684,7 +1684,7 @@ class GestureLowerPanel(
         elements.add(GestureGuiElement(
             elementId = "confirm-delete",
             bounds = rect(-0.27, -0.08, 0.48, 0.12),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "confirm-yes-bg",
         ))
         addBlock(visuals, "confirm-no-bg", 0.27, -0.08, 0.48, 0.12, Material.CYAN_TERRACOTTA, 4)
@@ -1693,7 +1693,7 @@ class GestureLowerPanel(
         elements.add(GestureGuiElement(
             elementId = "confirm-cancel",
             bounds = rect(0.27, -0.08, 0.48, 0.12),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "confirm-no-bg",
         ))
         // 確認画面も詳細設定と同じ子画面契約（面積比50%）で表示します。
@@ -1814,7 +1814,7 @@ class GestureLowerPanel(
                 elements.add(GestureGuiElement(
                     elementId = "lower-$id-page:$targetPage",
                     bounds = rect(x, centerY, 0.18, 0.10),
-                    acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                    acceptedGestures = GestureGuiClickPolicy.CLICK,
                     targetVisualId = visualId,
                 ))
             }

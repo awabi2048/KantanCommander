@@ -22,6 +22,22 @@ class GestureGuiClickPolicyTest {
     }
 
     @Test
+    fun `sneak click is treated as the same click as normal click`() {
+        // CC-Systemの入力層はスニーク状態でSHIFT_PRIMARYを発行します。
+        // 通常クリックとスニーククリックが同じ操作へ正規化されることを保証します。
+        assertEquals(
+            setOf(GestureGuiGesture.PRIMARY, GestureGuiGesture.SHIFT_PRIMARY),
+            GestureGuiClickPolicy.CLICK,
+        )
+        assertTrue(GestureGuiClickPolicy.isPrimaryClick(GestureGuiGesture.PRIMARY))
+        assertTrue(GestureGuiClickPolicy.isPrimaryClick(GestureGuiGesture.SHIFT_PRIMARY))
+        // 右クリック系とFキーはクリックへ正規化しません。
+        assertFalse(GestureGuiClickPolicy.isPrimaryClick(GestureGuiGesture.SECONDARY))
+        assertFalse(GestureGuiClickPolicy.isPrimaryClick(GestureGuiGesture.SHIFT_SECONDARY))
+        assertFalse(GestureGuiClickPolicy.isPrimaryClick(GestureGuiGesture.SWAP_HAND))
+    }
+
+    @Test
     fun `main hand availability is evaluated from the current inventory state`() {
         // ItemStackの生成はBukkitサーバー初期化を要求するため、判定本体を
         // Materialで直接検証します。Player版はこの同じ関数へ委譲します。

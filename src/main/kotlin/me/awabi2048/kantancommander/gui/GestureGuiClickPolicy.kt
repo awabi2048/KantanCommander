@@ -11,6 +11,21 @@ import org.bukkit.entity.Player
  * が発生しない状態になります。Shift版も同じ設定操作として扱います。
  */
 internal object GestureGuiClickPolicy {
+    /**
+     * 通常クリックとスニーク+クリックを同じ操作として扱う入力集合です。
+     * CC-Systemの入力層はスニーク状態でSHIFT_PRIMARYを発行するため、
+     * acceptedGesturesへPRIMARYだけを焼き付けると、スニーク中のクリックは
+     * 効果音もActionもない無反応になります。表示されている操作と実際に
+     * 受け付ける操作を一致させるため、全要素・全ハンドラでこの集合を使います。
+     */
+    val CLICK = setOf(
+        GestureGuiGesture.PRIMARY,
+        GestureGuiGesture.SHIFT_PRIMARY,
+    )
+
+    /** スニークの有無に依存しない「クリック」判定です。ハンドラの分岐で使います。 */
+    fun isPrimaryClick(gesture: GestureGuiGesture): Boolean = gesture in CLICK
+
     val MAIN_HAND = setOf(
         GestureGuiGesture.PRIMARY,
         GestureGuiGesture.SECONDARY,

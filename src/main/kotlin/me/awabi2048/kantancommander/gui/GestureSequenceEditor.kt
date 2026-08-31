@@ -720,7 +720,7 @@ class GestureSequenceEditor(
                 GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
                 GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
             ),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
         ))
 
         cells.forEach { (localPoint, cell) ->
@@ -783,7 +783,7 @@ class GestureSequenceEditor(
                             elements.add(GestureGuiElement(
                                 elementId = "node:${node.id}",
                                 bounds = iconBounds(cx, cy, metrics.iconSize),
-                                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                                acceptedGestures = GestureGuiClickPolicy.CLICK,
                                 targetVisualId = "node-icon-${node.id}",
                                 hoverText = GestureGuiHoverText(
                                     text = hoverText,
@@ -837,7 +837,7 @@ class GestureSequenceEditor(
                                     // 隣接ノードの状態は他の操作や外部保存で変わり得るため、
                                     // 描画時のenabledを入力可否へ固定しません。クリック時に
                                     // 最新グラフを再取得し、表示更新なしでも誤操作を防ぎます。
-                                    acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                                    acceptedGestures = GestureGuiClickPolicy.CLICK,
                                     gestureGuard = { _, _ ->
                                         plugin.scripts.load(state.scriptId)?.graph?.let { currentGraph ->
                                             GraphEditor.canSwapAdjacent(currentGraph, node.id, direction)
@@ -872,7 +872,7 @@ class GestureSequenceEditor(
                         elements.add(GestureGuiElement(
                             elementId = "add:$gx:$gy",
                             bounds = iconBounds(cx, cy, metrics.iconSize),
-                            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                            acceptedGestures = GestureGuiClickPolicy.CLICK,
                             targetVisualId = "add-plus-$gx-$gy",
                             hoverText = GestureGuiHoverText(
                                 text = net.kyori.adventure.text.Component.text(
@@ -893,7 +893,7 @@ class GestureSequenceEditor(
                         elements.add(GestureGuiElement(
                             elementId = "path:${gx}:${gy}",
                             bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
-                            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                            acceptedGestures = GestureGuiClickPolicy.CLICK,
                             hoverText = GestureGuiHoverText(
                                 text = net.kyori.adventure.text.Component.text(
                                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_INSERT),
@@ -991,7 +991,7 @@ class GestureSequenceEditor(
         elements.add(GestureGuiElement(
             elementId = "back-to-start",
             bounds = navBounds(GestureEditorLayout.BACK_X, GestureEditorLayout.BACK_Y, GestureEditorLayout.NAV_SIZE),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "back-label",
         ))
 
@@ -1870,7 +1870,7 @@ class GestureSequenceEditor(
 
     /** 専用選択画面のすべての選択を共有モデルへ適用します。 */
     private fun handleSettingAction(context: GestureGuiActionContext, player: Player) {
-        if (context.gesture != GestureGuiGesture.PRIMARY) return
+        if (!GestureGuiClickPolicy.isPrimaryClick(context.gesture)) return
         val ownerId = ownerIdFor(player)
         if (context.elementId == "lower-setting-back") {
             popSettingFrame(player)
@@ -2427,7 +2427,7 @@ class GestureSequenceEditor(
         // close/open以外の遷移でも遅延コールバックが設定を書き換えないようにします。
         invalidateInput(player.uniqueId)
         when {
-            context.elementId.startsWith("node-reorder:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("node-reorder:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val encoded = context.elementId.removePrefix("node-reorder:")
                 val directionName = encoded.substringBefore(":")
                 val nodeId = runCatching { UUID.fromString(encoded.substringAfter(":")) }.getOrNull() ?: return
@@ -2462,29 +2462,26 @@ class GestureSequenceEditor(
                 // 画面更新後に削除されたノードからの遅延入力は、選択も効果音も発生させません。
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 if (script.graph.nodes[nodeId] == null) return
-                when (context.gesture) {
-                    GestureGuiGesture.PRIMARY -> {
-                        if (settingChildOpen(ownerId)) {
-                            api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
-                        }
-                        state.selectedNodeId = nodeId
-                        state.selectedAddPoint = null
-                        state.selectedInsertionCandidatePoint = null
-                        state.pendingInsertion = null
-                        clearSettingState()
-                        state.lowerMode = GestureLowerMode.SETTINGS
-                        state.settingsTab = 0
-                        state.settingsPage = 0
-                        updateUpper(player)
-                        updateLower(player)
-                        // ノード選択直後は先頭フィールドを親画面へ表示します。
-                        // 詳細子画面は、木の項目を選択して再クリックしたときだけ開きます。
-                        openSettingsTab(player, 0)
+                if (GestureGuiClickPolicy.isPrimaryClick(context.gesture)) {
+                    if (settingChildOpen(ownerId)) {
+                        api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                     }
-                    else -> Unit
+                    state.selectedNodeId = nodeId
+                    state.selectedAddPoint = null
+                    state.selectedInsertionCandidatePoint = null
+                    state.pendingInsertion = null
+                    clearSettingState()
+                    state.lowerMode = GestureLowerMode.SETTINGS
+                    state.settingsTab = 0
+                    state.settingsPage = 0
+                    updateUpper(player)
+                    updateLower(player)
+                    // ノード選択直後は先頭フィールドを親画面へ表示します。
+                    // 詳細子画面は、木の項目を選択して再クリックしたときだけ開きます。
+                    openSettingsTab(player, 0)
                 }
             }
-            context.elementId == "viewport-empty" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "viewport-empty" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 if (settingChildOpen(ownerId)) {
                     api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 }
@@ -2498,28 +2495,28 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
-            context.elementId == "nav-zoom-in" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "nav-zoom-in" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val next = (state.zoomLevel + 1).coerceAtMost(GestureEditorLayout.MAX_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
                     setZoomLevel(next)
                     updateUpper(player)
                 }
             }
-            context.elementId == "nav-zoom-out" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "nav-zoom-out" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val next = (state.zoomLevel - 1).coerceAtLeast(GestureEditorLayout.MIN_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
                     setZoomLevel(next)
                     updateUpper(player)
                 }
             }
-            context.elementId == "nav-zoom-reset" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "nav-zoom-reset" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 if (state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL) {
                     setZoomLevel(GestureEditorLayout.INITIAL_ZOOM_LEVEL)
                     updateUpper(player)
                 }
             }
             context.elementId.startsWith("nav-") && context.elementId != "nav-close" &&
-                context.gesture == GestureGuiGesture.PRIMARY -> {
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val delta = when (context.elementId) {
                     "nav-up" -> MapPoint(0, -1)
                     "nav-down" -> MapPoint(0, 1)
@@ -2542,7 +2539,7 @@ class GestureSequenceEditor(
                 state.origin = nextOrigin
                 updateUpper(player)
             }
-            context.elementId == "back-to-start" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "back-to-start" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 // 最も先頭にある追加ポイントをビューに含めるよう原点を調整
                 // 挿入候補表示中は、後続ノードを右へ移動させた仮想レイアウトを使います。
                 // 永続グラフだけで原点を決めると、候補アイコンと表示範囲の基準が分岐します。
@@ -2569,7 +2566,7 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
-            context.elementId.startsWith("add:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("add:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 // addポイントの挿入先情報を保持し、下部をPICKERへ切り替える
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 if (settingChildOpen(ownerId)) {
@@ -2597,7 +2594,7 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
-            context.elementId.startsWith("path:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("path:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 if (settingChildOpen(ownerId)) {
                     api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
@@ -2619,17 +2616,17 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
-            context.elementId == "lower-script-name" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "lower-script-name" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 showProgramNameDialog(player)
             }
-            context.elementId == "lower-script-timer" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "lower-script-timer" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 showTimerSettingDialog(player)
             }
-            context.elementId.startsWith("lower-tab:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("lower-tab:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
                 openSettingsTab(player, index)
             }
-            context.elementId.startsWith("lower-settings-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("lower-settings-page:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val page = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
                 if (settingChildOpen(ownerId)) {
                     api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
@@ -2643,7 +2640,7 @@ class GestureSequenceEditor(
                 updateLower(player)
             }
             context.elementId.startsWith("lower-setting-") &&
-                context.gesture == GestureGuiGesture.PRIMARY -> {
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 handleSettingAction(context, player)
             }
             context.elementId.startsWith("lower-edit:") &&
@@ -2651,7 +2648,7 @@ class GestureSequenceEditor(
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
                 beginSelectedFieldEdit(player, fieldKey)
             }
-            context.elementId == "lower-item-get" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "lower-item-get" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
                 val item = configuredItem(node) ?: return
@@ -2660,16 +2657,16 @@ class GestureSequenceEditor(
                 }
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_TAKEN))
             }
-            context.elementId.startsWith("lower-cat:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("lower-cat:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
                 state.pickerPage = 0
                 updateLower(player)
             }
-            context.elementId.startsWith("lower-picker-page:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("lower-picker-page:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.pickerPage = context.elementId.removePrefix("lower-picker-page:").toIntOrNull() ?: return
                 updateLower(player)
             }
-            context.elementId.startsWith("lower-type:") && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId.startsWith("lower-type:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val typeName = context.elementId.removePrefix("lower-type:")
                 val type = runCatching { CommandType.valueOf(typeName) }.getOrNull() ?: return
                 val script = plugin.scripts.load(state.scriptId) ?: return
@@ -2745,7 +2742,7 @@ class GestureSequenceEditor(
                 // 「タブだけ選択されて詳細が空」の状態を作りません。
                 openSettingsTab(player, 0)
             }
-            context.elementId == "lower-close-picker" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "lower-close-picker" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 if (settingChildOpen(ownerId)) {
                     api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                 }
@@ -2756,7 +2753,7 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 updateLower(player)
             }
-            context.elementId == "nav-close" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 // 右上の閉じる操作は、親・子画面と入力claimをまとめて即時解放します。
                 if (context.actorId == ownerId) {
                     closeImmediately(ownerId)
@@ -2766,12 +2763,12 @@ class GestureSequenceEditor(
                     api.leave(context.actorId)
                 }
             }
-            context.elementId == "lower-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "lower-delete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.confirmNodeId = state.selectedNodeId ?: return
                 state.confirmKind = GestureConfirmKind.DELETE
                 openConfirmChild(player)
             }
-            context.elementId == "confirm-delete" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "confirm-delete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 if (state.confirmKind == GestureConfirmKind.ITEM_OVERWRITE) {
                     confirmItemOverwrite(player)
                     return
@@ -2826,7 +2823,7 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
-            context.elementId == "confirm-cancel" && context.gesture == GestureGuiGesture.PRIMARY -> {
+            context.elementId == "confirm-cancel" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val settingChildWasOpen = settingChildOpen(ownerId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE
@@ -3016,7 +3013,7 @@ class GestureSequenceEditor(
             elements.add(GestureGuiElement(
                 elementId = quad.first,
                 bounds = navBounds(nx, ny, s),
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 // 表示後のパンや挿入候補の変化も入力時点で再評価し、無効化された
                 // ナビゲーションでは効果音・Actionを発生させません。
                 gestureGuard = { _, _ -> canMoveCurrentViewport(delta) },
@@ -3084,7 +3081,7 @@ class GestureSequenceEditor(
                 bounds = navBounds(x, y, GestureEditorLayout.ZOOM_SIZE),
                 // 上限／下限はstateの変更後もクリック時点で再判定し、古いviewが
                 // 残った場合にも誤操作と効果音を発生させません。
-                acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
                 gestureGuard = { _, _ ->
                     if (id == "nav-zoom-in") {
                         state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
@@ -3113,7 +3110,7 @@ class GestureSequenceEditor(
         elements.add(GestureGuiElement(
             elementId = "nav-zoom-reset",
             bounds = navBounds(GestureEditorLayout.ZOOM_X, resetY, GestureEditorLayout.ZOOM_SIZE),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             gestureGuard = { _, _ -> state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL },
             targetVisualId = "nav-zoom-reset-glyph",
         ))
@@ -3144,7 +3141,7 @@ class GestureSequenceEditor(
         elements.add(GestureGuiElement(
             elementId = "nav-close",
             bounds = navBounds(x, y, size),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "nav-close-glyph",
             hoverText = GestureGuiHoverText(
                 text = net.kyori.adventure.text.Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)),
