@@ -448,14 +448,11 @@ object GraphLayoutEngine {
             if (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop)) {
                 putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
             }
-            val falseTarget = when {
-                falseSegment.tail != null ->
-                    InsertionTarget(falseSegment.tail, GraphEditor.Edge.NEXT, condition.id)
-                falseStart == null || falseStart == stop ->
-                    InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id)
-                else -> null
-            }
-            markVerticalInsertionTarget(x, y + 1, falseY, falseTarget)
+            // 開いた枝の縦幹には挿入判定を付けません。枝末端に追加ボタン（黄色＋）が
+            // 存在し、その挿入先が縦幹の候補と同一（空枝ならFALSE先頭、非空なら末尾追加）
+            // のためです。これは横経路の「追加ボタン直前は挿入判定を表示しない」規則と
+            // 同じであり、閉じた枝（renderCondition・追加ボタンなし）では横セルと同じく
+            // 縦幹にも挿入判定を保持します。
             val trueOpen = trueStart == null || trueSegment.hasOpenEnd ||
                 (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop))
             val falseOpen = falseStart == null || falseSegment.hasOpenEnd ||
@@ -532,7 +529,11 @@ object GraphLayoutEngine {
             }
         }
 
-        /** 縦経路上の全セルへ、対応する水平枝と同じ挿入先を付与します。 */
+        /**
+         * 閉じた枝（合流で閉じ、追加ボタンを持たない枝）の縦経路へ、対応する
+         * 水平枝と同じ挿入先を付与します。開いた枝は枝末端の追加ボタンが同一の
+         * 挿入先を提供するため、縦経路を接続専用にします（renderOpenCondition参照）。
+         */
         private fun markVerticalInsertionTarget(
             x: Int,
             fromY: Int,

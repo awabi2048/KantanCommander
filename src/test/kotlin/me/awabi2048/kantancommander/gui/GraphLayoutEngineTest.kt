@@ -187,10 +187,9 @@ class GraphLayoutEngineTest {
 
         assertEquals(GraphEditor.Edge.TRUE, layout.cells[MapPoint(2, 1)]?.insertionTarget?.edge)
         assertEquals(GraphEditor.Edge.FALSE, layout.cells[MapPoint(2, 3)]?.insertionTarget?.edge)
-        assertEquals(
-            InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id),
-            layout.cells[MapPoint(1, 2)]?.insertionTarget,
-        )
+        // 開いた枝の縦幹は、枝末端の追加ボタンが同一の挿入先を提供するため
+        // 接続専用になります（横経路の追加ボタン直前抑制と同じ規則）。
+        assertEquals(null, layout.cells[MapPoint(1, 2)]?.insertionTarget)
     }
 
     @Test
