@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
+﻿<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0
@@ -7,7 +7,7 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-    <version>26.901.3</version>
+    <version>26.901.4</version>
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>
@@ -51,7 +51,7 @@
         <dependency>
             <groupId>com.awabi2048</groupId>
             <artifactId>CC-System</artifactId>
-            <version>26.901.3</version>
+            <version>26.901.4</version>
             <scope>provided</scope>
         </dependency>
         <dependency>

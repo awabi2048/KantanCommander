@@ -145,7 +145,7 @@ class GestureLowerPanel(
         if (settingScreen != null) {
             // 設定木の直下は常に親画面へ表示します。子画面は、選択中の
             // ノードがさらに子要素を持つ場合だけ、再クリックで開きます。
-            addSettingChoiceNodes(settingChoices, player, visuals, elements)
+            addSettingChoiceNodes(settingChoices, player, visuals, elements, field.key)
         }
         // 「移動先→ほかのエンティティ」は親のSETTINGS画面から選択します。
         // 子画面側だけへ対象三分類を追加すると、最初の選択直後に親画面へ残る
@@ -161,7 +161,7 @@ class GestureLowerPanel(
             }
         } else null
         destinationTarget?.let {
-            addLowerRightTargetChoiceNodes(it.children, player, visuals, elements)
+            addLowerRightTargetChoiceNodes(it.children, player, visuals, elements, field.key)
         }
 
         // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
@@ -419,6 +419,7 @@ class GestureLowerPanel(
         player: Player,
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
+        fieldKey: String,
         child: Boolean = false,
     ) {
         choices.forEachIndexed { index, choice ->
@@ -446,7 +447,7 @@ class GestureLowerPanel(
             )
             addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
             val hoverDescription = choice.description.takeIf(String::isNotBlank)
-                ?: choiceDescription(player, choice)
+                ?: choiceDescription(player, choice, fieldKey)
             elements.add(GestureGuiElement(
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, width, SETTING_CHOICE_HEIGHT),
@@ -659,7 +660,7 @@ class GestureLowerPanel(
         )
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
-    private fun choiceDescription(player: Player, choice: SettingChoice): String? = when {
+    private fun choiceDescription(player: Player, choice: SettingChoice, fieldKey: String?): String? = when {
         // 対象の三分類は、ラベルと同一の文面ではなく項目の説明を表示します。
         choice.id == "target:${TargetCategory.INHERITED.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_INHERITED_TARGET)
@@ -669,10 +670,32 @@ class GestureLowerPanel(
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ENTITY_TARGET)
         // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します。
         choice.id.startsWith("condition-kind:") -> conditionKindDescription(player, choice.id)
-        choice.id == "context:executor" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EXECUTOR)
-        choice.id == "context:target" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONTEXT_TARGET)
-        choice.id == "context:position" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION)
-        choice.id == "context:facing" -> fieldDescriptionText(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING)
+        // コンテキスト系は、「コンテキスト」コマンドのタブ（後続への設定）と
+        // コマンド限りの上書き（fieldKey == "context"）で性質が異なるため文面を分けます。
+        choice.id == "context:executor" -> contextOverrideOrFieldDescription(
+            player,
+            fieldKey,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_OVERRIDE_EXECUTOR,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EXECUTOR,
+        )
+        choice.id == "context:target" -> contextOverrideOrFieldDescription(
+            player,
+            fieldKey,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_OVERRIDE_TARGET,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONTEXT_TARGET,
+        )
+        choice.id == "context:position" -> contextOverrideOrFieldDescription(
+            player,
+            fieldKey,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_OVERRIDE_POSITION,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+        )
+        choice.id == "context:facing" -> contextOverrideOrFieldDescription(
+            player,
+            fieldKey,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_OVERRIDE_FACING,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING,
+        )
         choice.id == "context:source" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_SOURCE)
         choice.id == "context:inherit" ->
@@ -685,19 +708,128 @@ class GestureLowerPanel(
         choice.id == "filter:tag" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_TAG)
         choice.id == "filter:name" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_NAME)
         choice.id.startsWith("filter:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_DEFAULT)
-        choice.id.startsWith("position:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_POSITION)
-        choice.id.startsWith("facing:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FACING)
-        choice.id.startsWith("condition-") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_CONDITION)
-        choice.id.startsWith("display:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DISPLAY)
-        choice.id.startsWith("action:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_ACTION)
-        choice.id.startsWith("scope:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_SCOPE)
-        choice.id.startsWith("type:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_TYPE)
-        choice.id.startsWith("operation:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPERATION)
-        choice.id.startsWith("value:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_VALUE)
-        choice.id.startsWith("source:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_SOURCE)
-        choice.id.startsWith("inclusive:") -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_INCLUSIVE)
+        choice.id.startsWith("position:") -> suffixKeyDescription(player, choice.id, "position:") { suffix ->
+            when (runCatching { PositionKind.valueOf(suffix) }.getOrNull()) {
+                PositionKind.DISK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_DISK
+                PositionKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_EXECUTOR
+                PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TARGET
+                PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_MYWORLD_SPAWN
+                PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_COORDINATES
+                PositionKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_CAPTURED
+                PositionKind.TEMPORARY_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TEMPORARY_VARIABLE
+                PositionKind.WORLD_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_WORLD_VARIABLE
+                null -> null
+            }
+        }
+        choice.id.startsWith("facing:") -> suffixKeyDescription(player, choice.id, "facing:") { suffix ->
+            when (runCatching { FacingKind.valueOf(suffix) }.getOrNull()) {
+                FacingKind.INHERITED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_INHERITED
+                FacingKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_CAPTURED
+                FacingKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_EXECUTOR
+                FacingKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_TARGET
+                FacingKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_COORDINATES
+                FacingKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_MYWORLD_SPAWN
+                FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_ROTATION
+                null -> null
+            }
+        }
+        choice.id.startsWith("condition-") -> conditionDetailDescription(player, choice.id)
+        choice.id.startsWith("display:") -> suffixKeyDescription(player, choice.id, "display:") { suffix ->
+            when (suffix) {
+                "tellraw" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_DISPLAY_TELLRAW
+                "title" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_DISPLAY_TITLE
+                "actionbar" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_DISPLAY_ACTIONBAR
+                else -> null
+            }
+        }
+        choice.id.startsWith("action:") -> suffixKeyDescription(player, choice.id, "action:") { suffix ->
+            when (suffix) {
+                "ride" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ACTION_RIDE
+                "dismount" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ACTION_DISMOUNT
+                else -> null
+            }
+        }
+        choice.id.startsWith("scope:") -> suffixKeyDescription(player, choice.id, "scope:") { suffix ->
+            when (suffix) {
+                "TEMPORARY" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SCOPE_TEMPORARY
+                "WORLD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SCOPE_WORLD
+                else -> null
+            }
+        }
+        choice.id.startsWith("type:") -> suffixKeyDescription(player, choice.id, "type:") { suffix ->
+            when (runCatching { VariableType.valueOf(suffix) }.getOrNull()) {
+                VariableType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_BOOLEAN
+                VariableType.INTEGER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_INTEGER
+                VariableType.DECIMAL -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_DECIMAL
+                VariableType.TEXT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_TEXT
+                VariableType.POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_POSITION
+                VariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_ENTITY
+                null -> null
+            }
+        }
+        choice.id.startsWith("operation:") -> suffixKeyDescription(player, choice.id, "operation:") { suffix ->
+            when (runCatching { VariableOperation.valueOf(suffix) }.getOrNull()) {
+                VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_SET
+                VariableOperation.ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_ADD
+                VariableOperation.SUBTRACT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_SUBTRACT
+                VariableOperation.TOGGLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_TOGGLE
+                VariableOperation.STORE_POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_STORE_POSITION
+                VariableOperation.STORE_TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_STORE_TARGET
+                VariableOperation.CLEAR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_CLEAR
+                null -> null
+            }
+        }
+        choice.id.startsWith("value:") -> suffixKeyDescription(player, choice.id, "value:") { suffix ->
+            when (suffix) {
+                "direct" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VALUE_DIRECT
+                "iteration" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VALUE_ITERATION
+                "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VALUE_COUNT
+                else -> null
+            }
+        }
+        choice.id.startsWith("source:") -> suffixKeyDescription(player, choice.id, "source:") { suffix ->
+            when (suffix) {
+                "FIXED" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_FIXED
+                "TEMPORARY" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_TEMPORARY
+                "WORLD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_WORLD
+                else -> null
+            }
+        }
+        // 終端の包含はfor（inclusiveEnd）と条件の反転（inverted）で意味が異なるため、
+        // 編集中のタブ（fieldKey）へ文面を分けます。
+        choice.id.startsWith("inclusive:") -> suffixKeyDescription(player, choice.id, "inclusive:") { suffix ->
+            when {
+                suffix == "true" && fieldKey == "inverted" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_ON
+                suffix == "false" && fieldKey == "inverted" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_OFF
+                suffix == "true" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_INCLUSIVE_END_TRUE
+                suffix == "false" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_INCLUSIVE_END_FALSE
+                else -> null
+            }
+        }
+        choice.id.startsWith("block:") -> suffixKeyDescription(player, choice.id, "block:") { suffix ->
+            when (suffix) {
+                "setblock" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_BLOCK_SETBLOCK
+                "fill" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_BLOCK_FILL
+                else -> null
+            }
+        }
         else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DEFAULT)
     }
+
+    /** 選択肢IDのサフィックスから説明キーを解決する共通処理です。解決できないIDは総称説明へフォールバックします。 */
+    private fun suffixKeyDescription(
+        player: Player,
+        choiceId: String,
+        prefix: String,
+        keyFor: (String) -> com.awabi2048.ccsystem.api.localization.LocalizationKey<String>?,
+    ): String = keyFor(choiceId.removePrefix(prefix))
+        ?.let { KcI18n.text(player, it) }
+        ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DEFAULT)
+
     /** 条件種別の選択肢ID（condition-kind:<KIND>）から、種別ごとの説明へ解決します。 */
     private fun conditionKindDescription(player: Player, choiceId: String): String? =
         when (runCatching { ConditionKind.valueOf(choiceId.removePrefix("condition-kind:")) }.getOrNull()) {
@@ -714,6 +846,45 @@ class GestureLowerPanel(
             null -> null
         }
 
+    /** コンテキスト系の説明です。上書き画面（fieldKey == "context"）では、コマンド限りの上書きとして文面を分けます。 */
+    private fun contextOverrideOrFieldDescription(
+        player: Player,
+        fieldKey: String?,
+        overrideKey: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>,
+        fieldDescriptionKey: com.awabi2048.ccsystem.api.localization.LocalizationKey<List<String>>,
+    ): String =
+        if (fieldKey == "context") {
+            KcI18n.text(player, overrideKey)
+        } else {
+            fieldDescriptionText(player, fieldDescriptionKey)
+        }
+
+    /** 条件詳細の選択肢IDから、項目ごとの説明へ解決します。 */
+    private fun conditionDetailDescription(player: Player, choiceId: String): String? =
+        when (choiceId) {
+            "condition-target" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_TARGET)
+            "condition-state" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_STATE)
+            "condition-variable" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VARIABLE)
+            "condition-scope" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_SCOPE)
+            "condition-operator" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_OPERATOR)
+            "condition-value" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VALUE)
+            "condition-block" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_BLOCK)
+            "condition-item" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_ITEM)
+            "condition-count" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_COUNT)
+            "condition-position" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_POSITION)
+            else -> null
+        }
+
     /** 項目の説明（テキストリスト）を、ホバー用の1文へ連結します。 */
     private fun fieldDescriptionText(
         player: Player,
@@ -722,6 +893,7 @@ class GestureLowerPanel(
         .filter(String::isNotBlank)
         .joinToString(" ")
         .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DEFAULT) }
+
 
     /**
      * ホバーは1行1エンティティで表示します。1つのTextDisplayへ複数行を
@@ -1109,6 +1281,7 @@ class GestureLowerPanel(
             player,
             visuals,
             elements,
+            fieldKey,
             child = child,
         )
         val destinationTarget = if (!child && screen == GestureSettingScreen.POSITION &&
@@ -1117,7 +1290,7 @@ class GestureLowerPanel(
             choices.firstOrNull { it.id == "position:${PositionKind.TARGET.name}" && it.selected }
         } else null
         destinationTarget?.let {
-            addLowerRightTargetChoiceNodes(it.children, player, visuals, elements)
+            addLowerRightTargetChoiceNodes(it.children, player, visuals, elements, fieldKey)
         }
         if (pageCount > 1) addPager(
             visuals,
@@ -1344,6 +1517,7 @@ class GestureLowerPanel(
         player: Player,
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
+        fieldKey: String,
     ) {
         val span = POSITION_TARGET_CHOICE_SPAN_END_X - POSITION_TARGET_CHOICE_SPAN_START_X
         val width = (span - POSITION_TARGET_CHOICE_GAP * 2) / 3.0
@@ -1372,7 +1546,7 @@ class GestureLowerPanel(
                 Component.text(choice.label),
             )
             val hoverDescription = choice.description.takeIf(String::isNotBlank)
-                ?: choiceDescription(player, choice)
+                ?: choiceDescription(player, choice, fieldKey)
             elements += GestureGuiElement(
                 // 共通ハンドラがtarget:<category>を解釈するため、elementIdの接頭辞は
                 // 通常の設定カードと統一します。
