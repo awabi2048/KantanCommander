@@ -231,7 +231,7 @@ class GestureLowerPanel(
                         else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER,
                     ),
                     x = 0.28,
-                    y = 0.39,
+                    y = ACTION_DESCRIPTION_Y,
                     replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
                 ),
             ))
@@ -264,7 +264,7 @@ class GestureLowerPanel(
                 hoverText = singleLineHover(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
                     x = 0.28,
-                    y = 0.39,
+                    y = ACTION_DESCRIPTION_Y,
                     replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
                 ),
             ))
@@ -578,48 +578,32 @@ class GestureLowerPanel(
     /**
      * 説明ブロックを意味別の固定スロットへ配置します。
      *
-     * 1行目は選択中タブ、2行目はそのタブでの操作、3行目は現在選択中の
-     * ノードが詳細を持つ場合だけ表示する案内です。対象だけ別レイアウトに
-     * 分岐させず、候補の説明は各要素のホバーへ同じ規則で渡します。
+     * 常設説明は灰色1本に統一し、項目の説明（field_description）を表示します。
+     * 従来の白い説明行と操作動詞行（field_action）は、内容が説明と重複するため
+     * ジェスチャーGUIから外しました。候補や操作面のホバー説明は、この灰色
+     * スロットをreplacesVisualIdで置き換えて同じ位置・寸法へ表示します。
+     * 2行目は要確認の状態名、無ければ「詳細を持つ候補の再クリック」案内です。
      */
     private fun addDescriptionRows(
         visuals: MutableList<GestureGuiVisual>,
         player: Player,
         field: EditorField?,
         fallback: String = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SETTINGS_FIELD_FALLBACK),
-        actionFallback: String? = null,
         detailHint: String? = null,
         warning: String? = null,
         centerX: Double = 0.28,
-        tabY: Double = 0.43,
         hoverY: Double = ACTION_DESCRIPTION_Y,
         detailY: Double = SETTING_DETAIL_HINT_Y,
     ) {
         addText(
             visuals,
-            "setting-description-tab",
-            centerX,
-            tabY,
-            0.0047,
-            280,
-            Component.text(field?.let { fieldDescription(player, it) } ?: fallback),
-        )
-        addText(
-            visuals,
-            "setting-description-hover",
+            SETTING_DESCRIPTION_HOVER_ID,
             centerX,
             hoverY,
-            0.0043,
+            DESCRIPTION_TEXT_SIZE,
             280,
             Component.text(
-                // 対象欄の固定「コマンドの対象を設定します」は、欄固有の説明と
-                // 重複するため表示しません。対象カードへホバーしたときだけ、
-                // choiceDescriptionがこの位置を置き換えて候補の説明を出します。
-                if (field?.key == "target") {
-                    actionFallback ?: ""
-                } else field?.let { fieldActionDescription(player, it) }
-                    ?: actionFallback
-                    ?: "",
+                field?.let { fieldDescription(player, it) } ?: fallback,
                 NamedTextColor.GRAY,
             ),
         )
@@ -647,6 +631,13 @@ class GestureLowerPanel(
         }
     }
 
+    /** 項目の説明文です。複数行の説明は1文へ連結し、折り返しは描画側へ任せます。 */
+    private fun fieldDescription(player: Player, field: EditorField): String =
+        KcI18n.list(player, field.descriptionKey)
+            .filter(String::isNotBlank)
+            .joinToString(" ")
+            .ifBlank { KcI18n.text(player, field.label) }
+
     /** 要確認時に説明欄へ出す状態名です。赤テクスチャと同じ判定から生成します。 */
     private fun attentionWarning(player: Player, attention: Boolean): String? =
         if (attention) {
@@ -663,19 +654,6 @@ class GestureLowerPanel(
             y = ACTION_DESCRIPTION_Y,
             replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
         )
-
-    private fun fieldDescription(player: Player, field: EditorField): String =
-        KcI18n.list(player, field.descriptionKey).firstOrNull()?.takeIf(String::isNotBlank)
-            ?: KcI18n.text(player, field.label)
-
-    private fun fieldActionDescription(player: Player, field: EditorField): String =
-        if (field.key == "item") KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_GET_HOVER)
-        else KcI18n.text(player, field.actionKey)
-
-    private fun descriptionY(node: CommandNode, field: EditorField): Double =
-        if (CommandSettingsModel.descriptor(node, field.key).editor == CommandSettingEditor.TARGET) {
-            ACTION_DESCRIPTION_Y
-        } else DEFAULT_HOVER_Y
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
     private fun choiceDescription(player: Player, choice: SettingChoice): String? = when {
@@ -714,8 +692,8 @@ class GestureLowerPanel(
     /**
      * ホバーは1行1エンティティで表示します。1つのTextDisplayへ複数行を
      * 入れると中央列揃えになり下部パネルのレイアウトが崩れるためです。
-     * 項目固有の説明は常設の説明ディスプレイと同じスロットを置換し、
-     * 既定案内との重複を解消します。
+     * 位置と寸法は常設の灰色説明スロットへ合わせ、replacesVisualIdで
+     * 置き換えることで、ホバー中に別の白文字が上へ重なることを防ぎます。
      */
     private fun singleLineHover(
         text: String,
@@ -727,7 +705,7 @@ class GestureLowerPanel(
             text = Component.text(text),
             x = x,
             y = y,
-            size = 0.0048,
+            size = DESCRIPTION_TEXT_SIZE,
             lineWidth = 280,
             replacesVisualId = replacesVisualId,
         )
@@ -1075,7 +1053,6 @@ class GestureLowerPanel(
             },
             warning = attentionWarning(player, fieldKey in attentionFields),
             centerX = if (child) 0.0 else 0.28,
-            tabY = if (child) CHILD_TAB_DESCRIPTION_Y else 0.43,
             hoverY = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
             detailY = if (child) CHILD_DETAIL_HINT_Y else SETTING_DETAIL_HINT_Y,
         )
@@ -1611,9 +1588,9 @@ class GestureLowerPanel(
         val categoryDescription = KcI18n.list(player, category.descriptionKey)
             .filter(String::isNotBlank)
             .joinToString(" ")
-        addText(visuals, "picker-description-title", 0.28, 0.43, 0.0047, 280,
-            Component.text(KcI18n.text(player, category.labelKey)))
-        addText(visuals, "picker-description-body", 0.28, 0.36, 0.0043, 280,
+        // カテゴリ名の白行は左タブ列のラベルと重複するため廃止し、灰色の説明1本に
+        // 統一します。コマンド種別カードのホバーは、この説明スロットを置き換えます。
+        addText(visuals, "picker-description-body", 0.28, ACTION_DESCRIPTION_Y, DESCRIPTION_TEXT_SIZE, 280,
             Component.text(categoryDescription, NamedTextColor.GRAY))
         val script = plugin.scripts.load(state.scriptId)
         val mergeConditionId = state.pendingInsertion?.mergeConditionId
@@ -1642,12 +1619,15 @@ class GestureLowerPanel(
                 bounds = rect(cx, cy, 0.72, 0.155),
                 acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
                 targetVisualId = "type-bg-$index",
+                // コマンド種別の説明は、灰色のカテゴリ説明スロットを置き換えて
+                // 同じ位置へ表示します。ホバー中の白文字が説明と重複しないようにします。
                 hoverText = singleLineHover(
                     KcI18n.list(player, type.descriptionKey)
                         .filter(String::isNotBlank)
                         .joinToString(" "),
                     x = 0.28,
-                    y = 0.39,
+                    y = ACTION_DESCRIPTION_Y,
+                    replacesVisualId = "picker-description-body",
                 ),
             ))
         }
@@ -1895,6 +1875,8 @@ class GestureLowerPanel(
 
     private companion object {
         const val SETTING_DESCRIPTION_HOVER_ID = "setting-description-hover"
+        /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます。 */
+        const val DESCRIPTION_TEXT_SIZE = 0.0043
         // 値行と詳細案内を0.10ブロック以上離し、長いTextDisplayの折返しが
         // 互いの領域へ侵入しないようにします。
         const val SETTING_VALUE_Y = 0.27
@@ -1915,13 +1897,11 @@ class GestureLowerPanel(
         const val CHILD_CHOICE_TOP_Y = 0.08
         const val CHILD_CHOICE_PITCH = 0.12
         const val CHILD_HEADER_Y = 0.36
-        const val CHILD_TAB_DESCRIPTION_Y = 0.29
         const val CHILD_HOVER_Y = 0.23
         const val CHILD_DETAIL_HINT_Y = 0.14
         const val CHILD_PAGER_Y = -0.34
         const val CHILD_BACK_WIDTH = 1.70
         const val ACTION_DESCRIPTION_Y = 0.36
-        const val DEFAULT_HOVER_Y = 0.39
         // 右端へ寄りすぎないよう、内側に余白を残して3枚を等間隔で収めます。
         const val POSITION_TARGET_CHOICE_WIDTH = 0.27
         const val POSITION_TARGET_CHOICE_START_X = 0.14
