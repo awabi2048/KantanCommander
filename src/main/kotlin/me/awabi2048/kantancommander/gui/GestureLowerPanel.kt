@@ -1300,9 +1300,9 @@ class GestureLowerPanel(
 
     /**
      * 移動先の「他のエンティティ」を選んだときだけ、対象三分類を右下へ並べます。
-     * 座標方式の選択肢と同じ親画面へ置くことで、スクリーンショットの黄色枠に
-     * 対応する導線（方式を選ぶ→対象種別を選ぶ→同じ種別を再クリックして詳細）を
-     * 保ちつつ、通常の対象設定画面の二列レイアウトを壊しません。
+     * 座標方式の選択肢と同じ親画面へ置くことで、方式を選ぶ→対象種別を選ぶ→
+     * 同じ種別を再クリックして詳細、という導線を保ちます。カードは右ペインの
+     * 選択領域を3等分し、設定タブとおよそ同じ寸法で配置します。
      */
     private fun addLowerRightTargetChoiceNodes(
         choices: List<GestureSettingTreeNode>,
@@ -1310,9 +1310,11 @@ class GestureLowerPanel(
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
     ) {
-        val width = POSITION_TARGET_CHOICE_WIDTH
+        val span = POSITION_TARGET_CHOICE_SPAN_END_X - POSITION_TARGET_CHOICE_SPAN_START_X
+        val width = (span - POSITION_TARGET_CHOICE_GAP * 2) / 3.0
+        val pitch = width + POSITION_TARGET_CHOICE_GAP
         choices.take(3).forEachIndexed { index, choice ->
-            val cx = POSITION_TARGET_CHOICE_START_X + index * POSITION_TARGET_CHOICE_PITCH
+            val cx = POSITION_TARGET_CHOICE_SPAN_START_X + width / 2.0 + index * pitch
             val cy = POSITION_TARGET_CHOICE_Y
             val bgId = "position-target-choice-bg-$index"
             addBlock(
@@ -1321,7 +1323,7 @@ class GestureLowerPanel(
                 cx,
                 cy,
                 width,
-                SETTING_CHOICE_HEIGHT,
+                POSITION_TARGET_CHOICE_HEIGHT,
                 settingChoiceMaterial(choice),
                 4,
             )
@@ -1329,9 +1331,9 @@ class GestureLowerPanel(
                 visuals,
                 "position-target-choice-label-$index",
                 cx,
-                cy - 0.012,
-                0.0038,
-                62,
+                cy - 0.02,
+                0.0055,
+                90,
                 Component.text(choice.label),
             )
             val hoverDescription = choice.description.takeIf(String::isNotBlank)
@@ -1340,7 +1342,7 @@ class GestureLowerPanel(
                 // 共通ハンドラがtarget:<category>を解釈するため、elementIdの接頭辞は
                 // 通常の設定カードと統一します。
                 elementId = "lower-setting-choice:${choice.id}",
-                bounds = rect(cx, cy, width, SETTING_CHOICE_HEIGHT),
+                bounds = rect(cx, cy, width, POSITION_TARGET_CHOICE_HEIGHT),
                 acceptedGestures = if (choice.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
@@ -1902,10 +1904,13 @@ class GestureLowerPanel(
         const val CHILD_PAGER_Y = -0.34
         const val CHILD_BACK_WIDTH = 1.70
         const val ACTION_DESCRIPTION_Y = 0.36
-        // 右端へ寄りすぎないよう、内側に余白を残して3枚を等間隔で収めます。
-        const val POSITION_TARGET_CHOICE_WIDTH = 0.27
-        const val POSITION_TARGET_CHOICE_START_X = 0.14
-        const val POSITION_TARGET_CHOICE_PITCH = 0.30
+        // 「ほかのエンティティ」の対象三分類は、右ペインの選択カード領域
+        // （SETTING_CHOICE 2列と同じスパン）を3等分し、設定タブ（0.47×0.15）と
+        // およそ同じ寸法で配置します。
+        const val POSITION_TARGET_CHOICE_SPAN_START_X = -0.43
+        const val POSITION_TARGET_CHOICE_SPAN_END_X = 1.00
+        const val POSITION_TARGET_CHOICE_GAP = 0.04
+        const val POSITION_TARGET_CHOICE_HEIGHT = 0.15
         const val POSITION_TARGET_CHOICE_Y = -0.25
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val DIALOG_EDITABLE_KEYS = setOf(
