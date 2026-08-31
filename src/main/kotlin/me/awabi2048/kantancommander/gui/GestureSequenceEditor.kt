@@ -661,10 +661,15 @@ class GestureSequenceEditor(
         // 実行前検証を一度だけ行い、ノード単位の未設定状態を背景色とホバーへ
         // 投影します。グラフ全体の検証を各セルで繰り返さないことで、ノード数が
         // 増えたときにも描画コストを線形に保ちます。
+        // 検証結果は構造化エラー（nodeId/fieldKeys）として受けるため、表示文字列の
+        // パス解析は行いません。snapshot内のエラーは主グラフのノードへ対応しないため、
+        // 存在しないノードIDは自然に除外されます。
         val validationErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
-        val incompleteNodeIds = script.graph.nodes.keys.filterTo(mutableSetOf()) { nodeId ->
-            validationErrors.any { error ->
-                error.substringBefore(':').split('/').lastOrNull() == nodeId.toString()
+        val incompleteNodeIds = buildSet {
+            validationErrors.forEach { error ->
+                error.nodeId?.let { nodeId ->
+                    if (nodeId in script.graph.nodes) add(nodeId)
+                }
             }
         }
         val visuals = mutableListOf<GestureGuiVisual>()

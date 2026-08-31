@@ -30,9 +30,37 @@ class ExecutableScriptValidatorTest {
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.contains("ディスク内容が未設定") })
-        assertTrue(errors.any { it.contains("コンテキストが未設定") })
-        assertTrue(errors.any { it.contains("乗り物となる対象が未設定") })
+        assertTrue(errors.any { it.message.contains("ディスク内容が未設定") })
+        assertTrue(errors.any { it.message.contains("コンテキストが未設定") })
+        assertTrue(errors.any { it.message.contains("乗り物となる対象が未設定") })
+    }
+
+    @Test
+    fun `structured errors carry the node and gui field keys`() {
+        val script = DiskScript(name = "structured", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        val diskCall = GraphEditor.append(script.graph, CommandType.DISK_CALL)
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.params["kind"] = me.awabi2048.kantancommander.model.ConditionKind.TARGET_EXISTS.name
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        val teleportErrors = errors.filter { it.nodeId == teleport.id }
+        assertTrue(teleportErrors.any { it.fieldKeys == setOf("target") })
+        assertTrue(teleportErrors.any { it.fieldKeys == setOf("destination") })
+        assertTrue(teleportErrors.all { it.path == "root/${teleport.id}" })
+        assertTrue(
+            errors.any { it.nodeId == diskCall.id && it.fieldKeys == setOf("diskId") },
+            "DISK_CALLの未設定はdiskIdタブへ投影される",
+        )
+        assertTrue(
+            errors.any { it.nodeId == condition.id && it.fieldKeys == setOf("condition") },
+            "条件の未設定は条件値（condition）タブへ投影される",
+        )
+        // 表示形式はrendered()だけが担当し、"path: message" の契約を維持します。
+        assertTrue(
+            errors.all { it.rendered() == "${it.path}: ${it.message}" },
+        )
     }
 
     @Test
@@ -48,7 +76,7 @@ class ExecutableScriptValidatorTest {
         )
 
         assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.contains("切替は真偽値だけ") }
+            ExecutableScriptValidator.validate(script).any { it.message.contains("切替は真偽値だけ") }
         )
     }
 
@@ -67,7 +95,7 @@ class ExecutableScriptValidatorTest {
         variable.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
 
         assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.contains("実行コンテキストを設定できません") },
+            ExecutableScriptValidator.validate(script).any { it.message.contains("実行コンテキストを設定できません") },
         )
     }
 
@@ -78,7 +106,7 @@ class ExecutableScriptValidatorTest {
         context.contextOverride = ExecutionContextSpec()
 
         assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.contains("コンテキストが未設定") },
+            ExecutableScriptValidator.validate(script).any { it.message.contains("コンテキストが未設定") },
         )
     }
 
@@ -90,10 +118,10 @@ class ExecutableScriptValidatorTest {
             activation = ActivationMode.ALWAYS_ACTIVE,
             timer = TimerSetting(enabled = false, intervalSeconds = 0),
         )
-        assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("タイマーオフ") })
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("タイマーオフ") })
 
         script.timer.enabled = true
-        assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("タイマー間隔") })
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("タイマー間隔") })
     }
 
     @Test
@@ -105,8 +133,8 @@ class ExecutableScriptValidatorTest {
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.contains("対象が未設定") })
-        assertTrue(errors.any { it.contains("移動先が未設定") })
+        assertTrue(errors.any { it.message.contains("対象が未設定") })
+        assertTrue(errors.any { it.message.contains("移動先が未設定") })
     }
 
     @Test
@@ -121,13 +149,13 @@ class ExecutableScriptValidatorTest {
             ExecutableScriptValidator.validate(
                 script,
                 GraphLimits(maximumNodeCount = 1),
-            ).any { it.contains("上限 1") }
+            ).any { it.message.contains("上限 1") }
         )
         assertFalse(
             ExecutableScriptValidator.validate(
                 script,
                 GraphLimits(maximumNodeCount = 2),
-            ).any { it.contains("ノード数が上限") }
+            ).any { it.message.contains("ノード数が上限") }
         )
     }
 
@@ -144,9 +172,9 @@ class ExecutableScriptValidatorTest {
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.contains("対象距離は有限値") })
-        assertTrue(errors.any { it.contains("対象数は1以上") })
-        assertTrue(errors.any { it.contains("座標が未設定") })
+        assertTrue(errors.any { it.message.contains("対象距離は有限値") })
+        assertTrue(errors.any { it.message.contains("対象数は1以上") })
+        assertTrue(errors.any { it.message.contains("座標が未設定") })
     }
 
     @Test
@@ -161,8 +189,8 @@ class ExecutableScriptValidatorTest {
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.contains("固定エンティティが未設定") })
-        assertTrue(errors.any { it.contains("捕捉した向き") })
+        assertTrue(errors.any { it.message.contains("固定エンティティが未設定") })
+        assertTrue(errors.any { it.message.contains("捕捉した向き") })
     }
 
     @Test
@@ -181,7 +209,7 @@ class ExecutableScriptValidatorTest {
         )
 
         assertFalse(
-            ExecutableScriptValidator.validate(script).any { it.contains("forの") },
+            ExecutableScriptValidator.validate(script).any { it.message.contains("forの") },
         )
     }
 
@@ -200,7 +228,7 @@ class ExecutableScriptValidatorTest {
         )
 
         assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.contains("ループ値はワールド内変数へ保存できません") },
+            ExecutableScriptValidator.validate(script).any { it.message.contains("ループ値はワールド内変数へ保存できません") },
         )
     }
 
@@ -220,7 +248,7 @@ class ExecutableScriptValidatorTest {
 
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
-                it.contains("タイトル／アクションバーの表示時間")
+                it.message.contains("タイトル／アクションバーの表示時間")
             }
         )
     }
@@ -233,9 +261,9 @@ class ExecutableScriptValidatorTest {
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.contains("配置ブロック") })
-        assertTrue(errors.any { it.contains("ブロック配置位置") })
-        assertTrue(errors.any { it.contains("削除対象") })
+        assertTrue(errors.any { it.message.contains("配置ブロック") })
+        assertTrue(errors.any { it.message.contains("ブロック配置位置") })
+        assertTrue(errors.any { it.message.contains("削除対象") })
     }
 
     @Test
@@ -247,6 +275,6 @@ class ExecutableScriptValidatorTest {
         fill.blockFromSpec = PositionSpec(PositionKind.COORDINATES, 0.0, 0.0, 0.0)
         fill.blockToSpec = PositionSpec(PositionKind.COORDINATES, 100.0, 100.0, 100.0)
 
-        assertTrue(ExecutableScriptValidator.validate(script).any { it.contains("32768") })
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("32768") })
     }
 }

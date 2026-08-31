@@ -58,7 +58,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val validationErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
         if (validationErrors.isNotEmpty()) {
             plugin.logger.warning(
-                "[KantanCommander] rejected disk=$scriptId reason=invalid_script errors=${validationErrors.joinToString(" | ")}"
+                "[KantanCommander] rejected disk=$scriptId reason=invalid_script " +
+                    "errors=${validationErrors.joinToString(" | ") { it.rendered() }}"
             )
             return callback(false)
         }
