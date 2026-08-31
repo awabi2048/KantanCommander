@@ -35,6 +35,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -634,13 +635,10 @@ class GestureSequenceEditor(
         observedRevision = script.revision
         val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }
             .getOrElse { return layoutErrorView(player) }
-        // 挿入先を選択中は、実グラフへ仮ノードを適用したレイアウトを使います。
-        // クリック元の経路セルから座標だけを推測すると、後続ノードが右へ移動する
-        // 実際の挿入結果と候補アイコンがずれるため、表示・経路・幅を同じ仮想グラフ
-        // から生成します。
-        val insertionPreview = state.pendingInsertion?.let { target ->
-            GraphLayoutEngine.previewInsertion(script.graph, target)
-        }
+        // 挿入プレビューは「経路クリックによる挿入」のときだけ適用します。
+        // 追加ポイントからの追加は、追加ボタン自体が候補位置であり既存ノードが
+        // 動かないため、仮ノード入りレイアウトや候補マーカーは二重表示になります。
+        val insertionPreview = insertionPreview(script)
         val renderGraph = insertionPreview?.graph ?: script.graph
         val layout = insertionPreview?.layout ?: persistedLayout
         val zoomScale = zoomScale()
@@ -2995,13 +2993,27 @@ class GestureSequenceEditor(
         return layout.canMove(state.origin, delta.x, delta.y, metrics.columns, metrics.rows)
     }
 
+    /**
+     * 上部ビューポートへ適用する挿入プレビューです。
+     *
+     * 経路セルからの「挿入」では後続ノードが右へ移動するため、仮ノードを含む
+     * レイアウトで表示・経路・幅を揃え、実際の挿入位置へ候補マーカーを置きます。
+     * 追加ポイントからの「追加」は追加ボタン自体が候補位置であり、既存ノードも
+     * 動かないためプレビューを適用しません。描画とナビゲーションの両方がこの
+     * 共通判定を使うことで、表示と入力判定の基準が分岐しません。
+     */
+    private fun insertionPreview(script: DiskScript): InsertionPreview? {
+        val target = state.pendingInsertion ?: return null
+        // 追加起点（ADDセル選択中）ではADDセルの選択glowがそのまま候補位置を示します。
+        if (state.selectedInsertionCandidatePoint == null) return null
+        return GraphLayoutEngine.previewInsertion(script.graph, target)
+    }
+
     /** 描画・ナビゲーション入力で共有する、現在の永続／仮想レイアウトです。 */
     private fun currentViewportLayout(): GraphLayout? {
         val script = plugin.scripts.load(state.scriptId) ?: return null
         val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return null
-        return state.pendingInsertion?.let { target ->
-            GraphLayoutEngine.previewInsertion(script.graph, target)?.layout
-        } ?: persistedLayout
+        return insertionPreview(script)?.layout ?: persistedLayout
     }
 
     /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
