@@ -61,6 +61,13 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
 
     fun find(location: Location): DiskPlacement? = find(location.world, location.blockX, location.blockY, location.blockZ)
 
+    /**
+     * 台帳に登録された配置かどうかだけを確認します。findと違ってスクリプト欠損時の
+     * 台帳修復を行わないため、ブロック形状の再計算中にも副作用なく利用できます。
+     */
+    fun isRegistered(world: World, x: Int, y: Int, z: Int): Boolean =
+        placements.containsKey(key(world.name, x, y, z))
+
     fun find(world: World?, x: Int, y: Int, z: Int): DiskPlacement? {
         world ?: return null
         val placementKey = key(world.name, x, y, z)
@@ -151,7 +158,16 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 }
         }
         stale.forEach { key ->
-            placements.remove(key)?.let { plugin.forgetActivationState(it.key, it.scriptId) }
+            placements.remove(key)?.let { removed ->
+                plugin.forgetActivationState(removed.key, removed.scriptId)
+                // 台帳を消した後に再計算し、実体が残っている場合も拡張ブロック向けの
+                // 特殊接続を通常のバニラ形状へ戻します。
+                Bukkit.getWorld(removed.world)?.let { world ->
+                    plugin.refreshRedstoneTopologyAround(
+                        world.getBlockAt(removed.x, removed.y, removed.z),
+                    )
+                }
+            }
         }
         save()
     }

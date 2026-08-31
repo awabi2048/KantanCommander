@@ -30,6 +30,7 @@ import me.awabi2048.kantancommander.placement.PlacementProtectionListener
 import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
+import org.bukkit.block.Block
 import org.bukkit.plugin.java.JavaPlugin
 
 /**
@@ -204,6 +205,11 @@ class KantanCommanderPlugin : JavaPlugin() {
 
     internal fun resetActivationTiming(scriptId: java.util.UUID) {
         triggerListener.resetTiming(scriptId)
+    }
+
+    /** 拡張ブロック撤去後に、残存している隣接ダストの接続状態を再計算します。 */
+    internal fun refreshRedstoneTopologyAround(block: Block) {
+        triggerListener.refreshDustTopologyAround(block)
     }
 
     internal fun forgetActivationState(placementKey: String, scriptId: java.util.UUID) {

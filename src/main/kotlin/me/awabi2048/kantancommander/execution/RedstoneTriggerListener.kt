@@ -17,14 +17,15 @@ import java.util.UUID
 
 class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Listener {
     private val runtimeState = RedstoneRuntimeState()
+    private val wireTopology = RedstoneWireTopology(::isExtendedCommandBlock)
 
     fun start() {
-        // プラグイン再起動時も、保存済みの側面ダストを現行の接続仕様へ
-        // 一度だけ補正してから監視を開始します。以後の変更は物理更新イベントで追従します。
+        // プラグイン再起動時も、保存済みの拡張ブロック隣接ダストだけを現行の接続仕様へ
+        // 一度だけ補正してから監視を開始します。通常のダストはバニラへ任せます。
         Bukkit.getScheduler().runTask(plugin, Runnable {
             plugin.placements.all().forEach { placement ->
                 val world = Bukkit.getWorld(placement.world) ?: return@forEach
-                enforceDustConnections(world.getBlockAt(placement.x, placement.y, placement.z))
+                wireTopology.refreshAround(world.getBlockAt(placement.x, placement.y, placement.z))
             }
         })
         Bukkit.getScheduler().runTaskTimer(plugin, Runnable(::tick), 1L, 1L)
@@ -35,7 +36,12 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         plugin.placements.all().forEach { placement ->
             val world = Bukkit.getWorld(placement.world) ?: return@forEach
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
-            if (!PlacedBlockMaterials.isPlacedBlock(block.type)) return@forEach
+            if (!PlacedBlockMaterials.isPlacedBlock(block.type)) {
+                // コマンドや外部プラグインで実体だけが置き換えられた場合も、
+                // 台帳に残った特殊接続を次の監視周期でバニラ形状へ戻します。
+                wireTopology.restoreAfterExtendedRemoval(block)
+                return@forEach
+            }
             val script = plugin.scripts.load(placement.scriptId) ?: return@forEach
             // 隣接ブロック自身の集約電力ではなく、対象ブロックへ入力された面を読む。
             // これによりリピーターの入力側など、出力方向でない信号を誤検知しません。
@@ -67,61 +73,39 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         runtimeState.forget(placementKey, scriptId)
     }
 
-    /**
-     * 拡張ブロックの側面へ置かれたダストの接続状態を、意図したワールド形状へ補正します。
-     * 対象は同じ高さの水平4面だけで、上下の面には手を入れません。
-     */
+    /** 拡張ブロックに隣接するダストだけを、周囲のワールド状態から再計算します。 */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onBlockPlace(event: BlockPlaceEvent) {
-        enforceTopologyAround(event.block)
+        if (event.block.type != Material.REDSTONE_WIRE && !isExtendedCommandBlock(event.block)) return
+        wireTopology.refreshAround(event.block)
     }
 
     /** バニラの物理更新で接続が再計算された場合も、意図した形状を再適用します。 */
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     fun onBlockPhysics(event: BlockPhysicsEvent) {
-        enforceTopologyAround(event.block)
+        if (event.block.type != Material.REDSTONE_WIRE && !isExtendedCommandBlock(event.block)) return
+        wireTopology.refreshAround(event.block)
     }
 
-    private fun enforceTopologyAround(changed: Block) {
-        val candidates = buildList {
-            if (PlacedBlockMaterials.isPlacedBlock(changed.type)) add(changed)
-            if (changed.type == Material.REDSTONE_WIRE) {
-                HORIZONTAL_FACES.mapNotNullTo(this) { face ->
-                    changed.getRelative(face).takeIf { PlacedBlockMaterials.isPlacedBlock(it.type) }
-                }
-            }
-        }.distinctBy { "${it.world.uid}:${it.x}:${it.y}:${it.z}" }
-        candidates.forEach(::enforceDustConnections)
-    }
+    private fun isExtendedCommandBlock(block: Block): Boolean =
+        PlacedBlockMaterials.isPlacedBlock(block.type) &&
+            plugin.placements.isRegistered(block.world, block.x, block.y, block.z)
 
-    private fun enforceDustConnections(target: Block) {
-        HORIZONTAL_FACES.forEach { face ->
-            val dust = target.getRelative(face)
-            val wire = dust.blockData as? RedstoneWire ?: return@forEach
-            val towardTarget = face.oppositeFace
-            if (wire.getFace(towardTarget) == RedstoneWire.Connection.SIDE) return@forEach
-            val corrected = wire.clone() as RedstoneWire
-            corrected.setFace(towardTarget, RedstoneWire.Connection.SIDE)
-            // 接続プロパティの変更自体が要件です。バニラの物理更新を発生させず、
-            // このイベント経路の冪等な再適用で形状を確定します。
-            dust.setBlockData(corrected, false)
-        }
+    /** 拡張ブロック撤去後など、イベント外から隣接ダストをバニラ形状へ戻します。 */
+    internal fun refreshDustTopologyAround(block: Block) {
+        wireTopology.restoreAfterExtendedRemoval(block)
     }
 
     private fun incomingPowerMask(block: Block): Int = POWER_FACES.mapIndexedNotNull { index, face ->
-        block.getBlockPower(face).takeIf { it > 0 }?.let { 1 shl index }
+        // 対象側のgetBlockPower(face)は現在のPaper実装でダスト以外の信号強度を
+        // 取りこぼすため、隣接ブロック自身が対象方向へ出力しているかを調べます。
+        block.getRelative(face).isBlockFacePowered(face).takeIf { it }?.let { 1 shl index }
     }.fold(0, Int::or)
 
     companion object {
         private val POWER_FACES = listOf(
             BlockFace.UP,
             BlockFace.DOWN,
-            BlockFace.NORTH,
-            BlockFace.SOUTH,
-            BlockFace.EAST,
-            BlockFace.WEST,
-        )
-        private val HORIZONTAL_FACES = listOf(
             BlockFace.NORTH,
             BlockFace.SOUTH,
             BlockFace.EAST,
