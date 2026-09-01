@@ -223,4 +223,38 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "to" })
         assertEquals(CommandSettingRole.BLOCK_FROM, CommandSettingsModel.descriptor(node, "from").role)
     }
+
+    @Test
+    fun `inheritance needs a context command with a concrete target`() {
+        val graph = me.awabi2048.kantancommander.model.CommandGraph.empty()
+        val first = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
+        first.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        val second = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
+
+        // 通常コマンドのtargetSpecは実行文脈へ入らないため、継承対象は確立されません。
+        assertFalse(CommandSettingsModel.hasPriorTargetContext(graph, second.id))
+    }
+
+    @Test
+    fun `context command with a concrete target enables inheritance`() {
+        val graph = me.awabi2048.kantancommander.model.CommandGraph.empty()
+        val context = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.CONTEXT)
+        context.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.NEAREST_PLAYER))
+        val teleport = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
+
+        assertTrue(CommandSettingsModel.hasPriorTargetContext(graph, teleport.id))
+    }
+
+    @Test
+    fun `explicit inherited context target clears the established target`() {
+        val graph = me.awabi2048.kantancommander.model.CommandGraph.empty()
+        val establish = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.CONTEXT)
+        establish.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.NEAREST_PLAYER))
+        val reset = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.CONTEXT)
+        reset.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.INHERITED_TARGET))
+        val teleport = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
+
+        // 明示的にINHERITEDを設定したCONTEXTは参照先を消すため、確立状態を解除します。
+        assertFalse(CommandSettingsModel.hasPriorTargetContext(graph, teleport.id))
+    }
 }

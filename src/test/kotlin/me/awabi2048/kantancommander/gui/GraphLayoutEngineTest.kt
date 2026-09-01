@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertDoesNotThrow
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.assertThrows
 import org.junit.jupiter.api.Test
@@ -187,9 +188,53 @@ class GraphLayoutEngineTest {
 
         assertEquals(GraphEditor.Edge.TRUE, layout.cells[MapPoint(2, 1)]?.insertionTarget?.edge)
         assertEquals(GraphEditor.Edge.FALSE, layout.cells[MapPoint(2, 3)]?.insertionTarget?.edge)
+        // 開いた枝の縦幹は、枝末端の追加ボタンが同一の挿入先を提供するため
+        // 接続専用になります（横経路の追加ボタン直前抑制と同じ規則）。
+        assertEquals(null, layout.cells[MapPoint(1, 2)]?.insertionTarget)
+    }
+
+    @Test
+    fun `nested condition exposes head insertion on the enclosing stem and none on its own empty stem`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val merge = GraphEditor.appendMerge(graph, outer.id)
+        // 外側FALSE枝の先頭へ、まだ合流を持たない内側条件を挿入し、
+        // 内側のFALSE枝を外側の合流で閉じる（追加ボタンのない閉じた枝）。
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+        graph.nodes.getValue(inner.id).falseNext = merge.id
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val outerPoint = requireNotNull(layout.nodePoints[outer.id])
+        val innerPoint = requireNotNull(layout.nodePoints[inner.id])
+
+        // 外側の縦幹は、非空のFALSE枝の先頭への挿入を受け付けます。
         assertEquals(
-            InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id),
-            layout.cells[MapPoint(1, 2)]?.insertionTarget,
+            InsertionTarget(outer.id, GraphEditor.Edge.FALSE, outer.id),
+            layout.cells[MapPoint(outerPoint.x, outerPoint.y + 1)]?.insertionTarget,
+        )
+        // 内側条件のFALSE枝は空のため、内側の縦幹は接続専用（追加ボタンが担う）。
+        assertEquals(
+            null,
+            layout.cells[MapPoint(innerPoint.x, innerPoint.y + 1)]?.insertionTarget,
+        )
+    }
+
+    @Test
+    fun `open condition with a non-empty false branch exposes the branch head insertion on its stem`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val merge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+        val falseNode = GraphEditor.append(graph, CommandType.WAIT, inner.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val innerPoint = requireNotNull(layout.nodePoints[inner.id])
+        assertNotNull(layout.nodePoints[falseNode.id])
+
+        // 非空のFALSE枝を持つ縦幹は、開いた枝でも枝の先頭への挿入を受け付けます。
+        assertEquals(
+            InsertionTarget(inner.id, GraphEditor.Edge.FALSE, inner.id),
+            layout.cells[MapPoint(innerPoint.x, innerPoint.y + 1)]?.insertionTarget,
         )
     }
 
@@ -359,7 +404,7 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `vertical branch and merge paths expose the same false-branch insertion target`() {
+    fun `condition stem exposes the branch head insertion and merge stem exposes the tail insertion`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.WAIT)
@@ -371,21 +416,20 @@ class GraphLayoutEngineTest {
         val falsePoint = requireNotNull(layout.nodePoints[falseNode.id])
         val mergePoint = requireNotNull(layout.nodePoints[merge.id])
 
-        val branchStem = layout.cells[MapPoint(conditionPoint.x, conditionPoint.y + 1)]
+        // 非空のFALSE枝を持つ条件の縦幹は、枝の先頭への挿入を受け付けます。
         assertEquals(
-            InsertionTarget(falseNode.id, GraphEditor.Edge.NEXT, condition.id),
-            branchStem?.insertionTarget,
+            InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id),
+            layout.cells[MapPoint(conditionPoint.x, conditionPoint.y + 1)]?.insertionTarget,
         )
-
-        val mergeStem = layout.cells[MapPoint(mergePoint.x, falsePoint.y - 1)]
+        // 合流側の縦幹は、枝末端への挿入（tail, NEXT）を受け付けます。
         assertEquals(
             InsertionTarget(falseNode.id, GraphEditor.Edge.NEXT, condition.id),
-            mergeStem?.insertionTarget,
+            layout.cells[MapPoint(mergePoint.x, falsePoint.y - 1)]?.insertionTarget,
         )
     }
 
     @Test
-    fun `every vertical condition segment uses the same target as its horizontal false branch`() {
+    fun `every vertical condition segment near the merge uses the tail insertion target`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.WAIT)
@@ -401,9 +445,16 @@ class GraphLayoutEngineTest {
         val expected = InsertionTarget(falseTail.id, GraphEditor.Edge.NEXT, condition.id)
 
         assertTrue(falsePoint.y > conditionPoint.y + 1)
+        // 合流側の縦幹は、枝末端への挿入を受け付けます。
         (conditionPoint.y + 1..falsePoint.y).forEach { y ->
-            assertEquals(expected, layout.cells[MapPoint(conditionPoint.x, y)]?.insertionTarget)
             assertEquals(expected, layout.cells[MapPoint(mergePoint.x, y)]?.insertionTarget)
+        }
+        // 条件直下の縦幹は、非空のFALSE枝の先頭への挿入を受け付けます。
+        (conditionPoint.y + 1..falsePoint.y).forEach { y ->
+            assertEquals(
+                InsertionTarget(condition.id, GraphEditor.Edge.FALSE, condition.id),
+                layout.cells[MapPoint(conditionPoint.x, y)]?.insertionTarget,
+            )
         }
     }
 

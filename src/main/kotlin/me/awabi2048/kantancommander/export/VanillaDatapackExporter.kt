@@ -48,7 +48,7 @@ class VanillaDatapackExporter(
         val exportRoot = root.copy(graph = root.graph.deepCopy())
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
-        errors += ExecutableScriptValidator.validate(exportRoot, graphLimits)
+        errors += ExecutableScriptValidator.validate(exportRoot, graphLimits).map { it.rendered() }
         collectWarnings(exportRoot.graph, "root", warnings)
         annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
         validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0)
