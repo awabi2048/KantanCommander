@@ -483,7 +483,10 @@ object ExecutableScriptValidator {
     ) {
         val parsed = NumericExpression.parse(raw)
         if (!parsed.isSuccess) {
-            errors += nodeError(node, path, setOf("value"), "計算式が不正です: ${parsed.error}")
+            // 詳細な入力エラーはDialog側でlocaleへ解決します。実行前検証は
+            // プレイヤー文脈を持たないため、モデルのErrorCodeをそのまま表示文へ
+            // 埋め込まず、実行ログ・出力検証で共通の要約だけを返します。
+            errors += nodeError(node, path, setOf("value"), "計算式が不正です")
             return
         }
         parsed.expression!!.references.forEach { reference ->

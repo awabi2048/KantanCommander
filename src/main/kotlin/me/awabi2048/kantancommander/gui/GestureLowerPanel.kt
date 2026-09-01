@@ -1784,6 +1784,27 @@ class GestureLowerPanel(
             ?.let { positionKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.FACING -> CommandSettingsModel.facingSpec(node, context.role)?.kind
             ?.let { facingKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+        GestureSettingScreen.INCLUSIVE_END -> if (node.type == CommandType.CONDITION && fieldKey == "inverted") {
+            KcI18n.text(
+                player,
+                if (node.boolean(fieldKey, false)) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_ON
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF
+                },
+            )
+        } else if (fieldKey == "inclusiveEnd") {
+            KcI18n.text(
+                player,
+                if (node.boolean(fieldKey, true)) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INCLUSIVE_ON
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INCLUSIVE_OFF
+                },
+            )
+        } else {
+            node.string(fieldKey).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+        }
         else -> node.string(fieldKey).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
     }
 

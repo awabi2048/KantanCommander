@@ -15,6 +15,17 @@ class MenuSlotDistributionTest {
     }
 
     @Test
+    fun `command picker reserves white-glass slots for every unused candidate`() {
+        val occupied = CommandPickerLayoutPolicy.itemSlots.take(3)
+        val empty = CommandPickerLayoutPolicy.emptyItemSlots(occupied.size)
+
+        assertEquals(CommandPickerLayoutPolicy.itemSlots.drop(3), empty)
+        assertEquals(CommandPickerLayoutPolicy.itemSlots, occupied + empty)
+        assertTrue(empty.none { it in CommandPickerLayoutPolicy.categorySlots })
+        assertTrue(empty.none { it == CommandPickerLayoutPolicy.BACK_SLOT })
+    }
+
+    @Test
     fun `choice menus center up to three choices and left-pack larger sets`() {
         assertEquals(ChoiceMenuLayout(45, listOf(22), 36), ChoiceMenuLayoutPolicy.layout(1))
         assertEquals(ChoiceMenuLayout(45, listOf(20, 24), 36), ChoiceMenuLayoutPolicy.layout(2))

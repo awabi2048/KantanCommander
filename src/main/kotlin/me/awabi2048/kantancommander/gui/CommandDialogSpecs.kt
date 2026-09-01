@@ -71,9 +71,22 @@ internal object CommandDialogSpecs {
                 NamedTextColor.GRAY,
             ),
         )
-        // テキスト入力を伴う Dialog では、入力欄より下に案内テキストを表示します。
+        // テキスト入力を伴うDialogでは、変数参照と色指定の例を入力欄より下へ
+        // 表示します。完成済みの日本語文をここへ持たせず、localeごとのカタログ
+        // から取得することで、Inventory/Gesture双方の案内を同じ契約にします。
         if (spec.maxLength >= 256) {
-            add(Component.text("\${変数名} でワールド変数、& で色指定が使えます。", NamedTextColor.GRAY))
+            add(
+                Component.text(
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_TEMPLATE_HINT,
+                        // プレースホルダーを一段経由して、表示上の「${score}」を
+                        // ローカライズ文字列内で別の置換対象と誤認させません。
+                        mapOf("variable_name" to "{score}"),
+                    ),
+                    NamedTextColor.GRAY,
+                ),
+            )
         }
     }
 
@@ -166,7 +179,7 @@ internal object CommandDialogSpecs {
             ),
             NamedTextColor.GRAY,
         ),
-        Component.text("各軸は0以上の数値で入力してください。空欄でその軸を解除します。", NamedTextColor.GRAY),
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_RANGE_CONSTRAINT),
     )
 
     fun rangeInputs(player: Player, dx: Double?, dy: Double?, dz: Double?): List<MenuDialogInput.Text> {
@@ -194,7 +207,7 @@ internal object CommandDialogSpecs {
             ),
             NamedTextColor.GRAY,
         ),
-        Component.text("音量は0.0から34.0まで、ピッチは0.5から2.0までの小数で入力してください。", NamedTextColor.GRAY),
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SOUND_PARAMETERS_CONSTRAINT),
     )
 
     fun soundParametersInputs(player: Player, volume: String, pitch: String): List<MenuDialogInput.Text> = listOf(
@@ -609,11 +622,11 @@ internal object CommandDialogSpecs {
         return base.copy(required = true, validate = { raw ->
             when {
                 type == null && changeMode == VariableChangeMode.CALCULATE ->
-                    if (NumericExpression.isValid(raw)) null else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    numericExpressionValidationError(raw)
                 type == null ->
                     if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
                 type == VariableType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
-                    if (NumericExpression.isValid(raw)) null else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    numericExpressionValidationError(raw)
                 } else if (raw == CURRENT_ITERATION_VALUE || raw == CURRENT_LOOP_COUNT ||
                     isNumericTemplate(raw) || raw.toDoubleOrNull()?.isFinite() == true
                 ) {
@@ -625,6 +638,21 @@ internal object CommandDialogSpecs {
             }
         })
     }
+
+    /** NumericExpressionの構文エラーを、入力画面で表示する専用キーへ変換します。 */
+    private fun numericExpressionValidationError(raw: String): LocalizationKey<String>? =
+        NumericExpression.parse(raw).error?.let { error ->
+            when (error.code) {
+                NumericExpression.ErrorCode.EMPTY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_EMPTY
+                NumericExpression.ErrorCode.TRAILING_CHARACTERS -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_TRAILING_CHARACTERS
+                NumericExpression.ErrorCode.UNCLOSED_PARENTHESIS -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_UNCLOSED_PARENTHESIS
+                NumericExpression.ErrorCode.OPERAND_REQUIRED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_OPERAND_REQUIRED
+                NumericExpression.ErrorCode.INVALID_NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_NUMBER
+                NumericExpression.ErrorCode.INVALID_CHARACTER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_CHARACTER
+                NumericExpression.ErrorCode.INVALID_READONLY_NAME -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_READONLY_NAME
+                NumericExpression.ErrorCode.INVALID_VARIABLE_NAME -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_VARIABLE_NAME
+            }
+        }
 
     /** 一覧から選択できる入力項目だけを候補提示の対象にします。 */
     fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect")

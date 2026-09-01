@@ -11,6 +11,12 @@ internal object CommandPickerLayoutPolicy {
     // 2カテゴリを中央寄せで配置し、将来のカテゴリ追加時も本文の
     // コマンド候補位置が動かないようにします。
     val categorySlots: List<Int> = listOf(48, 50)
+
+    /** 候補数が減っても、固定6行の未使用枠を同じ描画経路で埋めます。 */
+    fun emptyItemSlots(usedCount: Int): List<Int> {
+        require(usedCount in 0..itemSlots.size) { "コマンド候補数が固定領域を超えています: count=$usedCount" }
+        return itemSlots.drop(usedCount)
+    }
 }
 
 /**

@@ -1812,12 +1812,16 @@ class GestureSequenceEditor(
             val volumeValue = CommandDialogSpecs.normalize("volume", response.textValue("volume"))
             val pitchValue = CommandDialogSpecs.normalize("pitch", response.textValue("pitch"))
             val volumeError = volumeSpec.validateInput(volumeValue)
-            val pitchError = pitchSpec.validateInput(pitchValue)
-            if (volumeError != null || pitchError != null) {
-                val messages = buildList {
-                    if (volumeError != null) add("音量は0.0から34.0までの数値で入力してください")
-                    if (pitchError != null) add("ピッチは0.5から2.0までの小数で入力してください")
-                }
+                    val pitchError = pitchSpec.validateInput(pitchValue)
+                    if (volumeError != null || pitchError != null) {
+                        val messages = buildList {
+                            if (volumeError != null) {
+                                add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY))
+                            }
+                            if (pitchError != null) {
+                                add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH_BODY))
+                            }
+                        }
                 return@showInputDialog messages.joinToString("\n")
             }
             if (!updateSettingNode(player, context, configuredFields = setOf("soundParameters")) { command ->

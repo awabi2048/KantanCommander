@@ -925,7 +925,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 )),
             )
         }.toMutableList()
-        CommandPickerLayoutPolicy.itemSlots.drop(types.size).forEach { slot ->
+        CommandPickerLayoutPolicy.emptyItemSlots(types.size).forEach { slot ->
             elements += MenuElement(
                 slot,
                 KcGui.elements.decoration(Material.WHITE_STAINED_GLASS_PANE),
@@ -1679,8 +1679,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val pitchError = pitchSpec.validateInput(pitchValue)
                         if (volumeError != null || pitchError != null) {
                             val messages = buildList {
-                                if (volumeError != null) add("音量は0.0から34.0までの数値で入力してください")
-                                if (pitchError != null) add("ピッチは0.5から2.0までの小数で入力してください")
+                                if (volumeError != null) {
+                                    add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY))
+                                }
+                                if (pitchError != null) {
+                                    add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH_BODY))
+                                }
                             }
                             return@MenuDialogHandler MenuActionResult.Rejected(
                                 Component.text(messages.joinToString("\n"), NamedTextColor.RED),
@@ -2542,7 +2546,7 @@ object EditorMenuLayout {
             ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
         )
         CommandType.CONDITION -> listOf(
-            field("inverted", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INVERTED, Material.REDSTONE_TORCH) { displayBoolean(it.boolean("inverted")) },
+            field("inverted", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INVERTED, Material.REDSTONE_TORCH) { displayConditionInversion(it.boolean("inverted")) },
             field("kind", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_KIND, Material.COMPARATOR) { displayCondition(it.string("kind")) },
             field("condition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_VALUE, Material.TARGET) { displayCondition(it.string("kind")) },
         )
@@ -2685,6 +2689,15 @@ private fun displaySoundParameters(volume: String, pitch: String): DisplayValue 
 private fun displayUnset() = DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
 private fun displayBoolean(value: Boolean) = DisplayValue.Localized(
     if (value) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
+)
+
+/** 条件の反転は一般的な有効／無効ではなく、評価結果への作用を明示します。 */
+private fun displayConditionInversion(value: Boolean) = DisplayValue.Localized(
+    if (value) {
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_ON
+    } else {
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF
+    },
 )
 
 private fun displayTarget(kind: TargetKind) = DisplayValue.Localized(when (kind) {

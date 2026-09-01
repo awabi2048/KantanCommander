@@ -11,9 +11,32 @@ object NumericExpression {
     private val namePattern = Regex("[a-z][a-z0-9_.-]{0,63}")
     private val readOnlyNames = setOf("\$current_iteration_value", "\$current_loop_count")
 
+    /**
+     * パーサーの失敗理由を表示文言から分離します。
+     *
+     * 式をモデル層で日本語化すると、保存・実行・GUIごとに翻訳が分岐します。
+     * ここでは安定したエラー種別だけを返し、ユーザー向けの文面はCC-Systemの
+     * ローカライズキーへ解決します。
+     */
+    enum class ErrorCode {
+        EMPTY,
+        TRAILING_CHARACTERS,
+        UNCLOSED_PARENTHESIS,
+        OPERAND_REQUIRED,
+        INVALID_NUMBER,
+        INVALID_CHARACTER,
+        INVALID_READONLY_NAME,
+        INVALID_VARIABLE_NAME,
+    }
+
+    data class ParseError(
+        val code: ErrorCode,
+        val token: String? = null,
+    )
+
     data class ParseResult(
         val expression: Parsed? = null,
-        val error: String? = null,
+        val error: ParseError? = null,
     ) {
         val isSuccess: Boolean get() = expression != null
     }
@@ -33,12 +56,14 @@ object NumericExpression {
 
     fun parse(raw: String): ParseResult {
         val source = raw.trim()
-        if (source.isEmpty()) return ParseResult(error = "式が空です")
-        return runCatching {
+        if (source.isEmpty()) return ParseResult(error = ParseError(ErrorCode.EMPTY))
+        return try {
             Parser(source).parse().let { root ->
                 ParseResult(Parsed(root, root.references()))
             }
-        }.getOrElse { failure -> ParseResult(error = failure.message ?: "式の構文が不正です") }
+        } catch (failure: ParseFailure) {
+            ParseResult(error = failure.error)
+        }
     }
 
     fun isValid(raw: String): Boolean = parse(raw).isSuccess
@@ -63,7 +88,7 @@ object NumericExpression {
 
         fun parse(): Expr {
             val expression = parseAdditive()
-            if (peek() !is Token.End) fail("式の末尾に不要な文字があります")
+            if (peek() !is Token.End) fail(ErrorCode.TRAILING_CHARACTERS)
             return expression
         }
 
@@ -118,16 +143,21 @@ object NumericExpression {
                 is Token.Number -> Literal(token.value)
                 is Token.Name -> Name(token.value)
                 Token.LeftParen -> parseAdditive().also {
-                    if (advance() !is Token.RightParen) fail("括弧が閉じていません")
+                    if (advance() !is Token.RightParen) fail(ErrorCode.UNCLOSED_PARENTHESIS)
                 }
-                else -> fail("数値、変数名、または括弧が必要です")
+                else -> fail(ErrorCode.OPERAND_REQUIRED)
             }
         }
 
         private fun peek(): Token = tokens[index]
         private fun advance(): Token = tokens[index++]
-        private fun fail(message: String): Nothing = error(message)
+        private fun fail(code: ErrorCode): Nothing = NumericExpression.parseFailure(code)
     }
+
+    private class ParseFailure(val error: ParseError) : IllegalArgumentException()
+
+    private fun parseFailure(code: ErrorCode, token: String? = null): Nothing =
+        throw ParseFailure(ParseError(code, token))
 
     internal sealed interface Expr {
         fun evaluate(resolve: (String) -> Double?): Double?
@@ -216,18 +246,18 @@ object NumericExpression {
                     if (numberEnd != null) {
                         val raw = source.substring(index, numberEnd)
                         val number = raw.toDoubleOrNull()?.takeIf(Double::isFinite)
-                            ?: error("数値リテラルが不正です")
+                            ?: parseFailure(ErrorCode.INVALID_NUMBER, raw)
                         result += Token.Number(number)
                         index = numberEnd
                     } else {
                         val nameEnd = scanName(source, index)
-                        if (nameEnd == null) error("使用できない文字 '$char' があります")
+                        if (nameEnd == null) parseFailure(ErrorCode.INVALID_CHARACTER, char.toString())
                         val name = source.substring(index, nameEnd)
                         if (name.startsWith('$') && name !in readOnlyNames) {
-                            error("読み取り専用変数名が不正です: $name")
+                            parseFailure(ErrorCode.INVALID_READONLY_NAME, name)
                         }
                         if (!name.startsWith('$') && !namePattern.matches(name)) {
-                            error("変数名が不正です: $name")
+                            parseFailure(ErrorCode.INVALID_VARIABLE_NAME, name)
                         }
                         result += Token.Name(name)
                         index = nameEnd

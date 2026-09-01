@@ -104,11 +104,24 @@ class CommandDialogSpecsTest {
 
         variable.params["operation"] = VariableOperation.CHANGE.name
         variable.params["changeMode"] = "CALCULATE"
+        val expressionSpec = requireNotNull(CommandDialogSpecs.field(variable, "value"))
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
-            requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("1 +"),
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_OPERAND_REQUIRED,
+            expressionSpec.validate("1 +"),
         )
-        assertNull(requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("1 + 2"))
+        assertNull(expressionSpec.validate("1 + 2"))
+        val expressionErrors = listOf(
+            "" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_EMPTY,
+            "1 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_TRAILING_CHARACTERS,
+            "(1 + 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_UNCLOSED_PARENTHESIS,
+            "1e999" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_NUMBER,
+            "1 @ 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_CHARACTER,
+            "\$unknown" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_READONLY_NAME,
+            "Upper" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_VARIABLE_NAME,
+        )
+        expressionErrors.forEach { (raw, expected) ->
+            assertEquals(expected, expressionSpec.validate(raw), raw)
+        }
     }
 
     @Test

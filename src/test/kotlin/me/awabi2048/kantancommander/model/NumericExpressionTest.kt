@@ -37,4 +37,22 @@ class NumericExpressionTest {
         assertFalse(NumericExpression.isValid("(1 + 2"))
         assertTrue(NumericExpression.isValid("my-var - 1"))
     }
+
+    @Test
+    fun `parser exposes stable error codes for every user-facing syntax failure`() {
+        val cases = mapOf(
+            "" to NumericExpression.ErrorCode.EMPTY,
+            "1 2" to NumericExpression.ErrorCode.TRAILING_CHARACTERS,
+            "(1 + 2" to NumericExpression.ErrorCode.UNCLOSED_PARENTHESIS,
+            "1 +" to NumericExpression.ErrorCode.OPERAND_REQUIRED,
+            "1e999" to NumericExpression.ErrorCode.INVALID_NUMBER,
+            "1 @ 2" to NumericExpression.ErrorCode.INVALID_CHARACTER,
+            "\$unknown" to NumericExpression.ErrorCode.INVALID_READONLY_NAME,
+            "Upper" to NumericExpression.ErrorCode.INVALID_VARIABLE_NAME,
+        )
+
+        cases.forEach { (raw, expected) ->
+            assertEquals(expected, NumericExpression.parse(raw).error?.code, raw)
+        }
+    }
 }
