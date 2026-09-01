@@ -1350,10 +1350,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun renderVariableChangeModes(player: Player, route: MenuRoute): InventoryMenuView {
-        val options = listOf(
-            Triple(VariableChangeMode.ASSIGN, Material.LIME_DYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN)),
-            Triple(VariableChangeMode.CALCULATE, Material.COMPARATOR, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE)),
-        )
+        val nodeId = route.payload["nodeId"]?.let { runCatching { java.util.UUID.fromString(it) }.getOrNull() }
+        val node = nodeId?.let { script(route)?.graph?.nodes?.get(it) }
+        val isString = node?.string("type", VariableType.NUMBER.name) == VariableType.STRING.name
+        val options = if (isString) {
+            listOf(Triple(VariableChangeMode.ASSIGN, Material.LIME_DYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN)))
+        } else {
+            listOf(
+                Triple(VariableChangeMode.ASSIGN, Material.LIME_DYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN)),
+                Triple(VariableChangeMode.CALCULATE, Material.COMPARATOR, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE)),
+            )
+        }
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
             choiceElement(player, layout.itemSlots[index], option.second, option.third,

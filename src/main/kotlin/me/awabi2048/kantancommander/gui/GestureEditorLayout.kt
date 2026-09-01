@@ -19,7 +19,7 @@ import kotlin.math.roundToInt
 object GestureEditorLayout {
     /** ビューポートのマス数 */
     const val VIEWPORT_COLS: Int = 10
-    const val VIEWPORT_ROWS: Int = 4
+    const val VIEWPORT_ROWS: Int = 6
 
     /** 基準倍率。基準倍率では論理セルを10×4枚表示します。 */
     const val DEFAULT_ZOOM: Double = 0.75
@@ -60,7 +60,13 @@ object GestureEditorLayout {
     fun cellCenterY(row: Double): Double = FIRST_ROW_Y - row * PITCH_Y
 
     /** 2点を結ぶ軸整列な経路セグメントを生成します（水平または垂直） */
-    data class PathSegment(val x: Double, val y: Double, val w: Double, val h: Double)
+    data class PathSegment(
+        val x: Double,
+        val y: Double,
+        val w: Double,
+        val h: Double,
+        val kind: MapCellKind = MapCellKind.PATH,
+    )
 
     fun horizontalPath(y: Double, xFrom: Double, xTo: Double): PathSegment {
         val left = minOf(xFrom, xTo)
@@ -72,6 +78,18 @@ object GestureEditorLayout {
         val top = maxOf(yFrom, yTo)
         val bottom = minOf(yFrom, yTo)
         return PathSegment(x, (top + bottom) / 2.0, PATH_THICKNESS, top - bottom)
+    }
+
+    fun horizontalPath(y: Double, xFrom: Double, xTo: Double, kind: MapCellKind): PathSegment {
+        val left = minOf(xFrom, xTo)
+        val right = maxOf(xFrom, xTo)
+        return PathSegment((left + right) / 2.0, y, right - left, PATH_THICKNESS, kind)
+    }
+
+    fun verticalPath(x: Double, yFrom: Double, yTo: Double, kind: MapCellKind): PathSegment {
+        val top = maxOf(yFrom, yTo)
+        val bottom = minOf(yFrom, yTo)
+        return PathSegment(x, (top + bottom) / 2.0, PATH_THICKNESS, top - bottom, kind)
     }
 
     /** L字経路: (cornerX, cornerY)で曲がり、上から入って右へ出る（┘型） */
@@ -125,8 +143,8 @@ object GestureEditorLayout {
     // ---- 十字ナビゲーション（右下、グリッド外） ----
     const val NAV_CENTER_X: Double = 1.05
     const val NAV_CENTER_Y: Double = -0.32
-    const val NAV_SIZE: Double = 0.09
-    const val NAV_PITCH: Double = 0.11
+    const val NAV_SIZE: Double = 0.12
+    const val NAV_PITCH: Double = 0.14
 
     /** 先頭に戻る（⌂）: 十字の下・左に隣接 */
     val BACK_X: Double = NAV_CENTER_X - NAV_PITCH

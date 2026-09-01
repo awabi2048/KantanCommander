@@ -386,10 +386,9 @@ class GestureLowerPanel(
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.MULTIPLE,
                 valueState,
-                selected = false,
-                attention = attention,
             ),
             4,
+            glowColor = GestureSettingVisualPolicy.glowColor(selected = false, attention = attention),
         )
         visuals.add(GestureGuiVisual.Item(
             visualId = "$id-icon",
@@ -455,6 +454,7 @@ class GestureLowerPanel(
                 SETTING_CHOICE_HEIGHT,
                 settingChoiceMaterial(choice),
                 4,
+                glowColor = GestureSettingVisualPolicy.glowColor(choice.selected, choice.attention),
             )
             addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
             val hoverDescription = choice.description.takeIf(String::isNotBlank)
@@ -467,18 +467,19 @@ class GestureLowerPanel(
                 } else emptySet(),
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
+                // ホバーはカード直下へ追従させ、固定スロットとの重なりを解消します。
                 hoverText = hoverDescription?.let {
+                    val hoverX = cx
+                    val hoverY = cy - SETTING_CHOICE_HEIGHT / 2.0 - 0.04
                     if (child) {
-                        // 子画面は詳細設定に集中するため、説明スロットの置換を維持します。
                         singleLineHover(
                             it,
-                            x = 0.0,
-                            y = CHILD_HOVER_Y,
+                            x = hoverX,
+                            y = hoverY,
                             replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
                         )
                     } else {
-                        // 親画面では説明と対になる画面下段のスロットへ表示します。
-                        singleLineHover(it, x = HOVER_SLOT_X, y = HOVER_SLOT_Y)
+                        singleLineHover(it, x = hoverX, y = hoverY)
                     }
                 },
             ))
@@ -510,7 +511,7 @@ class GestureLowerPanel(
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
         attentionFields: Set<String> = emptySet(),
-        pagerCenterX: Double = -0.10,
+        pagerCenterX: Double = -0.30,
     ): Int {
         val fields = CommandSettingsModel.visibleFields(node)
         if (fields.isEmpty()) return 1
@@ -530,6 +531,7 @@ class GestureLowerPanel(
                 GestureSettingValueState.INITIAL
             }
             val attention = field.key in attentionFields
+            // テクスチャはボタンの種類、Glow は「選択中」と警告・要確認で使い分けます。
             addBlock(
                 visuals,
                 "tab-bg-$index",
@@ -540,10 +542,9 @@ class GestureLowerPanel(
                 GestureSettingVisualPolicy.material(
                     GestureSettingSelectionMode.EXCLUSIVE,
                     fieldState,
-                    on,
-                    attention,
                 ),
                 4,
+                glowColor = GestureSettingVisualPolicy.glowColor(on, attention),
             )
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, field.label)))
@@ -1449,10 +1450,18 @@ class GestureLowerPanel(
                 )
             }
         }
-        GestureSettingScreen.VARIABLE_CHANGE_MODE -> listOf(
-            SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), node.string("changeMode", "ASSIGN") == "ASSIGN"),
-            SettingChoice("changeMode:CALCULATE", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE), node.string("changeMode", "ASSIGN") == "CALCULATE"),
-        )
+        GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
+            // 文字列型では計算式を適用できないため、代入のみを提供します。
+            val isString = node.string("type", VariableType.NUMBER.name) == VariableType.STRING.name
+            if (isString) {
+                listOf(SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), true))
+            } else {
+                listOf(
+                    SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), node.string("changeMode", "ASSIGN") == "ASSIGN"),
+                    SettingChoice("changeMode:CALCULATE", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE), node.string("changeMode", "ASSIGN") == "CALCULATE"),
+                )
+            }
+        }
         GestureSettingScreen.VARIABLE_VALUE -> buildList {
             add(SettingChoice("value:direct", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE), !node.string("value").startsWith("$")))
             val script = plugin.scripts.load(context.scriptId)
@@ -1625,8 +1634,8 @@ class GestureLowerPanel(
                 hoverText = hoverDescription?.let {
                     singleLineHover(
                         it,
-                        x = HOVER_SLOT_X,
-                        y = HOVER_SLOT_Y,
+                        x = cx,
+                        y = cy - POSITION_TARGET_CHOICE_HEIGHT / 2.0 - 0.04,
                     )
                 },
             )
@@ -2090,6 +2099,7 @@ class GestureLowerPanel(
         h: Double,
         material: Material,
         layer: Int,
+        glowColor: Int? = null,
     ) {
         visuals.add(GestureGuiVisual.Block(
             visualId = id,
@@ -2097,6 +2107,7 @@ class GestureLowerPanel(
             width = w, height = h,
             blockData = Bukkit.createBlockData(material),
             layer = layer,
+            glowColor = glowColor,
         ))
     }
 

@@ -87,11 +87,11 @@ class GestureEditorLayoutTest {
 
     @Test
     fun `clamp origin keeps viewport inside layout`() {
-        // 幅20・高さ5のマップでは、原点xは0..10、yは0..2に収まる
+        // 幅20・高さ5のマップでは、原点xは0..10、yは0..0に収まる（ROWS 6 のため高さ方向は収まらない）
         val layout = GraphLayout(width = 20, height = 5, cells = emptyMap(), nodePoints = emptyMap())
         assertEquals(MapPoint(0, 0), GestureEditorLayout.clampOrigin(MapPoint(-5, -1), layout))
-        assertEquals(MapPoint(10, 1), GestureEditorLayout.clampOrigin(MapPoint(99, 99), layout))
-        assertEquals(MapPoint(3, 1), GestureEditorLayout.clampOrigin(MapPoint(3, 1), layout))
+        assertEquals(MapPoint(10, 0), GestureEditorLayout.clampOrigin(MapPoint(99, 99), layout))
+        assertEquals(MapPoint(3, 0), GestureEditorLayout.clampOrigin(MapPoint(3, 1), layout))
     }
 
     @Test
@@ -110,11 +110,11 @@ class GestureEditorLayoutTest {
     @Test
     fun `zoom recalculates logical viewport dimensions around the default range`() {
         assertEquals(10, GestureEditorLayout.viewportColumns(0.75))
-        assertEquals(4, GestureEditorLayout.viewportRows(0.75))
+        assertEquals(6, GestureEditorLayout.viewportRows(0.75))
         assertEquals(20, GestureEditorLayout.viewportColumns(0.375))
-        assertEquals(8, GestureEditorLayout.viewportRows(0.375))
+        assertEquals(12, GestureEditorLayout.viewportRows(0.375))
         assertEquals(30, GestureEditorLayout.viewportColumns(0.25))
-        assertEquals(12, GestureEditorLayout.viewportRows(0.25))
+        assertEquals(18, GestureEditorLayout.viewportRows(0.25))
         assertEquals(-5.0, GestureEditorLayout.viewportOffset(10, 20), 1.0e-9)
     }
 

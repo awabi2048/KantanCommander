@@ -930,11 +930,16 @@ class GestureSequenceEditor(
                 maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y / zoomScale,
             ),
         ).forEach { seg ->
+            val isLoopReturn = seg.kind == MapCellKind.LOOP_RETURN_PATH
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
                 width = seg.w, height = seg.h,
-                blockData = Bukkit.createBlockData(Material.WHITE_CONCRETE),
+                // ノード背景は変えず、経路色のみを InventoryGUI の様式に合わせて区別します。
+                // 通常・分岐は白色、ループ戻り経路のみ空色（LIGHT_BLUE）とします。
+                blockData = Bukkit.createBlockData(
+                    if (isLoopReturn) Material.LIGHT_BLUE_CONCRETE else Material.WHITE_CONCRETE,
+                ),
                 layer = 1,
             ))
         }
@@ -990,8 +995,8 @@ class GestureSequenceEditor(
             visualId = "back-label",
             x = GestureEditorLayout.BACK_X,
             y = GestureEditorLayout.BACK_Y - 0.02,
-            text = net.kyori.adventure.text.Component.text("⌂"),
-            size = 0.010,
+            text = net.kyori.adventure.text.Component.text("先頭に移動する"),
+            size = 0.0055,
             layer = 6,
         ))
         elements.add(GestureGuiElement(

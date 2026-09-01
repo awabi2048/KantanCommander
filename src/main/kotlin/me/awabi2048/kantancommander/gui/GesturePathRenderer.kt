@@ -141,6 +141,29 @@ internal object GesturePathRenderer {
 
         val segments = mutableListOf<GestureEditorLayout.PathSegment>()
 
+        // 経路セグメントの種別を判定します。戻り経路（LOOP_RETURN_PATH）は空色で描画するため、
+        // 通常経路（PATH/BRANCH_PATH）と区別します。InventoryGUIの MapCellMaterialPolicy
+        //（LOOP_RETURN_PATH → LIGHT_BLUE_STAINED_GLASS_PANE）に準拠します。
+        fun segmentKind(first: MapPoint, second: MapPoint): MapCellKind {
+            // 直線区間を構成する両端と、その間に含まれる中間点のいずれかが
+            // LOOP_RETURN_PATH であれば、区間全体を戻り経路として扱います。
+            val pointsInRun = mutableListOf<MapPoint>()
+            if (first.x == second.x) {
+                val minY = minOf(first.y, second.y)
+                val maxY = maxOf(first.y, second.y)
+                for (y in minY..maxY) pointsInRun += MapPoint(first.x, y)
+            } else {
+                val minX = minOf(first.x, second.x)
+                val maxX = maxOf(first.x, second.x)
+                for (x in minX..maxX) pointsInRun += MapPoint(x, first.y)
+            }
+            return if (pointsInRun.any { allCells[it]?.kind == MapCellKind.LOOP_RETURN_PATH }) {
+                MapCellKind.LOOP_RETURN_PATH
+            } else {
+                MapCellKind.PATH
+            }
+        }
+
         fun emitStraight(first: MapPoint, second: MapPoint, segmentAxis: Axis) {
             val firstCoordinate = if (segmentAxis == Axis.HORIZONTAL) xCenter(first.x) else yCenter(first.y)
             val secondCoordinate = if (segmentAxis == Axis.HORIZONTAL) xCenter(second.x) else yCenter(second.y)
@@ -159,10 +182,11 @@ internal object GesturePathRenderer {
             val third = length / 3.0
             repeat(3) { index ->
                 val center = low + third * (index + 0.5)
+                val kind = segmentKind(first, second)
                 segments += if (segmentAxis == Axis.HORIZONTAL) {
-                    GestureEditorLayout.PathSegment(center, yCenter(first.y), third, thickness)
+                    GestureEditorLayout.PathSegment(center, yCenter(first.y), third, thickness, kind)
                 } else {
-                    GestureEditorLayout.PathSegment(xCenter(first.x), center, thickness, third)
+                    GestureEditorLayout.PathSegment(xCenter(first.x), center, thickness, third, kind)
                 }
             }
         }
@@ -191,11 +215,13 @@ internal object GesturePathRenderer {
             val neighbors = adjacency[point].orEmpty()
             neighbors.any { it.y == point.y } && neighbors.any { it.x == point.x }
         }.forEach { point ->
+            val kind = allCells[point]?.kind ?: MapCellKind.PATH
             segments += GestureEditorLayout.PathSegment(
                 xCenter(point.x),
                 yCenter(point.y),
                 thickness,
                 thickness,
+                kind,
             )
         }
         val uniqueSegments = segments.distinct()
@@ -214,6 +240,7 @@ internal object GesturePathRenderer {
                 y = (bottom + top) / 2.0,
                 w = right - left,
                 h = top - bottom,
+                kind = segment.kind,
             )
         }.distinct()
     }

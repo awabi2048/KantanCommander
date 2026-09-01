@@ -60,12 +60,12 @@ class GestureSettingTreeTest {
 
     @Test
     fun `visual policy separates selection cardinality and value state`() {
+        // テクスチャはボタンの種類（選択方式と値状態）で決まり、選択状態は Glow で表現します。
         assertEquals(
-            org.bukkit.Material.CYAN_CONCRETE,
+            org.bukkit.Material.CYAN_TERRACOTTA,
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.EXCLUSIVE,
                 GestureSettingValueState.CONFIGURED,
-                selected = true,
             ),
         )
         assertEquals(
@@ -73,8 +73,29 @@ class GestureSettingTreeTest {
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.MULTIPLE,
                 GestureSettingValueState.INITIAL,
+            ),
+        )
+        // 旧シグネチャは後方互換のためテクスチャに影響しません。
+        assertEquals(
+            org.bukkit.Material.CYAN_TERRACOTTA,
+            GestureSettingVisualPolicy.material(
+                GestureSettingSelectionMode.EXCLUSIVE,
+                GestureSettingValueState.CONFIGURED,
+                selected = true,
+            ),
+        )
+        assertEquals(
+            org.bukkit.Material.CYAN_TERRACOTTA,
+            GestureSettingVisualPolicy.material(
+                GestureSettingSelectionMode.EXCLUSIVE,
+                GestureSettingValueState.CONFIGURED,
                 selected = false,
             ),
         )
+        // Glow は選択中と警告で使い分けます。
+        assertEquals(org.bukkit.Color.YELLOW.asARGB(), GestureSettingVisualPolicy.glowColor(selected = true, attention = false))
+        assertEquals(org.bukkit.Color.RED.asARGB(), GestureSettingVisualPolicy.glowColor(selected = false, attention = true))
+        assertEquals(org.bukkit.Color.RED.asARGB(), GestureSettingVisualPolicy.glowColor(selected = true, attention = true))
+        assertEquals(null, GestureSettingVisualPolicy.glowColor(selected = false, attention = false))
     }
 }

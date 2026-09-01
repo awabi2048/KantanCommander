@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.gui
 
+import org.bukkit.Color
 import org.bukkit.Material
 
 /**
@@ -48,32 +49,38 @@ enum class GestureSettingValueState {
 /**
  * 設定カードの表示規則を一箇所へ集約します。
  *
- * concrete / terracotta の明暗だけに意味を詰め込まず、選択方式は色相、値状態は
- * 明暗、現在選択中はコンクリートという三つの軸へ分けます。設定タブと詳細選択肢が
- * 同じ規則を使うため、画面ごとの色分岐が増えません。
+ * テクスチャはボタンの種類（選択方式と値状態）を表し、Glow は選択中と
+ * 要確認状態を表します。画面ごとの色分岐を増やさず、視認性を確保します。
  */
 internal object GestureSettingVisualPolicy {
+    // テクスチャはボタンの種類で決まります。選択状態は Glow で表現します。
+    fun material(
+        selectionMode: GestureSettingSelectionMode,
+        valueState: GestureSettingValueState,
+    ): Material = when (selectionMode) {
+        GestureSettingSelectionMode.EXCLUSIVE -> when (valueState) {
+            GestureSettingValueState.CONFIGURED -> Material.CYAN_TERRACOTTA
+            GestureSettingValueState.INITIAL -> Material.LIGHT_BLUE_TERRACOTTA
+        }
+        GestureSettingSelectionMode.MULTIPLE -> when (valueState) {
+            GestureSettingValueState.CONFIGURED -> Material.PURPLE_TERRACOTTA
+            GestureSettingValueState.INITIAL -> Material.MAGENTA_TERRACOTTA
+        }
+    }
+
+    // 後方互換のため旧シグネチャを維持します。内部ではテクスチャと Glow を分離します。
     fun material(
         selectionMode: GestureSettingSelectionMode,
         valueState: GestureSettingValueState,
         selected: Boolean,
         attention: Boolean = false,
-    ): Material {
-        // 要確認状態は選択方式・値状態より優先します。実行に必要な設定が
-        // 未設定・不正であることを、水色（初期値）とは別の赤で通知します。
-        if (attention) {
-            return if (selected) Material.RED_CONCRETE else Material.RED_TERRACOTTA
-        }
-        return when (selectionMode) {
-            GestureSettingSelectionMode.EXCLUSIVE -> when (valueState) {
-                GestureSettingValueState.CONFIGURED -> if (selected) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA
-                GestureSettingValueState.INITIAL -> if (selected) Material.LIGHT_BLUE_CONCRETE else Material.LIGHT_BLUE_TERRACOTTA
-            }
-            GestureSettingSelectionMode.MULTIPLE -> when (valueState) {
-                GestureSettingValueState.CONFIGURED -> if (selected) Material.PURPLE_CONCRETE else Material.PURPLE_TERRACOTTA
-                GestureSettingValueState.INITIAL -> if (selected) Material.MAGENTA_CONCRETE else Material.MAGENTA_TERRACOTTA
-            }
-        }
+    ): Material = material(selectionMode, valueState)
+
+    // Glow は「選択中」と「警告・要確認」で使い分けます。
+    fun glowColor(selected: Boolean, attention: Boolean = false): Int? = when {
+        attention -> Color.RED.asARGB()
+        selected -> Color.YELLOW.asARGB()
+        else -> null
     }
 }
 
