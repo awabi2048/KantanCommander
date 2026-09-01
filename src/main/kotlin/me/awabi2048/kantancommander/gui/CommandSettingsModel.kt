@@ -50,6 +50,7 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     BLOCK_FROM("block_from", "from"),
     BLOCK_TO("block_to", "to"),
     SOUND_POSITION("sound_position", "soundPosition"),
+    SUMMON_POSITION("summon_position", "summonPosition"),
     ;
 
     companion object {
@@ -305,9 +306,11 @@ object CommandSettingsModel {
             "mode" -> CommandSettingDescriptor(CommandSettingEditor.DISPLAY_MODE)
             else -> text()
         }
-        CommandType.WAIT,
-        CommandType.SUMMON_ENTITY,
-        -> text()
+        CommandType.WAIT -> text()
+        CommandType.SUMMON_ENTITY -> when (fieldKey) {
+            "summonPosition" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.SUMMON_POSITION)
+            else -> text()
+        }
         CommandType.PLAY_SOUND -> when (fieldKey) {
             "soundPosition" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.SOUND_POSITION)
             "soundScope" -> CommandSettingDescriptor(CommandSettingEditor.SOUND_SCOPE)
@@ -416,6 +419,7 @@ object CommandSettingsModel {
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
+        CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec
         CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
@@ -441,6 +445,7 @@ object CommandSettingsModel {
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec?.kind
         CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position?.kind
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec?.kind
+        CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec?.kind
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
@@ -457,6 +462,7 @@ object CommandSettingsModel {
                 node.destinationTargetSpec = null
             }
             CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec = spec
+            CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec = spec
             CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec = spec
             CommandSettingRole.CONTEXT_POSITION -> node.contextOverride =
                 (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
@@ -467,7 +473,11 @@ object CommandSettingsModel {
         }
         node.markConfigured(
             configuredFieldKey(
-                if (role == CommandSettingRole.SOUND_POSITION) "soundPosition" else "position",
+                when (role) {
+                    CommandSettingRole.SOUND_POSITION -> "soundPosition"
+                    CommandSettingRole.SUMMON_POSITION -> "summonPosition"
+                    else -> "position"
+                },
                 role,
             ),
         )
@@ -562,6 +572,7 @@ object CommandSettingsModel {
                 CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position != null
                 CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec != null
                 CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec != null
+                CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec != null
                 else -> node.contextOverride?.position != null
             }
             "from" -> node.blockFromSpec != null
@@ -569,6 +580,7 @@ object CommandSettingsModel {
             "destinationFacing" -> node.destinationFacingSpec != null
             "facing" -> node.contextOverride?.facing != null
             "soundPosition" -> node.soundPositionSpec != null
+            "summonPosition" -> node.summonPositionSpec != null
             // 音量とピッチは保存上は別パラメータですが、編集入口は一つです。
             // 旧データも正しく「設定済み」と表示できるよう、両方の実値を確認します。
             "soundParameters" -> listOf("volume", "pitch").any { key ->
@@ -793,6 +805,7 @@ object CommandSettingsModel {
         CommandSettingRole.CONTEXT_FACING -> "context.facing"
         CommandSettingRole.CONDITION_POSITION -> "condition.position"
         CommandSettingRole.SOUND_POSITION -> "soundPosition"
+        CommandSettingRole.SUMMON_POSITION -> "summonPosition"
         CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
             "destination.$fieldKey"
         } else "destination"

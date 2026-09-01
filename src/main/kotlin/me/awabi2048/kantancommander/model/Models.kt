@@ -85,6 +85,7 @@ data class CommandGraph(
                 blockFromSpec = node.blockFromSpec?.copy(),
                 blockToSpec = node.blockToSpec?.copy(),
                 soundPositionSpec = node.soundPositionSpec?.copy(),
+                summonPositionSpec = node.summonPositionSpec?.copy(),
                 snapshot = node.snapshot?.deepCopy(),
             )
         }
@@ -122,6 +123,8 @@ data class CommandNode(
     var blockToSpec: PositionSpec? = null,
     /** PLAY_SOUNDで「マイワールド内全域」以外を選んだ場合の再生位置です。 */
     var soundPositionSpec: PositionSpec? = null,
+    /** エンティティ召喚で指定された場合の召喚位置です。未設定時はコンテキスト位置を使用します。 */
+    var summonPositionSpec: PositionSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
     /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
     var contextSource: ContextSource? = ContextSource.BASE,

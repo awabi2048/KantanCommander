@@ -414,9 +414,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 if (!plugin.summonedEntities.canSummon(effectiveOrigin.world.uid)) return false
                 val key = NamespacedKey.fromString(node.string("entity")) ?: return false
                 val type = Registry.ENTITY_TYPE.get(key) ?: return false
-                val spawn = effectiveOrigin.clone()
+                // 召喚位置が指定されていればそちらを優先し、未設定時はコンテキスト位置（effectiveOrigin）を使用します。
+                val summonOrigin = node.summonPositionSpec?.let { resolvePosition(it, session, effectiveContext) ?: return false } ?: effectiveOrigin
+                val spawn = summonOrigin.clone()
                 effectiveContext?.facing?.let { applyFacing(spawn, it, effectiveContext, session) }
-                val entity = effectiveOrigin.world.spawnEntity(spawn, type)
+                val entity = summonOrigin.world.spawnEntity(spawn, type)
                 val tags = resolveText(node.string("tags"), session) ?: return false.also { entity.remove() }
                 tags.split(',').map(String::trim).filter(String::isNotEmpty).forEach(entity::addScoreboardTag)
                 val rawCustomName = node.string("customName")

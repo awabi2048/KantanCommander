@@ -1018,6 +1018,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 )),
             )
         }.toMutableList()
+        // 6行レイアウトに合わせ、選択肢があるべき場所が空欄になっている箇所は白の板ガラスで埋めます。
+        run {
+            val allKeys = EditorMenuLayout.fields(node.type).map(EditorField::key)
+            val allSlots = runCatching { CommandSettingsSlotPolicy.slots(node.type, allKeys) }.getOrDefault(emptyList())
+            val hiddenSlots = allSlots.filter { it !in slots }
+            hiddenSlots.forEach { slot ->
+                elements += MenuElement(
+                    slot,
+                    KcGui.elements.decoration(Material.WHITE_STAINED_GLASS_PANE),
+                    GuiElementRole.DECORATION,
+                )
+            }
+        }
         elements += backElement(player, CommandSettingsSlotPolicy.backSlot(node.type, fields.size))
         return InventoryMenuView(
             menuSize,
@@ -1279,7 +1292,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     /** ブロックは自由入力や任意スロット選択を許さず、メインハンドの実物から取得します。 */
     private fun setHeldBlock(context: MenuActionContext): MenuActionResult {
         val held = context.player.inventory.itemInMainHand
-        if (held.type == Material.AIR || !held.type.isBlock) return MenuActionResult.Ignored
+        if (held.type == Material.AIR || !held.type.isBlock) {
+            context.player.sendMessage("§cメインハンドにブロックを持ってください。")
+            return MenuActionResult.Ignored
+        }
         if (!updateNode(context.player, context.route) {
                 CommandSettingsModel.setParameter(it, "block", held.type.key.toString())
             }) {
@@ -1659,11 +1675,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     MenuDialogHandler { _, response ->
                         val volumeValue = CommandDialogSpecs.normalize("volume", response.textValue("volume"))
                         val pitchValue = CommandDialogSpecs.normalize("pitch", response.textValue("pitch"))
-                        val validationError = volumeSpec.validateInput(volumeValue)
-                            ?: pitchSpec.validateInput(pitchValue)
-                        if (validationError != null) {
+                        val volumeError = volumeSpec.validateInput(volumeValue)
+                        val pitchError = pitchSpec.validateInput(pitchValue)
+                        if (volumeError != null || pitchError != null) {
+                            val messages = buildList {
+                                if (volumeError != null) add("音量は0.0から34.0までの数値で入力してください")
+                                if (pitchError != null) add("ピッチは0.5から2.0までの小数で入力してください")
+                            }
                             return@MenuDialogHandler MenuActionResult.Rejected(
-                                KcI18n.component(player, validationError),
+                                Component.text(messages.joinToString("\n"), NamedTextColor.RED),
                             )
                         }
                         if (!updateNode(player, route, configuredFields = setOf("soundParameters")) { command ->
@@ -2405,6 +2425,13 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
             ),
             field("tags", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS, Material.NAME_TAG),
+            field(
+                "summonPosition",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.summonPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
         )
         CommandType.PLAY_SOUND -> listOf(
             field("sound", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND, Material.NOTE_BLOCK),

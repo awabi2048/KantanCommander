@@ -101,8 +101,7 @@ internal object CommandSettingsSlotPolicy {
         }
     }
 
-    fun size(type: CommandType, fieldCount: Int? = null): Int =
-        if (type == CommandType.VARIABLE || fieldCount?.let { it > 4 } == true) 54 else 45
+    fun size(type: CommandType, fieldCount: Int? = null): Int = 54
 
-    fun backSlot(type: CommandType, fieldCount: Int? = null): Int = size(type, fieldCount) - 9
+    fun backSlot(type: CommandType, fieldCount: Int? = null): Int = 45
 }

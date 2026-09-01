@@ -1285,6 +1285,7 @@ class GestureSequenceEditor(
     ): Boolean {
         val held = player.inventory.itemInMainHand.takeUnless { it.type == Material.AIR }
         if (held == null) {
+            player.sendMessage("§cメインハンドにアイテムを持ってください。")
             // 呼び出し元が専用選択画面から設定タブへ戻した直後でも、
             // 画面上の表示を状態と同期させ、古い候補画面を残しません。
             // 未所持時は要求どおり効果音・チャット通知を含めて何もしません。
@@ -1310,7 +1311,7 @@ class GestureSequenceEditor(
         val held = player.inventory.itemInMainHand
             .takeUnless { it.type.isAir || !it.type.isBlock }
             ?: run {
-                // 空手や非ブロックアイテムでは、設定・通知・効果音を発生させません。
+                player.sendMessage("§cメインハンドにブロックを持ってください。")
                 updateLower(player)
                 return false
             }
@@ -1810,9 +1811,15 @@ class GestureSequenceEditor(
         ) { response ->
             val volumeValue = CommandDialogSpecs.normalize("volume", response.textValue("volume"))
             val pitchValue = CommandDialogSpecs.normalize("pitch", response.textValue("pitch"))
-            val validationError = volumeSpec.validateInput(volumeValue)
-                ?: pitchSpec.validateInput(pitchValue)
-            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val volumeError = volumeSpec.validateInput(volumeValue)
+            val pitchError = pitchSpec.validateInput(pitchValue)
+            if (volumeError != null || pitchError != null) {
+                val messages = buildList {
+                    if (volumeError != null) add("音量は0.0から34.0までの数値で入力してください")
+                    if (pitchError != null) add("ピッチは0.5から2.0までの小数で入力してください")
+                }
+                return@showInputDialog messages.joinToString("\n")
+            }
             if (!updateSettingNode(player, context, configuredFields = setOf("soundParameters")) { command ->
                     CommandSettingsModel.setParameters(
                         command,

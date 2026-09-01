@@ -117,6 +117,7 @@ object ExecutableScriptValidator {
             node.blockFromSpec,
             node.blockToSpec,
             node.soundPositionSpec,
+            node.summonPositionSpec,
             node.contextOverride?.position,
         ).forEach { validatePosition(it, path, node, errors) }
         node.destinationFacingSpec?.let { validateFacing(it, path, node, errors) }

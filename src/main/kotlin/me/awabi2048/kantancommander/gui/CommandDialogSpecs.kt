@@ -55,21 +55,27 @@ internal object CommandDialogSpecs {
         mapOf("label" to KcI18n.text(player, spec.labelKey)),
     )
 
-    fun body(player: Player, spec: Spec, current: String): List<Component> = listOf(
-        Component.text(prompt(player, spec)),
-        Component.text(
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
-                mapOf(
-                    "value" to current.ifBlank {
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-                    },
+    fun body(player: Player, spec: Spec, current: String): List<Component> = buildList {
+        add(Component.text(prompt(player, spec)))
+        add(
+            Component.text(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
+                    mapOf(
+                        "value" to current.ifBlank {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+                        },
+                    ),
                 ),
+                NamedTextColor.GRAY,
             ),
-            NamedTextColor.GRAY,
-        ),
-    )
+        )
+        // テキスト入力を伴う Dialog では、入力欄より下に案内テキストを表示します。
+        if (spec.maxLength >= 256) {
+            add(Component.text("\${変数名} でワールド変数、& で色指定が使えます。", NamedTextColor.GRAY))
+        }
+    }
 
     fun input(player: Player, id: String, initial: String, spec: Spec): MenuDialogInput.Text =
         MenuDialogInput.Text(
@@ -160,6 +166,7 @@ internal object CommandDialogSpecs {
             ),
             NamedTextColor.GRAY,
         ),
+        Component.text("各軸は0以上の数値で入力してください。空欄でその軸を解除します。", NamedTextColor.GRAY),
     )
 
     fun rangeInputs(player: Player, dx: Double?, dy: Double?, dz: Double?): List<MenuDialogInput.Text> {
@@ -187,6 +194,7 @@ internal object CommandDialogSpecs {
             ),
             NamedTextColor.GRAY,
         ),
+        Component.text("音量は0.0から34.0まで、ピッチは0.5から2.0までの小数で入力してください。", NamedTextColor.GRAY),
     )
 
     fun soundParametersInputs(player: Player, volume: String, pitch: String): List<MenuDialogInput.Text> = listOf(
