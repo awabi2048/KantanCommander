@@ -49,7 +49,7 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
             requireNotNull(CommandDialogSpecs.field("startValue", "FIXED")).validate("not-a-number"),
         )
-        assertNull(requireNotNull(CommandDialogSpecs.field("startValue", "TEMPORARY")).validate("variable_name"))
+        assertNull(requireNotNull(CommandDialogSpecs.field("startValue", "WORLD")).validate("variable_name"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STEP_ZERO,
             requireNotNull(CommandDialogSpecs.field("stepValue", "FIXED")).validate("0"),
@@ -71,12 +71,9 @@ class CommandDialogSpecsTest {
         val shake = CommandType.CAMERA_SHAKE.newNode()
         val effect = CommandType.APPLY_EFFECT.newNode()
 
+        assertNull(requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validate("+1"))
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
-            requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validate("+1"),
-        )
-        assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
             requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validateInput(""),
         )
         assertNull(requireNotNull(CommandDialogSpecs.field(shake, "seconds")).validate("1.5"))
@@ -86,8 +83,8 @@ class CommandDialogSpecsTest {
         )
 
         val variable = CommandType.VARIABLE.newNode().apply {
-            params["type"] = VariableType.DECIMAL.name
-            params["operation"] = VariableOperation.SET.name
+            params["type"] = VariableType.NUMBER.name
+            params["operation"] = VariableOperation.DEFINE.name
         }
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_VARIABLE_NAME,
@@ -98,6 +95,14 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
             requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("not-a-number"),
         )
+
+        variable.params["operation"] = VariableOperation.CHANGE.name
+        variable.params["changeMode"] = "CALCULATE"
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("1 +"),
+        )
+        assertNull(requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("1 + 2"))
     }
 
     @Test

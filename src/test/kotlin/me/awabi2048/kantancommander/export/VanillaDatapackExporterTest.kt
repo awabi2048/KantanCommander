@@ -55,8 +55,7 @@ class VanillaDatapackExporterTest {
                         }.getOrNull()
                         if (kind in setOf(
                                 me.awabi2048.kantancommander.model.ConditionKind.TARGET_EXISTS,
-                                me.awabi2048.kantancommander.model.ConditionKind.ENTITY_STATE,
-                                me.awabi2048.kantancommander.model.ConditionKind.ITEM_POSSESSION,
+                                me.awabi2048.kantancommander.model.ConditionKind.PLAYER_STATE,
                             ) && node.targetSpec == null
                         ) {
                             node.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
@@ -104,7 +103,8 @@ class VanillaDatapackExporterTest {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             params["effect"] = "minecraft:speed"
         }
-        GraphEditor.append(script.graph, CommandType.EQUIP_ITEM).apply {
+        GraphEditor.append(script.graph, CommandType.ENTITY_ACTION).apply {
+            params["action"] = "equip"
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             params["item"] = "minecraft:stone"
         }
@@ -281,9 +281,9 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "place",
-                    "scope" to "TEMPORARY",
-                    "type" to VariableType.POSITION.name,
-                    "operation" to VariableOperation.STORE_POSITION.name,
+                    "type" to VariableType.NUMBER.name,
+                    "operation" to VariableOperation.DEFINE.name,
+                    "value" to "1",
                 )
             )
         }
@@ -336,20 +336,19 @@ class VanillaDatapackExporterTest {
     fun `temporary variables reset while world variables remain persistent`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "variables")
-        val temporary = GraphEditor.append(script.graph, CommandType.VARIABLE)
-        temporary.params["name"] = "local"
+        val local = GraphEditor.append(script.graph, CommandType.VARIABLE)
+        local.params.putAll(mapOf("name" to "local", "type" to VariableType.NUMBER.name, "operation" to VariableOperation.DEFINE.name, "value" to "1"))
         val world = GraphEditor.append(script.graph, CommandType.VARIABLE)
-        world.params["name"] = "shared"
-        world.params["scope"] = "WORLD"
+        world.params.putAll(mapOf("name" to "shared", "type" to VariableType.NUMBER.name, "operation" to VariableOperation.DEFINE.name, "value" to "2"))
         store.save(script)
 
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val root = success.directory.resolve("data/kantan/function/${script.id}.mcfunction").readText()
         val all = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(root.contains("reset ${VanillaScoreNames.variableHolder("local", true)} kc_vars"))
-        assertFalse(root.contains("reset ${VanillaScoreNames.variableHolder("shared", false)} kc_vars"))
-        assertTrue(all.contains("${VanillaScoreNames.variableHolder("shared", false)} kc_vars"))
+        assertFalse(root.contains("scoreboard players reset"))
+        assertTrue(all.contains("set value 1d"))
+        assertTrue(all.contains("set value 2d"))
     }
 
     @Test
@@ -359,14 +358,14 @@ class VanillaDatapackExporterTest {
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         val variable = GraphEditor.appendToForBody(script.graph, start.id, CommandType.VARIABLE)
         variable.params["name"] = "iteration"
-        variable.params["type"] = "INTEGER"
+        variable.params["type"] = VariableType.NUMBER.name
         variable.params["value"] = "\$current_iteration_value"
         store.save(script)
 
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("${VanillaScoreNames.variableHolder("iteration", true)} kc_vars = #for_"))
+        assertTrue(text.contains("execute store result storage kantan:variables"))
         assertTrue(text.contains("_value kc_vars"))
     }
 
@@ -387,43 +386,37 @@ class VanillaDatapackExporterTest {
     fun `not equal condition reverses the equality predicate`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "not-equal")
-        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
-            mapOf(
-                "name" to "value",
-                "scope" to "TEMPORARY",
-                "type" to "INTEGER",
-                "operation" to "SET",
-                "value" to "4",
-            )
-        )
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params.putAll(
             mapOf("kind" to "VARIABLE_STATE", "variable" to "value", "operator" to "!=", "value" to "4")
         )
-        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
-        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
-        store.save(script)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT).targetSpec =
+            TargetSpec(TargetKind.INHERITED_TARGET)
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT).targetSpec =
+            TargetSpec(TargetKind.INHERITED_TARGET)
 
         val success = assertInstanceOf(
-            ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
+                script,
+                mapOf("value" to VariableType.NUMBER),
+            ),
         )
-        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        val holder = VanillaScoreNames.variableHolder("value", true)
-        assertTrue(text.contains("execute unless score $holder kc_vars matches 4 run return run function"))
-        assertTrue(text.contains("execute if score $holder kc_vars matches 4 run return run function"))
+        val text = success.functions.values.joinToString("\n")
+        val holder = "#c_"
+        assertTrue(text.contains("execute unless score $holder"))
+        assertTrue(text.contains("execute if score $holder"))
     }
 
     @Test
-    fun `boolean variable condition uses scoreboard boolean values`() {
+    fun `string variable conditions fail vanilla preflight`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "boolean-condition")
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "enabled",
-                "scope" to "TEMPORARY",
-                "type" to "BOOLEAN",
-                "operation" to "SET",
+                "type" to VariableType.STRING.name,
+                "operation" to VariableOperation.DEFINE.name,
                 "value" to "true",
             )
         )
@@ -440,9 +433,8 @@ class VanillaDatapackExporterTest {
             .targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
 
         val compilation = VanillaDatapackExporter(store, temp.resolve("exports"))
-            .compileForStandalone(script)
-        val success = assertInstanceOf(StandaloneCompilation.Success::class.java, compilation)
-        assertTrue(success.functions.values.any { it.contains("kc_vars matches 1") })
+            .compileForStandalone(script, mapOf("enabled" to VariableType.STRING))
+        assertInstanceOf(StandaloneCompilation.Failure::class.java, compilation)
     }
 
     @Test
@@ -467,51 +459,38 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(oversized.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "large",
-                "scope" to "TEMPORARY",
-                "type" to "INTEGER",
-                "operation" to "SET",
+                "type" to VariableType.NUMBER.name,
+                "operation" to VariableOperation.DEFINE.name,
                 "value" to (Int.MAX_VALUE.toLong() + 1).toString(),
             )
         )
-        val oversizedFailure = assertInstanceOf(
-            StandaloneCompilation.Failure::class.java,
+        val oversizedSuccess = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(oversized),
         )
-        assertTrue(oversizedFailure.errors.any { it.contains("scoreboardの範囲外") })
+        assertTrue(oversizedSuccess.functions.values.any { it.contains("set value") })
     }
 
     @Test
-    fun `text and decimal variables use storage and support existence checks`() {
+    fun `text and number variables use storage`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "storage")
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "message",
-                "scope" to "TEMPORARY",
-                "type" to "TEXT",
-                "operation" to "SET",
+                "type" to VariableType.STRING.name,
+                "operation" to VariableOperation.DEFINE.name,
                 "value" to "hello",
             )
         )
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "ratio",
-                "scope" to "TEMPORARY",
-                "type" to "DECIMAL",
-                "operation" to "SET",
+                "type" to VariableType.NUMBER.name,
+                "operation" to VariableOperation.DEFINE.name,
                 "value" to "1.25",
             )
         )
-        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
-        condition.params.putAll(
-            mapOf(
-                "kind" to "VARIABLE_STATE",
-                "variable" to "message",
-                "variableScope" to "TEMPORARY",
-                "operator" to "set",
-            )
-        )
-
         val compilation = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
@@ -519,48 +498,32 @@ class VanillaDatapackExporterTest {
         val text = compilation.functions.values.joinToString("\n")
         assertTrue(text.contains("set value \"hello\""))
         assertTrue(text.contains("set value 1.25d"))
-        assertTrue(text.contains("data storage kantan:variables ${VanillaStorageNames.variablePath("message", true)}"))
+        assertTrue(text.contains("data modify storage kantan:variables ${VanillaStorageNames.variablePath("message", false)}"))
     }
 
     @Test
-    fun `position and entity references are captured into storage`() {
+    fun `dynamic strings are exported through vanilla macros`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "captured-storage")
-        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
-            mapOf(
-                "name" to "place",
-                "scope" to "TEMPORARY",
-                "type" to "POSITION",
-                "operation" to "STORE_POSITION",
-            )
-        )
-        GraphEditor.append(script.graph, CommandType.VARIABLE).apply {
-            params.putAll(
-                mapOf(
-                    "name" to "entity",
-                    "scope" to "TEMPORARY",
-                    "type" to "ENTITY",
-                    "operation" to "STORE_TARGET",
-                )
-            )
-            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+        val script = store.create(UUID.randomUUID(), "dynamic-text")
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            params["text"] = "hello ${'$'}{message}"
         }
 
         val compilation = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
+                script,
+                mapOf("message" to VariableType.STRING),
+            ),
         )
         val text = compilation.functions.values.joinToString("\n")
-        val positionPath = VanillaStorageNames.variablePath("place", true)
-        val entityPath = VanillaStorageNames.variablePath("entity", true)
-        assertTrue(text.contains("$positionPath.position set from entity @s Pos"))
-        assertTrue(text.contains("$positionPath.rotation set from entity @s Rotation"))
-        assertTrue(text.contains("execute summon minecraft:marker run function kantan:"))
-        assertTrue(text.contains("$entityPath set from entity @s UUID"))
+        assertTrue(text.contains("with storage kantan:variables macro."))
+        assertTrue(text.contains("$(v_"))
     }
 
     @Test
-    fun `structured teleport destination and boolean variables are lowered`() {
+    fun `structured teleport destination and number variables are lowered`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "structured")
         GraphEditor.append(script.graph, CommandType.TELEPORT).destinationSpec =
@@ -568,16 +531,9 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "flag",
-                "type" to VariableType.BOOLEAN.name,
-                "operation" to VariableOperation.SET.name,
-                "value" to "true",
-            )
-        )
-        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
-            mapOf(
-                "name" to "flag",
-                "type" to VariableType.BOOLEAN.name,
-                "operation" to VariableOperation.TOGGLE.name,
+                "type" to VariableType.NUMBER.name,
+                "operation" to VariableOperation.DEFINE.name,
+                "value" to "1.25",
             )
         )
         store.save(script)
@@ -588,9 +544,8 @@ class VanillaDatapackExporterTest {
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("tp @s 12.5 64.0 -3.0"))
-        val holder = VanillaScoreNames.variableHolder("flag", true)
-        assertTrue(text.contains("scoreboard players set $holder kc_vars 1"))
-        assertTrue(text.contains("execute store success score $holder kc_vars"))
+        assertTrue(text.contains("set value 1.25d"))
+        assertTrue(text.contains("execute store success score"))
     }
 
     @Test
@@ -599,7 +554,8 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "exclusive-for")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         start.params["inclusiveEnd"] = "false"
-        GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT)
+        GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT).targetSpec =
+            TargetSpec(TargetKind.INHERITED_TARGET)
         store.save(script)
 
         val success = assertInstanceOf(
@@ -613,12 +569,12 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `item possession condition checks the configured count`() {
+    fun `player state condition combines sneaking and item possession`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "item-count")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params.putAll(
-            mapOf("kind" to "ITEM_POSSESSION", "item" to "minecraft:stone", "count" to "5")
+            mapOf("kind" to "PLAYER_STATE", "sneaking" to "true", "item" to "minecraft:stone")
         )
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
@@ -629,8 +585,8 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("run clear @s minecraft:stone 0"))
-        assertTrue(text.contains("kc_result matches 5.."))
+        assertTrue(text.contains("Pose:\\\"CROUCHING\\\""))
+        assertTrue(text.contains("Inventory:[{id:\\\"minecraft:stone\\\"}]"))
     }
 
     @Test
@@ -807,131 +763,55 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `integer arithmetic and for increments stop before scoreboard overflow`() {
+    fun `numeric calculation is lowered to scoreboard operations`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "overflow-guards")
         val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
         variable.params.putAll(
             mapOf(
                 "name" to "counter",
-                "type" to VariableType.INTEGER.name,
-                "operation" to VariableOperation.ADD.name,
-                "value" to "10",
+                "type" to VariableType.NUMBER.name,
+                "operation" to VariableOperation.CHANGE.name,
+                "changeMode" to "CALCULATE",
+                "value" to "counter + 10 * 2",
             )
         )
         val loop = GraphEditor.append(script.graph, CommandType.FOR_START)
         loop.params.putAll(mapOf("startValue" to "0", "endValue" to "10", "stepValue" to "1"))
-        GraphEditor.appendToForBody(script.graph, loop.id, CommandType.DISPLAY_TEXT)
+        GraphEditor.appendToForBody(script.graph, loop.id, CommandType.DISPLAY_TEXT).targetSpec =
+            TargetSpec(TargetKind.INHERITED_TARGET)
 
         val success = assertInstanceOf(
-            ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
+                script,
+                mapOf("counter" to VariableType.NUMBER),
+            ),
         )
-        val arithmetic = success.directory
-            .resolve("data/kantan/function")
-            .walkTopDown()
-            .first {
-                it.isFile && it.readText().contains("matches 2147483638.. run return 0")
-            }
-            .readText()
-        val endFunction = success.directory
-            .resolve("data/kantan/function")
-            .walkTopDown()
-            .first { it.isFile && it.readText().contains("scoreboard players operation #for_") }
-            .readText()
+        val arithmetic = success.functions.values
+            .first { it.contains("scoreboard players operation") && it.contains("expr_") }
+        val endFunction = success.functions.values
+            .first { it.contains("scoreboard players operation #for_") }
 
-        assertTrue(arithmetic.contains("matches 2147483638.. run return 0"))
-        assertTrue(arithmetic.contains("scoreboard players add "))
-        assertTrue(arithmetic.contains(" kc_vars 10"))
+        assertTrue(arithmetic.contains("scoreboard players operation"))
+        assertTrue(arithmetic.contains("kc_runtime"))
         assertTrue(endFunction.contains("if score #for_"))
         assertTrue(endFunction.contains("run return 0"))
         assertTrue(endFunction.contains("scoreboard players operation #for_"))
     }
 
     @Test
-    fun `unrepresentable minimum integer subtraction fails preflight`() {
-        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "minimum-subtraction")
-        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
-        variable.params.putAll(
-            mapOf(
-                "name" to "counter",
-                "type" to VariableType.INTEGER.name,
-                "operation" to VariableOperation.SUBTRACT.name,
-                "value" to Int.MIN_VALUE.toString(),
-            )
-        )
-
-        val failure = assertInstanceOf(
-            ExportResult.Failure::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
-        )
-        assertTrue(failure.errors.any { it.contains("安全に変換できません") })
-    }
-
-    @Test
-    fun `unrepresentable minimum integer addition fails preflight`() {
-        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "minimum-addition")
-        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
-        variable.params.putAll(
-            mapOf(
-                "name" to "counter",
-                "type" to VariableType.INTEGER.name,
-                "operation" to VariableOperation.ADD.name,
-                "value" to Int.MIN_VALUE.toString(),
-            )
-        )
-
-        val failure = assertInstanceOf(
-            ExportResult.Failure::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
-        )
-        assertTrue(failure.errors.any { it.contains("安全に変換できません") })
-    }
-
-    @Test
-    fun `store target without a target spec fails preflight`() {
-        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "store-target-missing")
-        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
-            mapOf(
-                "name" to "victim",
-                "scope" to "TEMPORARY",
-                "type" to VariableType.ENTITY.name,
-                "operation" to VariableOperation.STORE_TARGET.name,
-            )
-        )
-
-        val failure = assertInstanceOf(
-            ExportResult.Failure::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
-        )
-        assertTrue(failure.errors.any { it.contains("対象指定が未設定") })
-    }
-
-    @Test
-    fun `integer condition with out of range comparison fails preflight`() {
+    fun `decimal condition output rejects unsupported fixed point range`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
 
         fun comparisonScript(name: String, value: String): me.awabi2048.kantancommander.model.DiskScript {
             val script = store.create(UUID.randomUUID(), name)
-            GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
-                mapOf(
-                    "name" to "counter",
-                    "scope" to "TEMPORARY",
-                    "type" to VariableType.INTEGER.name,
-                    "operation" to VariableOperation.SET.name,
-                    "value" to "0",
-                )
-            )
             val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
             condition.params.putAll(
                 mapOf(
                     "kind" to "VARIABLE_STATE",
                     "variable" to "counter",
-                    "variableScope" to "TEMPORARY",
                     "operator" to ">",
                     "value" to value,
                 )
@@ -941,15 +821,21 @@ class VanillaDatapackExporterTest {
 
         val oversized = assertInstanceOf(
             StandaloneCompilation.Failure::class.java,
-            exporter.compileForStandalone(comparisonScript("compare-oversized", (Int.MAX_VALUE.toLong() + 1).toString())),
+            exporter.compileForStandalone(
+                comparisonScript("compare-oversized", (Int.MAX_VALUE.toDouble() / 1000.0 + 1.0).toString()),
+                mapOf("counter" to VariableType.NUMBER),
+            ),
         )
-        assertTrue(oversized.errors.any { it.contains("32bit整数範囲") })
+        assertTrue(oversized.errors.any { it.contains("固定小数点範囲外") })
 
         val nonNumeric = assertInstanceOf(
             StandaloneCompilation.Failure::class.java,
-            exporter.compileForStandalone(comparisonScript("compare-non-numeric", "abc")),
+            exporter.compileForStandalone(
+                comparisonScript("compare-non-numeric", "abc"),
+                mapOf("counter" to VariableType.NUMBER),
+            ),
         )
-        assertTrue(nonNumeric.errors.any { it.contains("32bit整数範囲") })
+        assertTrue(nonNumeric.errors.any { it.contains("比較値は数値") })
     }
 
     @Test
@@ -987,16 +873,26 @@ class VanillaDatapackExporterTest {
                 "stepValue" to "1",
             )
         )
-        GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT)
+        GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT).targetSpec =
+            TargetSpec(TargetKind.INHERITED_TARGET)
 
         val success = assertInstanceOf(
-            ExportResult.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
+                script,
+                mapOf("base" to VariableType.NUMBER, "limit" to VariableType.NUMBER),
+            ),
         )
-        val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        // ワールド内変数（永続scoreboard）からfor開始値・終了値が転記される。
-        assertTrue(text.contains("= ${VanillaScoreNames.variableHolder("base", false)} kc_vars"))
-        assertTrue(text.contains("= ${VanillaScoreNames.variableHolder("limit", false)} kc_vars"))
+        val text = success.functions.values.joinToString("\n")
+        // ワールド変数storageからfor開始値・終了値が転記される。
+        assertTrue(
+            text.contains("data get storage kantan:variables ${VanillaStorageNames.variablePath("base", false)}"),
+            text,
+        )
+        assertTrue(
+            text.contains("data get storage kantan:variables ${VanillaStorageNames.variablePath("limit", false)}"),
+            text,
+        )
     }
 
     @Test

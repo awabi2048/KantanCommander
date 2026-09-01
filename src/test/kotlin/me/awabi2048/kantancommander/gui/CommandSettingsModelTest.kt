@@ -116,9 +116,11 @@ class CommandSettingsModelTest {
     fun `visible fields apply the same conditional rules`() {
         val display = CommandType.DISPLAY_TEXT.newNode()
         assertEquals(false, CommandSettingsModel.visibleFields(display).any { it.key == "staySeconds" })
+        assertEquals(false, CommandSettingsModel.visibleFields(display).any { it.key == "subtitle" })
 
         display.params["mode"] = "title"
         assertEquals(true, CommandSettingsModel.visibleFields(display).any { it.key == "staySeconds" })
+        assertEquals(true, CommandSettingsModel.visibleFields(display).any { it.key == "subtitle" })
 
         display.params["mode"] = "actionbar"
         val actionbarDuration = CommandSettingsModel.visibleFields(display).single { it.key == "staySeconds" }

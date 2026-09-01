@@ -27,12 +27,15 @@ class EditorMenuLayoutTest {
         val entityAction = CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "dismount" }
         val displayText = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "actionbar" }
         val cameraShake = CommandType.CAMERA_SHAKE.newNode().apply { params["shakeType"] = "positional" }
-        val equipment = CommandType.EQUIP_ITEM.newNode().apply { params["slot"] = "OFF_HAND" }
-        val condition = CommandType.CONDITION.newNode().apply { params["kind"] = "ENTITY_STATE" }
+        val equipment = CommandType.ENTITY_ACTION.newNode().apply {
+            params["action"] = "equip"
+            params["slot"] = "OFF_HAND"
+        }
+        val condition = CommandType.CONDITION.newNode().apply { params["kind"] = "PLAYER_STATE" }
         val variable = CommandType.VARIABLE.newNode().apply { params["value"] = "$" + "current_loop_count" }
         val loop = CommandType.FOR_START.newNode().apply {
             params["startSource"] = "FIXED"
-            params["endSource"] = "TEMPORARY"
+            params["endSource"] = "WORLD"
         }
 
         assertEquals(
@@ -49,10 +52,10 @@ class EditorMenuLayoutTest {
         )
         assertEquals(
             DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND),
-            EditorMenuLayout.fields(CommandType.EQUIP_ITEM).single { it.key == "slot" }.value(equipment),
+            EditorMenuLayout.fields(CommandType.ENTITY_ACTION).single { it.key == "slot" }.value(equipment),
         )
         assertEquals(
-            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
             EditorMenuLayout.fields(CommandType.CONDITION).single { it.key == "kind" }.value(condition),
         )
         assertEquals(
@@ -61,7 +64,7 @@ class EditorMenuLayoutTest {
         )
         val loopValues = EditorMenuLayout.fields(CommandType.FOR_START).associate { it.key to it.value(loop) }
         assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE), loopValues["startSource"])
-        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE), loopValues["endSource"])
+        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE), loopValues["endSource"])
     }
 
     @Test

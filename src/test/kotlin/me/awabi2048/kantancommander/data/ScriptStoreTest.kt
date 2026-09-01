@@ -167,11 +167,11 @@ class ScriptStoreTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val migrated = requireNotNull(store.load(scriptId))
 
-        assertEquals(7, migrated.formatVersion)
+        assertEquals(8, migrated.formatVersion)
         assertEquals(3, migrated.timer.intervalSeconds)
         assertEquals("2", migrated.graph.nodes[nodeId]?.params?.get("seconds"))
         val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 7"))
+        assertTrue(rewritten.contains("\"formatVersion\": 8"))
         assertTrue(rewritten.contains("\"intervalSeconds\": 3"))
         assertTrue(!rewritten.contains("intervalUnits"))
         assertTrue(!rewritten.contains("\"ticks\""))

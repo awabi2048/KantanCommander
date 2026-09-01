@@ -22,7 +22,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.effectiveContextSource
 import me.awabi2048.kantancommander.model.hasContextOverride
@@ -39,6 +39,7 @@ import java.util.UUID
 enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     NODE_TARGET("node_target", "target"),
     DESTINATION("destination", "destination"),
+    DESTINATION_FACING("destination_facing", "destinationFacing"),
     SECONDARY_TARGET("secondary_target", "other"),
     CONTEXT_EXECUTOR("context_executor", "executor"),
     CONTEXT_TARGET("context_target", "target"),
@@ -48,6 +49,7 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     BLOCK_POSITION("block_position", "position"),
     BLOCK_FROM("block_from", "from"),
     BLOCK_TO("block_to", "to"),
+    SOUND_POSITION("sound_position", "soundPosition"),
     ;
 
     companion object {
@@ -93,12 +95,17 @@ enum class CommandSettingEditor {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
-    VARIABLE_SCOPE,
+    ENTITY_EQUIPMENT_SLOT,
+    ENTITY_OVERWRITE,
+    ENTITY_TAG_OPERATION,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
+    VARIABLE_CHANGE_MODE,
     VARIABLE_VALUE,
     FOR_SOURCE,
     INCLUSIVE_END,
+    CAMERA_SHAKE_TYPE,
+    SOUND_SCOPE,
     CONTEXT,
     BLOCK_OPERATION,
 }
@@ -221,10 +228,24 @@ object CommandSettingsModel {
             } else field
         }
         val conditionalFields = when {
-            node.type == CommandType.ENTITY_ACTION && node.string("action") != "ride" ->
-                fields.filterNot { it.key == "other" }
-            node.type == CommandType.DISPLAY_TEXT && !DisplayTextTimingPolicy.supports(node) ->
-                fields.filterNot { it.key == "staySeconds" }
+            node.type == CommandType.ENTITY_ACTION -> when (node.string("action", "ride")) {
+                "ride" -> fields.filter { it.key in setOf("target", "action", "other", "context") }
+                // itemDataはメインハンドの実物から内部保存する値であり、利用者が
+                // 別途編集する設定ではありません。表示すると実物選択と手入力の
+                // 二重入口が生まれ、装備内容の正本が分岐します。
+                "equip" -> fields.filterNot { it.key in setOf("other", "itemData", "tagOperation", "tag") }
+                "tag" -> fields.filterNot { it.key in setOf("other", "slot", "item", "itemData", "overwrite") }
+                else -> fields.filterNot { it.key == "other" }
+            }
+            node.type == CommandType.DISPLAY_TEXT -> {
+                val withoutUnusedSubtitle = if (node.string("mode", "tellraw") == "title") {
+                    fields
+                } else {
+                    fields.filterNot { it.key == "subtitle" }
+                }
+                if (DisplayTextTimingPolicy.supports(node)) withoutUnusedSubtitle
+                else withoutUnusedSubtitle.filterNot { it.key == "staySeconds" }
+            }
             node.type == CommandType.BLOCK_OPERATION ->
                 if (node.string("operation", "setblock") == "fill") {
                     fields.filterNot { it.key == "position" }
@@ -233,13 +254,12 @@ object CommandSettingsModel {
                 }
             node.type == CommandType.VARIABLE -> {
                 val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
-                    .getOrDefault(VariableOperation.SET)
+                    .getOrDefault(VariableOperation.DEFINE)
                 fields.filterNot { field ->
-                    field.key == "value" && operation !in setOf(
-                        VariableOperation.SET,
-                        VariableOperation.ADD,
-                        VariableOperation.SUBTRACT,
-                    )
+                    when (operation) {
+                        VariableOperation.DEFINE -> field.key == "changeMode"
+                        VariableOperation.CHANGE -> field.key == "type"
+                    }
                 }
             }
             else -> fields
@@ -261,6 +281,7 @@ object CommandSettingsModel {
         CommandType.TELEPORT -> when (fieldKey) {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
             "destination" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.DESTINATION)
+            "destinationFacing" -> CommandSettingDescriptor(CommandSettingEditor.FACING, CommandSettingRole.DESTINATION_FACING)
             else -> text()
         }
         CommandType.GIVE_ITEM -> when (fieldKey) {
@@ -271,6 +292,9 @@ object CommandSettingsModel {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
             "action" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_ACTION)
             "other" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.SECONDARY_TARGET)
+            "slot" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_EQUIPMENT_SLOT)
+            "overwrite" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OVERWRITE)
+            "tagOperation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_TAG_OPERATION)
             else -> text()
         }
         CommandType.DISPLAY_TEXT -> when (fieldKey) {
@@ -280,15 +304,19 @@ object CommandSettingsModel {
         }
         CommandType.WAIT,
         CommandType.SUMMON_ENTITY,
-        CommandType.PLAY_SOUND,
         -> text()
-        CommandType.APPLY_EFFECT,
-        CommandType.CAMERA_SHAKE,
-        CommandType.EQUIP_ITEM,
-        -> if (fieldKey == "target") {
+        CommandType.PLAY_SOUND -> when (fieldKey) {
+            "soundPosition" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.SOUND_POSITION)
+            "soundScope" -> CommandSettingDescriptor(CommandSettingEditor.SOUND_SCOPE)
+            else -> text()
+        }
+        CommandType.APPLY_EFFECT -> if (fieldKey == "target") {
             CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
-        } else {
-            text()
+        } else text()
+        CommandType.CAMERA_SHAKE -> when (fieldKey) {
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            "shakeType" -> CommandSettingDescriptor(CommandSettingEditor.CAMERA_SHAKE_TYPE)
+            else -> text()
         }
         CommandType.CONDITION -> when (fieldKey) {
             "inverted" -> CommandSettingDescriptor(CommandSettingEditor.INCLUSIVE_END)
@@ -315,9 +343,9 @@ object CommandSettingsModel {
             CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
         } else text()
         CommandType.VARIABLE -> when (fieldKey) {
-            "scope" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_SCOPE)
             "type" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
             "operation" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_OPERATION)
+            "changeMode" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_CHANGE_MODE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
             else -> text()
         }
@@ -384,6 +412,7 @@ object CommandSettingsModel {
 
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
+        CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec
         CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
@@ -408,6 +437,7 @@ object CommandSettingsModel {
         }
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec?.kind
         CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position?.kind
+        CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec?.kind
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
@@ -423,6 +453,7 @@ object CommandSettingsModel {
                 node.destinationSpec = spec
                 node.destinationTargetSpec = null
             }
+            CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec = spec
             CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec = spec
             CommandSettingRole.CONTEXT_POSITION -> node.contextOverride =
                 (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
@@ -431,17 +462,35 @@ object CommandSettingsModel {
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
             else -> error("${node.type} の位置設定役割が不正です: $role")
         }
-        node.markConfigured(configuredFieldKey("position", role))
+        node.markConfigured(
+            configuredFieldKey(
+                if (role == CommandSettingRole.SOUND_POSITION) "soundPosition" else "position",
+                role,
+            ),
+        )
     }
 
-    fun facingSpec(node: CommandNode): FacingSpec? = node.contextOverride?.facing
+    fun facingSpec(node: CommandNode, role: CommandSettingRole? = CommandSettingRole.CONTEXT_FACING): FacingSpec? =
+        if (role == CommandSettingRole.DESTINATION_FACING) node.destinationFacingSpec else node.contextOverride?.facing
 
-    fun setFacingSpec(node: CommandNode, spec: FacingSpec) {
-        check(node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
+    fun setFacingSpec(
+        node: CommandNode,
+        spec: FacingSpec,
+        role: CommandSettingRole? = CommandSettingRole.CONTEXT_FACING,
+    ) {
+        check(
+            role == CommandSettingRole.DESTINATION_FACING ||
+                node.type == CommandType.CONTEXT || node.type.supportsContextOverride()
+        ) {
             "${node.type} は実行コンテキスト上書きを持てません"
         }
-        node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
-        node.markConfigured(configuredFieldKey("facing", CommandSettingRole.CONTEXT_FACING))
+        if (role == CommandSettingRole.DESTINATION_FACING) {
+            node.destinationFacingSpec = spec
+            node.markConfigured("destinationFacing")
+        } else {
+            node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
+            node.markConfigured(configuredFieldKey("facing", CommandSettingRole.CONTEXT_FACING))
+        }
     }
 
     fun contextSource(node: CommandNode): ContextSource = node.effectiveContextSource
@@ -509,11 +558,14 @@ object CommandSettingsModel {
                 CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec != null
                 CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position != null
                 CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec != null
+                CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec != null
                 else -> node.contextOverride?.position != null
             }
             "from" -> node.blockFromSpec != null
             "to" -> node.blockToSpec != null
+            "destinationFacing" -> node.destinationFacingSpec != null
             "facing" -> node.contextOverride?.facing != null
+            "soundPosition" -> node.soundPositionSpec != null
             "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
             "condition" -> conditionDetailConfigured(node)
@@ -536,6 +588,12 @@ object CommandSettingsModel {
             "kind" -> spec.kind != TargetKind.INHERITED_TARGET
             "entityType" -> !spec.entityType.isNullOrBlank()
             "distance" -> spec.minimumDistance != null || spec.maximumDistance != null
+            "range", "dx", "dy", "dz" -> when (parameter) {
+                "dx" -> spec.dx != null
+                "dy" -> spec.dy != null
+                "dz" -> spec.dz != null
+                else -> spec.dx != null || spec.dy != null || spec.dz != null
+            }
             "limit" -> spec.limit != null
             "sort" -> spec.sort != TargetSort.NEAREST
             "gameMode" -> !spec.gameMode.isNullOrBlank()
@@ -548,18 +606,12 @@ object CommandSettingsModel {
     private fun conditionDetailConfigured(node: CommandNode): Boolean =
         node.targetSpec != null || node.conditionPositionSpec != null ||
             node.params.any { (key, value) ->
-                key in setOf("state", "variable", "variableScope", "operator", "value", "block", "count", "item") &&
+                key in setOf("sneaking", "variable", "operator", "value", "block", "item", "itemData") &&
                     value.isNotBlank() && value != node.type.defaults[key]
             }
 
-    fun allowedVariableOperations(type: VariableType): List<VariableOperation> = when (type) {
-        VariableType.BOOLEAN -> listOf(VariableOperation.SET, VariableOperation.TOGGLE, VariableOperation.CLEAR)
-        VariableType.INTEGER, VariableType.DECIMAL ->
-            listOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT, VariableOperation.CLEAR)
-        VariableType.TEXT -> listOf(VariableOperation.SET, VariableOperation.CLEAR)
-        VariableType.POSITION -> listOf(VariableOperation.STORE_POSITION, VariableOperation.CLEAR)
-        VariableType.ENTITY -> listOf(VariableOperation.STORE_TARGET, VariableOperation.CLEAR)
-    }
+    fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
+        VariableOperation.entries
 
     /**
      * 対象種別に対して詳細条件が意味を持つかを判定します。
@@ -731,6 +783,7 @@ object CommandSettingsModel {
         CommandSettingRole.CONTEXT_POSITION -> "context.position"
         CommandSettingRole.CONTEXT_FACING -> "context.facing"
         CommandSettingRole.CONDITION_POSITION -> "condition.position"
+        CommandSettingRole.SOUND_POSITION -> "soundPosition"
         CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
             "destination.$fieldKey"
         } else "destination"

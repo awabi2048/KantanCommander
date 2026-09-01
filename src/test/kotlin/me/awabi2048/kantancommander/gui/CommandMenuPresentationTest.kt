@@ -10,9 +10,9 @@ class CommandMenuPresentationTest {
     @Test
     fun `every command type has an explicit category`() {
         assertEquals(CommandType.entries.toSet(), CommandType.entries.groupBy(CommandPresentationPolicy::category).values.flatten().toSet())
-        assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.PROCESS)
+        assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.EXECUTION)
         assertTrue(CommandType.CONDITION.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
-        assertTrue(CommandType.DISK_CALL.let(CommandPresentationPolicy::category) == CommandCategory.EXTERNAL_DISK)
+        assertTrue(CommandType.DISK_CALL.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
     }
 
     @Test
@@ -39,7 +39,7 @@ class CommandMenuPresentationTest {
     fun `variable and for settings use semantic two-dimensional layouts`() {
         assertEquals(
             listOf(19, 20, 21, 28, 29),
-            CommandSettingsSlotPolicy.slots(CommandType.VARIABLE, listOf("scope", "name", "type", "operation", "value")),
+            CommandSettingsSlotPolicy.slots(CommandType.VARIABLE, listOf("operation", "name", "type", "changeMode", "value")),
         )
         assertEquals(54, CommandSettingsSlotPolicy.size(CommandType.VARIABLE))
         assertEquals(45, CommandSettingsSlotPolicy.backSlot(CommandType.VARIABLE))

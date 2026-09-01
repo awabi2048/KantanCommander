@@ -17,13 +17,12 @@ internal enum class CommandCategory(
     val labelKey: LocalizationKey<String>,
     val descriptionKey: LocalizationKey<List<String>>,
 ) {
-    PROCESS("process", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS_DESCRIPTION),
+    EXECUTION("execution", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS_DESCRIPTION),
     CONTROL("control", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL_DESCRIPTION),
-    EXTERNAL_DISK("external_disk", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EXTERNAL_DISK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EXTERNAL_DISK_DESCRIPTION),
     ;
 
     companion object {
-        fun fromRoute(value: String?): CommandCategory = entries.firstOrNull { it.routeValue == value } ?: PROCESS
+        fun fromRoute(value: String?): CommandCategory = entries.firstOrNull { it.routeValue == value } ?: EXECUTION
     }
 }
 
@@ -41,15 +40,15 @@ internal object CommandPresentationPolicy {
         CommandType.PLAY_SOUND,
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
-        CommandType.EQUIP_ITEM,
         CommandType.BLOCK_OPERATION,
         CommandType.ENTITY_DELETE,
-        CommandType.VARIABLE,
-        -> CommandCategory.PROCESS
+        -> CommandCategory.EXECUTION
 
         CommandType.WAIT,
         CommandType.CONDITION,
         CommandType.CONTEXT,
+        CommandType.DISK_CALL,
+        CommandType.VARIABLE,
         CommandType.MERGE,
         CommandType.FOR_START,
         CommandType.FOR_END,
@@ -57,7 +56,6 @@ internal object CommandPresentationPolicy {
         CommandType.CONTINUE,
         -> CommandCategory.CONTROL
 
-        CommandType.DISK_CALL -> CommandCategory.EXTERNAL_DISK
     }
 
     fun supportsContextOverride(type: CommandType): Boolean = type.supportsContextOverride()
@@ -66,11 +64,14 @@ internal object CommandPresentationPolicy {
 /** 設定数が多いコマンドは、意味上の組を崩さない専用配置を使用します。 */
 internal object CommandSettingsSlotPolicy {
     private val fiveFieldSlots = listOf(19, 20, 21, 28, 29)
+    private val extendedFieldSlots = listOf(
+        10, 11, 12, 19, 20, 21, 28, 29, 30, 31, 32, 33, 34, 37, 38, 39, 40, 41, 42,
+    )
     private val variableSlots = mapOf(
-        "scope" to 19,
+        "operation" to 19,
         "name" to 20,
         "type" to 21,
-        "operation" to 28,
+        "changeMode" to 28,
         "value" to 29,
     )
     private val forSlots = mapOf(
@@ -95,6 +96,7 @@ internal object CommandSettingsSlotPolicy {
         return when (fieldKeys.size) {
             in 1..4 -> DistributedSettingSlots.slots(fieldKeys.size)
             5 -> fiveFieldSlots
+            in 6..extendedFieldSlots.size -> extendedFieldSlots.take(fieldKeys.size)
             else -> error("設定フィールドの専用配置が未定義です: type=$type count=${fieldKeys.size}")
         }
     }

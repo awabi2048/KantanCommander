@@ -1,6 +1,11 @@
 package me.awabi2048.kantancommander.data
 
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
@@ -23,24 +28,42 @@ class WorldVariableStore(
 
     @Synchronized
     fun get(worldId: UUID, name: String): WorldVariableValue? =
-        state(worldId).values[normalizedName(name)]
+        state(worldId).values[normalizedName(name)]?.copy()
 
     @Synchronized
     fun set(worldId: UUID, name: String, value: WorldVariableValue) {
         require(valid(value)) { "invalid variable value" }
         val normalized = normalizedName(name)
-        val candidate = state(worldId).deepCopy()
+        val current = state(worldId)
+        val declared = current.definitions[normalized]
+        require(declared == null || declared.type == value.type) { "variable type cannot change" }
+        val candidate = current.deepCopy()
         candidate.definitions.putIfAbsent(normalized, value.copy())
         candidate.values[normalized] = value.copy()
         persist(worldId, candidate)
         cache[worldId] = candidate
     }
 
+    /** 新しい変数を定義し、初期値を現在値として保存します。 */
+    @Synchronized
+    fun define(worldId: UUID, name: String, value: WorldVariableValue): Boolean {
+        require(valid(value)) { "invalid variable value" }
+        val normalized = normalizedName(name)
+        val current = state(worldId)
+        if (normalized in current.definitions) return false
+        val candidate = current.deepCopy()
+        candidate.definitions[normalized] = value.copy()
+        candidate.values[normalized] = value.copy()
+        persist(worldId, candidate)
+        cache[worldId] = candidate
+        return true
+    }
+
     @Synchronized
     fun remove(worldId: UUID, name: String): Boolean {
         val normalized = normalizedName(name)
         val candidate = state(worldId).deepCopy()
-        val removed = candidate.values.remove(normalized) != null
+        val removed = candidate.values.remove(normalized) != null || candidate.definitions.remove(normalized) != null
         candidate.definitions.remove(normalized)
         if (removed) {
             persist(worldId, candidate)
@@ -50,7 +73,8 @@ class WorldVariableStore(
     }
 
     @Synchronized
-    fun list(worldId: UUID): Map<String, WorldVariableValue> = state(worldId).values.toMap()
+    fun list(worldId: UUID): Map<String, WorldVariableValue> =
+        state(worldId).values.mapValues { (_, value) -> value.copy() }
 
     @Synchronized
     fun definitions(worldId: UUID): Map<String, WorldVariableValue> =
@@ -77,16 +101,90 @@ class WorldVariableStore(
 
     private fun state(worldId: UUID): WorldVariables =
         cache.getOrPut(worldId) {
-            val file = file(worldId)
-            if (!file.isFile) WorldVariables()
+            val target = file(worldId)
+            if (!target.isFile) WorldVariables()
             else runCatching {
-                gson.fromJson(file.readText(Charsets.UTF_8), WorldVariables::class.java)
+                val source = JsonParser.parseString(target.readText(Charsets.UTF_8)).asJsonObject
+                val migrated = migrate(source, target)
+                gson.fromJson(migrated, WorldVariables::class.java)
                     ?: error("JSON root is null")
             }.getOrElse { failure ->
-                quarantine(file, failure)
+                quarantine(target, failure)
                 WorldVariables()
             }
         }
+
+    /**
+     * 旧型を値単位で移行します。新しい Gson モデルへ直接デシリアライズすると、
+     * 廃止 enum が一つ混ざっただけでファイル全体が読めなくなるため、ここで型を
+     * 意味変換してから新モデルへ渡します。
+     */
+    private fun migrate(source: JsonObject, file: File): JsonObject {
+        val result = JsonObject()
+        result.add("definitions", migrateMap(source.getAsJsonObject("definitions"), file, "定義"))
+        result.add("values", migrateMap(source.getAsJsonObject("values"), file, "現在値"))
+        return result
+    }
+
+    private fun migrateMap(source: JsonObject?, file: File, section: String): JsonObject {
+        val result = JsonObject()
+        if (source == null) return result
+        source.entrySet().forEach { (name, element) ->
+            val converted = migrateValue(element, file, section, name)
+            if (converted != null) result.add(name, converted)
+        }
+        return result
+    }
+
+    private fun migrateValue(element: JsonElement, file: File, section: String, name: String): JsonObject? {
+        if (!element.isJsonObject) {
+            warnDropped(file, section, name, "値がオブジェクトではありません")
+            return null
+        }
+        val source = element.asJsonObject
+        val type = source.get("type")?.takeIf { it.isJsonPrimitive }?.asString?.uppercase()
+            ?: run {
+                warnDropped(file, section, name, "型がありません")
+                return null
+            }
+        return when (type) {
+            "NUMBER", "INTEGER", "DECIMAL" -> {
+                val raw = source.get("numberValue")
+                    ?: source.get("decimalValue")
+                    ?: source.get("integerValue")
+                val number = raw?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asDouble
+                if (number == null || !number.isFinite()) {
+                    warnDropped(file, section, name, "数値が不正です")
+                    null
+                } else JsonObject().apply {
+                    addProperty("type", VariableType.NUMBER.name)
+                    addProperty("numberValue", number)
+                }
+            }
+            "STRING", "TEXT" -> {
+                val raw = source.get("stringValue") ?: source.get("textValue")
+                if (raw == null || !raw.isJsonPrimitive || !raw.asJsonPrimitive.isString) {
+                    warnDropped(file, section, name, "文字列がありません")
+                    null
+                } else JsonObject().apply {
+                    addProperty("type", VariableType.STRING.name)
+                    addProperty("stringValue", raw.asString)
+                }
+            }
+            "BOOLEAN", "POSITION", "ENTITY" -> {
+                warnDropped(file, section, name, "廃止された型 $type です")
+                null
+            }
+            else -> {
+                warnDropped(file, section, name, "未知の型 $type です")
+                null
+            }
+        }
+    }
+
+    private fun warnDropped(file: File, section: String, name: String, reason: String) {
+        logger.warning("ワールド変数を移行時に破棄しました: file=${file.absolutePath}, section=$section, name=$name, reason=$reason")
+    }
 
     private fun quarantine(file: File, error: Throwable) {
         val quarantineDir = directory.resolve("corrupt").also(File::mkdirs)
@@ -119,21 +217,15 @@ class WorldVariableStore(
     }
 
     private fun valid(value: WorldVariableValue): Boolean = when (value.type) {
-        me.awabi2048.kantancommander.model.VariableType.BOOLEAN -> value.booleanValue != null
-        me.awabi2048.kantancommander.model.VariableType.INTEGER -> value.integerValue != null
-        me.awabi2048.kantancommander.model.VariableType.DECIMAL -> value.decimalValue?.isFinite() == true
-        me.awabi2048.kantancommander.model.VariableType.TEXT -> value.textValue != null
-        me.awabi2048.kantancommander.model.VariableType.POSITION -> value.position?.let {
-            it.x.isFinite() && it.y.isFinite() && it.z.isFinite() && it.yaw.isFinite() && it.pitch.isFinite()
-        } == true
-        me.awabi2048.kantancommander.model.VariableType.ENTITY -> value.entityId != null
+        VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
+        VariableType.STRING -> value.stringValue != null && value.numberValue == null
     }
 
     private fun file(worldId: UUID) = directory.resolve("$worldId.json")
 
     private fun normalizedName(raw: String): String {
         val value = raw.trim().lowercase()
-        require(value.matches(Regex("[a-z0-9_.-]{1,64}"))) { "invalid variable name" }
+        require(CommandValueRules.isVariableName(value)) { "invalid variable name" }
         return value
     }
 

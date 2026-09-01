@@ -354,7 +354,8 @@ class ScriptStore(
         val sourceVersion = source["formatVersion"]?.asInt ?: return null
         val migrated = when (sourceVersion) {
             STRUCTURED_FORMAT_VERSION -> source
-            LEGACY_TICK_FORMAT_VERSION -> migrateLegacyTickFormat(source)
+            LEGACY_COMMAND_FORMAT_VERSION -> migrateCommandFormat(source)
+            LEGACY_TICK_FORMAT_VERSION -> migrateCommandFormat(migrateLegacyTickFormat(source))
             else -> {
                 logger.warning("未対応の構造化プログラムディスク形式を読み込みません: ${file.absolutePath} version=$sourceVersion")
                 return null
@@ -377,10 +378,10 @@ class ScriptStore(
                     )
                 }
                 if (sourceVersion != STRUCTURED_FORMAT_VERSION) {
-                    // v6を読み込んだ時点でv7の正本へ書き戻し、次回以降に
-                    // 旧tick値と新しい秒値を二重解釈しないようにします。
+                    // 旧形式を読み込んだ時点でv8の正本へ書き戻し、次回以降に
+                    // 旧tick値や廃止コマンドを二重解釈しないようにします。
                     atomicWrite(file, gson.toJson(migrated))
-                    logger.info("構造化プログラムディスクを秒単位の形式へ移行しました: ${file.absolutePath}")
+                    logger.info("構造化プログラムディスクをv8形式へ移行しました: ${file.absolutePath}")
                 }
             }
     } catch (error: Exception) {
@@ -395,7 +396,7 @@ class ScriptStore(
      */
     private fun migrateLegacyTickFormat(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
-        migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        migrated.addProperty("formatVersion", LEGACY_COMMAND_FORMAT_VERSION)
         migrated["timer"]?.asJsonObject?.let { timer ->
             val units = timer["intervalUnits"]?.asInt ?: 1
             val seconds = ((units.toLong() + 1L) / 2L)
@@ -405,6 +406,175 @@ class ScriptStore(
         }
         migrateGraphTimes(migrated["graph"]?.asJsonObject)
         return migrated
+    }
+
+    /** v7のコマンド・型モデルをv8へ意味変換します。 */
+    private fun migrateCommandFormat(source: JsonObject): JsonObject {
+        val migrated = source.deepCopy()
+        migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        migrateCommandGraph(migrated["graph"]?.asJsonObject)
+        return migrated
+    }
+
+    private fun migrateCommandGraph(graph: JsonObject?) {
+        val nodes = graph?.get("nodes")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
+        val nodeIds = nodes.entrySet().map { it.key }.toList()
+        nodeIds.forEach { nodeId ->
+            val node = nodes[nodeId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
+            when (node["type"]?.asString) {
+                "EQUIP_ITEM" -> {
+                    node.addProperty("type", "ENTITY_ACTION")
+                    params?.addProperty("action", "equip")
+                    params?.addProperty("slot", params["slot"]?.asString ?: "HAND")
+                    params?.addProperty("item", params["item"]?.asString ?: "")
+                    params?.addProperty("itemData", params["itemData"]?.asString ?: "")
+                    params?.addProperty("overwrite", "false")
+                }
+                "ENTITY_STATE" -> migrateLegacyEntityState(node, params, graph)
+                "ITEM_POSSESSION" -> {
+                    node.addProperty("type", "CONDITION")
+                    params?.addProperty("kind", "PLAYER_STATE")
+                    params?.addProperty("sneaking", "")
+                    params?.addProperty("item", params["item"]?.asString ?: "")
+                    params?.addProperty("itemData", params["itemData"]?.asString ?: "")
+                    params?.remove("variableScope")
+                    params?.remove("count")
+                }
+                "VARIABLE" -> migrateLegacyVariable(node, params, graph)
+                else -> Unit
+            }
+            migrateLegacyPositionFields(node, params)
+            migrateForSources(params)
+            migrateCommandGraph(node["snapshot"]?.asJsonObject)
+        }
+    }
+
+    private fun migrateLegacyEntityState(node: JsonObject, params: JsonObject?, graph: JsonObject?) {
+        if (params == null) {
+            logger.warning("v7の状態条件に設定値がないため操作を破棄します: node=${node["id"]?.asString}")
+            dropLinearNode(graph, node["id"]?.asString)
+            return
+        }
+        val state = params["state"]?.asString
+        if (state == "sneaking") {
+            node.addProperty("type", "CONDITION")
+            params.addProperty("kind", "PLAYER_STATE")
+            params.addProperty("sneaking", "true")
+            params.remove("state")
+            return
+        }
+        logger.warning("v7の未対応エンティティ状態のノードを破棄します: node=${node["id"]?.asString} state=$state")
+        dropLinearNode(graph, node["id"]?.asString)
+    }
+
+    private fun migrateLegacyVariable(node: JsonObject, params: JsonObject?, graph: JsonObject?) {
+        if (params == null) {
+            logger.warning("v7の変数操作に設定値がないため操作を破棄します: node=${node["id"]?.asString}")
+            dropLinearNode(graph, node["id"]?.asString)
+            return
+        }
+        val type = params["type"]?.asString?.uppercase()
+        val newType = when (type) {
+            "INTEGER", "DECIMAL" -> "NUMBER"
+            "TEXT" -> "STRING"
+            else -> null
+        }
+        if (newType == null) {
+            logger.warning("v7の未対応変数型の操作を破棄します: node=${node["id"]?.asString} type=$type")
+            dropLinearNode(graph, node["id"]?.asString)
+            return
+        }
+        val name = params["name"]?.asString.orEmpty()
+        val operation = params["operation"]?.asString?.uppercase()
+        val rawValue = params["value"]?.asString ?: ""
+        val mappedOperation: String
+        val mappedValue: String
+        val mappedMode: String
+        when (operation) {
+            "SET" -> {
+                mappedOperation = "DEFINE"
+                mappedValue = rawValue
+                mappedMode = "ASSIGN"
+            }
+            "ADD" -> {
+                mappedOperation = "CHANGE"
+                mappedValue = "$name + ($rawValue)"
+                mappedMode = "CALCULATE"
+            }
+            "SUBTRACT" -> {
+                mappedOperation = "CHANGE"
+                mappedValue = "$name - ($rawValue)"
+                mappedMode = "CALCULATE"
+            }
+            else -> {
+                logger.warning("v7の未対応変数操作を破棄します: node=${node["id"]?.asString} operation=$operation")
+                dropLinearNode(graph, node["id"]?.asString)
+                return
+            }
+        }
+        if (mappedOperation.isBlank()) {
+            logger.warning("v7の未対応変数操作を破棄します: node=${node["id"]?.asString} operation=$operation")
+            dropLinearNode(graph, node["id"]?.asString)
+            return
+        }
+        params.remove("scope")
+        params.remove("variableScope")
+        params.addProperty("type", newType)
+        params.addProperty("operation", mappedOperation)
+        params.addProperty("changeMode", mappedMode)
+        params.addProperty("value", mappedValue)
+    }
+
+    private fun migrateLegacyPositionFields(node: JsonObject, params: JsonObject?) {
+        val fields = listOf("destinationSpec", "conditionPositionSpec", "blockPositionSpec", "blockFromSpec", "blockToSpec")
+        fields.forEach { field ->
+            node[field]?.takeIf { it.isJsonObject }?.asJsonObject?.let { position ->
+                val kind = position["kind"]?.asString
+                if (kind == "TEMPORARY_VARIABLE" || kind == "WORLD_VARIABLE") {
+                    logger.warning("v7の変数位置参照を移行時に破棄します: node=${node["id"]?.asString} field=$field")
+                    node.remove(field)
+                }
+            }
+        }
+        node["contextOverride"]?.takeIf { it.isJsonObject }?.asJsonObject?.let { context ->
+            context["position"]?.takeIf { it.isJsonObject }?.asJsonObject?.let { position ->
+                val kind = position["kind"]?.asString
+                if (kind == "TEMPORARY_VARIABLE" || kind == "WORLD_VARIABLE") {
+                    logger.warning("v7のコンテキスト変数位置参照を移行時に破棄します: node=${node["id"]?.asString}")
+                    context.remove("position")
+                }
+            }
+        }
+    }
+
+    private fun migrateForSources(params: JsonObject?) {
+        listOf("start", "end", "step").forEach { field ->
+            if (params?.get("${field}Source")?.asString == "TEMPORARY") {
+                logger.warning("v7の一時変数for参照をワールド内変数参照へ移行します: field=$field")
+                params.addProperty("${field}Source", "WORLD")
+            }
+        }
+    }
+
+    /** 変換不能な線形ノードを経路から外し、保存グラフの構造を壊さないようにします。 */
+    private fun dropLinearNode(graph: JsonObject?, rawId: String?) {
+        if (graph == null || rawId.isNullOrBlank()) return
+        val nodes = graph["nodes"]?.takeIf { it.isJsonObject }?.asJsonObject ?: return
+        val node = nodes[rawId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return
+        val replacement = node["next"]?.asString
+        nodes.entrySet().forEach { (_, element) ->
+            val parent = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            listOf("next", "trueNext", "falseNext").forEach { edge ->
+                if (parent[edge]?.asString == rawId) {
+                    if (replacement == null) parent.remove(edge) else parent.addProperty(edge, replacement)
+                }
+            }
+        }
+        if (graph["entryNodeId"]?.asString == rawId) {
+            if (replacement == null) graph.remove("entryNodeId") else graph.addProperty("entryNodeId", replacement)
+        }
+        nodes.remove(rawId)
     }
 
     private fun migrateGraphTimes(graph: JsonObject?) {
@@ -482,6 +652,7 @@ class ScriptStore(
 
     private companion object {
         private const val LEGACY_TICK_FORMAT_VERSION = 6
+        private const val LEGACY_COMMAND_FORMAT_VERSION = 7
         /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
         private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
 

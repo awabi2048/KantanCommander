@@ -24,7 +24,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -42,7 +42,7 @@ private typealias SettingChoice = GestureSettingTreeNode
  * ジェスチャーエディターの下部パネルのビュー生成を担います。
  *
  * - SETTINGS: 左タブ列＝設定フィールド、右詳細＝現在値＋説明。設定木の直下は親画面で編集
- * - PICKER: 左タブ列＝コマンドカテゴリ（PROCESS/CONTROL）、右詳細＝種別一覧
+ * - PICKER: 左タブ列＝コマンドカテゴリ（EXECUTION/CONTROL）、右詳細＝種別一覧
  * - CONFIRM: 上部エディターが子画面（openChild・赤ガラス）として開く
  *
  * 親画面は左タブ列＋右詳細の分割型、子画面は子画面全体を使う集中型です。
@@ -166,11 +166,19 @@ class GestureLowerPanel(
 
         // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
         // 文字列・数値だけを右ペインのダイアログ導線へ残し、専用子画面を増やしません。
-        val heldItemSetting = field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)
+        val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
+            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
+        val heldBlockSetting = field.key == "block" && (
+            node.type == CommandType.BLOCK_OPERATION ||
+                (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name)
+            )
         val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
-        val heldMainHandSetting = heldItemSetting || heldDiskSetting
+        val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting
         val heldMainHandAvailable = when {
             heldItemSetting -> GestureGuiClickPolicy.hasMainHandItem(player)
+            heldBlockSetting -> GestureGuiClickPolicy.hasMainHandItem(player) &&
+                player.inventory.itemInMainHand.type.isBlock
             heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
             else -> true
         }
@@ -218,6 +226,9 @@ class GestureLowerPanel(
                     { actor, _ ->
                         if (heldDiskSetting) {
                             KantanItemService.diskId(actor.inventory.itemInMainHand) != null
+                        } else if (heldBlockSetting) {
+                            GestureGuiClickPolicy.hasMainHandItem(actor) &&
+                                actor.inventory.itemInMainHand.type.isBlock
                         } else {
                             GestureGuiClickPolicy.hasMainHandItem(actor)
                         }
@@ -702,6 +713,8 @@ class GestureLowerPanel(
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_INHERIT)
         choice.id == "filter:entityType" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE)
         choice.id == "filter:distance" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY)
+        choice.id == "filter:dx" || choice.id == "filter:dy" || choice.id == "filter:dz" ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY)
         choice.id == "filter:limit" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_LIMIT)
         choice.id == "filter:sort" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_SORT)
         choice.id == "filter:gameMode" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_GAME_MODE)
@@ -716,8 +729,6 @@ class GestureLowerPanel(
                 PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_MYWORLD_SPAWN
                 PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_COORDINATES
                 PositionKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_CAPTURED
-                PositionKind.TEMPORARY_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TEMPORARY_VARIABLE
-                PositionKind.WORLD_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_WORLD_VARIABLE
                 null -> null
             }
         }
@@ -738,6 +749,7 @@ class GestureLowerPanel(
             when (suffix) {
                 "tellraw" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_DISPLAY_TELLRAW
                 "title" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_DISPLAY_TITLE
+                "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_DISPLAY_SUBTITLE
                 "actionbar" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_DISPLAY_ACTIONBAR
                 else -> null
             }
@@ -749,33 +761,52 @@ class GestureLowerPanel(
                 else -> null
             }
         }
-        choice.id.startsWith("scope:") -> suffixKeyDescription(player, choice.id, "scope:") { suffix ->
+        choice.id.startsWith("equipmentSlot:") -> suffixKeyDescription(player, choice.id, "equipmentSlot:") { suffix ->
             when (suffix) {
-                "TEMPORARY" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SCOPE_TEMPORARY
-                "WORLD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SCOPE_WORLD
+                "HAND" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND
+                "OFF_HAND" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND
+                "HEAD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HEAD
+                "CHEST" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_CHEST
+                "LEGS" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_LEGS
+                "FEET" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_FEET
                 else -> null
             }
         }
+        choice.id.startsWith("overwrite:") -> KcI18n.text(
+            player,
+            if (choice.id.endsWith(":true")) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED
+            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
+        )
+        choice.id.startsWith("tagOperation:") -> suffixKeyDescription(player, choice.id, "tagOperation:") { suffix ->
+            when (suffix) {
+                "add" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
+                "remove" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE
+                else -> null
+            }
+        }
+        choice.id.startsWith("shake:") -> suffixKeyDescription(player, choice.id, "shake:") { suffix ->
+            when (suffix) {
+                "positional" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_POSITIONAL
+                "rotational" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_ROTATIONAL
+                else -> null
+            }
+        }
+        choice.id.startsWith("soundScope:") -> KcI18n.text(
+            player,
+            if (choice.id.endsWith("WORLD")) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SCOPE_WORLD
+            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SCOPE_TEMPORARY,
+        )
         choice.id.startsWith("type:") -> suffixKeyDescription(player, choice.id, "type:") { suffix ->
             when (runCatching { VariableType.valueOf(suffix) }.getOrNull()) {
-                VariableType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_BOOLEAN
-                VariableType.INTEGER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_INTEGER
-                VariableType.DECIMAL -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_DECIMAL
-                VariableType.TEXT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_TEXT
-                VariableType.POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_POSITION
-                VariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_ENTITY
+                VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_DECIMAL
+                VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_TEXT
                 null -> null
             }
         }
         choice.id.startsWith("operation:") -> suffixKeyDescription(player, choice.id, "operation:") { suffix ->
             when (runCatching { VariableOperation.valueOf(suffix) }.getOrNull()) {
-                VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_SET
-                VariableOperation.ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_ADD
-                VariableOperation.SUBTRACT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_SUBTRACT
-                VariableOperation.TOGGLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_TOGGLE
-                VariableOperation.STORE_POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_STORE_POSITION
-                VariableOperation.STORE_TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_STORE_TARGET
-                VariableOperation.CLEAR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_CLEAR
+                VariableOperation.DEFINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_SET
+                VariableOperation.CHANGE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_ADD
                 null -> null
             }
         }
@@ -835,14 +866,12 @@ class GestureLowerPanel(
         when (runCatching { ConditionKind.valueOf(choiceId.removePrefix("condition-kind:")) }.getOrNull()) {
             ConditionKind.TARGET_EXISTS ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS)
-            ConditionKind.ENTITY_STATE ->
+            ConditionKind.PLAYER_STATE ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_ENTITY_STATE)
             ConditionKind.VARIABLE_STATE ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE)
             ConditionKind.BLOCK_STATE ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE)
-            ConditionKind.ITEM_POSSESSION ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_ITEM_POSSESSION)
             null -> null
         }
 
@@ -988,7 +1017,7 @@ class GestureLowerPanel(
                     children = positionChoices(node, context.copy(role = CommandSettingRole.CONTEXT_POSITION), player),
                 )
                 "context:facing" -> choice.copy(
-                    children = facingChoices(node, player),
+                    children = facingChoices(node, context.copy(role = CommandSettingRole.CONTEXT_FACING), player),
                 )
                 else -> choice
             }
@@ -1071,9 +1100,14 @@ class GestureLowerPanel(
         choiceId.startsWith("block:") -> setOf("operation")
         choiceId.startsWith("display:") -> setOf("mode")
         choiceId.startsWith("action:") -> setOf("action")
-        choiceId.startsWith("scope:") -> setOf("scope")
+        choiceId.startsWith("equipmentSlot:") -> setOf("slot")
+        choiceId.startsWith("overwrite:") -> setOf("overwrite")
+        choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
         choiceId.startsWith("type:") -> setOf("type")
         choiceId.startsWith("operation:") -> setOf("operation")
+        choiceId.startsWith("changeMode:") -> setOf("changeMode")
+        choiceId.startsWith("shake:") -> setOf("shakeType")
+        choiceId.startsWith("soundScope:") -> setOf("soundScope")
         choiceId.startsWith("value:") -> setOf("value")
         // forの参照元・包含判定は、その画面を開いたタブ自身（fieldKey）へ投影します。
         choiceId.startsWith("source:") || choiceId.startsWith("inclusive:") -> setOf(fieldKey)
@@ -1115,7 +1149,7 @@ class GestureLowerPanel(
             id.startsWith("position:") -> choice.selected &&
                 CommandSettingsModel.positionKind(node, context.role)?.name == id.removePrefix("position:")
             id.startsWith("facing:") -> choice.selected &&
-                CommandSettingsModel.facingSpec(node)?.kind?.name == id.removePrefix("facing:")
+                CommandSettingsModel.facingSpec(node, context.role)?.kind?.name == id.removePrefix("facing:")
             id == "condition-target" -> CommandSettingsModel.isFieldConfigured(
                 node,
                 "target",
@@ -1148,14 +1182,19 @@ class GestureLowerPanel(
             )
             id == "context:source" -> CommandSettingsModel.contextSource(node) != ContextSource.BASE
             id == "context:inherit" -> !CommandSettingsModel.isFieldConfigured(node, "context")
-            id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "state")
+            id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "sneaking")
             id.startsWith("condition-variable") -> CommandSettingsModel.isFieldConfigured(node, "variable")
-            id.startsWith("condition-scope") -> CommandSettingsModel.isFieldConfigured(node, "variableScope")
             id.startsWith("condition-operator") -> CommandSettingsModel.isFieldConfigured(node, "operator")
             id.startsWith("condition-value") -> CommandSettingsModel.isFieldConfigured(node, "value")
             id.startsWith("condition-block") -> CommandSettingsModel.isFieldConfigured(node, "block")
-            id.startsWith("condition-count") -> CommandSettingsModel.isFieldConfigured(node, "count")
+            id.startsWith("condition-item-data") -> CommandSettingsModel.isFieldConfigured(node, "itemData")
             id.startsWith("condition-item") -> CommandSettingsModel.isFieldConfigured(node, "item")
+            id.startsWith("changeMode:") -> choice.selected && node.string("changeMode", "ASSIGN") == id.removePrefix("changeMode:")
+            id.startsWith("equipmentSlot:") -> choice.selected && node.string("slot", "HAND") == id.removePrefix("equipmentSlot:")
+            id.startsWith("overwrite:") -> choice.selected && node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean()
+            id.startsWith("tagOperation:") -> choice.selected && node.string("tagOperation", "add") == id.removePrefix("tagOperation:")
+            id.startsWith("shake:") -> choice.selected && node.string("shakeType", "positional") == id.removePrefix("shake:")
+            id.startsWith("soundScope:") -> choice.selected && node.string("soundScope", "CONTEXT") == id.removePrefix("soundScope:")
             else -> choice.selected && CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)
         }
     }
@@ -1342,12 +1381,13 @@ class GestureLowerPanel(
         GestureSettingScreen.TARGET -> targetChoices(node, context, player)
         GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player)
-        GestureSettingScreen.FACING -> facingChoices(node, player)
+        GestureSettingScreen.FACING -> facingChoices(node, context, player)
         GestureSettingScreen.CONDITION_KIND -> conditionKindChoices(node, player)
         GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player)
         GestureSettingScreen.DISPLAY_MODE -> listOf(
             SettingChoice("display:tellraw", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHAT), node.string("mode", "tellraw") == "tellraw"),
             SettingChoice("display:title", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TITLE), node.string("mode", "tellraw") == "title"),
+            SettingChoice("display:subtitle", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SUBTITLE), node.string("mode", "tellraw") == "subtitle"),
             SettingChoice("display:actionbar", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIONBAR), node.string("mode", "tellraw") == "actionbar"),
         )
         GestureSettingScreen.BLOCK_OPERATION -> listOf(
@@ -1365,30 +1405,42 @@ class GestureLowerPanel(
         GestureSettingScreen.ENTITY_ACTION -> listOf(
             SettingChoice("action:ride", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE), node.string("action", "ride") == "ride"),
             SettingChoice("action:dismount", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT), node.string("action", "ride") == "dismount"),
+            SettingChoice("action:equip", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT), node.string("action", "ride") == "equip"),
+            SettingChoice("action:tag", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG), node.string("action", "ride") == "tag"),
         )
-        GestureSettingScreen.VARIABLE_SCOPE -> listOf(
-            SettingChoice(
-                "scope:TEMPORARY",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE),
-                node.string("scope", VariableScope.TEMPORARY.name) == VariableScope.TEMPORARY.name,
-            ),
-            SettingChoice(
-                "scope:WORLD",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE),
-                node.string("scope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name,
-            ),
+        GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
+            "HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND,
+            "OFF_HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND,
+            "HEAD" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HEAD,
+            "CHEST" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_CHEST,
+            "LEGS" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_LEGS,
+            "FEET" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_FEET,
+        ).map { (slot, label) ->
+            SettingChoice("equipmentSlot:$slot", KcI18n.text(player, label), node.string("slot", "HAND") == slot)
+        }
+        GestureSettingScreen.ENTITY_OVERWRITE -> listOf(
+            SettingChoice("overwrite:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED), node.boolean("overwrite")),
+            SettingChoice("overwrite:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED), !node.boolean("overwrite")),
+        )
+        GestureSettingScreen.ENTITY_TAG_OPERATION -> listOf(
+            SettingChoice("tagOperation:add", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD), node.string("tagOperation", "add") == "add"),
+            SettingChoice("tagOperation:remove", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE), node.string("tagOperation", "add") == "remove"),
+        )
+        GestureSettingScreen.CAMERA_SHAKE_TYPE -> listOf(
+            SettingChoice("shake:positional", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_POSITIONAL), node.string("shakeType", "positional") == "positional"),
+            SettingChoice("shake:rotational", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_ROTATIONAL), node.string("shakeType", "positional") == "rotational"),
+        )
+        GestureSettingScreen.SOUND_SCOPE -> listOf(
+            SettingChoice("soundScope:CONTEXT", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_POSITION), node.string("soundScope", "CONTEXT") == "CONTEXT"),
+            SettingChoice("soundScope:WORLD", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_WORLD_WIDE), node.string("soundScope", "CONTEXT") == "WORLD"),
         )
         GestureSettingScreen.VARIABLE_TYPE -> listOf(
-            SettingChoice("type:BOOLEAN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TRUE_FALSE), node.string("type", VariableType.BOOLEAN.name) == VariableType.BOOLEAN.name),
-            SettingChoice("type:INTEGER", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INTEGER), node.string("type", VariableType.BOOLEAN.name) == VariableType.INTEGER.name),
-            SettingChoice("type:DECIMAL", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DECIMAL), node.string("type", VariableType.BOOLEAN.name) == VariableType.DECIMAL.name),
-            SettingChoice("type:TEXT", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT), node.string("type", VariableType.BOOLEAN.name) == VariableType.TEXT.name),
-            SettingChoice("type:POSITION", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION), node.string("type", VariableType.BOOLEAN.name) == VariableType.POSITION.name),
-            SettingChoice("type:ENTITY", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_REFERENCE), node.string("type", VariableType.BOOLEAN.name) == VariableType.ENTITY.name),
+            SettingChoice("type:NUMBER", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER), node.string("type", VariableType.NUMBER.name) == VariableType.NUMBER.name),
+            SettingChoice("type:STRING", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT), node.string("type", VariableType.NUMBER.name) == VariableType.STRING.name),
         )
         GestureSettingScreen.VARIABLE_OPERATION -> {
-            val type = runCatching { VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name)) }
-                .getOrDefault(VariableType.BOOLEAN)
+            val type = runCatching { VariableType.valueOf(node.string("type", VariableType.NUMBER.name)) }
+                .getOrDefault(VariableType.NUMBER)
             CommandSettingsModel.allowedVariableOperations(type).map { operation ->
                 SettingChoice(
                     "operation:${operation.name}",
@@ -1397,11 +1449,14 @@ class GestureLowerPanel(
                 )
             }
         }
+        GestureSettingScreen.VARIABLE_CHANGE_MODE -> listOf(
+            SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), node.string("changeMode", "ASSIGN") == "ASSIGN"),
+            SettingChoice("changeMode:CALCULATE", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE), node.string("changeMode", "ASSIGN") == "CALCULATE"),
+        )
         GestureSettingScreen.VARIABLE_VALUE -> buildList {
             add(SettingChoice("value:direct", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE), !node.string("value").startsWith("$")))
             val script = plugin.scripts.load(context.scriptId)
-            val insideFor = script != null && node.string("type", VariableType.BOOLEAN.name) == VariableType.INTEGER.name &&
-                node.string("scope", VariableScope.TEMPORARY.name) != VariableScope.WORLD.name &&
+            val insideFor = script != null && node.string("type", VariableType.NUMBER.name) == VariableType.NUMBER.name &&
                 GraphEditor.isInsideFor(script.graph, node.id, GraphEditor.Edge.NEXT)
             if (insideFor) {
                 add(SettingChoice("value:iteration", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_ITERATION), node.string("value") == "\$current_iteration_value"))
@@ -1410,7 +1465,6 @@ class GestureLowerPanel(
         }
         GestureSettingScreen.FOR_SOURCE -> listOf(
             SettingChoice("source:FIXED", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE), node.string(fieldKey, "FIXED") == "FIXED"),
-            SettingChoice("source:TEMPORARY", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE), node.string(fieldKey, "FIXED") == "TEMPORARY"),
             SettingChoice("source:WORLD", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE), node.string(fieldKey, "FIXED") == "WORLD"),
         )
         GestureSettingScreen.INCLUSIVE_END -> if (node.type == CommandType.CONDITION && fieldKey == "inverted") {
@@ -1586,6 +1640,9 @@ class GestureLowerPanel(
                     "gameMode" -> it.gameMode
                     "entityType" -> it.entityType
                     "distance" -> displayDistance(it.minimumDistance, it.maximumDistance)
+                    "dx" -> it.dx?.toString()
+                    "dy" -> it.dy?.toString()
+                    "dz" -> it.dz?.toString()
                     "limit" -> it.limit?.toString()
                     "tag" -> it.tag
                     else -> it.name
@@ -1599,6 +1656,9 @@ class GestureLowerPanel(
         val filterChoices = listOf(
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
+            "dx" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX,
+            "dy" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY,
+            "dz" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ,
             "limit" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             "sort" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT,
             "gameMode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE,
@@ -1625,15 +1685,13 @@ class GestureLowerPanel(
                 PositionKind.TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION,
                 PositionKind.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
                 PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES,
-                PositionKind.TEMPORARY_VARIABLE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
-                PositionKind.WORLD_VARIABLE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE,
             )
         }
         return choices.map { (kind, label) -> SettingChoice("position:${kind.name}", KcI18n.text(player, label), current == kind) }
     }
 
-    private fun facingChoices(node: CommandNode, player: Player): List<SettingChoice> {
-        val current = CommandSettingsModel.facingSpec(node)?.kind
+    private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
+        val current = CommandSettingsModel.facingSpec(node, context.role)?.kind
         return listOf(
             FacingKind.INHERITED to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_UNCHANGED,
             FacingKind.CAPTURED to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_FACING,
@@ -1662,34 +1720,23 @@ class GestureLowerPanel(
                     node.targetSpec != null,
                 ),
             )
-            ConditionKind.ENTITY_STATE -> listOf(
+            ConditionKind.PLAYER_STATE -> listOf(
                 SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), node.targetSpec != null),
                 SettingChoice(
                     "condition-state",
                     label(
                         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_STATE,
-                        KcI18n.text(
-                            player,
-                            if (node.string("state", "sneaking") == "sneaking") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SNEAKING
-                            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ON_GROUND,
-                        ),
+                        when (node.string("sneaking")) {
+                            "true" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SNEAKING)
+                            "false" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ON_GROUND)
+                            else -> null
+                        },
                     ),
                 ),
+                SettingChoice("condition-item", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION, node.string("item"))),
             )
             ConditionKind.VARIABLE_STATE -> listOf(
                 SettingChoice("condition-variable", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("variable"))),
-                SettingChoice(
-                    "condition-scope",
-                    label(
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE,
-                        KcI18n.text(
-                            player,
-                            if (node.string("variableScope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name) {
-                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
-                            } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
-                        ),
-                    ),
-                ),
                 SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, node.string("operator", "=="))),
                 SettingChoice("condition-value", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("value", "0"))),
             )
@@ -1697,22 +1744,12 @@ class GestureLowerPanel(
                 SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION), node.conditionPositionSpec != null),
                 SettingChoice("condition-block", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, node.string("block", "minecraft:air"))),
             )
-            ConditionKind.ITEM_POSSESSION -> listOf(
-                SettingChoice("condition-target", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET), node.targetSpec != null),
-                SettingChoice("condition-item", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION, node.string("item"))),
-                SettingChoice("condition-count", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT, node.string("count", "1"))),
-            )
         }
     }
 
     private fun operationLabel(operation: VariableOperation): com.awabi2048.ccsystem.api.localization.LocalizationKey<String> = when (operation) {
-        VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET
-        VariableOperation.ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
-        VariableOperation.SUBTRACT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SUBTRACT
-        VariableOperation.TOGGLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TOGGLE
-        VariableOperation.STORE_POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STORE_POSITION
-        VariableOperation.STORE_TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STORE_TARGET
-        VariableOperation.CLEAR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR
+        VariableOperation.DEFINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DEFINE
+        VariableOperation.CHANGE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHANGE
     }
 
     private fun settingCurrentValue(
@@ -1727,7 +1764,7 @@ class GestureLowerPanel(
             ?.let { targetKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.POSITION -> CommandSettingsModel.positionKind(node, context.role)
             ?.let { positionKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-        GestureSettingScreen.FACING -> CommandSettingsModel.facingSpec(node)?.kind
+        GestureSettingScreen.FACING -> CommandSettingsModel.facingSpec(node, context.role)?.kind
             ?.let { facingKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         else -> node.string(fieldKey).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
     }
@@ -1750,8 +1787,6 @@ class GestureLowerPanel(
         PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
         PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
         PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
-        PositionKind.TEMPORARY_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
-        PositionKind.WORLD_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
     })
 
     private fun facingKindLabel(player: Player, kind: FacingKind): String = KcI18n.text(player, when (kind) {
@@ -1764,7 +1799,7 @@ class GestureLowerPanel(
         FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC
     })
 
-    /** PICKER: 左タブ列＝カテゴリ（PROCESS/CONTROL）、右詳細＝コマンド種別一覧 */
+    /** PICKER: 左タブ列＝カテゴリ（EXECUTION/CONTROL）、右詳細＝コマンド種別一覧 */
     private fun buildPicker(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -1808,13 +1843,19 @@ class GestureLowerPanel(
         // MERGEを表示してクリック時例外になる不一致を防ぎます。
         val mergeAvailable = script?.let { GraphEditor.canAppendMerge(it.graph, mergeConditionId) } == true
         // MERGEは分岐合流用の挿入先だけで候補化し、FOR_END等は単独挿入不可のため除外します。
+        val insertionTarget = state.pendingInsertion
+        val insideForBody = script?.graph?.let {
+            GraphEditor.isInsideFor(
+                it,
+                insertionTarget?.sourceId,
+                insertionTarget?.edge ?: GraphEditor.Edge.ENTRY,
+            )
+        } == true
         val types = CommandType.entries.filter { type ->
             CommandPresentationPolicy.category(type) == category &&
                 (type != CommandType.MERGE || mergeAvailable) &&
                 type != CommandType.FOR_END &&
-                type != CommandType.FOR_START &&
-                type != CommandType.BREAK &&
-                type != CommandType.CONTINUE
+                (type != CommandType.BREAK && type != CommandType.CONTINUE || insideForBody)
         }
         val pageCount = ((types.size + PICKER_PAGE_SIZE - 1) / PICKER_PAGE_SIZE).coerceAtLeast(1)
         val page = state.pickerPage.coerceIn(0, pageCount - 1)
@@ -2129,9 +2170,9 @@ class GestureLowerPanel(
         const val POSITION_TARGET_CHOICE_Y = -0.25
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val DIALOG_EDITABLE_KEYS = setOf(
-            "item", "count", "text", "tags", "sound", "volume", "pitch",
-            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "shakeType", "slot", "entity", "diskId", "name", "startValue",
-            "endValue", "stepValue", "condition", "variable", "value", "block",
+            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "volume", "pitch",
+            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name", "startValue",
+            "endValue", "stepValue", "condition", "variable", "value", "block", "sneaking",
         )
     }
 }

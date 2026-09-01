@@ -8,7 +8,10 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.NumericExpression
+import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -229,6 +232,23 @@ internal object CommandDialogSpecs {
             64,
             { raw ->
                 val value = raw.toDoubleOrNull()
+                if (!isNumericTemplate(raw) && (value == null || !value.isFinite() || value < 0.0)) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID
+                } else null
+            },
+        )
+        "dx", "dy", "dz" -> Spec(
+            when (parameter) {
+                "dx" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX
+                "dy" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY
+                else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ
+            },
+            64,
+            { raw ->
+                val value = raw.toDoubleOrNull()
+                // TargetSpecのdx/dy/dzは実行時に必ず有限Doubleとして保持する型付き値です。
+                // 文字列テンプレートをここで許すと、Gesture側のDouble保存時に参照式が
+                // 消えるため、型付きセレクター欄では保存可能な数値だけを受け付けます。
                 if (value == null || !value.isFinite() || value < 0.0) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID
                 } else null
@@ -245,7 +265,11 @@ internal object CommandDialogSpecs {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
             64,
             validate = { raw ->
-                if (!CommandValueRules.isTag(raw)) {
+                if (raw.contains(',')) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
+                } else if (VariableTemplate.references(raw).isNotEmpty() && !VariableTemplate.hasMalformedReference(raw)) {
+                    null
+                } else if (!CommandValueRules.isTag(raw)) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
                 } else null
             },
@@ -253,7 +277,13 @@ internal object CommandDialogSpecs {
         "name" -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
             256,
-            { raw -> if (raw.length > 256) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_NAME_LENGTH else null },
+            { raw ->
+                when {
+                    raw.length > 256 -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_NAME_LENGTH
+                    VariableTemplate.hasMalformedReference(raw) -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    else -> null
+                }
+            },
         )
         else -> null
     }
@@ -309,15 +339,25 @@ internal object CommandDialogSpecs {
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "value" && node.type == CommandType.VARIABLE) {
             val type = runCatching { VariableType.valueOf(node.string("type")) }
-                .getOrDefault(VariableType.BOOLEAN)
+                .getOrDefault(VariableType.NUMBER)
             val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
-                .getOrDefault(VariableOperation.SET)
-            return variableValue(type, operation)
+                .getOrDefault(VariableOperation.DEFINE)
+            val changeMode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
+                .getOrDefault(VariableChangeMode.ASSIGN)
+            return variableValue(
+                type = if (operation == VariableOperation.CHANGE) null else type,
+                operation = operation,
+                changeMode = changeMode,
+            )
         }
         return when (node.type) {
             CommandType.BLOCK_OPERATION -> if (fieldKey == "block") placementBlock else field(fieldKey, valueSource)
             CommandType.WAIT -> if (fieldKey == "seconds") {
-                positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS)
+                decimalRange(
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
+                    0.000001..86_400.0,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
+                )
             } else field(fieldKey, valueSource)
             CommandType.APPLY_EFFECT -> when (fieldKey) {
                 "level" -> integerRange(
@@ -391,6 +431,9 @@ internal object CommandDialogSpecs {
         if (fieldKey == "block") return block
         val labelKey = when (fieldKey) {
             "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
+            "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
+            "customName" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME
+            "itemData" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
             "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE
             "fadeInSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN
             "staySeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY
@@ -402,6 +445,7 @@ internal object CommandDialogSpecs {
             "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
             "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
             "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS
+            "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG
             "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT
             "level" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL
             "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS
@@ -413,42 +457,47 @@ internal object CommandDialogSpecs {
             else -> return null
         }
         val maxLength = when (fieldKey) {
-            "text", "value" -> 512
-            "entity", "sound", "effect", "tags" -> 64
+            "text", "subtitle", "customName", "itemData", "value" -> 512
+            "entity", "sound", "effect", "tags", "tag" -> 64
             else -> 16
         }
         val positiveInteger = fieldKey in setOf("count", "level", "seconds")
         val nonNegativeInteger = fieldKey in setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
         val required = fieldKey in setOf(
             "block", "entity", "sound", "effect", "count", "level", "seconds",
-            "volume", "pitch", "intensity", "shakeType", "slot",
+            "volume", "pitch", "intensity", "shakeType", "slot", "tag",
             "startValue", "endValue", "stepValue",
             "fadeInSeconds", "staySeconds", "fadeOutSeconds",
         )
         return Spec(labelKey, maxLength, validate = { raw ->
             when {
-                positiveInteger && !isPositiveInteger(raw) ->
+                positiveInteger && !isNumericTemplate(raw) && !isPositiveInteger(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID
-                nonNegativeInteger && !isNonNegativeInteger(raw) ->
+                nonNegativeInteger && !isNumericTemplate(raw) && !isNonNegativeInteger(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID
                 fieldKey in setOf("entity", "sound", "effect") && !registeredFieldId(fieldKey, raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey == "tags" && raw.split(',').map(String::trim).filter(String::isNotEmpty)
-                    .any { !CommandValueRules.isTag(it) } ->
+                fieldKey in setOf("tags", "tag") && VariableTemplate.hasMalformedReference(raw) ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
+                fieldKey in setOf("tags", "tag") && VariableTemplate.references(raw).isEmpty() &&
+                    raw.split(',').map(String::trim).filter(String::isNotEmpty)
+                        .any { !CommandValueRules.isTag(it) } ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
                 fieldKey == "slot" && !CommandValueRules.isEquipmentSlot(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey == "volume" && !CommandValueRules.isFiniteDoubleIn(raw, 0.0..2.0) ->
+                fieldKey == "volume" && !isNumericTemplate(raw) && !CommandValueRules.isFiniteDoubleIn(raw, 0.0..34.0) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey == "pitch" && !CommandValueRules.isFiniteDoubleIn(raw, 0.5..2.0) ->
+                fieldKey == "pitch" && !isNumericTemplate(raw) && !CommandValueRules.isFiniteDoubleIn(raw, 0.5..2.0) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey == "intensity" && !CommandValueRules.isFiniteDoubleIn(raw, 0.1..4.0) ->
+                fieldKey == "intensity" && !isNumericTemplate(raw) && !CommandValueRules.isFiniteDoubleIn(raw, 0.1..4.0) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 fieldKey in setOf("startValue", "endValue", "stepValue") && valueSource == "FIXED" &&
-                    raw.toLongOrNull() == null ->
+                    !isNumericTemplate(raw) && raw.toLongOrNull() == null ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
                 fieldKey == "stepValue" && valueSource == "FIXED" && raw.toLongOrNull() == 0L ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STEP_ZERO
+                fieldKey in setOf("text", "subtitle", "customName", "itemData", "value") && VariableTemplate.hasMalformedReference(raw) ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 else -> null
             }
         }, required = required)
@@ -458,7 +507,9 @@ internal object CommandDialogSpecs {
     private fun positiveInteger(labelKey: LocalizationKey<String>): Spec = Spec(
         labelKey,
         16,
-        validate = { raw -> if (!isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null },
+        validate = { raw ->
+            if (!isNumericTemplate(raw) && !isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null
+        },
         required = true,
     )
 
@@ -469,7 +520,7 @@ internal object CommandDialogSpecs {
         invalidKey: LocalizationKey<String>,
     ): Spec = Spec(labelKey, 16, validate = { raw ->
         val value = CommandValueRules.parsePositiveInt(raw)
-        if (value == null || value !in range) invalidKey else null
+        if (!isNumericTemplate(raw) && (value == null || value !in range)) invalidKey else null
     }, required = true)
 
     /** 小数を許可する実行値は、整数仕様へ誤って流さないよう専用化します。 */
@@ -479,29 +530,28 @@ internal object CommandDialogSpecs {
         invalidKey: LocalizationKey<String>,
     ): Spec = Spec(labelKey, 16, validate = { raw ->
         val value = raw.toDoubleOrNull()
-        if (value == null || !value.isFinite() || value !in range) invalidKey else null
+        if (!isNumericTemplate(raw) && (value == null || !value.isFinite() || value !in range)) invalidKey else null
     }, required = true)
 
-    /** 変数操作の保存値を、実行時parseVariableと同じ型境界で検証します。 */
-    private fun variableValue(type: VariableType, operation: VariableOperation): Spec {
+    /** 変数操作の保存値を、実行時の式評価と同じ型境界で検証します。 */
+    private fun variableValue(type: VariableType?, operation: VariableOperation, changeMode: VariableChangeMode): Spec {
         val base = requireNotNull(field("value"))
-        if (operation !in setOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT)) {
-            return base
-        }
         return base.copy(required = true, validate = { raw ->
-            when (type) {
-                VariableType.BOOLEAN ->
-                    if (raw.toBooleanStrictOrNull() == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
-                VariableType.INTEGER ->
-                    if (raw == CURRENT_ITERATION_VALUE || raw == CURRENT_LOOP_COUNT || raw.toLongOrNull() != null) {
-                        null
-                    } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID
-                VariableType.DECIMAL ->
-                    if (raw.toDoubleOrNull()?.isFinite() == true) null
-                    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                VariableType.TEXT -> null
-                VariableType.POSITION, VariableType.ENTITY ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            when {
+                type == null && changeMode == VariableChangeMode.CALCULATE ->
+                    if (NumericExpression.isValid(raw)) null else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                type == null ->
+                    if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
+                type == VariableType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
+                    if (NumericExpression.isValid(raw)) null else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                } else if (raw == CURRENT_ITERATION_VALUE || raw == CURRENT_LOOP_COUNT ||
+                    isNumericTemplate(raw) || raw.toDoubleOrNull()?.isFinite() == true
+                ) {
+                    null
+                } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                type == VariableType.STRING ->
+                    if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
+                else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
             }
         })
     }
@@ -515,7 +565,7 @@ internal object CommandDialogSpecs {
      * 「候補を表示」ボタン押下時の最新値を渡します。完全一致→前方一致→
      * 部分一致→編集距離の順で安定ソートし、空欄では候補を返しません。
      */
-    fun suggestions(fieldKey: String, query: String, limit: Int = 5): List<String> {
+    fun suggestions(fieldKey: String, query: String, limit: Int = 12): List<String> {
         val normalized = query.trim().lowercase()
         if (normalized.isEmpty() || !supportsSuggestions(fieldKey)) return emptyList()
         val values = registeredValues(fieldKey)
@@ -581,4 +631,10 @@ internal object CommandDialogSpecs {
     private const val CURRENT_ITERATION_VALUE = "\$current_iteration_value"
     private const val CURRENT_LOOP_COUNT = "\$current_loop_count"
     private val NAMESPACED_ID_FIELDS = setOf("entity", "entityType", "sound", "effect")
+
+    /** 数値欄でも単一のワールド変数を実行時に数値化できるようにします。 */
+    private fun isNumericTemplate(raw: String): Boolean =
+        VariableTemplate.references(raw).size == 1 &&
+            !VariableTemplate.hasMalformedReference(raw) &&
+            raw.trim().matches(Regex("\\$\\{[a-z][a-z0-9_.-]{0,63}}"))
 }

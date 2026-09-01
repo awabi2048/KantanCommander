@@ -1,76 +1,76 @@
 package me.awabi2048.kantancommander.data
 
+import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
-import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
-import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableScope
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.supportsContextOverride
-import me.awabi2048.kantancommander.model.ActivationMode
-import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.ContextSource
-import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
-import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
-import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
+import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
+import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
+import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
+import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
+import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
-import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.VariableChangeMode
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.effectiveContextSource
 import me.awabi2048.kantancommander.model.hasContextOverride
+import me.awabi2048.kantancommander.model.supportsContextOverride
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.UUID
 
-/**
- * 実行前検証の結果を、表示文字列ではなく意味（対象ノードと設定項目）として保持します。
- *
- * GUIはnodeIdとfieldKeysから「どのノードの、どの設定タブが要確認か」を直接導出します。
- * 以前は表示文字列のパス解析からノードIDを復元していましたが、これは表示形式と
- * 意味の結合であり、文言変更がGUI判定を壊す原因になります。表示はrendered()だけが
- * 担当し、意味の推測に文字列解析を使いません。
- */
+/** 実行前検証の結果を、表示文字列ではなく対象ノードと設定項目で保持します。 */
 data class ScriptValidationError(
-    /** 人間向け表示用のグラフ上の経路（例: "root/{nodeId}"）。 */
     val path: String,
-    /** エラーの直接の原因ノード。スクリプト全体（タイマー・構造）の問題はnull。 */
     val nodeId: UUID?,
-    /** このエラーが指すGUI設定項目（タブのfieldKey）。構造問題は空集合。 */
     val fieldKeys: Set<String>,
     val message: String,
 ) {
-    /** 従来の表示形式（"path: message"）へ整形します。ログ・エクスポート表示専用です。 */
     fun rendered(): String = "$path: $message"
 }
 
+/** 保存・実行・出力で共通利用するコマンド設定検証です。 */
 object ExecutableScriptValidator {
-    fun validate(script: DiskScript, limits: GraphLimits = GraphLimits()): List<ScriptValidationError> {
+    /**
+     * variableDefinitionsは配置済みMyWorldでのみ渡します。
+     * nullの場合は`${...}`の構文だけを検証し、未配置スクリプトの編集を妨げません。
+     */
+    fun validate(
+        script: DiskScript,
+        limits: GraphLimits = GraphLimits(),
+        variableDefinitions: Map<String, WorldVariableValue>? = null,
+    ): List<ScriptValidationError> {
         val errors = mutableListOf<ScriptValidationError>()
         if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
-            errors += ScriptValidationError(
-                path = "root",
-                nodeId = null,
-                // タイマーと起動モードの組み合わせ問題のため、プログラムタイマーのカードへ投影します。
-                fieldKeys = setOf("timer"),
-                message = "タイマーオフでは常時実行を使用できません",
-            )
+            errors += ScriptValidationError("root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません")
         }
         if (script.timer.enabled && script.timer.intervalSeconds !in MIN_TIMER_SECONDS..MAX_TIMER_SECONDS) {
             errors += ScriptValidationError(
-                path = "root",
-                nodeId = null,
-                fieldKeys = setOf("timer"),
-                message = "タイマー間隔は${MIN_TIMER_SECONDS}から${MAX_TIMER_SECONDS}秒で指定してください",
+                "root", null, setOf("timer"),
+                "タイマー間隔は${MIN_TIMER_SECONDS}から${MAX_TIMER_SECONDS}秒で指定してください",
             )
         }
-        validateGraph(script.graph, "root", errors, Collections.newSetFromMap(IdentityHashMap()), limits)
+        validateGraph(
+            script.graph,
+            "root",
+            errors,
+            Collections.newSetFromMap(IdentityHashMap()),
+            limits,
+            variableDefinitions,
+        )
         return errors
     }
 
@@ -80,28 +80,35 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         visited: MutableSet<CommandGraph>,
         limits: GraphLimits,
+        variableDefinitions: Map<String, WorldVariableValue>?,
     ) {
         if (!visited.add(graph)) {
             errors += ScriptValidationError(path, null, emptySet(), "別ディスクのコピー内容が循環参照しています")
             return
         }
-        GraphValidator.validate(graph, limits).forEach {
-            errors += ScriptValidationError(path, null, emptySet(), it)
-        }
+        GraphValidator.validate(graph, limits).forEach { errors += ScriptValidationError(path, null, emptySet(), it) }
         graph.nodes.values.forEach { node ->
-            validateNode(node, "$path/${node.id}", errors)
-            node.snapshot?.let { validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits) }
+            validateNode(node, "$path/${node.id}", errors, variableDefinitions, isInsideForBody(graph, node.id))
+            node.snapshot?.let {
+                validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits, variableDefinitions)
+            }
         }
         visited.remove(graph)
     }
 
-    private fun validateNode(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
+    private fun validateNode(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        insideForBody: Boolean,
+    ) {
         val hasContextState = node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
         if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
-            errors += ScriptValidationError(path, node.id, emptySet(), "${node.type} では実行コンテキストを設定できません")
+            errors += nodeError(node, path, emptySet(), "${node.type} では実行コンテキストを設定できません")
         }
         listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach {
-            validateTarget(it, path, node, errors)
+            validateTarget(it, path, node, errors, variableDefinitions)
         }
         listOfNotNull(
             node.destinationSpec,
@@ -109,267 +116,237 @@ object ExecutableScriptValidator {
             node.blockPositionSpec,
             node.blockFromSpec,
             node.blockToSpec,
+            node.soundPositionSpec,
             node.contextOverride?.position,
-        ).forEach {
-            validatePosition(it, path, node, errors)
-        }
+        ).forEach { validatePosition(it, path, node, errors) }
+        node.destinationFacingSpec?.let { validateFacing(it, path, node, errors) }
         node.contextOverride?.let { context ->
-            listOfNotNull(context.executor, context.target).forEach { validateTarget(it, path, node, errors) }
+            listOfNotNull(context.executor, context.target).forEach {
+                validateTarget(it, path, node, errors, variableDefinitions)
+            }
             context.facing?.let { validateFacing(it, path, node, errors) }
         }
         when (node.type) {
             CommandType.TELEPORT -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-                }
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
                 if (node.destinationSpec == null && node.destinationTargetSpec == null) {
-                    errors += nodeError(node, path, setOf("destination"), "移動先が未設定です")
+                    errors += nodeError(node, path, setOf("destination"), "移動先座標が未設定です")
                 }
             }
             CommandType.GIVE_ITEM -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-                }
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
                 if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
                     errors += nodeError(node, path, setOf("item"), "アイテムが未設定です")
                 }
-                if (CommandValueRules.parsePositiveInt(node.string("count")) == null) {
-                    errors += nodeError(node, path, setOf("count"), "個数は1以上である必要があります")
-                }
+                validatePositiveIntegerInput(node.string("count"), variableDefinitions, node, path, setOf("count"), errors)
             }
-            CommandType.ENTITY_ACTION -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-                }
-                val action = node.string("action")
-                if (action !in setOf("ride", "dismount")) {
-                    errors += nodeError(node, path, setOf("action"), "不明なエンティティ操作です")
-                }
-                if (action == "ride" && node.secondaryTargetSpec == null) {
-                    errors += nodeError(node, path, setOf("other"), "乗り物となる対象が未設定です")
-                }
-            }
-            CommandType.DISPLAY_TEXT -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-                }
-                if (node.string("mode") !in setOf("tellraw", "title", "actionbar")) {
-                    errors += nodeError(node, path, setOf("mode"), "不明な文字列表示方式です")
-                }
-                if (DisplayTextTimingPolicy.supports(node) &&
-                    listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
-                        .any { CommandValueRules.parseNonNegativeInt(node.string(it)) == null }
-                ) {
-                    // 表示時間はGUI上も「時間設定」（staySecondsタブ）へ一括編集のため、そこへ投影します。
-                    errors += nodeError(
-                        node,
-                        path,
-                        setOf("staySeconds"),
-                        "タイトル／アクションバーの表示時間は0秒以上である必要があります",
-                    )
-                }
-            }
-            CommandType.WAIT ->
-                if (CommandValueRules.parsePositiveInt(node.string("seconds")) == null) {
-                    errors += nodeError(node, path, setOf("seconds"), "待機時間は1秒以上である必要があります")
-                }
+            CommandType.ENTITY_ACTION -> validateEntityAction(node, path, errors)
+            CommandType.DISPLAY_TEXT -> validateDisplayText(node, path, errors, variableDefinitions)
+            CommandType.WAIT -> validateWait(node, path, errors, variableDefinitions)
             CommandType.SUMMON_ENTITY -> {
                 if (!CommandValueRules.isEntityTypeId(node.string("entity"))) {
                     errors += nodeError(node, path, setOf("entity"), "エンティティ種類が不正です")
                 }
                 val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
-                if (tags.any { !CommandValueRules.isTag(it) }) {
+                if (tags.any { !isTemplateOrTag(it, variableDefinitions) }) {
                     errors += nodeError(node, path, setOf("tags"), "召喚タグが不正です")
                 }
+                validateTemplate(node.string("customName"), node, path, "customName", errors, variableDefinitions)
             }
             CommandType.PLAY_SOUND -> {
                 if (!CommandValueRules.isSoundId(node.string("sound"))) {
                     errors += nodeError(node, path, setOf("sound"), "サウンドIDが不正です")
                 }
-                if (node.double("volume", -1.0) !in 0.0..2.0) {
-                    errors += nodeError(node, path, setOf("volume"), "音量は0.0〜2.0の範囲です")
-                }
-                if (node.double("pitch", -1.0) !in 0.5..2.0) {
-                    errors += nodeError(node, path, setOf("pitch"), "ピッチは0.5〜2.0の範囲です")
+                validateRange(node, path, "volume", 0.0..34.0, "音量は0.0〜34.0の範囲です", errors, variableDefinitions)
+                validateRange(node, path, "pitch", 0.5..2.0, "ピッチは0.5〜2.0の範囲です", errors, variableDefinitions)
+                if (node.string("soundScope", "CONTEXT") !in setOf("CONTEXT", "WORLD")) {
+                    errors += nodeError(node, path, setOf("soundPosition"), "サウンドの再生位置が不正です")
                 }
             }
             CommandType.APPLY_EFFECT -> {
                 if (!CommandValueRules.isEffectId(node.string("effect"))) {
                     errors += nodeError(node, path, setOf("effect"), "エフェクト種類が不正です")
                 }
-                if (CommandValueRules.parsePositiveInt(node.string("level")) !in 1..255) {
-                    errors += nodeError(node, path, setOf("level"), "エフェクトレベルは1〜255の範囲です")
-                }
-                if (CommandValueRules.parsePositiveInt(node.string("seconds")) !in 1..86_400) {
-                    errors += nodeError(node, path, setOf("seconds"), "効果時間は1〜86400秒の範囲です")
-                }
+                validateIntegerRange(node, path, "level", 1..255, "エフェクトレベルは1〜255の範囲です", errors, variableDefinitions)
+                validateIntegerRange(node, path, "seconds", 1..86_400, "効果時間は1〜86400秒の範囲です", errors, variableDefinitions)
             }
             CommandType.CAMERA_SHAKE -> {
-                if (node.double("intensity", -1.0) !in 0.1..4.0) {
-                    errors += nodeError(node, path, setOf("intensity"), "揺れの強さは0.1〜4.0の範囲です")
-                }
-                if (node.double("seconds", -1.0) !in 1.0..10.0) {
-                    errors += nodeError(node, path, setOf("seconds"), "揺れ時間は1.0〜10.0秒の範囲です")
-                }
+                validateRange(node, path, "intensity", 0.1..4.0, "揺れの強さは0.1〜4.0の範囲です", errors, variableDefinitions)
+                validateRange(node, path, "seconds", 1.0..10.0, "揺れ時間は1.0〜10.0秒の範囲です", errors, variableDefinitions)
                 if (node.string("shakeType") !in setOf("positional", "rotational")) {
                     errors += nodeError(node, path, setOf("shakeType"), "揺れ種類が不正です")
                 }
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("target"), "カメラ揺れの対象が未設定です")
-                }
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "カメラ揺れの対象が未設定です")
             }
-            CommandType.EQUIP_ITEM -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("target"), "装備変更の対象が未設定です")
-                }
-                if (node.string("slot") !in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")) {
+            CommandType.BLOCK_OPERATION -> validateBlockOperation(node, path, errors)
+            CommandType.ENTITY_DELETE -> {
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
+            }
+            CommandType.CONDITION -> validateCondition(node, path, errors, variableDefinitions)
+            CommandType.CONTEXT -> if (!node.hasContextOverride()) {
+                errors += nodeError(node, path, setOf("context"), "コンテキストが未設定です")
+            }
+            CommandType.DISK_CALL -> if (node.snapshot == null) {
+                errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
+            }
+            CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody)
+            CommandType.FOR_START -> validateFor(node, path, errors, variableDefinitions)
+            CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
+        }
+    }
+
+    private fun validateEntityAction(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
+        if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
+        when (node.string("action", "ride")) {
+            "ride" -> if (node.secondaryTargetSpec == null) {
+                errors += nodeError(node, path, setOf("other"), "乗り物となる対象が未設定です")
+            }
+            "dismount" -> Unit
+            "equip" -> {
+                if (!CommandValueRules.isEquipmentSlot(node.string("slot"))) {
                     errors += nodeError(node, path, setOf("slot"), "装備スロットが不正です")
                 }
                 if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
                     errors += nodeError(node, path, setOf("item"), "装備アイテムが未設定です")
                 }
-            }
-            CommandType.BLOCK_OPERATION -> {
-                val operation = BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))
-                if (operation == null) {
-                    errors += nodeError(node, path, setOf("operation"), "ブロック操作方式が不正です")
-                }
-                if (CommandValueRules.placementMaterial(node.string("block")) == null) {
-                    errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
-                }
-                when (operation) {
-                    BlockOperationMode.SETBLOCK -> {
-                        if (node.blockPositionSpec == null) {
-                            errors += nodeError(node, path, setOf("position"), "ブロック配置位置が未設定です")
-                        }
-                    }
-                    BlockOperationMode.FILL -> {
-                        val from = node.blockFromSpec
-                        val to = node.blockToSpec
-                        if (from == null) {
-                            errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
-                        }
-                        if (to == null) {
-                            errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
-                        }
-                        if (from != null && to != null) {
-                            blockVolume(from, to)?.let { volume ->
-                                if (volume > MAX_BLOCK_OPERATION_VOLUME) {
-                                    errors += nodeError(
-                                        node,
-                                        path,
-                                        setOf("from", "to"),
-                                        "範囲配置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください",
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    null -> Unit
+                if (node.params["overwrite"]?.toBooleanStrictOrNull() == null) {
+                    errors += nodeError(node, path, setOf("overwrite"), "上書き設定が不正です")
                 }
             }
-            CommandType.ENTITY_DELETE -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
+            "tag" -> {
+                if (node.string("tagOperation", "add") !in setOf("add", "remove")) {
+                    errors += nodeError(node, path, setOf("tagOperation"), "タグ操作が不正です")
+                }
+                val tag = node.string("tag")
+                if (tag.contains(',') ||
+                    VariableTemplate.hasMalformedReference(tag) ||
+                    (VariableTemplate.references(tag).isEmpty() && !CommandValueRules.isTag(tag))
+                ) {
+                    errors += nodeError(node, path, setOf("tag"), "タグ名は単一の形式で指定してください")
                 }
             }
-            CommandType.CONDITION -> validateCondition(node, path, errors)
-            CommandType.CONTEXT ->
-                if (!node.hasContextOverride()) {
-                    errors += nodeError(node, path, setOf("context"), "コンテキストが未設定です")
-                }
-            CommandType.DISK_CALL ->
-                if (node.snapshot == null) {
-                    errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
-                }
-            CommandType.VARIABLE -> validateVariable(node, path, errors)
-            CommandType.FOR_START -> validateFor(node, path, errors)
-            CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
+            else -> errors += nodeError(node, path, setOf("action"), "不明なエンティティ操作です")
         }
     }
 
-    private fun nodeError(node: CommandNode, path: String, fieldKeys: Set<String>, message: String): ScriptValidationError =
-        ScriptValidationError(path, node.id, fieldKeys, message)
+    private fun validateDisplayText(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+    ) {
+        if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
+        if (node.string("mode") !in setOf("tellraw", "title", "subtitle", "actionbar")) {
+            errors += nodeError(node, path, setOf("mode"), "不明なテキスト表示位置です")
+        }
+        validateTemplate(node.string("text"), node, path, "text", errors, variableDefinitions)
+        validateTemplate(node.string("subtitle"), node, path, "subtitle", errors, variableDefinitions)
+        if (DisplayTextTimingPolicy.supports(node)) {
+            listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").forEach { field ->
+                validateNumberInput(node.string(field), variableDefinitions, node, path, setOf(field), errors)
+                val value = resolvedDouble(node.string(field), variableDefinitions)
+                if (!deferNumericValidation(node.string(field), variableDefinitions) &&
+                    (value == null || value < 0.0 || value > Int.MAX_VALUE)
+                ) {
+                    errors += nodeError(node, path, setOf(field), "表示時間は0秒以上の数値で指定してください")
+                }
+            }
+        }
+    }
+
+    private fun validateWait(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+    ) {
+        validateNumberInput(node.string("seconds"), variableDefinitions, node, path, setOf("seconds"), errors)
+        val seconds = resolvedDouble(node.string("seconds"), variableDefinitions)
+        if (!deferNumericValidation(node.string("seconds"), variableDefinitions) &&
+            (seconds == null || !seconds.isFinite() || seconds <= 0.0 || seconds > 86_400.0)
+        ) {
+            errors += nodeError(node, path, setOf("seconds"), "待機時間は0秒より大きく86400秒以下の数値で指定してください")
+        }
+    }
+
+    private fun validateBlockOperation(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
+        val operation = BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))
+        if (operation == null) errors += nodeError(node, path, setOf("operation"), "ブロック操作方式が不正です")
+        if (CommandValueRules.placementMaterial(node.string("block")) == null) {
+            errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
+        }
+        when (operation) {
+            BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null) {
+                errors += nodeError(node, path, setOf("position"), "ブロック設置位置が未設定です")
+            }
+            BlockOperationMode.FILL -> {
+                val from = node.blockFromSpec
+                val to = node.blockToSpec
+                if (from == null) errors += nodeError(node, path, setOf("from"), "範囲設置の始点が未設定です")
+                if (to == null) errors += nodeError(node, path, setOf("to"), "範囲設置の終点が未設定です")
+                if (from != null && to != null && blockVolume(from, to)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true) {
+                    errors += nodeError(node, path, setOf("from", "to"), "範囲設置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
+                }
+            }
+            null -> Unit
+        }
+    }
 
     private fun validateTarget(
         spec: TargetSpec,
         path: String,
         node: CommandNode,
         errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
     ) {
         if (spec.kind == TargetKind.FIXED_ENTITY && spec.fixedEntityId == null) {
             errors += nodeError(node, path, emptySet(), "固定エンティティが未設定です")
         }
-        spec.entityType?.takeIf(String::isNotBlank)?.let { raw ->
-            if (!CommandValueRules.isEntityTypeId(raw)) {
-                errors += nodeError(node, path, emptySet(), "エンティティ種別が不正です")
-            }
+        spec.entityType?.takeIf(String::isNotBlank)?.let {
+            if (!CommandValueRules.isEntityTypeId(it)) errors += nodeError(node, path, emptySet(), "エンティティ種別が不正です")
         }
-        spec.gameMode?.takeIf(String::isNotBlank)?.let { mode ->
-            if (mode.uppercase() !in setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) {
+        spec.gameMode?.takeIf(String::isNotBlank)?.let {
+            if (it.uppercase() !in setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) {
                 errors += nodeError(node, path, emptySet(), "ゲームモードが不正です")
             }
         }
-        spec.tag?.takeIf(String::isNotBlank)?.let { tag ->
-            if (!CommandValueRules.isTag(tag)) {
+        spec.tag?.takeIf(String::isNotBlank)?.let {
+            validateTemplate(it, node, path, "target", errors, variableDefinitions)
+            if (VariableTemplate.references(it).isEmpty() && !CommandValueRules.isTag(it)) {
                 errors += nodeError(node, path, emptySet(), "タグが不正です")
             }
         }
-        spec.name?.let { name ->
-            if (name.length > 256) {
-                errors += nodeError(node, path, emptySet(), "エンティティ名が長すぎます")
-            }
+        spec.name?.takeIf(String::isNotBlank)?.let {
+            validateTemplate(it, node, path, "target", errors, variableDefinitions)
+            if (it.length > 256) errors += nodeError(node, path, emptySet(), "エンティティ名が長すぎます")
         }
-        if (spec.minimumDistance?.isFinite() == false || spec.maximumDistance?.isFinite() == false) {
-            errors += nodeError(node, path, emptySet(), "対象距離は有限値で指定してください")
-        }
-        if (spec.minimumDistance?.let { it < 0.0 } == true ||
-            spec.maximumDistance?.let { it < 0.0 } == true
-        ) {
-            errors += nodeError(node, path, emptySet(), "対象距離は0以上で指定してください")
-        }
-        if (spec.minimumDistance != null && spec.maximumDistance != null &&
-            spec.minimumDistance > spec.maximumDistance
-        ) {
+        val distances = listOf(spec.minimumDistance, spec.maximumDistance)
+        if (distances.any { it?.isFinite() == false }) errors += nodeError(node, path, emptySet(), "対象距離は有限値で指定してください")
+        if (distances.any { it != null && it < 0.0 }) errors += nodeError(node, path, emptySet(), "対象距離は0以上で指定してください")
+        if (spec.minimumDistance != null && spec.maximumDistance != null && spec.minimumDistance > spec.maximumDistance) {
             errors += nodeError(node, path, emptySet(), "最小距離が最大距離を超えています")
         }
-        if (spec.limit?.let { it < 1 } == true) {
-            errors += nodeError(node, path, emptySet(), "対象数は1以上で指定してください")
+        listOf("dx" to spec.dx, "dy" to spec.dy, "dz" to spec.dz).forEach { (field, value) ->
+            if (value != null && (!value.isFinite() || value < 0.0)) {
+                errors += nodeError(node, path, setOf(field), "$field は有限な0以上の数値で指定してください")
+            }
         }
+        if (spec.limit?.let { it < 1 } == true) errors += nodeError(node, path, emptySet(), "対象数は1以上で指定してください")
     }
 
-    private fun validatePosition(
-        spec: PositionSpec,
-        path: String,
-        node: CommandNode,
-        errors: MutableList<ScriptValidationError>,
-    ) {
+    private fun validatePosition(spec: PositionSpec, path: String, node: CommandNode, errors: MutableList<ScriptValidationError>) {
         if (spec.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES) &&
             listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }
         ) {
             errors += nodeError(node, path, emptySet(), "座標が未設定または有限値ではありません")
         }
-        if (spec.kind == PositionKind.CAPTURED &&
-            (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)
-        ) {
+        if (spec.kind == PositionKind.CAPTURED && (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)) {
             errors += nodeError(node, path, emptySet(), "捕捉した向きが未設定または有限値ではありません")
-        }
-        if (spec.kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE) &&
-            !CommandValueRules.isVariableName(spec.variable.orEmpty())
-        ) {
-            errors += nodeError(node, path, emptySet(), "位置変数名が不正です")
         }
     }
 
-    private fun validateFacing(
-        spec: FacingSpec,
-        path: String,
-        node: CommandNode,
-        errors: MutableList<ScriptValidationError>,
-    ) {
-        if (spec.kind == FacingKind.COORDINATES &&
-            listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }
-        ) {
+    private fun validateFacing(spec: FacingSpec, path: String, node: CommandNode, errors: MutableList<ScriptValidationError>) {
+        if (spec.kind == FacingKind.COORDINATES && listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }) {
             errors += nodeError(node, path, emptySet(), "向く座標が未設定または有限値ではありません")
         }
         if (spec.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION) &&
@@ -379,7 +356,310 @@ object ExecutableScriptValidator {
         }
     }
 
-    /** 座標値が静的な場合だけ、実行前にfillの上限を判定します。 */
+    private fun validateCondition(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+    ) {
+        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+        if (kind == null) {
+            errors += nodeError(node, path, setOf("kind"), "条件の種類が未設定です")
+            return
+        }
+        when (kind) {
+            ConditionKind.TARGET_EXISTS -> if (node.targetSpec == null) {
+                errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
+            }
+            ConditionKind.PLAYER_STATE -> {
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("condition"), "対象プレイヤーが未設定です")
+                if (node.params["sneaking"]?.isNotBlank() == true && node.params["sneaking"]?.toBooleanStrictOrNull() == null) {
+                    errors += nodeError(node, path, setOf("condition"), "スニーク状態の設定が不正です")
+                }
+                val item = node.string("item")
+                if (item.isNotBlank() && CommandValueRules.material(item, allowAir = false) == null) {
+                    errors += nodeError(node, path, setOf("condition"), "所持アイテムが不正です")
+                }
+            }
+            ConditionKind.VARIABLE_STATE -> {
+                if (!CommandValueRules.isVariableName(node.string("variable"))) {
+                    errors += nodeError(node, path, setOf("condition"), "評価する変数名が不正です")
+                } else checkDefinition(node.string("variable"), VariableType.NUMBER, variableDefinitions, node, path, setOf("condition"), errors)
+                if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
+                    errors += nodeError(node, path, setOf("condition"), "評価の方法が不正です")
+                }
+                validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors)
+            }
+            ConditionKind.BLOCK_STATE -> {
+                if (CommandValueRules.material(node.string("block")) == null) {
+                    errors += nodeError(node, path, setOf("condition"), "判定するブロックが未設定です")
+                }
+                if (node.conditionPositionSpec == null && node.contextOverride?.position == null) {
+                    // コンテキスト位置を既定値として使うため、未設定は有効です。
+                }
+            }
+        }
+    }
+
+    private fun validateVariable(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        insideForBody: Boolean,
+    ) {
+        val name = node.string("name")
+        if (!CommandValueRules.isVariableName(name)) errors += nodeError(node, path, setOf("name"), "変数名が不正です")
+        val type = runCatching { VariableType.valueOf(node.string("type")) }.getOrNull()
+        val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }.getOrNull()
+        if (type == null) errors += nodeError(node, path, setOf("type"), "変数型が不正です")
+        if (operation == null) errors += nodeError(node, path, setOf("operation"), "変数操作が不正です")
+        when (operation) {
+            VariableOperation.DEFINE -> {
+                if (type == null) return
+                if (variableDefinitions?.containsKey(name) == true) {
+                    errors += nodeError(node, path, setOf("name"), "同名のワールド内変数は既に定義されています")
+                }
+                validateAssignedValue(node.string("value"), type, variableDefinitions, node, path, errors, insideForBody)
+            }
+            VariableOperation.CHANGE -> {
+                if (name.isNotBlank()) checkDefinition(name, null, variableDefinitions, node, path, setOf("name"), errors)
+                val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }.getOrNull()
+                if (mode == null) {
+                    errors += nodeError(node, path, setOf("changeMode"), "変数の変更内容が不正です")
+                } else when (variableDefinitions?.get(name)?.type) {
+                    VariableType.STRING -> if (mode == VariableChangeMode.CALCULATE) {
+                        errors += nodeError(node, path, setOf("changeMode"), "文字列変数へ計算式を適用できません")
+                    } else {
+                        validateAssignedValue(node.string("value"), VariableType.STRING, variableDefinitions, node, path, errors, insideForBody)
+                    }
+                    VariableType.NUMBER -> when (mode) {
+                        VariableChangeMode.CALCULATE -> validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody)
+                        VariableChangeMode.ASSIGN -> validateAssignedValue(node.string("value"), VariableType.NUMBER, variableDefinitions, node, path, errors, insideForBody)
+                    }
+                    null -> if (variableDefinitions == null) {
+                        // 配置前は対象変数の型を照会できないため、代入は文字列化して
+                        // 実行時へ渡し、計算式だけ構文検証します。
+                        if (mode == VariableChangeMode.CALCULATE) {
+                            validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody)
+                        } else {
+                            validateAssignedValue(node.string("value"), VariableType.STRING, variableDefinitions, node, path, errors, insideForBody)
+                        }
+                    }
+                }
+            }
+            null -> Unit
+        }
+    }
+
+    private fun validateAssignedValue(
+        raw: String,
+        type: VariableType,
+        definitions: Map<String, WorldVariableValue>?,
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        insideForBody: Boolean,
+    ) {
+        if (isReadOnlyReference(raw)) {
+            if (!insideForBody) {
+                errors += nodeError(node, path, setOf("value"), "ループ値はfor本体内でのみ参照できます")
+            }
+            return
+        }
+        if (type == VariableType.NUMBER) validateNumberInput(raw, definitions, node, path, setOf("value"), errors)
+        else validateTemplate(raw, node, path, "value", errors, definitions)
+    }
+
+    private fun validateNumericExpression(
+        raw: String,
+        selfName: String,
+        definitions: Map<String, WorldVariableValue>?,
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        insideForBody: Boolean,
+    ) {
+        val parsed = NumericExpression.parse(raw)
+        if (!parsed.isSuccess) {
+            errors += nodeError(node, path, setOf("value"), "計算式が不正です: ${parsed.error}")
+            return
+        }
+        parsed.expression!!.references.forEach { reference ->
+            if (reference.startsWith("$")) {
+                if (reference !in setOf("\$current_iteration_value", "\$current_loop_count")) {
+                    errors += nodeError(node, path, setOf("value"), "読み取り専用変数名が不正です")
+                } else if (!insideForBody) {
+                    errors += nodeError(node, path, setOf("value"), "ループ値はfor本体内でのみ参照できます")
+                }
+            } else if (definitions != null && reference != selfName && definitions[reference]?.type != VariableType.NUMBER) {
+                errors += nodeError(node, path, setOf("value"), "計算式の変数が未定義または数値型ではありません: $reference")
+            }
+        }
+    }
+
+    private fun validateFor(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        definitions: Map<String, WorldVariableValue>?,
+    ) {
+        listOf("start", "end", "step").forEach { field ->
+            when (node.string("${field}Source", "FIXED")) {
+                "FIXED" -> {
+                    val raw = node.string("${field}Value")
+                    validateNumberInput(raw, definitions, node, path, setOf("${field}Value"), errors)
+                    val value = resolvedDouble(raw, definitions)
+                    if (!deferNumericValidation(raw, definitions) && exactLong(value) == null) {
+                        errors += nodeError(node, path, setOf("${field}Value"), "forの${field}値は整数で指定してください")
+                    }
+                }
+                "WORLD" -> {
+                    val name = node.string("${field}Value")
+                    if (!CommandValueRules.isVariableName(name)) {
+                        errors += nodeError(node, path, setOf("${field}Value"), "forの${field}参照変数名が不正です")
+                    } else checkDefinition(name, VariableType.NUMBER, definitions, node, path, setOf("${field}Value"), errors)
+                }
+                else -> errors += nodeError(node, path, setOf("${field}Source"), "forの${field}参照元が不正です")
+            }
+        }
+        if (node.string("stepSource", "FIXED") == "FIXED" &&
+            !deferNumericValidation(node.string("stepValue"), definitions) &&
+            exactLong(resolvedDouble(node.string("stepValue"), definitions)) == 0L
+        ) {
+            errors += nodeError(node, path, setOf("stepValue"), "forの増分に0は指定できません")
+        }
+    }
+
+    private fun checkDefinition(
+        name: String,
+        expected: VariableType?,
+        definitions: Map<String, WorldVariableValue>?,
+        node: CommandNode,
+        path: String,
+        fields: Set<String>,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        val actual = definitions?.get(name)
+        if (definitions != null && actual == null) errors += nodeError(node, path, fields, "ワールド内変数が未定義です: $name")
+        if (expected != null && actual != null && actual.type != expected) {
+            errors += nodeError(node, path, fields, "ワールド内変数の型が一致しません: $name")
+        }
+    }
+
+    private fun validateNumberInput(
+        raw: String,
+        definitions: Map<String, WorldVariableValue>?,
+        node: CommandNode,
+        path: String,
+        fields: Set<String>,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        validateTemplate(raw, node, path, fields.firstOrNull() ?: "value", errors, definitions)
+        if (VariableTemplate.hasMalformedReference(raw)) return
+        if (VariableTemplate.references(raw).isEmpty() && resolvedDouble(raw, definitions) == null) {
+            errors += nodeError(node, path, fields, "数値で入力してください")
+        } else if (definitions != null && resolvedDouble(raw, definitions) == null) {
+            errors += nodeError(node, path, fields, "変数展開後の値が数値ではありません")
+        }
+    }
+
+    /** 数値欄へ展開結果を入れる正の整数項目の共通検証です。 */
+    private fun validatePositiveIntegerInput(
+        raw: String,
+        definitions: Map<String, WorldVariableValue>?,
+        node: CommandNode,
+        path: String,
+        fields: Set<String>,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        validateNumberInput(raw, definitions, node, path, fields, errors)
+        val value = resolvedDouble(raw, definitions)
+        if (!deferNumericValidation(raw, definitions) &&
+            (value == null || value != kotlin.math.floor(value) || value < 1.0 || value > Int.MAX_VALUE)
+        ) {
+            errors += nodeError(node, path, fields, "個数は1以上の整数である必要があります")
+        }
+    }
+
+    /** エフェクトのような整数範囲を、テンプレート展開後の値へ適用します。 */
+    private fun validateIntegerRange(
+        node: CommandNode,
+        path: String,
+        field: String,
+        range: IntRange,
+        message: String,
+        errors: MutableList<ScriptValidationError>,
+        definitions: Map<String, WorldVariableValue>?,
+    ) {
+        val raw = node.string(field)
+        validateNumberInput(raw, definitions, node, path, setOf(field), errors)
+        val value = resolvedDouble(raw, definitions)
+        if (!deferNumericValidation(raw, definitions) &&
+            (value == null || value != kotlin.math.floor(value) || value.toInt() !in range)
+        ) {
+            errors += nodeError(node, path, setOf(field), message)
+        }
+    }
+
+    private fun validateRange(
+        node: CommandNode,
+        path: String,
+        field: String,
+        range: ClosedFloatingPointRange<Double>,
+        message: String,
+        errors: MutableList<ScriptValidationError>,
+        definitions: Map<String, WorldVariableValue>?,
+    ) {
+        validateNumberInput(node.string(field), definitions, node, path, setOf(field), errors)
+        val value = resolvedDouble(node.string(field), definitions)
+        if (value != null && value !in range) errors += nodeError(node, path, setOf(field), message)
+    }
+
+    private fun validateTemplate(
+        raw: String,
+        node: CommandNode,
+        path: String,
+        field: String,
+        errors: MutableList<ScriptValidationError>,
+        definitions: Map<String, WorldVariableValue>?,
+    ) {
+        if (VariableTemplate.hasMalformedReference(raw)) {
+            errors += nodeError(node, path, setOf(field), "ワールド内変数の記法が不正です")
+        }
+        if (definitions != null) {
+            VariableTemplate.references(raw).filter { it !in definitions }.forEach {
+                errors += nodeError(node, path, setOf(field), "ワールド内変数が未定義です: $it")
+            }
+        }
+    }
+
+    private fun isTemplateOrTag(raw: String, definitions: Map<String, WorldVariableValue>?): Boolean {
+        if (VariableTemplate.hasMalformedReference(raw)) return false
+        if (VariableTemplate.references(raw).any { definitions != null && it !in definitions }) return false
+        return VariableTemplate.references(raw).isNotEmpty() || CommandValueRules.isTag(raw)
+    }
+
+    /** 配置未配置のスクリプトでは、変数の存在だけを将来の実行境界へ委ねます。 */
+    private fun deferNumericValidation(raw: String, definitions: Map<String, WorldVariableValue>?): Boolean =
+        definitions == null && VariableTemplate.references(raw).isNotEmpty() &&
+            !VariableTemplate.hasMalformedReference(raw)
+
+    private fun resolvedDouble(raw: String, definitions: Map<String, WorldVariableValue>?): Double? {
+        if (VariableTemplate.hasMalformedReference(raw)) return null
+        val expanded = if (VariableTemplate.references(raw).isEmpty()) raw else {
+            if (definitions == null) return null
+            VariableTemplate.interpolate(raw) { definitions[it] } ?: return null
+        }
+        return expanded.toDoubleOrNull()?.takeIf(Double::isFinite)
+    }
+
+    private fun exactLong(value: Double?): Long? {
+        if (value == null || !value.isFinite() || value != kotlin.math.floor(value)) return null
+        if (value < Long.MIN_VALUE.toDouble() || value > Long.MAX_VALUE.toDouble()) return null
+        return value.toLong()
+    }
+
     private fun blockVolume(from: PositionSpec, to: PositionSpec): Long? {
         val coordinates = listOf(from.x, from.y, from.z, to.x, to.y, to.z)
         if (coordinates.any { it?.isFinite() != true }) return null
@@ -392,115 +672,28 @@ object ExecutableScriptValidator {
         return sizes.fold(1L) { total, size ->
             if (total > MAX_BLOCK_OPERATION_VOLUME / size.toLong().coerceAtLeast(1L)) {
                 MAX_BLOCK_OPERATION_VOLUME + 1
-            } else {
-                total * size.toLong()
-            }
+            } else total * size.toLong()
         }
     }
 
-    private fun validateCondition(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        if (kind == null) {
-            errors += nodeError(node, path, setOf("kind"), "条件種別が未設定です")
-            return
-        }
-        when (kind) {
-            ConditionKind.TARGET_EXISTS ->
-                if (node.targetSpec == null) {
-                    // 条件の詳細項目はGUI上「条件値」（conditionタブ）配下のため、そこへ投影します。
-                    errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
-                }
-            ConditionKind.ENTITY_STATE -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
-                }
-                if (node.string("state") !in setOf("sneaking", "on_ground")) {
-                    errors += nodeError(node, path, setOf("condition"), "状態が未設定です")
-                }
-            }
-            ConditionKind.VARIABLE_STATE -> {
-                if (node.string("variable").isBlank()) {
-                    errors += nodeError(node, path, setOf("condition"), "変数名が未設定です")
-                }
-                if (runCatching { VariableScope.valueOf(node.string("variableScope")) }.isFailure) {
-                    errors += nodeError(node, path, setOf("condition"), "変数の範囲が不正です")
-                }
-                if (node.string("operator") !in setOf("set", "unset", "==", "!=", ">", "<", ">=", "<=")) {
-                    errors += nodeError(node, path, setOf("condition"), "比較方法が不正です")
-                }
-            }
-            ConditionKind.BLOCK_STATE ->
-                if (CommandValueRules.material(node.string("block")) == null) {
-                    errors += nodeError(node, path, setOf("condition"), "ブロックが未設定です")
-                }
-            ConditionKind.ITEM_POSSESSION -> {
-                if (node.targetSpec == null) {
-                    errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
-                }
-                if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
-                    errors += nodeError(node, path, setOf("condition"), "アイテムが未設定です")
-                }
-                if (node.int("count", 0) < 1) {
-                    errors += nodeError(node, path, setOf("condition"), "必要個数は1以上である必要があります")
-                }
-            }
-        }
-    }
+    private fun isReadOnlyReference(raw: String): Boolean =
+        raw.trim() in setOf("\$current_iteration_value", "\$current_loop_count")
 
-    private fun validateVariable(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
-        if (!CommandValueRules.isVariableName(node.string("name"))) {
-            errors += nodeError(node, path, setOf("name"), "変数名が不正です")
-        }
-        val type = runCatching { VariableType.valueOf(node.string("type")) }.getOrNull()
-        val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }.getOrNull()
-        if (type == null) {
-            errors += nodeError(node, path, setOf("type"), "変数型が不正です")
-        }
-        if (operation == null) {
-            errors += nodeError(node, path, setOf("operation"), "変数操作が不正です")
-        }
-        // 型と操作の組み合わせ問題は、どちらのタブを直しても解消できるため両方へ投影します。
-        if (operation in setOf(VariableOperation.ADD, VariableOperation.SUBTRACT) &&
-            type !in setOf(VariableType.INTEGER, VariableType.DECIMAL)
-        ) {
-            errors += nodeError(node, path, setOf("type", "operation"), "加減算できない変数型です")
-        }
-        if (operation == VariableOperation.TOGGLE && type != VariableType.BOOLEAN) {
-            errors += nodeError(node, path, setOf("type", "operation"), "切替は真偽値だけに使用できます")
-        }
-        if (operation == VariableOperation.STORE_POSITION && type != VariableType.POSITION) {
-            errors += nodeError(node, path, setOf("type", "operation"), "位置保存には位置型が必要です")
-        }
-        if (operation == VariableOperation.STORE_TARGET && type != VariableType.ENTITY) {
-            errors += nodeError(node, path, setOf("type", "operation"), "対象保存にはエンティティ型が必要です")
-        }
-        // 反復値・ループ回数は起動ローカルの読み取り専用値のため、ワールド内変数（MyWorld共有）への
-        // 保存を拒否する（仕様12.2 forの反復値・ループ回数の出力先には使用できない）。
-        if (operation == VariableOperation.SET &&
-            node.string("scope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name &&
-            node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")
-        ) {
-            errors += nodeError(node, path, setOf("scope", "value"), "ループ値はワールド内変数へ保存できません")
-        }
-    }
-
-    private fun validateFor(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
-        listOf("start", "end", "step").forEach { field ->
-            when (node.string("${field}Source", "FIXED")) {
-                "FIXED" -> if (node.string("${field}Value").toLongOrNull() == null) {
-                    errors += nodeError(node, path, setOf("${field}Value"), "forの${field}値が不正です")
-                }
-                "TEMPORARY" -> if (node.string("${field}Value").isBlank()) {
-                    errors += nodeError(node, path, setOf("${field}Value"), "forの${field}参照変数が未設定です")
-                }
-                "WORLD" -> if (node.string("${field}Value").isBlank()) {
-                    errors += nodeError(node, path, setOf("${field}Value"), "forの${field}参照変数が未設定です")
-                }
-                else -> errors += nodeError(node, path, setOf("${field}Source"), "forの${field}参照元が不正です")
+    /** for本体の境界を越えず、読み取り専用ループ値の参照位置を検証します。 */
+    private fun isInsideForBody(graph: CommandGraph, target: UUID): Boolean =
+        graph.nodes.values.any { start ->
+            if (start.type != CommandType.FOR_START) return@any false
+            val stop = start.pairedNodeId
+            val visited = mutableSetOf<UUID>()
+            fun visit(id: UUID?): Boolean {
+                if (id == null || id == stop || !visited.add(id)) return false
+                if (id == target) return true
+                val node = graph.nodes[id] ?: return false
+                return listOfNotNull(node.next, node.trueNext, node.falseNext, node.pairedNodeId).any(::visit)
             }
+            visit(start.trueNext)
         }
-        if (node.string("stepSource", "FIXED") == "FIXED" && node.string("stepValue").toLongOrNull() == 0L) {
-            errors += nodeError(node, path, setOf("stepValue"), "forの増分に0は指定できません")
-        }
-    }
+
+    private fun nodeError(node: CommandNode, path: String, fields: Set<String>, message: String) =
+        ScriptValidationError(path, node.id, fields, message)
 }

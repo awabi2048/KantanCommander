@@ -13,7 +13,10 @@ import org.bukkit.Registry
  */
 object CommandValueRules {
     private val ASCII_INTEGER_PATTERN = Regex("[0-9]+")
-    private val VARIABLE_NAME_PATTERN = Regex("[a-z0-9_.-]{1,64}")
+    // 変数名は式・テンプレートへそのまま埋め込むため、先頭を英字に限定します。
+    // 数字始まりを許すと、式の数値リテラルと区別できず、GUI・実行・出力で
+    // 同じ名前を解釈できなくなります。
+    private val VARIABLE_NAME_PATTERN = Regex("[a-z][a-z0-9_.-]{0,63}")
     private val TAG_PATTERN = Regex("[A-Za-z0-9_.:+-]{1,64}")
     private val EQUIPMENT_SLOTS = setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")
 

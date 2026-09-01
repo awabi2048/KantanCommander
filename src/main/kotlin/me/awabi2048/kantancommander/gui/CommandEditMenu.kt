@@ -34,7 +34,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
@@ -239,6 +239,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     },
                     "entityType" to targetFilterDialog("entityType"),
                     "distance" to targetFilterDialog("distance"),
+                    "dx" to targetFilterDialog("dx"),
+                    "dy" to targetFilterDialog("dy"),
+                    "dz" to targetFilterDialog("dz"),
                     "limit" to targetFilterDialog("limit"),
                     "tag" to targetFilterDialog("tag"),
                     "name" to targetFilterDialog("name"),
@@ -271,10 +274,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Replace(context.route))
                         }
                         showPositionDialog(context.player, context.route)
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
-                        }
-                        if (kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
-                            showPositionVariableDialog(context.player, context.route, kind)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         val location = context.player.location
@@ -321,7 +320,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
                         } else FacingSpec(kind)
                         if (!updateNode(context.player, context.route) { node ->
-                            CommandSettingsModel.setFacingSpec(node, spec)
+                            CommandSettingsModel.setFacingSpec(
+                                node,
+                                spec,
+                                CommandSettingRole.fromRoute(context.route.payload[ROLE]) ?: CommandSettingRole.CONTEXT_FACING,
+                            )
                         }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
@@ -340,7 +343,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "field" to MenuActionHandler { context ->
                         val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (field == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
+                        if (field == "item" && (node.type == CommandType.GIVE_ITEM ||
+                                (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip"))) {
                             // 付与アイテムはインベントリ内の実物をクリックして選択する
                             // 旧方式へ戻します（インベントリGUIの標準選択導線）。
                             val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -368,9 +372,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         if (field == "block" && node.type == CommandType.BLOCK_OPERATION) {
-                            val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
-                            plugin.itemSelection.beginMaterial(context.player, scriptId, node.id, context.route, "block")
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                            return@MenuActionHandler setHeldBlock(context)
                         }
                         if (field == "inverted" && node.type == CommandType.CONDITION) {
                             if (!updateNode(context.player, context.route) {
@@ -380,26 +382,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
-                        if (field == "scope" && node.type == CommandType.VARIABLE) {
-                            if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    "scope",
-                                    if (it.string("scope") == "WORLD") "TEMPORARY" else "WORLD",
-                                )
-                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
-                        }
                         if (field.endsWith("Source") && node.type == CommandType.FOR_START) {
-                            // 参照元は固定値→一時変数→ワールド内変数の3択を循環する（仕様10.2）。
+                            // FORの入力元は固定値とワールド変数だけです。実行セッションの
+                            // 一時変数を再導入すると、VARIABLEの保存先統一と矛盾するため、
+                            // 選択肢の循環もこの2択に限定します。
                             if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     field,
                                     when (it.string(field, "FIXED")) {
-                                        "TEMPORARY" -> "WORLD"
                                         "WORLD" -> "FIXED"
-                                        else -> "TEMPORARY"
+                                        else -> "WORLD"
                                     },
                                 )
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -421,6 +414,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(choiceRoute(context.route, VARIABLE_OPERATION_ID))
                             )
                         }
+                        if (field == "changeMode" && node.type == CommandType.VARIABLE) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, VARIABLE_CHANGE_MODE_ID))
+                            )
+                        }
                         if (field == "name" && node.type == CommandType.VARIABLE) {
                             showVariableNameDialog(context.player, context.route, node.string("name"))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
@@ -440,7 +438,53 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "action",
-                                    if (it.string("action", "ride") == "ride") "dismount" else "ride",
+                                    when (it.string("action", "ride")) {
+                                        "ride" -> "dismount"
+                                        "dismount" -> "equip"
+                                        "equip" -> "tag"
+                                        else -> "ride"
+                                    },
+                                )
+                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field == "slot" && node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_EQUIPMENT_SLOT_ID)),
+                            )
+                        }
+                        if (field == "overwrite" && node.type == CommandType.ENTITY_ACTION) {
+                            if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
+                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field == "tagOperation" && node.type == CommandType.ENTITY_ACTION) {
+                            if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(
+                                    it,
+                                    "tagOperation",
+                                    if (it.string("tagOperation", "add") == "add") "remove" else "add",
+                                )
+                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field == "soundScope" && node.type == CommandType.PLAY_SOUND) {
+                            if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(
+                                    it,
+                                    "soundScope",
+                                    if (it.string("soundScope", "CONTEXT") == "CONTEXT") "WORLD" else "CONTEXT",
+                                )
+                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field == "shakeType" && node.type == CommandType.CAMERA_SHAKE) {
+                            if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(
+                                    it,
+                                    "shakeType",
+                                    if (it.string("shakeType", "positional") == "positional") "rotational" else "positional",
                                 )
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
@@ -452,15 +496,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field in setOf(
-                                "count", "seconds", "text", "value", "startValue", "endValue", "stepValue",
-                                "entity", "tags", "sound", "volume", "pitch", "effect", "level",
-                                "intensity", "shakeType", "slot",
+                                "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
+                                "startValue", "endValue", "stepValue", "entity", "tags", "tag", "sound",
+                                "volume", "pitch", "effect", "level", "intensity",
                             )) {
                             showFieldDialog(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         val target = when {
                             field == "destination" -> positionRoute(context.route, "destination")
+                            field == "destinationFacing" -> facingRoute(context.route, "destination_facing")
                             field == "executor" -> targetRoute(context.route, "context_executor")
                             field == "target" && node.type == CommandType.CONTEXT -> targetRoute(context.route, "context_target")
                             field == "target" || field == "subject" -> targetRoute(context.route, "node_target")
@@ -472,8 +517,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 positionRoute(context.route, "block_from")
                             field == "to" && node.type == CommandType.BLOCK_OPERATION ->
                                 positionRoute(context.route, "block_to")
+                            field == "soundPosition" -> positionRoute(context.route, "sound_position")
                             field == "position" -> positionRoute(context.route, "context_position")
-                            field == "facing" -> facingRoute(context.route)
+                            field == "facing" -> facingRoute(context.route, "context_facing")
                             field == "context" -> choiceRoute(context.route, CONTEXT_OVERRIDE_ID)
                             else -> null
                         } ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -494,11 +540,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     },
                     "state" to MenuActionHandler { context ->
                         if (!updateNode(context.player, context.route) {
-                            CommandSettingsModel.setParameter(
-                                it,
-                                "state",
-                                if (it.string("state", "sneaking") == "sneaking") "on_ground" else "sneaking",
-                            )
+                            val next = when (it.string("sneaking")) {
+                                "" -> "true"
+                                "true" -> "false"
+                                else -> ""
+                            }
+                            CommandSettingsModel.setParameter(it, "sneaking", next)
                         }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         MenuActionResult.Success(MenuUpdate.Refresh)
                     },
@@ -511,20 +558,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         )
                         MenuActionResult.Success(MenuUpdate.None)
                     },
-                    "scope" to MenuActionHandler { context ->
-                        if (!updateNode(context.player, context.route) {
-                            CommandSettingsModel.setParameter(
-                                it,
-                                "variableScope",
-                                if (it.string("variableScope") == VariableScope.WORLD.name) {
-                                    VariableScope.TEMPORARY.name
-                                } else VariableScope.WORLD.name,
-                            )
-                        }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                        MenuActionResult.Success(MenuUpdate.Refresh)
-                    },
                     "operator" to MenuActionHandler { context ->
-                        val operators = listOf("set", "unset", "==", "!=", ">", ">=", "<", "<=")
+                        val operators = listOf("==", "!=", ">", ">=", "<", "<=")
                         if (!updateNode(context.player, context.route) {
                             val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                             CommandSettingsModel.setParameter(it, "operator", operators[(current + 1) % operators.size])
@@ -545,14 +580,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             MenuUpdate.Navigate(positionRoute(context.route, "condition_position"))
                         )
                     },
-                    "block" to materialSelection("block"),
+                    "block" to MenuActionHandler { context -> setHeldBlock(context) },
                     // 条件のアイテムもインベントリ内クリック選択へ統一します。
                     "item" to materialSelection("item"),
-                    "count" to MenuActionHandler { context ->
-                        val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
-                        showFieldDialog(context.player, context.route, "count", node)
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
                 ),
             )
         )
@@ -617,7 +647,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         )
                     },
                     "facing" to MenuActionHandler { context ->
-                        MenuActionResult.Success(MenuUpdate.Navigate(facingRoute(context.route)))
+                        MenuActionResult.Success(MenuUpdate.Navigate(facingRoute(context.route, "context_facing")))
                     },
                     "source" to MenuActionHandler { context ->
                         if (!updateNode(context.player, context.route) { CommandSettingsModel.toggleContextSource(it) }) {
@@ -643,7 +673,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "back" to back(),
                     "select" to MenuActionHandler { context ->
                         val mode = context.payload["mode"]
-                            ?.takeIf { it in setOf("tellraw", "title", "actionbar") }
+                            ?.takeIf { it in setOf("tellraw", "title", "subtitle", "actionbar") }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, "mode", mode)
@@ -668,6 +698,29 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, "operation", operation)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                ENTITY_EQUIPMENT_SLOT_ID,
+                renderer = { renderEquipmentSlots(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val slot = context.payload["slot"]
+                            ?.takeIf { it in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET") }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "slot", slot)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
@@ -730,6 +783,29 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 CommandSettingsModel.setParameter(it, "operation", operation.name)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                VARIABLE_CHANGE_MODE_ID,
+                renderer = { renderVariableChangeModes(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val mode = context.payload["changeMode"]
+                            ?.let { runCatching { VariableChangeMode.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "changeMode", mode.name)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
                     },
@@ -864,9 +940,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 player = player,
                 slot = CommandPickerLayoutPolicy.categorySlots[index],
                 material = when (option) {
-                    CommandCategory.PROCESS -> Material.COMMAND_BLOCK
+                    CommandCategory.EXECUTION -> Material.COMMAND_BLOCK
                     CommandCategory.CONTROL -> Material.CHAIN_COMMAND_BLOCK
-                    CommandCategory.EXTERNAL_DISK -> Material.MUSIC_DISC_13
                 },
                 name = KcI18n.text(player, option.labelKey),
                 style = GuiNameStyle.PRIMARY,
@@ -1005,6 +1080,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "kind", displayTarget(spec.kind)),
             DetailOption(Material.ARMOR_STAND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, "entityType", displayLiteral(spec.entityType)),
             DetailOption(Material.COMPARATOR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, "distance", displayLiteral(displayDistance(spec.minimumDistance, spec.maximumDistance))),
+            DetailOption(Material.COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX, "dx", displayLiteral(spec.dx)),
+            DetailOption(Material.COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY, "dy", displayLiteral(spec.dy)),
+            DetailOption(Material.COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ, "dz", displayLiteral(spec.dz)),
             DetailOption(Material.REPEATER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT, "limit", displayLiteral(spec.limit)),
             DetailOption(Material.COMPARATOR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT, "sort", DisplayValue.Localized(when (spec.sort) {
                 TargetSort.NEAREST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_NEAREST
@@ -1050,7 +1128,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         // 「現在位置を設定」は編集画面の選択肢から廃止しました。
         // 既存データのCAPTURED値は読み込み・実行側で引き続き扱えますが、
         // 新規設定では座標／ディスク／対象など明示的な方式だけを提示します。
-        val layout = ChoiceMenuLayoutPolicy.layout(if (destination) 2 else 7)
+        val layout = ChoiceMenuLayoutPolicy.layout(if (destination) 2 else 5)
         val elements = if (destination) {
             mutableListOf(
                 choiceElement(player, 20, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES_SET), "select", mapOf("kind" to PositionKind.COORDINATES.name)),
@@ -1063,8 +1141,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 Triple(PositionKind.TARGET, Material.TARGET, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION)),
                 Triple(PositionKind.MYWORLD_SPAWN, Material.RESPAWN_ANCHOR, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN)),
                 Triple(PositionKind.COORDINATES, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES)),
-                Triple(PositionKind.TEMPORARY_VARIABLE, Material.REDSTONE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE)),
-                Triple(PositionKind.WORLD_VARIABLE, Material.ENDER_CHEST, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE)),
             )
             options.mapIndexed { index, option ->
                 choiceElement(player, layout.itemSlots[index], option.second, option.third,
@@ -1109,10 +1185,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderConditionKinds(player: Player): InventoryMenuView {
         val options = listOf(
             Triple(ConditionKind.TARGET_EXISTS, Material.ENDER_EYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS)),
-            Triple(ConditionKind.ENTITY_STATE, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE)),
+            Triple(ConditionKind.PLAYER_STATE, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE)),
             Triple(ConditionKind.VARIABLE_STATE, Material.REDSTONE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE)),
             Triple(ConditionKind.BLOCK_STATE, Material.GRASS_BLOCK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE)),
-            Triple(ConditionKind.ITEM_POSSESSION, Material.CHEST, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ITEM_POSSESSION)),
         )
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
@@ -1132,13 +1207,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             ConditionKind.TARGET_EXISTS -> listOf(
                 DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.INHERITED_TARGET)),
             )
-            ConditionKind.ENTITY_STATE -> listOf(
+            ConditionKind.PLAYER_STATE -> listOf(
                 DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.INHERITED_TARGET)),
-                DetailOption(Material.LEVER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_STATE, "state", displayEntityState(node.string("state", "sneaking"))),
+                DetailOption(Material.LEVER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_STATE, "state", displayPlayerSneaking(node.string("sneaking"))),
+                DetailOption(Material.CHEST, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION, "item", displayLiteral(node.string("item"))),
             )
             ConditionKind.VARIABLE_STATE -> listOf(
                 DetailOption(Material.NAME_TAG, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, "variable", displayLiteral(node.string("variable"))),
-                DetailOption(Material.ENDER_CHEST, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE, "scope", displayVariableScope(node.string("variableScope", VariableScope.TEMPORARY.name))),
                 DetailOption(Material.COMPARATOR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, "operator", DisplayValue.Literal(node.string("operator", "=="))),
                 DetailOption(Material.REPEATER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, "value", DisplayValue.Literal(node.string("value", "0"))),
             )
@@ -1150,16 +1225,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     displayPosition(node.conditionPositionSpec?.kind ?: PositionKind.DISK),
                 ),
                 DetailOption(Material.GRASS_BLOCK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, "block", DisplayValue.Literal(node.string("block", "minecraft:air"))),
-            )
-            ConditionKind.ITEM_POSSESSION -> listOf(
-                DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "target", displayTarget(node.targetSpec?.kind ?: TargetKind.INHERITED_TARGET)),
-                DetailOption(
-                    Material.CHEST,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM_CONDITION,
-                    "item",
-                    displayLiteral(node.string("item")),
-                ),
-                DetailOption(Material.DIAMOND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT, "count", DisplayValue.Literal(node.string("count", "1"))),
             )
         }
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
@@ -1174,11 +1239,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderVariableValue(player: Player, route: MenuRoute): InventoryMenuView {
         val script = script(route)
         val node = node(route)
-        // 反復値・ループ回数は一時変数（起動ローカル）だけへ保存できるため、
-        // ワールド内変数ノードでは選択肢を表示しない（仕様12.2）。
+        // 反復値・ループ回数はワールド変数へ保存せず、for body内だけの
+        // 読み取り専用値として扱うため、forの外からは選択肢を表示しません。
         val insideFor = script != null && node != null &&
-            node.string("type") == VariableType.INTEGER.name &&
-            node.string("scope", VariableScope.TEMPORARY.name) != VariableScope.WORLD.name &&
+            node.string("type", VariableType.NUMBER.name) == VariableType.NUMBER.name &&
             GraphEditor.isInsideFor(script.graph, node.id, GraphEditor.Edge.NEXT)
         val options = buildList {
             add(DetailOption(Material.WRITABLE_BOOK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE, "direct", DisplayValue.Literal("")))
@@ -1212,14 +1276,24 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         MenuActionResult.Success(MenuUpdate.None)
     }
 
+    /** ブロックは自由入力や任意スロット選択を許さず、メインハンドの実物から取得します。 */
+    private fun setHeldBlock(context: MenuActionContext): MenuActionResult {
+        val held = context.player.inventory.itemInMainHand
+        if (held.type == Material.AIR || !held.type.isBlock) return MenuActionResult.Ignored
+        if (!updateNode(context.player, context.route) {
+                CommandSettingsModel.setParameter(it, "block", held.type.key.toString())
+            }) {
+            return MenuActionResult.Rejected(
+                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+        }
+        return MenuActionResult.Success(MenuUpdate.Refresh)
+    }
+
     private fun renderVariableTypes(player: Player): InventoryMenuView {
         val options = listOf(
-            Triple(VariableType.BOOLEAN, Material.LEVER, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TRUE_FALSE)),
-            Triple(VariableType.INTEGER, Material.REPEATER, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INTEGER)),
-            Triple(VariableType.DECIMAL, Material.COMPARATOR, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DECIMAL)),
-            Triple(VariableType.TEXT, Material.WRITABLE_BOOK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT)),
-            Triple(VariableType.POSITION, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION)),
-            Triple(VariableType.ENTITY, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_REFERENCE)),
+            Triple(VariableType.NUMBER, Material.COMPARATOR, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER)),
+            Triple(VariableType.STRING, Material.WRITABLE_BOOK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT)),
         )
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
@@ -1230,23 +1304,60 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_VARIABLE_TYPE_TITLE)), elements)
     }
 
+    private fun renderEquipmentSlots(player: Player): InventoryMenuView {
+        val options = listOf(
+            Triple("HAND", Material.ARMOR_STAND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND),
+            Triple("OFF_HAND", Material.SHIELD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND),
+            Triple("HEAD", Material.CARVED_PUMPKIN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HEAD),
+            Triple("CHEST", Material.IRON_CHESTPLATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_CHEST),
+            Triple("LEGS", Material.IRON_LEGGINGS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_LEGS),
+            Triple("FEET", Material.IRON_BOOTS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_FEET),
+        )
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                KcI18n.text(player, option.third),
+                "select",
+                mapOf("slot" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT)),
+            elements,
+        )
+    }
+
     private fun renderVariableOperations(player: Player, route: MenuRoute): InventoryMenuView {
         val type = node(route)?.string("type")
             ?.let { runCatching { VariableType.valueOf(it) }.getOrNull() }
-            ?: VariableType.BOOLEAN
+            ?: VariableType.NUMBER
         val options = listOf(
-            Triple(VariableOperation.SET, Material.LIME_DYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET)),
-            Triple(VariableOperation.ADD, Material.SLIME_BALL, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD)),
-            Triple(VariableOperation.SUBTRACT, Material.FERMENTED_SPIDER_EYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SUBTRACT)),
-            Triple(VariableOperation.TOGGLE, Material.LEVER, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TOGGLE)),
-            Triple(VariableOperation.STORE_POSITION, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STORE_POSITION)),
-            Triple(VariableOperation.STORE_TARGET, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STORE_TARGET)),
-            Triple(VariableOperation.CLEAR, Material.BARRIER, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR)),
+            Triple(VariableOperation.DEFINE, Material.LIME_DYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DEFINE)),
+            Triple(VariableOperation.CHANGE, Material.SLIME_BALL, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHANGE)),
         ).filter { it.first in allowedVariableOperations(type) }
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
             choiceElement(player, layout.itemSlots[index], option.second, option.third,
                 "select", mapOf("operation" to option.first.name))
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_VARIABLE_OPERATION_TITLE)), elements)
+    }
+
+    private fun renderVariableChangeModes(player: Player, route: MenuRoute): InventoryMenuView {
+        val options = listOf(
+            Triple(VariableChangeMode.ASSIGN, Material.LIME_DYE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN)),
+            Triple(VariableChangeMode.CALCULATE, Material.COMPARATOR, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE)),
+        )
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(player, layout.itemSlots[index], option.second, option.third,
+                "select", mapOf("changeMode" to option.first.name))
         }.toMutableList()
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_VARIABLE_OPERATION_TITLE)), elements)
@@ -1263,6 +1374,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val options = listOf(
             Triple("tellraw", Material.WRITABLE_BOOK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHAT)),
             Triple("title", Material.OAK_SIGN, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TITLE)),
+            Triple("subtitle", Material.WRITABLE_BOOK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SUBTITLE)),
             Triple("actionbar", Material.NAME_TAG, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ACTIONBAR)),
         )
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
@@ -1430,7 +1542,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 CommandType.CAMERA_SHAKE -> "5"
                 else -> "1"
             }
-            "text", "value", "tags" -> ""
+            "text", "subtitle", "customName", "itemData", "value", "tags", "tag" -> ""
             "startValue", "endValue" -> "0"
             "stepValue" -> "1"
             "entity" -> "minecraft:pig"
@@ -1448,47 +1560,45 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         } else null
         val spec = CommandDialogSpecs.field(node, field, valueSource) ?: return
         val currentValue = initialOverride ?: node.string(field, defaultValue)
-        val candidateButtons = buildList {
-            if (CommandDialogSpecs.supportsSuggestions(field)) {
-                add(MenuDialogButton(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_CANDIDATES),
-                    MenuDialogHandler { _, response ->
-                        val query = response.textValue(field).trim()
-                        showFieldDialog(
-                            player = player,
-                            route = route,
-                            field = field,
-                            node = node,
-                            initialOverride = query,
-                            candidateValues = CommandDialogSpecs.suggestions(field, query),
+        val candidateButtons = candidateValues.take(12).map { candidate ->
+            MenuDialogButton(
+                Component.text(candidate),
+                MenuDialogHandler { _, _ ->
+                    val value = CommandDialogSpecs.normalize(field, candidate)
+                    val validationError = spec.validateInput(value)
+                    if (validationError != null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                    }
+                    if (!updateNode(player, route) {
+                            CommandSettingsModel.setParameter(it, field, value)
+                        }) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(
+                            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
                         )
-                        // 入力値を引き継いだ新しいDialogを同期表示するため、元の
-                        // Dialogを外部入力へ戻す処理は行いません。
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
-                ))
-            }
-            candidateValues.forEach { candidate ->
-                add(MenuDialogButton(
-                    Component.text(candidate),
-                    MenuDialogHandler { _, _ ->
-                        val value = CommandDialogSpecs.normalize(field, candidate)
-                        val validationError = spec.validateInput(value)
-                        if (validationError != null) {
-                            return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
-                        }
-                        if (!updateNode(player, route) {
-                                CommandSettingsModel.setParameter(it, field, value)
-                            }) {
-                            return@MenuDialogHandler MenuActionResult.Rejected(
-                                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
-                            )
-                        }
-                        MenuActionResult.Success(MenuUpdate.Replace(route))
-                    },
-                ))
-            }
+                    }
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                },
+            )
         }
+        val candidateFooterActions = if (CommandDialogSpecs.supportsSuggestions(field)) {
+            listOf(MenuDialogButton(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_CANDIDATES),
+                MenuDialogHandler { _, response ->
+                    val query = response.textValue(field).trim()
+                    showFieldDialog(
+                        player = player,
+                        route = route,
+                        field = field,
+                        node = node,
+                        initialOverride = query,
+                        candidateValues = CommandDialogSpecs.suggestions(field, query),
+                    )
+                    // 入力値を引き継いだ新しいDialogを同期表示するため、元の
+                    // Dialogを外部入力へ戻す処理は行いません。
+                    MenuActionResult.Success(MenuUpdate.None)
+                },
+            ))
+        } else emptyList()
         CCSystem.getAPI().getMenuDialogService().show(
             player,
             MenuDialogRequest(
@@ -1512,7 +1622,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 }),
                 cancel = dialogCancel(player, route),
                 additionalActions = candidateButtons,
-                columns = if (candidateButtons.size > 1) 2 else 1,
+                footerActions = candidateFooterActions,
+                multiActionWithoutExit = candidateFooterActions.isNotEmpty(),
+                columns = if (candidateFooterActions.isNotEmpty()) 3 else 1,
             )
         )
     }
@@ -1611,43 +1723,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    private fun showPositionVariableDialog(player: Player, route: MenuRoute, kind: PositionKind) {
-        val current = node(route)?.let { selectedPosition(it, route.payload[ROLE]) }?.variable.orEmpty()
-        val spec = CommandDialogSpecs.variableName
-        CCSystem.getAPI().getMenuDialogService().show(
-            player,
-            MenuDialogRequest(
-                owner = SequenceEditorMenu.OWNER,
-                id = "position-variable",
-                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
-                body = CommandDialogSpecs.body(player, spec, current),
-                inputs = listOf(CommandDialogSpecs.input(player, "name", current, spec)),
-                confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    // 大文字を暗黙変換せず、Gesture GUIと同じ変数名規則で検証します。
-                    // 入力を片方だけ正規化すると、同じ設定でもGUIによって保存値が変わります。
-                    val name = response.textValue("name").trim()
-                    val validationError = spec.validateInput(name)
-                    if (validationError != null) {
-                        return@MenuDialogHandler MenuActionResult.Rejected(
-                            KcI18n.component(player, validationError),
-                        )
-                    }
-                    if (!updateNode(player, route) { command ->
-                        CommandSettingsModel.setPositionSpec(
-                            command,
-                            CommandSettingRole.fromRoute(route.payload[ROLE]),
-                            PositionSpec(kind, variable = name),
-                        )
-                    }) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                    MenuActionResult.Success(MenuUpdate.Replace(route))
-                }),
-                cancel = dialogCancel(player, route),
-            )
-        )
-    }
-
     private fun showFacingCoordinatesDialog(player: Player, route: MenuRoute) {
-        val current = node(route)?.let(CommandSettingsModel::facingSpec)
+        val role = CommandSettingRole.fromRoute(route.payload[ROLE]) ?: CommandSettingRole.CONTEXT_FACING
+        val current = node(route)?.let { CommandSettingsModel.facingSpec(it, role) }
         val location = player.location
         showCoordinateDialog(
             player = player,
@@ -1662,13 +1740,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 CommandSettingsModel.setFacingSpec(
                     command,
                     FacingSpec(FacingKind.COORDINATES, x = x, y = y, z = z),
+                    role,
                 )
             }
         }
     }
 
     private fun showRotationDialog(player: Player, route: MenuRoute) {
-        val current = node(route)?.let(CommandSettingsModel::facingSpec)
+        val role = CommandSettingRole.fromRoute(route.payload[ROLE]) ?: CommandSettingRole.CONTEXT_FACING
+        val current = node(route)?.let { CommandSettingsModel.facingSpec(it, role) }
         val location = player.location
         CCSystem.getAPI().getMenuDialogService().show(
             player,
@@ -1696,6 +1776,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         CommandSettingsModel.setFacingSpec(
                             command,
                             FacingSpec(FacingKind.ROTATION, yaw = yaw, pitch = pitch),
+                            role,
                         )
                     }) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     MenuActionResult.Success(MenuUpdate.Replace(route))
@@ -1955,7 +2036,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val CONDITION_DETAIL_ID = "condition_detail"
         private const val VARIABLE_TYPE_ID = "variable_type"
         private const val VARIABLE_OPERATION_ID = "variable_operation"
+        private const val VARIABLE_CHANGE_MODE_ID = "variable_change_mode"
         private const val VARIABLE_VALUE_ID = "variable_value"
+        private const val ENTITY_EQUIPMENT_SLOT_ID = "entity_equipment_slot"
         private const val DISPLAY_MODE_ID = "display_mode"
         private const val BLOCK_OPERATION_ID = "block_operation"
         private const val CONTEXT_OVERRIDE_ID = "context_override"
@@ -2013,7 +2096,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private fun positionRoute(route: MenuRoute, role: String) =
             route.copy(id = POSITION_ID, payload = route.payload + (ROLE to role))
 
-        private fun facingRoute(route: MenuRoute) = route.copy(id = FACING_ID)
+        private fun facingRoute(route: MenuRoute, role: String = "context_facing") =
+            route.copy(id = FACING_ID, payload = route.payload + (ROLE to role))
 
         private fun choiceRoute(route: MenuRoute, id: String) = route.copy(id = id)
 
@@ -2076,6 +2160,13 @@ object EditorMenuLayout {
                     ?: it.destinationSpec?.kind?.let(::displayPosition)
                     ?: displayUnset()
             },
+            field(
+                "destinationFacing",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING,
+                Material.SPYGLASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FACING,
+            ) { it.destinationFacingSpec?.kind?.let(::displayFacing) ?: displayUnset() },
         )
         CommandType.GIVE_ITEM -> listOf(
             field(
@@ -2106,6 +2197,48 @@ object EditorMenuLayout {
             field("other", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OTHER, Material.ANVIL) {
                 it.secondaryTargetSpec?.kind?.let(::displayTarget) ?: displayUnset()
             },
+            field("slot", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT, Material.ARMOR_STAND) {
+                displayEquipmentSlot(it.string("slot", "HAND"))
+            },
+            field(
+                "item",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM,
+                Material.CHEST,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EQUIP_ITEM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EQUIP_ITEM,
+            ),
+            field(
+                "itemData",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM,
+                Material.WRITABLE_BOOK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EQUIP_ITEM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EQUIP_ITEM,
+            ),
+            field(
+                "overwrite",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INVERTED,
+                Material.LIME_DYE,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_INVERTED,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_INVERTED,
+            ) {
+                displayBoolean(it.boolean("overwrite"))
+            },
+            field(
+                "tagOperation",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) {
+                displayTagOperation(it.string("tagOperation", "add"))
+            },
+            field(
+                "tag",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAGS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAGS,
+            ),
         )
         CommandType.DISPLAY_TEXT -> listOf(
             field(
@@ -2116,7 +2249,20 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_TARGET,
             ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("mode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODE, Material.OAK_SIGN) { displayTextMode(it.string("mode", "tellraw")) },
-            field("text", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT, Material.WRITTEN_BOOK),
+            field(
+                "text",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT,
+                Material.WRITTEN_BOOK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TEXT,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TEXT,
+            ),
+            field(
+                "subtitle",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT,
+                Material.WRITABLE_BOOK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TEXT,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TEXT,
+            ),
             field(
                 "staySeconds",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DURATION,
@@ -2136,12 +2282,27 @@ object EditorMenuLayout {
         )
         CommandType.SUMMON_ENTITY -> listOf(
             field("entity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY, Material.ZOMBIE_SPAWN_EGG),
+            field(
+                "customName",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+            ),
             field("tags", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS, Material.NAME_TAG),
         )
         CommandType.PLAY_SOUND -> listOf(
             field("sound", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND, Material.NOTE_BLOCK),
             field("volume", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME, Material.JUKEBOX),
             field("pitch", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH, Material.NOTE_BLOCK),
+            field("soundScope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, Material.GLOBE_BANNER_PATTERN,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { displaySoundScope(it.string("soundScope", "CONTEXT")) },
+            field("soundPosition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.soundPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
         )
         CommandType.APPLY_EFFECT -> listOf(
             field(
@@ -2178,23 +2339,6 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CAMERA_SHAKE_SECONDS,
             ),
             field("shakeType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SHAKE_TYPE, Material.COMPASS) { displayShakeType(it.string("shakeType")) },
-        )
-        CommandType.EQUIP_ITEM -> listOf(
-            field(
-                "target",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
-                Material.PLAYER_HEAD,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EQUIP_TARGET,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EQUIP_TARGET,
-            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
-            field("slot", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT, Material.ARMOR_STAND) { displayEquipmentSlot(it.string("slot")) },
-            field(
-                "item",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM,
-                Material.CHEST,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EQUIP_ITEM,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EQUIP_ITEM,
-            ),
         )
         CommandType.BLOCK_OPERATION -> listOf(
             field(
@@ -2277,10 +2421,13 @@ object EditorMenuLayout {
             field("diskId", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK, Material.MUSIC_DISC_13),
         )
         CommandType.VARIABLE -> listOf(
-            field("scope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SCOPE, Material.ENDER_CHEST) { displayVariableScope(it.string("scope", "TEMPORARY")) },
+            field("operation", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.REDSTONE) { displayVariableOperation(it.string("operation")) },
             field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG),
             field("type", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) { displayVariableType(it.string("type")) },
-            field("operation", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.REDSTONE) { displayVariableOperation(it.string("operation")) },
+            field("changeMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.COMPARATOR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayVariableChangeMode(it.string("changeMode", "ASSIGN")) },
             field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
         )
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
@@ -2398,8 +2545,6 @@ private fun displayPosition(kind: PositionKind) = DisplayValue.Localized(when (k
     PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
     PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
     PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
-    PositionKind.TEMPORARY_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
-    PositionKind.WORLD_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
 })
 
 private fun displayFacing(kind: FacingKind) = DisplayValue.Localized(when (kind) {
@@ -2415,30 +2560,24 @@ private fun displayFacing(kind: FacingKind) = DisplayValue.Localized(when (kind)
 private fun displayCondition(value: String) = runCatching { ConditionKind.valueOf(value) }.getOrNull()
     ?.let { DisplayValue.Localized(it.key) } ?: displayUnset()
 
-private fun displayVariableScope(value: String) = DisplayValue.Localized(
-    if (value == VariableScope.WORLD.name) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
-)
-
 private fun displayVariableType(value: String) = runCatching { VariableType.valueOf(value) }.getOrNull()?.let {
     DisplayValue.Localized(when (it) {
-        VariableType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TRUE_FALSE
-        VariableType.INTEGER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INTEGER
-        VariableType.DECIMAL -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DECIMAL
-        VariableType.TEXT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-        VariableType.POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
-        VariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_REFERENCE
+        VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+        VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
     })
 } ?: displayUnset()
 
 private fun displayVariableOperation(value: String) = runCatching { VariableOperation.valueOf(value) }.getOrNull()?.let {
     DisplayValue.Localized(when (it) {
-        VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET
-        VariableOperation.ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
-        VariableOperation.SUBTRACT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SUBTRACT
-        VariableOperation.TOGGLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TOGGLE
-        VariableOperation.STORE_POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STORE_POSITION
-        VariableOperation.STORE_TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STORE_TARGET
-        VariableOperation.CLEAR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR
+        VariableOperation.DEFINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DEFINE
+        VariableOperation.CHANGE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHANGE
+    })
+} ?: displayUnset()
+
+private fun displayVariableChangeMode(value: String) = runCatching { VariableChangeMode.valueOf(value) }.getOrNull()?.let {
+    DisplayValue.Localized(when (it) {
+        VariableChangeMode.ASSIGN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN
+        VariableChangeMode.CALCULATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE
     })
 } ?: displayUnset()
 
@@ -2449,7 +2588,12 @@ private fun displayVariableValue(value: String) = when (value) {
 }
 
 private fun displayEntityAction(value: String) = DisplayValue.Localized(
-    if (value == "dismount") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE,
+    when (value) {
+        "dismount" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT
+        "equip" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT
+        "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG
+        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE
+    },
 )
 
 private fun displayBlockOperation(value: String) = DisplayValue.Localized(
@@ -2466,16 +2610,24 @@ private fun displayTextMode(value: String) = DisplayValue.Localized(when (value)
     else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHAT
 })
 
-private fun displayEntityState(value: String) = DisplayValue.Localized(
-    if (value == "on_ground") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ON_GROUND else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SNEAKING,
-)
+private fun displayPlayerSneaking(value: String) = when (value) {
+    "true" -> DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SNEAKING)
+    "false" -> DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ON_GROUND)
+    else -> displayUnset()
+}
 
 private fun displayForSource(value: String) = DisplayValue.Localized(
     when (value) {
-        "TEMPORARY" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
         "WORLD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
         else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE
     },
+)
+
+private fun displayTagOperation(value: String) = DisplayValue.Literal(value.lowercase())
+
+private fun displaySoundScope(value: String) = DisplayValue.Localized(
+    if (value == "WORLD") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_WORLD_WIDE
+    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_POSITION,
 )
 
 private fun displayGameMode(value: String?) = when (value?.lowercase()) {

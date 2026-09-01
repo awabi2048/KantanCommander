@@ -11,8 +11,9 @@ import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.NumericExpression
+import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
-import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.mwmchanpon.api.PreparedStandaloneExport
 import me.awabi2048.mwmchanpon.api.StandaloneExportContext
@@ -28,10 +29,8 @@ class KantanStandaloneExportContributor(
         context.worlds.forEach { world ->
             plugin.variables.definitions(world.uuid).forEach { (name, value) ->
                 validateVariable(world.sourceWorldName, name, value)?.let(errors::add)
-                if (value.type == VariableType.INTEGER &&
-                    value.integerValue?.let { it !in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong() } != false
-                ) {
-                    errors += "${world.sourceWorldName}/$name: 整数初期値はバニラscoreboardの範囲外です"
+                if (value.type == VariableType.NUMBER && value.numberValue?.isFinite() != true) {
+                    errors += "${world.sourceWorldName}/$name: 数値初期値は有限値で指定してください"
                 }
             }
         }
@@ -94,15 +93,8 @@ class KantanStandaloneExportContributor(
 
     private fun validateVariable(world: String, name: String, value: WorldVariableValue): String? {
         val valid = when (value.type) {
-            VariableType.BOOLEAN -> value.booleanValue != null
-            VariableType.INTEGER -> value.integerValue != null
-            VariableType.DECIMAL -> value.decimalValue?.isFinite() == true
-            VariableType.TEXT -> value.textValue != null
-            VariableType.POSITION -> value.position?.let {
-                it.x.isFinite() && it.y.isFinite() && it.z.isFinite() &&
-                    it.yaw.isFinite() && it.pitch.isFinite()
-            } == true
-            VariableType.ENTITY -> value.entityId != null
+            VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
+            VariableType.STRING -> value.stringValue != null && value.numberValue == null
         }
         return if (valid) null else "$world/$name: 変数初期値が不完全または有限値ではありません"
     }
@@ -122,21 +114,82 @@ class KantanStandaloneExportContributor(
         val graph = script.graph.deepCopy()
         fun rewrite(current: me.awabi2048.kantancommander.model.CommandGraph) {
             current.nodes.values.forEach { node ->
-                if (node.type == CommandType.VARIABLE &&
-                    node.string("scope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name
-                ) {
+                if (node.type == CommandType.VARIABLE) {
                     node.params["name"] = "${namespace}_${node.string("name")}"
                 }
-                if (node.type == CommandType.CONDITION &&
-                    node.string("variableScope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name
-                ) {
+                if (node.type == CommandType.CONDITION && node.string("kind") == "VARIABLE_STATE") {
                     node.params["variable"] = "${namespace}_${node.string("variable")}"
+                }
+                if (node.type == CommandType.FOR_START) {
+                    listOf("start", "end", "step").forEach { field ->
+                        if (node.string("${field}Source", "FIXED") == "WORLD") {
+                            node.params["${field}Value"] = "${namespace}_${node.string("${field}Value")}"
+                        }
+                    }
+                }
+                node.targetSpec = namespaceTarget(node.targetSpec, namespace)
+                node.secondaryTargetSpec = namespaceTarget(node.secondaryTargetSpec, namespace)
+                node.destinationTargetSpec = namespaceTarget(node.destinationTargetSpec, namespace)
+                node.contextOverride = node.contextOverride?.let { context ->
+                    context.copy(
+                        executor = namespaceTarget(context.executor, namespace),
+                        target = namespaceTarget(context.target, namespace),
+                    )
+                }
+                val operation = node.string("operation", VariableOperation.DEFINE.name)
+                node.params.keys.toList().forEach { key ->
+                    val raw = node.params[key] ?: return@forEach
+                    node.params[key] = when {
+                        node.type == CommandType.VARIABLE && key == "value" &&
+                            operation == VariableOperation.CHANGE.name &&
+                            node.string("changeMode", "ASSIGN") == "CALCULATE" -> namespaceExpression(raw, namespace)
+                        key in DIRECT_VARIABLE_FIELDS &&
+                            node.type == CommandType.CONDITION &&
+                            node.string("kind") == "VARIABLE_STATE" -> "${namespace}_$raw"
+                        key in REGISTRY_FIELDS || key in NON_TEXT_FIELDS -> raw
+                        else -> namespaceTemplate(raw, namespace) ?: raw
+                    }
                 }
                 node.snapshot?.let(::rewrite)
             }
         }
         rewrite(graph)
         return script.copy(graph = graph)
+    }
+
+    private fun namespaceTarget(
+        target: me.awabi2048.kantancommander.model.TargetSpec?,
+        namespace: String,
+    ): me.awabi2048.kantancommander.model.TargetSpec? = target?.copy(
+        tag = namespaceTemplate(target.tag, namespace),
+        name = namespaceTemplate(target.name, namespace),
+    )
+
+    private fun namespaceTemplate(raw: String?, namespace: String): String? = raw?.let {
+        TEMPLATE_REFERENCE.replace(it) { match ->
+            "${'$'}{${namespace}_${match.groupValues[1]}}"
+        }
+    }
+
+    private fun namespaceExpression(raw: String, namespace: String): String {
+        val parsed = NumericExpression.parse(raw).expression ?: return raw
+        return parsed.references
+            .filterNot { it.startsWith("$") }
+            .fold(raw) { expression, reference ->
+                Regex("(?<![a-z0-9_.-])${Regex.escape(reference)}(?![a-z0-9_.-])")
+                    .replace(expression, "${namespace}_$reference")
+            }
+    }
+
+    private companion object {
+        val TEMPLATE_REFERENCE = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}")
+        val DIRECT_VARIABLE_FIELDS = setOf("variable")
+        val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId")
+        val NON_TEXT_FIELDS = setOf(
+            "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
+            "tagOperation", "soundScope", "shakeType", "startSource", "endSource", "stepSource",
+            "inclusiveEnd", "overwrite", "inverted",
+        )
     }
 }
 
@@ -248,31 +301,9 @@ internal class PreparedKantanExport(
         "#timer_${scriptId.replace("-", "")}"
 
     private fun initializeVariable(dimension: String, name: String, value: WorldVariableValue): String {
-        val holder = VanillaScoreNames.variableHolder(name, temporary = false)
         return when (value.type) {
-            VariableType.BOOLEAN ->
-                "scoreboard players set $holder kc_vars ${if (value.booleanValue == true) 1 else 0}"
-            VariableType.INTEGER -> {
-                val number = value.integerValue ?: 0L
-                require(number in Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()) {
-                    "world variable $name exceeds the vanilla scoreboard integer range"
-                }
-                "scoreboard players set $holder kc_vars $number"
-            }
-            VariableType.DECIMAL ->
-                storageSet(name, "${value.decimalValue ?: 0.0}d")
-            VariableType.TEXT ->
-                storageSet(name, "\"${escapeNbt(value.textValue.orEmpty())}\"")
-            VariableType.POSITION -> {
-                val position = requireNotNull(value.position) { "world variable $name has no position" }
-                storageSet(
-                    name,
-                    "{position:[${position.x}d,${position.y}d,${position.z}d]," +
-                        "rotation:[${position.yaw}f,${position.pitch}f]}",
-                )
-            }
-            VariableType.ENTITY ->
-                storageSet(name, uuidSnbt(value.entityId ?: UUID(0L, 0L)))
+            VariableType.NUMBER -> storageSet(name, "${value.numberValue ?: 0.0}d")
+            VariableType.STRING -> storageSet(name, "\"${escapeNbt(value.stringValue.orEmpty())}\"")
         }
     }
 
