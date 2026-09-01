@@ -143,6 +143,20 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `entity action fields follow the selected operation allowlist`() {
+        val node = CommandType.ENTITY_ACTION.newNode()
+        fun keys(action: String): List<String> {
+            node.params["action"] = action
+            return CommandSettingsModel.visibleFields(node).map { it.key }
+        }
+
+        assertEquals(listOf("target", "action", "other", "context"), keys("ride"))
+        assertEquals(listOf("target", "action", "context"), keys("dismount"))
+        assertEquals(listOf("target", "action", "slot", "item", "overwrite", "context"), keys("equip"))
+        assertEquals(listOf("target", "action", "tagOperation", "tag", "context"), keys("tag"))
+    }
+
+    @Test
     fun `descriptor maps structured fields to shared editors`() {
         val context = CommandSettingsModel.descriptor(CommandNode(type = CommandType.CONTEXT), "position")
         assertEquals(CommandSettingEditor.POSITION, context.editor)
@@ -204,11 +218,24 @@ class CommandSettingsModelTest {
     @Test
     fun `target filter state is independent for multi-select details`() {
         val node = CommandType.GIVE_ITEM.newNode().apply {
-            targetSpec = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 12.0)
+            targetSpec = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 12.0, dx = 4.0)
         }
 
         assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "distance"))
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "range"))
         assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "sort"))
+    }
+
+    @Test
+    fun `sound parameters are configured as one visible field`() {
+        val node = CommandType.PLAY_SOUND.newNode()
+        val fields = CommandSettingsModel.visibleFields(node)
+
+        assertEquals(listOf("sound", "soundParameters", "soundScope", "soundPosition", "context"), fields.map { it.key })
+        assertFalse(fields.any { it.key == "volume" || it.key == "pitch" })
+
+        node.params["volume"] = "0.5"
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "soundParameters"))
     }
 
     @Test

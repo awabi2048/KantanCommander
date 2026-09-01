@@ -229,13 +229,16 @@ object CommandSettingsModel {
         }
         val conditionalFields = when {
             node.type == CommandType.ENTITY_ACTION -> when (node.string("action", "ride")) {
-                "ride" -> fields.filter { it.key in setOf("target", "action", "other", "context") }
+                // 操作ごとの許可リストを明示します。除外リスト方式では、別操作へ
+                // 追加した詳細項目が無関係な操作へ漏れ続けるためです。
+                "ride" -> fields.filter { it.key in setOf("target", "action", "other") }
+                "dismount" -> fields.filter { it.key in setOf("target", "action") }
                 // itemDataはメインハンドの実物から内部保存する値であり、利用者が
                 // 別途編集する設定ではありません。表示すると実物選択と手入力の
                 // 二重入口が生まれ、装備内容の正本が分岐します。
-                "equip" -> fields.filterNot { it.key in setOf("other", "itemData", "tagOperation", "tag") }
-                "tag" -> fields.filterNot { it.key in setOf("other", "slot", "item", "itemData", "overwrite") }
-                else -> fields.filterNot { it.key == "other" }
+                "equip" -> fields.filter { it.key in setOf("target", "action", "slot", "item", "overwrite") }
+                "tag" -> fields.filter { it.key in setOf("target", "action", "tagOperation", "tag") }
+                else -> fields.filter { it.key in setOf("target", "action") }
             }
             node.type == CommandType.DISPLAY_TEXT -> {
                 val withoutUnusedSubtitle = if (node.string("mode", "tellraw") == "title") {
@@ -566,6 +569,12 @@ object CommandSettingsModel {
             "destinationFacing" -> node.destinationFacingSpec != null
             "facing" -> node.contextOverride?.facing != null
             "soundPosition" -> node.soundPositionSpec != null
+            // 音量とピッチは保存上は別パラメータですが、編集入口は一つです。
+            // 旧データも正しく「設定済み」と表示できるよう、両方の実値を確認します。
+            "soundParameters" -> listOf("volume", "pitch").any { key ->
+                val value = node.params[key]
+                value != null && value.isNotBlank() && value != node.type.defaults[key]
+            }
             "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
             "condition" -> conditionDetailConfigured(node)

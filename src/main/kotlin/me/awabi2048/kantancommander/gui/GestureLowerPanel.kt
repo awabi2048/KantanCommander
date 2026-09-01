@@ -713,8 +713,8 @@ class GestureLowerPanel(
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONTEXT_INHERIT)
         choice.id == "filter:entityType" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_ENTITY_TYPE)
         choice.id == "filter:distance" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY)
-        choice.id == "filter:dx" || choice.id == "filter:dy" || choice.id == "filter:dz" ->
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_MINIMUM_DISTANCE_BODY)
+        choice.id == "filter:range" ->
+            KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_RANGE).joinToString(" ")
         choice.id == "filter:limit" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_LIMIT)
         choice.id == "filter:sort" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_SORT)
         choice.id == "filter:gameMode" -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_FILTER_GAME_MODE)
@@ -1405,8 +1405,8 @@ class GestureLowerPanel(
         GestureSettingScreen.ENTITY_ACTION -> listOf(
             SettingChoice("action:ride", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE), node.string("action", "ride") == "ride"),
             SettingChoice("action:dismount", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT), node.string("action", "ride") == "dismount"),
-            SettingChoice("action:equip", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT), node.string("action", "ride") == "equip"),
-            SettingChoice("action:tag", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG), node.string("action", "ride") == "tag"),
+            SettingChoice("action:equip", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIP), node.string("action", "ride") == "equip"),
+            SettingChoice("action:tag", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET_TAG), node.string("action", "ride") == "tag"),
         )
         GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
             "HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND,
@@ -1529,6 +1529,19 @@ class GestureLowerPanel(
         return "${format(minimum)}..${format(maximum)}"
     }
 
+    /** 対象範囲は3軸を一つの設定項目として現在値を表示します。 */
+    private fun displayTargetRange(player: Player, dx: Double?, dy: Double?, dz: Double?): String? {
+        if (dx == null && dy == null && dz == null) return null
+        fun format(value: Double?): String = value?.let {
+            if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+        }.orEmpty()
+        return listOf(
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX)}=${format(dx).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY)}=${format(dy).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)}=${format(dz).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
+        ).joinToString(" / ")
+    }
+
     /** 対象種別を木の親ノードとして表示し、詳細条件を子ノードへぶら下げます。 */
     private fun targetChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
         val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
@@ -1640,9 +1653,7 @@ class GestureLowerPanel(
                     "gameMode" -> it.gameMode
                     "entityType" -> it.entityType
                     "distance" -> displayDistance(it.minimumDistance, it.maximumDistance)
-                    "dx" -> it.dx?.toString()
-                    "dy" -> it.dy?.toString()
-                    "dz" -> it.dz?.toString()
+                    "range" -> displayTargetRange(player, it.dx, it.dy, it.dz)
                     "limit" -> it.limit?.toString()
                     "tag" -> it.tag
                     else -> it.name
@@ -1656,9 +1667,7 @@ class GestureLowerPanel(
         val filterChoices = listOf(
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
-            "dx" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX,
-            "dy" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY,
-            "dz" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ,
+            "range" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
             "limit" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             "sort" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT,
             "gameMode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE,
@@ -2170,7 +2179,7 @@ class GestureLowerPanel(
         const val POSITION_TARGET_CHOICE_Y = -0.25
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val DIALOG_EDITABLE_KEYS = setOf(
-            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "volume", "pitch",
+            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch",
             "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name", "startValue",
             "endValue", "stepValue", "condition", "variable", "value", "block", "sneaking",
         )

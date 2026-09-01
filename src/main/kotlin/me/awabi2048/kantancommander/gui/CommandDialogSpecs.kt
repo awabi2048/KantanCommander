@@ -149,6 +149,71 @@ internal object CommandDialogSpecs {
         MenuDialogInput.Text("pitch", Component.text("Pitch"), pitch.toString(), maxLength = MULTI_VALUE_MAX_LENGTH),
     )
 
+    /** 対象範囲は3軸を一つの設定項目として表示します。 */
+    fun rangeBody(player: Player, dx: Double?, dy: Double?, dz: Double?): List<Component> = listOf(
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_RANGE_BODY),
+        Component.text(
+            KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
+                mapOf("value" to rangeSummary(player, dx, dy, dz)),
+            ),
+            NamedTextColor.GRAY,
+        ),
+    )
+
+    fun rangeInputs(player: Player, dx: Double?, dy: Double?, dz: Double?): List<MenuDialogInput.Text> {
+        val maxLength = requireNotNull(targetFilter("range")).maxLength
+        return listOf(
+            MenuDialogInput.Text("dx", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX), formatOptionalNumber(dx), maxLength = maxLength),
+            MenuDialogInput.Text("dy", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY), formatOptionalNumber(dy), maxLength = maxLength),
+            MenuDialogInput.Text("dz", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ), formatOptionalNumber(dz), maxLength = maxLength),
+        )
+    }
+
+    /** 効果音の音量・ピッチを一つの設定項目として表示・入力します。 */
+    fun soundParametersBody(player: Player, volume: String, pitch: String): List<Component> = listOf(
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SOUND_PARAMETERS_BODY),
+        Component.text(
+            KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
+                mapOf(
+                    "value" to listOf(
+                        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME)}=$volume",
+                        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH)}=$pitch",
+                    ).joinToString(" / "),
+                ),
+            ),
+            NamedTextColor.GRAY,
+        ),
+    )
+
+    fun soundParametersInputs(player: Player, volume: String, pitch: String): List<MenuDialogInput.Text> = listOf(
+        MenuDialogInput.Text(
+            "volume",
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME),
+            volume,
+            maxLength = requireNotNull(field("volume")).maxLength,
+        ),
+        MenuDialogInput.Text(
+            "pitch",
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH),
+            pitch,
+            maxLength = requireNotNull(field("pitch")).maxLength,
+        ),
+    )
+
+    private fun formatOptionalNumber(value: Double?): String = value?.let {
+        if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+    }.orEmpty()
+
+    private fun rangeSummary(player: Player, dx: Double?, dy: Double?, dz: Double?): String = listOf(
+        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX)}=${formatOptionalNumber(dx).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
+        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY)}=${formatOptionalNumber(dy).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
+        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)}=${formatOptionalNumber(dz).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
+    ).joinToString(" / ")
+
     fun finiteDouble(raw: String): Double? = raw.toDoubleOrNull()?.takeIf(Double::isFinite)
 
     fun finiteFloat(raw: String): Float? = raw.toFloatOrNull()?.takeIf(Float::isFinite)
@@ -237,12 +302,8 @@ internal object CommandDialogSpecs {
                 } else null
             },
         )
-        "dx", "dy", "dz" -> Spec(
-            when (parameter) {
-                "dx" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX
-                "dy" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY
-                else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ
-            },
+        "range" -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
             64,
             { raw ->
                 val value = raw.toDoubleOrNull()
@@ -443,6 +504,7 @@ internal object CommandDialogSpecs {
             "stepValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STEP
             "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY
             "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
+            "soundParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_PARAMETERS
             "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
             "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS
             "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG
@@ -560,7 +622,7 @@ internal object CommandDialogSpecs {
     fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect")
 
     /**
-     * 入力中の文字列に近い登録IDを最大5件返します。
+     * 入力中の文字列に近い登録IDを最大12件返します。
      * Paper Dialogはキー入力ごとのコールバックを提供しないため、呼び出し側は
      * 「候補を表示」ボタン押下時の最新値を渡します。完全一致→前方一致→
      * 部分一致→編集距離の順で安定ソートし、空欄では候補を返しません。

@@ -31,6 +31,12 @@ class CommandDialogSpecsTest {
         assertNull(distance.validate("1.5"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, distance.validate("-1"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_ENTITY_TYPE_FORMAT, entityType.validate("bad id"))
+
+        val range = requireNotNull(CommandDialogSpecs.targetFilter("range"))
+        assertEquals(64, range.maxLength)
+        assertNull(range.validateInput(""))
+        assertNull(range.validate("1.5"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, range.validate("-1"))
     }
 
     @Test

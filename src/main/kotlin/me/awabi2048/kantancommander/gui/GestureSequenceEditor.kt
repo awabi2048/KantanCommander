@@ -32,6 +32,7 @@ import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskPlacement
@@ -1224,6 +1225,10 @@ class GestureSequenceEditor(
             showDisplayTimingSettingDialog(player, context, node)
             return
         }
+        if (fieldKey == "soundParameters" && node.type == CommandType.PLAY_SOUND) {
+            showSoundParametersSettingDialog(player, context, node)
+            return
+        }
         val screen = gestureSettingScreenFor(descriptor.editor)
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目は、チャットを横取りせず
@@ -1538,6 +1543,36 @@ class GestureSequenceEditor(
         }
     }
 
+    /** 対象範囲の3軸を一つのDialogで入力し、空欄はその軸の指定解除とします。 */
+    private fun beginSettingRangeInput(
+        player: Player,
+        dx: Double?,
+        dy: Double?,
+        dz: Double?,
+        result: (Double?, Double?, Double?) -> String?,
+    ) {
+        val spec = requireNotNull(CommandDialogSpecs.targetFilter("range"))
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.rangeBody(player, dx, dy, dz),
+            inputs = CommandDialogSpecs.rangeInputs(player, dx, dy, dz),
+        ) { response ->
+            val raw = listOf("dx", "dy", "dz").associateWith { key ->
+                response.textValue(key).trim().takeIf(String::isNotEmpty)
+            }
+            val validationError = raw.values
+                .filterNotNull()
+                .mapNotNull(spec::validateInput)
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val values = raw.mapValues { (_, value) -> value?.let(CommandDialogSpecs::finiteDouble) }
+            if (values.any { (key, parsed) -> raw[key] != null && parsed == null }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID)
+            }
+            result(values.getValue("dx"), values.getValue("dy"), values.getValue("dz"))
+        }
+    }
+
     private fun beginSettingInput(
         player: Player,
         spec: CommandDialogSpecs.Spec,
@@ -1592,7 +1627,7 @@ class GestureSequenceEditor(
         }
         val candidateFooterActions = if (suggestionParameter != null && CommandDialogSpecs.supportsSuggestions(suggestionParameter)) {
             listOf(MenuDialogButton(
-                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_CANDIDATES),
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
                 MenuDialogHandler { target, response ->
                     val ownerId = ownerIdFor(player)
                     if (target.uniqueId != player.uniqueId || !canOperateSharedActor(ownerId, target.uniqueId)) {
@@ -1753,6 +1788,38 @@ class GestureSequenceEditor(
         }
     }
 
+    /** 効果音の音量・ピッチを一つの設定項目として編集します。 */
+    private fun showSoundParametersSettingDialog(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+    ) {
+        val volumeSpec = requireNotNull(CommandDialogSpecs.field(node, "volume"))
+        val pitchSpec = requireNotNull(CommandDialogSpecs.field(node, "pitch"))
+        val volume = node.string("volume", "1.0")
+        val pitch = node.string("pitch", "1.0")
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.soundParametersBody(player, volume, pitch),
+            inputs = CommandDialogSpecs.soundParametersInputs(player, volume, pitch),
+        ) { response ->
+            val volumeValue = CommandDialogSpecs.normalize("volume", response.textValue("volume"))
+            val pitchValue = CommandDialogSpecs.normalize("pitch", response.textValue("pitch"))
+            val validationError = volumeSpec.validateInput(volumeValue)
+                ?: pitchSpec.validateInput(pitchValue)
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            if (!updateSettingNode(player, context, configuredFields = setOf("soundParameters")) { command ->
+                    CommandSettingsModel.setParameters(
+                        command,
+                        mapOf("volume" to volumeValue, "pitch" to pitchValue),
+                    )
+                }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            null
+        }
+    }
+
     /**
      * 複数値の設定は入力欄を分割します（座標X/Y/Z、yaw/pitchなど）。
      * 連結文字列を1欄で受けると、どの値が不正かをユーザーが特定できず、
@@ -1825,7 +1892,7 @@ class GestureSequenceEditor(
                         },
                     ),
                     cancel = MenuDialogButton(
-                        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_CANCEL),
+                        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
                         MenuDialogHandler { target, _ ->
                             if (
                                 target.uniqueId != player.uniqueId ||
@@ -2035,7 +2102,7 @@ class GestureSequenceEditor(
                         val next = modes[(modes.indexOf(current.gameMode) + 1).coerceAtLeast(0) % modes.size]
                         CommandSettingsModel.setTargetSpec(it, role, current.copy(gameMode = next))
                     }
-                    "entityType", "distance", "dx", "dy", "dz", "limit", "tag", "name" -> {
+                    "entityType", "distance", "range", "limit", "tag", "name" -> {
                         if (value == "distance") {
                             beginSettingDistanceInput(
                                 player,
@@ -2059,15 +2126,33 @@ class GestureSequenceEditor(
                             }
                             return
                         }
+                        if (value == "range") {
+                            beginSettingRangeInput(
+                                player,
+                                current.dx,
+                                current.dy,
+                                current.dz,
+                            ) { dx, dy, dz ->
+                                if (!updateSettingNode(player, settingContext) {
+                                        val latest = CommandSettingsModel.targetSpec(it, role)
+                                            ?: TargetSpec(current.kind)
+                                        CommandSettingsModel.setTargetSpec(
+                                            it,
+                                            role,
+                                            latest.copy(dx = dx, dy = dy, dz = dz),
+                                        )
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else null
+                            }
+                            return
+                        }
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = CommandDialogSpecs.targetFilter(value)
                             ?: return
                         val initial = when (value) {
                             "limit" -> current.limit?.toString()
                             "entityType" -> current.entityType
-                            "dx" -> current.dx?.toString()
-                            "dy" -> current.dy?.toString()
-                            "dz" -> current.dz?.toString()
                             "tag" -> current.tag
                             else -> current.name
                         }.orEmpty()
@@ -2079,16 +2164,12 @@ class GestureSequenceEditor(
                         ) { raw ->
                             val parsedText = raw.trim().takeIf(String::isNotEmpty)
                             val parsedLimit = parsedText?.toIntOrNull()
-                            val parsedNumber = parsedText?.toDoubleOrNull()?.takeIf(Double::isFinite)
                             if (!updateSettingNode(player, settingContext) {
                                 val latest = CommandSettingsModel.targetSpec(it, role)
                                     ?: TargetSpec(current.kind)
                                 val updated = when (value) {
                                     "entityType" -> latest.copy(entityType = parsedText)
                                     "limit" -> latest.copy(limit = parsedLimit)
-                                    "dx" -> latest.copy(dx = parsedNumber)
-                                    "dy" -> latest.copy(dy = parsedNumber)
-                                    "dz" -> latest.copy(dz = parsedNumber)
                                     "tag" -> latest.copy(tag = parsedText)
                                     else -> latest.copy(name = parsedText)
                                 }

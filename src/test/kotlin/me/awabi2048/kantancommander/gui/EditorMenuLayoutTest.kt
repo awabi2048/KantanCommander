@@ -7,6 +7,8 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class EditorMenuLayoutTest {
@@ -92,6 +94,32 @@ class EditorMenuLayoutTest {
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CAMERA_SHAKE_SECONDS,
             EditorMenuLayout.fields(CommandType.CAMERA_SHAKE).single { it.key == "seconds" }.descriptionKey,
+        )
+    }
+
+    @Test
+    fun `entity and sound layouts expose consolidated settings`() {
+        val entityFields = EditorMenuLayout.fields(CommandType.ENTITY_ACTION)
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_ITEM,
+            entityFields.single { it.key == "item" }.label,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE,
+            entityFields.single { it.key == "overwrite" }.label,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_TAG,
+            entityFields.single { it.key == "tag" }.descriptionKey,
+        )
+        assertFalse(entityFields.any { it.key == "itemData" })
+
+        val soundFields = EditorMenuLayout.fields(CommandType.PLAY_SOUND)
+        assertTrue(soundFields.any { it.key == "soundParameters" })
+        assertFalse(soundFields.any { it.key == "volume" || it.key == "pitch" })
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_PARAMETERS,
+            soundFields.single { it.key == "soundParameters" }.descriptionKey,
         )
     }
 }
