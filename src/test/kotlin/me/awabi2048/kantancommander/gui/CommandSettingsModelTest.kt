@@ -144,6 +144,41 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `gesture display timing fields expose each current value while inventory stays grouped`() {
+        val title = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
+
+        assertEquals(
+            listOf("target", "mode", "text", "subtitle", "staySeconds", "context"),
+            CommandSettingsModel.visibleFields(title).map { it.key },
+        )
+        assertEquals(
+            listOf("target", "mode", "text", "subtitle", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "context"),
+            CommandSettingsModel.gestureVisibleFields(title).map { it.key },
+        )
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN,
+            CommandSettingsModel.gestureVisibleFields(title).single { it.key == "fadeInSeconds" }.label,
+        )
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY,
+            CommandSettingsModel.gestureVisibleFields(title).single { it.key == "staySeconds" }.label,
+        )
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT,
+            CommandSettingsModel.gestureVisibleFields(title).single { it.key == "fadeOutSeconds" }.label,
+        )
+
+        val tellraw = CommandType.DISPLAY_TEXT.newNode()
+        assertEquals(
+            listOf("target", "mode", "text", "context"),
+            CommandSettingsModel.gestureVisibleFields(tellraw).map { it.key },
+        )
+    }
+
+    @Test
     fun `incomplete warnings use fixed keys for each setting tab`() {
         val display = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
         val giveItem = CommandType.GIVE_ITEM.newNode()
@@ -169,8 +204,9 @@ class CommandSettingsModelTest {
         val tellraw = CommandType.DISPLAY_TEXT.newNode()
         val sound = CommandType.PLAY_SOUND.newNode()
 
-        assertEquals("staySeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "fadeInSeconds"))
-        assertEquals("staySeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "fadeOutSeconds"))
+        assertEquals("fadeInSeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "fadeInSeconds"))
+        assertEquals("staySeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "staySeconds"))
+        assertEquals("fadeOutSeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "fadeOutSeconds"))
         assertEquals("text", CommandSettingsModel.visibleAttentionFieldKey(display, "subtitle"))
         assertEquals(null, CommandSettingsModel.visibleAttentionFieldKey(tellraw, "fadeInSeconds"))
         assertEquals("soundParameters", CommandSettingsModel.visibleAttentionFieldKey(sound, "volume"))

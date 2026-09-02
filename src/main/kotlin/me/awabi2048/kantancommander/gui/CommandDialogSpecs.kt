@@ -287,19 +287,11 @@ internal object CommandDialogSpecs {
         if (fieldKey in NAMESPACED_ID_FIELDS) it.lowercase() else it
     }
 
-    /** 表示方式ごとの説明を使い分けた表示時間入力画面の本文を生成します。 */
+    /** 表示方式ごとの説明と入力形式だけを表示する時間入力画面の本文を生成します。 */
     fun durationBody(
         player: Player,
-        fadeIn: String,
-        stay: String,
-        fadeOut: String,
         mode: String,
     ): List<Component> {
-        val current = listOf(
-            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN)}=$fadeIn",
-            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY)}=$stay",
-            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT)}=$fadeOut",
-        ).joinToString(", ")
         return listOf(
             KcI18n.component(
                 player,
@@ -308,14 +300,6 @@ internal object CommandDialogSpecs {
                 } else {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_BODY
                 },
-            ),
-            Component.text(
-                KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
-                    mapOf("value" to current),
-                ),
-                NamedTextColor.GRAY,
             ),
             Component.text(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT),

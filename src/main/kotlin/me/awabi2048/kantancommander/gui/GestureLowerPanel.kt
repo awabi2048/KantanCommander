@@ -107,7 +107,7 @@ class GestureLowerPanel(
             return buildScriptSettings(state, player, script, attention)
         }
 
-        val fields = CommandSettingsModel.visibleFields(node)
+        val fields = CommandSettingsModel.gestureVisibleFields(node)
         if (fields.isEmpty()) {
             addText(visuals, "lower-hint", 0.28, 0.20, 0.010, 160, Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS)))
             return view(GestureLowerMode.SETTINGS, elements, visuals)
@@ -123,7 +123,7 @@ class GestureLowerPanel(
             suppressGlow = suppressGlow,
         )
         // 設定タブはページ分割せず、常に全フィールドを同じ画面へ描画します。
-        // 設定項目はCommandSettingsModelで最大6項目へ整理されているため、
+        // 設定項目はCommandSettingsModelで最大8項目へ整理されているため、
         // タブを探すためのページング操作を挟まずにすべての入口へ到達できます。
         val field = fields[state.settingsTab.coerceIn(0, fields.lastIndex)]
         val descriptor = CommandSettingsModel.descriptor(node, field.key)
@@ -557,7 +557,7 @@ class GestureLowerPanel(
         attentionFields: Set<String> = emptySet(),
         suppressGlow: Boolean = false,
     ) {
-        val fields = CommandSettingsModel.visibleFields(node)
+        val fields = CommandSettingsModel.gestureVisibleFields(node)
         if (fields.isEmpty()) return
         val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
             ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
@@ -1380,7 +1380,7 @@ class GestureLowerPanel(
                 suppressGlow = suppressGlow,
             )
         }
-        val field = CommandSettingsModel.visibleFields(node).firstOrNull { it.key == fieldKey }
+        val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
         val fieldLabel = field?.let { KcI18n.text(player, it.label) } ?: fieldKey
         val fieldValue = field?.value?.invoke(node)?.render(player)
             ?: settingCurrentValue(node, context, screen, fieldKey, player)
@@ -2309,10 +2309,12 @@ class GestureLowerPanel(
         // 互いの領域へ侵入しないようにします。
         const val SETTING_VALUE_Y = 0.27
         const val SETTING_DETAIL_HINT_Y = 0.17
-        // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
-        const val SETTINGS_TAB_MAX = 6
-        const val SETTINGS_TAB_TOP_Y = 0.38
-        const val SETTINGS_TAB_PITCH = 0.11
+        // 8項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
+        // DISPLAY_TEXTの時間設定をフェードイン・表示継続時間・フェードアウトへ
+        // 分離しても、下部パネル内へ収まる寸法を維持します。
+        const val SETTINGS_TAB_MAX = 8
+        const val SETTINGS_TAB_TOP_Y = 0.40
+        const val SETTINGS_TAB_PITCH = 0.10
         const val SETTINGS_TAB_HEIGHT = 0.10
         // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。

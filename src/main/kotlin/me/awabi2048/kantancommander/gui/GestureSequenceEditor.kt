@@ -431,9 +431,8 @@ class GestureSequenceEditor(
      * 実行前検証を、下部パネルの「要確認」表示用の情報へ要約します。
      *
      * 構造化エラー（nodeId/fieldKeys）を表示上のタブへ正規化して集約するため、表示側で
-     * エラー文言を解析する必要はありません。例えば表示時間の内部3項目は1つの時間タブへ
-     * まとめます。snapshot内のエラーは主グラフのノードへ対応しないため、存在しない
-     * ノードIDは除外します。
+     * エラー文言を解析する必要はありません。表示時間の3項目もそれぞれのタブへ投影します。
+     * snapshot内のエラーは主グラフのノードへ対応しないため、存在しないノードIDは除外します。
      */
     private fun attentionState(): GestureAttentionState {
         val script = plugin.scripts.load(state.scriptId) ?: return GestureAttentionState.EMPTY
@@ -1284,7 +1283,7 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(state.scriptId) ?: return
         observedRevision = script.revision
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
-        val fields = CommandSettingsModel.visibleFields(node)
+        val fields = CommandSettingsModel.gestureVisibleFields(node)
         if (absoluteIndex !in fields.indices) return
 
         invalidateInput(player.uniqueId)
@@ -1358,9 +1357,11 @@ class GestureSequenceEditor(
             applyHeldDisk(player, context)
             return
         }
-        if (fieldKey == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
-            // 表示時間はfadeInSeconds/staySeconds/fadeOutSecondsを一組として編集し、インベントリGUIと
-            // 同じ入力欄・最大長・0以上検証を使います。
+        if (fieldKey in setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds") &&
+            node.type == CommandType.DISPLAY_TEXT
+        ) {
+            // 表示時間はGesture上では3項目に分けて現在値を示しつつ、編集時は
+            // インベントリGUIと同じ一組の入力欄・最大長・検証を使います。
             showDisplayTimingSettingDialog(player, context, node)
             return
         }
@@ -1929,9 +1930,6 @@ class GestureSequenceEditor(
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
             body = CommandDialogSpecs.durationBody(
                 player,
-                fadeIn,
-                stay,
-                fadeOut,
                 node.string("mode", "tellraw"),
             ),
             inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),

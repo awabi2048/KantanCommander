@@ -279,6 +279,46 @@ object CommandSettingsModel {
     }
 
     /**
+     * Gesture GUIで表示するフィールドを返します。
+     *
+     * Inventory GUIでは3つの時間を一つのDialogでまとめて編集しますが、Gesture GUIの
+     * 設定タブは現在値を直接確認する画面です。そのため同じ保存モデルを維持したまま、
+     * 表示だけをフェードイン・表示継続時間・フェードアウトへ展開します。展開処理を
+     * Gesture側へ複製せず、タブの順序・編集対象・設定済み表示を同じモデルで揃えます。
+     */
+    fun gestureVisibleFields(node: CommandNode): List<EditorField> =
+        visibleFields(node).flatMap { field ->
+            if (node.type == CommandType.DISPLAY_TEXT &&
+                field.key == "staySeconds" &&
+                DisplayTextTimingPolicy.supports(node)
+            ) {
+                listOf(
+                    timingField(field, "fadeInSeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
+                    timingField(field, "staySeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
+                    timingField(field, "fadeOutSeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
+                )
+            } else {
+                listOf(field)
+            }
+        }
+
+    /** 時間の現在値を、空欄なら共通の未設定表示へ変換したGesture用フィールドです。 */
+    private fun timingField(
+        base: EditorField,
+        key: String,
+        label: LocalizationKey<String>,
+    ): EditorField = base.copy(
+        key = key,
+        label = label,
+        value = { node ->
+            node.string(key)
+                .takeIf(String::isNotBlank)
+                ?.let(DisplayValue::Literal)
+                ?: DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+        },
+    )
+
+    /**
      * 下部画面の設定タブへ表示する、未完了警告の固定キーを返します。
      *
      * 検証エラーの文言や保存値から表示文字列を組み立てると、同じタブでも
@@ -320,7 +360,8 @@ object CommandSettingsModel {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISPLAY_TARGET
                 "mode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODE
                 "text", "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TEXT
-                "staySeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DURATION
+                "fadeInSeconds", "staySeconds", "fadeOutSeconds" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DURATION
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.WAIT -> when (fieldKey) {
@@ -405,14 +446,13 @@ object CommandSettingsModel {
     /**
      * 検証側の内部フィールド名を、実際に表示するタブへ正規化します。
      *
-     * 表示時間は内部では3項目、音量・ピッチは2項目ですが、下部画面では
-     * それぞれ1タブへまとめています。また非表示のsubtitleはtextタブで編集
-     * するため、検証結果だけが存在しないタブを指さないようにします。
+     * 表示時間はInventory GUIでは1項目、Gesture GUIでは3項目へ展開します。
+     * また非表示のsubtitleはtextタブで編集するため、検証結果だけが存在しない
+     * タブを指さないようにします。
      */
     fun visibleAttentionFieldKey(node: CommandNode, validationFieldKey: String): String? {
         val visibleKey = when (node.type) {
             CommandType.DISPLAY_TEXT -> when (validationFieldKey) {
-                "fadeInSeconds", "staySeconds", "fadeOutSeconds" -> "staySeconds"
                 "subtitle" -> "text"
                 else -> validationFieldKey
             }
@@ -428,7 +468,7 @@ object CommandSettingsModel {
             }
             else -> validationFieldKey
         }
-        return visibleFields(node).firstOrNull { it.key == visibleKey }?.key
+        return gestureVisibleFields(node).firstOrNull { it.key == visibleKey }?.key
     }
 
     private fun undefinedWarningKey(node: CommandNode, fieldKey: String): Nothing =
