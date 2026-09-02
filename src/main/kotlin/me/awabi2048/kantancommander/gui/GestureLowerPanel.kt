@@ -123,14 +123,23 @@ class GestureLowerPanel(
             suppressGlow = suppressGlow,
         )
         // 設定タブはページ分割せず、常に全フィールドを同じ画面へ描画します。
-        // 設定項目はCommandSettingsModelで最大8項目へ整理されているため、
+        // 設定項目はCommandSettingsModelで最大6項目へ整理されているため、
         // タブを探すためのページング操作を挟まずにすべての入口へ到達できます。
         val field = fields[state.settingsTab.coerceIn(0, fields.lastIndex)]
         val descriptor = CommandSettingsModel.descriptor(node, field.key)
         val settingContext = state.settingContext
             ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
         val displayLabel = KcI18n.text(player, field.label)
-        val value = field.value(node).render(player)
+        val displayValue = field.value(node)
+        val timingRows = (displayValue as? DisplayValue.Timing)?.rows(player)
+        val timingLayout = timingRows?.let {
+            GestureSettingValueLayout.calculate(
+                rowCount = it.size,
+                valueAnchorY = SETTING_VALUE_ANCHOR_Y,
+                detailAnchorY = SETTING_DETAIL_ANCHOR_Y,
+            )
+        }
+        val value = displayValue.render(player)
         val settingScreen = gestureSettingScreenFor(descriptor.editor)
         val settingChoices = settingScreen?.let { screen ->
             settingTreeNodes(
@@ -155,8 +164,13 @@ class GestureLowerPanel(
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
             warning = attentionWarning(player, node, field.key, attentionFields),
+            detailY = timingLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
         )
-        addValueRow(visuals, "lower-setting", SETTING_VALUE_Y, displayLabel, value)
+        if (timingRows != null && timingLayout != null) {
+            addTimingValueRows(visuals, timingRows, timingLayout)
+        } else {
+            addValueRow(visuals, "lower-setting", SETTING_VALUE_ANCHOR_Y, displayLabel, value)
+        }
 
         if (settingScreen != null) {
             // 設定木の直下は常に親画面へ表示します。子画面は、選択中の
@@ -643,14 +657,35 @@ class GestureLowerPanel(
         addText(visuals, "$id-value", valueX, y, 0.0060, 170, Component.text(value))
     }
 
+    /** 表示時間の意味を1行ずつ分離し、共通の値行レイアウトで配置します。 */
+    private fun addTimingValueRows(
+        visuals: MutableList<GestureGuiVisual>,
+        rows: List<DisplayValue.TimingRow>,
+        layout: GestureSettingValueRowsLayout,
+    ) {
+        check(rows.size == layout.rowCentersY.size) {
+            "表示時間の値行とレイアウトの行数が一致しません: ${rows.size} != ${layout.rowCentersY.size}"
+        }
+        rows.forEachIndexed { index, row ->
+            addValueRow(
+                visuals,
+                id = "lower-setting-timing-$index",
+                y = layout.rowCentersY[index],
+                label = row.label,
+                value = row.value,
+            )
+        }
+    }
+
     /**
-     * 説明ブロックを意味別の固定スロットへ配置します。
+     * 説明ブロックを意味別のスロットへ配置します。
      *
      * 常設説明は灰色1本に統一し、項目の説明（field_description）を表示します。
      * 従来の白い説明行と操作動詞行（field_action）は、内容が説明と重複するため
      * ジェスチャーGUIから外しました。候補や操作面のホバー説明は、この灰色
      * スロットをreplacesVisualIdで置き換えて同じ位置・寸法へ表示します。
      * 2行目は要確認の状態名、無ければ「詳細を持つ候補の再クリック」案内です。
+     * 複数の現在値行を表示する画面では、呼び出し側が値行数に応じたdetailYを渡します。
      */
     private fun addDescriptionRows(
         visuals: MutableList<GestureGuiVisual>,
@@ -661,7 +696,7 @@ class GestureLowerPanel(
         warning: String? = null,
         centerX: Double = 0.28,
         hoverY: Double = ACTION_DESCRIPTION_Y,
-        detailY: Double = SETTING_DETAIL_HINT_Y,
+        detailY: Double = SETTING_DETAIL_ANCHOR_Y,
     ) {
         addText(
             visuals,
@@ -1409,12 +1444,12 @@ class GestureLowerPanel(
             warning = attentionWarning(player, node, fieldKey, attentionFields),
             centerX = if (child) 0.0 else 0.28,
             hoverY = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
-            detailY = if (child) CHILD_DETAIL_HINT_Y else SETTING_DETAIL_HINT_Y,
+            detailY = if (child) CHILD_DETAIL_HINT_Y else SETTING_DETAIL_ANCHOR_Y,
         )
         addValueRow(
             visuals,
             "setting-header",
-            if (child) CHILD_HEADER_Y else SETTING_VALUE_Y,
+            if (child) CHILD_HEADER_Y else SETTING_VALUE_ANCHOR_Y,
             fieldLabel,
             fieldValue,
             labelX = if (child) -0.53 else -0.08,
@@ -2313,10 +2348,10 @@ class GestureLowerPanel(
         const val SETTING_DESCRIPTION_HOVER_ID = "setting-description-hover"
         /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます。 */
         const val DESCRIPTION_TEXT_SIZE = 0.0043
-        // 値行と詳細案内を0.10ブロック以上離し、長いTextDisplayの折返しが
-        // 互いの領域へ侵入しないようにします。
-        const val SETTING_VALUE_Y = 0.27
-        const val SETTING_DETAIL_HINT_Y = 0.17
+        // 既存の1行表示時の位置をアンカーとして保持し、複数の現在値行は
+        // GestureSettingValueLayoutでこの2点の間隔から行ピッチを算出します。
+        const val SETTING_VALUE_ANCHOR_Y = 0.27
+        const val SETTING_DETAIL_ANCHOR_Y = 0.17
         // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
         // タブの高さ0.10に対してピッチ0.11を確保し、意図された0.01の余白を維持します。
         const val SETTINGS_TAB_MAX = 6

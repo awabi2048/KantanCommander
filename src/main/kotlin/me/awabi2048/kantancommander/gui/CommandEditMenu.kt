@@ -2259,21 +2259,38 @@ private data class DetailOption(
 sealed interface DisplayValue {
     data class Literal(val value: String) : DisplayValue
     data class Localized(val key: LocalizationKey<String>) : DisplayValue
+    /** 現在値をGUI上で意味ごとの行へ分けるための表示単位です。 */
+    data class TimingRow(
+        val label: String,
+        val value: String,
+    )
+
     /** Gesture GUIの「表示時間」タブに3つの現在値を意味付きで表示します。 */
     data class Timing(
         val fadeInSeconds: String,
         val staySeconds: String,
         val fadeOutSeconds: String,
-    ) : DisplayValue
+    ) : DisplayValue {
+        fun rows(player: Player): List<TimingRow> = listOf(
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
+                fadeInSeconds,
+            ),
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
+                staySeconds,
+            ),
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
+                fadeOutSeconds,
+            ),
+        )
+    }
 
     fun render(player: Player): String = when (this) {
         is Literal -> value
         is Localized -> KcI18n.text(player, key)
-        is Timing -> listOf(
-            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN)}=${fadeInSeconds}",
-            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY)}=${staySeconds}",
-            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT)}=${fadeOutSeconds}",
-        ).joinToString(" / ")
+        is Timing -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
     }
 }
 
