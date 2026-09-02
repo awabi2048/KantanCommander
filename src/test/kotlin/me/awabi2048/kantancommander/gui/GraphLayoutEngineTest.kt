@@ -560,6 +560,32 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `nested open condition keeps insertion target on the upper merge compensation path`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueHead = GraphEditor.append(graph, CommandType.WAIT)
+        val merge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, trueHead.id, GraphEditor.Edge.NEXT, CommandType.CONDITION)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val innerPoint = requireNotNull(layout.nodePoints[inner.id])
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val expected = InsertionTarget(
+            inner.id,
+            GraphEditor.Edge.TRUE,
+            inner.id,
+            continuationId = merge.id,
+        )
+
+        // 内側条件のTRUE枝から外側MERGEまで、FALSE枝の幅を埋める上段経路にも
+        // 同じ挿入先を付与します。途中セルだけ判定が欠けると、クリック位置で
+        // 挿入可否が変わり、GestureGUIの経路表示と操作対象が分離します。
+        ((innerPoint.x + 1) until mergePoint.x).forEach { x ->
+            assertEquals(expected, layout.cells[MapPoint(x, innerPoint.y)]?.insertionTarget)
+        }
+    }
+
+    @Test
     fun `nested false add point reserves a separate parent merge column`() {
         val graph = CommandGraph.empty()
         val outer = GraphEditor.append(graph, CommandType.CONDITION)
@@ -753,5 +779,31 @@ class GraphLayoutEngineTest {
         assertEquals(null, tailPath?.insertionTarget)
         // 一方、枝末端の黄色追加アイコンは維持されるため追加導線は失われない。
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.ADD })
+    }
+
+    @Test
+    fun `for body compensation path keeps insertion target from an open condition`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val body = GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val inner = GraphEditor.insert(graph, body.id, GraphEditor.Edge.NEXT, CommandType.CONDITION)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val innerPoint = requireNotNull(layout.nodePoints[inner.id])
+        val endPoint = requireNotNull(layout.nodePoints[end.id])
+        val expected = InsertionTarget(
+            inner.id,
+            GraphEditor.Edge.TRUE,
+            inner.id,
+            continuationId = end.id,
+        )
+
+        // 内側条件のFALSE枝で広がった幅をFOR_ENDまで埋める主行にも、TRUE枝の
+        // 挿入先を引き継ぎます。空のTRUE枝だけを対象にせず、補償経路全体を
+        // 同じ操作領域にすることが目的です。
+        ((innerPoint.x + 1) until endPoint.x).forEach { x ->
+            assertEquals(expected, layout.cells[MapPoint(x, innerPoint.y)]?.insertionTarget)
+        }
     }
 }
