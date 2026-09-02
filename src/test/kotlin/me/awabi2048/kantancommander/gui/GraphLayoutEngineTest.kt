@@ -372,19 +372,19 @@ class GraphLayoutEngineTest {
         assertEquals(layout.nodePoints[start.id]?.y, layout.nodePoints[body.id]?.y)
         assertEquals(layout.nodePoints[start.id]?.y, layout.nodePoints[end.id]?.y)
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.LOOP_RETURN_PATH })
+        val startPoint = requireNotNull(layout.nodePoints[start.id])
         val bodyPoint = requireNotNull(layout.nodePoints[body.id])
+        val endPoint = requireNotNull(layout.nodePoints[end.id])
         val returnY = layout.cells.keys.filter {
             it.x == bodyPoint.x && it.y > bodyPoint.y && layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH
         }
             .minOf(MapPoint::y)
         assertEquals(
-            setOf(
-                MapPoint(bodyPoint.x - 1, returnY),
-                MapPoint(bodyPoint.x + 1, returnY),
-            ),
+            setOf(MapPoint(startPoint.x + 1, returnY), MapPoint(startPoint.x + 3, returnY)),
             layout.loopReturnArrowPoints,
         )
-        assertTrue(layout.loopReturnArrowPoints.none { it.x == bodyPoint.x })
+        assertTrue(layout.loopReturnArrowPoints.none { it.x == startPoint.x || it.x == endPoint.x })
+        assertTrue(layout.loopReturnArrowPoints.all { layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH })
         assertEquals(
             layout.loopReturnArrowPoints,
             layout.projection(MapPoint(0, 0), layout.width, layout.height).loopReturnArrowPoints,
@@ -392,7 +392,7 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `loop return arrows use horizontal middle path slots inside nested branches`() {
+    fun `loop return arrows skip boundaries and every other return path slot inside branches`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)
         val bodyCondition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
@@ -404,21 +404,37 @@ class GraphLayoutEngineTest {
         val startPoint = requireNotNull(layout.nodePoints[start.id])
         val endPoint = requireNotNull(layout.nodePoints[requireNotNull(start.pairedNodeId)])
         val returnY = layout.cells.keys.filter {
-            it.y > startPoint.y && layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH
+            it.x == startPoint.x + 1 &&
+                it.y > startPoint.y &&
+                layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH
         }
             .minOf(MapPoint::y)
-        val expectedX = layout.cells.asSequence()
-            .filter { (point, cell) ->
-                point.x in (startPoint.x + 1) until endPoint.x &&
-                    point.y in startPoint.y until returnY &&
-                    cell.kind in setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH) &&
-                    layout.cells[MapPoint(point.x - 1, point.y)]?.kind in CONNECTABLE_CELL_KINDS &&
-                    layout.cells[MapPoint(point.x + 1, point.y)]?.kind in CONNECTABLE_CELL_KINDS
-            }
-            .map { (point, _) -> point.x }
-            .toSet()
-        assertTrue(expectedX.isNotEmpty())
+        val expectedX = (startPoint.x + 1 until endPoint.x step 2).toSet()
         assertEquals(expectedX, layout.loopReturnArrowPoints.map(MapPoint::x).toSet())
+        assertTrue(layout.loopReturnArrowPoints.none { it.x == startPoint.x || it.x == endPoint.x })
+        assertTrue(layout.loopReturnArrowPoints.all { layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH })
+    }
+
+    @Test
+    fun `empty loop return arrows use the same boundary-free stride`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val layout = GraphLayoutEngine.layout(graph)
+        val startPoint = requireNotNull(layout.nodePoints[start.id])
+        val endPoint = requireNotNull(layout.nodePoints[requireNotNull(start.pairedNodeId)])
+        val returnY = layout.cells.keys.filter {
+            it.x == startPoint.x + 1 &&
+                it.y > startPoint.y &&
+                layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH
+        }
+            .minOf(MapPoint::y)
+
+        assertEquals(
+            (startPoint.x + 1 until endPoint.x step 2)
+                .map { MapPoint(it, returnY) }
+                .toSet(),
+            layout.loopReturnArrowPoints,
+        )
         assertTrue(layout.loopReturnArrowPoints.all { layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH })
     }
 

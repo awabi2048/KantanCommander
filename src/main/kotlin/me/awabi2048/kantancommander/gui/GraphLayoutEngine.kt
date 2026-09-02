@@ -56,16 +56,6 @@ internal val PATH_CELL_KINDS: Set<MapCellKind> = setOf(
     MapCellKind.LOOP_RETURN_PATH,
 )
 
-/**
- * 戻り経路矢印の起点にできる、body内の横向き経路セルです。
- * LOOP_RETURN_PATHを除外することで、入れ子forの戻り経路そのものを
- * 外側forの矢印起点として二重投影しないようにします。
- */
-private val LOOP_RETURN_ARROW_SOURCE_KINDS: Set<MapCellKind> = setOf(
-    MapCellKind.PATH,
-    MapCellKind.BRANCH_PATH,
-)
-
 internal val CONNECTABLE_CELL_KINDS: Set<MapCellKind> = PATH_CELL_KINDS + setOf(
     MapCellKind.NODE,
     MapCellKind.ADD,
@@ -103,7 +93,7 @@ data class ViewportProjection(
     val height: Int,
     val cells: Map<MapPoint, MapCell>,
     val boundaryConnections: Set<ViewportBoundaryConnection>,
-    /** body内の中間経路から垂直投影した、戻り経路上の矢印表示用論理スロットです。 */
+    /** 開始・終了セルを空け、戻り経路上へ1つおきに配置する矢印の論理スロットです。 */
     val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
     fun contains(local: MapPoint): Boolean =
@@ -124,7 +114,7 @@ data class GraphLayout(
     val nodePoints: Map<UUID, MapPoint>,
     val width: Int,
     val height: Int,
-    /** body内の中間経路を戻り経路へ投影して配置する矢印の論理座標です。 */
+    /** 開始・終了セルを空け、戻り経路上へ1つおきに配置する矢印の論理座標です。 */
     val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
     fun viewport(origin: MapPoint, width: Int, height: Int): Map<MapPoint, MapCell> =
@@ -641,11 +631,6 @@ object GraphLayoutEngine {
         private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
             putNode(x, y, start)
             val endId = start.pairedNodeId ?: return Segment(x + 2, y, start.id)
-            // bodyの再帰描画が追加するノード座標だけをスナップショットします。
-            // これにより、単純な直列ノードだけでなく、body内の条件分岐・入れ子forの
-            // ノードからも同じ戻り経路へ矢印を投影できます。開始・終了ノード自身は
-            // 戻り先を示す内部ノードではないため、スナップショットの外側に置きます。
-            val bodyNodeIdsBefore = nodePoints.keys.toSet()
             val bodyStart = start.trueNext
             val body = if (bodyStart != null && bodyStart != endId) {
                 putPath(x + 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
@@ -686,43 +671,22 @@ object GraphLayoutEngine {
             putNode(endX, y, end)
 
             val returnY = body.maxY + 2
-            val bodyHasNodes = nodePoints.keys.any { it !in bodyNodeIdsBefore }
-            if (bodyHasNodes) {
-                // ノードの中心列ではなく、body内で実際にノード同士をつなぐ横経路セルを
-                // 矢印の起点にします。経路セルの左右が接続可能なら「内部ノードの中間」
-                // とみなし、その論理X列を戻り経路へ垂直投影します。これにより、分岐の
-                // 下枝や入れ子forを含めても、ノードそのものへ矢印が重ならず、経路上の
-                // 複数スロットへ等間隔に「«」を配置できます。
-                cells.asSequence()
-                    .filter { (point, cell) ->
-                        point.x in (x + 1) until endX &&
-                            point.y in y..body.maxY &&
-                            cell.kind in LOOP_RETURN_ARROW_SOURCE_KINDS &&
-                            isHorizontalBodyPathSlot(point)
-                    }
-                    .map { (point, _) -> point.x }
-                    .distinct()
-                    .forEach { arrowX ->
-                        loopReturnArrowPoints += MapPoint(arrowX, returnY)
-                    }
-            }
             for (verticalY in y + 1..returnY) {
                 putPath(endX, verticalY, MapCellKind.LOOP_RETURN_PATH)
                 putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH)
             }
             fillHorizontal(x, endX, returnY, MapCellKind.LOOP_RETURN_PATH)
+            // 矢印はbodyのノード種類や分岐形状から推測しません。水色の戻り経路そのものを
+            // 基準に、ループ開始・終了セル（x/endX）を空けたうえで、開始直後の論理スロット
+            // から1つおきに配置します。戻り経路を先に生成することで、矢印が必ず水色経路上に
+            // 乗ることも同時に保証します（例: S « ・ « ・ « E）。
+            for (arrowX in (x + 1 until endX step 2)) {
+                val arrowPoint = MapPoint(arrowX, returnY)
+                if (cells[arrowPoint]?.kind == MapCellKind.LOOP_RETURN_PATH) {
+                    loopReturnArrowPoints += arrowPoint
+                }
+            }
             return Segment(endX + 2, returnY, end.id)
-        }
-
-        /**
-         * 経路セルがノード間の水平経路に属するかを判定します。
-         * 縦枝の途中は上下だけで接続されるため、左右の接続可能セルを要求すると、
-         * 縦線や曲がり角を矢印の起点へ誤って採用しません。
-         */
-        private fun isHorizontalBodyPathSlot(point: MapPoint): Boolean {
-            val leftKind = cells[MapPoint(point.x - 1, point.y)]?.kind
-            val rightKind = cells[MapPoint(point.x + 1, point.y)]?.kind
-            return leftKind in CONNECTABLE_CELL_KINDS && rightKind in CONNECTABLE_CELL_KINDS
         }
 
         private fun fillHorizontal(

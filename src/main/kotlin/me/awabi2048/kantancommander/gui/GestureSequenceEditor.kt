@@ -972,16 +972,17 @@ class GestureSequenceEditor(
                     }
                 }
                 MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
-                    // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
-                    val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
-                    if (insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
+                    if (insertionPreview == null && cell.kind == MapCellKind.LOOP_RETURN_PATH) {
+                        // 戻り経路は処理の流れを示す表示専用要素です。クリック操作は受け付けず、
+                        // ホバー時だけ「戻って処理を繰り返します」と説明します。矢印と同じ論理セルを
+                        // 当たり判定に使うため、パン・ズーム後も水色経路上の説明がずれません。
                         elements.add(GestureGuiElement(
-                            elementId = "path:${gx}:${gy}",
+                            elementId = "path-return:$gx:$gy",
                             bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
-                            acceptedGestures = GestureGuiClickPolicy.CLICK,
+                            acceptedGestures = emptySet(),
                             hoverText = GestureGuiHoverText(
-                                text = net.kyori.adventure.text.Component.text(
-                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_INSERT),
+                                text = Component.text(
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_LOOP_RETURN_HOVER),
                                 ),
                                 x = cx,
                                 y = cy + metrics.pathThickness,
@@ -989,6 +990,25 @@ class GestureSequenceEditor(
                                 lineWidth = 120,
                             ),
                         ))
+                    } else {
+                        // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
+                        val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
+                        if (insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
+                            elements.add(GestureGuiElement(
+                                elementId = "path:${gx}:${gy}",
+                                bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
+                                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                                hoverText = GestureGuiHoverText(
+                                    text = net.kyori.adventure.text.Component.text(
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_INSERT),
+                                    ),
+                                    x = cx,
+                                    y = cy + metrics.pathThickness,
+                                    size = 0.0055,
+                                    lineWidth = 120,
+                                ),
+                            ))
+                        }
                     }
                 }
             }
@@ -1023,9 +1043,9 @@ class GestureSequenceEditor(
             ))
         }
 
-        // 戻り経路の矢印は、レイアウトエンジンが求めた内部ノードとの交点だけへ
-        // 配置します。論理座標から投影するため、ズーム・パン後も水色経路上の
-        // 等間隔なスロットと矢印がずれません。
+        // 戻り経路の矢印は、ループ開始・終了セルを空けた1つおきの水色経路上へ
+        // 配置します。論理座標から投影するため、ズーム・パン後も矢印とホバー用の
+        // 当たり判定が同じ戻り経路セルを参照します。
         projection.loopReturnArrowPoints.forEach { localPoint ->
             val gx = state.origin.x + localPoint.x
             val gy = state.origin.y + localPoint.y
