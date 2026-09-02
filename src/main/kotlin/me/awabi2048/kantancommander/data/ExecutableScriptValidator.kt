@@ -13,6 +13,7 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
+import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.NumericExpression
@@ -249,13 +250,17 @@ object ExecutableScriptValidator {
         validateTemplate(node.string("subtitle"), node, path, "subtitle", errors, variableDefinitions)
         if (DisplayTextTimingPolicy.supports(node)) {
             listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").forEach { field ->
-                validateNumberInput(node.string(field), variableDefinitions, node, path, setOf(field), errors)
-                val value = resolvedDouble(node.string(field), variableDefinitions)
-                if (!deferNumericValidation(node.string(field), variableDefinitions) &&
-                    (value == null || value < 0.0 || value > Int.MAX_VALUE)
-                ) {
-                    errors += nodeError(node, path, setOf(field), "表示時間は0秒以上の数値で指定してください")
-                }
+                validateTickAlignedTime(
+                    node = node,
+                    path = path,
+                    field = field,
+                    raw = node.string(field),
+                    minimum = 0.0,
+                    exclusiveMinimum = false,
+                    rangeMessage = "表示時間は0秒以上86400秒以下の数値で指定してください",
+                    variableDefinitions = variableDefinitions,
+                    errors = errors,
+                )
             }
         }
     }
@@ -266,13 +271,17 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         variableDefinitions: Map<String, WorldVariableValue>?,
     ) {
-        validateNumberInput(node.string("seconds"), variableDefinitions, node, path, setOf("seconds"), errors)
-        val seconds = resolvedDouble(node.string("seconds"), variableDefinitions)
-        if (!deferNumericValidation(node.string("seconds"), variableDefinitions) &&
-            (seconds == null || !seconds.isFinite() || seconds <= 0.0 || seconds > 86_400.0)
-        ) {
-            errors += nodeError(node, path, setOf("seconds"), "待機時間は0秒より大きく86400秒以下の数値で指定してください")
-        }
+        validateTickAlignedTime(
+            node = node,
+            path = path,
+            field = "seconds",
+            raw = node.string("seconds"),
+            minimum = 0.0,
+            exclusiveMinimum = true,
+            rangeMessage = "待機時間は0秒より大きく86400秒以下の数値で指定してください",
+            variableDefinitions = variableDefinitions,
+            errors = errors,
+        )
     }
 
     private fun validateBlockOperation(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
@@ -560,6 +569,36 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, fields, "数値で入力してください")
         } else if (!deferred && definitions != null && resolvedDouble(raw, definitions) == null) {
             errors += nodeError(node, path, fields, "変数展開後の値が数値ではありません")
+        }
+    }
+
+    /** 表示時間とWAITに共通する、秒数・上限・tick単位の検証です。 */
+    private fun validateTickAlignedTime(
+        node: CommandNode,
+        path: String,
+        field: String,
+        raw: String,
+        minimum: Double,
+        exclusiveMinimum: Boolean,
+        rangeMessage: String,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        validateNumberInput(raw, variableDefinitions, node, path, setOf(field), errors)
+        val value = resolvedDouble(raw, variableDefinitions)
+        val deferred = deferNumericValidation(raw, variableDefinitions)
+        when {
+            value == null && !deferred ->
+                errors += nodeError(node, path, setOf(field), rangeMessage)
+            value != null && (
+                !value.isFinite() ||
+                    (exclusiveMinimum && value <= minimum) ||
+                    (!exclusiveMinimum && value < minimum) ||
+                    value > MAX_COMMAND_TIME_SECONDS
+                ) ->
+                errors += nodeError(node, path, setOf(field), rangeMessage)
+            value != null && !CommandValueRules.isTickAlignedSeconds(value) ->
+                errors += nodeError(node, path, setOf(field), "時間の設定は、1 tick = 0.05秒 の単位で行ってください")
         }
     }
 

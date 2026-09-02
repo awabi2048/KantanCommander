@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.model
 import org.bukkit.Material
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
+import java.math.BigDecimal
 
 /**
  * GUI・実行前検証・実行処理が共有する値の受理規則です。
@@ -13,6 +14,7 @@ import org.bukkit.Registry
  */
 object CommandValueRules {
     private val ASCII_INTEGER_PATTERN = Regex("[0-9]+")
+    private val TICK_SECONDS_DECIMAL = BigDecimal("0.05")
     // 変数名は式・テンプレートへそのまま埋め込むため、先頭を英字に限定します。
     // 数字始まりを許すと、式の数値リテラルと区別できず、GUI・実行・出力で
     // 同じ名前を解釈できなくなります。
@@ -62,7 +64,40 @@ object CommandValueRules {
     fun isEquipmentSlot(raw: String): Boolean = raw in EQUIPMENT_SLOTS
 
     fun isFiniteDoubleIn(raw: String, range: ClosedFloatingPointRange<Double>): Boolean =
-        raw.toDoubleOrNull()?.takeIf(Double::isFinite)?.let { it in range } == true
+        parseFiniteDouble(raw)?.let { it in range } == true
+
+    /** 入力文字列を、空白を除いた有限Doubleへ変換します。 */
+    fun parseFiniteDouble(raw: String): Double? =
+        raw.trim().toDoubleOrNull()?.takeIf(Double::isFinite)
+
+    /** 秒数がMinecraftのtick境界（0.05秒）の整数倍かを10進数として判定します。 */
+    fun isTickAlignedSeconds(raw: String): Boolean = runCatching {
+        BigDecimal(raw.trim()).remainder(TICK_SECONDS_DECIMAL).compareTo(BigDecimal.ZERO) == 0
+    }.getOrDefault(false)
+
+    /** 既にDoubleへ展開された秒数をtick境界へ照合します。 */
+    fun isTickAlignedSeconds(seconds: Double): Boolean =
+        seconds.isFinite() && runCatching {
+            BigDecimal.valueOf(seconds).remainder(TICK_SECONDS_DECIMAL).compareTo(BigDecimal.ZERO) == 0
+        }.getOrDefault(false)
+
+    /** tick境界に一致する秒数をMinecraftのtickへ変換します。丸めは行いません。 */
+    fun secondsToTicks(seconds: Double): Long? {
+        if (!isTickAlignedSeconds(seconds)) return null
+        return runCatching {
+            BigDecimal.valueOf(seconds)
+                .divide(TICK_SECONDS_DECIMAL)
+                .longValueExact()
+        }.getOrNull()
+    }
+
+    /** DISPLAY_TEXTの時間区分で許可する値です。 */
+    fun isDisplayTimeSeconds(seconds: Double): Boolean =
+        seconds.isFinite() && seconds in 0.0..MAX_COMMAND_TIME_SECONDS && isTickAlignedSeconds(seconds)
+
+    /** WAITで許可する値です。0秒は待機にならないため許可しません。 */
+    fun isWaitSeconds(seconds: Double): Boolean =
+        seconds.isFinite() && seconds > 0.0 && seconds <= MAX_COMMAND_TIME_SECONDS && isTickAlignedSeconds(seconds)
 
     private fun registered(raw: String, lookup: (NamespacedKey) -> Boolean): Boolean {
         val key = NamespacedKey.fromString(raw) ?: return false
@@ -70,3 +105,6 @@ object CommandValueRules {
         return runCatching { lookup(key) }.getOrDefault(false)
     }
 }
+
+/** DISPLAY_TEXT／WAITが共有する秒数の上限です。 */
+const val MAX_COMMAND_TIME_SECONDS = 86_400.0

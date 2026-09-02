@@ -34,6 +34,7 @@ import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandNode
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskPlacement
@@ -53,6 +54,7 @@ import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
@@ -1657,17 +1659,19 @@ class GestureSequenceEditor(
             player = player,
             body = CommandDialogSpecs.body(player, spec, current),
             inputs = listOf(
-                MenuDialogInput.Text(
-                    "minimum",
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
-                    format(minimum),
-                    maxLength = spec.maxLength,
+                CommandDialogSpecs.input(
+                    player = player,
+                    id = "minimum",
+                    initial = format(minimum),
+                    spec = spec,
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
                 ),
-                MenuDialogInput.Text(
-                    "maximum",
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE),
-                    format(maximum),
-                    maxLength = spec.maxLength,
+                CommandDialogSpecs.input(
+                    player = player,
+                    id = "maximum",
+                    initial = format(maximum),
+                    spec = spec,
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE),
                 ),
             ),
         ) { response ->
@@ -1677,8 +1681,8 @@ class GestureSequenceEditor(
                 .mapNotNull(spec::validateInput)
                 .firstOrNull()
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
-            val minimumValue = minimumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite)
-            val maximumValue = maximumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite)
+            val minimumValue = minimumRaw?.let(CommandDialogSpecs::finiteDouble)
+            val maximumValue = maximumRaw?.let(CommandDialogSpecs::finiteDouble)
             if ((minimumRaw != null && minimumValue == null) || (maximumRaw != null && maximumValue == null)) {
                 return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID)
             }
@@ -1765,13 +1769,13 @@ class GestureSequenceEditor(
                         val validationError = spec.validateInput(value)
                         if (validationError != null) {
                             return@MenuDialogHandler MenuActionResult.Rejected(
-                                Component.text(KcI18n.text(player, validationError), NamedTextColor.RED),
+                                validationComponent(KcI18n.text(player, validationError)),
                             )
                         }
                         val error = runCatching { onSubmit(value) }
                             .getOrElse { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT) }
                         if (error != null) {
-                            MenuActionResult.Rejected(Component.text(error, NamedTextColor.RED))
+                            MenuActionResult.Rejected(validationComponent(error))
                         } else {
                             MenuActionResult.Success(MenuUpdate.Close)
                         }
@@ -1815,6 +1819,14 @@ class GestureSequenceEditor(
             onSubmit(value)
         }
     }
+
+    /** Locale内の§カラーコードを失わず、通常の検証エラーも赤で表示します。 */
+    private fun validationComponent(error: String): Component =
+        if ('§' in error || '&' in error) {
+            LegacyComponentSerializer.legacySection().deserialize(error.replace('&', '§'))
+        } else {
+            Component.text(error, NamedTextColor.RED)
+        }
 
     /** ノード未選択時に表示するプログラム名の設定入力画面です。 */
     private fun showProgramNameDialog(player: Player) {
@@ -1869,7 +1881,7 @@ class GestureSequenceEditor(
             if (validationError != null) {
                 return@showInputDialog KcI18n.text(player, validationError)
             }
-            val seconds = requireNotNull(rawSeconds.toIntOrNull())
+            val seconds = requireNotNull(CommandValueRules.parsePositiveInt(rawSeconds))
             val updated = runCatching {
                 CommandSettingsModel.updateTimer(
                     plugin,
@@ -2047,7 +2059,7 @@ class GestureSequenceEditor(
                                 // RejectedはCC-System側で同じ入力画面を入力値付きで
                                 // 再表示するため、入力セッションを維持したまま修正できます。
                                 return@MenuDialogHandler MenuActionResult.Rejected(
-                                    Component.text(error, NamedTextColor.RED),
+                                    validationComponent(error),
                                 )
                             }
                             clearInputState(player.uniqueId, token)
@@ -2097,9 +2109,14 @@ class GestureSequenceEditor(
             body = CommandDialogSpecs.coordinateBody(player, x, y, z),
             inputs = CommandDialogSpecs.coordinateInputs(player, x, y, z),
         ) { response ->
-            val xValue = CommandDialogSpecs.finiteDouble(response.textValue("x").trim())
-            val yValue = CommandDialogSpecs.finiteDouble(response.textValue("y").trim())
-            val zValue = CommandDialogSpecs.finiteDouble(response.textValue("z").trim())
+            val rawValues = listOf("x", "y", "z").associateWith { key -> response.textValue(key).trim() }
+            val validationError = rawValues.entries
+                .mapNotNull { (key, raw) -> CommandDialogSpecs.coordinateSpec(key).validateInput(raw) }
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val xValue = CommandDialogSpecs.finiteDouble(rawValues.getValue("x"))
+            val yValue = CommandDialogSpecs.finiteDouble(rawValues.getValue("y"))
+            val zValue = CommandDialogSpecs.finiteDouble(rawValues.getValue("z"))
             if (xValue == null || yValue == null || zValue == null) {
                 return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID)
             }
@@ -2119,8 +2136,13 @@ class GestureSequenceEditor(
             body = CommandDialogSpecs.rotationBody(player, yaw, pitch),
             inputs = CommandDialogSpecs.rotationInputs(player, yaw, pitch),
         ) { response ->
-            val yawValue = CommandDialogSpecs.finiteFloat(response.textValue("yaw").trim())
-            val pitchValue = CommandDialogSpecs.finiteFloat(response.textValue("pitch").trim())
+            val rawValues = listOf("yaw", "pitch").associateWith { key -> response.textValue(key).trim() }
+            val validationError = rawValues.entries
+                .mapNotNull { (key, raw) -> CommandDialogSpecs.rotationSpec(key).validateInput(raw) }
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val yawValue = CommandDialogSpecs.finiteFloat(rawValues.getValue("yaw"))
+            val pitchValue = CommandDialogSpecs.finiteFloat(rawValues.getValue("pitch"))
             if (yawValue == null || pitchValue == null) {
                 return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID)
             }
@@ -2326,7 +2348,7 @@ class GestureSequenceEditor(
                             suggestionParameter = value.takeIf { it == "entityType" },
                         ) { raw ->
                             val parsedText = raw.trim().takeIf(String::isNotEmpty)
-                            val parsedLimit = parsedText?.toIntOrNull()
+                            val parsedLimit = parsedText?.let(CommandValueRules::parsePositiveInt)
                             if (!updateSettingNode(player, settingContext) {
                                 val latest = CommandSettingsModel.targetSpec(it, role)
                                     ?: TargetSpec(current.kind)
@@ -2524,7 +2546,7 @@ class GestureSequenceEditor(
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = when (encoded) {
                             "condition-variable" -> CommandDialogSpecs.variableName
-                            "condition-value" -> CommandDialogSpecs.conditionValue
+                            "condition-value" -> CommandDialogSpecs.conditionValueSpec(node)
                             else -> return
                         }
                         val saveKey = specSaveKey(encoded)

@@ -25,6 +25,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
@@ -554,7 +555,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             context.player,
                             context.route,
                             "value",
-                            CommandDialogSpecs.conditionValue,
+                            CommandDialogSpecs.conditionValueSpec(node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored),
                         )
                         MenuActionResult.Success(MenuUpdate.None)
                     },
@@ -1463,7 +1464,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             KcI18n.component(player, validationError)
                         )
                     }
-                    val value = requireNotNull(rawValue.toIntOrNull())
+                    val value = requireNotNull(CommandValueRules.parsePositiveInt(rawValue))
                     val updated = runCatching {
                         CommandSettingsModel.updateTimer(
                             plugin,
@@ -1707,11 +1708,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         .mapNotNull(durationSpec::validateInput)
                         .firstOrNull()
                     if (validationError != null) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
-                    val values = rawValues.mapValues { (_, value) -> requireNotNull(value.toIntOrNull()) }
                     if (!updateNode(player, route) { command ->
                         CommandSettingsModel.setParameters(
                             command,
-                            values.mapValues { (_, value) -> value.toString() },
+                            rawValues,
                         )
                     }) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     MenuActionResult.Success(MenuUpdate.Replace(route))
@@ -1820,9 +1820,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     current?.pitch ?: location.pitch,
                 ),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val yaw = CommandDialogSpecs.finiteFloat(response.textValue("yaw"))
-                    val pitch = CommandDialogSpecs.finiteFloat(response.textValue("pitch"))
-                    if (yaw == null || pitch == null || !yaw.isFinite() || !pitch.isFinite()) {
+                    val rawValues = listOf("yaw", "pitch").associateWith { key -> response.textValue(key).trim() }
+                    val validationError = rawValues.entries
+                        .mapNotNull { (key, raw) -> CommandDialogSpecs.rotationSpec(key).validateInput(raw) }
+                        .firstOrNull()
+                    if (validationError != null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                    }
+                    val yaw = CommandDialogSpecs.finiteFloat(rawValues.getValue("yaw"))
+                    val pitch = CommandDialogSpecs.finiteFloat(rawValues.getValue("pitch"))
+                    if (yaw == null || pitch == null) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID))
                     }
                     if (!updateNode(player, route) { command ->
@@ -1858,12 +1865,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 body = CommandDialogSpecs.coordinateBody(player, currentX, currentY, currentZ),
                 inputs = CommandDialogSpecs.coordinateInputs(player, currentX, currentY, currentZ),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
-                    val x = CommandDialogSpecs.finiteDouble(response.textValue("x"))
-                    val y = CommandDialogSpecs.finiteDouble(response.textValue("y"))
-                    val z = CommandDialogSpecs.finiteDouble(response.textValue("z"))
-                    if (x == null || y == null || z == null ||
-                        !x.isFinite() || !y.isFinite() || !z.isFinite()
-                    ) {
+                    val rawValues = listOf("x", "y", "z").associateWith { key -> response.textValue(key).trim() }
+                    val validationError = rawValues.entries
+                        .mapNotNull { (key, raw) -> CommandDialogSpecs.coordinateSpec(key).validateInput(raw) }
+                        .firstOrNull()
+                    if (validationError != null) {
+                        return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
+                    }
+                    val x = CommandDialogSpecs.finiteDouble(rawValues.getValue("x"))
+                    val y = CommandDialogSpecs.finiteDouble(rawValues.getValue("y"))
+                    val z = CommandDialogSpecs.finiteDouble(rawValues.getValue("z"))
+                    if (x == null || y == null || z == null) {
                         return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID))
                     }
                     if (!save(x, y, z)) {
@@ -1993,17 +2005,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }.orEmpty().let { initialOverride ?: it }
         val inputs = if (parameter == "distance") {
             listOf(
-                MenuDialogInput.Text(
-                    "minimum",
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
-                    currentSpec.minimumDistance?.toString().orEmpty(),
-                    maxLength = inputSpec.maxLength,
+                CommandDialogSpecs.input(
+                    player = player,
+                    id = "minimum",
+                    initial = currentSpec.minimumDistance?.toString().orEmpty(),
+                    spec = inputSpec,
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
                 ),
-                MenuDialogInput.Text(
-                    "maximum",
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE),
-                    currentSpec.maximumDistance?.toString().orEmpty(),
-                    maxLength = inputSpec.maxLength,
+                CommandDialogSpecs.input(
+                    player = player,
+                    id = "maximum",
+                    initial = currentSpec.maximumDistance?.toString().orEmpty(),
+                    spec = inputSpec,
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE),
                 ),
             )
         } else {
@@ -2025,7 +2039,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     val updated = when (parameter) {
                         "entityType" -> currentSpec.copy(entityType = value)
                         "tag" -> currentSpec.copy(tag = value)
-                        "limit" -> currentSpec.copy(limit = value.toIntOrNull())
+                        "limit" -> currentSpec.copy(limit = CommandValueRules.parsePositiveInt(value))
                         else -> currentSpec.copy(name = value)
                     }
                     if (!updateTargetSpec(player, route) { _ -> updated }) {
@@ -2072,8 +2086,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
                         }
                         currentSpec.copy(
-                            minimumDistance = minimumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite),
-                            maximumDistance = maximumRaw?.toDoubleOrNull()?.takeIf(Double::isFinite),
+                            minimumDistance = minimumRaw?.let(CommandDialogSpecs::finiteDouble),
+                            maximumDistance = maximumRaw?.let(CommandDialogSpecs::finiteDouble),
                         )
                     } else {
                         val raw = response.textValue(parameter)
@@ -2083,8 +2097,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (validationError != null) {
                             return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, validationError))
                         }
-                        val decimalValue = raw?.toDoubleOrNull()?.takeIf(Double::isFinite)
-                        val integerValue = raw?.toIntOrNull()
+                        val integerValue = raw?.let(CommandValueRules::parsePositiveInt)
                         when (parameter) {
                             "limit" -> currentSpec.copy(limit = integerValue)
                             "entityType" -> currentSpec.copy(entityType = raw?.let { CommandDialogSpecs.normalize(parameter, it) })

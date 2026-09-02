@@ -6,6 +6,7 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -27,6 +28,27 @@ import org.bukkit.entity.Player
  */
 internal object CommandDialogSpecs {
 
+    /**
+     * プレイヤー入力の意味を、単なるテキスト欄の見た目から分離して保持します。
+     *
+     * 同じString型のparamsでも、数量・時間・ID・任意文字列では保存前に確認すべき
+     * 契約が異なります。フィールド仕様にこの形式をメタデータとして持たせ、
+     * Inventory/Gesture双方が同じ形式・検証・案内を参照する境界にします。
+     */
+    enum class InputFormat {
+        ANY_STRING,
+        INTEGER,
+        QUANTITY,
+        NUMBER,
+        TIME,
+        RESOURCE_ID,
+        MATERIAL_ID,
+        VARIABLE_NAME,
+        TAG,
+        EQUIPMENT_SLOT,
+        NUMERIC_EXPRESSION,
+    }
+
     /** テキスト入力欄の共通仕様。 */
     data class Spec(
         /** 入力欄のラベル（入力画面の見出し・案内へ使用）。 */
@@ -36,6 +58,10 @@ internal object CommandDialogSpecs {
         val validate: (String) -> LocalizationKey<String>? = { null },
         /** trueの場合は空欄も検証関数へ渡し、必須値として扱います。 */
         val required: Boolean = false,
+        /** 入力欄へ設定される意味上の形式です。既定値は任意文字列です。 */
+        val format: InputFormat = InputFormat.ANY_STRING,
+        /** 形式・範囲を入力本文へ表示する説明キーです。 */
+        val formatHintKey: LocalizationKey<String>? = null,
     ) {
         /** GUI固有の空欄スキップを廃止し、必須／任意の契約をここで一元適用します。 */
         fun validateInput(raw: String): LocalizationKey<String>? =
@@ -88,12 +114,21 @@ internal object CommandDialogSpecs {
                 ),
             )
         }
+        spec.formatHintKey?.let { key ->
+            add(Component.text(KcI18n.text(player, key), NamedTextColor.GRAY))
+        }
     }
 
-    fun input(player: Player, id: String, initial: String, spec: Spec): MenuDialogInput.Text =
+    fun input(
+        player: Player,
+        id: String,
+        initial: String,
+        spec: Spec,
+        label: Component? = null,
+    ): MenuDialogInput.Text =
         MenuDialogInput.Text(
             id = id,
-            label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_LABEL)),
+            label = label ?: Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_LABEL)),
             initial = initial,
             maxLength = spec.maxLength,
         )
@@ -109,6 +144,7 @@ internal object CommandDialogSpecs {
             } else null
         },
         required = true,
+        format = InputFormat.TIME,
     )
 
     fun timerBody(player: Player, seconds: Int): List<Component> = listOf(
@@ -124,11 +160,12 @@ internal object CommandDialogSpecs {
     )
 
     fun timerInput(player: Player, seconds: Int): MenuDialogInput.Text =
-        MenuDialogInput.Text(
+        input(
+            player,
             id = "seconds",
-            label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTERVAL),
             initial = seconds.toString(),
-            maxLength = timerSeconds.maxLength,
+            spec = timerSeconds,
+            label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTERVAL),
         )
 
     /** 座標入力の表示・入力長・有限値判定を両GUIで共有します。 */
@@ -144,10 +181,12 @@ internal object CommandDialogSpecs {
         ),
     )
 
+    fun coordinateSpec(axis: String): Spec = finiteCoordinate(axis)
+
     fun coordinateInputs(player: Player, x: Double, y: Double, z: Double): List<MenuDialogInput.Text> = listOf(
-        MenuDialogInput.Text("x", Component.text("X"), x.toString(), maxLength = MULTI_VALUE_MAX_LENGTH),
-        MenuDialogInput.Text("y", Component.text("Y"), y.toString(), maxLength = MULTI_VALUE_MAX_LENGTH),
-        MenuDialogInput.Text("z", Component.text("Z"), z.toString(), maxLength = MULTI_VALUE_MAX_LENGTH),
+        input(player, "x", x.toString(), coordinateSpec("x"), Component.text("X")),
+        input(player, "y", y.toString(), coordinateSpec("y"), Component.text("Y")),
+        input(player, "z", z.toString(), coordinateSpec("z"), Component.text("Z")),
     )
 
     /** 回転入力も座標入力と同じく、表示と有限値判定の境界を共有します。 */
@@ -163,9 +202,11 @@ internal object CommandDialogSpecs {
         ),
     )
 
+    fun rotationSpec(axis: String): Spec = finiteRotation(axis)
+
     fun rotationInputs(player: Player, yaw: Float, pitch: Float): List<MenuDialogInput.Text> = listOf(
-        MenuDialogInput.Text("yaw", Component.text("Yaw"), yaw.toString(), maxLength = MULTI_VALUE_MAX_LENGTH),
-        MenuDialogInput.Text("pitch", Component.text("Pitch"), pitch.toString(), maxLength = MULTI_VALUE_MAX_LENGTH),
+        input(player, "yaw", yaw.toString(), rotationSpec("yaw"), Component.text("Yaw")),
+        input(player, "pitch", pitch.toString(), rotationSpec("pitch"), Component.text("Pitch")),
     )
 
     /** 対象範囲は3軸を一つの設定項目として表示します。 */
@@ -183,11 +224,11 @@ internal object CommandDialogSpecs {
     )
 
     fun rangeInputs(player: Player, dx: Double?, dy: Double?, dz: Double?): List<MenuDialogInput.Text> {
-        val maxLength = requireNotNull(targetFilter("range")).maxLength
+        val spec = requireNotNull(targetFilter("range"))
         return listOf(
-            MenuDialogInput.Text("dx", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX), formatOptionalNumber(dx), maxLength = maxLength),
-            MenuDialogInput.Text("dy", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY), formatOptionalNumber(dy), maxLength = maxLength),
-            MenuDialogInput.Text("dz", KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ), formatOptionalNumber(dz), maxLength = maxLength),
+            input(player, "dx", formatOptionalNumber(dx), spec, KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX)),
+            input(player, "dy", formatOptionalNumber(dy), spec, KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY)),
+            input(player, "dz", formatOptionalNumber(dz), spec, KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)),
         )
     }
 
@@ -211,17 +252,19 @@ internal object CommandDialogSpecs {
     )
 
     fun soundParametersInputs(player: Player, volume: String, pitch: String): List<MenuDialogInput.Text> = listOf(
-        MenuDialogInput.Text(
+        input(
+            player,
             "volume",
-            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME),
             volume,
-            maxLength = requireNotNull(field("volume")).maxLength,
+            requireNotNull(field("volume")),
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME),
         ),
-        MenuDialogInput.Text(
+        input(
+            player,
             "pitch",
-            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH),
             pitch,
-            maxLength = requireNotNull(field("pitch")).maxLength,
+            requireNotNull(field("pitch")),
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH),
         ),
     )
 
@@ -235,9 +278,9 @@ internal object CommandDialogSpecs {
         "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)}=${formatOptionalNumber(dz).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
     ).joinToString(" / ")
 
-    fun finiteDouble(raw: String): Double? = raw.toDoubleOrNull()?.takeIf(Double::isFinite)
+    fun finiteDouble(raw: String): Double? = CommandValueRules.parseFiniteDouble(raw)
 
-    fun finiteFloat(raw: String): Float? = raw.toFloatOrNull()?.takeIf(Float::isFinite)
+    fun finiteFloat(raw: String): Float? = raw.trim().toFloatOrNull()?.takeIf(Float::isFinite)
 
     /** Inventory/Gestureの両方で、保存前に同じ入力正規化を行います。 */
     fun normalize(fieldKey: String, raw: String): String = raw.trim().let {
@@ -274,30 +317,36 @@ internal object CommandDialogSpecs {
                 ),
                 NamedTextColor.GRAY,
             ),
+            Component.text(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT),
+                NamedTextColor.GRAY,
+            ),
         )
     }
 
     /** 表示時間3項目の入力欄を共通仕様から生成します。 */
     fun durationInputs(player: Player, fadeIn: String, stay: String, fadeOut: String): List<MenuDialogInput.Text> {
-        val spec = requireNotNull(field("staySeconds"))
         return listOf(
-            MenuDialogInput.Text(
+            input(
+                player,
                 "fadeInSeconds",
-                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
                 fadeIn,
-                maxLength = spec.maxLength,
+                requireNotNull(field("fadeInSeconds")),
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
             ),
-            MenuDialogInput.Text(
+            input(
+                player,
                 "staySeconds",
-                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
                 stay,
-                maxLength = spec.maxLength,
+                requireNotNull(field("staySeconds")),
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
             ),
-            MenuDialogInput.Text(
+            input(
+                player,
                 "fadeOutSeconds",
-                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
                 fadeOut,
-                maxLength = spec.maxLength,
+                requireNotNull(field("fadeOutSeconds")),
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
             ),
         )
     }
@@ -312,12 +361,13 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_ENTITY_TYPE_FORMAT
                 } else null
             },
+            format = InputFormat.RESOURCE_ID,
         )
         "distance" -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
             64,
             { raw ->
-                val value = raw.toDoubleOrNull()
+                val value = CommandValueRules.parseFiniteDouble(raw)
                 // TargetSpecへ保存する距離はDouble型の構造化値です。生の参照式を
                 // 受け付けると入力画面では成功しても、保存時にDoubleへ変換できず
                 // 消えるため、参照可能な数値欄（params保存）とは契約を分けます。
@@ -325,12 +375,13 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID
                 } else null
             },
+            format = InputFormat.NUMBER,
         )
         "range" -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
             64,
             { raw ->
-                val value = raw.toDoubleOrNull()
+                val value = CommandValueRules.parseFiniteDouble(raw)
                 // TargetSpecのdx/dy/dzは実行時に必ず有限Doubleとして保持する型付き値です。
                 // 文字列テンプレートをここで許すと、Gesture側のDouble保存時に参照式が
                 // 消えるため、型付きセレクター欄では保存可能な数値だけを受け付けます。
@@ -338,6 +389,7 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID
                 } else null
             },
+            format = InputFormat.NUMBER,
         )
         "limit" -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
@@ -345,6 +397,7 @@ internal object CommandDialogSpecs {
             { raw ->
                 if (!isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null
             },
+            format = InputFormat.QUANTITY,
         )
         "tag" -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
@@ -357,6 +410,7 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
                 } else null
             },
+            format = InputFormat.TAG,
         )
         "name" -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
@@ -368,6 +422,7 @@ internal object CommandDialogSpecs {
                     else -> null
                 }
             },
+            format = InputFormat.ANY_STRING,
         )
         else -> null
     }
@@ -380,6 +435,7 @@ internal object CommandDialogSpecs {
             if (raw.isBlank() || raw.length > 256) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_NAME_LENGTH else null
         },
         required = true,
+        format = InputFormat.ANY_STRING,
     )
 
     /** 変数名（保存名）の共通仕様。 */
@@ -392,6 +448,7 @@ internal object CommandDialogSpecs {
             } else null
         },
         required = true,
+        format = InputFormat.VARIABLE_NAME,
     )
 
     /** 符号付き整数（条件の比較値など）。 */
@@ -399,13 +456,19 @@ internal object CommandDialogSpecs {
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
         64,
         { raw -> if (raw.toLongOrNull() == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID else null },
+        format = InputFormat.INTEGER,
     )
 
     /** 条件値は参照先変数の型に従うため、入力欄では文字列を保持します。 */
     val conditionValue = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
         512,
+        format = InputFormat.ANY_STRING,
     )
+
+    /** 条件種別に応じた比較値の形式を返し、数値条件だけを数値欄へ切り替えます。 */
+    fun conditionValueSpec(node: CommandNode): Spec =
+        field(node, "value") ?: conditionValue
 
     /**
      * コマンド種別を含めてフィールド入力仕様を解決します。
@@ -436,13 +499,19 @@ internal object CommandDialogSpecs {
                 changeMode = changeMode,
             )
         }
+        if (node.type == CommandType.CONDITION && fieldKey == "value" &&
+            node.string("kind") == me.awabi2048.kantancommander.model.ConditionKind.VARIABLE_STATE.name
+        ) {
+            return conditionNumberValue
+        }
         return when (node.type) {
             CommandType.BLOCK_OPERATION -> if (fieldKey == "block") placementBlock else field(fieldKey)
             CommandType.WAIT -> if (fieldKey == "seconds") {
-                decimalRange(
+                timeRange(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
-                    0.000001..86_400.0,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
+                    minimum = 0.0,
+                    exclusiveMinimum = true,
+                    invalidKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
                 )
             } else field(fieldKey)
             CommandType.APPLY_EFFECT -> when (fieldKey) {
@@ -455,6 +524,7 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
                     1..MAX_EFFECT_SECONDS,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_EFFECT_SECONDS_INVALID,
+                    format = InputFormat.TIME,
                 )
                 else -> field(fieldKey)
             }
@@ -463,6 +533,7 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
                     1.0..10.0,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CAMERA_SHAKE_SECONDS_INVALID,
+                    format = InputFormat.TIME,
                 )
             } else field(fieldKey)
             else -> field(fieldKey)
@@ -479,9 +550,6 @@ internal object CommandDialogSpecs {
     internal fun isPositiveInteger(raw: String): Boolean =
         CommandValueRules.parsePositiveInt(raw) != null
 
-    private fun isNonNegativeInteger(raw: String): Boolean =
-        CommandValueRules.parseNonNegativeInt(raw) != null
-
     /** ブロックID（条件のブロック状態など）。マテリアルとして解決できることを検証します。 */
     val block = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK,
@@ -492,6 +560,7 @@ internal object CommandDialogSpecs {
             } else null
         },
         required = true,
+        format = InputFormat.MATERIAL_ID,
     )
 
     /** ブロック操作はAIRを配置できないため、条件ブロックとは別の規則を使います。 */
@@ -515,6 +584,18 @@ internal object CommandDialogSpecs {
         // ここを通常の文字列入力へ流すと、ジェスチャーGUIだけが任意文字列を
         // 保存でき、インベントリGUIとの入力契約が分岐してしまいます。
         if (fieldKey == "block") return block
+        if (fieldKey in setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")) {
+            return timeRange(
+                labelKey = when (fieldKey) {
+                    "fadeInSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN
+                    "staySeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY
+                    else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT
+                },
+                minimum = 0.0,
+                exclusiveMinimum = false,
+                invalidKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
+            )
+        }
         val labelKey = when (fieldKey) {
             "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
             "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
@@ -545,8 +626,34 @@ internal object CommandDialogSpecs {
             "entity", "sound", "effect", "tags", "tag" -> 64
             else -> 16
         }
+        val format = when (fieldKey) {
+            "text", "subtitle", "customName", "itemData", "value", "shakeType" -> InputFormat.ANY_STRING
+            "entity", "sound", "effect" -> InputFormat.RESOURCE_ID
+            "tags", "tag" -> InputFormat.TAG
+            "count" -> InputFormat.QUANTITY
+            "level" -> InputFormat.INTEGER
+            "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds" -> InputFormat.TIME
+            "volume", "pitch", "intensity" -> InputFormat.NUMBER
+            "slot" -> InputFormat.EQUIPMENT_SLOT
+            else -> InputFormat.ANY_STRING
+        }
+        val formatHintKey = when (fieldKey) {
+            "text", "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TEXT_BODY
+            "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VALUE_BODY
+            "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_ENTITY_BODY
+            "tags", "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TAGS_BODY
+            "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SOUND_BODY
+            "volume" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY
+            "pitch" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH_BODY
+            "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_EFFECT_BODY
+            "level" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_LEVEL_BODY
+            "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SECONDS_BODY
+            "intensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_INTENSITY_BODY
+            "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_EQUIPMENT_SLOT_BODY
+            "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_COUNT_BODY
+            else -> null
+        }
         val positiveInteger = fieldKey in setOf("count", "level", "seconds")
-        val nonNegativeInteger = fieldKey in setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
         val required = fieldKey in setOf(
             "block", "entity", "sound", "effect", "count", "level", "seconds",
             "volume", "pitch", "intensity", "shakeType", "slot", "tag",
@@ -556,8 +663,6 @@ internal object CommandDialogSpecs {
             when {
                 positiveInteger && !isNumericTemplate(raw) && !isPositiveInteger(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID
-                nonNegativeInteger && !isNumericTemplate(raw) && !isNonNegativeInteger(raw) ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID
                 fieldKey in setOf("entity", "sound", "effect") && !registeredFieldId(fieldKey, raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 fieldKey in setOf("tags", "tag") && VariableTemplate.hasMalformedReference(raw) ->
@@ -577,10 +682,81 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 else -> null
             }
-        }, required = required)
+        }, required = required, format = format, formatHintKey = formatHintKey)
     }
 
-    /** 正の整数を受け付ける仕様を、個数・秒数・上限で共有します。 */
+    /** 有限の座標値を受け付ける仕様です。座標・回転の各入力欄で共有します。 */
+    private fun finiteCoordinate(axis: String): Spec = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        MULTI_VALUE_MAX_LENGTH,
+        validate = { raw ->
+            if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+    )
+
+    private fun finiteRotation(axis: String): Spec = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        MULTI_VALUE_MAX_LENGTH,
+        validate = { raw ->
+            if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+    )
+
+    /** Minecraftのtickで表現できる秒数を検証する仕様です。 */
+    private fun timeRange(
+        labelKey: LocalizationKey<String>,
+        minimum: Double,
+        exclusiveMinimum: Boolean,
+        invalidKey: LocalizationKey<String>,
+    ): Spec = Spec(
+        labelKey,
+        16,
+        validate = { raw ->
+            if (isNumericTemplate(raw)) {
+                null
+            } else {
+                val value = CommandValueRules.parseFiniteDouble(raw)
+                when {
+                    value == null ||
+                        (exclusiveMinimum && value <= minimum) ||
+                        (!exclusiveMinimum && value < minimum) ||
+                        value > MAX_COMMAND_TIME_SECONDS -> invalidKey
+                    !CommandValueRules.isTickAlignedSeconds(raw) ->
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID
+                    else -> null
+                }
+            }
+        },
+        required = true,
+        format = InputFormat.TIME,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT,
+    )
+
+    /** 条件の数値比較値は、数値または単一の数値変数参照だけを許可します。 */
+    private val conditionNumberValue = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        512,
+        validate = { raw ->
+            if (VariableTemplate.hasMalformedReference(raw) ||
+                (!isNumericTemplate(raw) && CommandValueRules.parseFiniteDouble(raw) == null)
+            ) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_VALUE_BODY,
+    )
+
+    /** 正の整数を受け付ける仕様を、数量・整数秒数・上限で共有します。 */
     private fun positiveInteger(labelKey: LocalizationKey<String>): Spec = Spec(
         labelKey,
         16,
@@ -588,6 +764,7 @@ internal object CommandDialogSpecs {
             if (!isNumericTemplate(raw) && !isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null
         },
         required = true,
+        format = InputFormat.QUANTITY,
     )
 
     /** 実行側のInt範囲まで入力時に確認し、保存後にだけ失敗する値を作りません。 */
@@ -595,25 +772,32 @@ internal object CommandDialogSpecs {
         labelKey: LocalizationKey<String>,
         range: IntRange,
         invalidKey: LocalizationKey<String>,
+        format: InputFormat = InputFormat.INTEGER,
     ): Spec = Spec(labelKey, 16, validate = { raw ->
         val value = CommandValueRules.parsePositiveInt(raw)
         if (!isNumericTemplate(raw) && (value == null || value !in range)) invalidKey else null
-    }, required = true)
+    }, required = true, format = format)
 
     /** 小数を許可する実行値は、整数仕様へ誤って流さないよう専用化します。 */
     private fun decimalRange(
         labelKey: LocalizationKey<String>,
         range: ClosedFloatingPointRange<Double>,
         invalidKey: LocalizationKey<String>,
+        format: InputFormat = InputFormat.NUMBER,
     ): Spec = Spec(labelKey, 16, validate = { raw ->
-        val value = raw.toDoubleOrNull()
+        val value = CommandValueRules.parseFiniteDouble(raw)
         if (!isNumericTemplate(raw) && (value == null || !value.isFinite() || value !in range)) invalidKey else null
-    }, required = true)
+    }, required = true, format = format)
 
     /** 変数操作の保存値を、実行時の式評価と同じ型境界で検証します。 */
     private fun variableValue(type: VariableType?, operation: VariableOperation, changeMode: VariableChangeMode): Spec {
         val base = requireNotNull(field("value"))
-        return base.copy(required = true, validate = { raw ->
+        val format = when {
+            type == VariableType.NUMBER && changeMode == VariableChangeMode.CALCULATE -> InputFormat.NUMERIC_EXPRESSION
+            type == VariableType.NUMBER -> InputFormat.NUMBER
+            else -> InputFormat.ANY_STRING
+        }
+        return base.copy(required = true, format = format, validate = { raw ->
             when {
                 type == null && changeMode == VariableChangeMode.CALCULATE ->
                     numericExpressionValidationError(raw)
@@ -621,7 +805,7 @@ internal object CommandDialogSpecs {
                     if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
                 type == VariableType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
                     numericExpressionValidationError(raw)
-                } else if (isNumericTemplate(raw) || raw.toDoubleOrNull()?.isFinite() == true
+                } else if (isNumericTemplate(raw) || CommandValueRules.parseFiniteDouble(raw) != null
                 ) {
                     null
                 } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT

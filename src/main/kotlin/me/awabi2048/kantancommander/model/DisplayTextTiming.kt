@@ -8,34 +8,52 @@ package me.awabi2048.kantancommander.model
  * Bukkit APIがないため、実行時は3区分の合計を表示ライフサイクルとして扱います。
  */
 data class DisplayTextTiming(
-    val fadeInSeconds: Int,
-    val staySeconds: Int,
-    val fadeOutSeconds: Int,
+    val fadeInSeconds: Double,
+    val staySeconds: Double,
+    val fadeOutSeconds: Double,
 ) {
-    val totalSeconds: Long
+    val totalSeconds: Double
         get() = listOf(fadeInSeconds, staySeconds, fadeOutSeconds)
-            .sumOf { it.coerceAtLeast(0).toLong() }
+            .sumOf { it.coerceAtLeast(0.0) }
 
     val fadeInTicks: Long
-        get() = fadeInSeconds.coerceAtLeast(0).toLong() * TICKS_PER_SECOND
+        get() = safeTicks(fadeInSeconds)
 
     val stayTicks: Long
-        get() = staySeconds.coerceAtLeast(0).toLong() * TICKS_PER_SECOND
+        get() = safeTicks(staySeconds)
 
     val fadeOutTicks: Long
-        get() = fadeOutSeconds.coerceAtLeast(0).toLong() * TICKS_PER_SECOND
+        get() = safeTicks(fadeOutSeconds)
 
     val totalTicks: Long
-        get() = totalSeconds * TICKS_PER_SECOND
+        get() = fadeInTicks + stayTicks + fadeOutTicks
+
+    /** Bukkit Title APIへ渡す時間も、tickから変換して秒の切り捨てを防ぎます。 */
+    val fadeInDuration: java.time.Duration
+        get() = java.time.Duration.ofMillis(fadeInTicks * MILLIS_PER_TICK)
+
+    val stayDuration: java.time.Duration
+        get() = java.time.Duration.ofMillis(stayTicks * MILLIS_PER_TICK)
+
+    val fadeOutDuration: java.time.Duration
+        get() = java.time.Duration.ofMillis(fadeOutTicks * MILLIS_PER_TICK)
 
     companion object {
         fun from(node: CommandNode): DisplayTextTiming = DisplayTextTiming(
-            // 実行前検証は符号なし整数を要求します。ここでも同じパーサーを使い、
-            // 直接呼び出された場合に「+1」だけ別の値として解釈しないようにします。
-            fadeInSeconds = CommandValueRules.parseNonNegativeInt(node.string("fadeInSeconds")) ?: 1,
-            staySeconds = CommandValueRules.parseNonNegativeInt(node.string("staySeconds")) ?: 3,
-            fadeOutSeconds = CommandValueRules.parseNonNegativeInt(node.string("fadeOutSeconds")) ?: 1,
+            fadeInSeconds = value(node, "fadeInSeconds", 1.0),
+            staySeconds = value(node, "staySeconds", 3.0),
+            fadeOutSeconds = value(node, "fadeOutSeconds", 1.0),
         )
+
+        private fun value(node: CommandNode, key: String, fallback: Double): Double =
+            CommandValueRules.parseFiniteDouble(node.string(key))
+                ?.takeIf(CommandValueRules::isDisplayTimeSeconds)
+                ?: fallback
+
+        private fun safeTicks(seconds: Double): Long =
+            CommandValueRules.secondsToTicks(seconds.coerceAtLeast(0.0)) ?: 0L
+
+        private const val MILLIS_PER_TICK = 50L
     }
 }
 

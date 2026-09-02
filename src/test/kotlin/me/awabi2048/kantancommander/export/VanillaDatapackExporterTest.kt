@@ -764,6 +764,34 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `title export preserves fractional tick durations`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "fractional-title")
+        val title = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        title.params.putAll(
+            mapOf(
+                "mode" to "title",
+                "text" to "hello",
+                "fadeInSeconds" to "0.05",
+                "staySeconds" to "0.15",
+                "fadeOutSeconds" to "0.25",
+            )
+        )
+
+        val success = assertInstanceOf(
+            ExportResult.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+        val function = success.directory
+            .resolve("data/kantan/function")
+            .walkTopDown()
+            .first { it.isFile && it.readText().contains("title @s times 1 3 5") }
+            .readText()
+
+        assertTrue(function.contains("title @s times 1 3 5"))
+    }
+
+    @Test
     fun `numeric calculation is lowered to scoreboard operations`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "overflow-guards")

@@ -22,6 +22,7 @@ internal class TimedActionBarService(private val plugin: KantanCommanderPlugin) 
 
     private val generations = mutableMapOf<UUID, Long>()
     private val tasks = mutableMapOf<UUID, BukkitTask>()
+    private val clearTasks = mutableMapOf<UUID, BukkitTask>()
 
     /** 新しい表示を開始し、同じプレイヤーの前回表示を終了させます。 */
     fun show(player: Player, text: Component, timing: DisplayTextTiming) {
@@ -31,17 +32,15 @@ internal class TimedActionBarService(private val plugin: KantanCommanderPlugin) 
         player.sendActionBar(text)
 
         if (timing.totalTicks <= 0L) {
-            lateinit var clearTask: BukkitTask
-            clearTask = plugin.server.scheduler.runTask(plugin, Runnable {
+            val clearTask = plugin.server.scheduler.runTaskLater(plugin, Runnable {
                 if (!isCurrent(player, generation)) return@Runnable
                 if (player.isOnline) player.sendActionBar(Component.empty())
-                finish(playerId, generation, clearTask)
-            })
-            tasks[playerId] = clearTask
+                finish(playerId, generation)
+            }, 1L)
+            clearTasks[playerId] = clearTask
             return
         }
 
-        var elapsedTicks = 0L
         lateinit var refreshTask: BukkitTask
         refreshTask = plugin.server.scheduler.runTaskTimer(
             plugin,
@@ -51,29 +50,32 @@ internal class TimedActionBarService(private val plugin: KantanCommanderPlugin) 
                     return@Runnable
                 }
                 if (!player.isOnline) {
-                    finish(playerId, generation, refreshTask)
+                    finish(playerId, generation)
                     return@Runnable
                 }
-                elapsedTicks += REFRESH_TICKS
-                if (elapsedTicks >= timing.totalTicks) {
-                    player.sendActionBar(Component.empty())
-                    finish(playerId, generation, refreshTask)
-                } else {
-                    // クライアント既定の保持時間を超える設定でも表示を維持します。
-                    player.sendActionBar(text)
-                }
+                // クライアント既定の保持時間を超える設定でも表示を維持します。
+                // 終了時刻は別のrunTaskLaterで管理し、20tick刻みの再送によって
+                // 0.05秒単位の設定が最大1秒ずれることを防ぎます。
+                player.sendActionBar(text)
             },
             REFRESH_TICKS,
             REFRESH_TICKS,
         )
         tasks[playerId] = refreshTask
+        val clearTask = plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            if (!isCurrent(player, generation)) return@Runnable
+            if (player.isOnline) player.sendActionBar(Component.empty())
+            finish(playerId, generation)
+        }, timing.totalTicks)
+        clearTasks[playerId] = clearTask
     }
 
     /** 他の表示方式へ切り替える際に、保留中の再送を停止します。 */
     fun cancel(player: Player, clear: Boolean) {
         val playerId = player.uniqueId
-        val hadState = tasks.containsKey(playerId) || generations.containsKey(playerId)
+        val hadState = tasks.containsKey(playerId) || clearTasks.containsKey(playerId) || generations.containsKey(playerId)
         tasks.remove(playerId)?.cancel()
+        clearTasks.remove(playerId)?.cancel()
         if (hadState) nextGeneration(playerId)
         if (clear && player.isOnline) player.sendActionBar(Component.empty())
     }
@@ -87,13 +89,12 @@ internal class TimedActionBarService(private val plugin: KantanCommanderPlugin) 
         return next
     }
 
-    private fun finish(playerId: UUID, generation: Long, task: BukkitTask) {
+    private fun finish(playerId: UUID, generation: Long) {
         if (generations[playerId] != generation) {
-            task.cancel()
             return
         }
-        if (tasks[playerId] === task) tasks.remove(playerId)
+        tasks.remove(playerId)?.cancel()
+        clearTasks.remove(playerId)?.cancel()
         generations.remove(playerId)
-        task.cancel()
     }
 }

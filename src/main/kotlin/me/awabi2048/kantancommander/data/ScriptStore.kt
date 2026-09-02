@@ -9,6 +9,7 @@ import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
+import java.math.BigDecimal
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -601,7 +602,16 @@ class ScriptStore(
     private fun migrateTicksParam(params: JsonObject?, oldKey: String, newKey: String) {
         val raw = params?.get(oldKey)?.asString ?: return
         val ticks = raw.toLongOrNull() ?: return
-        val seconds = if (ticks <= 0L) 0L else (ticks + 19L) / 20L
+        // 旧形式のtick値は、整数秒へ切り上げると1tick=0.05秒の設定を失います。
+        // 現行形式は小数秒を正本にできるため、丸めずに1tick単位の値へ移行します。
+        val seconds = if (ticks <= 0L) {
+            "0"
+        } else {
+            BigDecimal.valueOf(ticks)
+                .divide(BigDecimal.valueOf(20L))
+                .stripTrailingZeros()
+                .toPlainString()
+        }
         params.addProperty(newKey, seconds)
         params.remove(oldKey)
     }

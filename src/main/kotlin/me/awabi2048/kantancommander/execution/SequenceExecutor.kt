@@ -26,7 +26,6 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DisplayTextTiming
-import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.model.effectiveContextSource
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
@@ -38,7 +37,6 @@ import org.bukkit.entity.Entity
 import org.bukkit.entity.LivingEntity
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
-import java.time.Duration
 import java.util.UUID
 import java.util.logging.Level
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
@@ -125,9 +123,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.WAIT -> {
                 // 保存・入力値は秒を正本とし、Minecraftのスケジューラ境界でだけtickへ変換します。
                 val seconds = resolveNumber(node.string("seconds"), session)
-                    ?.takeIf { it.isFinite() && it > 0.0 && it <= 86_400.0 }
+                    ?.takeIf(CommandValueRules::isWaitSeconds)
                     ?: return stop(session, script, node.id, depth, "invalid_wait_seconds", done)
-                val waitTicks = kotlin.math.ceil(seconds * TICKS_PER_SECOND).toLong().coerceAtLeast(1L)
+                val waitTicks = CommandValueRules.secondsToTicks(seconds)
+                    ?.takeIf { it >= 1L }
+                    ?: return stop(session, script, node.id, depth, "invalid_wait_seconds", done)
                 plugin.server.scheduler.runTaskLater(
                     plugin,
                     Runnable { next(node.next, true) },
@@ -346,9 +346,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                                 text,
                                 subtitle,
                                 Title.Times.times(
-                                    Duration.ofSeconds(timing.fadeInSeconds.coerceAtLeast(0).toLong()),
-                                    Duration.ofSeconds(timing.staySeconds.coerceAtLeast(0).toLong()),
-                                    Duration.ofSeconds(timing.fadeOutSeconds.coerceAtLeast(0).toLong()),
+                                    timing.fadeInDuration,
+                                    timing.stayDuration,
+                                    timing.fadeOutDuration,
                                 ),
                             ))
                     }
@@ -359,9 +359,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                             Component.empty(),
                             text,
                             Title.Times.times(
-                                Duration.ofSeconds(timing.fadeInSeconds.coerceAtLeast(0).toLong()),
-                                Duration.ofSeconds(timing.staySeconds.coerceAtLeast(0).toLong()),
-                                Duration.ofSeconds(timing.fadeOutSeconds.coerceAtLeast(0).toLong()),
+                                timing.fadeInDuration,
+                                timing.stayDuration,
+                                timing.fadeOutDuration,
                             ),
                         ))
                     }
@@ -851,12 +851,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun displayTiming(node: CommandNode, session: ExecutionSession): DisplayTextTiming {
-        fun value(key: String, fallback: Int): Int =
-            resolveNumber(node.string(key), session)?.coerceIn(0.0, Int.MAX_VALUE.toDouble())?.toInt() ?: fallback
+        fun value(key: String, fallback: Double): Double =
+            resolveNumber(node.string(key), session)
+                ?.takeIf(CommandValueRules::isDisplayTimeSeconds)
+                ?: fallback
         return DisplayTextTiming(
-            value("fadeInSeconds", 1),
-            value("staySeconds", 3),
-            value("fadeOutSeconds", 1),
+            value("fadeInSeconds", 1.0),
+            value("staySeconds", 3.0),
+            value("fadeOutSeconds", 1.0),
         )
     }
 

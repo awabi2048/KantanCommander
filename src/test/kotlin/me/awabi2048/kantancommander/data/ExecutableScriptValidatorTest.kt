@@ -283,6 +283,65 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `display and wait durations require whole tick values`() {
+        val displayScript = DiskScript(name = "fractional-display", owner = UUID.randomUUID())
+        val display = GraphEditor.append(displayScript.graph, CommandType.DISPLAY_TEXT)
+        display.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        display.params.putAll(
+            mapOf(
+                "mode" to "title",
+                "fadeInSeconds" to "0.01",
+                "staySeconds" to "0.05",
+                "fadeOutSeconds" to "1",
+            )
+        )
+
+        val displayErrors = ExecutableScriptValidator.validate(displayScript)
+        assertTrue(
+            displayErrors.any {
+                it.nodeId == display.id &&
+                    it.fieldKeys == setOf("fadeInSeconds") &&
+                    it.message == "時間の設定は、1 tick = 0.05秒 の単位で行ってください"
+            },
+        )
+
+        val waitScript = DiskScript(name = "wait-boundaries", owner = UUID.randomUUID())
+        val wait = GraphEditor.append(waitScript.graph, CommandType.WAIT)
+
+        wait.params["seconds"] = "0.05"
+        assertFalse(
+            ExecutableScriptValidator.validate(waitScript).any {
+                it.nodeId == wait.id && it.fieldKeys == setOf("seconds") && it.message.contains("tick")
+            },
+        )
+
+        wait.params["seconds"] = "86400"
+        assertFalse(
+            ExecutableScriptValidator.validate(waitScript).any {
+                it.nodeId == wait.id && it.fieldKeys == setOf("seconds") && it.message.contains("86400秒以下")
+            },
+        )
+
+        wait.params["seconds"] = "86400.05"
+        assertTrue(
+            ExecutableScriptValidator.validate(waitScript).any {
+                it.nodeId == wait.id &&
+                    it.fieldKeys == setOf("seconds") &&
+                    it.message == "待機時間は0秒より大きく86400秒以下の数値で指定してください"
+            },
+        )
+
+        wait.params["seconds"] = "0.01"
+        assertTrue(
+            ExecutableScriptValidator.validate(waitScript).any {
+                it.nodeId == wait.id &&
+                    it.fieldKeys == setOf("seconds") &&
+                    it.message == "時間の設定は、1 tick = 0.05秒 の単位で行ってください"
+            },
+        )
+    }
+
+    @Test
     fun `block operations and entity deletion require their structured inputs`() {
         val script = DiskScript(name = "new-operations", owner = UUID.randomUUID())
         GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION)

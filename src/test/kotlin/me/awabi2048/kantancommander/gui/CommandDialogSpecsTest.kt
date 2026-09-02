@@ -23,11 +23,14 @@ class CommandDialogSpecsTest {
         val entityType = requireNotNull(CommandDialogSpecs.targetFilter("entityType"))
 
         assertEquals(256, name.maxLength)
+        assertEquals(CommandDialogSpecs.InputFormat.ANY_STRING, name.format)
         assertNull(name.validate(""))
         assertNull(limit.validate("1"))
+        assertEquals(CommandDialogSpecs.InputFormat.QUANTITY, limit.format)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID, limit.validate("0"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID, limit.validate("+1"))
         val distance = requireNotNull(CommandDialogSpecs.targetFilter("distance"))
+        assertEquals(CommandDialogSpecs.InputFormat.NUMBER, distance.format)
         assertNull(distance.validate("1.5"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, distance.validate("-1"))
         assertEquals(
@@ -45,31 +48,38 @@ class CommandDialogSpecsTest {
 
     @Test
     fun `direct field specs cover loop values and field-specific validators`() {
-        assertEquals(512, requireNotNull(CommandDialogSpecs.field("value")).maxLength)
-        assertEquals(16, requireNotNull(CommandDialogSpecs.field("count")).maxLength)
+        val valueSpec = requireNotNull(CommandDialogSpecs.field("value"))
+        val countSpec = requireNotNull(CommandDialogSpecs.field("count"))
+        val timeSpec = requireNotNull(CommandDialogSpecs.field("staySeconds"))
+        assertEquals(512, valueSpec.maxLength)
+        assertEquals(CommandDialogSpecs.InputFormat.ANY_STRING, valueSpec.format)
+        assertEquals(16, countSpec.maxLength)
+        assertEquals(CommandDialogSpecs.InputFormat.QUANTITY, countSpec.format)
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
-            requireNotNull(CommandDialogSpecs.field("count")).validate("0"),
+            countSpec.validate("0"),
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
-            requireNotNull(CommandDialogSpecs.field("count")).validate("+1"),
+            countSpec.validate("+1"),
         )
-        assertNull(requireNotNull(CommandDialogSpecs.field("count")).validate("\${limit}"))
-        assertNull(requireNotNull(CommandDialogSpecs.field("count")).validate("\${CURRENT_LOOP_COUNT}"))
+        assertNull(countSpec.validate("\${limit}"))
+        assertNull(countSpec.validate("\${CURRENT_LOOP_COUNT}"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
-            requireNotNull(CommandDialogSpecs.field("count")).validate("not-a-number"),
+            countSpec.validate("not-a-number"),
         )
+        assertEquals(CommandDialogSpecs.InputFormat.TIME, timeSpec.format)
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
-            requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("-1"),
+            timeSpec.validate("-1"),
         )
-        assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
-            requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("+1"),
-        )
-        assertNull(requireNotNull(CommandDialogSpecs.field("staySeconds")).validate("0"))
+        assertNull(timeSpec.validate("+1"))
+        assertNull(timeSpec.validate("0"))
+        assertNull(timeSpec.validate("0.05"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID, timeSpec.validate("0.01"))
+        assertNull(timeSpec.validate("86400"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID, timeSpec.validate("86400.05"))
     }
 
     @Test
@@ -84,11 +94,18 @@ class CommandDialogSpecsTest {
             requireNotNull(CommandDialogSpecs.field(repeat, "count")).labelKey,
         )
 
-        assertNull(requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validate("+1"))
+        val waitSpec = requireNotNull(CommandDialogSpecs.field(wait, "seconds"))
+        assertEquals(CommandDialogSpecs.InputFormat.TIME, waitSpec.format)
+        assertNull(waitSpec.validate("+1"))
+        assertNull(waitSpec.validate("0.05"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID, waitSpec.validate("0.01"))
+        assertNull(waitSpec.validate("86400"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID, waitSpec.validate("86400.05"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
-            requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validateInput(""),
+            waitSpec.validateInput(""),
         )
+        assertEquals(CommandDialogSpecs.InputFormat.TIME, requireNotNull(CommandDialogSpecs.field(shake, "seconds")).format)
         assertNull(requireNotNull(CommandDialogSpecs.field(shake, "seconds")).validate("1.5"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_LEVEL_INVALID,
@@ -148,10 +165,17 @@ class CommandDialogSpecsTest {
             CommandDialogSpecs.timerSeconds.validateInput(""),
         )
         val displayTiming = requireNotNull(CommandDialogSpecs.field(CommandType.DISPLAY_TEXT.newNode(), "staySeconds"))
+        assertEquals(CommandDialogSpecs.InputFormat.TIME, displayTiming.format)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT, displayTiming.formatHintKey)
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
             displayTiming.validateInput(""),
         )
+        assertNull(displayTiming.validate("0.05"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID, displayTiming.validate("0.01"))
+        assertNull(displayTiming.validate("86400"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID, displayTiming.validate("86400.05"))
+        assertEquals(CommandDialogSpecs.InputFormat.TIME, CommandDialogSpecs.timerSeconds.format)
         assertEquals(1.5, CommandDialogSpecs.finiteDouble("1.5"))
         assertNull(CommandDialogSpecs.finiteDouble("NaN"))
         assertNull(CommandDialogSpecs.finiteFloat("Infinity"))
