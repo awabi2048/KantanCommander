@@ -977,7 +977,11 @@ class GestureSequenceEditor(
                         // ホバー時だけ「戻って処理を繰り返します」と説明します。矢印と同じ論理セルを
                         // 当たり判定に使うため、パン・ズーム後も水色経路上の説明がずれません。
                         elements.add(GestureGuiElement(
-                            elementId = "path-return:$gx:$gy",
+                            // 経路要素の名前空間へ統一します。戻り経路だけ別の接頭辞にすると、
+                            // 表示側のpath-判定とは一致しても、当たり判定側の縮尺・クリップ判定から
+                            // 漏れてしまいます。通常経路と同じpath:配下に置くことで、表示と入力の
+                            // 座標変換を同じ規則で適用します。
+                            elementId = "path:return:$gx:$gy",
                             bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
                             acceptedGestures = emptySet(),
                             hoverText = GestureGuiHoverText(
@@ -1125,8 +1129,11 @@ class GestureSequenceEditor(
         addCloseButton(player, visuals, elements)
 
         // ズームはビューポート内容とその当たり判定だけを同じ倍率で変換します。
+        // IDの接頭辞判定はisMapVisual/isMapElementへ集約し、表示だけ・入力だけが
+        // 変換対象から外れる状態を防ぎます。特に戻り経路のホバー要素はpath:名前空間へ
+        // 統一しているため、通常経路と同じ縮尺・クリップ処理を通ります。
         val scaledVisuals = visuals.map { visual ->
-            if (visual.visualId.startsWith("node-") || visual.visualId.startsWith("add-") || visual.visualId.startsWith("path-")) {
+            if (isMapVisual(visual)) {
                 when (visual) {
                     is GestureGuiVisual.Block -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
                         width = visual.width * zoomScale, height = visual.height * zoomScale)
@@ -1138,8 +1145,7 @@ class GestureSequenceEditor(
             } else visual
         }
         val scaledElements = elements.map { element ->
-            if (element.elementId.startsWith("node:") || element.elementId.startsWith("node-reorder:") ||
-                element.elementId.startsWith("add:") || element.elementId.startsWith("path:")) {
+            if (isMapElement(element)) {
                 val hover = element.hoverText
                 element.copy(
                     bounds = scaleBounds(element.bounds, zoomScale),
@@ -3165,13 +3171,23 @@ class GestureSequenceEditor(
         ) {}
     }
 
+    /**
+     * グラフの表示要素を一括変換する対象か判定します。
+     * 表示IDはハイフン区切りの名前空間として扱い、経路上の矢印も含めます。
+     */
     private fun isMapVisual(visual: GestureGuiVisual): Boolean =
         visual.visualId.startsWith("node-") ||
             visual.visualId.startsWith("add-") ||
             visual.visualId.startsWith("path-")
 
+    /**
+     * グラフの入力要素を表示と同じ変換対象へ揃えます。
+     * node-reorderもグラフ上の操作要素であるため、通常ノードと同じ縮尺・クリップを
+     * 適用します。IDの名前空間を追加するときは、ここだけでなく生成側も同じ規則に従います。
+     */
     private fun isMapElement(element: GestureGuiElement): Boolean =
         element.elementId.startsWith("node:") ||
+            element.elementId.startsWith("node-reorder:") ||
             element.elementId.startsWith("add:") ||
             element.elementId.startsWith("path:")
 
