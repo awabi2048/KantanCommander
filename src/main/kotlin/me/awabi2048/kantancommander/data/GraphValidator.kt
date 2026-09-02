@@ -107,11 +107,11 @@ object GraphValidator {
     private fun validateCondition(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
         val mergeId = node.pairedNodeId ?: return
         validatePair(graph, node, CommandType.MERGE, errors)
-        if (!allPathsReach(graph, node.trueNext, mergeId)) {
-            errors += "CONDITION ${node.id} のtrue枝が対応合流へ到達しません"
+        if (!allPathsReachMergeOrEnd(graph, node.trueNext, mergeId)) {
+            errors += "CONDITION ${node.id} のtrue枝が対応合流または終端へ到達しません"
         }
-        if (!allPathsReach(graph, node.falseNext, mergeId)) {
-            errors += "CONDITION ${node.id} のfalse枝が対応合流へ到達しません"
+        if (!allPathsReachMergeOrEnd(graph, node.falseNext, mergeId)) {
+            errors += "CONDITION ${node.id} のfalse枝が対応合流または終端へ到達しません"
         }
     }
 
@@ -149,12 +149,32 @@ object GraphValidator {
             if (count > allowed) {
                 errors += "${node.type} ${node.id} に複数の親があります: $count"
             }
-            if (node.type == CommandType.MERGE && count != 2) {
-                errors += "MERGE ${node.id} の入力枝数が不正です: $count"
-            }
         }
     }
 
+    /** MERGEを持つ条件でも、枝ごとの正常終了（null終端）を許可します。 */
+    private fun allPathsReachMergeOrEnd(graph: CommandGraph, start: UUID?, stop: UUID): Boolean {
+        val active = mutableSetOf<UUID>()
+        val memo = mutableMapOf<UUID, Boolean>()
+        fun visit(id: UUID?): Boolean {
+            if (id == stop || id == null) return true
+            if (!graph.nodes.containsKey(id)) return false
+            memo[id]?.let { return it }
+            if (!active.add(id)) return false
+            val node = graph.nodes.getValue(id)
+            val outgoing = node.outgoing()
+            // outgoingが空の実行ノードは、その枝で正常終了する終端です。
+            // これを許可しないと、条件枝の末端へ到達した時点で不正扱いになり、
+            // 二分木状の早期終了を構築できません。
+            val result = outgoing.isEmpty() || outgoing.all(::visit)
+            active.remove(id)
+            memo[id] = result
+            return result
+        }
+        return visit(start)
+    }
+
+    /** forのbodyは必ず対応FOR_ENDへ到達し、途中終了しない構造を維持します。 */
     private fun allPathsReach(graph: CommandGraph, start: UUID?, stop: UUID): Boolean {
         val active = mutableSetOf<UUID>()
         val memo = mutableMapOf<UUID, Boolean>()
@@ -164,8 +184,7 @@ object GraphValidator {
             memo[id]?.let { return it }
             if (!active.add(id)) return false
             val node = graph.nodes.getValue(id)
-            val outgoing = node.outgoing()
-            val result = outgoing.isNotEmpty() && outgoing.all(::visit)
+            val result = node.outgoing().isNotEmpty() && node.outgoing().all(::visit)
             active.remove(id)
             memo[id] = result
             return result

@@ -20,20 +20,20 @@ class WorldVariableStoreTest {
         val firstWorld = UUID.randomUUID()
         val secondWorld = UUID.randomUUID()
         WorldVariableStore(directory).apply {
-            set(firstWorld, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 3))
-            set(secondWorld, "wave", WorldVariableValue(VariableType.INTEGER, integerValue = 8))
+            set(firstWorld, "wave", WorldVariableValue(VariableType.NUMBER, numberValue = 3.0))
+            set(secondWorld, "wave", WorldVariableValue(VariableType.NUMBER, numberValue = 8.0))
         }
 
         val reloaded = WorldVariableStore(directory)
-        assertEquals(3, reloaded.get(firstWorld, "wave")?.integerValue)
-        assertEquals(8, reloaded.get(secondWorld, "wave")?.integerValue)
+        assertEquals(3.0, reloaded.get(firstWorld, "wave")?.numberValue)
+        assertEquals(8.0, reloaded.get(secondWorld, "wave")?.numberValue)
     }
 
     @Test
     fun `removing a variable is persisted`() {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)
-        store.set(world, "open", WorldVariableValue(VariableType.BOOLEAN, booleanValue = true))
+        store.set(world, "open", WorldVariableValue(VariableType.STRING, stringValue = "true"))
         store.remove(world, "open")
 
         assertNull(WorldVariableStore(directory).get(world, "open"))
@@ -43,7 +43,7 @@ class WorldVariableStoreTest {
     fun `deleting a MyWorld removes cached and persisted values`() {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)
-        store.set(world, "shared", WorldVariableValue(VariableType.INTEGER, integerValue = 7))
+        store.set(world, "shared", WorldVariableValue(VariableType.NUMBER, numberValue = 7.0))
 
         assertTrue(store.deleteWorld(world))
         assertTrue(store.list(world).isEmpty())
@@ -56,8 +56,36 @@ class WorldVariableStoreTest {
         val store = WorldVariableStore(directory)
 
         assertThrows(IllegalArgumentException::class.java) {
-            store.set(world, "broken", WorldVariableValue(VariableType.DECIMAL, decimalValue = Double.NaN))
+            store.set(world, "broken", WorldVariableValue(VariableType.NUMBER, numberValue = Double.NaN))
         }
         assertNull(store.get(world, "broken"))
+    }
+
+    @Test
+    fun `legacy values are converted and unsupported types are dropped`() {
+        val world = UUID.randomUUID()
+        directory.resolve("$world.json").writeText(
+            """
+            {
+              "definitions": {
+                "integer_value": {"type":"INTEGER","integerValue":3},
+                "text_value": {"type":"TEXT","textValue":"hello"},
+                "old_flag": {"type":"BOOLEAN","booleanValue":true}
+              },
+              "values": {
+                "integer_value": {"type":"INTEGER","integerValue":4},
+                "text_value": {"type":"TEXT","textValue":"world"},
+                "old_flag": {"type":"BOOLEAN","booleanValue":false}
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val store = WorldVariableStore(directory)
+        assertEquals(4.0, store.get(world, "integer_value")?.numberValue)
+        assertEquals("world", store.get(world, "text_value")?.stringValue)
+        assertNull(store.get(world, "old_flag"))
+        assertEquals(VariableType.NUMBER, store.definitions(world)["integer_value"]?.type)
+        assertEquals(VariableType.STRING, store.definitions(world)["text_value"]?.type)
     }
 }

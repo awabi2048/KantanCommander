@@ -55,13 +55,14 @@ object GraphEditor {
         }
     }
 
-    fun canAppendMerge(graph: CommandGraph?, conditionId: UUID?): Boolean {
+    fun canAppendMerge(graph: CommandGraph?, conditionId: UUID?, continuationId: UUID? = null): Boolean {
         val currentGraph = graph ?: return false
         val condition = conditionId?.let { currentGraph.nodes[it] } ?: return false
+        if (continuationId != null && (continuationId !in currentGraph.nodes || continuationId == condition.id)) return false
         return condition.type == CommandType.CONDITION &&
             condition.pairedNodeId == null &&
-            !containsUnmergedCondition(currentGraph, condition.trueNext, condition.id) &&
-            !containsUnmergedCondition(currentGraph, condition.falseNext, condition.id)
+            !containsUnmergedCondition(currentGraph, condition.trueNext, condition.id, continuationId) &&
+            !containsUnmergedCondition(currentGraph, condition.falseNext, condition.id, continuationId)
     }
 
     fun isInsideFor(graph: CommandGraph, sourceId: UUID?, edge: Edge): Boolean {
@@ -92,21 +93,35 @@ object GraphEditor {
         return inserted
     }
 
-    fun appendMerge(graph: CommandGraph, conditionId: UUID): CommandNode {
+    /**
+     * 未合流条件へMERGEを追加します。
+     *
+     * 入れ子の未合流条件を親の枝内で閉じる場合、両枝の終端が親の合流へ直結して
+     * いることがあります。その親合流を `continuationId` として受け取り、既存の
+     * 直結を新しい内側MERGEへ付け替えてから、内側MERGEのNEXTへ親合流を接続します。
+     * これにより、親MERGEの入力が3本になることや、親の実行経路を書き換えることを
+     * 防ぎます。
+     */
+    fun appendMerge(graph: CommandGraph, conditionId: UUID, continuationId: UUID? = null): CommandNode {
         val condition = graph.nodes[conditionId]
             ?.takeIf { it.type == CommandType.CONDITION }
             ?: error("対象の条件分岐が存在しません")
         require(condition.pairedNodeId == null) { "条件分岐には既に対応する合流があります" }
-        require(canAppendMerge(graph, conditionId)) {
+        require(canAppendMerge(graph, conditionId, continuationId)) {
             "内側の条件分岐を先に合流してください"
+        }
+        continuationId?.let { continuation ->
+            require(continuation in graph.nodes) { "合流後の継続先が存在しません: $continuation" }
+            require(continuation != conditionId) { "条件分岐自身へは継続できません" }
         }
 
         val merge = CommandType.MERGE.newNode()
         graph.nodes[merge.id] = merge
         condition.pairedNodeId = merge.id
         merge.pairedNodeId = condition.id
-        connectOpenTail(graph, condition.trueNext, condition, true, merge.id)
-        connectOpenTail(graph, condition.falseNext, condition, false, merge.id)
+        connectOpenTail(graph, condition.trueNext, condition, true, merge.id, continuationId)
+        connectOpenTail(graph, condition.falseNext, condition, false, merge.id, continuationId)
+        merge.next = continuationId
         return merge
     }
 
@@ -128,16 +143,30 @@ object GraphEditor {
         return inserted
     }
 
-    fun insert(graph: CommandGraph, sourceId: UUID?, edge: Edge, type: CommandType): CommandNode {
+    /**
+     * 既存エッジの直後へ通常ノードを挿入します。
+     *
+     * 条件枝の終端は後続へ再合流する場合と、その枝でプログラムを正常終了する場合を
+     * 区別します。通常ノードの追加は既存エッジの終端をそのまま引き継ぐため、
+     * `null` 終端の枝へ追加しても早期終了の意味を変えません。
+     */
+    fun insert(
+        graph: CommandGraph,
+        sourceId: UUID?,
+        edge: Edge,
+        type: CommandType,
+    ): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) { "$type はこの経路へ挿入できません" }
         val target = edgeTarget(graph, sourceId, edge)
         val inserted = createBundle(graph, type)
         setEdge(graph, sourceId, edge, inserted.id)
-        connectBundleTail(graph, inserted, target)
         if (inserted.type == CommandType.CONDITION) {
+            connectBundleTail(graph, inserted, target)
             inserted.next = null
             inserted.trueNext = target
             inserted.falseNext = null
+        } else {
+            connectBundleTail(graph, inserted, target)
         }
         return inserted
     }
@@ -195,12 +224,13 @@ object GraphEditor {
         condition: CommandNode,
         trueBranch: Boolean,
         target: UUID,
+        stop: UUID?,
     ) {
-        if (start == null) {
+        if (start == null || start == stop) {
             if (trueBranch) condition.trueNext = target else condition.falseNext = target
             return
         }
-        val tail = findOpenTail(graph, start, preferTrue = true)
+        val tail = findOpenTail(graph, start, preferTrue = true, stop = stop)
         connect(tail, target, preferTrue = true)
     }
 
@@ -361,10 +391,15 @@ object GraphEditor {
         return visit(start)
     }
 
-    private fun containsUnmergedCondition(graph: CommandGraph, start: UUID?, rootConditionId: UUID): Boolean {
+    private fun containsUnmergedCondition(
+        graph: CommandGraph,
+        start: UUID?,
+        rootConditionId: UUID,
+        stop: UUID? = null,
+    ): Boolean {
         val visited = mutableSetOf<UUID>()
         fun visit(id: UUID?): Boolean {
-            if (id == null || !visited.add(id)) return false
+            if (id == null || id == stop || !visited.add(id)) return false
             val node = graph.nodes[id] ?: return false
             if (node.id != rootConditionId && node.type == CommandType.CONDITION && node.pairedNodeId == null) {
                 return true

@@ -7,6 +7,8 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class EditorMenuLayoutTest {
@@ -27,12 +29,15 @@ class EditorMenuLayoutTest {
         val entityAction = CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "dismount" }
         val displayText = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "actionbar" }
         val cameraShake = CommandType.CAMERA_SHAKE.newNode().apply { params["shakeType"] = "positional" }
-        val equipment = CommandType.EQUIP_ITEM.newNode().apply { params["slot"] = "OFF_HAND" }
-        val condition = CommandType.CONDITION.newNode().apply { params["kind"] = "ENTITY_STATE" }
+        val equipment = CommandType.ENTITY_ACTION.newNode().apply {
+            params["action"] = "equip"
+            params["slot"] = "OFF_HAND"
+        }
+        val condition = CommandType.CONDITION.newNode().apply { params["kind"] = "PLAYER_STATE" }
         val variable = CommandType.VARIABLE.newNode().apply { params["value"] = "$" + "current_loop_count" }
         val loop = CommandType.FOR_START.newNode().apply {
             params["startSource"] = "FIXED"
-            params["endSource"] = "TEMPORARY"
+            params["endSource"] = "WORLD"
         }
 
         assertEquals(
@@ -49,10 +54,10 @@ class EditorMenuLayoutTest {
         )
         assertEquals(
             DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND),
-            EditorMenuLayout.fields(CommandType.EQUIP_ITEM).single { it.key == "slot" }.value(equipment),
+            EditorMenuLayout.fields(CommandType.ENTITY_ACTION).single { it.key == "slot" }.value(equipment),
         )
         assertEquals(
-            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE),
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
             EditorMenuLayout.fields(CommandType.CONDITION).single { it.key == "kind" }.value(condition),
         )
         assertEquals(
@@ -61,7 +66,7 @@ class EditorMenuLayoutTest {
         )
         val loopValues = EditorMenuLayout.fields(CommandType.FOR_START).associate { it.key to it.value(loop) }
         assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE), loopValues["startSource"])
-        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE), loopValues["endSource"])
+        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE), loopValues["endSource"])
     }
 
     @Test
@@ -89,6 +94,32 @@ class EditorMenuLayoutTest {
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CAMERA_SHAKE_SECONDS,
             EditorMenuLayout.fields(CommandType.CAMERA_SHAKE).single { it.key == "seconds" }.descriptionKey,
+        )
+    }
+
+    @Test
+    fun `entity and sound layouts expose consolidated settings`() {
+        val entityFields = EditorMenuLayout.fields(CommandType.ENTITY_ACTION)
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_ITEM,
+            entityFields.single { it.key == "item" }.label,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE,
+            entityFields.single { it.key == "overwrite" }.label,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_TAG,
+            entityFields.single { it.key == "tag" }.descriptionKey,
+        )
+        assertFalse(entityFields.any { it.key == "itemData" })
+
+        val soundFields = EditorMenuLayout.fields(CommandType.PLAY_SOUND)
+        assertTrue(soundFields.any { it.key == "soundParameters" })
+        assertFalse(soundFields.any { it.key == "volume" || it.key == "pitch" })
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_PARAMETERS,
+            soundFields.single { it.key == "soundParameters" }.descriptionKey,
         )
     }
 }

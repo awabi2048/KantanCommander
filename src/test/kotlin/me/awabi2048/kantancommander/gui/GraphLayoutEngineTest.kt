@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.data.GraphValidator
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -180,6 +181,22 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `paired condition exposes an add point for a null terminated branch`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        condition.falseNext = null
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val conditionPoint = requireNotNull(layout.nodePoints[condition.id])
+        val add = layout.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y + 2)]
+
+        assertEquals(MapCellKind.ADD, add?.kind)
+        assertEquals(GraphEditor.Edge.FALSE, add?.insertionTarget?.edge)
+        assertEquals(merge.id, condition.trueNext)
+    }
+
+    @Test
     fun `open condition keeps true and false insertion targets distinct`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
@@ -220,6 +237,30 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `nested open branch add point carries the enclosing merge continuation`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val add = layout.cells.values.first {
+            it.kind == MapCellKind.ADD &&
+                it.insertionTarget?.let { target ->
+                    target.sourceId == inner.id && target.edge == GraphEditor.Edge.FALSE
+                } == true
+        }
+        val target = requireNotNull(add.insertionTarget)
+
+        // 左下の追加位置は、内側条件の枝で正常終了する通常ノードも受け付けます。
+        // 継続先は、明示的にMERGEを選んだ場合だけ再合流先として使用します。
+        assertEquals(inner.id, target.mergeConditionId)
+        assertEquals(outerMerge.id, target.continuationId)
+        val preview = requireNotNull(GraphLayoutEngine.previewInsertion(graph, target))
+        assertTrue(GraphValidator.validate(preview.graph).isEmpty())
+    }
+
+    @Test
     fun `open condition with a non-empty false branch exposes the branch head insertion on its stem`() {
         val graph = CommandGraph.empty()
         val outer = GraphEditor.append(graph, CommandType.CONDITION)
@@ -231,9 +272,9 @@ class GraphLayoutEngineTest {
         val innerPoint = requireNotNull(layout.nodePoints[inner.id])
         assertNotNull(layout.nodePoints[falseNode.id])
 
-        // 非空のFALSE枝を持つ縦幹は、開いた枝でも枝の先頭への挿入を受け付けます。
+        // 非空のFALSE枝を持つ縦幹も、親合流へ戻る継続先を保持します。
         assertEquals(
-            InsertionTarget(inner.id, GraphEditor.Edge.FALSE, inner.id),
+            InsertionTarget(inner.id, GraphEditor.Edge.FALSE, inner.id, continuationId = merge.id),
             layout.cells[MapPoint(innerPoint.x, innerPoint.y + 1)]?.insertionTarget,
         )
     }

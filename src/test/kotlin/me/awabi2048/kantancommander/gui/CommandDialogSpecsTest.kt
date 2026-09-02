@@ -31,6 +31,12 @@ class CommandDialogSpecsTest {
         assertNull(distance.validate("1.5"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, distance.validate("-1"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_ENTITY_TYPE_FORMAT, entityType.validate("bad id"))
+
+        val range = requireNotNull(CommandDialogSpecs.targetFilter("range"))
+        assertEquals(64, range.maxLength)
+        assertNull(range.validateInput(""))
+        assertNull(range.validate("1.5"))
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, range.validate("-1"))
     }
 
     @Test
@@ -49,7 +55,7 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
             requireNotNull(CommandDialogSpecs.field("startValue", "FIXED")).validate("not-a-number"),
         )
-        assertNull(requireNotNull(CommandDialogSpecs.field("startValue", "TEMPORARY")).validate("variable_name"))
+        assertNull(requireNotNull(CommandDialogSpecs.field("startValue", "WORLD")).validate("variable_name"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STEP_ZERO,
             requireNotNull(CommandDialogSpecs.field("stepValue", "FIXED")).validate("0"),
@@ -71,12 +77,9 @@ class CommandDialogSpecsTest {
         val shake = CommandType.CAMERA_SHAKE.newNode()
         val effect = CommandType.APPLY_EFFECT.newNode()
 
+        assertNull(requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validate("+1"))
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
-            requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validate("+1"),
-        )
-        assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
             requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validateInput(""),
         )
         assertNull(requireNotNull(CommandDialogSpecs.field(shake, "seconds")).validate("1.5"))
@@ -86,8 +89,8 @@ class CommandDialogSpecsTest {
         )
 
         val variable = CommandType.VARIABLE.newNode().apply {
-            params["type"] = VariableType.DECIMAL.name
-            params["operation"] = VariableOperation.SET.name
+            params["type"] = VariableType.NUMBER.name
+            params["operation"] = VariableOperation.DEFINE.name
         }
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_VARIABLE_NAME,
@@ -98,6 +101,27 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
             requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("not-a-number"),
         )
+
+        variable.params["operation"] = VariableOperation.CHANGE.name
+        variable.params["changeMode"] = "CALCULATE"
+        val expressionSpec = requireNotNull(CommandDialogSpecs.field(variable, "value"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_OPERAND_REQUIRED,
+            expressionSpec.validate("1 +"),
+        )
+        assertNull(expressionSpec.validate("1 + 2"))
+        val expressionErrors = listOf(
+            "" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_EMPTY,
+            "1 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_TRAILING_CHARACTERS,
+            "(1 + 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_UNCLOSED_PARENTHESIS,
+            "1e999" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_NUMBER,
+            "1 @ 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_CHARACTER,
+            "\$unknown" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_READONLY_NAME,
+            "Upper" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_VARIABLE_NAME,
+        )
+        expressionErrors.forEach { (raw, expected) ->
+            assertEquals(expected, expressionSpec.validate(raw), raw)
+        }
     }
 
     @Test
@@ -165,5 +189,21 @@ class CommandDialogSpecsTest {
         assertNull(CommandValueRules.parsePositiveInt("2147483648"))
         assertEquals(0, CommandValueRules.parseNonNegativeInt("0"))
         assertNull(CommandValueRules.parseNonNegativeInt("+1"))
+    }
+
+    @Test
+    fun `tag inputs are validated as one string without comma splitting`() {
+        val summonTag = requireNotNull(CommandDialogSpecs.field("tags"))
+        val entityTag = requireNotNull(CommandDialogSpecs.field("tag"))
+
+        assertNull(summonTag.validate("spawn_tag"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT,
+            summonTag.validate("spawn_tag,other"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT,
+            entityTag.validate("entity_tag,other"),
+        )
     }
 }

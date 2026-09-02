@@ -60,7 +60,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         else me.awabi2048.kantancommander.data.GraphEditor.Edge.NEXT
                         val mergeCondition = context.payload["mergeConditionId"]?.takeIf(String::isNotBlank)
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(context.route, source, edge, mergeCondition)))
+                        val continuation = context.payload["continuationId"]?.takeIf(String::isNotBlank)
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(
+                                CommandEditMenu.typeRoute(context.route, source, edge, mergeCondition, continuation),
+                            ),
+                        )
                     },
                     "activation" to handler { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load)
@@ -446,8 +452,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
             PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
             PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
-            PositionKind.TEMPORARY_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
-            PositionKind.WORLD_VARIABLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
         }
     )
 
@@ -473,6 +477,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     "sourceId" to insertionTarget.sourceId?.toString().orEmpty(),
                     "edge" to insertionTarget.edge.name,
                     "mergeConditionId" to insertionTarget.mergeConditionId?.toString().orEmpty(),
+                    "continuationId" to insertionTarget.continuationId?.toString().orEmpty(),
                         ),
                     ),
                 ),

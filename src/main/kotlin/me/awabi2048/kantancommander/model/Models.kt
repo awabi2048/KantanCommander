@@ -5,7 +5,7 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 import org.bukkit.Material
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 7
+const val STRUCTURED_FORMAT_VERSION = 8
 const val TICKS_PER_SECOND = 20
 const val MIN_TIMER_SECONDS = 1
 const val MAX_TIMER_SECONDS = 86_400
@@ -79,10 +79,13 @@ data class CommandGraph(
                 secondaryTargetSpec = node.secondaryTargetSpec?.copy(),
                 destinationSpec = node.destinationSpec?.copy(),
                 destinationTargetSpec = node.destinationTargetSpec?.copy(),
+                destinationFacingSpec = node.destinationFacingSpec?.copy(),
                 conditionPositionSpec = node.conditionPositionSpec?.copy(),
                 blockPositionSpec = node.blockPositionSpec?.copy(),
                 blockFromSpec = node.blockFromSpec?.copy(),
                 blockToSpec = node.blockToSpec?.copy(),
+                soundPositionSpec = node.soundPositionSpec?.copy(),
+                summonPositionSpec = node.summonPositionSpec?.copy(),
                 snapshot = node.snapshot?.deepCopy(),
             )
         }
@@ -110,12 +113,18 @@ data class CommandNode(
     var secondaryTargetSpec: TargetSpec? = null,
     var destinationSpec: PositionSpec? = null,
     var destinationTargetSpec: TargetSpec? = null,
+    /** テレポート先へ適用するノード単位の向きです。 */
+    var destinationFacingSpec: FacingSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
     /** ブロック操作の単一配置位置（setblock相当）。 */
     var blockPositionSpec: PositionSpec? = null,
     /** ブロック操作の範囲始点・終点（fill相当）。 */
     var blockFromSpec: PositionSpec? = null,
     var blockToSpec: PositionSpec? = null,
+    /** PLAY_SOUNDで「マイワールド内全域」以外を選んだ場合の再生位置です。 */
+    var soundPositionSpec: PositionSpec? = null,
+    /** エンティティ召喚で指定された場合の召喚位置です。未設定時はコンテキスト位置を使用します。 */
+    var summonPositionSpec: PositionSpec? = null,
     var contextOverride: ExecutionContextSpec? = null,
     /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
     var contextSource: ContextSource? = ContextSource.BASE,
@@ -182,12 +191,15 @@ data class TargetSpec(
     val gameMode: String? = null,
     val tag: String? = null,
     val name: String? = null,
+    /** セレクターのdx/dy/dzに対応する非負の範囲です。基準は実行コンテキスト位置です。 */
+    val dx: Double? = null,
+    val dy: Double? = null,
+    val dz: Double? = null,
     val fixedEntityId: UUID? = null,
 )
 
 enum class PositionKind {
     CAPTURED, DISK, EXECUTOR, TARGET, MYWORLD_SPAWN, COORDINATES,
-    TEMPORARY_VARIABLE, WORLD_VARIABLE,
 }
 data class PositionSpec(
     val kind: PositionKind,
@@ -196,7 +208,6 @@ data class PositionSpec(
     val z: Double? = null,
     val yaw: Float? = null,
     val pitch: Float? = null,
-    val variable: String? = null,
 )
 
 enum class FacingKind { INHERITED, CAPTURED, EXECUTOR, TARGET, COORDINATES, MYWORLD_SPAWN, ROTATION }
@@ -224,24 +235,24 @@ fun CommandNode.hasContextOverride(): Boolean = contextOverride?.hasAnySetting()
 
 enum class ConditionKind(val key: LocalizationKey<String>) {
     TARGET_EXISTS(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS),
-    ENTITY_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE),
+    PLAYER_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
     VARIABLE_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
     BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
-    ITEM_POSSESSION(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ITEM_POSSESSION),
 }
 
-enum class VariableType { BOOLEAN, INTEGER, DECIMAL, TEXT, POSITION, ENTITY }
-enum class VariableScope { TEMPORARY, WORLD }
-enum class VariableOperation { SET, ADD, SUBTRACT, TOGGLE, STORE_POSITION, STORE_TARGET, CLEAR }
+/** ワールド内変数の保存型。数値は常にdoubleで保持します。 */
+enum class VariableType { NUMBER, STRING }
+
+/** 変数操作の大分類。すべてMyWorld単位の定義へ反映します。 */
+enum class VariableOperation { DEFINE, CHANGE }
+
+/** CHANGE時に数値へ適用する詳細操作です。STRINGではASSIGNだけを許可します。 */
+enum class VariableChangeMode { CALCULATE, ASSIGN }
 
 data class WorldVariableValue(
     val type: VariableType,
-    val booleanValue: Boolean? = null,
-    val integerValue: Long? = null,
-    val decimalValue: Double? = null,
-    val textValue: String? = null,
-    val position: SavedPosition? = null,
-    val entityId: UUID? = null,
+    val numberValue: Double? = null,
+    val stringValue: String? = null,
 )
 
 data class SavedPosition(
@@ -260,25 +271,30 @@ enum class CommandType(
 ) {
     TELEPORT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT_DESCRIPTION, Material.ENDER_PEARL, emptyMap()),
     GIVE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM_DESCRIPTION, Material.CHEST, mapOf("count" to "1")),
-    ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf("action" to "ride")),
+    ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf(
+        "action" to "ride",
+        "slot" to "HAND",
+        "item" to "",
+        "itemData" to "",
+        "overwrite" to "false",
+        "tagOperation" to "add",
+        "tag" to "",
+    )),
     DISPLAY_TEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT_DESCRIPTION, Material.WRITABLE_BOOK, mapOf(
-        "mode" to "tellraw", "text" to "", "fadeInSeconds" to "1", "staySeconds" to "3", "fadeOutSeconds" to "1"
+        "mode" to "tellraw", "text" to "", "subtitle" to "", "fadeInSeconds" to "1", "staySeconds" to "3", "fadeOutSeconds" to "1"
     )),
     WAIT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT_DESCRIPTION, Material.CLOCK, mapOf("seconds" to "1")),
     SUMMON_ENTITY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY_DESCRIPTION, Material.ZOMBIE_SPAWN_EGG, mapOf(
-        "entity" to "", "tags" to ""
+        "entity" to "", "tags" to "", "customName" to ""
     )),
     PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
-        "sound" to "", "volume" to "1.0", "pitch" to "1.0"
+        "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "CONTEXT"
     )),
     APPLY_EFFECT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT_DESCRIPTION, Material.POTION, mapOf(
         "effect" to "", "level" to "1", "seconds" to "30"
     )),
     CAMERA_SHAKE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CAMERA_SHAKE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CAMERA_SHAKE_DESCRIPTION, Material.SPYGLASS, mapOf(
         "intensity" to "1.0", "seconds" to "5", "shakeType" to "positional"
-    )),
-    EQUIP_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_EQUIP_ITEM_DESCRIPTION, Material.IRON_CHESTPLATE, mapOf(
-        "slot" to "HAND", "item" to ""
     )),
     BLOCK_OPERATION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BLOCK_OPERATION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BLOCK_OPERATION_DESCRIPTION, Material.BRICKS, mapOf(
         "operation" to "setblock", "block" to ""
@@ -287,13 +303,13 @@ enum class CommandType(
     CONDITION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
         "kind" to ConditionKind.TARGET_EXISTS.name,
         "inverted" to "false",
-        "state" to "sneaking",
+        "sneaking" to "",
+        "item" to "",
+        "itemData" to "",
         "variable" to "",
-        "variableScope" to VariableScope.TEMPORARY.name,
         "operator" to ">=",
-        "value" to "0",
+        "value" to "0.0",
         "block" to "minecraft:air",
-        "count" to "1",
     )),
     CONTEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT_DESCRIPTION, Material.RECOVERY_COMPASS, mapOf(
         "executor" to "", "target" to "", "position" to "", "facing" to ""
@@ -301,10 +317,10 @@ enum class CommandType(
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REDSTONE, mapOf(
         "name" to "",
-        "scope" to VariableScope.TEMPORARY.name,
-        "type" to VariableType.BOOLEAN.name,
-        "operation" to VariableOperation.SET.name,
-        "value" to "false",
+        "type" to VariableType.NUMBER.name,
+        "operation" to VariableOperation.DEFINE.name,
+        "changeMode" to VariableChangeMode.ASSIGN.name,
+        "value" to "0.0",
     )),
     MERGE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE_DESCRIPTION, Material.HOPPER, emptyMap()),
     FOR_START(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START_DESCRIPTION, Material.REPEATER, mapOf(
@@ -340,7 +356,6 @@ fun CommandType.supportsContextOverride(): Boolean = when (this) {
     CommandType.PLAY_SOUND,
     CommandType.APPLY_EFFECT,
     CommandType.CAMERA_SHAKE,
-    CommandType.EQUIP_ITEM,
     CommandType.BLOCK_OPERATION,
     CommandType.ENTITY_DELETE,
     CommandType.CONDITION,

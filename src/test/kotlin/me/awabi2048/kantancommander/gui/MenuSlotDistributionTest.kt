@@ -10,8 +10,19 @@ class MenuSlotDistributionTest {
     fun `command picker keeps one empty row above and below a fixed fourteen-slot area`() {
         assertEquals(54, CommandPickerLayoutPolicy.SIZE)
         assertEquals((19..25).toList() + (28..34).toList(), CommandPickerLayoutPolicy.itemSlots)
-        assertEquals(listOf(47, 49, 51), CommandPickerLayoutPolicy.categorySlots)
+        assertEquals(listOf(48, 50), CommandPickerLayoutPolicy.categorySlots)
         assertEquals(45, CommandPickerLayoutPolicy.BACK_SLOT)
+    }
+
+    @Test
+    fun `command picker reserves white-glass slots for every unused candidate`() {
+        val occupied = CommandPickerLayoutPolicy.itemSlots.take(3)
+        val empty = CommandPickerLayoutPolicy.emptyItemSlots(occupied.size)
+
+        assertEquals(CommandPickerLayoutPolicy.itemSlots.drop(3), empty)
+        assertEquals(CommandPickerLayoutPolicy.itemSlots, occupied + empty)
+        assertTrue(empty.none { it in CommandPickerLayoutPolicy.categorySlots })
+        assertTrue(empty.none { it == CommandPickerLayoutPolicy.BACK_SLOT })
     }
 
     @Test

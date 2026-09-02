@@ -1,7 +1,7 @@
 package me.awabi2048.kantancommander.model
 
 /**
- * タイトルとアクションバーで共有する表示時間です。
+ * title・subtitle・actionbarで共有する表示時間です。
  *
  * 値は保存形式どおり秒を正本とし、Minecraftのtickへの変換は実行・出力側が
  * 必要とする境界でこのモデルから行います。アクションバーにはTitle.Times相当の
@@ -41,7 +41,7 @@ data class DisplayTextTiming(
 
 /** 時間設定を表示・検証・実行・データパック出力する表示方式を一元管理します。 */
 object DisplayTextTimingPolicy {
-    private val TIMED_MODES = setOf("title", "actionbar")
+    private val TIMED_MODES = setOf("title", "subtitle", "actionbar")
 
     fun supports(mode: String): Boolean = mode in TIMED_MODES
 

@@ -32,6 +32,7 @@ import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskPlacement
@@ -44,7 +45,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.hasContextOverride
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
@@ -152,12 +153,17 @@ enum class GestureSettingScreen {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
-    VARIABLE_SCOPE,
+    ENTITY_EQUIPMENT_SLOT,
+    ENTITY_OVERWRITE,
+    ENTITY_TAG_OPERATION,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
+    VARIABLE_CHANGE_MODE,
     VARIABLE_VALUE,
     FOR_SOURCE,
     INCLUSIVE_END,
+    CAMERA_SHAKE_TYPE,
+    SOUND_SCOPE,
     CONTEXT_OVERRIDE,
     BLOCK_OPERATION,
 }
@@ -924,11 +930,16 @@ class GestureSequenceEditor(
                 maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y / zoomScale,
             ),
         ).forEach { seg ->
+            val isLoopReturn = seg.kind == MapCellKind.LOOP_RETURN_PATH
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
                 width = seg.w, height = seg.h,
-                blockData = Bukkit.createBlockData(Material.WHITE_CONCRETE),
+                // ノード背景は変えず、経路色のみを InventoryGUI の様式に合わせて区別します。
+                // 通常・分岐は白色、ループ戻り経路のみ空色（LIGHT_BLUE）とします。
+                blockData = Bukkit.createBlockData(
+                    if (isLoopReturn) Material.LIGHT_BLUE_CONCRETE else Material.WHITE_CONCRETE,
+                ),
                 layer = 1,
             ))
         }
@@ -984,8 +995,8 @@ class GestureSequenceEditor(
             visualId = "back-label",
             x = GestureEditorLayout.BACK_X,
             y = GestureEditorLayout.BACK_Y - 0.02,
-            text = net.kyori.adventure.text.Component.text("⌂"),
-            size = 0.010,
+            text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_GLYPH)),
+            size = 0.0055,
             layer = 6,
         ))
         elements.add(GestureGuiElement(
@@ -1154,7 +1165,11 @@ class GestureSequenceEditor(
         // アイテムタブの選択は表示だけを切り替えます。タブを開いただけで
         // 設定済みアイテムを上書きしないよう、保存操作は右ペインの
         // 「メインハンドから設定」ボタンへ限定します。
-        if (field.key == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
+        if (field.key == "item" && (
+                node.type == CommandType.GIVE_ITEM ||
+                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name)
+                )) {
             clearSettingState()
             state.lowerMode = GestureLowerMode.SETTINGS
             updateLower(player)
@@ -1190,8 +1205,19 @@ class GestureSequenceEditor(
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
-        if (fieldKey == "item" && node.type in setOf(CommandType.GIVE_ITEM, CommandType.EQUIP_ITEM)) {
+        if (fieldKey == "item" && (
+                node.type == CommandType.GIVE_ITEM ||
+                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name)
+                )) {
             applyHeldItem(player, context)
+            return
+        }
+        if (fieldKey == "block" && (
+                node.type == CommandType.BLOCK_OPERATION ||
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name)
+                )) {
+            applyHeldBlock(player, context)
             return
         }
         if (fieldKey == "diskId" && node.type == CommandType.DISK_CALL) {
@@ -1202,6 +1228,10 @@ class GestureSequenceEditor(
             // 表示時間はfadeInSeconds/staySeconds/fadeOutSecondsを一組として編集し、インベントリGUIと
             // 同じ入力欄・最大長・0以上検証を使います。
             showDisplayTimingSettingDialog(player, context, node)
+            return
+        }
+        if (fieldKey == "soundParameters" && node.type == CommandType.PLAY_SOUND) {
+            showSoundParametersSettingDialog(player, context, node)
             return
         }
         val screen = gestureSettingScreenFor(descriptor.editor)
@@ -1255,6 +1285,7 @@ class GestureSequenceEditor(
     ): Boolean {
         val held = player.inventory.itemInMainHand.takeUnless { it.type == Material.AIR }
         if (held == null) {
+            player.sendMessage("§cメインハンドにアイテムを持ってください。")
             // 呼び出し元が専用選択画面から設定タブへ戻した直後でも、
             // 画面上の表示を状態と同期させ、古い候補画面を残しません。
             // 未所持時は要求どおり効果音・チャット通知を含めて何もしません。
@@ -1270,6 +1301,25 @@ class GestureSequenceEditor(
             return false
         }
         return saveHeldItem(player, context, parameter, itemKey, itemData)
+    }
+
+    /** ブロック設定はメインハンドの実アイテムからブロックIDだけを保存します。 */
+    private fun applyHeldBlock(
+        player: Player,
+        context: CommandSettingContext,
+    ): Boolean {
+        val held = player.inventory.itemInMainHand
+            .takeUnless { it.type.isAir || !it.type.isBlock }
+            ?: run {
+                player.sendMessage("§cメインハンドにブロックを持ってください。")
+                updateLower(player)
+                return false
+            }
+        val updated = updateSettingNode(player, context, configuredFields = setOf("block")) {
+            CommandSettingsModel.setParameter(it, "block", held.type.key.toString())
+        }
+        if (updated) updateLower(player)
+        return updated
     }
 
     /**
@@ -1499,6 +1549,36 @@ class GestureSequenceEditor(
         }
     }
 
+    /** 対象範囲の3軸を一つのDialogで入力し、空欄はその軸の指定解除とします。 */
+    private fun beginSettingRangeInput(
+        player: Player,
+        dx: Double?,
+        dy: Double?,
+        dz: Double?,
+        result: (Double?, Double?, Double?) -> String?,
+    ) {
+        val spec = requireNotNull(CommandDialogSpecs.targetFilter("range"))
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.rangeBody(player, dx, dy, dz),
+            inputs = CommandDialogSpecs.rangeInputs(player, dx, dy, dz),
+        ) { response ->
+            val raw = listOf("dx", "dy", "dz").associateWith { key ->
+                response.textValue(key).trim().takeIf(String::isNotEmpty)
+            }
+            val validationError = raw.values
+                .filterNotNull()
+                .mapNotNull(spec::validateInput)
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val values = raw.mapValues { (_, value) -> value?.let(CommandDialogSpecs::finiteDouble) }
+            if (values.any { (key, parsed) -> raw[key] != null && parsed == null }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID)
+            }
+            result(values.getValue("dx"), values.getValue("dy"), values.getValue("dz"))
+        }
+    }
+
     private fun beginSettingInput(
         player: Player,
         spec: CommandDialogSpecs.Spec,
@@ -1524,31 +1604,8 @@ class GestureSequenceEditor(
         candidateValues: List<String> = emptyList(),
         onSubmit: (String) -> String?,
     ) {
-        val candidateButtons = buildList {
-            if (suggestionParameter != null && CommandDialogSpecs.supportsSuggestions(suggestionParameter)) {
-                add(MenuDialogButton(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_CANDIDATES),
-                        MenuDialogHandler { target, response ->
-                        val ownerId = ownerIdFor(player)
-                        if (target.uniqueId != player.uniqueId || !canOperateSharedActor(ownerId, target.uniqueId)) {
-                            if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
-                            return@MenuDialogHandler MenuActionResult.Ignored
-                        }
-                        val query = response.textValue("value").trim()
-                        showTextInputDialog(
-                            player = player,
-                            spec = spec,
-                            initial = query,
-                            suggestionParameter = suggestionParameter,
-                            candidateValues = CommandDialogSpecs.suggestions(suggestionParameter, query),
-                            onSubmit = onSubmit,
-                        )
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
-                ))
-            }
-            candidateValues.forEach { candidate ->
-                add(MenuDialogButton(
+        val candidateButtons = candidateValues.take(12).map { candidate ->
+                MenuDialogButton(
                     Component.text(candidate),
                     MenuDialogHandler { target, _ ->
                         if (target.uniqueId != player.uniqueId ||
@@ -1572,15 +1629,38 @@ class GestureSequenceEditor(
                             MenuActionResult.Success(MenuUpdate.Close)
                         }
                     },
-                ))
-            }
+                )
         }
+        val candidateFooterActions = if (suggestionParameter != null && CommandDialogSpecs.supportsSuggestions(suggestionParameter)) {
+            listOf(MenuDialogButton(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
+                MenuDialogHandler { target, response ->
+                    val ownerId = ownerIdFor(player)
+                    if (target.uniqueId != player.uniqueId || !canOperateSharedActor(ownerId, target.uniqueId)) {
+                        if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                        return@MenuDialogHandler MenuActionResult.Ignored
+                    }
+                    val query = response.textValue("value").trim()
+                    showTextInputDialog(
+                        player = player,
+                        spec = spec,
+                        initial = query,
+                        suggestionParameter = suggestionParameter,
+                        candidateValues = CommandDialogSpecs.suggestions(suggestionParameter, query),
+                        onSubmit = onSubmit,
+                    )
+                    MenuActionResult.Success(MenuUpdate.None)
+                },
+            ))
+        } else emptyList()
         showInputDialog(
             player = player,
             body = CommandDialogSpecs.body(player, spec, initial),
             inputs = listOf(CommandDialogSpecs.input(player, "value", initial, spec)),
             additionalActions = candidateButtons,
-            columns = if (candidateButtons.size > 1) 2 else 1,
+            footerActions = candidateFooterActions,
+            multiActionWithoutExit = candidateFooterActions.isNotEmpty(),
+            columns = if (candidateFooterActions.isNotEmpty()) 3 else 1,
         ) { response ->
             val value = CommandDialogSpecs.normalize(suggestionParameter.orEmpty(), response.textValue("value"))
             val validationError = spec.validateInput(value)
@@ -1704,14 +1784,52 @@ class GestureSequenceEditor(
                 .mapNotNull(durationSpec::validateInput)
                 .firstOrNull()
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
-            val values = rawValues.mapValues { (_, value) -> requireNotNull(value.toIntOrNull()) }
             if (!updateSettingNode(player, context) { command ->
-                    CommandSettingsModel.setParameters(
-                        command,
-                        values.mapValues { (_, value) -> value.toString() },
-                    )
+                CommandSettingsModel.setParameters(command, rawValues)
                 }
             ) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            null
+        }
+    }
+
+    /** 効果音の音量・ピッチを一つの設定項目として編集します。 */
+    private fun showSoundParametersSettingDialog(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+    ) {
+        val volumeSpec = requireNotNull(CommandDialogSpecs.field(node, "volume"))
+        val pitchSpec = requireNotNull(CommandDialogSpecs.field(node, "pitch"))
+        val volume = node.string("volume", "1.0")
+        val pitch = node.string("pitch", "1.0")
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.soundParametersBody(player, volume, pitch),
+            inputs = CommandDialogSpecs.soundParametersInputs(player, volume, pitch),
+        ) { response ->
+            val volumeValue = CommandDialogSpecs.normalize("volume", response.textValue("volume"))
+            val pitchValue = CommandDialogSpecs.normalize("pitch", response.textValue("pitch"))
+            val volumeError = volumeSpec.validateInput(volumeValue)
+                    val pitchError = pitchSpec.validateInput(pitchValue)
+                    if (volumeError != null || pitchError != null) {
+                        val messages = buildList {
+                            if (volumeError != null) {
+                                add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY))
+                            }
+                            if (pitchError != null) {
+                                add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH_BODY))
+                            }
+                        }
+                return@showInputDialog messages.joinToString("\n")
+            }
+            if (!updateSettingNode(player, context, configuredFields = setOf("soundParameters")) { command ->
+                    CommandSettingsModel.setParameters(
+                        command,
+                        mapOf("volume" to volumeValue, "pitch" to pitchValue),
+                    )
+                }) {
                 return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
             }
             null
@@ -1729,6 +1847,8 @@ class GestureSequenceEditor(
         inputs: List<MenuDialogInput>,
         title: Component = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE)),
         additionalActions: List<MenuDialogButton> = emptyList(),
+        footerActions: List<MenuDialogButton> = emptyList(),
+        multiActionWithoutExit: Boolean = false,
         columns: Int = 1,
         onSubmit: (MenuDialogResponse) -> String?,
     ) {
@@ -1746,6 +1866,8 @@ class GestureSequenceEditor(
                     body = body,
                     inputs = inputs,
                     additionalActions = additionalActions,
+                    footerActions = footerActions,
+                    multiActionWithoutExit = multiActionWithoutExit,
                     columns = columns,
                     confirm = MenuDialogButton(
                         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
@@ -1786,7 +1908,7 @@ class GestureSequenceEditor(
                         },
                     ),
                     cancel = MenuDialogButton(
-                        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_CANCEL),
+                        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
                         MenuDialogHandler { target, _ ->
                             if (
                                 target.uniqueId != player.uniqueId ||
@@ -1864,7 +1986,8 @@ class GestureSequenceEditor(
         "condition-variable" -> "variable"
         "condition-value" -> "value"
         "condition-block" -> "block"
-        "condition-count" -> "count"
+        "condition-item" -> "item"
+        "condition-item-data" -> "itemData"
         else -> encoded
     }
 
@@ -1995,7 +2118,7 @@ class GestureSequenceEditor(
                         val next = modes[(modes.indexOf(current.gameMode) + 1).coerceAtLeast(0) % modes.size]
                         CommandSettingsModel.setTargetSpec(it, role, current.copy(gameMode = next))
                     }
-                    "entityType", "distance", "limit", "tag", "name" -> {
+                    "entityType", "distance", "range", "limit", "tag", "name" -> {
                         if (value == "distance") {
                             beginSettingDistanceInput(
                                 player,
@@ -2019,6 +2142,27 @@ class GestureSequenceEditor(
                             }
                             return
                         }
+                        if (value == "range") {
+                            beginSettingRangeInput(
+                                player,
+                                current.dx,
+                                current.dy,
+                                current.dz,
+                            ) { dx, dy, dz ->
+                                if (!updateSettingNode(player, settingContext) {
+                                        val latest = CommandSettingsModel.targetSpec(it, role)
+                                            ?: TargetSpec(current.kind)
+                                        CommandSettingsModel.setTargetSpec(
+                                            it,
+                                            role,
+                                            latest.copy(dx = dx, dy = dy, dz = dz),
+                                        )
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else null
+                            }
+                            return
+                        }
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = CommandDialogSpecs.targetFilter(value)
                             ?: return
@@ -2034,18 +2178,16 @@ class GestureSequenceEditor(
                             initial,
                             suggestionParameter = value.takeIf { it == "entityType" },
                         ) { raw ->
-                            val parsed = when (value) {
-                                "limit" -> raw.takeIf(String::isNotEmpty)?.toIntOrNull()
-                                else -> raw.takeIf(String::isNotEmpty)
-                            }
+                            val parsedText = raw.trim().takeIf(String::isNotEmpty)
+                            val parsedLimit = parsedText?.toIntOrNull()
                             if (!updateSettingNode(player, settingContext) {
                                 val latest = CommandSettingsModel.targetSpec(it, role)
                                     ?: TargetSpec(current.kind)
                                 val updated = when (value) {
-                                    "entityType" -> latest.copy(entityType = parsed as String?)
-                                    "limit" -> latest.copy(limit = parsed as Int?)
-                                    "tag" -> latest.copy(tag = parsed as String?)
-                                    else -> latest.copy(name = parsed as String?)
+                                    "entityType" -> latest.copy(entityType = parsedText)
+                                    "limit" -> latest.copy(limit = parsedLimit)
+                                    "tag" -> latest.copy(tag = parsedText)
+                                    else -> latest.copy(name = parsedText)
                                 }
                                 CommandSettingsModel.setTargetSpec(it, role, updated)
                             }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
@@ -2108,20 +2250,6 @@ class GestureSequenceEditor(
                     }
                     return
                 }
-                if (kind in setOf(PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE)) {
-                    beginSettingInput(
-                        player,
-                        CommandDialogSpecs.variableName,
-                        CommandSettingsModel.positionSpec(node, settingContext.role)?.variable.orEmpty(),
-                    ) { raw ->
-                        if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, variable = raw))
-                        }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        showSettingScreen()
-                        null
-                    }
-                    return
-                }
                 val location = player.location
                 val spec = if (kind == PositionKind.CAPTURED) {
                     PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
@@ -2133,8 +2261,9 @@ class GestureSequenceEditor(
             GestureSettingScreen.FACING -> {
                 if (group != "facing") return
                 val kind = runCatching { FacingKind.valueOf(value) }.getOrNull() ?: return
+                val facingRole = settingContext.role ?: CommandSettingRole.CONTEXT_FACING
                 if (kind == FacingKind.COORDINATES) {
-                    val current = CommandSettingsModel.facingSpec(node)
+                    val current = CommandSettingsModel.facingSpec(node, facingRole)
                     showCoordinateSettingDialog(
                         player,
                         current?.x ?: player.location.x,
@@ -2142,7 +2271,7 @@ class GestureSequenceEditor(
                         current?.z ?: player.location.z,
                     ) { x, y, z ->
                         if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, x = x, y = y, z = z))
+                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, x = x, y = y, z = z), facingRole)
                         }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         showSettingScreen()
                         null
@@ -2150,14 +2279,14 @@ class GestureSequenceEditor(
                     return
                 }
                 if (kind == FacingKind.ROTATION) {
-                    val current = CommandSettingsModel.facingSpec(node)
+                    val current = CommandSettingsModel.facingSpec(node, facingRole)
                     showRotationSettingDialog(
                         player,
                         current?.yaw ?: player.location.yaw,
                         current?.pitch ?: player.location.pitch,
                     ) { yaw, pitch ->
                         if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = yaw, pitch = pitch))
+                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = yaw, pitch = pitch), facingRole)
                         }) return@showRotationSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         showSettingScreen()
                         null
@@ -2167,7 +2296,7 @@ class GestureSequenceEditor(
                 val location = player.location
                 val spec = if (kind == FacingKind.CAPTURED) FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
                 else FacingSpec(kind)
-                if (updateSettingNode(player, settingContext) { CommandSettingsModel.setFacingSpec(it, spec) }) {
+                if (updateSettingNode(player, settingContext) { CommandSettingsModel.setFacingSpec(it, spec, facingRole) }) {
                     showSettingScreen()
                 }
             }
@@ -2220,46 +2349,35 @@ class GestureSequenceEditor(
                     }
                     "condition-state" -> {
                         if (updateSettingNode(player, settingContext) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    "state",
-                                    if (it.string("state", "sneaking") == "sneaking") "on_ground" else "sneaking",
-                                )
-                            }) updateLower(player)
-                    }
-                    "condition-scope" -> {
-                        if (updateSettingNode(player, settingContext) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    "variableScope",
-                                    if (it.string("variableScope", VariableScope.TEMPORARY.name) == VariableScope.WORLD.name) {
-                                        VariableScope.TEMPORARY.name
-                                    } else VariableScope.WORLD.name,
-                                )
+                                val next = when (it.string("sneaking")) {
+                                    "" -> "true"
+                                    "true" -> "false"
+                                    else -> ""
+                                }
+                                CommandSettingsModel.setParameter(it, "sneaking", next)
                             }) updateLower(player)
                     }
                     "condition-operator" -> {
-                        val operators = listOf("set", "unset", "==", "!=", ">", ">=", "<", "<=")
+                        val operators = listOf("==", "!=", ">", ">=", "<", "<=")
                         if (updateSettingNode(player, settingContext) {
                                 val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                                 CommandSettingsModel.setParameter(it, "operator", operators[(current + 1) % operators.size])
                             }) updateLower(player)
                     }
-                    "condition-variable", "condition-value", "condition-block", "condition-item", "condition-count" -> {
+                    "condition-variable", "condition-value", "condition-block", "condition-item" -> {
                         if (encoded == "condition-item") {
                             applyHeldItem(player, settingContext)
                             updateLower(player)
+                            return
+                        }
+                        if (encoded == "condition-block") {
+                            applyHeldBlock(player, settingContext)
                             return
                         }
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = when (encoded) {
                             "condition-variable" -> CommandDialogSpecs.variableName
                             "condition-value" -> CommandDialogSpecs.conditionValue
-                            "condition-block" -> CommandDialogSpecs.block
-                            // countはInventory/Gestureで同じpositive integer仕様を必ず使います。
-                            // 個別の簡易validatorへフォールバックすると、+1などの符号付き表記を
-                            // 受け入れてしまい、画面間の入力契約が分岐します。
-                            "condition-count" -> requireNotNull(CommandDialogSpecs.field(node, "count"))
                             else -> return
                         }
                         val saveKey = specSaveKey(encoded)
@@ -2274,7 +2392,7 @@ class GestureSequenceEditor(
                 }
             }
             GestureSettingScreen.DISPLAY_MODE -> {
-                if (group != "display" || value !in setOf("tellraw", "title", "actionbar")) return
+                if (group != "display" || value !in setOf("tellraw", "title", "subtitle", "actionbar")) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "mode", value)
                     }) showSettingScreen()
@@ -2286,16 +2404,39 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_ACTION -> {
-                if (group != "action" || value !in setOf("ride", "dismount")) return
+                if (group != "action" || value !in setOf("ride", "dismount", "equip", "tag")) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "action", value)
                     }) showSettingScreen()
             }
-            GestureSettingScreen.VARIABLE_SCOPE -> {
-                if (group != "scope") return
-                val scope = runCatching { VariableScope.valueOf(value) }.getOrNull() ?: return
+            GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> {
+                if (group != "equipmentSlot" || value !in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")) return
                 if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "scope", scope.name)
+                        CommandSettingsModel.setParameter(it, "slot", value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.ENTITY_OVERWRITE -> {
+                if (group != "overwrite" || value !in setOf("true", "false")) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "overwrite", value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.ENTITY_TAG_OPERATION -> {
+                if (group != "tagOperation" || value !in setOf("add", "remove")) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "tagOperation", value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.CAMERA_SHAKE_TYPE -> {
+                if (group != "shake" || value !in setOf("positional", "rotational")) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "shakeType", value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.SOUND_SCOPE -> {
+                if (group != "soundScope" || value !in setOf("CONTEXT", "WORLD")) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "soundScope", value)
                     }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_TYPE -> {
@@ -2303,23 +2444,20 @@ class GestureSequenceEditor(
                 val type = runCatching { VariableType.valueOf(value) }.getOrNull() ?: return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "type", type.name)
-                        val operation = runCatching { VariableOperation.valueOf(it.string("operation")) }.getOrNull()
-                        if (operation !in CommandSettingsModel.allowedVariableOperations(type)) {
-                            CommandSettingsModel.setParameter(
-                                it,
-                                "operation",
-                                CommandSettingsModel.allowedVariableOperations(type).first().name,
-                            )
-                        }
                     }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_OPERATION -> {
                 if (group != "operation") return
                 val operation = runCatching { VariableOperation.valueOf(value) }.getOrNull() ?: return
-                val type = runCatching { VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name)) }.getOrDefault(VariableType.BOOLEAN)
-                if (operation !in CommandSettingsModel.allowedVariableOperations(type)) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "operation", operation.name)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
+                if (group != "changeMode") return
+                val mode = runCatching { VariableChangeMode.valueOf(value) }.getOrNull() ?: return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "changeMode", mode.name)
                     }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_VALUE -> {
@@ -2345,7 +2483,7 @@ class GestureSequenceEditor(
                 }
             }
             GestureSettingScreen.FOR_SOURCE -> {
-                if (group != "source" || value !in setOf("FIXED", "TEMPORARY", "WORLD")) return
+                if (group != "source" || value !in setOf("FIXED", "WORLD")) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, fieldKey, value)
                     }) showSettingScreen()
@@ -2684,8 +2822,11 @@ class GestureSequenceEditor(
                     if (currentTarget != target) return
                 }
                 if (type == CommandType.FOR_END || (type == CommandType.MERGE &&
-                        (target.mergeConditionId == null || !GraphEditor.canAppendMerge(script.graph, target.mergeConditionId)))) {
-                    // 合流は対応する分岐を持つ経路以外では選択できません。
+                        (target.mergeConditionId == null || !GraphEditor.canAppendMerge(
+                            script.graph,
+                            target.mergeConditionId,
+                            target.continuationId,
+                        )))) {
                     state.lowerMode = GestureLowerMode.SETTINGS
                     updateLower(player)
                     return
@@ -2702,13 +2843,26 @@ class GestureSequenceEditor(
                     ) { candidateGraph ->
                         if (type == CommandType.MERGE) {
                             // 画面表示後に別操作でグラフが変わる競合にも例外を漏らしません。
-                            if (!GraphEditor.canAppendMerge(candidateGraph, target.mergeConditionId)) {
+                            if (!GraphEditor.canAppendMerge(
+                                    candidateGraph,
+                                    target.mergeConditionId,
+                                    target.continuationId,
+                                )) {
                                 null
                             } else {
-                                GraphEditor.appendMerge(candidateGraph, requireNotNull(target.mergeConditionId))
+                                GraphEditor.appendMerge(
+                                    candidateGraph,
+                                    requireNotNull(target.mergeConditionId),
+                                    continuationId = target.continuationId,
+                                )
                             }
                         } else {
-                            GraphEditor.insert(candidateGraph, target.sourceId, target.edge, type)
+                            GraphEditor.insert(
+                                candidateGraph,
+                                target.sourceId,
+                                target.edge,
+                                type,
+                            )
                         }
                     }
                 }.getOrElse { failure ->

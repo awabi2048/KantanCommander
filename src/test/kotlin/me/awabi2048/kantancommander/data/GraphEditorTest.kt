@@ -169,6 +169,114 @@ class GraphEditorTest {
     }
 
     @Test
+    fun `nested open condition merges into its enclosing continuation`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+
+        // 内側条件のTRUE枝は、挿入時点では親MERGEへ直結しています。ここをそのまま
+        // 残すと親MERGEへの入力が3本になるため、appendMergeは直結を内側MERGEへ
+        // 付け替え、内側MERGEのNEXTだけを親MERGEへ接続します。
+        val innerMerge = GraphEditor.appendMerge(graph, inner.id, continuationId = outerMerge.id)
+
+        assertEquals(innerMerge.id, inner.trueNext)
+        assertEquals(innerMerge.id, inner.falseNext)
+        assertEquals(outerMerge.id, innerMerge.next)
+        assertEquals(outerMerge.id, outer.trueNext)
+        assertEquals(inner.id, outer.falseNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `nested merge availability stops at the enclosing continuation`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        // 親合流の後ろに別の未合流条件があっても、内側条件の合流判定へ
+        // それを混ぜると、無関係な後続経路のために操作ができなくなります。
+        GraphEditor.append(graph, CommandType.CONDITION)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+
+        assertTrue(GraphEditor.canAppendMerge(graph, inner.id, outerMerge.id))
+        GraphEditor.appendMerge(graph, inner.id, outerMerge.id)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `normal insertion into a nested open branch keeps the branch as an early exit`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+
+        val inserted = GraphEditor.insert(
+            graph,
+            inner.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.WAIT,
+        )
+
+        assertEquals(null, inner.pairedNodeId)
+        assertEquals(outerMerge.id, inner.trueNext)
+        assertEquals(inserted.id, inner.falseNext)
+        assertEquals(null, inserted.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `condition insertion into a nested open branch creates a nested early-exit branch`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+
+        val inserted = GraphEditor.insert(
+            graph,
+            inner.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.CONDITION,
+        )
+
+        assertEquals(null, inserted.pairedNodeId)
+        assertEquals(null, inserted.trueNext)
+        assertEquals(null, inserted.falseNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `explicit merge can rejoin a nested early-exit branch`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+        val terminal = GraphEditor.insert(graph, inner.id, GraphEditor.Edge.FALSE, CommandType.WAIT)
+
+        val innerMerge = GraphEditor.appendMerge(graph, inner.id, continuationId = outerMerge.id)
+
+        assertEquals(innerMerge.id, terminal.next)
+        assertEquals(innerMerge.id, inner.trueNext)
+        assertEquals(terminal.id, inner.falseNext)
+        assertEquals(outerMerge.id, innerMerge.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `deleting nested merge restores the false branch as an early exit`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+        val innerMerge = GraphEditor.appendMerge(graph, inner.id, continuationId = outerMerge.id)
+
+        assertTrue(GraphEditor.delete(graph, innerMerge.id))
+        assertEquals(null, inner.pairedNodeId)
+        assertEquals(outerMerge.id, inner.trueNext)
+        assertEquals(null, inner.falseNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
     fun `last false command may be deleted while branches remain merged`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)

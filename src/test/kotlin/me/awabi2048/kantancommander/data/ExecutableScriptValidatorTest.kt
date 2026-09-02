@@ -64,20 +64,19 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `variable operation must match its declared type`() {
+    fun `variable definitions support number and string values`() {
         val script = DiskScript(name = "variable", owner = UUID.randomUUID())
         val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
         variable.params.putAll(
             mapOf(
-                "name" to "flag",
-                "type" to VariableType.TEXT.name,
-                "operation" to VariableOperation.TOGGLE.name,
+                "name" to "message",
+                "type" to VariableType.STRING.name,
+                "operation" to VariableOperation.DEFINE.name,
+                "value" to "ready",
             )
         )
 
-        assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.message.contains("切替は真偽値だけ") }
-        )
+        assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == variable.id })
     }
 
     @Test
@@ -87,8 +86,8 @@ class ExecutableScriptValidatorTest {
         variable.params.putAll(
             mapOf(
                 "name" to "value",
-                "type" to VariableType.INTEGER.name,
-                "operation" to VariableOperation.SET.name,
+                "type" to VariableType.NUMBER.name,
+                "operation" to VariableOperation.DEFINE.name,
                 "value" to "1",
             )
         )
@@ -134,7 +133,7 @@ class ExecutableScriptValidatorTest {
         val errors = ExecutableScriptValidator.validate(script)
 
         assertTrue(errors.any { it.message.contains("対象が未設定") })
-        assertTrue(errors.any { it.message.contains("移動先が未設定") })
+        assertTrue(errors.any { it.message.contains("移動先座標が未設定") })
     }
 
     @Test
@@ -214,22 +213,20 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `loop values cannot be stored into world variables`() {
+    fun `loop values may be assigned inside a for body`() {
         val script = DiskScript(name = "loop-world", owner = UUID.randomUUID())
-        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        val variable = GraphEditor.appendToForBody(script.graph, start.id, CommandType.VARIABLE)
         variable.params.putAll(
             mapOf(
                 "name" to "shared",
-                "scope" to "WORLD",
-                "type" to VariableType.INTEGER.name,
-                "operation" to VariableOperation.SET.name,
+                "type" to VariableType.NUMBER.name,
+                "operation" to VariableOperation.DEFINE.name,
                 "value" to "\$current_iteration_value",
             )
         )
 
-        assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.message.contains("ループ値はワールド内変数へ保存できません") },
-        )
+        assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == variable.id })
     }
 
     @Test
@@ -248,7 +245,7 @@ class ExecutableScriptValidatorTest {
 
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
-                it.message.contains("タイトル／アクションバーの表示時間")
+            it.message.contains("表示時間は0秒以上")
             }
         )
     }
@@ -262,7 +259,7 @@ class ExecutableScriptValidatorTest {
         val errors = ExecutableScriptValidator.validate(script)
 
         assertTrue(errors.any { it.message.contains("配置ブロック") })
-        assertTrue(errors.any { it.message.contains("ブロック配置位置") })
+        assertTrue(errors.any { it.message.contains("ブロック設置位置") })
         assertTrue(errors.any { it.message.contains("削除対象") })
     }
 
@@ -276,5 +273,22 @@ class ExecutableScriptValidatorTest {
         fill.blockToSpec = PositionSpec(PositionKind.COORDINATES, 100.0, 100.0, 100.0)
 
         assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("32768") })
+    }
+
+    @Test
+    fun `summon tags are validated as one string rather than a comma-separated list`() {
+        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
+        val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY)
+        summon.params["entity"] = "minecraft:pig"
+        summon.params["tags"] = "first_tag,second_tag"
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any { it.nodeId == summon.id && it.fieldKeys == setOf("tags") },
+        )
+
+        summon.params["tags"] = "first_tag"
+        assertFalse(
+            ExecutableScriptValidator.validate(script).any { it.nodeId == summon.id && it.fieldKeys == setOf("tags") },
+        )
     }
 }

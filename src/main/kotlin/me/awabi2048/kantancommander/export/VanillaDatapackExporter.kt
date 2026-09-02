@@ -15,6 +15,10 @@ import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.VariableChangeMode
+import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.NumericExpression
+import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -48,10 +52,14 @@ class VanillaDatapackExporter(
         val exportRoot = root.copy(graph = root.graph.deepCopy())
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
-        errors += ExecutableScriptValidator.validate(exportRoot, graphLimits).map { it.rendered() }
+        val variableDefinitions = worldVariableTypes.mapValues { (_, type) ->
+            if (type == VariableType.NUMBER) WorldVariableValue(type, numberValue = 0.0)
+            else WorldVariableValue(type, stringValue = "")
+        }
+        errors += ExecutableScriptValidator.validate(exportRoot, graphLimits, variableDefinitions).map { it.rendered() }
         collectWarnings(exportRoot.graph, "root", warnings)
         annotateVariableTypes(exportRoot.graph, worldVariableTypes, errors)
-        validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0)
+        validate(exportRoot, errors, Collections.newSetFromMap(IdentityHashMap()), 0, worldVariableTypes)
         return if (errors.isEmpty()) {
             StandaloneCompilation.Success(compile(exportRoot, entryFunctionName), entryFunctionName, warnings.distinct())
         } else {
@@ -86,6 +94,7 @@ class VanillaDatapackExporter(
         errors: MutableList<String>,
         visited: MutableSet<CommandGraph>,
         callDepth: Int,
+        worldVariableTypes: Map<String, VariableType>,
     ) {
         if (!visited.add(script.graph)) {
             errors += "${script.id}: 別ディスクのコピー内容が循環参照しています"
@@ -106,8 +115,20 @@ class VanillaDatapackExporter(
                         errors += "${script.id}/${node.id}: 保存されたItemStackメタデータは完全バニラ出力に未対応です"
                     }
                 }
-                CommandType.ENTITY_ACTION -> if (node.string("action") !in setOf("ride", "dismount")) {
-                    errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
+                CommandType.ENTITY_ACTION -> when (node.string("action")) {
+                    "ride", "dismount" -> Unit
+                    "equip" -> {
+                        val item = node.string("item")
+                        if (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null) {
+                            errors += "${script.id}/${node.id}: バニラに存在しない装備アイテムです: $item"
+                        }
+                        val itemData = node.string("itemData")
+                        if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
+                            errors += "${script.id}/${node.id}: 保存された装備ItemStackメタデータは完全バニラ出力に未対応です"
+                        }
+                    }
+                    "tag" -> Unit
+                    else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
                 CommandType.BLOCK_OPERATION -> {
                     val block = CommandValueRules.placementMaterial(node.string("block"))
@@ -135,47 +156,31 @@ class VanillaDatapackExporter(
                     callDepth >= maximumDiskCallDepth ->
                         errors += "${script.id}/${node.id}: 別ディスク呼出深度が上限 $maximumDiskCallDepth を超えます"
                     else ->
-                        validate(script.copy(graph = node.snapshot!!), errors, visited, callDepth + 1)
+                        validate(script.copy(graph = node.snapshot!!), errors, visited, callDepth + 1, worldVariableTypes)
                 }
-                CommandType.CONDITION -> validateCondition(script, node, errors)
+                CommandType.CONDITION -> validateCondition(script, node, errors, worldVariableTypes)
                 CommandType.CONTEXT -> validateContext(script, node, contextFrom(node), errors)
                 CommandType.VARIABLE -> {
                     if (node.string("name").isBlank()) errors += "${script.id}/${node.id}: variable name is missing"
-                    val type = runCatching { VariableType.valueOf(node.string("type")) }.getOrNull()
                     val operation = runCatching {
-                        VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
+                        VariableOperation.valueOf(node.string("operation", VariableOperation.DEFINE.name))
                     }.getOrNull()
-                    val storageOperationSupported =
-                        type in setOf(VariableType.DECIMAL, VariableType.TEXT) &&
-                            operation in setOf(VariableOperation.SET, VariableOperation.CLEAR) ||
-                            type == VariableType.POSITION &&
-                            operation in setOf(VariableOperation.STORE_POSITION, VariableOperation.CLEAR) ||
-                            type == VariableType.ENTITY &&
-                            operation in setOf(VariableOperation.STORE_TARGET, VariableOperation.CLEAR)
-                    if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER) && !storageOperationSupported) {
-                        errors += "${script.id}/${node.id}: ${type ?: "不明"}型の変数は完全バニラ出力に未対応です"
-                    }
-                    if (type == VariableType.INTEGER &&
-                        node.string("value") !in setOf("\$current_iteration_value", "\$current_loop_count") &&
-                        operation in setOf(VariableOperation.SET, VariableOperation.ADD, VariableOperation.SUBTRACT) &&
-                        node.string("value").toLongOrNull()?.let { it !in VANILLA_INTEGER_RANGE } != false
-                    ) {
-                        errors += "${script.id}/${node.id}: 整数値はバニラscoreboardの範囲外です"
-                    }
-                    if (type == VariableType.INTEGER &&
-                        operation in setOf(VariableOperation.ADD, VariableOperation.SUBTRACT) &&
-                        node.string("value").toLongOrNull() == Int.MIN_VALUE.toLong()
-                    ) {
-                        // Int最小値は32bit定数へ反転できないため、加減算どちらでもバニラ命令が範囲外になる。
-                        errors += "${script.id}/${node.id}: Int最小値の加減算はバニラscoreboard命令へ安全に変換できません"
-                    }
-                    if (operation == VariableOperation.STORE_TARGET && node.targetSpec == null) {
-                        errors += "${script.id}/${node.id}: 対象を保存するための対象指定が未設定です"
-                    }
-                    if (node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")) {
-                        if (node.string("type") != VariableType.INTEGER.name) {
-                            errors += "${script.id}/${node.id}: ループ値は整数変数だけへ保存できます"
+                    val type = runCatching {
+                        val rawType = if (operation == VariableOperation.CHANGE) {
+                            node.params[EXPORT_VARIABLE_TYPE] ?: node.string("type")
+                        } else {
+                            node.string("type")
                         }
+                        VariableType.valueOf(rawType)
+                    }.getOrNull()
+                    if (type == null || operation == null) errors += "${script.id}/${node.id}: 変数型または操作が不正です"
+                    if (operation == VariableOperation.CHANGE &&
+                        node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name &&
+                        type != VariableType.NUMBER
+                    ) errors += "${script.id}/${node.id}: 文字列変数へ計算式を適用できません"
+                    if (VariableTemplate.references(node.string("value")).isEmpty() &&
+                        node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")
+                    ) {
                         if (enclosingFor(script.graph, node.id) == null) {
                             errors += "${script.id}/${node.id}: ループ値はfor本体内だけで参照できます"
                         }
@@ -185,18 +190,26 @@ class VanillaDatapackExporter(
                     listOf("start", "end", "step").forEach { field ->
                         when (node.string("${field}Source", "FIXED")) {
                             "FIXED" -> {
-                                val value = node.string("${field}Value").toLongOrNull()
-                                if (value == null) {
+                                val raw = node.string("${field}Value")
+                                val value = raw.toDoubleOrNull()?.let(::exactLong)
+                                if (value == null && VariableTemplate.references(raw).isEmpty()) {
                                     errors += "${script.id}/${node.id}: forの${field}値は64bit符号付き整数で指定してください"
-                                } else if (value !in VANILLA_INTEGER_RANGE) {
+                                } else if (value != null && value !in VANILLA_INTEGER_RANGE) {
                                     errors += "${script.id}/${node.id}: forの${field}値はバニラscoreboardの範囲外です"
                                 }
                             }
-                            "TEMPORARY", "WORLD" -> Unit
+                            "WORLD" -> {
+                                val name = node.string("${field}Value")
+                                if (worldVariableTypes[name] != VariableType.NUMBER) {
+                                    errors += "${script.id}/${node.id}: forの${field}参照変数は数値型である必要があります: $name"
+                                }
+                            }
                             else -> errors += "${script.id}/${node.id}: forの${field}参照元が不正です"
                         }
                     }
-                    if (node.string("stepSource", "FIXED") == "FIXED" && node.string("stepValue").toLongOrNull() == 0L) {
+                    if (node.string("stepSource", "FIXED") == "FIXED" &&
+                        node.string("stepValue").toDoubleOrNull()?.let(::exactLong) == 0L
+                    ) {
                         errors += "${script.id}/${node.id}: forの増分に0は指定できません"
                     }
                 }
@@ -215,6 +228,7 @@ class VanillaDatapackExporter(
                 node.contextOverride?.let { validateContext(script, node, it, errors) }
             }
             validatePosition(script, node, node.conditionPositionSpec, errors)
+            validateFacing(script, node, node.destinationFacingSpec, errors)
             if (listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec)
                     .any { it.kind == TargetKind.FIXED_ENTITY }
             ) {
@@ -224,31 +238,47 @@ class VanillaDatapackExporter(
         visited.remove(script.graph)
     }
 
-    private fun validateCondition(script: DiskScript, node: CommandNode, errors: MutableList<String>) {
+    private fun validateCondition(
+        script: DiskScript,
+        node: CommandNode,
+        errors: MutableList<String>,
+        worldVariableTypes: Map<String, VariableType>,
+    ) {
         val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
         if (kind == null) {
             errors += "${script.id}/${node.id}: 不明な条件種別です"
             return
         }
-        if (kind == ConditionKind.VARIABLE_STATE && node.string("variable").isBlank()) {
-            errors += "${script.id}/${node.id}: 一時変数名がありません"
-        }
-        if (kind == ConditionKind.VARIABLE_STATE && node.params[EXPORT_VARIABLE_TYPE] == null) {
-            errors += "${script.id}/${node.id}: 変数の型を一意に解決できません"
-        }
-        // 整数変数の大小比較はバニラscoreboardのmatches範囲へ展開されるため、
-        // 比較値が32bit範囲外・非数値のまま出力すると常にfalseまたはコマンドエラーになる。
-        val comparisonType = node.params[EXPORT_VARIABLE_TYPE]?.let {
-            runCatching { VariableType.valueOf(it) }.getOrNull()
-        }
-        if (kind == ConditionKind.VARIABLE_STATE &&
-            comparisonType == VariableType.INTEGER &&
-            node.string("operator") !in setOf("set", "unset")
-        ) {
-            val parsed = node.string("value").toLongOrNull()
-            if (parsed == null || parsed !in VANILLA_INTEGER_RANGE) {
-                errors += "${script.id}/${node.id}: 整数比較値はバニラscoreboardの32bit整数範囲で指定してください: ${node.string("value")}"
+        when (kind) {
+            ConditionKind.VARIABLE_STATE -> {
+                val variable = node.string("variable")
+                if (variable.isBlank()) {
+                    errors += "${script.id}/${node.id}: ワールド内変数名がありません"
+                }
+                if (worldVariableTypes[variable] != VariableType.NUMBER) {
+                    errors += "${script.id}/${node.id}: 数値型以外の変数条件は完全バニラ出力に未対応です"
+                }
+                if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
+                    errors += "${script.id}/${node.id}: 変数比較方法が不正です"
+                }
+                val raw = node.string("value")
+                val parsed = raw.toDoubleOrNull()
+                val reference = VariableTemplate.references(raw).singleOrNull()
+                if (reference == null && parsed == null) {
+                    errors += "${script.id}/${node.id}: バニラ出力の比較値は数値または単一の変数参照で指定してください: $raw"
+                } else if (reference == null && scaledScore(parsed!!) == null) {
+                    errors += "${script.id}/${node.id}: 比較値がバニラの固定小数点範囲外です: $raw"
+                } else if (reference != null && worldVariableTypes[reference] != VariableType.NUMBER) {
+                    errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
+                }
             }
+            ConditionKind.PLAYER_STATE -> {
+                val itemData = node.string("itemData")
+                if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
+                    errors += "${script.id}/${node.id}: アイテムデータ付き所持判定は完全バニラ出力に未対応です"
+                }
+            }
+            else -> Unit
         }
     }
 
@@ -257,37 +287,31 @@ class VanillaDatapackExporter(
         worldVariableTypes: Map<String, VariableType>,
         errors: MutableList<String>,
     ) {
-        val temporaryTypes = mutableMapOf<String, MutableSet<VariableType>>()
-        fun collect(current: CommandGraph) {
-            current.nodes.values.forEach { node ->
-                if (node.type == CommandType.VARIABLE &&
-                    node.string("scope", "TEMPORARY") != "WORLD"
-                ) {
-                    runCatching { VariableType.valueOf(node.string("type")) }.getOrNull()?.let {
-                        temporaryTypes.getOrPut(node.string("name")) { linkedSetOf() } += it
-                    }
-                }
-                node.snapshot?.let(::collect)
-            }
-        }
-        collect(graph)
-
         fun annotate(current: CommandGraph) {
             current.nodes.values.forEach { node ->
                 if (node.type == CommandType.CONDITION &&
                     node.string("kind") == ConditionKind.VARIABLE_STATE.name
                 ) {
                     val name = node.string("variable")
-                    val type = if (node.string("variableScope", "TEMPORARY") == "WORLD") {
-                        worldVariableTypes[name]
+                    val type = worldVariableTypes[name]
+                    if (type == null) {
+                        errors += "${node.id}: ワールド内変数の型を一意に解決できません: $name"
+                    } else if (type != VariableType.NUMBER) {
+                        errors += "${node.id}: 文字列変数の条件は完全バニラ出力に未対応です: $name"
                     } else {
-                        temporaryTypes[name]?.singleOrNull()
+                        node.params[EXPORT_VARIABLE_TYPE] = type.name
                     }
-                    val storageExistenceCheck = node.string("operator") in setOf("set", "unset")
-                    if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER) && !storageExistenceCheck) {
-                        errors += "${node.id}: ${type ?: "不明"}型の変数条件は完全バニラ出力に未対応です"
-                    } else if (type != null) {
-                        node.params[EXPORT_VARIABLE_TYPE] = requireNotNull(type).name
+                }
+                if (node.type == CommandType.VARIABLE &&
+                    node.string("operation", VariableOperation.DEFINE.name) == VariableOperation.CHANGE.name
+                ) {
+                    val name = node.string("name")
+                    val type = worldVariableTypes[name]
+                    if (type == null) {
+                        errors += "${node.id}: 変更対象のワールド内変数の型を一意に解決できません: $name"
+                    } else {
+                        // CHANGEでは型タブを表示しないため、出力時だけ実在する定義から補います。
+                        node.params[EXPORT_VARIABLE_TYPE] = type.name
                     }
                 }
                 node.snapshot?.let(::annotate)
@@ -313,13 +337,19 @@ class VanillaDatapackExporter(
         errors: MutableList<String>,
     ) {
         val kind = position?.kind
-        if (kind in setOf(
-                PositionKind.MYWORLD_SPAWN,
-                PositionKind.TEMPORARY_VARIABLE,
-                PositionKind.WORLD_VARIABLE,
-            )
-        ) {
+        if (kind == PositionKind.MYWORLD_SPAWN) {
             errors += "${script.id}/${node.id}: ${kind}の位置は完全バニラ出力に未対応です"
+        }
+    }
+
+    private fun validateFacing(
+        script: DiskScript,
+        node: CommandNode,
+        facing: me.awabi2048.kantancommander.model.FacingSpec?,
+        errors: MutableList<String>,
+    ) {
+        if (facing?.kind == FacingKind.MYWORLD_SPAWN) {
+            errors += "${script.id}/${node.id}: 出力先のMyWorldスポーンの向きを検証できません"
         }
     }
 
@@ -355,20 +385,6 @@ class VanillaDatapackExporter(
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
             val nodeExportContext = exportContext(graph, node)
-            if (node.type == CommandType.VARIABLE &&
-                node.string("operation") == VariableOperation.STORE_POSITION.name
-            ) {
-                val helper = nodeFunction(prefix, node.id, "capture_position")
-                node.params[EXPORT_CAPTURE_FUNCTION] = helper
-                val temporary = node.string("scope", "TEMPORARY") != "WORLD"
-                val path = VanillaStorageNames.variablePath(node.string("name"), temporary)
-                defineFunction(output, helper, buildString {
-                    appendLine("data modify storage kantan:variables $path set value {}")
-                    appendLine("data modify storage kantan:variables $path.position set from entity @s Pos")
-                    appendLine("data modify storage kantan:variables $path.rotation set from entity @s Rotation")
-                    appendLine("kill @s")
-                })
-            }
             val emptyFor = node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId
             if (!emptyFor) {
                 lines += "execute if score #executed kc_runtime matches ${maximumCommandCount.coerceAtLeast(1)}.. run return 0"
@@ -430,10 +446,8 @@ class VanillaDatapackExporter(
                     } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.VARIABLE &&
-                    node.string("operation") in setOf(
-                        VariableOperation.ADD.name,
-                        VariableOperation.SUBTRACT.name,
-                    ) -> {
+                    node.string("operation") == VariableOperation.CHANGE.name &&
+                    node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name -> {
                     val helper = nodeFunction(prefix, node.id, "arithmetic")
                     defineFunction(
                         output,
@@ -456,7 +470,9 @@ class VanillaDatapackExporter(
                         lines += nodeExportContext?.let { wrapContext(it, times) } ?: times
                     }
                     val contextual = nodeExportContext?.let { wrapContext(it, command) } ?: command
-                    lines += storeResult(node, contextual)
+                    val macro = prepareMacro(node, contextual, output)
+                    lines += macro.setup
+                    lines += storeResult(node, macro.call)
                 }
             }
 
@@ -467,17 +483,21 @@ class VanillaDatapackExporter(
                         lines += conditionContext?.let { context -> wrapContext(context, preparation) } ?: preparation
                     }
                     val predicate = predicate(node)
-                    val inequality = node.string("kind") == ConditionKind.VARIABLE_STATE.name &&
-                        node.string("operator") in setOf("!=", "unset")
-                    val inverted = node.boolean("inverted") xor inequality
+                    val predicateMacro = prepareMacroTemplate(node, predicate)
+                    predicateMacro?.setup?.let(lines::addAll)
+                    val predicateCommand = predicateMacro?.command ?: predicate
+                    // Java版と同じく「に等しくない」は等号判定を反転して表現します。
+                    // execute if score には != 演算子がないため、ノード自身の反転と
+                    // 合成してからtrue/false枝を組み立てます。
+                    val inverted = node.boolean("inverted") xor conditionNeedsInversion(node)
                     val trueCheck = if (inverted) "unless" else "if"
                     val falseCheck = if (inverted) "if" else "unless"
                     val trueBranch = node.trueNext?.let {
-                        "execute $trueCheck $predicate run return run function kantan:${nodeFunction(prefix, it)}"
-                    } ?: "execute $trueCheck $predicate run return 1"
+                        "execute $trueCheck $predicateCommand run return run function kantan:${nodeFunction(prefix, it)}"
+                    } ?: "execute $trueCheck $predicateCommand run return 1"
                     val falseBranch = node.falseNext?.let {
-                        "execute $falseCheck $predicate run return run function kantan:${nodeFunction(prefix, it)}"
-                    } ?: "execute $falseCheck $predicate run return 1"
+                        "execute $falseCheck $predicateCommand run return run function kantan:${nodeFunction(prefix, it)}"
+                    } ?: "execute $falseCheck $predicateCommand run return 1"
                     lines += conditionContext?.let { context -> wrapContext(context, trueBranch) } ?: trueBranch
                     lines += conditionContext?.let { context -> wrapContext(context, falseBranch) } ?: falseBranch
                     lines += "return 0"
@@ -505,30 +525,80 @@ class VanillaDatapackExporter(
         }
     }
 
+    private fun teleportCommand(node: CommandNode): String {
+        val base = "tp ${effectiveTarget(node)} ${destination(node)}"
+        val facing = node.destinationFacingSpec ?: return base
+        return when (facing.kind) {
+            FacingKind.INHERITED -> base
+            FacingKind.ROTATION, FacingKind.CAPTURED ->
+                "$base ${facing.yaw ?: 0f} ${facing.pitch ?: 0f}"
+            FacingKind.EXECUTOR -> "$base facing entity @s eyes"
+            FacingKind.TARGET -> {
+                val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
+                "$base facing entity ${singleSelector(target)} eyes"
+            }
+            FacingKind.COORDINATES ->
+                "$base facing ${facing.x ?: error("destination facing x is missing")} " +
+                    "${facing.y ?: error("destination facing y is missing")} " +
+                    "${facing.z ?: error("destination facing z is missing")}"
+            FacingKind.MYWORLD_SPAWN -> error("unsupported destination facing")
+        }
+    }
+
+    private fun soundCommand(node: CommandNode): String {
+        val sound = "playsound ${node.string("sound")} master @a ~ ~ ~ " +
+            "${node.string("volume", "1.0")} ${node.string("pitch", "1.0")}"
+        if (node.string("soundScope", "CONTEXT") == "WORLD") {
+            // 全域指定は各プレイヤー位置を音源位置にするという計画書の定義に合わせ、
+            // プレイヤーごとに一度ずつ実行します。
+            return "execute as @a at @s run playsound ${node.string("sound")} master @s ~ ~ ~ " +
+                "${node.string("volume", "1.0")} ${node.string("pitch", "1.0")}"
+        }
+        val position = node.soundPositionSpec ?: return sound
+        return when (position.kind) {
+            PositionKind.CAPTURED, PositionKind.COORDINATES ->
+                "execute positioned ${position.x ?: error("sound x is missing")} " +
+                    "${position.y ?: error("sound y is missing")} ${position.z ?: error("sound z is missing")} run $sound"
+            PositionKind.DISK -> sound
+            PositionKind.EXECUTOR -> "execute at @s run $sound"
+            PositionKind.TARGET -> {
+                val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
+                "execute at ${singleSelector(target)} run $sound"
+            }
+            PositionKind.MYWORLD_SPAWN -> error("unsupported sound position")
+        }
+    }
+
     private fun lower(node: CommandNode, graph: CommandGraph): String? = when (node.type) {
-        CommandType.TELEPORT -> "tp ${effectiveTarget(node)} ${destination(node)}"
-        CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.int("count", 1)}"
-        CommandType.ENTITY_ACTION ->
-            if (node.string("action") == "dismount") "ride ${effectiveTarget(node)} dismount"
-            else "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
+        CommandType.TELEPORT -> teleportCommand(node)
+        CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.string("count", "1")}"
+        CommandType.ENTITY_ACTION -> when (node.string("action")) {
+            "dismount" -> "ride ${effectiveTarget(node)} dismount"
+            "equip" -> "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with ${node.string("item")}"
+            "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
+            else -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
+        }
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
-            "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text"))}\"}"
-            "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text"))}\"}"
-            else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text"))}\"}"
+            "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
+            "subtitle" -> "title ${effectiveTarget(node)} subtitle {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
+            "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
+            else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
         }
         CommandType.SUMMON_ENTITY -> {
-            val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
-            val nbt = if (tags.isEmpty()) "" else " {Tags:[${tags.joinToString(",") { "\\\"${escape(it)}\\\"" }}]}"
+            // 召喚タグは一つの文字列としてNBTへ一要素だけを書き込みます。
+            // 入力中のカンマを複数タグの区切りとして再解釈しません。
+            val tag = node.string("tags").takeIf(String::isNotBlank)
+            val tagNbt = tag?.let { "Tags:[\\\"${escape(it)}\\\"]" }.orEmpty()
+            val customName = node.string("customName").takeIf(String::isNotBlank)
+                ?.let { "CustomName:\"{\\\"text\\\":\\\"${escape(it.replace('&', '§'))}\\\"}\"" }
+            val nbtFields = listOfNotNull(tagNbt.takeIf(String::isNotBlank), customName)
+            val nbt = nbtFields.takeIf { it.isNotEmpty() }?.let { " {${it.joinToString(",")}}" }.orEmpty()
             "summon ${node.string("entity")} ~ ~ ~$nbt"
         }
-        CommandType.PLAY_SOUND ->
-            "execute as @a at @s run playsound ${node.string("sound")} master @s ~ ~ ~ " +
-                "${node.double("volume", 1.0)} ${node.double("pitch", 1.0)}"
+        CommandType.PLAY_SOUND -> soundCommand(node)
         CommandType.APPLY_EFFECT ->
-            "effect give ${effectiveTarget(node)} ${node.string("effect")} ${node.int("seconds", 30)} ${node.int("level", 1) - 1}"
+            "effect give ${effectiveTarget(node)} ${node.string("effect")} ${node.string("seconds", "30")} ${effectAmplifier(node.string("level", "1"))}"
         CommandType.CAMERA_SHAKE -> null
-        CommandType.EQUIP_ITEM ->
-            "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with ${node.string("item")}"
         CommandType.BLOCK_OPERATION -> blockOperationCommand(node)
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
         CommandType.DISK_CALL -> null
@@ -536,6 +606,61 @@ class VanillaDatapackExporter(
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
     }
+
+    /** 動的な文字列・数値入力はJava版のfunction macroへ一元的に変換します。 */
+    private fun prepareMacro(
+        node: CommandNode,
+        command: String,
+        output: MutableMap<String, String>,
+    ): MacroCommand {
+        val template = prepareMacroTemplate(node, command)
+        if (template == null) return MacroCommand(emptyList(), command)
+        val macroName = nodeFunction("macro", node.id)
+        defineFunction(output, macroName, "${'$'}${template.command}\n")
+        return MacroCommand(template.setup, "function kantan:$macroName with storage kantan:variables ${template.storagePath}")
+    }
+
+    /** 条件分岐のpredicateなど、関数化せず置換文字列だけが必要な箇所にも使います。 */
+    private fun prepareMacroTemplate(node: CommandNode, command: String): MacroTemplate? {
+        val references = VariableTemplate.references(command)
+        if (references.isEmpty()) return null
+        val token = node.id.toString().replace("-", "")
+        val storagePath = "macro.$token"
+        val replacements = references.associateWith { "v_${shortDigest(it, 10)}" }
+        val macroCommand = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}").replace(command) { match ->
+            "${'$'}(${replacements.getValue(match.groupValues[1])})"
+        }
+        val setup = buildList {
+            add("data remove storage kantan:variables $storagePath")
+            references.forEach { reference ->
+                add(
+                    "data modify storage kantan:variables $storagePath.${replacements.getValue(reference)} " +
+                        "set from storage kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)}",
+                )
+            }
+        }
+        return MacroTemplate(storagePath, macroCommand, setup)
+    }
+
+    private fun effectAmplifier(raw: String): String =
+        raw.toDoubleOrNull()?.let { value ->
+            if (value.isFinite() && value == value.toLong().toDouble()) {
+                (value.toLong() - 1L).coerceAtLeast(0L).toString()
+            } else {
+                raw
+            }
+        } ?: raw
+
+    private data class MacroCommand(
+        val setup: List<String>,
+        val call: String,
+    )
+
+    private data class MacroTemplate(
+        val storagePath: String,
+        val command: String,
+        val setup: List<String>,
+    )
 
     private fun equipmentSlot(slot: String) = when (slot) {
         "OFF_HAND" -> "weapon.offhand"
@@ -630,51 +755,69 @@ class VanillaDatapackExporter(
         ConditionKind.valueOf(node.string("kind", ConditionKind.TARGET_EXISTS.name))
     ) {
         ConditionKind.TARGET_EXISTS -> "entity ${conditionTarget(node)}"
-        ConditionKind.ENTITY_STATE -> when (node.string("state", "sneaking")) {
-            "sneaking" -> "entity ${appendSelectorArguments(conditionTarget(node), "nbt={Pose:\\\"CROUCHING\\\"}")}"
-            "on_ground" -> "entity ${appendSelectorArguments(conditionTarget(node), "nbt={OnGround:1b}")}"
-            else -> "entity ${conditionTarget(node)}"
+        ConditionKind.PLAYER_STATE -> {
+            val nbt = buildList {
+                when (node.string("sneaking").toBooleanStrictOrNull()) {
+                    true -> add("Pose:\\\"CROUCHING\\\"")
+                    false -> add("Pose:\\\"STANDING\\\"")
+                    null -> Unit
+                }
+                node.string("item").takeIf(String::isNotBlank)?.let {
+                    add("Inventory:[{id:\\\"${escape(it)}\\\"}]")
+                }
+            }
+            val target = conditionTarget(node)
+            if (nbt.isEmpty()) "entity $target"
+            else "entity ${appendSelectorArguments(target, "nbt={${nbt.joinToString(",")}}")}"
         }
         ConditionKind.VARIABLE_STATE -> {
-            val temporary = node.string("variableScope", "TEMPORARY") != "WORLD"
-            val type = VariableType.valueOf(node.string(EXPORT_VARIABLE_TYPE))
-            if (type !in setOf(VariableType.BOOLEAN, VariableType.INTEGER)) {
-                "data storage kantan:variables ${VanillaStorageNames.variablePath(node.string("variable"), temporary)}"
+            val holder = conditionCountHolder(node)
+            val raw = node.string("value")
+            val value = raw.toDoubleOrNull()?.let(::scaledScore)
+            val operator = comparisonOperator(node)
+            if (value != null) {
+                "score $holder kc_runtime matches ${scoreRange(operator, value)}"
             } else {
-                val holder = variableHolder(node.string("variable"), temporary)
-                val operator = node.string("operator")
-                if (operator in setOf("set", "unset")) {
-                    "score $holder kc_vars matches ${Int.MIN_VALUE}..${Int.MAX_VALUE}"
-                } else {
-                    val value = if (type == VariableType.BOOLEAN) {
-                        if (node.string("value").toBooleanStrictOrNull() == true) 1L else 0L
-                    } else node.string("value").toLong()
-                    when {
-                        operator == ">" && value == Int.MAX_VALUE.toLong() ||
-                            operator == "<" && value == Int.MIN_VALUE.toLong() ->
-                            "score #never_set kc_runtime matches 1"
-                        operator == "<=" && value == Int.MAX_VALUE.toLong() ||
-                            operator == ">=" && value == Int.MIN_VALUE.toLong() ->
-                            "score $holder kc_vars matches ${Int.MIN_VALUE}..${Int.MAX_VALUE}"
-                        else -> "score $holder kc_vars matches ${scoreRange(operator, value)}"
-                    }
-                }
+                "score $holder kc_runtime $operator ${conditionValueHolder(node)} kc_runtime"
             }
         }
         ConditionKind.BLOCK_STATE ->
             "block ~ ~ ~ ${node.string("block", "minecraft:air")}"
-        ConditionKind.ITEM_POSSESSION ->
-            "score ${conditionCountHolder(node)} kc_result matches ${node.int("count", 1).coerceAtLeast(1)}.."
     }
 
     private fun conditionPreparation(node: CommandNode): String? =
-        if (ConditionKind.valueOf(node.string("kind")) == ConditionKind.ITEM_POSSESSION) {
-            "execute store result score ${conditionCountHolder(node)} kc_result run clear " +
-                "${conditionTarget(node)} ${node.string("item", "minecraft:air")} 0"
+        if (ConditionKind.valueOf(node.string("kind")) == ConditionKind.VARIABLE_STATE) {
+            buildList {
+                add(
+                    "execute store result score ${conditionCountHolder(node)} kc_runtime run data get storage " +
+                        "kantan:variables ${VanillaStorageNames.variablePath(node.string("variable"), temporary = false)} $FIXED_POINT_SCALE",
+                )
+                val raw = node.string("value")
+                val staticValue = raw.toDoubleOrNull()?.let(::scaledScore)
+                if (staticValue != null) {
+                    add("scoreboard players set ${conditionValueHolder(node)} kc_runtime $staticValue")
+                } else {
+                    VariableTemplate.references(raw).singleOrNull()?.let { reference ->
+                        add(
+                            "execute store result score ${conditionValueHolder(node)} kc_runtime run data get storage " +
+                                "kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)} $FIXED_POINT_SCALE",
+                        )
+                    }
+                }
+            }.joinToString("\n")
         } else null
 
     private fun conditionCountHolder(node: CommandNode) =
         "#c_${node.id.toString().replace("-", "")}"
+
+    private fun conditionValueHolder(node: CommandNode) =
+        "#cv_${node.id.toString().replace("-", "")}"
+
+    private fun conditionNeedsInversion(node: CommandNode): Boolean =
+        node.string("kind") == ConditionKind.VARIABLE_STATE.name && node.string("operator") == "!="
+
+    private fun comparisonOperator(node: CommandNode): String =
+        node.string("operator").takeUnless { it == "!=" } ?: "=="
 
     private fun conditionTarget(node: CommandNode): String {
         val spec = node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET)
@@ -682,62 +825,106 @@ class VanillaDatapackExporter(
     }
 
     private fun lowerVariable(node: CommandNode, graph: CommandGraph): String? {
-        val temporary = node.string("scope", "TEMPORARY") != "WORLD"
-        val holder = variableHolder(node.string("name"), temporary)
-        val storagePath = VanillaStorageNames.variablePath(node.string("name"), temporary)
-        val type = VariableType.valueOf(node.string("type", VariableType.BOOLEAN.name))
-        val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.SET.name))
-        val special = node.string("value").takeIf { it in setOf("\$current_iteration_value", "\$current_loop_count") }
+        val name = node.string("name")
+        val storagePath = VanillaStorageNames.variablePath(name, temporary = false)
+        val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.DEFINE.name))
+        val type = VariableType.valueOf(
+            if (operation == VariableOperation.CHANGE) {
+                node.params[EXPORT_VARIABLE_TYPE] ?: node.string("type", VariableType.NUMBER.name)
+            } else {
+                node.string("type", VariableType.NUMBER.name)
+            },
+        )
+        if (operation == VariableOperation.CHANGE &&
+            node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name
+        ) return null
+        val raw = node.string("value")
+        val special = raw.takeIf { it in setOf("\$current_iteration_value", "\$current_loop_count") }
         if (special != null) {
             val loop = enclosingFor(graph, node.id) ?: return null
+            if (type != VariableType.NUMBER || operation != VariableOperation.DEFINE) return null
             val source = "#${loopName(loop.id)}_${if (special == "\$current_loop_count") "count" else "value"}"
-            val operator = if (operation == VariableOperation.SET) "=" else return null
-            return "scoreboard players operation $holder kc_vars $operator $source kc_vars"
+            return "execute store result storage kantan:variables $storagePath double 1.0 run scoreboard players get $source kc_vars"
         }
-        return when (operation) {
-            VariableOperation.SET -> when (type) {
-                VariableType.BOOLEAN -> "scoreboard players set $holder kc_vars ${if (node.boolean("value")) 1 else 0}"
-                VariableType.INTEGER -> "scoreboard players set $holder kc_vars ${node.string("value").toLong()}"
-                VariableType.DECIMAL ->
-                    "data modify storage kantan:variables $storagePath set value ${node.string("value").toDouble()}d"
-                VariableType.TEXT ->
-                    "data modify storage kantan:variables $storagePath set value \"${escape(node.string("value"))}\""
-                VariableType.POSITION, VariableType.ENTITY -> null
-            }
-            VariableOperation.ADD, VariableOperation.SUBTRACT -> null
-            VariableOperation.CLEAR ->
-                if (type in setOf(VariableType.BOOLEAN, VariableType.INTEGER)) {
-                    "scoreboard players reset $holder kc_vars"
-                } else {
-                    "data remove storage kantan:variables $storagePath"
-                }
-            VariableOperation.TOGGLE ->
-                "execute store success score $holder kc_vars run execute unless score $holder kc_vars matches 1"
-            VariableOperation.STORE_POSITION ->
-                "execute summon minecraft:marker run function kantan:${node.string(EXPORT_CAPTURE_FUNCTION)}"
-            VariableOperation.STORE_TARGET ->
-                "execute as ${selector(requireNotNull(node.targetSpec))} run data modify storage kantan:variables " +
-                    "$storagePath set from entity @s UUID"
+        val assignment = when (type) {
+            VariableType.NUMBER ->
+                "data modify storage kantan:variables $storagePath set value ${raw}d"
+            VariableType.STRING ->
+                "data modify storage kantan:variables $storagePath set value \"${escape(raw)}\""
         }
+        return if (operation == VariableOperation.DEFINE) {
+            "execute unless data storage kantan:variables $storagePath run $assignment"
+        } else assignment
     }
 
     private fun lowerArithmeticVariable(node: CommandNode, graph: CommandGraph): List<String> {
-        val holder = variableHolder(
-            node.string("name"),
-            temporary = node.string("scope", "TEMPORARY") != "WORLD",
-        )
-        val subtract = node.string("operation") == VariableOperation.SUBTRACT.name
-        val special = node.string("value").takeIf {
-            it in setOf("\$current_iteration_value", "\$current_loop_count")
+        val parsed = NumericExpression.parse(node.string("value")).expression ?: return listOf("return 0")
+        val enclosingLoop = enclosingFor(graph, node.id)
+        val prefix = "#expr_${node.id.toString().replace("-", "").take(12)}"
+        val stack = ArrayDeque<String>()
+        val lines = mutableListOf<String>()
+        lines += "scoreboard players set ${prefix}_scale kc_runtime $FIXED_POINT_SCALE"
+        lines += "scoreboard players set ${prefix}_negative kc_runtime -1"
+
+        fun holder(index: Int) = "${prefix}_$index"
+        fun push(value: String) = stack.addLast(value)
+        fun pop(): String? = stack.removeLastOrNull()
+
+        parsed.postfix().forEachIndexed { index, token ->
+            when (token) {
+                is NumericExpression.PostfixToken.Literal -> {
+                    val scaled = scaledScore(token.value) ?: return listOf("return 0")
+                    val destination = holder(index)
+                    lines += "scoreboard players set $destination kc_runtime $scaled"
+                    push(destination)
+                }
+                is NumericExpression.PostfixToken.Reference -> {
+                    val destination = holder(index)
+                    when (token.name) {
+                        "\$current_iteration_value", "\$current_loop_count" -> {
+                            val loop = enclosingLoop ?: return listOf("return 0")
+                            val source = "#${loopName(loop.id)}_${if (token.name == "\$current_loop_count") "count" else "value"}"
+                            lines += "scoreboard players operation $destination kc_runtime = $source kc_vars"
+                            lines += "scoreboard players operation $destination kc_runtime *= ${prefix}_scale kc_runtime"
+                        }
+                        else -> lines +=
+                            "execute store result score $destination kc_runtime run data get storage " +
+                                "kantan:variables ${VanillaStorageNames.variablePath(token.name, temporary = false)} $FIXED_POINT_SCALE"
+                    }
+                    push(destination)
+                }
+                is NumericExpression.PostfixToken.Operator -> {
+                    if (token.value == '~') {
+                        val operand = pop() ?: return listOf("return 0")
+                        lines += "scoreboard players operation $operand kc_runtime *= ${prefix}_negative kc_runtime"
+                        push(operand)
+                    } else {
+                        val rhs = pop() ?: return listOf("return 0")
+                        val lhs = pop() ?: return listOf("return 0")
+                        when (token.value) {
+                            '+' -> lines += "scoreboard players operation $lhs kc_runtime += $rhs kc_runtime"
+                            '-' -> lines += "scoreboard players operation $lhs kc_runtime -= $rhs kc_runtime"
+                            '*' -> {
+                                lines += "scoreboard players operation $lhs kc_runtime *= $rhs kc_runtime"
+                                lines += "scoreboard players operation $lhs kc_runtime /= ${prefix}_scale kc_runtime"
+                            }
+                            '/' -> {
+                                lines += "execute if score $rhs kc_runtime matches 0 run return 0"
+                                lines += "scoreboard players operation $lhs kc_runtime *= ${prefix}_scale kc_runtime"
+                                lines += "scoreboard players operation $lhs kc_runtime /= $rhs kc_runtime"
+                            }
+                            else -> return listOf("return 0")
+                        }
+                        push(lhs)
+                    }
+                }
+            }
         }
-        if (special != null) {
-            val loop = requireNotNull(enclosingFor(graph, node.id))
-            val source = "#${loopName(loop.id)}_${if (special == "\$current_loop_count") "count" else "value"}"
-            return guardedScoreOperation(holder, source, subtract)
-        }
-        val raw = node.string("value").toLong()
-        val delta = if (subtract) Math.negateExact(raw) else raw
-        return guardedScoreConstant(holder, delta)
+        val result = stack.singleOrNull() ?: return listOf("return 0")
+        val storagePath = VanillaStorageNames.variablePath(node.string("name"), temporary = false)
+        lines += "execute store result storage kantan:variables $storagePath double 0.001 run scoreboard players get $result kc_runtime"
+        lines += "return 1"
+        return lines
     }
 
     private fun guardedScoreConstant(target: String, delta: Long): List<String> {
@@ -791,11 +978,11 @@ class VanillaDatapackExporter(
     private fun assignLoopValue(loop: String, target: String, node: CommandNode, field: String): String {
         val destination = "#${loop}_$target"
         return when (node.string("${field}Source", "FIXED")) {
-            "TEMPORARY" ->
-                "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"), temporary = true)} kc_vars"
-            // ワールド内変数は永続scoreboardへ初期化済みのため、一時変数と同じoperation転記で読める。
             "WORLD" ->
-                "scoreboard players operation $destination kc_vars = ${variableHolder(node.string("${field}Value"), temporary = false)} kc_vars"
+                // ワールド変数の正本はstorageです。scoreboardへ暗黙にミラーされている
+                // という前提を置くと、実行中に変更された値がforへ反映されません。
+                "execute store result score $destination kc_vars run data get storage " +
+                    "kantan:variables ${VanillaStorageNames.variablePath(node.string("${field}Value"), temporary = false)} 1"
             else ->
                 "scoreboard players set $destination kc_vars ${node.string("${field}Value", if (field == "step") "1" else "0")}"
         }
@@ -854,27 +1041,8 @@ class VanillaDatapackExporter(
         return visit(start)
     }
 
-    private fun temporaryNames(graph: CommandGraph): Set<String> = buildSet {
-        graph.nodes.values.forEach { node ->
-            if (node.type == CommandType.VARIABLE && node.string("scope", "TEMPORARY") != "WORLD") {
-                node.string("name").takeIf(String::isNotBlank)?.let(::add)
-            }
-            if (node.type == CommandType.CONDITION &&
-                node.string("kind") == ConditionKind.VARIABLE_STATE.name &&
-                node.string("variableScope", "TEMPORARY") != "WORLD"
-            ) {
-                node.string("variable").takeIf(String::isNotBlank)?.let(::add)
-            }
-            if (node.type == CommandType.FOR_START) {
-                listOf("start", "end", "step").forEach { field ->
-                    if (node.string("${field}Source", "FIXED") == "TEMPORARY") {
-                        node.string("${field}Value").takeIf(String::isNotBlank)?.let(::add)
-                    }
-                }
-            }
-            node.snapshot?.let { addAll(temporaryNames(it)) }
-        }
-    }
+    /** 変数はすべてMyWorld単位へ統一したため、実行ローカルscoreboardの初期化は不要です。 */
+    private fun temporaryNames(graph: CommandGraph): Set<String> = emptySet()
 
     private fun effectiveTarget(node: CommandNode): String =
         selector(requireNotNull(node.targetSpec))
@@ -891,9 +1059,7 @@ class VanillaDatapackExporter(
                 PositionKind.TARGET ->
                     // tpの移動先は単一エンティティでなければならないため、limit=1へ固定する。
                     singleSelector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
-                PositionKind.MYWORLD_SPAWN,
-                PositionKind.TEMPORARY_VARIABLE,
-                PositionKind.WORLD_VARIABLE -> error("unsupported structured teleport destination")
+                PositionKind.MYWORLD_SPAWN -> error("unsupported structured teleport destination")
             }
         }
     }
@@ -932,9 +1098,7 @@ class VanillaDatapackExporter(
             "execute at ${singleSelector(node.contextOverride?.target ?: node.targetSpec ?: error("block target is missing"))} run ",
             "~ ~ ~",
         )
-        PositionKind.MYWORLD_SPAWN,
-        PositionKind.TEMPORARY_VARIABLE,
-        PositionKind.WORLD_VARIABLE -> error("unsupported structured block position")
+        PositionKind.MYWORLD_SPAWN -> error("unsupported structured block position")
     }
 
     private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
@@ -953,7 +1117,6 @@ class VanillaDatapackExporter(
                     PositionKind.COORDINATES, PositionKind.CAPTURED -> add("positioned ${it.x} ${it.y} ${it.z}")
                     PositionKind.EXECUTOR -> add("at @s")
                     PositionKind.TARGET -> context.target?.let { target -> add("at ${selector(target)}") }
-                    PositionKind.TEMPORARY_VARIABLE, PositionKind.WORLD_VARIABLE -> Unit
                     else -> Unit
                 }
             }
@@ -1021,7 +1184,9 @@ class VanillaDatapackExporter(
                 .append(":secondary=").append(node.secondaryTargetSpec)
                 .append(":destination=").append(node.destinationSpec)
                 .append(":destinationTarget=").append(node.destinationTargetSpec)
+                .append(":destinationFacing=").append(node.destinationFacingSpec)
                 .append(":conditionPosition=").append(node.conditionPositionSpec)
+                .append(":soundPosition=").append(node.soundPositionSpec)
                 .append(":context=").append(node.contextOverride)
             node.snapshot?.let {
                 append(":snapshot={").append(graphFingerprint(it)).append('}')
@@ -1060,6 +1225,9 @@ class VanillaDatapackExporter(
             spec.gameMode?.let { add("gamemode=${it.lowercase()}") }
             spec.tag?.let { add("tag=$it") }
             spec.name?.let { add("name=$it") }
+            spec.dx?.let { add("dx=${selectorExtent(it)}") }
+            spec.dy?.let { add("dy=${selectorExtent(it)}") }
+            spec.dz?.let { add("dz=${selectorExtent(it)}") }
             val limit = spec.limit ?: when (spec.kind) {
                 TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY -> 1
                 else -> null
@@ -1088,11 +1256,32 @@ class VanillaDatapackExporter(
         if (selector.endsWith("]")) selector.dropLast(1) + ",$argument]"
         else "$selector[$argument]"
 
+    private fun selectorExtent(value: Double): String =
+        value.toString().removeSuffix(".0")
+
+    /**
+     * バニラのscoreboardへdoubleを写すための固定小数点境界です。
+     * 数値型の正本はstorageのdoubleのまま保持し、出力時だけ小数第3位へ
+     * 射影します。範囲外は静かにラップさせず、事前検証で拒否します。
+     */
+    private fun scaledScore(value: Double): Long? {
+        if (!value.isFinite()) return null
+        val scaled = value * FIXED_POINT_SCALE.toDouble()
+        if (!scaled.isFinite() || scaled < Int.MIN_VALUE || scaled > Int.MAX_VALUE) return null
+        return kotlin.math.round(scaled).toLong()
+    }
+
+    private fun exactLong(value: Double): Long? {
+        if (!value.isFinite() || value != kotlin.math.floor(value)) return null
+        if (value < Long.MIN_VALUE.toDouble() || value > Long.MAX_VALUE.toDouble()) return null
+        return value.toLong()
+    }
+
     private fun scoreRange(operator: String, value: Long): String = when (operator) {
         "==" -> value.toString()
         "!=" -> value.toString()
-        ">" -> "${Math.addExact(value, 1)}.."
-        "<" -> "..${Math.subtractExact(value, 1)}"
+        ">" -> if (value >= Int.MAX_VALUE) "${Int.MAX_VALUE + 1L}.." else "${value + 1}.."
+        "<" -> if (value <= Int.MIN_VALUE) "..${Int.MIN_VALUE - 1L}" else "..${value - 1}"
         "<=" -> "..$value"
         else -> "$value.."
     }
@@ -1100,6 +1289,7 @@ class VanillaDatapackExporter(
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")
 
     private companion object {
+        const val FIXED_POINT_SCALE = 1000L
         const val EXPORT_VARIABLE_TYPE = "_exportVariableType"
         const val EXPORT_CAPTURE_FUNCTION = "_exportCaptureFunction"
         val VANILLA_INTEGER_RANGE = Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()
