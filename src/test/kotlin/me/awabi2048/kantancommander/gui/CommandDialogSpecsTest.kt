@@ -190,4 +190,20 @@ class CommandDialogSpecsTest {
         assertEquals(0, CommandValueRules.parseNonNegativeInt("0"))
         assertNull(CommandValueRules.parseNonNegativeInt("+1"))
     }
+
+    @Test
+    fun `tag inputs are validated as one string without comma splitting`() {
+        val summonTag = requireNotNull(CommandDialogSpecs.field("tags"))
+        val entityTag = requireNotNull(CommandDialogSpecs.field("tag"))
+
+        assertNull(summonTag.validate("spawn_tag"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT,
+            summonTag.validate("spawn_tag,other"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT,
+            entityTag.validate("entity_tag,other"),
+        )
+    }
 }

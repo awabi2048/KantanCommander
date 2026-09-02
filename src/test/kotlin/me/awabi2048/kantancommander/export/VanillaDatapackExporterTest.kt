@@ -116,6 +116,7 @@ class VanillaDatapackExporterTest {
         )
         val body = result.functions.values.joinToString("\n")
         assertTrue(body.contains("summon minecraft:pig"))
+        assertTrue(body.contains("Tags:[\\\"kc_test\\\"]"))
         assertTrue(body.contains("playsound minecraft:block.note_block.harp"))
         assertTrue(body.contains("effect give"))
         assertTrue(body.contains("item replace entity"))

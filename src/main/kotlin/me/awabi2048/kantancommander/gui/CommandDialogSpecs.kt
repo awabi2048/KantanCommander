@@ -347,9 +347,8 @@ internal object CommandDialogSpecs {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
             64,
             validate = { raw ->
-                if (raw.contains(',')) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
-                } else if (VariableTemplate.references(raw).isNotEmpty() && !VariableTemplate.hasMalformedReference(raw)) {
+                // タグは単一の入力値として検証し、カンマを区切り文字として解釈しません。
+                if (VariableTemplate.references(raw).isNotEmpty() && !VariableTemplate.hasMalformedReference(raw)) {
                     null
                 } else if (!CommandValueRules.isTag(raw)) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
@@ -563,8 +562,7 @@ internal object CommandDialogSpecs {
                 fieldKey in setOf("tags", "tag") && VariableTemplate.hasMalformedReference(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
                 fieldKey in setOf("tags", "tag") && VariableTemplate.references(raw).isEmpty() &&
-                    raw.split(',').map(String::trim).filter(String::isNotEmpty)
-                        .any { !CommandValueRules.isTag(it) } ->
+                    !CommandValueRules.isTag(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
                 fieldKey == "slot" && !CommandValueRules.isEquipmentSlot(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT

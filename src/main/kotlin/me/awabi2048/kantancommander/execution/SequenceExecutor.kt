@@ -353,7 +353,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     }
                     "tag" -> {
                         val tag = resolveText(node.string("tag"), session) ?: return false
-                        if (!CommandValueRules.isTag(tag) || tag.contains(',')) return false
+                        // タグは単一値としてそのまま扱います。カンマを分割したり、
+                        // 複数タグとして順番に適用したりしません。
+                        if (!CommandValueRules.isTag(tag)) return false
                         when (node.string("tagOperation", "add")) {
                             // タグ追加は冪等な設定操作として扱います。既にタグを持つ対象が
                             // 混在していても、対象全体の処理を失敗扱いにしません。
@@ -414,13 +416,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 if (!plugin.summonedEntities.canSummon(effectiveOrigin.world.uid)) return false
                 val key = NamespacedKey.fromString(node.string("entity")) ?: return false
                 val type = Registry.ENTITY_TYPE.get(key) ?: return false
+                // 召喚タグは単一値です。空欄はタグなしとして扱い、カンマを
+                // 複数タグの区切りに変換しないことでGUI・保存・実行の契約を揃えます。
+                val tag = resolveText(node.string("tags"), session) ?: return false
+                if (tag.isNotBlank() && !CommandValueRules.isTag(tag)) return false
                 // 召喚位置が指定されていればそちらを優先し、未設定時はコンテキスト位置（effectiveOrigin）を使用します。
                 val summonOrigin = node.summonPositionSpec?.let { resolvePosition(it, session, effectiveContext) ?: return false } ?: effectiveOrigin
                 val spawn = summonOrigin.clone()
                 effectiveContext?.facing?.let { applyFacing(spawn, it, effectiveContext, session) }
                 val entity = summonOrigin.world.spawnEntity(spawn, type)
-                val tags = resolveText(node.string("tags"), session) ?: return false.also { entity.remove() }
-                tags.split(',').map(String::trim).filter(String::isNotEmpty).forEach(entity::addScoreboardTag)
+                if (tag.isNotBlank()) entity.addScoreboardTag(tag)
                 val rawCustomName = node.string("customName")
                 val customName = resolveText(rawCustomName, session)
                     ?: return false.also { entity.remove() }

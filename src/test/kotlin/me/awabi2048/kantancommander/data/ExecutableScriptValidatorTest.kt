@@ -274,4 +274,21 @@ class ExecutableScriptValidatorTest {
 
         assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("32768") })
     }
+
+    @Test
+    fun `summon tags are validated as one string rather than a comma-separated list`() {
+        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
+        val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY)
+        summon.params["entity"] = "minecraft:pig"
+        summon.params["tags"] = "first_tag,second_tag"
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any { it.nodeId == summon.id && it.fieldKeys == setOf("tags") },
+        )
+
+        summon.params["tags"] = "first_tag"
+        assertFalse(
+            ExecutableScriptValidator.validate(script).any { it.nodeId == summon.id && it.fieldKeys == setOf("tags") },
+        )
+    }
 }

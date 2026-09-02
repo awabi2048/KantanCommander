@@ -585,8 +585,10 @@ class VanillaDatapackExporter(
             else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
         }
         CommandType.SUMMON_ENTITY -> {
-            val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
-            val tagNbt = if (tags.isEmpty()) "" else "Tags:[${tags.joinToString(",") { "\\\"${escape(it)}\\\"" }}]"
+            // 召喚タグは一つの文字列としてNBTへ一要素だけを書き込みます。
+            // 入力中のカンマを複数タグの区切りとして再解釈しません。
+            val tag = node.string("tags").takeIf(String::isNotBlank)
+            val tagNbt = tag?.let { "Tags:[\\\"${escape(it)}\\\"]" }.orEmpty()
             val customName = node.string("customName").takeIf(String::isNotBlank)
                 ?.let { "CustomName:\"{\\\"text\\\":\\\"${escape(it.replace('&', '§'))}\\\"}\"" }
             val nbtFields = listOfNotNull(tagNbt.takeIf(String::isNotBlank), customName)

@@ -148,9 +148,11 @@ object ExecutableScriptValidator {
                 if (!CommandValueRules.isEntityTypeId(node.string("entity"))) {
                     errors += nodeError(node, path, setOf("entity"), "エンティティ種類が不正です")
                 }
-                val tags = node.string("tags").split(',').map(String::trim).filter(String::isNotEmpty)
-                if (tags.any { !isTemplateOrTag(it, variableDefinitions) }) {
-                    errors += nodeError(node, path, setOf("tags"), "召喚タグが不正です")
+                // 召喚タグも単一文字列です。カンマ区切りの複数タグへ展開せず、
+                // 入力された値全体を一つのタグとして検証します。
+                val tag = node.string("tags")
+                if (tag.isNotBlank() && !isTemplateOrTag(tag, variableDefinitions)) {
+                    errors += nodeError(node, path, setOf("tags"), "タグが不正です")
                 }
                 validateTemplate(node.string("customName"), node, path, "customName", errors, variableDefinitions)
             }
@@ -219,11 +221,11 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("tagOperation"), "タグ操作が不正です")
                 }
                 val tag = node.string("tag")
-                if (tag.contains(',') ||
-                    VariableTemplate.hasMalformedReference(tag) ||
+                // カンマを特別扱いせず、単一タグの通常の形式検証へ委ねます。
+                if (VariableTemplate.hasMalformedReference(tag) ||
                     (VariableTemplate.references(tag).isEmpty() && !CommandValueRules.isTag(tag))
                 ) {
-                    errors += nodeError(node, path, setOf("tag"), "タグ名は単一の形式で指定してください")
+                    errors += nodeError(node, path, setOf("tag"), "タグが不正です")
                 }
             }
             else -> errors += nodeError(node, path, setOf("action"), "不明なエンティティ操作です")
