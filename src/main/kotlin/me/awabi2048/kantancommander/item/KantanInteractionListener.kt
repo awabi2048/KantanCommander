@@ -28,7 +28,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
      */
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     fun suppressExternalEditorStart(event: PlayerInteractEvent) {
-        if (event.action != Action.RIGHT_CLICK_BLOCK || event.player.isSneaking) return
+        if (event.action != Action.RIGHT_CLICK_BLOCK) return
         val clicked = event.clickedBlock ?: return
         if (plugin.placements.find(clicked.location) == null) return
         if (event.hand != EquipmentSlot.HAND) {
@@ -73,13 +73,16 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
 
-        if (
-            clickedPlacement != null &&
-            event.action == Action.RIGHT_CLICK_BLOCK &&
-            !player.isSneaking
-        ) {
-            // かんたんコマンダー制御ブロックを手に持った右クリックは通常のブロック配置を優先し、編集画面を開かない。
-            if (itemKind == KantanItemKind.BLOCK) return
+        if (clickedPlacement != null && event.action == Action.RIGHT_CLICK_BLOCK) {
+            val placementInteraction = KantanPlacementInteractionPolicy.resolve(
+                itemKind = itemKind,
+                sneaking = player.isSneaking,
+                useGestureEditor = plugin.config.getBoolean("use-gesture-editor", false),
+            )
+            // かんたんコマンダー制御ブロックを手に持った通常右クリックは、従来どおり
+            // バニラのブロック配置を優先します。スニーク時は同じアイテムを持っていても
+            // 明示的な追従GestureGUI操作になるため、この分岐へ進みます。
+            if (placementInteraction == KantanPlacementInteraction.VANILLA_PLACE) return
             // GUIを開く経路はイベントをキャンセルするため、バニラが送る腕振りが
             // 発生しません。実際に編集／ディスク挿入を受け付ける右クリックだけ、
             // 使用した手に対応するスイングを明示的に送って操作の成立を見せます。
@@ -101,17 +104,25 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 return
             }
             if (canOperateExistingGesture && !canManagePlacement) return
-            // プログラムディスク挿入は常に既存の書き込み確認へ送り、Gesture GUIを開かない。
-            if (itemKind == KantanItemKind.DISK) {
-                val diskScriptId = diskId ?: return
-                plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
-                return
+            when (placementInteraction) {
+                KantanPlacementInteraction.FOLLOWING_GESTURE -> {
+                    plugin.gestureEditor.openFollowingPlayer(player, clickedPlacement)
+                }
+                // プログラムディスク挿入は通常の右クリックだけ既存の書き込み確認へ送ります。
+                KantanPlacementInteraction.WRITE_CONFIRM -> {
+                    val diskScriptId = diskId ?: return
+                    plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
+                }
+                KantanPlacementInteraction.FIXED_GESTURE -> {
+                    plugin.gestureEditor.open(player, clickedPlacement)
+                }
+                KantanPlacementInteraction.INVENTORY_EDITOR -> {
+                    plugin.editorMenu.open(player, clickedPlacement)
+                }
+                KantanPlacementInteraction.VANILLA_PLACE -> {
+                    // 上でreturn済みです。網羅性を保つため、ここでは何もしません。
+                }
             }
-            if (plugin.config.getBoolean("use-gesture-editor", false)) {
-                plugin.gestureEditor.open(player, clickedPlacement)
-                return
-            }
-            plugin.editorMenu.open(player, clickedPlacement)
             return
         }
 

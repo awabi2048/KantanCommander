@@ -18,6 +18,15 @@ class GestureEditorFacade(
     private val externalEditorSuppressions = mutableMapOf<UUID, PermissionAttachment>()
 
     fun open(player: Player, placement: DiskPlacement) {
+        open(player, placement, followPlayer = false)
+    }
+
+    /** 制御ブロック上ではなく、プレイヤーの視線と位置に追従するGesture GUIを開きます。 */
+    fun openFollowingPlayer(player: Player, placement: DiskPlacement) {
+        open(player, placement, followPlayer = true)
+    }
+
+    private fun open(player: Player, placement: DiskPlacement, followPlayer: Boolean) {
         // 同じ配置を複数人が開いた場合は新しい所有者画面を作らず、最初の
         // Gestureセッションを共有します。別セッションを作ると表示・選択状態が
         // 分岐し、第三者操作の入力先も共有できなくなるためです。
@@ -30,13 +39,18 @@ class GestureEditorFacade(
         }
         val scriptId = placement.scriptId
         val world = org.bukkit.Bukkit.getWorld(placement.world)
-        val anchor: Location? = if (world != null) {
+        val anchor: Location? = if (!followPlayer && world != null) {
             // ブロック実体との視線干渉を避け、ジェスチャー画面全体を
             // 基準位置から合計0.8ブロック上へ配置します（従来の0.3ブロックに
             // 今回の追加0.5ブロックを加算）。上部・下部の両画面は
             // 同じanchorから姿勢を算出するため、相対位置は変わりません。
             Location(world, placement.x + 0.5, placement.y + 0.5 + GESTURE_DISPLAY_VERTICAL_OFFSET, placement.z + 0.5)
-        } else null
+        } else {
+            // スニーク操作ではアンカーを渡さず、CC-Systemのプレイヤー追従モードを
+            // 使用します。プレイヤーの移動・視線変更に追従する設定を、固定表示の
+            // 通常編集と明示的に分けます。
+            null
+        }
         val state = GestureEditorState(
             scriptId = scriptId,
             placement = placement,
