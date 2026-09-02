@@ -31,6 +31,22 @@ class CommandMenuPresentationTest {
         assertTrue(CommandType.TELEPORT in executionTypes)
         assertTrue(CommandType.CONDITION in controlTypes)
         assertTrue(CommandType.MERGE in controlTypes)
+        assertTrue(executionTypes.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+        assertTrue(controlTypes.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+    }
+
+    @Test
+    fun `gesture command picker fits ten candidates on one two-column page`() {
+        assertEquals(10, GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+        assertEquals(1, GestureCommandPickerLayoutPolicy.pageCount(10))
+        assertEquals(2, GestureCommandPickerLayoutPolicy.pageCount(11))
+        assertEquals(5, GestureCommandPickerLayoutPolicy.rowCount(10))
+        assertEquals(-0.10, GestureCommandPickerLayoutPolicy.columnX(0), 1.0e-9)
+        assertEquals(0.67, GestureCommandPickerLayoutPolicy.columnX(1), 1.0e-9)
+        assertEquals(0.20, GestureCommandPickerLayoutPolicy.rowY(0), 1.0e-9)
+        assertEquals(-0.24, GestureCommandPickerLayoutPolicy.rowY(4), 1.0e-9)
+        assertEquals(0.66, GestureCommandPickerLayoutPolicy.CARD_WIDTH, 1.0e-9)
+        assertEquals(0.10, GestureCommandPickerLayoutPolicy.CARD_HEIGHT, 1.0e-9)
     }
 
     @Test

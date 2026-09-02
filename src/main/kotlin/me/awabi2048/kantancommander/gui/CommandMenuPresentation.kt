@@ -83,6 +83,44 @@ internal object CommandPickerTypePolicy {
     }
 }
 
+/**
+ * ジェスチャー下部PICKERの候補配置を一つの契約へ集約します。
+ *
+ * 設定候補と同じ2列グリッドを使い、1ページ10件を2列×5行へ収めます。
+ * コマンド種別が増えて10件を超えた場合だけ、同じ配置のまま次ページへ送ります。
+ */
+internal object GestureCommandPickerLayoutPolicy {
+    const val PAGE_SIZE = 10
+    const val COLUMNS = 2
+    const val CARD_WIDTH = 0.66
+    const val CARD_HEIGHT = 0.10
+    const val CARD_TOP_Y = 0.20
+    const val CARD_ROW_PITCH = 0.11
+    const val LEFT_COLUMN_X = -0.10
+    const val RIGHT_COLUMN_X = 0.67
+
+    fun pageCount(candidateCount: Int): Int {
+        require(candidateCount >= 0) { "候補数は0以上で指定してください: $candidateCount" }
+        return ((candidateCount + PAGE_SIZE - 1) / PAGE_SIZE).coerceAtLeast(1)
+    }
+
+    fun rowCount(candidateCount: Int): Int {
+        require(candidateCount >= 0) { "候補数は0以上で指定してください: $candidateCount" }
+        return (candidateCount + COLUMNS - 1) / COLUMNS
+    }
+
+    fun columnX(column: Int): Double = when (column) {
+        0 -> LEFT_COLUMN_X
+        1 -> RIGHT_COLUMN_X
+        else -> error("PICKER列は0または1で指定してください: $column")
+    }
+
+    fun rowY(row: Int): Double {
+        require(row >= 0) { "PICKER行は0以上で指定してください: $row" }
+        return CARD_TOP_Y - row * CARD_ROW_PITCH
+    }
+}
+
 /** 設定数が多いコマンドは、意味上の組を崩さない専用配置を使用します。 */
 internal object CommandSettingsSlotPolicy {
     private val fiveFieldSlots = listOf(19, 20, 21, 28, 29)

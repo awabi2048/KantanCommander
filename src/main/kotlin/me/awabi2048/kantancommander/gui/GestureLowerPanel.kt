@@ -2007,19 +2007,37 @@ class GestureLowerPanel(
             mergeAvailable = mergeAvailable,
             insideForBody = insideForBody,
         )
-        val pageCount = ((types.size + PICKER_PAGE_SIZE - 1) / PICKER_PAGE_SIZE).coerceAtLeast(1)
+        val pageCount = GestureCommandPickerLayoutPolicy.pageCount(types.size)
         val page = state.pickerPage.coerceIn(0, pageCount - 1)
-        val pageTypes = types.drop(page * PICKER_PAGE_SIZE).take(PICKER_PAGE_SIZE)
-        val pickerRowCount = (pageTypes.size + 1) / 2
+        val pageTypes = types
+            .drop(page * GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+            .take(GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+        val pickerRowCount = GestureCommandPickerLayoutPolicy.rowCount(pageTypes.size)
         pageTypes.forEachIndexed { index, type ->
-            val cx = if (index % 2 == 0) -0.11 else 0.65
-            val cy = 0.20 - (index / 2) * 0.18
-            addBlock(visuals, "type-bg-$index", cx, cy, 0.72, 0.155, Material.CYAN_TERRACOTTA, 4)
-            addText(visuals, "type-$index", cx, cy - 0.02, 0.0055, 90,
+            val column = index % GestureCommandPickerLayoutPolicy.COLUMNS
+            val row = index / GestureCommandPickerLayoutPolicy.COLUMNS
+            val cx = GestureCommandPickerLayoutPolicy.columnX(column)
+            val cy = GestureCommandPickerLayoutPolicy.rowY(row)
+            addBlock(
+                visuals,
+                "type-bg-$index",
+                cx,
+                cy,
+                GestureCommandPickerLayoutPolicy.CARD_WIDTH,
+                GestureCommandPickerLayoutPolicy.CARD_HEIGHT,
+                Material.CYAN_TERRACOTTA,
+                4,
+            )
+            addText(visuals, "type-$index", cx, cy - 0.012, 0.0045, 115,
                 Component.text(KcI18n.text(player, type.key)))
             elements.add(GestureGuiElement(
                 elementId = "lower-type:${type.name}",
-                bounds = rect(cx, cy, 0.72, 0.155),
+                bounds = rect(
+                    cx,
+                    cy,
+                    GestureCommandPickerLayoutPolicy.CARD_WIDTH,
+                    GestureCommandPickerLayoutPolicy.CARD_HEIGHT,
+                ),
                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "type-bg-$index",
                 hoverText = parallelButtonHover(
@@ -2028,9 +2046,9 @@ class GestureLowerPanel(
                         .joinToString(" "),
                     x = cx,
                     y = cy,
-                    row = index / 2,
+                    row = row,
                     rowCount = pickerRowCount,
-                    height = 0.155,
+                    height = GestureCommandPickerLayoutPolicy.CARD_HEIGHT,
                     descriptionX = HOVER_SLOT_X,
                     descriptionY = PICKER_HOVER_SLOT_Y,
                     replacesDescription = false,
@@ -2296,9 +2314,7 @@ class GestureLowerPanel(
         const val SETTINGS_TAB_TOP_Y = 0.38
         const val SETTINGS_TAB_PITCH = 0.11
         const val SETTINGS_TAB_HEIGHT = 0.10
-        // PICKERは説明と対になる下段ホバースロットを確保するため、2列×3行へ縮小します。
-        const val PICKER_PAGE_SIZE = 6
-        // 2列×5行に収め、対象フィルター（10項目）を1画面で編集できます。
+        // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
         const val SETTING_CHOICE_PAGE_SIZE = 10
         const val SETTING_CHOICE_WIDTH = 0.66
