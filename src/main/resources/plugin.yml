@@ -29,13 +29,13 @@ permissions:
       kankoma.command.gesture: true
   kankoma.command.kankoma:
     description: /kankoma によるかんたんコマンダー制御ブロックの付与を許可する
-    default: true
+    default: false
   kankoma.command.history:
     description: /kankoma history の実行を許可する
-    default: true
+    default: false
   kankoma.command.library:
     description: /kankoma library の実行を許可する
-    default: true
+    default: false
   kankoma.command.help:
     description: /kankoma help の実行を許可する
     default: true
