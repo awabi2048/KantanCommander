@@ -138,7 +138,7 @@ class GestureLowerPanel(
             fallback = displayLabel,
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
-            warning = attentionWarning(player, field.key in attentionFields),
+            warning = attentionWarning(player, node, field.key, attentionFields),
         )
         addValueRow(visuals, "lower-setting", SETTING_VALUE_Y, displayLabel, value)
 
@@ -388,7 +388,9 @@ class GestureLowerPanel(
                 valueState,
             ),
             4,
-            glowColor = GestureSettingVisualPolicy.glowColor(selected = false, attention = attention),
+            // プログラム全体設定はタブではないため、未完了でも警告Glowを付けません。
+            // 未完了の状態名はホバーで伝え、Glowの対象はノード設定タブへ限定します。
+            glowColor = null,
         )
         visuals.add(GestureGuiVisual.Item(
             visualId = "$id-icon",
@@ -407,7 +409,7 @@ class GestureLowerPanel(
             bounds = rect(x, -0.02, 0.68, 0.17),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = backgroundId,
-            // 赤カードは状態名をホバーでも示します（色だけの通知を避ける規則）。
+            // プログラム全体設定も状態名をホバーで示します（色だけの通知を避ける規則）。
             hoverText = if (attention) {
                 singleLineHover(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_INCOMPLETE),
@@ -454,7 +456,10 @@ class GestureLowerPanel(
                 SETTING_CHOICE_HEIGHT,
                 settingChoiceMaterial(choice),
                 4,
-                glowColor = GestureSettingVisualPolicy.glowColor(choice.selected, choice.attention),
+                // 右側の設定ボタンは完了状態にかかわらず、選択中だけ白で示します。
+                // attentionはタブへ投影済みの状態情報であり、子画面を含む右側カードの
+                // 警告Glowには使いません。
+                glowColor = GestureSettingVisualPolicy.nonTabGlowColor(choice.selected),
             )
             addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
             val hoverDescription = choice.description.takeIf(String::isNotBlank)
@@ -531,7 +536,8 @@ class GestureLowerPanel(
                 GestureSettingValueState.INITIAL
             }
             val attention = field.key in attentionFields
-            // テクスチャはボタンの種類、Glow は「選択中」と警告・要確認で使い分けます。
+            // タブだけが未完了警告のGlowを受け持ち、選択中かつ未完了なら紫、
+            // 選択中のみなら青になります。
             addBlock(
                 visuals,
                 "tab-bg-$index",
@@ -544,7 +550,7 @@ class GestureLowerPanel(
                     fieldState,
                 ),
                 4,
-                glowColor = GestureSettingVisualPolicy.glowColor(on, attention),
+                glowColor = GestureSettingVisualPolicy.tabGlowColor(on, attention),
             )
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, field.label)))
@@ -556,7 +562,7 @@ class GestureLowerPanel(
                 // 要確認タブは色だけでなく状態名も示します。ホバー中は操作説明欄を
                 // 置き換えて警告を表示し、どのタブが未完了かを文面で伝えます。
                 hoverText = if (attention) {
-                    attentionWarningHover(player)
+                    attentionWarningHover(player, node, field.key)
                 } else null,
             ))
         }
@@ -655,18 +661,32 @@ class GestureLowerPanel(
             .joinToString(" ")
             .ifBlank { KcI18n.text(player, field.label) }
 
-    /** 要確認時に説明欄へ出す状態名です。赤テクスチャと同じ判定から生成します。 */
-    private fun attentionWarning(player: Player, attention: Boolean): String? =
-        if (attention) {
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_INCOMPLETE)
-        } else {
-            null
-        }
+    /**
+     * 現在のタブに対応する固定キーから、設定不足の警告文を解決します。
+     *
+     * 検証エラーの文言をそのまま表示せず、タブごとの必要設定を示す文面へ
+     * 統一します。キーの選択はCommandSettingsModelへ集約し、表示側でコマンド型の
+     * 分岐や入力値の解析を行わないようにします。
+     */
+    private fun attentionWarning(
+        player: Player,
+        node: CommandNode,
+        fieldKey: String,
+        attentionFields: Set<String>,
+    ): String? = if (fieldKey in attentionFields) {
+        KcI18n.text(player, CommandSettingsModel.incompleteWarningKey(node, fieldKey))
+    } else {
+        null
+    }
 
-    /** 要確認タブへホバーしたときの状態名ホバーです。操作説明欄を置き換えて表示します。 */
-    private fun attentionWarningHover(player: Player): GestureGuiHoverText =
+    /** 要確認タブへホバーしたときも、そのタブ固有の固定警告文を表示します。 */
+    private fun attentionWarningHover(
+        player: Player,
+        node: CommandNode,
+        fieldKey: String,
+    ): GestureGuiHoverText =
         singleLineHover(
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_INCOMPLETE),
+            KcI18n.text(player, CommandSettingsModel.incompleteWarningKey(node, fieldKey)),
             x = HOVER_SLOT_X,
             y = HOVER_SLOT_Y,
         )
@@ -1066,8 +1086,9 @@ class GestureLowerPanel(
             } else {
                 GestureSettingValueState.INITIAL
             },
-            // 要確認状態は、この選択肢が属する設定タブが実行前検証で指されていれば付与します。
-            // タブと同じfieldKey基準のため、色の意味が画面間でずれません。
+            // 要確認状態は、この選択肢が属する設定タブが実行前検証で指されていれば
+            // 付与します。右側カード自身は警告Glowを使いませんが、タブ単位の警告文や
+            // 子要素への状態投影には同じfieldKey情報を引き続き使用します。
             attention = settingChoiceTabFieldKeys(choice.id, fieldKey, effectiveContext.role)
                 .any { it in attentionFields },
             children = choice.children.map {
@@ -1079,8 +1100,9 @@ class GestureLowerPanel(
     /**
      * 選択肢が属する設定タブ（fieldKey）の集合を返します。
      *
-     * 実行前検証はタブのfieldKey単位で要確認を指すため、選択肢カードも同じ基準で
-     * 赤表示へ投影します。settingChoiceConfiguredと同じ選択肢IDの分類に倣います。
+     * 実行前検証はタブのfieldKey単位で要確認を指すため、警告文の対象タブへ
+     * 投影します。右側カードのGlow色はこの値を直接使わず、settingChoiceConfiguredと
+     * 同じ選択肢IDの分類に倣います。
      */
     private fun settingChoiceTabFieldKeys(
         choiceId: String,
@@ -1298,7 +1320,7 @@ class GestureLowerPanel(
             detailHint = selectedDetail?.let {
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS)
             },
-            warning = attentionWarning(player, fieldKey in attentionFields),
+            warning = attentionWarning(player, node, fieldKey, attentionFields),
             centerX = if (child) 0.0 else 0.28,
             hoverY = if (child) CHILD_HOVER_Y else ACTION_DESCRIPTION_Y,
             detailY = if (child) CHILD_DETAIL_HINT_Y else SETTING_DETAIL_HINT_Y,
@@ -1611,6 +1633,9 @@ class GestureLowerPanel(
                 POSITION_TARGET_CHOICE_HEIGHT,
                 settingChoiceMaterial(choice),
                 4,
+                // 右側へ表示する対象分類ボタンもタブ以外の設定ボタンです。
+                // 選択中は完了状態にかかわらず白、未完了警告はタブだけへ残します。
+                glowColor = GestureSettingVisualPolicy.nonTabGlowColor(choice.selected),
             )
             addText(
                 visuals,

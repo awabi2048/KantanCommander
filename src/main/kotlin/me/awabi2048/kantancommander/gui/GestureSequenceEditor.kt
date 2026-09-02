@@ -125,7 +125,7 @@ enum class GestureLowerMode {
  * 解析して意味を推測しないよう、この集約が唯一の受け渡し経路になります。
  */
 data class GestureAttentionState(
-    /** ノードID → そのノードで要確認となっている設定タブ（fieldKey）の集合。 */
+    /** ノードID → そのノードで要確認となっている表示上の設定タブ（fieldKey）の集合。 */
     val fieldKeysByNode: Map<UUID, Set<String>> = emptyMap(),
     /** プログラムタイマー（スクリプト全体設定）が要確認か。 */
     val timer: Boolean = false,
@@ -411,17 +411,27 @@ class GestureSequenceEditor(
     /**
      * 実行前検証を、下部パネルの「要確認」表示用の情報へ要約します。
      *
-     * 構造化エラー（nodeId/fieldKeys）をそのまま集約するため、表示側でエラー文言を
-     * 解析する必要はありません。snapshot内のエラーは主グラフのノードへ対応しないため、
-     * 存在しないノードIDは除外します。
+     * 構造化エラー（nodeId/fieldKeys）を表示上のタブへ正規化して集約するため、表示側で
+     * エラー文言を解析する必要はありません。例えば表示時間の内部3項目は1つの時間タブへ
+     * まとめます。snapshot内のエラーは主グラフのノードへ対応しないため、存在しない
+     * ノードIDは除外します。
      */
     private fun attentionState(): GestureAttentionState {
         val script = plugin.scripts.load(state.scriptId) ?: return GestureAttentionState.EMPTY
         val errors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
         val fieldKeysByNode = errors
             .filter { it.nodeId != null && it.nodeId in script.graph.nodes }
-            .groupBy({ it.nodeId!! }) { it.fieldKeys }
-            .mapValues { (_, keys) -> keys.flatten().toSet() }
+            .groupBy { it.nodeId!! }
+            .mapValues { (nodeId, nodeErrors) ->
+                val node = script.graph.nodes.getValue(nodeId)
+                nodeErrors
+                    .flatMap { error ->
+                        error.fieldKeys.mapNotNull { fieldKey ->
+                            CommandSettingsModel.visibleAttentionFieldKey(node, fieldKey)
+                        }
+                    }
+                    .toSet()
+            }
         return GestureAttentionState(
             fieldKeysByNode = fieldKeysByNode,
             timer = errors.any { it.nodeId == null && "timer" in it.fieldKeys },

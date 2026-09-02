@@ -92,10 +92,14 @@ class GestureSettingTreeTest {
                 selected = false,
             ),
         )
-        // Glow は選択中と警告で使い分けます。
-        assertEquals(org.bukkit.Color.YELLOW.asARGB(), GestureSettingVisualPolicy.glowColor(selected = true, attention = false))
-        assertEquals(org.bukkit.Color.RED.asARGB(), GestureSettingVisualPolicy.glowColor(selected = false, attention = true))
-        assertEquals(org.bukkit.Color.RED.asARGB(), GestureSettingVisualPolicy.glowColor(selected = true, attention = true))
-        assertEquals(null, GestureSettingVisualPolicy.glowColor(selected = false, attention = false))
+        // タブは選択中を青、選択中かつ未完了を紫、未選択の未完了を赤で示します。
+        assertEquals(org.bukkit.Color.BLUE.asARGB(), GestureSettingVisualPolicy.tabGlowColor(selected = true, attention = false))
+        assertEquals(org.bukkit.Color.RED.asARGB(), GestureSettingVisualPolicy.tabGlowColor(selected = false, attention = true))
+        assertEquals(org.bukkit.Color.PURPLE.asARGB(), GestureSettingVisualPolicy.tabGlowColor(selected = true, attention = true))
+        assertEquals(null, GestureSettingVisualPolicy.tabGlowColor(selected = false, attention = false))
+
+        // タブ以外の設定ボタンは、完了状態にかかわらず選択中だけ白で示します。
+        assertEquals(org.bukkit.Color.WHITE.asARGB(), GestureSettingVisualPolicy.nonTabGlowColor(selected = true))
+        assertEquals(null, GestureSettingVisualPolicy.nonTabGlowColor(selected = false))
     }
 }

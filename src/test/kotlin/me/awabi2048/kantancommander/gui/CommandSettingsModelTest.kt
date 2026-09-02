@@ -143,6 +143,41 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `incomplete warnings use fixed keys for each setting tab`() {
+        val display = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
+        val giveItem = CommandType.GIVE_ITEM.newNode()
+        val sound = CommandType.PLAY_SOUND.newNode()
+
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.duration",
+            CommandSettingsModel.incompleteWarningKey(display, "staySeconds").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.give_target",
+            CommandSettingsModel.incompleteWarningKey(giveItem, "target").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.sound_parameters",
+            CommandSettingsModel.incompleteWarningKey(sound, "soundParameters").id,
+        )
+    }
+
+    @Test
+    fun `validation fields are normalized to visible setting tabs`() {
+        val display = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
+        val tellraw = CommandType.DISPLAY_TEXT.newNode()
+        val sound = CommandType.PLAY_SOUND.newNode()
+
+        assertEquals("staySeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "fadeInSeconds"))
+        assertEquals("staySeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "fadeOutSeconds"))
+        assertEquals("text", CommandSettingsModel.visibleAttentionFieldKey(display, "subtitle"))
+        assertEquals(null, CommandSettingsModel.visibleAttentionFieldKey(tellraw, "fadeInSeconds"))
+        assertEquals("soundParameters", CommandSettingsModel.visibleAttentionFieldKey(sound, "volume"))
+        assertEquals("soundParameters", CommandSettingsModel.visibleAttentionFieldKey(sound, "pitch"))
+        assertEquals("soundScope", CommandSettingsModel.visibleAttentionFieldKey(sound, "soundPosition"))
+    }
+
+    @Test
     fun `entity action fields follow the selected operation allowlist`() {
         val node = CommandType.ENTITY_ACTION.newNode()
         fun keys(action: String): List<String> {

@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.api.gui.MenuRoute
+import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.ActivationMode
@@ -276,6 +277,168 @@ object CommandSettingsModel {
             conditionalFields
         }
     }
+
+    /**
+     * 下部画面の設定タブへ表示する、未完了警告の固定キーを返します。
+     *
+     * 検証エラーの文言や保存値から表示文字列を組み立てると、同じタブでも
+     * エラーの種類によって表示が揺れ、ローカライズ契約も画面側へ漏れます。
+     * そのため、画面で編集できる設定項目ごとに、コマンド型とfieldKeyの
+     * 組み合わせをこの表で固定します。実際の文言はCC-Systemの型付きキーから
+     * 解決し、タブ単位で常に同じ警告を表示します。
+     */
+    fun incompleteWarningKey(node: CommandNode, fieldKey: String): LocalizationKey<String> {
+        // contextはsupportsContextOverride()で追加される共通タブです。
+        if (fieldKey == "context" && node.type.supportsContextOverride()) {
+            return KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONTEXT
+        }
+        return when (node.type) {
+            CommandType.TELEPORT -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "destination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DESTINATION
+                "destinationFacing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_FACING
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.GIVE_ITEM -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GIVE_TARGET
+                "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GIVE_ITEM
+                "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_COUNT
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.ENTITY_ACTION -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "action" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ACTION
+                "other" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OTHER
+                "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_SLOT
+                "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_ITEM
+                "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
+                "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.DISPLAY_TEXT -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISPLAY_TARGET
+                "mode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODE
+                "text", "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TEXT
+                "staySeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DURATION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.WAIT -> when (fieldKey) {
+                "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_WAIT
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.SUMMON_ENTITY -> when (fieldKey) {
+                "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY
+                "customName" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_NAME
+                "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAGS
+                "summonPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.PLAY_SOUND -> when (fieldKey) {
+                "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND
+                "soundParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_PARAMETERS
+                "soundScope", "soundPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.APPLY_EFFECT -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EFFECT
+                "level" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_LEVEL
+                "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SECONDS
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.CAMERA_SHAKE -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "intensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_INTENSITY
+                "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SECONDS
+                "shakeType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SHAKE_TYPE
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.BLOCK_OPERATION -> when (fieldKey) {
+                "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_OPERATION
+                "block" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK
+                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
+                "from" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_FROM
+                "to" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_TO
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.ENTITY_DELETE -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.CONDITION -> when (fieldKey) {
+                "inverted" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_INVERTED
+                "kind" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION_KIND
+                "condition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.CONTEXT -> when (fieldKey) {
+                "executor" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EXECUTOR
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                "facing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_FACING
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.DISK_CALL -> when (fieldKey) {
+                "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.VARIABLE -> when (fieldKey) {
+                "operation", "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
+                "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.FOR_START -> when (fieldKey) {
+                "startSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_START_SOURCE
+                "endSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_END_SOURCE
+                "stepSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_STEP_SOURCE
+                "startValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_START_VALUE
+                "endValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_END_VALUE
+                "stepValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_STEP_VALUE
+                "inclusiveEnd" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_INCLUSIVE_END
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.MERGE,
+            CommandType.FOR_END,
+            CommandType.BREAK,
+            CommandType.CONTINUE,
+            -> undefinedWarningKey(node, fieldKey)
+        }
+    }
+
+    /**
+     * 検証側の内部フィールド名を、実際に表示するタブへ正規化します。
+     *
+     * 表示時間は内部では3項目、音量・ピッチは2項目ですが、下部画面では
+     * それぞれ1タブへまとめています。また非表示のsubtitleはtextタブで編集
+     * するため、検証結果だけが存在しないタブを指さないようにします。
+     */
+    fun visibleAttentionFieldKey(node: CommandNode, validationFieldKey: String): String? {
+        val visibleKey = when (node.type) {
+            CommandType.DISPLAY_TEXT -> when (validationFieldKey) {
+                "fadeInSeconds", "staySeconds", "fadeOutSeconds" -> "staySeconds"
+                "subtitle" -> "text"
+                else -> validationFieldKey
+            }
+            CommandType.PLAY_SOUND -> when (validationFieldKey) {
+                "volume", "pitch" -> "soundParameters"
+                // 現行バリデーターはscopeの不正をsoundPositionとして報告します。
+                "soundPosition" -> "soundScope"
+                else -> validationFieldKey
+            }
+            CommandType.CONDITION -> when (validationFieldKey) {
+                "sneaking", "variable", "operator", "value", "block", "item", "itemData" -> "condition"
+                else -> validationFieldKey
+            }
+            else -> validationFieldKey
+        }
+        return visibleFields(node).firstOrNull { it.key == visibleKey }?.key
+    }
+
+    private fun undefinedWarningKey(node: CommandNode, fieldKey: String): Nothing =
+        error("未定義の設定警告キーです: type=${node.type}, field=$fieldKey")
 
     fun descriptor(node: CommandNode, fieldKey: String): CommandSettingDescriptor {
         if (fieldKey == "context" && node.type.supportsContextOverride()) {

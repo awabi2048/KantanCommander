@@ -76,12 +76,23 @@ internal object GestureSettingVisualPolicy {
         attention: Boolean = false,
     ): Material = material(selectionMode, valueState)
 
-    // Glow は「選択中」と「警告・要確認」で使い分けます。
-    fun glowColor(selected: Boolean, attention: Boolean = false): Int? = when {
+    /**
+     * 下部画面の設定タブ専用のGlowです。
+     *
+     * 要確認タブを選択している場合は警告色を優先し、それ以外の選択中タブは
+     * 青で統一します。ビューポートのノード選択はこのポリシーを通らないため、
+     * ノード側の既存色を変更せずに下部画面だけの意味を表現できます。
+     */
+    fun tabGlowColor(selected: Boolean, attention: Boolean = false): Int? = when {
+        selected && attention -> Color.PURPLE.asARGB()
         attention -> Color.RED.asARGB()
-        selected -> Color.YELLOW.asARGB()
+        selected -> Color.BLUE.asARGB()
         else -> null
     }
+
+    /** 下部画面のタブ以外の設定ボタン専用のGlowです。警告状態はタブだけで示します。 */
+    fun nonTabGlowColor(selected: Boolean): Int? =
+        if (selected) Color.WHITE.asARGB() else null
 }
 
 /** 木構造上の現在位置。表示状態と戻る経路を同じ値から復元します。 */
