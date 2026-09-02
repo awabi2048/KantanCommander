@@ -546,20 +546,39 @@ class GestureSequenceEditor(
         val ownerId = ownerIdFor(player)
         if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
         val settingChildWasOpen = settingChildOpen(ownerId)
+        val owner = ownerPlayerFor(player)
+        val attention = attentionState()
+        // 確認画面も下部画面の子画面です。openChild前の親ビューをGlowなしで
+        // 作っておくことで、親がメイン画面でも設定子画面でも同じ抑制経路を通します。
+        val parentView = if (settingChildWasOpen) {
+            lowerPanel.buildSettingChild(state, owner, attention, suppressGlow = true)
+        } else {
+            lowerPanel.build(state, owner, attention, suppressGlow = true)
+        }
         state.lowerMode = GestureLowerMode.CONFIRM
-        val view = lowerPanel.build(state, ownerPlayerFor(player))
-        val opened = api.openChild(
-            ownerId,
-            view,
-            GestureGuiChildOptions(
-                // 個別設定中の確認は、その子画面のさらに前面に置きます。
-                // 親IDを固定すると子画面を飛び越えて重なり、キャンセル後に
-                // どの表示を復元すべきか失われるためです。
-                parentScreenId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID,
-                overlayMaterial = Material.RED_STAINED_GLASS,
-                animated = false,
-            ),
-        )
+        val view = lowerPanel.build(state, owner, attention)
+        val opened = runCatching {
+            openChildAndSuppressParentGlow(
+                ownerId,
+                parentView,
+                view,
+                GestureGuiChildOptions(
+                    // 個別設定中の確認は、その子画面のさらに前面に置きます。
+                    // 親IDを固定すると子画面を飛び越えて重なり、キャンセル後に
+                    // どの表示を復元すべきか失われるためです。
+                    parentScreenId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.RED_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "確認子画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
         if (!opened) {
             state.confirmKind = GestureConfirmKind.DELETE
             state.confirmNodeId = null
@@ -574,8 +593,32 @@ class GestureSequenceEditor(
     private fun settingChildOpen(ownerId: UUID): Boolean =
         api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.SETTING_CHILD_SCREEN_ID) == true
 
+    /**
+     * 下部画面へ子画面を積み、子画面生成後に親ビューのGlowを一括解除します。
+     *
+     * CC-SystemのopenChildは親を背面へ残すため、子ビューからGlowを除くだけでは
+     * 親の描画済みGlowが残ります。設定詳細・削除確認・上書き確認を個別対応せず、
+     * 親ビューをGlowなしで差分更新する責務をここへ集約します。
+     */
+    private fun openChildAndSuppressParentGlow(
+        ownerId: UUID,
+        parentView: GestureGuiView,
+        childView: GestureGuiView,
+        options: GestureGuiChildOptions,
+    ): Boolean {
+        val opened = api.openChild(ownerId, childView, options)
+        if (!opened) return false
+        if (!api.updateScreen(ownerId, parentView)) {
+            plugin.logger.warning(
+                "子画面の親ビューからGlowを解除できませんでした: " +
+                    "parent=${parentView.definition.screenId} child=${childView.definition.screenId}",
+            )
+        }
+        return true
+    }
+
     /** 個別設定子画面を開き、既に開いている場合は差分更新だけを行います。 */
-    private fun ensureSettingChild(player: Player) {
+    private fun ensureSettingChild(player: Player, parentView: GestureGuiView? = null) {
         state.lowerMode = GestureLowerMode.SETTING_CHOICES
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) {
@@ -584,9 +627,16 @@ class GestureSequenceEditor(
         }
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
+        val effectiveParentView = parentView ?: lowerPanel.build(
+            state,
+            owner,
+            attention,
+            suppressGlow = true,
+        )
         val opened = runCatching {
-            api.openChild(
+            openChildAndSuppressParentGlow(
                 ownerId,
+                effectiveParentView,
                 lowerPanel.buildSettingChild(state, owner, attention),
                 GestureGuiChildOptions(
                     parentScreenId = lowerPanel.LOWER_SCREEN_ID,
@@ -603,20 +653,7 @@ class GestureSequenceEditor(
             )
             false
         }
-        if (opened) {
-            // openChildは親画面を背面に残すため、子画面からタブを除外するだけでは
-            // 親に描画済みのGlowが残ります。子画面を生成した直後に親画面だけを
-            // タブGlowなしで差分更新し、背面にも「子画面表示中」の状態を反映します。
-            if (!api.updateScreen(
-                    ownerId,
-                    lowerPanel.build(state, owner, attention, suppressTabGlow = true),
-                )) {
-                plugin.logger.warning(
-                    "個別設定子画面の親画面からGlowを解除できませんでした: script=${state.scriptId} " +
-                        "screenId=${lowerPanel.SETTING_CHILD_SCREEN_ID}",
-                )
-            }
-        } else {
+        if (!opened) {
             // セッションが終了している／子深度上限に達している等の場合は、
             // 孤立した設定状態を残さず通常の設定画面へ戻します。
             clearSettingState()
@@ -1127,11 +1164,22 @@ class GestureSequenceEditor(
         frame: GestureSettingFrame,
         selectedNodeId: String,
     ) {
+        val ownerId = ownerIdFor(player)
+        val owner = ownerPlayerFor(player)
+        val attention = attentionState()
+        // stateを子フレームへ進める前に、現在背面にある親ビューを取得します。
+        // 進行後のstateで再生成すると、親ビューの構造まで子フレームへ変わるため、
+        // 子画面を積む対象とGlowを解除する対象を正しく特定できません。
+        val parentView = if (settingChildOpen(ownerId)) {
+            lowerPanel.buildSettingChild(state, owner, attention, suppressGlow = true)
+        } else {
+            lowerPanel.build(state, owner, attention, suppressGlow = true)
+        }
         val nextPath = state.settingTreePath?.enterChild(selectedNodeId)?.nodeIds.orEmpty()
         state.settingRoute = state.settingRoute + frame
         activateSettingFrame(frame, nextPath)
         state.lowerMode = GestureLowerMode.SETTING_CHOICES
-        ensureSettingChild(player)
+        ensureSettingChild(player, parentView)
     }
 
     /** 直下ノードの選択を経路へ記録し、同じ項目の再クリックを判定可能にします。 */
@@ -1414,22 +1462,40 @@ class GestureSequenceEditor(
     ) {
         val ownerId = ownerIdFor(player)
         if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
-        val parentId = if (settingChildOpen(ownerId)) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val settingChildWasOpen = settingChildOpen(ownerId)
+        val parentId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val owner = ownerPlayerFor(player)
+        val attention = attentionState()
+        val parentView = if (settingChildWasOpen) {
+            lowerPanel.buildSettingChild(state, owner, attention, suppressGlow = true)
+        } else {
+            lowerPanel.build(state, owner, attention, suppressGlow = true)
+        }
         state.confirmKind = GestureConfirmKind.ITEM_OVERWRITE
         state.confirmNodeId = null
         state.pendingItemContext = context
         state.pendingItemKey = itemKey
         state.pendingItemData = itemData
         state.lowerMode = GestureLowerMode.CONFIRM
-        val opened = api.openChild(
-            ownerId,
-            lowerPanel.build(state, ownerPlayerFor(player)),
-            GestureGuiChildOptions(
-                parentScreenId = parentId,
-                overlayMaterial = Material.RED_STAINED_GLASS,
-                animated = false,
-            ),
-        )
+        val opened = runCatching {
+            openChildAndSuppressParentGlow(
+                ownerId,
+                parentView,
+                lowerPanel.build(state, owner, attention),
+                GestureGuiChildOptions(
+                    parentScreenId = parentId,
+                    overlayMaterial = Material.RED_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "アイテム上書き確認子画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
         if (!opened) {
             state.confirmKind = GestureConfirmKind.DELETE
             state.pendingItemContext = null
