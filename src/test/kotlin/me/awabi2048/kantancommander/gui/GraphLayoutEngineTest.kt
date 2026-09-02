@@ -181,6 +181,22 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `paired condition exposes an add point for a null terminated branch`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        condition.falseNext = null
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val conditionPoint = requireNotNull(layout.nodePoints[condition.id])
+        val add = layout.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y + 2)]
+
+        assertEquals(MapCellKind.ADD, add?.kind)
+        assertEquals(GraphEditor.Edge.FALSE, add?.insertionTarget?.edge)
+        assertEquals(merge.id, condition.trueNext)
+    }
+
+    @Test
     fun `open condition keeps true and false insertion targets distinct`() {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
@@ -236,9 +252,8 @@ class GraphLayoutEngineTest {
         }
         val target = requireNotNull(add.insertionTarget)
 
-        // 左下の追加位置は単なる枝末端ではなく、内側条件を合流してから親へ戻る
-        // 必要があります。継続先を保持することで、通常ノードを選んでも自動的に
-        // 内側MERGEを具体化した正しいプレビューを生成できます。
+        // 左下の追加位置は、内側条件の枝で正常終了する通常ノードも受け付けます。
+        // 継続先は、明示的にMERGEを選んだ場合だけ再合流先として使用します。
         assertEquals(inner.id, target.mergeConditionId)
         assertEquals(outerMerge.id, target.continuationId)
         val preview = requireNotNull(GraphLayoutEngine.previewInsertion(graph, target))

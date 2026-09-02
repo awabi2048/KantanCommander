@@ -78,11 +78,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         } ?: GraphEditor.Edge.ENTRY
                         val mergeConditionId = context.route.payload[MERGE_CONDITION_ID]?.takeIf(String::isNotBlank)
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        val continuationId = context.route.payload[CONTINUATION_ID]?.takeIf(String::isNotBlank)
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                         // 表示後に別画面でグラフが更新されると、表示時には有効だった
                         // 合流候補が無効になることがあります。ジェスチャーGUIと同じ
                         // 検証を実行境界でも行い、IllegalArgumentExceptionをイベントへ
                         // 漏らさず安全に操作を無視します。
-                        if (type == CommandType.MERGE && !GraphEditor.canAppendMerge(script.graph, mergeConditionId)) {
+                        if (type == CommandType.MERGE && !GraphEditor.canAppendMerge(script.graph, mergeConditionId, continuationId)) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
                         // 挿入処理は共通グラフ更新入口へ通します。表示中のscriptを
@@ -91,10 +93,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val node = runCatching {
                             CommandSettingsModel.updateGraph(plugin, script.id, context.player.uniqueId) { candidateGraph ->
                                 if (type == CommandType.MERGE) {
-                                    if (!GraphEditor.canAppendMerge(candidateGraph, mergeConditionId)) {
+                                    if (!GraphEditor.canAppendMerge(candidateGraph, mergeConditionId, continuationId)) {
                                         null
                                     } else {
-                                        GraphEditor.appendMerge(candidateGraph, requireNotNull(mergeConditionId))
+                                        GraphEditor.appendMerge(
+                                            candidateGraph,
+                                            requireNotNull(mergeConditionId),
+                                            continuationId = continuationId,
+                                        )
                                     }
                                 } else {
                                     GraphEditor.insert(candidateGraph, sourceId, edge, type)
@@ -2194,6 +2200,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val SOURCE_ID = "sourceId"
         private const val EDGE = "edge"
         private const val MERGE_CONDITION_ID = "mergeConditionId"
+        private const val CONTINUATION_ID = "continuationId"
         private const val PICKER_CATEGORY = "pickerCategory"
         private const val ROLE = "role"
         private const val CURRENT_ITERATION = "\$current_iteration_value"
@@ -2204,6 +2211,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             sourceId: UUID?,
             edge: GraphEditor.Edge,
             mergeConditionId: UUID? = null,
+            continuationId: UUID? = null,
         ) =
             requireNotNull(EditorSession.from(current)).route(
                 SequenceEditorMenu.OWNER,
@@ -2212,6 +2220,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     SOURCE_ID to sourceId?.toString().orEmpty(),
                     EDGE to edge.name,
                     MERGE_CONDITION_ID to mergeConditionId?.toString().orEmpty(),
+                    CONTINUATION_ID to continuationId?.toString().orEmpty(),
                 ),
             )
 

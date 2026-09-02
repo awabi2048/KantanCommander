@@ -1844,8 +1844,8 @@ class GestureLowerPanel(
         val elements = mutableListOf<GestureGuiElement>()
         val categories = CommandCategory.entries
         val insertionTarget = state.pendingInsertion
-        // 継続先付きの入れ子枝でも通常のコマンド候補を維持します。選択時に
-        // GraphEditorが必要な内側MERGEを自動生成するため、表示と実行可否が一致します。
+        // 継続先付きの入れ子枝でも通常のコマンド候補を維持します。通常ノードは
+        // 枝の終端を引き継ぎ、MERGEを選んだ場合だけ継続先へ再合流します。
         val selectedCategory = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
         categories.forEachIndexed { index, option ->
             val cy = 0.38 - index * 0.17

@@ -60,7 +60,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         else me.awabi2048.kantancommander.data.GraphEditor.Edge.NEXT
                         val mergeCondition = context.payload["mergeConditionId"]?.takeIf(String::isNotBlank)
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.typeRoute(context.route, source, edge, mergeCondition)))
+                        val continuation = context.payload["continuationId"]?.takeIf(String::isNotBlank)
+                            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(
+                                CommandEditMenu.typeRoute(context.route, source, edge, mergeCondition, continuation),
+                            ),
+                        )
                     },
                     "activation" to handler { context ->
                         val script = scriptId(context.route)?.let(plugin.scripts::load)
@@ -471,6 +477,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                     "sourceId" to insertionTarget.sourceId?.toString().orEmpty(),
                     "edge" to insertionTarget.edge.name,
                     "mergeConditionId" to insertionTarget.mergeConditionId?.toString().orEmpty(),
+                    "continuationId" to insertionTarget.continuationId?.toString().orEmpty(),
                         ),
                     ),
                 ),

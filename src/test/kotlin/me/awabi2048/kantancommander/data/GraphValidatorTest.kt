@@ -79,7 +79,7 @@ class GraphValidatorTest {
     }
 
     @Test
-    fun `paired condition requires both branches to reach its merge`() {
+    fun `paired condition may end one branch before its merge`() {
         val condition = CommandType.CONDITION.newNode()
         val merge = CommandType.MERGE.newNode()
         condition.pairedNodeId = merge.id
@@ -92,7 +92,6 @@ class GraphValidatorTest {
         )
 
         val errors = GraphValidator.validate(graph)
-        assertTrue(errors.any { it.contains("false枝が対応合流へ到達しません") })
-        assertTrue(errors.any { it.contains("入力枝数が不正") })
+        assertTrue(errors.isEmpty())
     }
 }
