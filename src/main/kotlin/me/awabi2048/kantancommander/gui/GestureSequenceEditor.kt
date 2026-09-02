@@ -582,10 +582,12 @@ class GestureSequenceEditor(
             updateLower(player)
             return
         }
+        val owner = ownerPlayerFor(player)
+        val attention = attentionState()
         val opened = runCatching {
             api.openChild(
                 ownerId,
-                lowerPanel.buildSettingChild(state, ownerPlayerFor(player)),
+                lowerPanel.buildSettingChild(state, owner, attention),
                 GestureGuiChildOptions(
                     parentScreenId = lowerPanel.LOWER_SCREEN_ID,
                     overlayMaterial = Material.GRAY_STAINED_GLASS,
@@ -601,7 +603,20 @@ class GestureSequenceEditor(
             )
             false
         }
-        if (!opened) {
+        if (opened) {
+            // openChildは親画面を背面に残すため、子画面からタブを除外するだけでは
+            // 親に描画済みのGlowが残ります。子画面を生成した直後に親画面だけを
+            // タブGlowなしで差分更新し、背面にも「子画面表示中」の状態を反映します。
+            if (!api.updateScreen(
+                    ownerId,
+                    lowerPanel.build(state, owner, attention, suppressTabGlow = true),
+                )) {
+                plugin.logger.warning(
+                    "個別設定子画面の親画面からGlowを解除できませんでした: script=${state.scriptId} " +
+                        "screenId=${lowerPanel.SETTING_CHILD_SCREEN_ID}",
+                )
+            }
+        } else {
             // セッションが終了している／子深度上限に達している等の場合は、
             // 孤立した設定状態を残さず通常の設定画面へ戻します。
             clearSettingState()

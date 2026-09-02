@@ -66,11 +66,17 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
+        suppressTabGlow: Boolean = false,
     ): GestureGuiView {
         return when (state.lowerMode) {
-            GestureLowerMode.SETTINGS -> buildSettings(state, player, attention)
+            GestureLowerMode.SETTINGS -> buildSettings(state, player, attention, suppressTabGlow)
             GestureLowerMode.PICKER -> buildPicker(state, player)
-            GestureLowerMode.SETTING_CHOICES -> buildSettingChoices(state, player, attention)
+            GestureLowerMode.SETTING_CHOICES -> buildSettingChoices(
+                state,
+                player,
+                attention,
+                suppressTabGlow = suppressTabGlow,
+            )
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
         }
     }
@@ -88,6 +94,7 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState,
+        suppressTabGlow: Boolean = false,
     ): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -103,7 +110,15 @@ class GestureLowerPanel(
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
-        val pageCount = addSettingsNavigation(state, player, node, visuals, elements, attentionFields)
+        val pageCount = addSettingsNavigation(
+            state,
+            player,
+            node,
+            visuals,
+            elements,
+            attentionFields,
+            suppressGlow = suppressTabGlow,
+        )
         val page = state.settingsPage.coerceIn(0, pageCount - 1)
         val pageStart = page * SETTINGS_PAGE_SIZE
         val tabs = fields.drop(pageStart).take(SETTINGS_PAGE_SIZE)
@@ -517,6 +532,7 @@ class GestureLowerPanel(
         elements: MutableList<GestureGuiElement>,
         attentionFields: Set<String> = emptySet(),
         pagerCenterX: Double = -0.30,
+        suppressGlow: Boolean = false,
     ): Int {
         val fields = CommandSettingsModel.visibleFields(node)
         if (fields.isEmpty()) return 1
@@ -550,7 +566,11 @@ class GestureLowerPanel(
                     fieldState,
                 ),
                 4,
-                glowColor = GestureSettingVisualPolicy.tabGlowColor(on, attention),
+                glowColor = if (suppressGlow) {
+                    null
+                } else {
+                    GestureSettingVisualPolicy.tabGlowColor(on, attention)
+                },
             )
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, field.label)))
@@ -1281,6 +1301,7 @@ class GestureLowerPanel(
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
         child: Boolean = false,
+        suppressTabGlow: Boolean = false,
     ): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -1300,7 +1321,16 @@ class GestureLowerPanel(
         // 親のタブ・コンテキスト・削除操作を重ねて表示しません。
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
         if (!child) {
-            addSettingsNavigation(state, player, node, visuals, elements, attentionFields, pagerCenterX = -0.30)
+            addSettingsNavigation(
+                state,
+                player,
+                node,
+                visuals,
+                elements,
+                attentionFields,
+                pagerCenterX = -0.30,
+                suppressGlow = suppressTabGlow,
+            )
         }
         val field = CommandSettingsModel.visibleFields(node).firstOrNull { it.key == fieldKey }
         val fieldLabel = field?.let { KcI18n.text(player, it.label) } ?: fieldKey
