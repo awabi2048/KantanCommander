@@ -18,18 +18,32 @@ class GestureSettingValueLayoutTest {
     }
 
     @Test
-    fun `three values divide the existing value area into equal rows`() {
+    fun `three values add the configured row gap`() {
         val layout = GestureSettingValueLayout.calculate(
             rowCount = 3,
             valueAnchorY = 0.27,
             detailAnchorY = 0.17,
+            rowGapRatio = 0.10,
         )
 
         assertEquals(3, layout.rowCentersY.size)
         assertEquals(0.27, layout.rowCentersY[0], 1.0e-9)
-        assertEquals(0.22, layout.rowCentersY[1], 1.0e-9)
-        assertEquals(0.17, layout.rowCentersY[2], 1.0e-9)
-        assertEquals(0.12, layout.detailCenterY, 1.0e-9)
+        assertEquals(0.215, layout.rowCentersY[1], 1.0e-9)
+        assertEquals(0.16, layout.rowCentersY[2], 1.0e-9)
+        assertEquals(0.105, layout.detailCenterY, 1.0e-9)
+    }
+
+    @Test
+    fun `row gap ratio increases the calculated pitch`() {
+        val layout = GestureSettingValueLayout.calculate(
+            rowCount = 3,
+            valueAnchorY = 0.27,
+            detailAnchorY = 0.17,
+            rowGapRatio = 0.10,
+        )
+
+        assertEquals(0.055, layout.rowCentersY[0] - layout.rowCentersY[1], 1.0e-9)
+        assertEquals(0.05 * 0.10, 0.055 - 0.05, 1.0e-9)
     }
 
     @Test
@@ -39,6 +53,9 @@ class GestureSettingValueLayoutTest {
         }
         assertThrows(IllegalArgumentException::class.java) {
             GestureSettingValueLayout.calculate(2, 0.17, 0.27)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            GestureSettingValueLayout.calculate(2, 0.27, 0.17, -0.10)
         }
     }
 }

@@ -137,6 +137,7 @@ class GestureLowerPanel(
                 rowCount = it.size,
                 valueAnchorY = SETTING_VALUE_ANCHOR_Y,
                 detailAnchorY = SETTING_DETAIL_ANCHOR_Y,
+                rowGapRatio = TIMING_ROW_GAP_RATIO,
             )
         }
         val value = displayValue.render(player)
@@ -2352,6 +2353,8 @@ class GestureLowerPanel(
         // GestureSettingValueLayoutでこの2点の間隔から行ピッチを算出します。
         const val SETTING_VALUE_ANCHOR_Y = 0.27
         const val SETTING_DETAIL_ANCHOR_Y = 0.17
+        // 既存タブと同じ「行高の10%を余白にする」配置規則です。
+        const val TIMING_ROW_GAP_RATIO = 0.10
         // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
         // タブの高さ0.10に対してピッチ0.11を確保し、意図された0.01の余白を維持します。
         const val SETTINGS_TAB_MAX = 6
