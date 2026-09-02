@@ -23,6 +23,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionState
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionListener
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisibilityPolicy
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenLayout
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVerticalSlot
@@ -236,12 +237,17 @@ class GestureSequenceEditor(
     private val screenAccessPolicy = state.placement?.let {
         GestureGuiAccessPolicy(::canOperateSharedActor)
     }
+    /** 遠距離でも共有画面の存在は確認できるよう、表示認可から距離判定を外します。 */
+    private val screenVisibilityPolicy = state.placement?.let {
+        GestureGuiVisibilityPolicy(::canViewSharedActor)
+    }
     // 下部画面のクリックは上部と同じハンドラで処理します（タブ切替・PICKER・CONFIRMの共通ロジック）。
     private val lowerPanel = GestureLowerPanel(
         plugin,
         onAction = { ctx -> handleUpperAction(ctx) },
         screenAccess = screenAccess,
         screenAccessPolicy = screenAccessPolicy,
+        screenVisibilityPolicy = screenVisibilityPolicy,
     )
 
     private val UPPER_SCREEN_ID = "gesture-editor-upper"
@@ -258,20 +264,29 @@ class GestureSequenceEditor(
     private var renderRetrySessionId: UUID? = null
     private var renderRetryAttempts = 0
 
-    private fun canOperateSharedActor(ownerId: UUID, actorId: UUID): Boolean {
+    private fun canViewSharedActor(ownerId: UUID, actorId: UUID): Boolean {
         val placement = state.placement ?: return actorId == ownerId
         val owner = Bukkit.getPlayer(ownerId) ?: return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
-        val editorAnchor = state.anchor ?: return false
         // ツール権限はMWM-Chanponが現在ワールドへ一時付与するノードです。
         // 建築権限は要求しません。今回の要件では、既存ブロックを編集する
-        // 「共有GUI操作」と、配置物を設置・破壊する「管理操作」を分離します。
-        // 所有者も含めて同じ距離・ワールド・権限規則へ通します。所有者だけを無条件で
-        // 通すと、歩いて離れた後も共有画面の可視性と入力claimが残るためです。
+        // 「共有GUI表示」と、配置物を設置・破壊する「管理操作」を分離します。
+        // 表示は同じワールドにいてツール権限を持つ間は維持し、距離によって画面全体が
+        // 消えないようにします。
         return actor.world.uid == owner.world.uid &&
             actor.world.name == placement.world &&
-            GestureEditorReachPolicy.isWithinInteractionRange(actor, editorAnchor) &&
             actor.hasPermission(PlacementAccessPolicy.EXTENDED_COMMAND_BLOCK_PERMISSION)
+    }
+
+    private fun canOperateSharedActor(ownerId: UUID, actorId: UUID): Boolean {
+        val placement = state.placement ?: return actorId == ownerId
+        if (!canViewSharedActor(ownerId, actorId)) return false
+        val actor = Bukkit.getPlayer(actorId) ?: return false
+        val editorAnchor = state.anchor ?: return false
+        // 距離は操作の認可だけへ適用します。これにより、遠ざかったプレイヤーは
+        // 画面を見失わず、戻って位置を合わせれば同じ画面上で操作を再開できます。
+        return actor.world.name == placement.world &&
+            GestureEditorReachPolicy.isWithinInteractionRange(actor, editorAnchor)
     }
 
     internal fun canOperateSharedActor(player: Player): Boolean =
@@ -1122,6 +1137,7 @@ class GestureSequenceEditor(
                 finalElements,
                 access = screenAccess,
                 accessPolicy = screenAccessPolicy,
+                visibilityPolicy = screenVisibilityPolicy,
             ),
             clippedVisuals,
             panel = GestureGuiPanel(
@@ -3097,6 +3113,7 @@ class GestureSequenceEditor(
                 emptyList(),
                 access = screenAccess,
                 accessPolicy = screenAccessPolicy,
+                visibilityPolicy = screenVisibilityPolicy,
             ),
             emptyList(),
         ) {}
@@ -3128,6 +3145,7 @@ class GestureSequenceEditor(
                 emptyList(),
                 access = screenAccess,
                 accessPolicy = screenAccessPolicy,
+                visibilityPolicy = screenVisibilityPolicy,
             ),
             visuals,
             panel = GestureGuiPanel(

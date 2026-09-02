@@ -11,6 +11,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisibilityPolicy
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
@@ -53,6 +54,7 @@ class GestureLowerPanel(
     private val onAction: (GestureGuiActionContext) -> Unit = {},
     private val screenAccess: GestureGuiAccess = GestureGuiAccess.OWNER_ONLY,
     private val screenAccessPolicy: GestureGuiAccessPolicy? = null,
+    private val screenVisibilityPolicy: GestureGuiVisibilityPolicy? = null,
 ) {
     val LOWER_SCREEN_ID = "gesture-editor-lower"
     /** 個別設定専用。親の下部画面へモーダルに重ねます。 */
@@ -2097,6 +2099,7 @@ class GestureLowerPanel(
             elements,
             access = screenAccess,
             accessPolicy = screenAccessPolicy,
+            visibilityPolicy = screenVisibilityPolicy,
         ),
         visuals,
         panel = GestureGuiPanel(
