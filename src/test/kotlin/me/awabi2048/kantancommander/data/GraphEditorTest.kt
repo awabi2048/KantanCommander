@@ -204,23 +204,49 @@ class GraphEditorTest {
     }
 
     @Test
-    fun `normal insertion is rejected while an enclosing continuation is pending`() {
+    fun `normal insertion into a nested open branch materializes the enclosing merge`() {
         val graph = CommandGraph.empty()
         val outer = GraphEditor.append(graph, CommandType.CONDITION)
         val outerMerge = GraphEditor.appendMerge(graph, outer.id)
         val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
 
-        assertThrows(IllegalArgumentException::class.java) {
-            GraphEditor.insert(
-                graph,
-                inner.id,
-                GraphEditor.Edge.FALSE,
-                CommandType.WAIT,
-                continuationId = outerMerge.id,
-            )
-        }
-        assertEquals(outerMerge.id, inner.trueNext)
-        assertEquals(null, inner.falseNext)
+        val inserted = GraphEditor.insert(
+            graph,
+            inner.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.WAIT,
+            continuationId = outerMerge.id,
+            enclosingConditionId = inner.id,
+        )
+
+        val innerMerge = requireNotNull(inner.pairedNodeId).let(graph.nodes::get)
+        assertEquals(innerMerge?.id, inner.trueNext)
+        assertEquals(inserted.id, inner.falseNext)
+        assertEquals(innerMerge?.id, inserted.next)
+        assertEquals(outerMerge.id, innerMerge?.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `condition insertion into a nested open branch creates an editable closed pair`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+
+        val inserted = GraphEditor.insert(
+            graph,
+            inner.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.CONDITION,
+            continuationId = outerMerge.id,
+            enclosingConditionId = inner.id,
+        )
+
+        val insertedMerge = requireNotNull(inserted.pairedNodeId).let(graph.nodes::get)
+        assertEquals(insertedMerge?.id, inserted.trueNext)
+        assertEquals(insertedMerge?.id, inserted.falseNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 
     @Test

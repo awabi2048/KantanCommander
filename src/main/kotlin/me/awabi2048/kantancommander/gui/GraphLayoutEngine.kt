@@ -215,6 +215,7 @@ object GraphLayoutEngine {
                 target.edge,
                 placeholderType,
                 continuationId = target.continuationId,
+                enclosingConditionId = target.mergeConditionId,
             )
         }.getOrNull() ?: return null
         val previewLayout = runCatching { layout(candidate) }.getOrNull() ?: return null

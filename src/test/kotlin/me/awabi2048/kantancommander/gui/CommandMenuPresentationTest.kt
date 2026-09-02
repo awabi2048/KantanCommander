@@ -16,34 +16,21 @@ class CommandMenuPresentationTest {
     }
 
     @Test
-    fun `nested open branch picker exposes only merge until the enclosing path is closed`() {
-        assertEquals(
-            emptyList<CommandType>(),
-            CommandPickerTypePolicy.types(
-                category = CommandCategory.EXECUTION,
-                mergeAvailable = true,
-                insideForBody = false,
-                requiresEnclosingMerge = true,
-            ),
+    fun `nested open branch picker retains normal commands and optional merge`() {
+        val executionTypes = CommandPickerTypePolicy.types(
+            category = CommandCategory.EXECUTION,
+            mergeAvailable = true,
+            insideForBody = false,
         )
-        assertEquals(
-            listOf(CommandType.MERGE),
-            CommandPickerTypePolicy.types(
-                category = CommandCategory.CONTROL,
-                mergeAvailable = true,
-                insideForBody = false,
-                requiresEnclosingMerge = true,
-            ),
+        val controlTypes = CommandPickerTypePolicy.types(
+            category = CommandCategory.CONTROL,
+            mergeAvailable = true,
+            insideForBody = false,
         )
-        assertEquals(
-            emptyList<CommandType>(),
-            CommandPickerTypePolicy.types(
-                category = CommandCategory.CONTROL,
-                mergeAvailable = false,
-                insideForBody = false,
-                requiresEnclosingMerge = true,
-            ),
-        )
+
+        assertTrue(CommandType.TELEPORT in executionTypes)
+        assertTrue(CommandType.CONDITION in controlTypes)
+        assertTrue(CommandType.MERGE in controlTypes)
     }
 
     @Test

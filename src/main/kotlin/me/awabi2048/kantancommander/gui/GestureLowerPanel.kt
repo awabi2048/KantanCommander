@@ -1844,11 +1844,9 @@ class GestureLowerPanel(
         val elements = mutableListOf<GestureGuiElement>()
         val categories = CommandCategory.entries
         val insertionTarget = state.pendingInsertion
-        val requiresEnclosingMerge = insertionTarget?.continuationId != null
-        // 親の合流へ戻る途中の未合流条件では、通常コマンドの追加先がまだ確定して
-        // いません。先に内側MERGEを選ばせるため、カテゴリもCONTROLへ固定します。
-        val selectedCategory = if (requiresEnclosingMerge) CommandCategory.CONTROL
-            else categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
+        // 継続先付きの入れ子枝でも通常のコマンド候補を維持します。選択時に
+        // GraphEditorが必要な内側MERGEを自動生成するため、表示と実行可否が一致します。
+        val selectedCategory = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
         categories.forEachIndexed { index, option ->
             val cy = 0.38 - index * 0.17
             val on = option == selectedCategory
@@ -1900,7 +1898,6 @@ class GestureLowerPanel(
             category = selectedCategory,
             mergeAvailable = mergeAvailable,
             insideForBody = insideForBody,
-            requiresEnclosingMerge = requiresEnclosingMerge,
         )
         val pageCount = ((types.size + PICKER_PAGE_SIZE - 1) / PICKER_PAGE_SIZE).coerceAtLeast(1)
         val page = state.pickerPage.coerceIn(0, pageCount - 1)

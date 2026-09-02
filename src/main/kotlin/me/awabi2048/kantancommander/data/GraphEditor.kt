@@ -147,8 +147,8 @@ object GraphEditor {
      * 既存エッジの直後へ通常ノードを挿入します。
      *
      * `continuationId` が指定された挿入先は、親の合流へ戻る途中の未合流条件に属します。
-     * そこへ通常ノードを直接置くと、空いているもう一方の枝が残って保存検証に失敗する
-     * ため、MERGE操作を先に選ばせる境界として拒否します。
+     * 通常ノードを追加する前に、その条件を内側MERGEで閉じてから挿入することで、
+     * プレイヤーに構造補完だけを強制せず、編集直後から有効なグラフを維持します。
      */
     fun insert(
         graph: CommandGraph,
@@ -156,17 +156,33 @@ object GraphEditor {
         edge: Edge,
         type: CommandType,
         continuationId: UUID? = null,
+        enclosingConditionId: UUID? = null,
     ): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) { "$type はこの経路へ挿入できません" }
-        require(continuationId == null) { "未合流の条件分岐は先に内側の合流を追加してください" }
+        if (continuationId != null) {
+            val conditionId = requireNotNull(enclosingConditionId) { "継続先付き挿入には内側条件分岐が必要です" }
+            require(canAppendMerge(graph, conditionId, continuationId)) {
+                "内側の条件分岐を合流できません"
+            }
+            // 入れ子枝への通常追加は、内側の合流を自動生成して親合流への入力数を
+            // 2本に保ちます。先に閉じるため、下記のedgeTargetは新しい内側MERGEを
+            // 挿入先の後続として取得し、選択した枝へ自然にノードを差し込めます。
+            appendMerge(graph, conditionId, continuationId)
+        }
         val target = edgeTarget(graph, sourceId, edge)
-        val inserted = createBundle(graph, type)
+        val inserted = if (type == CommandType.CONDITION && continuationId != null) {
+            createClosedConditionBundle(graph, target)
+        } else {
+            createBundle(graph, type)
+        }
         setEdge(graph, sourceId, edge, inserted.id)
-        connectBundleTail(graph, inserted, target)
-        if (inserted.type == CommandType.CONDITION) {
+        if (inserted.type == CommandType.CONDITION && continuationId == null) {
+            connectBundleTail(graph, inserted, target)
             inserted.next = null
             inserted.trueNext = target
             inserted.falseNext = null
+        } else if (inserted.type != CommandType.CONDITION) {
+            connectBundleTail(graph, inserted, target)
         }
         return inserted
     }
@@ -195,6 +211,26 @@ object GraphEditor {
             graph.nodes[end.id] = end
         }
         return node
+    }
+
+    /**
+     * 既に親の継続先を持つ枝へ条件分岐を追加する場合の完全な条件・合流ペアです。
+     *
+     * 条件だけを置くと新しいFALSE枝が未接続になり、即時保存するエディターでは
+     * 妥当性検証を通せません。空の両枝を同じMERGEへ接続して作ることで、その後も
+     * 各枝へ通常の追加・挿入を行える編集可能な状態を保ちます。
+     */
+    private fun createClosedConditionBundle(graph: CommandGraph, target: UUID?): CommandNode {
+        val condition = CommandType.CONDITION.newNode()
+        val merge = CommandType.MERGE.newNode()
+        condition.pairedNodeId = merge.id
+        condition.trueNext = merge.id
+        condition.falseNext = merge.id
+        merge.pairedNodeId = condition.id
+        merge.next = target
+        graph.nodes[condition.id] = condition
+        graph.nodes[merge.id] = merge
+        return condition
     }
 
     private fun appendToMainPath(graph: CommandGraph, inserted: CommandNode) {

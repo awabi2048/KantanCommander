@@ -2821,16 +2821,12 @@ class GestureSequenceEditor(
                         ?.insertionTarget
                     if (currentTarget != target) return
                 }
-                if ((target.continuationId != null && type != CommandType.MERGE) ||
-                    type == CommandType.FOR_END || (type == CommandType.MERGE &&
+                if (type == CommandType.FOR_END || (type == CommandType.MERGE &&
                         (target.mergeConditionId == null || !GraphEditor.canAppendMerge(
                             script.graph,
                             target.mergeConditionId,
                             target.continuationId,
                         )))) {
-                    // 親の合流へ続く未合流条件では、先に内側MERGEを作成します。
-                    // 通常ノードをここで受け付けると、もう一方の枝が親合流へ届かず、
-                    // 保存時のGraphValidatorで例外になるため、表示・入力の両方で拒否します。
                     state.lowerMode = GestureLowerMode.SETTINGS
                     updateLower(player)
                     return
@@ -2867,6 +2863,7 @@ class GestureSequenceEditor(
                                 target.edge,
                                 type,
                                 continuationId = target.continuationId,
+                                enclosingConditionId = target.mergeConditionId,
                             )
                         }
                     }

@@ -73,9 +73,7 @@ internal object CommandPickerTypePolicy {
         category: CommandCategory,
         mergeAvailable: Boolean,
         insideForBody: Boolean,
-        requiresEnclosingMerge: Boolean = false,
     ): List<CommandType> = CommandType.entries.filter { type ->
-        if (requiresEnclosingMerge && type != CommandType.MERGE) return@filter false
         if (CommandPresentationPolicy.category(type) != category) return@filter false
         when (type) {
             CommandType.FOR_END -> false

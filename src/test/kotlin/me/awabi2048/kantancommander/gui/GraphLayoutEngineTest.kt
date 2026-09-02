@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.data.GraphValidator
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -236,11 +237,12 @@ class GraphLayoutEngineTest {
         val target = requireNotNull(add.insertionTarget)
 
         // 左下の追加位置は単なる枝末端ではなく、内側条件を合流してから親へ戻る
-        // 必要があります。継続先を保持することで、UIが通常コマンドを誤表示せず、
-        // MERGEだけを提示できます。
+        // 必要があります。継続先を保持することで、通常ノードを選んでも自動的に
+        // 内側MERGEを具体化した正しいプレビューを生成できます。
         assertEquals(inner.id, target.mergeConditionId)
         assertEquals(outerMerge.id, target.continuationId)
-        assertEquals(null, GraphLayoutEngine.previewInsertion(graph, target))
+        val preview = requireNotNull(GraphLayoutEngine.previewInsertion(graph, target))
+        assertTrue(GraphValidator.validate(preview.graph).isEmpty())
     }
 
     @Test
