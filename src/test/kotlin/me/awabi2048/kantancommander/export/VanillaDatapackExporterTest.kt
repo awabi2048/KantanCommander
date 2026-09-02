@@ -176,13 +176,11 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `for loop and its control commands are compiled to scoreboard functions`() {
+    fun `repeat count and its control commands are compiled to scoreboard functions`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "for")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
-        start.params["startValue"] = "1"
-        start.params["endValue"] = "3"
-        start.params["stepValue"] = "1"
+        start.params["count"] = "3"
         GraphEditor.appendToForBody(script.graph, start.id, CommandType.CONTINUE)
         store.save(script)
 
@@ -192,8 +190,10 @@ class VanillaDatapackExporterTest {
             .filter(File::isFile)
             .joinToString("\n") { it.readText() }
         assertTrue(text.contains("_check"))
-        assertTrue(text.contains("scoreboard players operation"))
-        assertTrue(text.contains("matches 1.."))
+        assertTrue(text.contains("scoreboard players set #for_"))
+        assertTrue(text.contains("_limit kc_vars 3"))
+        assertTrue(text.contains("_count kc_vars 1"))
+        assertTrue(text.contains("_count kc_vars <= #for_"))
     }
 
     @Test
@@ -353,21 +353,21 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `current loop values compile only inside a for body`() {
+    fun `current loop count compiles only inside a for body`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "loop-value")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         val variable = GraphEditor.appendToForBody(script.graph, start.id, CommandType.VARIABLE)
         variable.params["name"] = "iteration"
         variable.params["type"] = VariableType.NUMBER.name
-        variable.params["value"] = "\$current_iteration_value"
+        variable.params["value"] = "\${CURRENT_LOOP_COUNT}"
         store.save(script)
 
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
         assertTrue(text.contains("execute store result storage kantan:variables"))
-        assertTrue(text.contains("_value kc_vars"))
+        assertTrue(text.contains("_count kc_vars"))
     }
 
     @Test
@@ -550,11 +550,11 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `exclusive for end uses strict scoreboard comparisons`() {
+    fun `repeat loop stops at the configured count without an extra increment`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "exclusive-for")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
-        start.params["inclusiveEnd"] = "false"
+        start.params["count"] = "2"
         GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT).targetSpec =
             TargetSpec(TargetKind.INHERITED_TARGET)
         store.save(script)
@@ -564,9 +564,9 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("kc_vars < #for_"))
-        assertTrue(text.contains("kc_vars > #for_"))
-        assertFalse(text.contains("kc_vars <= #for_"))
+        assertTrue(text.contains("kc_vars <= #for_"))
+        assertTrue(text.contains("kc_vars >= #for_"))
+        assertTrue(text.contains("scoreboard players add #for_"))
     }
 
     @Test
@@ -774,11 +774,11 @@ class VanillaDatapackExporterTest {
                 "type" to VariableType.NUMBER.name,
                 "operation" to VariableOperation.CHANGE.name,
                 "changeMode" to "CALCULATE",
-                "value" to "counter + 10 * 2",
+                "value" to "\${counter} + 10 * 2",
             )
         )
         val loop = GraphEditor.append(script.graph, CommandType.FOR_START)
-        loop.params.putAll(mapOf("startValue" to "0", "endValue" to "10", "stepValue" to "1"))
+        loop.params["count"] = "10"
         GraphEditor.appendToForBody(script.graph, loop.id, CommandType.DISPLAY_TEXT).targetSpec =
             TargetSpec(TargetKind.INHERITED_TARGET)
 
@@ -792,13 +792,13 @@ class VanillaDatapackExporterTest {
         val arithmetic = success.functions.values
             .first { it.contains("scoreboard players operation") && it.contains("expr_") }
         val endFunction = success.functions.values
-            .first { it.contains("scoreboard players operation #for_") }
+            .first { it.contains("scoreboard players add #for_") }
 
         assertTrue(arithmetic.contains("scoreboard players operation"))
         assertTrue(arithmetic.contains("kc_runtime"))
         assertTrue(endFunction.contains("if score #for_"))
         assertTrue(endFunction.contains("run return 0"))
-        assertTrue(endFunction.contains("scoreboard players operation #for_"))
+        assertTrue(endFunction.contains("scoreboard players add #for_"))
     }
 
     @Test
@@ -860,20 +860,11 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `for ranges may read world variables in vanilla output`() {
+    fun `repeat count may read a world variable in vanilla output`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "for-world-vanilla")
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
-        start.params.putAll(
-            mapOf(
-                "startSource" to "WORLD",
-                "startValue" to "base",
-                "endSource" to "WORLD",
-                "endValue" to "limit",
-                "stepSource" to "FIXED",
-                "stepValue" to "1",
-            )
-        )
+        start.params["count"] = "\${limit}"
         GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT).targetSpec =
             TargetSpec(TargetKind.INHERITED_TARGET)
 
@@ -881,15 +872,11 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
                 script,
-                mapOf("base" to VariableType.NUMBER, "limit" to VariableType.NUMBER),
+                mapOf("limit" to VariableType.NUMBER),
             ),
         )
         val text = success.functions.values.joinToString("\n")
-        // ワールド変数storageからfor開始値・終了値が転記される。
-        assertTrue(
-            text.contains("data get storage kantan:variables ${VanillaStorageNames.variablePath("base", false)}"),
-            text,
-        )
+        // ワールド変数storageからfor上限を開始時に転記する。
         assertTrue(
             text.contains("data get storage kantan:variables ${VanillaStorageNames.variablePath("limit", false)}"),
             text,

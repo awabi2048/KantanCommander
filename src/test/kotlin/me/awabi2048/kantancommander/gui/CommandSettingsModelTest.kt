@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertThrows
 
 class CommandSettingsModelTest {
     @Test
@@ -248,6 +249,20 @@ class CommandSettingsModelTest {
         node.markConfigured("count")
 
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "count"))
+    }
+
+    @Test
+    fun `repeat command exposes only its count field and rejects reserved variable definitions`() {
+        val repeat = CommandType.FOR_START.newNode()
+        assertEquals(listOf("count"), CommandSettingsModel.visibleFields(repeat).map { it.key })
+
+        val variable = CommandType.VARIABLE.newNode()
+        assertThrows(IllegalArgumentException::class.java) {
+            CommandSettingsModel.setParameter(variable, "name", "CURRENT_LOOP_COUNT")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            CommandSettingsModel.setParameter(variable, "name", "current_loop_count")
+        }
     }
 
     @Test

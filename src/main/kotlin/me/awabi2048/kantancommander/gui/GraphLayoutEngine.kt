@@ -93,6 +93,8 @@ data class ViewportProjection(
     val height: Int,
     val cells: Map<MapPoint, MapCell>,
     val boundaryConnections: Set<ViewportBoundaryConnection>,
+    /** 戻り経路上で内部ノードの垂線と交差する、矢印表示用の論理スロットです。 */
+    val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
     fun contains(local: MapPoint): Boolean =
         local.x in 0 until width && local.y in 0 until height
@@ -112,6 +114,8 @@ data class GraphLayout(
     val nodePoints: Map<UUID, MapPoint>,
     val width: Int,
     val height: Int,
+    /** 戻り経路上へ配置する矢印の論理座標です。 */
+    val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
     fun viewport(origin: MapPoint, width: Int, height: Int): Map<MapPoint, MapCell> =
         cells.mapNotNull { (point, cell) ->
@@ -147,7 +151,11 @@ data class GraphLayout(
                 }
             }
         }
-        return ViewportProjection(origin, width, height, visible, boundaries)
+        val arrows = loopReturnArrowPoints.mapNotNull { global ->
+            val local = MapPoint(global.x - origin.x, global.y - origin.y)
+            local.takeIf { it.x in 0 until width && it.y in 0 until height }
+        }.toSet()
+        return ViewportProjection(origin, width, height, visible, boundaries, arrows)
     }
 
     fun canMove(origin: MapPoint, dx: Int, dy: Int, viewportWidth: Int, viewportHeight: Int): Boolean {
@@ -189,6 +197,7 @@ object GraphLayoutEngine {
             nodePoints = builder.nodePoints.toMap(),
             width = maxX + 2,
             height = maxY + 2,
+            loopReturnArrowPoints = builder.loopReturnArrowPoints.toSet(),
         )
     }
 
@@ -226,6 +235,7 @@ object GraphLayoutEngine {
     ) {
         val cells = linkedMapOf<MapPoint, MapCell>()
         val nodePoints = linkedMapOf<UUID, MapPoint>()
+        val loopReturnArrowPoints = linkedSetOf<MapPoint>()
 
         fun renderRoot() {
             val entry = graph.entryNodeId
@@ -621,6 +631,11 @@ object GraphLayoutEngine {
         private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
             putNode(x, y, start)
             val endId = start.pairedNodeId ?: return Segment(x + 2, y, start.id)
+            // bodyの再帰描画が追加するノード座標だけをスナップショットします。
+            // これにより、単純な直列ノードだけでなく、body内の条件分岐・入れ子forの
+            // ノードからも同じ戻り経路へ矢印を投影できます。開始・終了ノード自身は
+            // 戻り先を示す内部ノードではないため、スナップショットの外側に置きます。
+            val bodyNodeIdsBefore = nodePoints.keys.toSet()
             val bodyStart = start.trueNext
             val body = if (bodyStart != null && bodyStart != endId) {
                 putPath(x + 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
@@ -661,6 +676,17 @@ object GraphLayoutEngine {
             putNode(endX, y, end)
 
             val returnY = body.maxY + 2
+            nodePoints
+                .filterKeys { it !in bodyNodeIdsBefore }
+                .values
+                .map { it.x }
+                .filter { it in (x + 1) until endX }
+                .distinct()
+                .forEach { arrowX ->
+                    // 論理セルのXスロットは画面倍率によらず等間隔なので、描画側で
+                    // ピクセル座標を計算せず、戻り経路との交点として正本化します。
+                    loopReturnArrowPoints += MapPoint(arrowX, returnY)
+                }
             for (verticalY in y + 1..returnY) {
                 putPath(endX, verticalY, MapCellKind.LOOP_RETURN_PATH)
                 putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH)

@@ -16,7 +16,6 @@ object CommandValueRules {
     // 変数名は式・テンプレートへそのまま埋め込むため、先頭を英字に限定します。
     // 数字始まりを許すと、式の数値リテラルと区別できず、GUI・実行・出力で
     // 同じ名前を解釈できなくなります。
-    private val VARIABLE_NAME_PATTERN = Regex("[a-z][a-z0-9_.-]{0,63}")
     private val TAG_PATTERN = Regex("[A-Za-z0-9_.:+-]{1,64}")
     private val EQUIPMENT_SLOTS = setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")
 
@@ -56,7 +55,7 @@ object CommandValueRules {
     /** サウンドはリソースパック由来のカスタムIDも受け付けるため、構文だけを検証します。 */
     fun isSoundId(raw: String): Boolean = NamespacedKey.fromString(raw) != null
 
-    fun isVariableName(raw: String): Boolean = VARIABLE_NAME_PATTERN.matches(raw)
+    fun isVariableName(raw: String): Boolean = SystemVariableNames.isUserName(raw)
 
     fun isTag(raw: String): Boolean = TAG_PATTERN.matches(raw)
 

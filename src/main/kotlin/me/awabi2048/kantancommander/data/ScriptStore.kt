@@ -101,7 +101,7 @@ class ScriptStore(
     /**
      * 最新の正本をロック内で取得し、変更・検証・保存まで一度だけ行います。
      * expectedRevisionを指定した場合、画面表示後に別の編集が成功していれば
-     * 保存せずnullを返します。削除確認や入力Dialogの古い応答を安全に無効化する
+     * 保存せずnullを返します。削除確認や入力画面の古い応答を安全に無効化する
      * 共通境界として、Gesture／Inventory双方から利用します。
      */
     fun <T : Any> update(
@@ -148,7 +148,7 @@ class ScriptStore(
             // 漏れが生じるため、保存正本を確定するこの一点で差分を記録します。
             script.contentModified = true
         }
-        // 保存成功ごとに単調増加させ、Dialog開始時の正本世代と比較できるようにします。
+        // 保存成功ごとに単調増加させ、入力画面開始時の正本世代と比較できるようにします。
         script.revision = (previous?.revision ?: script.revision).inc()
         atomicWrite(file(script.id), gson.toJson(script))
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
@@ -445,7 +445,7 @@ class ScriptStore(
                 else -> Unit
             }
             migrateLegacyPositionFields(node, params)
-            migrateForSources(params)
+            if (node["type"]?.asString == "FOR_START") migrateLegacyForCount(params)
             migrateCommandGraph(node["snapshot"]?.asJsonObject)
         }
     }
@@ -499,12 +499,12 @@ class ScriptStore(
             }
             "ADD" -> {
                 mappedOperation = "CHANGE"
-                mappedValue = "$name + ($rawValue)"
+                mappedValue = "${'$'}{$name} + ($rawValue)"
                 mappedMode = "CALCULATE"
             }
             "SUBTRACT" -> {
                 mappedOperation = "CHANGE"
-                mappedValue = "$name - ($rawValue)"
+                mappedValue = "${'$'}{$name} - ($rawValue)"
                 mappedMode = "CALCULATE"
             }
             else -> {
@@ -548,13 +548,17 @@ class ScriptStore(
         }
     }
 
-    private fun migrateForSources(params: JsonObject?) {
-        listOf("start", "end", "step").forEach { field ->
-            if (params?.get("${field}Source")?.asString == "TEMPORARY") {
-                logger.warning("v7の一時変数for参照をワールド内変数参照へ移行します: field=$field")
-                params.addProperty("${field}Source", "WORLD")
-            }
-        }
+    /** v7の範囲指定を、現行の回数指定へ残さず変換します。 */
+    private fun migrateLegacyForCount(params: JsonObject?) {
+        if (params == null) return
+        val legacyFields = listOf(
+            "startSource", "endSource", "stepSource",
+            "startValue", "endValue", "stepValue", "inclusiveEnd",
+        )
+        if (legacyFields.none(params::has)) return
+        legacyFields.forEach(params::remove)
+        if (!params.has("count")) params.addProperty("count", "1")
+        logger.warning("v7の範囲指定forを現行の回数指定へ移行しました。旧範囲値は保持しません")
     }
 
     /** 変換不能な線形ノードを経路から外し、保存グラフの構造を壊さないようにします。 */

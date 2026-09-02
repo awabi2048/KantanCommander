@@ -79,7 +79,6 @@ data class GestureEditorState(
     var lowerMode: GestureLowerMode = GestureLowerMode.SETTINGS,
     /** SETTINGSで選択中のフィールドインデックス */
     var settingsTab: Int = 0,
-    var settingsPage: Int = 0,
     /** PICKERで選択中のカテゴリインデックス */
     var pickerCategory: Int = 0,
     var pickerPage: Int = 0,
@@ -107,7 +106,8 @@ data class GestureEditorState(
     var settingRoute: List<GestureSettingFrame> = emptyList(),
     /** 個別設定画面の現在の意味上の編集経路。 */
     var settingScreen: GestureSettingScreen? = null,
-    var settingPage: Int = 0,
+    /** 設定候補だけに使うページ番号です。左側の設定タブはページ分割しません。 */
+    var settingChoicePage: Int = 0,
 )
 
 /** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
@@ -161,8 +161,7 @@ enum class GestureSettingScreen {
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
     VARIABLE_VALUE,
-    FOR_SOURCE,
-    INCLUSIVE_END,
+    CONDITION_INVERSION,
     CAMERA_SHAKE_TYPE,
     SOUND_SCOPE,
     CONTEXT_OVERRIDE,
@@ -693,7 +692,7 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    /** 指定操作者のDialog世代だけを破棄します。成功／キャンセル後の通常経路で使います。 */
+    /** 指定操作者の入力画面世代だけを破棄します。成功／キャンセル後の通常経路で使います。 */
     private fun clearInputState(playerId: UUID, token: UUID? = null) {
         val current = activeInputs[playerId] ?: return
         if (token != null && current.token != token) return
@@ -701,9 +700,9 @@ class GestureSequenceEditor(
     }
 
     /**
-     * 現在のDialogを物理的にも閉じてから入力世代を破棄します。
-     * 共有Gesture画面ではDialogの操作者とセッション所有者が異なるため、
-     * 両者を混同して古いDialogを残さないようにします。
+     * 現在の入力画面を物理的にも閉じてから入力世代を破棄します。
+     * 共有Gesture画面では入力画面の操作者とセッション所有者が異なるため、
+     * 両者を混同して古い入力画面を残さないようにします。
      */
     private fun invalidateInput(playerId: UUID) {
         val input = activeInputs.remove(playerId) ?: return
@@ -720,20 +719,20 @@ class GestureSequenceEditor(
                         input.dialogId,
                     )
                 }.onFailure { failure ->
-                    plugin.logger.warning("Kantan Commanderの入力Dialog終了に失敗しました: ${failure.message}")
+                    plugin.logger.warning("Kantan Commanderの入力画面終了に失敗しました: ${failure.message}")
                 }
             }
         }
     }
 
-    /** セッション終了や共有正本の再同期時に、全操作者の古いDialogを回収します。 */
+    /** セッション終了や共有正本の再同期時に、全操作者の古い入力画面を回収します。 */
     private fun invalidateInputs() {
         activeInputs.keys.toList().forEach(::invalidateInput)
     }
 
     /**
      * Gestureセッション終了時のローカル状態を一箇所で解放します。
-     * DialogはIDと表示所有者をCC-System側で照合し、別機能のDialogを閉じないようにします。
+     * 入力画面はIDと表示所有者をCC-System側で照合し、別機能の入力画面を閉じないようにします。
      * Facade通知はgestureSessionIdをまだ保持した状態で行い、旧通知が新エディターを
      * 消さないようFacade側でインスタンスとセッションIDを照合できるようにします。
      */
@@ -1024,6 +1023,22 @@ class GestureSequenceEditor(
             ))
         }
 
+        // 戻り経路の矢印は、レイアウトエンジンが求めた内部ノードとの交点だけへ
+        // 配置します。論理座標から投影するため、ズーム・パン後も水色経路上の
+        // 等間隔なスロットと矢印がずれません。
+        projection.loopReturnArrowPoints.forEach { localPoint ->
+            val gx = state.origin.x + localPoint.x
+            val gy = state.origin.y + localPoint.y
+            visuals.add(GestureGuiVisual.Text(
+                visualId = "path-return-arrow-$gx-$gy",
+                x = metrics.x(localPoint.x),
+                y = metrics.y(localPoint.y) - 0.006,
+                text = Component.text("«").color(NamedTextColor.WHITE),
+                size = 0.010,
+                layer = 2,
+            ))
+        }
+
         // 経路をクリックしてPICKERへ移った場合は、仮ノードを含むレイアウト上の
         // 実際の挿入位置へ候補アイコンを置きます。仮ノード自体の標準アイコンは
         // 上で描画せず、ここで「＋」と黄色ハイライトへ差し替えます。これにより、
@@ -1156,7 +1171,7 @@ class GestureSequenceEditor(
         state.settingTreePath = null
         state.settingRoute = emptyList()
         state.settingScreen = null
-        state.settingPage = 0
+        state.settingChoicePage = 0
     }
 
     /** 設定木の現在フレームを既存表示状態へ投影します。 */
@@ -1168,7 +1183,7 @@ class GestureSequenceEditor(
         state.settingFieldKey = frame.fieldKey
         state.settingTreePath = GestureSettingTreePath(frame.fieldKey, frame.context.role, nodeIds)
         state.settingScreen = frame.screen
-        state.settingPage = 0
+        state.settingChoicePage = 0
     }
 
     /** タブから設定木のルートを開始します。 */
@@ -1246,7 +1261,6 @@ class GestureSequenceEditor(
 
         invalidateInput(player.uniqueId)
         state.settingsTab = absoluteIndex
-        state.settingsPage = absoluteIndex / SETTINGS_PAGE_SIZE
         // タブ切替時は親画面を先に更新し、選択中の項目・現在値を常に残します。
         // 木の直下の選択肢も親画面へ表示し、二段階目が必要なときだけ子画面へ進みます。
         val ownerId = ownerIdFor(player)
@@ -1290,7 +1304,7 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    /** SETTINGSの編集ボタンから、ダイアログ入力または専用選択へ遷移します。 */
+    /** SETTINGSの編集ボタンから、入力画面または専用選択へ遷移します。 */
     private fun beginSelectedFieldEdit(player: Player, fieldKey: String) {
         val script = plugin.scripts.load(state.scriptId) ?: return
         observedRevision = script.revision
@@ -1329,14 +1343,11 @@ class GestureSequenceEditor(
         val screen = gestureSettingScreenFor(descriptor.editor)
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目は、チャットを横取りせず
-            // CC-System共通のダイアログで入力します。
+            // CC-System共通の入力画面で入力します。
             // インベントリGUIのshowFieldDialogと同一の maxLength・検証を使います。
-            val valueSource = if (fieldKey in setOf("startValue", "endValue", "stepValue")) {
-                node.string(fieldKey.removeSuffix("Value") + "Source", "FIXED")
-            } else null
             // 入力項目はCommandSettingsModelが返すフィールド集合から来るため、
             // 仕様未登録時に自由入力へ落とすとInventory/Gesture間の契約が壊れます。
-            val spec = CommandDialogSpecs.field(node, fieldKey, valueSource) ?: return
+            val spec = CommandDialogSpecs.field(node, fieldKey) ?: return
             showTextInputDialog(
                 player,
                 spec,
@@ -1705,7 +1716,7 @@ class GestureSequenceEditor(
         }
     }
 
-    /** 単一文字列の入力を共通ダイアログへ委譲します。 */
+    /** 単一文字列の入力をCC-Systemの入力画面へ委譲します。 */
     private fun showTextInputDialog(
         player: Player,
         spec: CommandDialogSpecs.Spec,
@@ -1779,7 +1790,7 @@ class GestureSequenceEditor(
         }
     }
 
-    /** ノード未選択時に表示するプログラム名の設定ダイアログです。 */
+    /** ノード未選択時に表示するプログラム名の設定入力画面です。 */
     private fun showProgramNameDialog(player: Player) {
         val script = plugin.scripts.load(state.scriptId) ?: return
         observedRevision = script.revision
@@ -1922,16 +1933,16 @@ class GestureSequenceEditor(
             val volumeValue = CommandDialogSpecs.normalize("volume", response.textValue("volume"))
             val pitchValue = CommandDialogSpecs.normalize("pitch", response.textValue("pitch"))
             val volumeError = volumeSpec.validateInput(volumeValue)
-                    val pitchError = pitchSpec.validateInput(pitchValue)
-                    if (volumeError != null || pitchError != null) {
-                        val messages = buildList {
-                            if (volumeError != null) {
-                                add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY))
-                            }
-                            if (pitchError != null) {
-                                add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH_BODY))
-                            }
-                        }
+            val pitchError = pitchSpec.validateInput(pitchValue)
+            if (volumeError != null || pitchError != null) {
+                val messages = buildList {
+                    if (volumeError != null) {
+                        add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY))
+                    }
+                    if (pitchError != null) {
+                        add(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_PITCH_BODY))
+                    }
+                }
                 return@showInputDialog messages.joinToString("\n")
             }
             if (!updateSettingNode(player, context, configuredFields = setOf("soundParameters")) { command ->
@@ -1949,7 +1960,7 @@ class GestureSequenceEditor(
     /**
      * 複数値の設定は入力欄を分割します（座標X/Y/Z、yaw/pitchなど）。
      * 連結文字列を1欄で受けると、どの値が不正かをユーザーが特定できず、
-     * Dialog再表示時にも入力値の対応が崩れるため、入力IDと値を一対一にします。
+     * 入力画面の再表示時にも入力値の対応が崩れるため、入力IDと値を一対一にします。
      */
     private fun showInputDialog(
         player: Player,
@@ -2007,7 +2018,7 @@ class GestureSequenceEditor(
                             val error = runCatching { onSubmit(response) }
                                 .getOrElse { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT) }
                             if (error != null) {
-                                // RejectedはCC-System側で同じダイアログを入力値付きで
+                                // RejectedはCC-System側で同じ入力画面を入力値付きで
                                 // 再表示するため、入力セッションを維持したまま修正できます。
                                 return@MenuDialogHandler MenuActionResult.Rejected(
                                     Component.text(error, NamedTextColor.RED),
@@ -2034,7 +2045,7 @@ class GestureSequenceEditor(
                 ),
             )
         } catch (failure: Throwable) {
-            // show()はPaperのDialog生成失敗を例外で返すため、表示されていないDialogを
+            // show()はPaperの入力画面生成失敗を例外で返すため、表示されていない入力画面を
             // 後続のclose処理が所有中と誤認しないよう、同じ世代だけをロールバックします。
             if (activeInputs[player.uniqueId]?.token == token) invalidateInput(player.uniqueId)
             throw failure
@@ -2045,7 +2056,7 @@ class GestureSequenceEditor(
      * 座標設定用の入力欄をX/Y/Zへ分割します。
      *
      * 座標を1つの文字列として受け取る方式では、区切り文字の誤りや一部の
-     * 値だけの入力を画面上で特定できません。Dialogの各入力値をそのまま
+     * 値だけの入力を画面上で特定できません。入力画面の各入力値をそのまま
      * 検証することで、エラー時も入力済みの値を保持したまま再表示できます。
      */
     private fun showCoordinateSettingDialog(
@@ -2109,8 +2120,8 @@ class GestureSequenceEditor(
             popSettingFrame(player)
             return
         }
-        if (context.elementId.startsWith("lower-setting-page:")) {
-            state.settingPage = context.elementId.removePrefix("lower-setting-page:").toIntOrNull() ?: return
+        if (context.elementId.startsWith("lower-setting-choice-page:")) {
+            state.settingChoicePage = context.elementId.removePrefix("lower-setting-choice-page:").toIntOrNull() ?: return
             updateLower(player)
             return
         }
@@ -2342,7 +2353,7 @@ class GestureSequenceEditor(
                                     PositionSpec(PositionKind.COORDINATES, x = location.x, y = location.y, z = location.z),
                                 )
                             }) return
-                        // 一回目は方式だけを選択し、二回目に入力Dialogを開きます。
+                        // 一回目は方式だけを選択し、二回目に入力画面を開きます。
                         showSettingScreen()
                         return
                     }
@@ -2584,22 +2595,13 @@ class GestureSequenceEditor(
                             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         } else null
                     }
-                    "iteration" -> if (updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setParameter(it, "value", "\$current_iteration_value")
-                        }) showSettingScreen()
                     "count" -> if (updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setParameter(it, "value", "\$current_loop_count")
+                            CommandSettingsModel.setParameter(it, "value", "\${CURRENT_LOOP_COUNT}")
                         }) showSettingScreen()
                 }
             }
-            GestureSettingScreen.FOR_SOURCE -> {
-                if (group != "source" || value !in setOf("FIXED", "WORLD")) return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, fieldKey, value)
-                    }) showSettingScreen()
-            }
-            GestureSettingScreen.INCLUSIVE_END -> {
-                if (group != "inclusive") return
+            GestureSettingScreen.CONDITION_INVERSION -> {
+                if (group != "invert") return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, fieldKey, value.toBoolean().toString())
                     }) showSettingScreen()
@@ -2671,7 +2673,7 @@ class GestureSequenceEditor(
         val player = Bukkit.getPlayer(context.actorId) ?: return
         val ownerId = context.ownerId
         if (!canOperateSharedActor(ownerId, context.actorId)) return
-        // 画面操作が発生した時点で、古いダイアログ入力を無効化します。
+        // 画面操作が発生した時点で、古い入力画面の入力を無効化します。
         // close/open以外の遷移でも遅延コールバックが設定を書き換えないようにします。
         invalidateInput(player.uniqueId)
         when {
@@ -2721,7 +2723,6 @@ class GestureSequenceEditor(
                     clearSettingState()
                     state.lowerMode = GestureLowerMode.SETTINGS
                     state.settingsTab = 0
-                    state.settingsPage = 0
                     updateUpper(player)
                     updateLower(player)
                     // ノード選択直後は先頭フィールドを親画面へ表示します。
@@ -2874,19 +2875,6 @@ class GestureSequenceEditor(
                 val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
                 openSettingsTab(player, index)
             }
-            context.elementId.startsWith("lower-settings-page:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                val page = context.elementId.removePrefix("lower-settings-page:").toIntOrNull() ?: return
-                if (settingChildOpen(ownerId)) {
-                    api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
-                }
-                state.settingsPage = page
-                // 専用選択画面から設定ページャーを押した場合も、古い専用画面を
-                // 残さず、対応するタブ一覧へ戻します。これがページング重複を防ぎます。
-                clearSettingState()
-                state.settingsTab = page * SETTINGS_PAGE_SIZE
-                state.lowerMode = GestureLowerMode.SETTINGS
-                updateLower(player)
-            }
             context.elementId.startsWith("lower-setting-") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 handleSettingAction(context, player)
@@ -2999,7 +2987,6 @@ class GestureSequenceEditor(
                 state.selectedAddPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
-                state.settingsPage = 0
                 updateUpper(player)
                 updateLower(player)
                 // 新規追加時も既存ノード選択時と同じ初期表示経路を通し、
@@ -3491,8 +3478,6 @@ class GestureSequenceEditor(
     }
 
     private companion object {
-        // GestureLowerPanelと同じ4項目単位で設定タブをページ分割します。
-        const val SETTINGS_PAGE_SIZE = 4
         const val DIALOG_OWNER = "kantan-commander"
         /** CC-SystemのOPENING完了待ちを吸収する上限（13tickのアニメーションより長くします）。 */
         const val MAX_RENDER_RETRY_TICKS = 20

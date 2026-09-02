@@ -15,12 +15,12 @@ class NumericExpressionTest {
     }
 
     @Test
-    fun `parser exposes ordinary and loop readonly references`() {
+    fun `parser exposes ordinary and system references in unified syntax`() {
         val expression = requireNotNull(
-            NumericExpression.parse("base * 2 + \$current_loop_count").expression,
+            NumericExpression.parse("\${base} * 2 + \${CURRENT_LOOP_COUNT}").expression,
         )
 
-        assertEquals(setOf("base", "\$current_loop_count"), expression.references)
+        assertEquals(setOf("base", "CURRENT_LOOP_COUNT"), expression.references)
         assertEquals(17.0, expression.evaluate { name -> if (name == "base") 5.0 else 7.0 })
     }
 
@@ -31,11 +31,13 @@ class NumericExpressionTest {
     }
 
     @Test
-    fun `parser rejects unknown readonly names and malformed expressions`() {
+    fun `parser rejects legacy references and malformed expressions`() {
         assertFalse(NumericExpression.isValid("\$unknown"))
+        assertTrue(NumericExpression.isValid("\${unknown}"))
+        assertTrue(NumericExpression.isValid("\${CURRENT_LOOP_COUNT}"))
         assertFalse(NumericExpression.isValid("1 +"))
         assertFalse(NumericExpression.isValid("(1 + 2"))
-        assertTrue(NumericExpression.isValid("my-var - 1"))
+        assertTrue(NumericExpression.isValid("\${my-var} - 1"))
     }
 
     @Test
@@ -47,8 +49,9 @@ class NumericExpressionTest {
             "1 +" to NumericExpression.ErrorCode.OPERAND_REQUIRED,
             "1e999" to NumericExpression.ErrorCode.INVALID_NUMBER,
             "1 @ 2" to NumericExpression.ErrorCode.INVALID_CHARACTER,
-            "\$unknown" to NumericExpression.ErrorCode.INVALID_READONLY_NAME,
-            "Upper" to NumericExpression.ErrorCode.INVALID_VARIABLE_NAME,
+            "\$unknown" to NumericExpression.ErrorCode.INVALID_CHARACTER,
+            "\${unknown" to NumericExpression.ErrorCode.INVALID_VARIABLE_NAME,
+            "\${BadName}" to NumericExpression.ErrorCode.INVALID_VARIABLE_NAME,
         )
 
         cases.forEach { (raw, expected) ->

@@ -13,7 +13,7 @@ class WorldVariableLifecycleListener(
     fun onWorldDeleted(event: MwmWorldDeletedEvent) {
         plugin.placements.removeWorld(event.worldName).forEach { placement ->
             // ワールド削除はBlockBreakEventを経由しないため、ここでも共有Gesture画面を
-            // 先に終了させます。残ったDialogの入力だけが後から到着すると、削除済み
+            // 先に終了させます。残った入力画面の入力だけが後から到着すると、削除済み
             // ノード／スクリプトへ保存しようとして誤警告や再生成を起こします。
             plugin.gestureEditor.closeForPlacement(placement)
             plugin.scripts.delete(placement.scriptId)

@@ -34,11 +34,8 @@ class EditorMenuLayoutTest {
             params["slot"] = "OFF_HAND"
         }
         val condition = CommandType.CONDITION.newNode().apply { params["kind"] = "PLAYER_STATE" }
-        val variable = CommandType.VARIABLE.newNode().apply { params["value"] = "$" + "current_loop_count" }
-        val loop = CommandType.FOR_START.newNode().apply {
-            params["startSource"] = "FIXED"
-            params["endSource"] = "WORLD"
-        }
+        val variable = CommandType.VARIABLE.newNode().apply { params["value"] = "\${CURRENT_LOOP_COUNT}" }
+        val loop = CommandType.FOR_START.newNode().apply { params["count"] = "3" }
 
         assertEquals(
             DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT),
@@ -65,8 +62,7 @@ class EditorMenuLayoutTest {
             EditorMenuLayout.fields(CommandType.VARIABLE).single { it.key == "value" }.value(variable),
         )
         val loopValues = EditorMenuLayout.fields(CommandType.FOR_START).associate { it.key to it.value(loop) }
-        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE), loopValues["startSource"])
-        assertEquals(DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE), loopValues["endSource"])
+        assertEquals(DisplayValue.Literal("3"), loopValues["count"])
     }
 
     @Test

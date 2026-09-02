@@ -30,6 +30,10 @@ class CommandDialogSpecsTest {
         val distance = requireNotNull(CommandDialogSpecs.targetFilter("distance"))
         assertNull(distance.validate("1.5"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID, distance.validate("-1"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID,
+            distance.validate("\${distance}"),
+        )
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_ENTITY_TYPE_FORMAT, entityType.validate("bad id"))
 
         val range = requireNotNull(CommandDialogSpecs.targetFilter("range"))
@@ -51,14 +55,11 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
             requireNotNull(CommandDialogSpecs.field("count")).validate("+1"),
         )
+        assertNull(requireNotNull(CommandDialogSpecs.field("count")).validate("\${limit}"))
+        assertNull(requireNotNull(CommandDialogSpecs.field("count")).validate("\${CURRENT_LOOP_COUNT}"))
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
-            requireNotNull(CommandDialogSpecs.field("startValue", "FIXED")).validate("not-a-number"),
-        )
-        assertNull(requireNotNull(CommandDialogSpecs.field("startValue", "WORLD")).validate("variable_name"))
-        assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STEP_ZERO,
-            requireNotNull(CommandDialogSpecs.field("stepValue", "FIXED")).validate("0"),
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID,
+            requireNotNull(CommandDialogSpecs.field("count")).validate("not-a-number"),
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID,
@@ -76,6 +77,12 @@ class CommandDialogSpecsTest {
         val wait = CommandType.WAIT.newNode()
         val shake = CommandType.CAMERA_SHAKE.newNode()
         val effect = CommandType.APPLY_EFFECT.newNode()
+        val repeat = CommandType.FOR_START.newNode()
+
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REPEAT_COUNT,
+            requireNotNull(CommandDialogSpecs.field(repeat, "count")).labelKey,
+        )
 
         assertNull(requireNotNull(CommandDialogSpecs.field(wait, "seconds")).validate("+1"))
         assertEquals(
@@ -116,8 +123,8 @@ class CommandDialogSpecsTest {
             "(1 + 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_UNCLOSED_PARENTHESIS,
             "1e999" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_NUMBER,
             "1 @ 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_CHARACTER,
-            "\$unknown" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_READONLY_NAME,
-            "Upper" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_VARIABLE_NAME,
+            "\$unknown" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_CHARACTER,
+            "\${BadName}" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_VARIABLE_NAME,
         )
         expressionErrors.forEach { (raw, expected) ->
             assertEquals(expected, expressionSpec.validate(raw), raw)

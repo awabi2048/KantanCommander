@@ -97,13 +97,7 @@ internal object CommandSettingsSlotPolicy {
         "value" to 29,
     )
     private val forSlots = mapOf(
-        "startSource" to 10,
-        "endSource" to 11,
-        "stepSource" to 12,
-        "startValue" to 19,
-        "endValue" to 20,
-        "stepValue" to 21,
-        "inclusiveEnd" to 28,
+        "count" to 20,
     )
 
     fun slots(type: CommandType, fieldKeys: List<String>): List<Int> {

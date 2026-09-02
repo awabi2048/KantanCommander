@@ -64,10 +64,10 @@ class CommandMenuPresentationTest {
         assertEquals(54, CommandSettingsSlotPolicy.size(CommandType.APPLY_EFFECT, 5))
         assertEquals(45, CommandSettingsSlotPolicy.backSlot(CommandType.APPLY_EFFECT, 5))
         assertEquals(
-            listOf(10, 11, 12, 19, 20, 21, 28),
+            listOf(20),
             CommandSettingsSlotPolicy.slots(
                 CommandType.FOR_START,
-                listOf("startSource", "endSource", "stepSource", "startValue", "endValue", "stepValue", "inclusiveEnd"),
+                listOf("count"),
             ),
         )
     }

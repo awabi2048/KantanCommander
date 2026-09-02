@@ -23,6 +23,7 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.effectiveContextSource
@@ -103,12 +104,14 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, WorldVariableValue>?,
         insideForBody: Boolean,
     ) {
+        validateSystemReferences(node, path, insideForBody, errors)
+        validateRemovedSystemReferences(node, path, errors)
         val hasContextState = node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
         if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
             errors += nodeError(node, path, emptySet(), "${node.type} では実行コンテキストを設定できません")
         }
         listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach {
-            validateTarget(it, path, node, errors, variableDefinitions)
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody)
         }
         listOfNotNull(
             node.destinationSpec,
@@ -123,7 +126,7 @@ object ExecutableScriptValidator {
         node.destinationFacingSpec?.let { validateFacing(it, path, node, errors) }
         node.contextOverride?.let { context ->
             listOfNotNull(context.executor, context.target).forEach {
-                validateTarget(it, path, node, errors, variableDefinitions)
+                validateTarget(it, path, node, errors, variableDefinitions, insideForBody)
             }
             context.facing?.let { validateFacing(it, path, node, errors) }
         }
@@ -301,6 +304,7 @@ object ExecutableScriptValidator {
         node: CommandNode,
         errors: MutableList<ScriptValidationError>,
         variableDefinitions: Map<String, WorldVariableValue>?,
+        insideForBody: Boolean,
     ) {
         if (spec.kind == TargetKind.FIXED_ENTITY && spec.fixedEntityId == null) {
             errors += nodeError(node, path, emptySet(), "固定エンティティが未設定です")
@@ -314,13 +318,13 @@ object ExecutableScriptValidator {
             }
         }
         spec.tag?.takeIf(String::isNotBlank)?.let {
-            validateTemplate(it, node, path, "target", errors, variableDefinitions)
+            validateTemplate(it, node, path, "target", errors, variableDefinitions, insideForBody)
             if (VariableTemplate.references(it).isEmpty() && !CommandValueRules.isTag(it)) {
                 errors += nodeError(node, path, emptySet(), "タグが不正です")
             }
         }
         spec.name?.takeIf(String::isNotBlank)?.let {
-            validateTemplate(it, node, path, "target", errors, variableDefinitions)
+            validateTemplate(it, node, path, "target", errors, variableDefinitions, insideForBody)
             if (it.length > 256) errors += nodeError(node, path, emptySet(), "エンティティ名が長すぎます")
         }
         val distances = listOf(spec.minimumDistance, spec.maximumDistance)
@@ -464,12 +468,6 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         insideForBody: Boolean,
     ) {
-        if (isReadOnlyReference(raw)) {
-            if (!insideForBody) {
-                errors += nodeError(node, path, setOf("value"), "ループ値はfor本体内でのみ参照できます")
-            }
-            return
-        }
         if (type == VariableType.NUMBER) validateNumberInput(raw, definitions, node, path, setOf("value"), errors)
         else validateTemplate(raw, node, path, "value", errors, definitions)
     }
@@ -485,18 +483,16 @@ object ExecutableScriptValidator {
     ) {
         val parsed = NumericExpression.parse(raw)
         if (!parsed.isSuccess) {
-            // 詳細な入力エラーはDialog側でlocaleへ解決します。実行前検証は
+            // 詳細な入力エラーは入力画面側でlocaleへ解決します。実行前検証は
             // プレイヤー文脈を持たないため、モデルのErrorCodeをそのまま表示文へ
             // 埋め込まず、実行ログ・出力検証で共通の要約だけを返します。
             errors += nodeError(node, path, setOf("value"), "計算式が不正です")
             return
         }
         parsed.expression!!.references.forEach { reference ->
-            if (reference.startsWith("$")) {
-                if (reference !in setOf("\$current_iteration_value", "\$current_loop_count")) {
-                    errors += nodeError(node, path, setOf("value"), "読み取り専用変数名が不正です")
-                } else if (!insideForBody) {
-                    errors += nodeError(node, path, setOf("value"), "ループ値はfor本体内でのみ参照できます")
+            if (SystemVariableNames.isSystemName(reference)) {
+                if (!insideForBody) {
+                    errors += nodeError(node, path, setOf("value"), "システム変数はfor本体内でのみ参照できます")
                 }
             } else if (definitions != null && reference != selfName && definitions[reference]?.type != VariableType.NUMBER) {
                 errors += nodeError(node, path, setOf("value"), "計算式の変数が未定義または数値型ではありません: $reference")
@@ -510,31 +506,14 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         definitions: Map<String, WorldVariableValue>?,
     ) {
-        listOf("start", "end", "step").forEach { field ->
-            when (node.string("${field}Source", "FIXED")) {
-                "FIXED" -> {
-                    val raw = node.string("${field}Value")
-                    validateNumberInput(raw, definitions, node, path, setOf("${field}Value"), errors)
-                    val value = resolvedDouble(raw, definitions)
-                    if (!deferNumericValidation(raw, definitions) && exactLong(value) == null) {
-                        errors += nodeError(node, path, setOf("${field}Value"), "forの${field}値は整数で指定してください")
-                    }
-                }
-                "WORLD" -> {
-                    val name = node.string("${field}Value")
-                    if (!CommandValueRules.isVariableName(name)) {
-                        errors += nodeError(node, path, setOf("${field}Value"), "forの${field}参照変数名が不正です")
-                    } else checkDefinition(name, VariableType.NUMBER, definitions, node, path, setOf("${field}Value"), errors)
-                }
-                else -> errors += nodeError(node, path, setOf("${field}Source"), "forの${field}参照元が不正です")
-            }
-        }
-        if (node.string("stepSource", "FIXED") == "FIXED" &&
-            !deferNumericValidation(node.string("stepValue"), definitions) &&
-            exactLong(resolvedDouble(node.string("stepValue"), definitions)) == 0L
-        ) {
-            errors += nodeError(node, path, setOf("stepValue"), "forの増分に0は指定できません")
-        }
+        validatePositiveIntegerInput(
+            node.string("count", "1"),
+            definitions,
+            node,
+            path,
+            setOf("count"),
+            errors,
+        )
     }
 
     private fun checkDefinition(
@@ -563,9 +542,23 @@ object ExecutableScriptValidator {
     ) {
         validateTemplate(raw, node, path, fields.firstOrNull() ?: "value", errors, definitions)
         if (VariableTemplate.hasMalformedReference(raw)) return
+        val nonNumericReferences = if (definitions == null) {
+            emptyList()
+        } else {
+            VariableTemplate.references(raw)
+                .filterNot(SystemVariableNames::isSystemName)
+                .filter { definitions[it]?.type == VariableType.STRING }
+        }
+        if (nonNumericReferences.isNotEmpty()) {
+            nonNumericReferences.forEach { reference ->
+                errors += nodeError(node, path, fields, "数値欄では数値型変数だけを参照できます: $reference")
+            }
+            return
+        }
+        val deferred = deferNumericValidation(raw, definitions)
         if (VariableTemplate.references(raw).isEmpty() && resolvedDouble(raw, definitions) == null) {
             errors += nodeError(node, path, fields, "数値で入力してください")
-        } else if (definitions != null && resolvedDouble(raw, definitions) == null) {
+        } else if (!deferred && definitions != null && resolvedDouble(raw, definitions) == null) {
             errors += nodeError(node, path, fields, "変数展開後の値が数値ではありません")
         }
     }
@@ -629,12 +622,19 @@ object ExecutableScriptValidator {
         field: String,
         errors: MutableList<ScriptValidationError>,
         definitions: Map<String, WorldVariableValue>?,
+        insideForBody: Boolean = true,
     ) {
         if (VariableTemplate.hasMalformedReference(raw)) {
             errors += nodeError(node, path, setOf(field), "ワールド内変数の記法が不正です")
         }
+        if (!insideForBody && VariableTemplate.references(raw).any(SystemVariableNames::isSystemName)) {
+            errors += nodeError(node, path, setOf(field), "システム変数はfor本体内でのみ参照できます")
+        }
         if (definitions != null) {
-            VariableTemplate.references(raw).filter { it !in definitions }.forEach {
+            VariableTemplate.references(raw)
+                .filterNot(SystemVariableNames::isSystemName)
+                .filter { it !in definitions }
+                .forEach {
                 errors += nodeError(node, path, setOf(field), "ワールド内変数が未定義です: $it")
             }
         }
@@ -642,14 +642,20 @@ object ExecutableScriptValidator {
 
     private fun isTemplateOrTag(raw: String, definitions: Map<String, WorldVariableValue>?): Boolean {
         if (VariableTemplate.hasMalformedReference(raw)) return false
-        if (VariableTemplate.references(raw).any { definitions != null && it !in definitions }) return false
+        if (VariableTemplate.references(raw).any {
+                !SystemVariableNames.isSystemName(it) && definitions != null && it !in definitions
+            }) return false
         return VariableTemplate.references(raw).isNotEmpty() || CommandValueRules.isTag(raw)
     }
 
     /** 配置未配置のスクリプトでは、変数の存在だけを将来の実行境界へ委ねます。 */
-    private fun deferNumericValidation(raw: String, definitions: Map<String, WorldVariableValue>?): Boolean =
-        definitions == null && VariableTemplate.references(raw).isNotEmpty() &&
-            !VariableTemplate.hasMalformedReference(raw)
+    private fun deferNumericValidation(raw: String, definitions: Map<String, WorldVariableValue>?): Boolean {
+        val reference = VariableTemplate.references(raw).singleOrNull()
+            ?: return false
+        if (!VariableTemplate.isSingleReference(raw)) return false
+        return SystemVariableNames.isSystemName(reference) ||
+            definitions == null || definitions[reference]?.type == VariableType.NUMBER
+    }
 
     private fun resolvedDouble(raw: String, definitions: Map<String, WorldVariableValue>?): Double? {
         if (VariableTemplate.hasMalformedReference(raw)) return null
@@ -658,12 +664,6 @@ object ExecutableScriptValidator {
             VariableTemplate.interpolate(raw) { definitions[it] } ?: return null
         }
         return expanded.toDoubleOrNull()?.takeIf(Double::isFinite)
-    }
-
-    private fun exactLong(value: Double?): Long? {
-        if (value == null || !value.isFinite() || value != kotlin.math.floor(value)) return null
-        if (value < Long.MIN_VALUE.toDouble() || value > Long.MAX_VALUE.toDouble()) return null
-        return value.toLong()
     }
 
     private fun blockVolume(from: PositionSpec, to: PositionSpec): Long? {
@@ -682,8 +682,33 @@ object ExecutableScriptValidator {
         }
     }
 
-    private fun isReadOnlyReference(raw: String): Boolean =
-        raw.trim() in setOf("\$current_iteration_value", "\$current_loop_count")
+    /** システム変数のスコープを全パラメータで検証し、項目ごとの検証漏れを防ぎます。 */
+    private fun validateSystemReferences(
+        node: CommandNode,
+        path: String,
+        insideForBody: Boolean,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        if (insideForBody) return
+        node.params.forEach { (field, raw) ->
+            if (VariableTemplate.references(raw).any(SystemVariableNames::isSystemName)) {
+                errors += nodeError(node, path, setOf(field), "システム変数はfor本体内でのみ参照できます")
+            }
+        }
+    }
+
+    /** 破棄した旧ループ値を文字列として保存済みのノードも実行前に拒否します。 */
+    private fun validateRemovedSystemReferences(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        node.params.forEach { (field, raw) ->
+            if (raw.contains("\$current_iteration_value") || raw.contains("\$current_loop_count")) {
+                errors += nodeError(node, path, setOf(field), "旧形式のシステム変数は使用できません")
+            }
+        }
+    }
 
     /** for本体の境界を越えず、読み取り専用ループ値の参照位置を検証します。 */
     private fun isInsideForBody(graph: CommandGraph, target: UUID): Boolean =

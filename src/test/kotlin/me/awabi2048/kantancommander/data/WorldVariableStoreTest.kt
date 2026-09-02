@@ -62,6 +62,23 @@ class WorldVariableStoreTest {
     }
 
     @Test
+    fun `system variable names cannot be defined or edited as world variables`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+        val value = WorldVariableValue(VariableType.NUMBER, numberValue = 1.0)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.define(world, "CURRENT_LOOP_COUNT", value)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.set(world, "current_loop_count", value)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.remove(world, "CURRENT_LOOP_COUNT")
+        }
+    }
+
+    @Test
     fun `legacy values are converted and unsupported types are dropped`() {
         val world = UUID.randomUUID()
         directory.resolve("$world.json").writeText(
@@ -70,11 +87,13 @@ class WorldVariableStoreTest {
               "definitions": {
                 "integer_value": {"type":"INTEGER","integerValue":3},
                 "text_value": {"type":"TEXT","textValue":"hello"},
+                "CURRENT_LOOP_COUNT": {"type":"NUMBER","numberValue":99},
                 "old_flag": {"type":"BOOLEAN","booleanValue":true}
               },
               "values": {
                 "integer_value": {"type":"INTEGER","integerValue":4},
                 "text_value": {"type":"TEXT","textValue":"world"},
+                "current_loop_count": {"type":"NUMBER","numberValue":99},
                 "old_flag": {"type":"BOOLEAN","booleanValue":false}
               }
             }
@@ -85,6 +104,7 @@ class WorldVariableStoreTest {
         assertEquals(4.0, store.get(world, "integer_value")?.numberValue)
         assertEquals("world", store.get(world, "text_value")?.stringValue)
         assertNull(store.get(world, "old_flag"))
+        assertTrue(store.definitions(world).keys.none { it.equals("current_loop_count", ignoreCase = true) })
         assertEquals(VariableType.NUMBER, store.definitions(world)["integer_value"]?.type)
         assertEquals(VariableType.STRING, store.definitions(world)["text_value"]?.type)
     }

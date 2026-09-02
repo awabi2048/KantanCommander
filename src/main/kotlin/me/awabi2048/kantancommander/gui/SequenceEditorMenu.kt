@@ -425,7 +425,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             KcI18n.text(player, if (node.snapshot == null) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
         CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.FOR_START ->
-            "${node.string("startValue")}..${node.string("endValue")} / ${node.string("stepValue")}"
+            "×${node.string("count", "1")}"
         else -> KcI18n.text(player, node.type.key)
     }
 

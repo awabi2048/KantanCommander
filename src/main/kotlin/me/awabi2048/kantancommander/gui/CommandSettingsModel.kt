@@ -8,6 +8,7 @@ import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskScript
@@ -104,8 +105,7 @@ enum class CommandSettingEditor {
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
     VARIABLE_VALUE,
-    FOR_SOURCE,
-    INCLUSIVE_END,
+    CONDITION_INVERSION,
     CAMERA_SHAKE_TYPE,
     SOUND_SCOPE,
     CONTEXT,
@@ -391,13 +391,7 @@ object CommandSettingsModel {
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.FOR_START -> when (fieldKey) {
-                "startSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_START_SOURCE
-                "endSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_END_SOURCE
-                "stepSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_STEP_SOURCE
-                "startValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_START_VALUE
-                "endValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_END_VALUE
-                "stepValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_STEP_VALUE
-                "inclusiveEnd" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_INCLUSIVE_END
+                "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_REPEAT_COUNT
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.MERGE,
@@ -488,7 +482,7 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.CONDITION -> when (fieldKey) {
-            "inverted" -> CommandSettingDescriptor(CommandSettingEditor.INCLUSIVE_END)
+            "inverted" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_INVERSION)
             "kind" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_KIND)
             "condition" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_DETAIL)
             else -> text()
@@ -518,11 +512,7 @@ object CommandSettingsModel {
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
             else -> text()
         }
-        CommandType.FOR_START -> when {
-            fieldKey.endsWith("Source") -> CommandSettingDescriptor(CommandSettingEditor.FOR_SOURCE)
-            fieldKey == "inclusiveEnd" -> CommandSettingDescriptor(CommandSettingEditor.INCLUSIVE_END)
-            else -> text()
-        }
+        CommandType.FOR_START -> text()
         CommandType.MERGE,
         CommandType.FOR_END,
         CommandType.BREAK,
@@ -540,6 +530,9 @@ object CommandSettingsModel {
      */
     fun setParameter(node: CommandNode, key: String, value: String) {
         require(key.isNotBlank()) { "設定キーが空です" }
+        if (node.type == CommandType.VARIABLE && key == "name") {
+            require(CommandValueRules.isVariableName(value)) { "予約済みまたは不正な変数名です" }
+        }
         node.params[key] = value
         node.markConfigured(key)
     }

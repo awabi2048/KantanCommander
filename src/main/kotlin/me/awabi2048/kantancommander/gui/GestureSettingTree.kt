@@ -162,8 +162,7 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.VARIABLE_OPERATION -> GestureSettingScreen.VARIABLE_OPERATION
     CommandSettingEditor.VARIABLE_CHANGE_MODE -> GestureSettingScreen.VARIABLE_CHANGE_MODE
     CommandSettingEditor.VARIABLE_VALUE -> GestureSettingScreen.VARIABLE_VALUE
-    CommandSettingEditor.FOR_SOURCE -> GestureSettingScreen.FOR_SOURCE
-    CommandSettingEditor.INCLUSIVE_END -> GestureSettingScreen.INCLUSIVE_END
+    CommandSettingEditor.CONDITION_INVERSION -> GestureSettingScreen.CONDITION_INVERSION
     CommandSettingEditor.CAMERA_SHAKE_TYPE -> GestureSettingScreen.CAMERA_SHAKE_TYPE
     CommandSettingEditor.SOUND_SCOPE -> GestureSettingScreen.SOUND_SCOPE
     CommandSettingEditor.CONTEXT -> GestureSettingScreen.CONTEXT_OVERRIDE

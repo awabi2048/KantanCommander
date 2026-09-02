@@ -19,6 +19,7 @@ import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -178,39 +179,20 @@ class VanillaDatapackExporter(
                         node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name &&
                         type != VariableType.NUMBER
                     ) errors += "${script.id}/${node.id}: 文字列変数へ計算式を適用できません"
-                    if (VariableTemplate.references(node.string("value")).isEmpty() &&
-                        node.string("value") in setOf("\$current_iteration_value", "\$current_loop_count")
-                    ) {
-                        if (enclosingFor(script.graph, node.id) == null) {
-                            errors += "${script.id}/${node.id}: ループ値はfor本体内だけで参照できます"
-                        }
-                    }
                 }
                 CommandType.FOR_START -> {
-                    listOf("start", "end", "step").forEach { field ->
-                        when (node.string("${field}Source", "FIXED")) {
-                            "FIXED" -> {
-                                val raw = node.string("${field}Value")
-                                val value = raw.toDoubleOrNull()?.let(::exactLong)
-                                if (value == null && VariableTemplate.references(raw).isEmpty()) {
-                                    errors += "${script.id}/${node.id}: forの${field}値は64bit符号付き整数で指定してください"
-                                } else if (value != null && value !in VANILLA_INTEGER_RANGE) {
-                                    errors += "${script.id}/${node.id}: forの${field}値はバニラscoreboardの範囲外です"
-                                }
-                            }
-                            "WORLD" -> {
-                                val name = node.string("${field}Value")
-                                if (worldVariableTypes[name] != VariableType.NUMBER) {
-                                    errors += "${script.id}/${node.id}: forの${field}参照変数は数値型である必要があります: $name"
-                                }
-                            }
-                            else -> errors += "${script.id}/${node.id}: forの${field}参照元が不正です"
-                        }
-                    }
-                    if (node.string("stepSource", "FIXED") == "FIXED" &&
-                        node.string("stepValue").toDoubleOrNull()?.let(::exactLong) == 0L
+                    val raw = node.string("count", "1")
+                    val value = raw.toDoubleOrNull()?.let(::exactLong)
+                    val reference = VariableTemplate.references(raw).singleOrNull()
+                    if (value == null && reference == null) {
+                        errors += "${script.id}/${node.id}: forの回数は正の整数または数値変数参照で指定してください"
+                    } else if (value != null && value !in 1L..Int.MAX_VALUE.toLong()) {
+                        errors += "${script.id}/${node.id}: forの回数は1以上のInt範囲内で指定してください"
+                    } else if (reference != null &&
+                        !SystemVariableNames.isSystemName(reference) &&
+                        worldVariableTypes[reference] != VariableType.NUMBER
                     ) {
-                        errors += "${script.id}/${node.id}: forの増分に0は指定できません"
+                        errors += "${script.id}/${node.id}: forの回数参照変数は数値型である必要があります: $reference"
                     }
                 }
                 CommandType.WAIT -> {
@@ -268,7 +250,13 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: バニラ出力の比較値は数値または単一の変数参照で指定してください: $raw"
                 } else if (reference == null && scaledScore(parsed!!) == null) {
                     errors += "${script.id}/${node.id}: 比較値がバニラの固定小数点範囲外です: $raw"
-                } else if (reference != null && worldVariableTypes[reference] != VariableType.NUMBER) {
+                } else if (reference != null && SystemVariableNames.isSystemName(reference) &&
+                    enclosingFor(script.graph, node.id) == null
+                ) {
+                    errors += "${script.id}/${node.id}: システム変数はfor本体内でのみ参照できます"
+                } else if (reference != null && !SystemVariableNames.isSystemName(reference) &&
+                    worldVariableTypes[reference] != VariableType.NUMBER
+                ) {
                     errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
                 }
             }
@@ -396,9 +384,7 @@ class VanillaDatapackExporter(
                 } ?: run { lines += "return 1" }
                 node.type == CommandType.FOR_START -> {
                     val loop = loopName(node.id)
-                    lines += assignLoopValue(loop, "value", node, "start")
-                    lines += assignLoopValue(loop, "end", node, "end")
-                    lines += assignLoopValue(loop, "step", node, "step")
+                    lines += assignLoopCount(loop, node, graph)
                     lines += "scoreboard players set #${loop}_count kc_vars 1"
                     lines += "return run function kantan:${nodeFunction(prefix, node.id, "check")}"
                     defineFunction(
@@ -411,11 +397,11 @@ class VanillaDatapackExporter(
                     val start = node.pairedNodeId?.let(graph.nodes::get)
                     if (start != null) {
                         val loop = loopName(start.id)
-                        lines += assignLoopValue(loop, "step", start, "step")
-                        lines += guardedScoreOperation(
-                            target = "#${loop}_value",
-                            source = "#${loop}_step",
-                        )
+                        val after = node.next?.let { "return run function kantan:${nodeFunction(prefix, it)}" }
+                            ?: "return 1"
+                        // count == limit の反復後は加算せず終了します。Int最大値の
+                        // ループでscoreboardをオーバーフローさせないための境界です。
+                        lines += "execute if score #${loop}_count kc_vars >= #${loop}_limit kc_vars run $after"
                         lines += "scoreboard players add #${loop}_count kc_vars 1"
                         lines += "return run function kantan:${nodeFunction(prefix, start.id, "check")}"
                     }
@@ -470,7 +456,7 @@ class VanillaDatapackExporter(
                         lines += nodeExportContext?.let { wrapContext(it, times) } ?: times
                     }
                     val contextual = nodeExportContext?.let { wrapContext(it, command) } ?: command
-                    val macro = prepareMacro(node, contextual, output)
+                    val macro = prepareMacro(node, contextual, output, graph)
                     lines += macro.setup
                     lines += storeResult(node, macro.call)
                 }
@@ -479,11 +465,11 @@ class VanillaDatapackExporter(
             when (node.type) {
                 CommandType.CONDITION -> {
                     val conditionContext = conditionContext(node)
-                    conditionPreparation(node)?.let { preparation ->
+                    conditionPreparation(node, graph)?.let { preparation ->
                         lines += conditionContext?.let { context -> wrapContext(context, preparation) } ?: preparation
                     }
                     val predicate = predicate(node)
-                    val predicateMacro = prepareMacroTemplate(node, predicate)
+                    val predicateMacro = prepareMacroTemplate(node, predicate, graph)
                     predicateMacro?.setup?.let(lines::addAll)
                     val predicateCommand = predicateMacro?.command ?: predicate
                     // Java版と同じく「に等しくない」は等号判定を反転して表現します。
@@ -612,8 +598,9 @@ class VanillaDatapackExporter(
         node: CommandNode,
         command: String,
         output: MutableMap<String, String>,
+        graph: CommandGraph,
     ): MacroCommand {
-        val template = prepareMacroTemplate(node, command)
+        val template = prepareMacroTemplate(node, command, graph)
         if (template == null) return MacroCommand(emptyList(), command)
         val macroName = nodeFunction("macro", node.id)
         defineFunction(output, macroName, "${'$'}${template.command}\n")
@@ -621,22 +608,38 @@ class VanillaDatapackExporter(
     }
 
     /** 条件分岐のpredicateなど、関数化せず置換文字列だけが必要な箇所にも使います。 */
-    private fun prepareMacroTemplate(node: CommandNode, command: String): MacroTemplate? {
+    private fun prepareMacroTemplate(node: CommandNode, command: String, graph: CommandGraph): MacroTemplate? {
         val references = VariableTemplate.references(command)
         if (references.isEmpty()) return null
+        val enclosingLoop = references
+            .filter(SystemVariableNames::isSystemName)
+            .map { enclosingFor(graph, node.id) }
+            .firstOrNull()
+        if (references.any(SystemVariableNames::isSystemName) && enclosingLoop == null) {
+            // 実行前検証が通常この経路を遮断しますが、単体で呼ばれた場合にも
+            // システム変数をワールド変数として誤出力しないよう防御します。
+            return null
+        }
         val token = node.id.toString().replace("-", "")
         val storagePath = "macro.$token"
         val replacements = references.associateWith { "v_${shortDigest(it, 10)}" }
-        val macroCommand = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}").replace(command) { match ->
+        val macroCommand = Regex("\\$\\{([A-Za-z][A-Za-z0-9_.-]{0,63})}").replace(command) { match ->
             "${'$'}(${replacements.getValue(match.groupValues[1])})"
         }
         val setup = buildList {
             add("data remove storage kantan:variables $storagePath")
             references.forEach { reference ->
-                add(
-                    "data modify storage kantan:variables $storagePath.${replacements.getValue(reference)} " +
-                        "set from storage kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)}",
-                )
+                val target = "$storagePath.${replacements.getValue(reference)}"
+                if (SystemVariableNames.isSystemName(reference)) {
+                    val loop = requireNotNull(enclosingLoop)
+                    val source = "#${loopName(loop.id)}_count"
+                    add("execute store result storage kantan:variables $target double 1.0 run scoreboard players get $source kc_vars")
+                } else {
+                    add(
+                        "data modify storage kantan:variables $target " +
+                            "set from storage kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)}",
+                    )
+                }
             }
         }
         return MacroTemplate(storagePath, macroCommand, setup)
@@ -785,7 +788,7 @@ class VanillaDatapackExporter(
             "block ~ ~ ~ ${node.string("block", "minecraft:air")}"
     }
 
-    private fun conditionPreparation(node: CommandNode): String? =
+    private fun conditionPreparation(node: CommandNode, graph: CommandGraph): String? =
         if (ConditionKind.valueOf(node.string("kind")) == ConditionKind.VARIABLE_STATE) {
             buildList {
                 add(
@@ -798,10 +801,20 @@ class VanillaDatapackExporter(
                     add("scoreboard players set ${conditionValueHolder(node)} kc_runtime $staticValue")
                 } else {
                     VariableTemplate.references(raw).singleOrNull()?.let { reference ->
-                        add(
-                            "execute store result score ${conditionValueHolder(node)} kc_runtime run data get storage " +
-                                "kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)} $FIXED_POINT_SCALE",
-                        )
+                        if (SystemVariableNames.isSystemName(reference)) {
+                            val loop = enclosingFor(graph, node.id)
+                            if (loop != null) {
+                                val source = "#${loopName(loop.id)}_count"
+                                add("scoreboard players operation ${conditionValueHolder(node)} kc_runtime = $source kc_vars")
+                                add("scoreboard players set #kc_scale kc_runtime $FIXED_POINT_SCALE")
+                                add("scoreboard players operation ${conditionValueHolder(node)} kc_runtime *= #kc_scale kc_runtime")
+                            }
+                        } else {
+                            add(
+                                "execute store result score ${conditionValueHolder(node)} kc_runtime run data get storage " +
+                                    "kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)} $FIXED_POINT_SCALE",
+                            )
+                        }
                     }
                 }
             }.joinToString("\n")
@@ -839,12 +852,14 @@ class VanillaDatapackExporter(
             node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name
         ) return null
         val raw = node.string("value")
-        val special = raw.takeIf { it in setOf("\$current_iteration_value", "\$current_loop_count") }
+        val special = raw.takeIf { it == "${'$'}{${SystemVariableNames.CURRENT_LOOP_COUNT}}" }
         if (special != null) {
             val loop = enclosingFor(graph, node.id) ?: return null
-            if (type != VariableType.NUMBER || operation != VariableOperation.DEFINE) return null
-            val source = "#${loopName(loop.id)}_${if (special == "\$current_loop_count") "count" else "value"}"
-            return "execute store result storage kantan:variables $storagePath double 1.0 run scoreboard players get $source kc_vars"
+            if (type == VariableType.NUMBER) {
+                val source = "#${loopName(loop.id)}_count"
+                return "execute store result storage kantan:variables $storagePath double 1.0 run scoreboard players get $source kc_vars"
+            }
+            // 文字列代入は下のmacro経路でシステム変数を文字列化します。
         }
         val assignment = when (type) {
             VariableType.NUMBER ->
@@ -880,10 +895,11 @@ class VanillaDatapackExporter(
                 }
                 is NumericExpression.PostfixToken.Reference -> {
                     val destination = holder(index)
-                    when (token.name) {
-                        "\$current_iteration_value", "\$current_loop_count" -> {
+                    when {
+                        SystemVariableNames.isSystemName(token.name) -> {
                             val loop = enclosingLoop ?: return listOf("return 0")
-                            val source = "#${loopName(loop.id)}_${if (token.name == "\$current_loop_count") "count" else "value"}"
+                            if (token.name != SystemVariableNames.CURRENT_LOOP_COUNT) return listOf("return 0")
+                            val source = "#${loopName(loop.id)}_count"
                             lines += "scoreboard players operation $destination kc_runtime = $source kc_vars"
                             lines += "scoreboard players operation $destination kc_runtime *= ${prefix}_scale kc_runtime"
                         }
@@ -975,17 +991,22 @@ class VanillaDatapackExporter(
 
     private fun loopName(id: UUID) = "for_${id.toString().replace("-", "").take(12)}"
 
-    private fun assignLoopValue(loop: String, target: String, node: CommandNode, field: String): String {
-        val destination = "#${loop}_$target"
-        return when (node.string("${field}Source", "FIXED")) {
-            "WORLD" ->
-                // ワールド変数の正本はstorageです。scoreboardへ暗黙にミラーされている
-                // という前提を置くと、実行中に変更された値がforへ反映されません。
-                "execute store result score $destination kc_vars run data get storage " +
-                    "kantan:variables ${VanillaStorageNames.variablePath(node.string("${field}Value"), temporary = false)} 1"
-            else ->
-                "scoreboard players set $destination kc_vars ${node.string("${field}Value", if (field == "step") "1" else "0")}"
+    /** ループ上限を開始時に一度だけ確定します。可変参照でも本体中の変更の影響を受けません。 */
+    private fun assignLoopCount(loop: String, node: CommandNode, graph: CommandGraph): String {
+        val destination = "#${loop}_limit"
+        val raw = node.string("count", "1")
+        val reference = VariableTemplate.references(raw).singleOrNull()
+        if (reference == SystemVariableNames.CURRENT_LOOP_COUNT) {
+            val outer = enclosingFor(graph, node.id) ?: return "scoreboard players set $destination kc_vars 0"
+            return "scoreboard players operation $destination kc_vars = #${loopName(outer.id)}_count kc_vars"
         }
+        if (reference != null) {
+            // ワールド変数の正本はstorageです。ループ開始時だけscoreboardへ読み込み、
+            // 本体中に同じ変数が変更されても現在のループ上限を安定させます。
+            return "execute store result score $destination kc_vars run data get storage " +
+                "kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)} 1"
+        }
+        return "scoreboard players set $destination kc_vars $raw"
     }
 
     private fun loopCheck(graph: CommandGraph, prefix: String, start: CommandNode): String {
@@ -995,13 +1016,9 @@ class VanillaDatapackExporter(
         val after = end?.let(graph.nodes::get)?.next
         val bodyFunction = body?.takeUnless { it == end }?.let { "function kantan:${nodeFunction(prefix, it)}" }
         val lines = mutableListOf<String>()
-        lines += assignLoopValue(loop, "end", start, "end")
         lines += "scoreboard players set #${loop}_run kc_vars 0"
         if (bodyFunction != null) {
-            val positiveComparison = if (start.boolean("inclusiveEnd", true)) "<=" else "<"
-            val negativeComparison = if (start.boolean("inclusiveEnd", true)) ">=" else ">"
-            lines += "execute if score #${loop}_step kc_vars matches 1.. if score #${loop}_value kc_vars $positiveComparison #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
-            lines += "execute if score #${loop}_step kc_vars matches ..-1 if score #${loop}_value kc_vars $negativeComparison #${loop}_end kc_vars run scoreboard players set #${loop}_run kc_vars 1"
+            lines += "execute if score #${loop}_count kc_vars <= #${loop}_limit kc_vars run scoreboard players set #${loop}_run kc_vars 1"
             lines += "execute if score #${loop}_run kc_vars matches 1 run return run $bodyFunction"
         }
         after?.let {

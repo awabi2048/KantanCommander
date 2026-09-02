@@ -49,12 +49,11 @@ class ExecutionSemanticsTest {
     }
 
     @Test
-    fun `for range supports inclusive and exclusive ends in both directions`() {
-        assertTrue(ExecutionSemantics.withinForRange(3, 3, 1, true))
-        assertFalse(ExecutionSemantics.withinForRange(3, 3, 1, false))
-        assertTrue(ExecutionSemantics.withinForRange(-2, -2, -1, true))
-        assertFalse(ExecutionSemantics.withinForRange(-2, -2, -1, false))
-        assertFalse(ExecutionSemantics.withinForRange(0, 10, 0, true))
+    fun `count loop advances only while the current count is below the limit`() {
+        assertTrue(ExecutionSemantics.shouldRunNextLoopIteration(1, 3))
+        assertFalse(ExecutionSemantics.shouldRunNextLoopIteration(3, 3))
+        assertFalse(ExecutionSemantics.shouldRunNextLoopIteration(0, 3))
+        assertFalse(ExecutionSemantics.shouldRunNextLoopIteration(1, 0))
     }
 
     @Test
@@ -74,9 +73,8 @@ class ExecutionSemanticsTest {
     }
 
     @Test
-    fun `for increment detects signed 64 bit overflow`() {
-        assertEquals(3L, ExecutionSemantics.nextForValue(1, 2))
-        assertEquals(null, ExecutionSemantics.nextForValue(Long.MAX_VALUE, 1))
-        assertEquals(null, ExecutionSemantics.nextForValue(Long.MIN_VALUE, -1))
+    fun `loop count increment detects signed 64 bit overflow`() {
+        assertEquals(2L, ExecutionSemantics.nextLoopCount(1))
+        assertEquals(null, ExecutionSemantics.nextLoopCount(Long.MAX_VALUE))
     }
 }

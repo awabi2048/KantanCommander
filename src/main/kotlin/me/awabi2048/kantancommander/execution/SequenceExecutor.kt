@@ -17,6 +17,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -189,16 +190,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         val endId = node.pairedNodeId ?: return stop(session, script, node.id, depth, "missing_for_end", done)
-        val start = resolveForValue(node, "start", session) ?: return stop(session, script, node.id, depth, "invalid_for_start", done)
-        val end = resolveForValue(node, "end", session) ?: return stop(session, script, node.id, depth, "invalid_for_end", done)
-        val step = resolveForValue(node, "step", session) ?: return stop(session, script, node.id, depth, "invalid_for_step", done)
-        if (step == 0L) return stop(session, script, node.id, depth, "zero_for_step", done)
-        if (!ExecutionSemantics.withinForRange(start, end, step, node.boolean("inclusiveEnd", true))) {
-            plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${node.id} reason=zero_iterations")
-            return runNode(script, graph, graph.nodes[endId]?.next, session, depth, done)
-        }
-        session.loops += LoopFrame(node.id, endId, start, end, step, 1, session.context)
-        session.currentIterationValue = start
+        val count = resolvePositiveInt(node.string("count", "1"), session)
+            ?: return stop(session, script, node.id, depth, "invalid_for_count", done)
+        session.loops += LoopFrame(node.id, endId, count.toLong(), 1, session.context)
         session.currentLoopCount = 1
         runNode(script, graph, node.trueNext, session, depth, done)
     }
@@ -215,32 +209,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ?: return stop(session, script, node.id, depth, "for_frame_missing", done)
         val startNode = graph.nodes[frame.startId]
             ?: return stop(session, script, node.id, depth, "for_start_missing", done)
-        val currentEnd = resolveForValue(startNode, "end", session)
-            ?: return stop(session, script, node.id, depth, "invalid_for_end", done)
-        val currentStep = resolveForValue(startNode, "step", session)
-            ?: return stop(session, script, node.id, depth, "invalid_for_step", done)
-        if (currentStep == 0L) return stop(session, script, node.id, depth, "zero_for_step", done)
-        val nextValue = ExecutionSemantics.nextForValue(frame.value, currentStep)
-            ?: return stop(session, script, node.id, depth, "for_overflow", done)
         session.context = frame.startContext
-        if (ExecutionSemantics.withinForRange(
-                nextValue,
-                currentEnd,
-                currentStep,
-                startNode.boolean("inclusiveEnd", true),
-            )
-        ) {
-            frame.value = nextValue
-            frame.end = currentEnd
-            frame.step = currentStep
-            frame.count++
-            session.currentIterationValue = frame.value
+        if (ExecutionSemantics.shouldRunNextLoopIteration(frame.count, frame.limit)) {
+            frame.count = requireNotNull(ExecutionSemantics.nextLoopCount(frame.count))
             session.currentLoopCount = frame.count
             runNode(script, graph, startNode.trueNext, session, depth, done)
         } else {
-            plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=range_complete iterations=${frame.count}")
+            plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=count_complete iterations=${frame.count}")
             session.loops.remove(frame)
-            session.currentIterationValue = session.loops.lastOrNull()?.value
             session.currentLoopCount = session.loops.lastOrNull()?.count
             runNode(script, graph, node.next, session, depth, done)
         }
@@ -258,7 +234,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ?: return stop(session, script, node.id, depth, "break_outside_for", done)
         plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=break iterations=${frame.count}")
         session.context = frame.startContext
-        session.currentIterationValue = session.loops.lastOrNull()?.value
         session.currentLoopCount = session.loops.lastOrNull()?.count
         runNode(script, graph, graph.nodes[frame.endId]?.next, session, depth, done)
     }
@@ -275,18 +250,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ?: return stop(session, script, node.id, depth, "continue_outside_for", done)
         session.context = frame.startContext
         runNode(script, graph, frame.endId, session, depth, done)
-    }
-
-    private fun resolveForValue(node: CommandNode, prefix: String, session: ExecutionSession): Long? {
-        val source = node.string("${prefix}Source", "FIXED")
-        val value = node.string("${prefix}Value", if (prefix == "step") "1" else "0")
-        return when (source) {
-            "FIXED" -> resolveNumber(value, session)?.let(::exactLong)
-            // 変数はMyWorld単位へ統一しました。数値型でも小数値はforの整数値へ
-            // 暗黙丸めせず、整数として表現できる場合だけ採用します。
-            "WORLD" -> plugin.variables.get(session.worldId, value)?.numberValue?.let(::exactLong)
-            else -> null
-        }
     }
 
     private fun runDiskCall(node: CommandNode, session: ExecutionSession, depth: Int, done: (Boolean) -> Unit) {
@@ -629,11 +592,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         VariableChangeMode.CALCULATE -> {
                             val expression = NumericExpression.parse(node.string("value")).expression ?: return false
                             val result = expression.evaluate { reference ->
-                                when (reference) {
-                                    "\$current_iteration_value" -> session.currentIterationValue?.toDouble()
-                                    "\$current_loop_count" -> session.currentLoopCount?.toDouble()
-                                    else -> plugin.variables.get(session.worldId, reference)?.numberValue
-                                }
+                                if (SystemVariableNames.isSystemName(reference)) {
+                                    when (reference) {
+                                        SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toDouble()
+                                        else -> null
+                                    }
+                                } else plugin.variables.get(session.worldId, reference)?.numberValue
                             } ?: return false
                             WorldVariableValue(VariableType.NUMBER, numberValue = result)
                         }
@@ -859,25 +823,29 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun resolveText(raw: String, session: ExecutionSession): String? {
-        val trimmed = raw.trim()
-        when (trimmed) {
-            "\$current_iteration_value" -> return session.currentIterationValue?.toString()
-            "\$current_loop_count" -> return session.currentLoopCount?.toString()
+        return VariableTemplate.interpolateText(raw) { name ->
+            when (name) {
+                SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toString()
+                else -> plugin.variables.get(session.worldId, name)?.let(VariableTemplate::stringify)
+            }
         }
-        return VariableTemplate.interpolate(raw) { plugin.variables.get(session.worldId, it) }
             ?: raw.takeIf { VariableTemplate.references(it).isEmpty() && !VariableTemplate.hasMalformedReference(it) }
     }
 
     private fun resolveNumber(raw: String, session: ExecutionSession): Double? {
-        val trimmed = raw.trim()
-        val readOnly = when (trimmed) {
-            "\$current_iteration_value" -> session.currentIterationValue?.toDouble()
-            "\$current_loop_count" -> session.currentLoopCount?.toDouble()
-            else -> null
-        }
-        if (readOnly != null) return readOnly
         val expanded = if (VariableTemplate.references(raw).isEmpty()) raw else {
-            VariableTemplate.interpolate(raw) { plugin.variables.get(session.worldId, it) } ?: return null
+            VariableTemplate.interpolateText(raw) { name ->
+                when (name) {
+                    SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toString()
+                    // 数値欄は文字列変数を暗黙にDoubleへ変換しません。保存値がたまたま
+                    // 数字だけでも、定義型を越境するとGUI・実行・出力で意味が分岐するためです。
+                    else -> plugin.variables.get(session.worldId, name)
+                        ?.takeIf { it.type == VariableType.NUMBER }
+                        ?.numberValue
+                        ?.takeIf(Double::isFinite)
+                        ?.toString()
+                }
+            } ?: return null
         }
         return expanded.toDoubleOrNull()?.takeIf(Double::isFinite)
     }
@@ -894,12 +862,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     private fun legacyText(raw: String): Component =
         LegacyComponentSerializer.legacySection().deserialize(raw.replace('&', '§'))
-
-    private fun exactLong(value: Double): Long? {
-        if (!value.isFinite() || value != kotlin.math.floor(value)) return null
-        if (value < Long.MIN_VALUE.toDouble() || value > Long.MAX_VALUE.toDouble()) return null
-        return value.toLong()
-    }
 
     /** 数値テンプレートを実行値の正のIntへ変換する共通境界です。 */
     private fun resolvePositiveInt(raw: String, session: ExecutionSession): Int? {
@@ -952,16 +914,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var context: ExecutionContextSpec? = null,
         var previousContext: ExecutionContextSpec? = null,
         val loops: MutableList<LoopFrame> = mutableListOf(),
-        var currentIterationValue: Long? = null,
         var currentLoopCount: Long? = null,
     )
 
     private data class LoopFrame(
         val startId: UUID,
         val endId: UUID,
-        var value: Long,
-        var end: Long,
-        var step: Long,
+        val limit: Long,
         var count: Long,
         val startContext: ExecutionContextSpec?,
     )
@@ -977,12 +936,19 @@ internal object ExecutionSemantics {
     fun withinCallDepth(currentDepth: Int, maximumDepth: Int): Boolean =
         currentDepth < maximumDepth
 
-    fun nextForValue(current: Long, step: Long): Long? =
-        try {
-            Math.addExact(current, step)
-        } catch (_: ArithmeticException) {
-            null
-        }
+    /**
+     * 回数指定ループの継続判定を一箇所へ集約します。
+     *
+     * 実行器とテストがそれぞれ境界条件を持つと、1回多く実行する差異が
+     * 保存データや出力先によって生じます。現在回数が上限未満のときだけ
+     * 次の反復へ進む、という新仕様の境界を共通化します。
+     */
+    fun shouldRunNextLoopIteration(currentCount: Long, limit: Long): Boolean =
+        currentCount > 0 && limit > 0 && currentCount < limit
+
+    /** 次の回数を安全に計算し、符号付き64bitの上限では停止できるようにします。 */
+    fun nextLoopCount(currentCount: Long): Long? =
+        currentCount.takeIf { it < Long.MAX_VALUE }?.plus(1)
 
     fun mergeContexts(
         inherited: ExecutionContextSpec?,
@@ -1008,16 +974,4 @@ internal object ExecutionSemantics {
         override,
     )
 
-    fun withinForRange(
-        value: Long,
-        end: Long,
-        step: Long,
-        inclusiveEnd: Boolean,
-    ): Boolean = when {
-        step > 0 && inclusiveEnd -> value <= end
-        step > 0 -> value < end
-        step < 0 && inclusiveEnd -> value >= end
-        step < 0 -> value > end
-        else -> false
-    }
 }

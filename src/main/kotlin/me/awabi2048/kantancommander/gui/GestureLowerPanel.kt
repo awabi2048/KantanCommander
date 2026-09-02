@@ -113,7 +113,7 @@ class GestureLowerPanel(
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
-        val pageCount = addSettingsNavigation(
+        addSettingsNavigation(
             state,
             player,
             node,
@@ -122,12 +122,10 @@ class GestureLowerPanel(
             attentionFields,
             suppressGlow = suppressGlow,
         )
-        val page = state.settingsPage.coerceIn(0, pageCount - 1)
-        val pageStart = page * SETTINGS_PAGE_SIZE
-        val tabs = fields.drop(pageStart).take(SETTINGS_PAGE_SIZE)
-        val selectedAbsolute = state.settingsTab.coerceIn(0, fields.lastIndex)
-        val selected = if (selectedAbsolute in pageStart until pageStart + tabs.size) selectedAbsolute - pageStart else 0
-        val field = tabs[selected]
+        // 設定タブはページ分割せず、常に全フィールドを同じ画面へ描画します。
+        // 設定項目はCommandSettingsModelで最大6項目へ整理されているため、
+        // タブを探すためのページング操作を挟まずにすべての入口へ到達できます。
+        val field = fields[state.settingsTab.coerceIn(0, fields.lastIndex)]
         val descriptor = CommandSettingsModel.descriptor(node, field.key)
         val settingContext = state.settingContext
             ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
@@ -197,7 +195,7 @@ class GestureLowerPanel(
         }
 
         // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
-        // 文字列・数値だけを右ペインのダイアログ導線へ残し、専用子画面を増やしません。
+        // 文字列・数値だけを右ペインの入力画面導線へ残し、専用子画面を増やしません。
         val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
             (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
             (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
@@ -215,9 +213,9 @@ class GestureLowerPanel(
             else -> true
         }
         val dialogInputSetting = !heldMainHandSetting &&
-            descriptor.editor == CommandSettingEditor.TEXT && field.key in DIALOG_EDITABLE_KEYS
+            descriptor.editor == CommandSettingEditor.TEXT && field.key in TEXT_EDITABLE_KEYS
         if (heldMainHandSetting || dialogInputSetting) {
-            // ダイアログ入力欄は、既存 lower-edit（例:「待機する秒数を設定する」）
+            // 入力欄は、既存 lower-edit（例:「待機する秒数を設定する」）
             // の位置を唯一の設定入口として再利用します。同じ枠・寸法・装飾で入力方法を
             // 表示し、上のアクション説明行や新しい配置へ設定導線を増やしません。
             val editVisualText = if (heldMainHandSetting) {
@@ -244,7 +242,7 @@ class GestureLowerPanel(
             )
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
-                // すべてのダイアログ入力を既存のlower-edit枠へ集約します。
+                // すべての入力画面への導線を既存のlower-edit枠へ集約します。
                 // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
                 // 開ける二重導線にはしません。
                 bounds = rect(0.28, 0.02, 1.2, 0.16),
@@ -467,6 +465,7 @@ class GestureLowerPanel(
         child: Boolean = false,
         suppressGlow: Boolean = false,
     ) {
+        val rowCount = (choices.size + 1) / 2
         choices.forEachIndexed { index, choice ->
             val column = index % 2
             val row = index / 2
@@ -509,20 +508,23 @@ class GestureLowerPanel(
                 } else emptySet(),
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
-                // ホバーはカード直下へ追従させ、固定スロットとの重なりを解消します。
+                // 並列カードの説明は、最上段ならカード上側、最下段ならカード下側へ
+                // 置きます。中段はカード同士の説明が交差しやすいため、常設の右下
+                // 説明領域を置き換えます。1行に複数ボタンが並ぶ場合は最上段として
+                // 上側へ出し、単独ボタンだけを共通説明領域へ集約します。
                 hoverText = hoverDescription?.let {
-                    val hoverX = cx
-                    val hoverY = cy - SETTING_CHOICE_HEIGHT / 2.0 - 0.04
-                    if (child) {
-                        singleLineHover(
-                            it,
-                            x = hoverX,
-                            y = hoverY,
-                            replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
-                        )
-                    } else {
-                        singleLineHover(it, x = hoverX, y = hoverY)
-                    }
+                    parallelButtonHover(
+                        text = it,
+                        x = cx,
+                        y = cy,
+                        row = row,
+                        rowCount = rowCount,
+                        height = SETTING_CHOICE_HEIGHT,
+                        descriptionX = if (child) 0.0 else HOVER_SLOT_X,
+                        descriptionY = if (child) CHILD_HOVER_Y else HOVER_SLOT_Y,
+                        replacesDescription = child,
+                        parallel = choices.size > 1,
+                    )
                 },
             ))
         }
@@ -553,21 +555,18 @@ class GestureLowerPanel(
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
         attentionFields: Set<String> = emptySet(),
-        pagerCenterX: Double = -0.30,
         suppressGlow: Boolean = false,
-    ): Int {
+    ) {
         val fields = CommandSettingsModel.visibleFields(node)
-        if (fields.isEmpty()) return 1
-        val pageCount = (fields.size + SETTINGS_PAGE_SIZE - 1) / SETTINGS_PAGE_SIZE
-        val page = state.settingsPage.coerceIn(0, pageCount - 1)
-        val pageStart = page * SETTINGS_PAGE_SIZE
-        val tabs = fields.drop(pageStart).take(SETTINGS_PAGE_SIZE)
+        if (fields.isEmpty()) return
         val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
             ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
-        val selected = if (activeField in pageStart until pageStart + tabs.size) activeField - pageStart else 0
-        tabs.forEachIndexed { index, field ->
-            val cy = 0.38 - index * 0.17
-            val on = index == selected
+        check(fields.size <= SETTINGS_TAB_MAX) {
+            "設定タブは${SETTINGS_TAB_MAX}個以内で定義してください: ${node.type}=${fields.size}"
+        }
+        fields.forEachIndexed { index, field ->
+            val cy = SETTINGS_TAB_TOP_Y - index * SETTINGS_TAB_PITCH
+            val on = index == activeField
             val fieldState = if (CommandSettingsModel.isFieldConfigured(node, field.key)) {
                 GestureSettingValueState.CONFIGURED
             } else {
@@ -582,7 +581,7 @@ class GestureLowerPanel(
                 -0.7975,
                 cy,
                 0.47,
-                0.15,
+                SETTINGS_TAB_HEIGHT,
                 GestureSettingVisualPolicy.material(
                     GestureSettingSelectionMode.EXCLUSIVE,
                     fieldState,
@@ -597,8 +596,8 @@ class GestureLowerPanel(
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, field.label)))
             elements.add(GestureGuiElement(
-                elementId = "lower-tab:${pageStart + index}",
-                bounds = rect(-0.7975, cy, 0.47, 0.15),
+                elementId = "lower-tab:$index",
+                bounds = rect(-0.7975, cy, 0.47, SETTINGS_TAB_HEIGHT),
                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "tab-bg-$index",
                 // 要確認タブは色だけでなく状態名も示します。ホバー中は操作説明欄を
@@ -620,10 +619,6 @@ class GestureLowerPanel(
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "delete-bg",
         ))
-        // ページャーは左ナビと右ペインの境界に置きます。専用選択画面では
-        // 候補用ページャーと重ならないよう、呼び出し側から位置を分けます。
-        if (pageCount > 1) addPager(visuals, elements, "settings", page, pageCount, pagerCenterX, -0.43)
-        return pageCount
     }
 
     /** 項目名と値を別々のTextDisplayへ配置し、表示領域の分離を明示します。 */
@@ -876,7 +871,6 @@ class GestureLowerPanel(
         choice.id.startsWith("value:") -> suffixKeyDescription(player, choice.id, "value:") { suffix ->
             when (suffix) {
                 "direct" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VALUE_DIRECT
-                "iteration" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VALUE_ITERATION
                 "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VALUE_COUNT
                 else -> null
             }
@@ -889,18 +883,13 @@ class GestureLowerPanel(
                 else -> null
             }
         }
-        // 終端の包含はfor（inclusiveEnd）と条件の反転（inverted）で意味が異なるため、
-        // 編集中のタブ（fieldKey）へ文面を分けます。
-        choice.id.startsWith("inclusive:") -> suffixKeyDescription(player, choice.id, "inclusive:") { suffix ->
+        // 条件の反転設定は、選択肢の意味を編集中のタブ（fieldKey）へ投影します。
+        choice.id.startsWith("invert:") -> suffixKeyDescription(player, choice.id, "invert:") { suffix ->
             when {
-                suffix == "true" && fieldKey == "inverted" ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_ON
-                suffix == "false" && fieldKey == "inverted" ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_OFF
                 suffix == "true" ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_INCLUSIVE_END_TRUE
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_ON
                 suffix == "false" ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_INCLUSIVE_END_FALSE
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_INVERT_OFF
                 else -> null
             }
         }
@@ -1008,6 +997,44 @@ class GestureLowerPanel(
             lineWidth = 280,
             replacesVisualId = replacesVisualId,
         )
+
+    /**
+     * 2列以上の選択肢で、行位置に応じたホバー説明の配置を返します。
+     *
+     * 上段・下段はカードに近い上下へ置き、中段だけは説明が左右のカード間で
+     * 交差しないよう共通説明領域へ集約します。子画面は常設説明を置き換え、
+     * 親画面は右下の専用ホバースロットを使うという既存の画面契約もここで
+     * 吸収し、各ボタン生成側に配置条件を複製しません。
+     */
+    private fun parallelButtonHover(
+        text: String,
+        x: Double,
+        y: Double,
+        row: Int,
+        rowCount: Int,
+        height: Double,
+        descriptionX: Double,
+        descriptionY: Double,
+        replacesDescription: Boolean,
+        parallel: Boolean,
+    ): GestureGuiHoverText = when {
+        parallel && row == 0 -> singleLineHover(
+            text,
+            x = x,
+            y = y + height / 2.0 + HOVER_BUTTON_GAP,
+        )
+        parallel && rowCount > 1 && row == rowCount - 1 -> singleLineHover(
+            text,
+            x = x,
+            y = y - height / 2.0 - HOVER_BUTTON_GAP,
+        )
+        else -> singleLineHover(
+            text,
+            x = descriptionX,
+            y = descriptionY,
+            replacesVisualId = if (replacesDescription) SETTING_DESCRIPTION_HOVER_ID else null,
+        )
+    }
 
     /**
      * 現在の設定経路における直下の木ノードを返します。
@@ -1175,7 +1202,7 @@ class GestureLowerPanel(
         choiceId.startsWith("soundScope:") -> setOf("soundScope")
         choiceId.startsWith("value:") -> setOf("value")
         // forの参照元・包含判定は、その画面を開いたタブ自身（fieldKey）へ投影します。
-        choiceId.startsWith("source:") || choiceId.startsWith("inclusive:") -> setOf(fieldKey)
+        choiceId.startsWith("source:") || choiceId.startsWith("invert:") -> setOf(fieldKey)
         else -> setOf(fieldKey)
     }
 
@@ -1350,7 +1377,6 @@ class GestureLowerPanel(
                 visuals,
                 elements,
                 attentionFields,
-                pagerCenterX = -0.30,
                 suppressGlow = suppressGlow,
             )
         }
@@ -1389,7 +1415,7 @@ class GestureLowerPanel(
 
         val pageSize = SETTING_CHOICE_PAGE_SIZE
         val pageCount = (choices.size + pageSize - 1) / pageSize
-        val page = state.settingPage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        val page = state.settingChoicePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
         addSettingChoiceNodes(
             choices.drop(page * pageSize).take(pageSize),
             player,
@@ -1417,7 +1443,7 @@ class GestureLowerPanel(
         if (pageCount > 1) addPager(
             visuals,
             elements,
-            "setting",
+            "setting-choice",
             page,
             pageCount,
             if (child) 0.0 else 0.25,
@@ -1550,23 +1576,19 @@ class GestureLowerPanel(
             val insideFor = script != null && node.string("type", VariableType.NUMBER.name) == VariableType.NUMBER.name &&
                 GraphEditor.isInsideFor(script.graph, node.id, GraphEditor.Edge.NEXT)
             if (insideFor) {
-                add(SettingChoice("value:iteration", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_ITERATION), node.string("value") == "\$current_iteration_value"))
-                add(SettingChoice("value:count", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_LOOP_COUNT), node.string("value") == "\$current_loop_count"))
+                add(
+                    SettingChoice(
+                        "value:count",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_LOOP_COUNT),
+                        node.string("value") == "\${CURRENT_LOOP_COUNT}",
+                    ),
+                )
             }
         }
-        GestureSettingScreen.FOR_SOURCE -> listOf(
-            SettingChoice("source:FIXED", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE), node.string(fieldKey, "FIXED") == "FIXED"),
-            SettingChoice("source:WORLD", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE), node.string(fieldKey, "FIXED") == "WORLD"),
-        )
-        GestureSettingScreen.INCLUSIVE_END -> if (node.type == CommandType.CONDITION && fieldKey == "inverted") {
+        GestureSettingScreen.CONDITION_INVERSION -> {
             listOf(
-                SettingChoice("inclusive:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_ON), node.boolean(fieldKey, false)),
-                SettingChoice("inclusive:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF), !node.boolean(fieldKey, false)),
-            )
-        } else {
-            listOf(
-                SettingChoice("inclusive:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INCLUSIVE_ON), node.boolean(fieldKey, true)),
-                SettingChoice("inclusive:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INCLUSIVE_OFF), !node.boolean(fieldKey, true)),
+                SettingChoice("invert:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_ON), node.boolean(fieldKey, false)),
+                SettingChoice("invert:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF), !node.boolean(fieldKey, false)),
             )
         }
         GestureSettingScreen.CONTEXT_OVERRIDE -> listOf(
@@ -1722,10 +1744,17 @@ class GestureLowerPanel(
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
                 hoverText = hoverDescription?.let {
-                    singleLineHover(
-                        it,
+                    parallelButtonHover(
+                        text = it,
                         x = cx,
-                        y = cy - POSITION_TARGET_CHOICE_HEIGHT / 2.0 - 0.04,
+                        y = cy,
+                        row = 0,
+                        rowCount = 1,
+                        height = POSITION_TARGET_CHOICE_HEIGHT,
+                        descriptionX = HOVER_SLOT_X,
+                        descriptionY = HOVER_SLOT_Y,
+                        replacesDescription = false,
+                        parallel = choices.size > 1,
                     )
                 },
             )
@@ -1874,7 +1903,7 @@ class GestureLowerPanel(
             ?.let { positionKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.FACING -> CommandSettingsModel.facingSpec(node, context.role)?.kind
             ?.let { facingKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-        GestureSettingScreen.INCLUSIVE_END -> if (node.type == CommandType.CONDITION && fieldKey == "inverted") {
+        GestureSettingScreen.CONDITION_INVERSION -> {
             KcI18n.text(
                 player,
                 if (node.boolean(fieldKey, false)) {
@@ -1883,17 +1912,6 @@ class GestureLowerPanel(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF
                 },
             )
-        } else if (fieldKey == "inclusiveEnd") {
-            KcI18n.text(
-                player,
-                if (node.boolean(fieldKey, true)) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INCLUSIVE_ON
-                } else {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INCLUSIVE_OFF
-                },
-            )
-        } else {
-            node.string(fieldKey).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         }
         else -> node.string(fieldKey).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
     }
@@ -1991,7 +2009,9 @@ class GestureLowerPanel(
         )
         val pageCount = ((types.size + PICKER_PAGE_SIZE - 1) / PICKER_PAGE_SIZE).coerceAtLeast(1)
         val page = state.pickerPage.coerceIn(0, pageCount - 1)
-        types.drop(page * PICKER_PAGE_SIZE).take(PICKER_PAGE_SIZE).forEachIndexed { index, type ->
+        val pageTypes = types.drop(page * PICKER_PAGE_SIZE).take(PICKER_PAGE_SIZE)
+        val pickerRowCount = (pageTypes.size + 1) / 2
+        pageTypes.forEachIndexed { index, type ->
             val cx = if (index % 2 == 0) -0.11 else 0.65
             val cy = 0.20 - (index / 2) * 0.18
             addBlock(visuals, "type-bg-$index", cx, cy, 0.72, 0.155, Material.CYAN_TERRACOTTA, 4)
@@ -2002,14 +2022,19 @@ class GestureLowerPanel(
                 bounds = rect(cx, cy, 0.72, 0.155),
                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "type-bg-$index",
-                // コマンド種別の説明は、説明と対になる画面下段のスロットへ
-                // 表示します。カテゴリ説明は常設のため置き換えません。
-                hoverText = singleLineHover(
-                    KcI18n.list(player, type.descriptionKey)
+                hoverText = parallelButtonHover(
+                    text = KcI18n.list(player, type.descriptionKey)
                         .filter(String::isNotBlank)
                         .joinToString(" "),
-                    x = HOVER_SLOT_X,
-                    y = PICKER_HOVER_SLOT_Y,
+                    x = cx,
+                    y = cy,
+                    row = index / 2,
+                    rowCount = pickerRowCount,
+                    height = 0.155,
+                    descriptionX = HOVER_SLOT_X,
+                    descriptionY = PICKER_HOVER_SLOT_Y,
+                    replacesDescription = false,
+                    parallel = pageTypes.size > 1,
                 ),
             ))
         }
@@ -2266,7 +2291,11 @@ class GestureLowerPanel(
         // 互いの領域へ侵入しないようにします。
         const val SETTING_VALUE_Y = 0.27
         const val SETTING_DETAIL_HINT_Y = 0.17
-        const val SETTINGS_PAGE_SIZE = 4
+        // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
+        const val SETTINGS_TAB_MAX = 6
+        const val SETTINGS_TAB_TOP_Y = 0.38
+        const val SETTINGS_TAB_PITCH = 0.11
+        const val SETTINGS_TAB_HEIGHT = 0.10
         // PICKERは説明と対になる下段ホバースロットを確保するため、2列×3行へ縮小します。
         const val PICKER_PAGE_SIZE = 6
         // 2列×5行に収め、対象フィルター（10項目）を1画面で編集できます。
@@ -2293,6 +2322,7 @@ class GestureLowerPanel(
         // 重ならない位置です。
         const val HOVER_SLOT_X = 0.28
         const val HOVER_SLOT_Y = -0.35
+        const val HOVER_BUTTON_GAP = 0.04
         // PICKERの下段はページャー（0.28, -0.48）があるため、その上へ置きます。
         const val PICKER_HOVER_SLOT_Y = -0.38
         // 「ほかのエンティティ」の対象三分類は、右ペインの選択カード領域
@@ -2304,10 +2334,10 @@ class GestureLowerPanel(
         const val POSITION_TARGET_CHOICE_HEIGHT = 0.15
         const val POSITION_TARGET_CHOICE_Y = -0.25
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
-        val DIALOG_EDITABLE_KEYS = setOf(
+        val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch",
-            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name", "startValue",
-            "endValue", "stepValue", "condition", "variable", "value", "block", "sneaking",
+            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name",
+            "condition", "variable", "value", "block", "sneaking",
         )
     }
 }

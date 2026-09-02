@@ -36,6 +36,7 @@ import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
 import me.awabi2048.kantancommander.item.ItemStackCodec
@@ -265,7 +266,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     val currentKind = node(context.route)?.let { CommandSettingsModel.positionKind(it, CommandSettingRole.fromRoute(context.route.payload[ROLE])) }
                     if (kind == PositionKind.COORDINATES) {
                         // 座標は「選択」と「入力」を別操作にします。未選択からの
-                        // クリックでは座標方式だけを確定し、次のクリックでDialogを開きます。
+                        // クリックでは座標方式だけを確定し、次のクリックで入力画面を開きます。
                         if (currentKind != PositionKind.COORDINATES) {
                             val location = context.player.location
                             if (!updateNode(context.player, context.route) { node ->
@@ -386,28 +387,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
-                        if (field.endsWith("Source") && node.type == CommandType.FOR_START) {
-                            // FORの入力元は固定値とワールド変数だけです。実行セッションの
-                            // 一時変数を再導入すると、VARIABLEの保存先統一と矛盾するため、
-                            // 選択肢の循環もこの2択に限定します。
-                            if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    field,
-                                    when (it.string(field, "FIXED")) {
-                                        "WORLD" -> "FIXED"
-                                        else -> "WORLD"
-                                    },
-                                )
-                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
-                        }
-                        if (field == "inclusiveEnd" && node.type == CommandType.FOR_START) {
-                            if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(it, "inclusiveEnd", (!it.boolean("inclusiveEnd", true)).toString())
-                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
-                        }
                         if (field == "type" && node.type == CommandType.VARIABLE) {
                             return@MenuActionHandler MenuActionResult.Success(
                                 MenuUpdate.Navigate(choiceRoute(context.route, VARIABLE_TYPE_ID))
@@ -501,7 +480,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }
                         if (field in setOf(
                                 "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
-                                "startValue", "endValue", "stepValue", "entity", "tags", "tag", "sound",
+                                 "entity", "tags", "tag", "sound",
                                 "soundParameters", "effect", "level", "intensity",
                             )) {
                             showFieldDialog(context.player, context.route, field, node)
@@ -602,8 +581,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         showFieldDialog(context.player, context.route, "value", node)
                         MenuActionResult.Success(MenuUpdate.None)
                     },
-                    "iteration" to setVariableValue(CURRENT_ITERATION),
-                    "count" to setVariableValue(CURRENT_LOOP_COUNT),
+                     "count" to setVariableValue("${'$'}{${SystemVariableNames.CURRENT_LOOP_COUNT}}"),
                 ),
             )
         )
@@ -1262,7 +1240,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val options = buildList {
             add(DetailOption(Material.WRITABLE_BOOK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE, "direct", DisplayValue.Literal("")))
             if (insideFor) {
-                add(DetailOption(Material.COMPARATOR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_ITERATION, "iteration", DisplayValue.Literal("")))
                 add(DetailOption(Material.REPEATER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_LOOP_COUNT, "count", DisplayValue.Literal("")))
             }
         }
@@ -1572,8 +1549,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 else -> "1"
             }
             "text", "subtitle", "customName", "itemData", "value", "tags", "tag" -> ""
-            "startValue", "endValue" -> "0"
-            "stepValue" -> "1"
             "entity" -> "minecraft:pig"
             "sound" -> "minecraft:block.note_block.harp"
             "volume", "pitch" -> "1.0"
@@ -1584,10 +1559,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "slot" -> "HAND"
             else -> return
         }
-        val valueSource = if (field in setOf("startValue", "endValue", "stepValue")) {
-            node.string(field.removeSuffix("Value") + "Source", "FIXED")
-        } else null
-        val spec = CommandDialogSpecs.field(node, field, valueSource) ?: return
+        val spec = CommandDialogSpecs.field(node, field) ?: return
         val currentValue = initialOverride ?: node.string(field, defaultValue)
         val candidateButtons = candidateValues.take(12).map { candidate ->
             MenuDialogButton(
@@ -1622,8 +1594,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         initialOverride = query,
                         candidateValues = CommandDialogSpecs.suggestions(field, query),
                     )
-                    // 入力値を引き継いだ新しいDialogを同期表示するため、元の
-                    // Dialogを外部入力へ戻す処理は行いません。
+                    // 入力値を引き継いだ新しい入力画面を同期表示するため、元の
+                    // 入力画面を外部入力へ戻す処理は行いません。
                     MenuActionResult.Success(MenuUpdate.None)
                 },
             ))
@@ -2203,8 +2175,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val CONTINUATION_ID = "continuationId"
         private const val PICKER_CATEGORY = "pickerCategory"
         private const val ROLE = "role"
-        private const val CURRENT_ITERATION = "\$current_iteration_value"
-        private const val CURRENT_LOOP_COUNT = "\$current_loop_count"
 
         fun typeRoute(
             current: MenuRoute,
@@ -2588,15 +2558,13 @@ object EditorMenuLayout {
         )
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
         CommandType.FOR_START -> listOf(
-            field("startSource", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_START_SOURCE, Material.LIME_DYE) { displayForSource(it.string("startSource", "FIXED")) },
-            field("endSource", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_END_SOURCE, Material.RED_DYE) { displayForSource(it.string("endSource", "FIXED")) },
-            field("stepSource", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STEP_SOURCE, Material.ARROW) { displayForSource(it.string("stepSource", "FIXED")) },
-            field("startValue", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_START, Material.LIME_DYE),
-            field("endValue", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_END, Material.RED_DYE),
-            field("stepValue", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STEP, Material.ARROW),
-            field("inclusiveEnd", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INCLUSIVE_END, Material.COMPARATOR) {
-                displayBoolean(it.boolean("inclusiveEnd", true))
-            },
+            field(
+                "count",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REPEAT_COUNT,
+                Material.REPEATER,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_REPEAT_COUNT,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_REPEAT_COUNT,
+            ),
         )
         }
         return fields
@@ -2656,13 +2624,6 @@ object EditorMenuLayout {
         "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE
         "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION
         "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE
-        "startSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_STARTSOURCE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_STARTSOURCE
-        "endSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENDSOURCE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENDSOURCE
-        "stepSource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_STEPSOURCE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_STEPSOURCE
-        "startValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_STARTVALUE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_STARTVALUE
-        "endValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENDVALUE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENDVALUE
-        "stepValue" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_STEPVALUE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_STEPVALUE
-        "inclusiveEnd" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_INCLUSIVEEND to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_INCLUSIVEEND
         else -> error("未定義のエディターフィールドです: $key")
     }
 }
@@ -2760,8 +2721,7 @@ private fun displayVariableChangeMode(value: String) = runCatching { VariableCha
 } ?: displayUnset()
 
 private fun displayVariableValue(value: String) = when (value) {
-    "$" + "current_iteration_value" -> DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_ITERATION)
-    "$" + "current_loop_count" -> DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_LOOP_COUNT)
+    "${'$'}{${SystemVariableNames.CURRENT_LOOP_COUNT}}" -> DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_LOOP_COUNT)
     else -> displayLiteral(value)
 }
 
@@ -2793,13 +2753,6 @@ private fun displayPlayerSneaking(value: String) = when (value) {
     "false" -> DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ON_GROUND)
     else -> displayUnset()
 }
-
-private fun displayForSource(value: String) = DisplayValue.Localized(
-    when (value) {
-        "WORLD" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_WORLD_VARIABLE
-        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_VALUE
-    },
-)
 
 private fun displayTagOperation(value: String) = DisplayValue.Localized(
     if (value == "remove") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE

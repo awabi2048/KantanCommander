@@ -5,12 +5,14 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.Locale
 import java.util.UUID
 import java.util.logging.Level
 import java.util.logging.Logger
@@ -130,8 +132,17 @@ class WorldVariableStore(
         val result = JsonObject()
         if (source == null) return result
         source.entrySet().forEach { (name, element) ->
+            val normalizedName = name.trim().lowercase(Locale.ROOT)
+            if (SystemVariableNames.isReservedName(name)) {
+                warnDropped(file, section, name, "システム予約名です")
+                return@forEach
+            }
+            if (!CommandValueRules.isVariableName(normalizedName)) {
+                warnDropped(file, section, name, "変数名が不正です")
+                return@forEach
+            }
             val converted = migrateValue(element, file, section, name)
-            if (converted != null) result.add(name, converted)
+            if (converted != null) result.add(normalizedName, converted)
         }
         return result
     }
@@ -224,7 +235,7 @@ class WorldVariableStore(
     private fun file(worldId: UUID) = directory.resolve("$worldId.json")
 
     private fun normalizedName(raw: String): String {
-        val value = raw.trim().lowercase()
+        val value = raw.trim().lowercase(Locale.ROOT)
         require(CommandValueRules.isVariableName(value)) { "invalid variable name" }
         return value
     }

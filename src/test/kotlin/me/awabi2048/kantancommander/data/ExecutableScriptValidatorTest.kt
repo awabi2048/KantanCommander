@@ -14,6 +14,7 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.WorldVariableValue
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -193,23 +194,30 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `for ranges may reference world variables`() {
+    fun `repeat count may reference a world variable`() {
         val script = DiskScript(name = "for-world", owner = UUID.randomUUID())
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
-        start.params.putAll(
-            mapOf(
-                "startSource" to "WORLD",
-                "startValue" to "base",
-                "endSource" to "WORLD",
-                "endValue" to "limit",
-                "stepSource" to "FIXED",
-                "stepValue" to "1",
-            )
-        )
+        start.params["count"] = "\${limit}"
 
         assertFalse(
             ExecutableScriptValidator.validate(script).any { it.message.contains("forの") },
         )
+    }
+
+    @Test
+    fun `numeric inputs reject string world variable references`() {
+        val script = DiskScript(name = "for-string-world", owner = UUID.randomUUID())
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        start.params["count"] = "\${limit}"
+
+        val errors = ExecutableScriptValidator.validate(
+            script,
+            variableDefinitions = mapOf(
+                "limit" to WorldVariableValue(VariableType.STRING, stringValue = "3"),
+            ),
+        )
+
+        assertTrue(errors.any { it.message.contains("数値型変数だけを参照できます") })
     }
 
     @Test
@@ -222,11 +230,35 @@ class ExecutableScriptValidatorTest {
                 "name" to "shared",
                 "type" to VariableType.NUMBER.name,
                 "operation" to VariableOperation.DEFINE.name,
-                "value" to "\$current_iteration_value",
+                "value" to "\${CURRENT_LOOP_COUNT}",
             )
         )
 
         assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == variable.id })
+    }
+
+    @Test
+    fun `system references in structured target filters follow the for body scope`() {
+        val outside = DiskScript(name = "outside-target-template", owner = UUID.randomUUID())
+        val outsideDisplay = GraphEditor.append(outside.graph, CommandType.DISPLAY_TEXT)
+        outsideDisplay.targetSpec = TargetSpec(
+            TargetKind.ALL_PLAYERS,
+            tag = "\${CURRENT_LOOP_COUNT}",
+        )
+
+        val outsideErrors = ExecutableScriptValidator.validate(outside)
+        assertTrue(outsideErrors.any { it.nodeId == outsideDisplay.id && it.message.contains("for本体内") })
+
+        val inside = DiskScript(name = "inside-target-template", owner = UUID.randomUUID())
+        val start = GraphEditor.append(inside.graph, CommandType.FOR_START)
+        val insideDisplay = GraphEditor.appendToForBody(inside.graph, start.id, CommandType.DISPLAY_TEXT)
+        insideDisplay.targetSpec = TargetSpec(
+            TargetKind.ALL_PLAYERS,
+            tag = "\${CURRENT_LOOP_COUNT}",
+        )
+
+        val insideErrors = ExecutableScriptValidator.validate(inside)
+        assertFalse(insideErrors.any { it.nodeId == insideDisplay.id && it.message.contains("for本体内") })
     }
 
     @Test

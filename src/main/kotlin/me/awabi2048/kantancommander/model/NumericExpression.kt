@@ -5,12 +5,10 @@ package me.awabi2048.kantancommander.model
  *
  * GUI・実行・バニラ出力がそれぞれ独自にsplitや優先順位処理を持つと、同じ式が
  * 保存時と実行時で別の値になるため、字句解析と構文解析をモデル層へ集約します。
- * 許可する構文は数値リテラル、変数名、読み取り専用の$current_*、四則演算、括弧です。
+ * 許可する構文は数値リテラル、`${variable_name}` 形式の変数参照、四則演算、括弧です。
+ * システム変数は `${CURRENT_LOOP_COUNT}` のように大文字で記述します。
  */
 object NumericExpression {
-    private val namePattern = Regex("[a-z][a-z0-9_.-]{0,63}")
-    private val readOnlyNames = setOf("\$current_iteration_value", "\$current_loop_count")
-
     /**
      * パーサーの失敗理由を表示文言から分離します。
      *
@@ -25,7 +23,6 @@ object NumericExpression {
         OPERAND_REQUIRED,
         INVALID_NUMBER,
         INVALID_CHARACTER,
-        INVALID_READONLY_NAME,
         INVALID_VARIABLE_NAME,
     }
 
@@ -241,28 +238,26 @@ object NumericExpression {
                     result += Token.RightParen
                     index++
                 }
-                else -> {
-                    val numberEnd = scanNumber(source, index)
-                    if (numberEnd != null) {
-                        val raw = source.substring(index, numberEnd)
-                        val number = raw.toDoubleOrNull()?.takeIf(Double::isFinite)
-                            ?: parseFailure(ErrorCode.INVALID_NUMBER, raw)
-                        result += Token.Number(number)
-                        index = numberEnd
-                    } else {
-                        val nameEnd = scanName(source, index)
-                        if (nameEnd == null) parseFailure(ErrorCode.INVALID_CHARACTER, char.toString())
-                        val name = source.substring(index, nameEnd)
-                        if (name.startsWith('$') && name !in readOnlyNames) {
-                            parseFailure(ErrorCode.INVALID_READONLY_NAME, name)
+                    else -> {
+                        val numberEnd = scanNumber(source, index)
+                        if (numberEnd != null) {
+                            val raw = source.substring(index, numberEnd)
+                            val number = raw.toDoubleOrNull()?.takeIf(Double::isFinite)
+                                ?: parseFailure(ErrorCode.INVALID_NUMBER, raw)
+                            result += Token.Number(number)
+                            index = numberEnd
+                        } else {
+                            val nameEnd = scanName(source, index)
+                            if (nameEnd == null) parseFailure(ErrorCode.INVALID_CHARACTER, char.toString())
+                            val raw = source.substring(index, nameEnd)
+                            val name = raw.removePrefix("${'$'}{").removeSuffix("}")
+                            if (!SystemVariableNames.isReferenceName(name)) {
+                                parseFailure(ErrorCode.INVALID_VARIABLE_NAME, name)
+                            }
+                            result += Token.Name(name)
+                            index = nameEnd
                         }
-                        if (!name.startsWith('$') && !namePattern.matches(name)) {
-                            parseFailure(ErrorCode.INVALID_VARIABLE_NAME, name)
-                        }
-                        result += Token.Name(name)
-                        index = nameEnd
                     }
-                }
             }
         }
         result += Token.End
@@ -279,17 +274,9 @@ object NumericExpression {
     }
 
     private fun scanName(source: String, start: Int): Int? {
-        if (source[start] == '$') {
-            val end = source.indexOfFirstFrom(start + 1) { !it.isLetterOrDigit() && it != '_' }
-            return if (end == -1) source.length else end
-        }
-        if (!source[start].isLetter()) return null
-        val end = source.indexOfFirstFrom(start + 1) { !it.isLetterOrDigit() && it != '_' && it != '.' && it != '-' }
-        return if (end == -1) source.length else end
-    }
-
-    private fun String.indexOfFirstFrom(start: Int, predicate: (Char) -> Boolean): Int {
-        for (index in start until length) if (predicate(this[index])) return index
-        return -1
+        if (source[start] != '$' || source.getOrNull(start + 1) != '{') return null
+        val close = source.indexOf('}', start + 2)
+        if (close == -1) parseFailure(ErrorCode.INVALID_VARIABLE_NAME, source.substring(start))
+        return close + 1
     }
 }

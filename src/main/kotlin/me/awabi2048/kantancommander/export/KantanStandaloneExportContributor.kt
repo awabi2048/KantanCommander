@@ -13,6 +13,7 @@ import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.mwmchanpon.api.PreparedStandaloneExport
@@ -117,16 +118,6 @@ class KantanStandaloneExportContributor(
                 if (node.type == CommandType.VARIABLE) {
                     node.params["name"] = "${namespace}_${node.string("name")}"
                 }
-                if (node.type == CommandType.CONDITION && node.string("kind") == "VARIABLE_STATE") {
-                    node.params["variable"] = "${namespace}_${node.string("variable")}"
-                }
-                if (node.type == CommandType.FOR_START) {
-                    listOf("start", "end", "step").forEach { field ->
-                        if (node.string("${field}Source", "FIXED") == "WORLD") {
-                            node.params["${field}Value"] = "${namespace}_${node.string("${field}Value")}"
-                        }
-                    }
-                }
                 node.targetSpec = namespaceTarget(node.targetSpec, namespace)
                 node.secondaryTargetSpec = namespaceTarget(node.secondaryTargetSpec, namespace)
                 node.destinationTargetSpec = namespaceTarget(node.destinationTargetSpec, namespace)
@@ -174,10 +165,12 @@ class KantanStandaloneExportContributor(
     private fun namespaceExpression(raw: String, namespace: String): String {
         val parsed = NumericExpression.parse(raw).expression ?: return raw
         return parsed.references
-            .filterNot { it.startsWith("$") }
+            .filterNot(SystemVariableNames::isSystemName)
             .fold(raw) { expression, reference ->
-                Regex("(?<![a-z0-9_.-])${Regex.escape(reference)}(?![a-z0-9_.-])")
-                    .replace(expression, "${namespace}_$reference")
+                expression.replace(
+                    "${'$'}{$reference}",
+                    "${'$'}{${namespace}_$reference}",
+                )
             }
     }
 
@@ -187,8 +180,7 @@ class KantanStandaloneExportContributor(
         val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId")
         val NON_TEXT_FIELDS = setOf(
             "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
-            "tagOperation", "soundScope", "shakeType", "startSource", "endSource", "stepSource",
-            "inclusiveEnd", "overwrite", "inverted",
+            "tagOperation", "soundScope", "shakeType", "overwrite", "inverted",
         )
     }
 }

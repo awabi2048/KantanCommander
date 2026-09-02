@@ -372,6 +372,38 @@ class GraphLayoutEngineTest {
         assertEquals(layout.nodePoints[start.id]?.y, layout.nodePoints[body.id]?.y)
         assertEquals(layout.nodePoints[start.id]?.y, layout.nodePoints[end.id]?.y)
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.LOOP_RETURN_PATH })
+        val bodyPoint = requireNotNull(layout.nodePoints[body.id])
+        val returnY = layout.cells.keys.filter {
+            it.x == bodyPoint.x && it.y > bodyPoint.y && layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH
+        }
+            .minOf(MapPoint::y)
+        assertEquals(setOf(MapPoint(bodyPoint.x, returnY)), layout.loopReturnArrowPoints)
+        assertEquals(
+            layout.loopReturnArrowPoints,
+            layout.projection(MapPoint(0, 0), layout.width, layout.height).loopReturnArrowPoints,
+        )
+    }
+
+    @Test
+    fun `loop return arrows include nodes inside nested branches at their logical slots`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val bodyCondition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val trueNode = GraphEditor.append(graph, CommandType.WAIT, bodyCondition.id)
+        val falseNode = GraphEditor.insert(graph, bodyCondition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
+        val merge = GraphEditor.appendMerge(graph, bodyCondition.id)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val startPoint = requireNotNull(layout.nodePoints[start.id])
+        val endPoint = requireNotNull(layout.nodePoints[requireNotNull(start.pairedNodeId)])
+        val expectedX = setOf(
+            requireNotNull(layout.nodePoints[bodyCondition.id]).x,
+            requireNotNull(layout.nodePoints[trueNode.id]).x,
+            requireNotNull(layout.nodePoints[falseNode.id]).x,
+            requireNotNull(layout.nodePoints[merge.id]).x,
+        ).filter { it in (startPoint.x + 1) until endPoint.x }.toSet()
+        assertEquals(expectedX, layout.loopReturnArrowPoints.map(MapPoint::x).toSet())
+        assertTrue(layout.loopReturnArrowPoints.all { layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH })
     }
 
     @Test
