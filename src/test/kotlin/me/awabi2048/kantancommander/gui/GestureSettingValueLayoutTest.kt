@@ -18,19 +18,20 @@ class GestureSettingValueLayoutTest {
     }
 
     @Test
-    fun `three values add the configured row gap`() {
+    fun `three values add the configured row gap and honor the lower boundary`() {
         val layout = GestureSettingValueLayout.calculate(
             rowCount = 3,
             valueAnchorY = 0.27,
             detailAnchorY = 0.17,
-            rowGapRatio = 0.10,
+            rowGapRatio = 0.30,
+            minimumDetailY = 0.12,
         )
 
         assertEquals(3, layout.rowCentersY.size)
-        assertEquals(0.27, layout.rowCentersY[0], 1.0e-9)
-        assertEquals(0.215, layout.rowCentersY[1], 1.0e-9)
-        assertEquals(0.16, layout.rowCentersY[2], 1.0e-9)
-        assertEquals(0.105, layout.detailCenterY, 1.0e-9)
+        assertEquals(0.315, layout.rowCentersY[0], 1.0e-9)
+        assertEquals(0.25, layout.rowCentersY[1], 1.0e-9)
+        assertEquals(0.185, layout.rowCentersY[2], 1.0e-9)
+        assertEquals(0.12, layout.detailCenterY, 1.0e-9)
     }
 
     @Test
@@ -39,11 +40,11 @@ class GestureSettingValueLayoutTest {
             rowCount = 3,
             valueAnchorY = 0.27,
             detailAnchorY = 0.17,
-            rowGapRatio = 0.10,
+            rowGapRatio = 0.30,
         )
 
-        assertEquals(0.055, layout.rowCentersY[0] - layout.rowCentersY[1], 1.0e-9)
-        assertEquals(0.05 * 0.10, 0.055 - 0.05, 1.0e-9)
+        assertEquals(0.065, layout.rowCentersY[0] - layout.rowCentersY[1], 1.0e-9)
+        assertEquals(0.05 * 0.30, 0.065 - 0.05, 1.0e-9)
     }
 
     @Test

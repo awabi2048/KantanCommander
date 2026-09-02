@@ -138,6 +138,8 @@ class GestureLowerPanel(
                 valueAnchorY = SETTING_VALUE_ANCHOR_Y,
                 detailAnchorY = SETTING_DETAIL_ANCHOR_Y,
                 rowGapRatio = TIMING_ROW_GAP_RATIO,
+                minimumDetailY = SETTING_INPUT_CENTER_Y + SETTING_INPUT_HEIGHT / 2.0 +
+                    SETTING_DETAIL_INPUT_GAP,
             )
         }
         val value = displayValue.render(player)
@@ -240,9 +242,9 @@ class GestureLowerPanel(
                 visuals,
                 "lower-edit-bg",
                 0.28,
-                0.02,
+                SETTING_INPUT_CENTER_Y,
                 1.2,
-                0.16,
+                SETTING_INPUT_HEIGHT,
                 if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
                 4,
             )
@@ -250,7 +252,7 @@ class GestureLowerPanel(
                 visuals,
                 "lower-edit",
                 0.28,
-                0.02,
+                SETTING_INPUT_CENTER_Y,
                 0.0055,
                 180,
                 Component.text(KcI18n.text(player, editVisualText)),
@@ -260,7 +262,7 @@ class GestureLowerPanel(
                 // すべての入力画面への導線を既存のlower-edit枠へ集約します。
                 // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
                 // 開ける二重導線にはしません。
-                bounds = rect(0.28, 0.02, 1.2, 0.16),
+                bounds = rect(0.28, SETTING_INPUT_CENTER_Y, 1.2, SETTING_INPUT_HEIGHT),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
                 // 空集合を焼き付けず、クリック時点のガードで判定します。空手時は
                 // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
@@ -2353,8 +2355,13 @@ class GestureLowerPanel(
         // GestureSettingValueLayoutでこの2点の間隔から行ピッチを算出します。
         const val SETTING_VALUE_ANCHOR_Y = 0.27
         const val SETTING_DETAIL_ANCHOR_Y = 0.17
-        // 既存タブと同じ「行高の10%を余白にする」配置規則です。
-        const val TIMING_ROW_GAP_RATIO = 0.10
+        // 既存タブと同じ比率指定で、行高の30%を行間として確保します。
+        const val TIMING_ROW_GAP_RATIO = 0.30
+        const val SETTING_INPUT_CENTER_Y = 0.02
+        const val SETTING_INPUT_HEIGHT = 0.16
+        // 詳細・警告行は入力欄の上端から一定距離を空け、値行の計算結果が
+        // 入力欄へ入り込む場合は値行ブロック全体を上へ移動します。
+        const val SETTING_DETAIL_INPUT_GAP = 0.02
         // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
         // タブの高さ0.10に対してピッチ0.11を確保し、意図された0.01の余白を維持します。
         const val SETTINGS_TAB_MAX = 6
