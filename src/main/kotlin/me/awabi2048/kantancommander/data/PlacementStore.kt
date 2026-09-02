@@ -179,7 +179,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             val displayMaterial = if (script?.timer?.enabled == true) Material.REPEATING_COMMAND_BLOCK else Material.COMMAND_BLOCK
             it.block = Bukkit.createBlockData(displayMaterial)
             it.isGlowing = false
-            // 設置後実体の名称を拡張コマンドブロックへ統一する（浮遊表示はせず識別用に保持する）。
+            // 設置後実体の名称をかんたんコマンダー制御ブロックへ統一する（浮遊表示はせず識別用に保持する）。
             it.customName(Component.text(
                 KcI18n.text(null, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_NAME_BLOCK),
                 NamedTextColor.AQUA,

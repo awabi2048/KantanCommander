@@ -9,6 +9,7 @@ import com.awabi2048.ccsystem.api.gui.MenuTargetPolicy
 import com.awabi2048.ccsystem.api.gui.PublicMenuDefinition
 import com.awabi2048.ccsystem.api.localization.LocalizationCatalogContract
 import me.awabi2048.kantancommander.command.KantanCommanderCommand
+import me.awabi2048.kantancommander.command.KantanCommandPermissions
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.PlacementStore
@@ -26,6 +27,7 @@ import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
 import me.awabi2048.kantancommander.item.KantanInteractionListener
 import me.awabi2048.kantancommander.item.KantanItemGrantProvider
+import me.awabi2048.kantancommander.item.KantanItemGrantService
 import me.awabi2048.kantancommander.placement.PlacementProtectionListener
 import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
@@ -41,7 +43,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "71daa8b7ab22976da11e38c9af2a9a0f28fa08f8417a0824ae30e99ca95658ef"
+    "d13e32e0da8dfa8f418a154b90e494ddf5031539312f3c934c7f26259becb83e"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -67,6 +69,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var placementAccess: PlacementAccessPolicy
         private set
     lateinit var exporter: VanillaDatapackExporter
+        private set
+    lateinit var itemGrantService: KantanItemGrantService
         private set
     private lateinit var triggerListener: RedstoneTriggerListener
     private var standaloneExportContributor: KantanStandaloneExportContributor? = null
@@ -131,7 +135,8 @@ class KantanCommanderPlugin : JavaPlugin() {
         KcI18n.init(this)
         reloadConfig()
         rebuildConfiguredServices()
-        CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(this))
+        itemGrantService = KantanItemGrantService(this)
+        CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(itemGrantService))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
         summonedEntities = SummonedEntityTracker(
@@ -143,14 +148,14 @@ class KantanCommanderPlugin : JavaPlugin() {
         programListMenu = ProgramListMenu(this)
         CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan")
         listOf(
-            "library" to programListMenu::openLibrary,
-            "history" to programListMenu::openHistory,
-        ).forEach { (id, opener) ->
+            Triple("library", KantanCommandPermissions.LIBRARY, programListMenu::openLibrary),
+            Triple("history", KantanCommandPermissions.HISTORY, programListMenu::openHistory),
+        ).forEach { (id, permission, opener) ->
             CCSystem.getAPI().getMenuCommandService().register(
                 PublicMenuDefinition(
                     owner = "kantan",
                     id = id,
-                    permission = "kankoma.use",
+                    permission = permission,
                     targetPolicy = MenuTargetPolicy.SELF_ONLY,
                     argumentKeys = setOf("page"),
                     opener = { player, arguments ->
@@ -167,7 +172,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         placementAccess = PlacementAccessPolicy(this)
         triggerListener = RedstoneTriggerListener(this)
 
-        getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this))
+        getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this, itemGrantService))
         registerEvents()
         placements.restoreDisplays()
         triggerListener.start()

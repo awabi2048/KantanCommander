@@ -14,15 +14,40 @@ softdepend:
 commands:
   kankoma:
     description: Kantan Commander 管理コマンド
-    usage: /kankoma <library|history|placed|reload|help>
-    permission: kankoma.use
+    usage: /kankoma [history|library|placed|reload|gesture|help]
 permissions:
   kankoma.admin:
     description: Kantan Commander の管理操作を許可する
     default: op
-  kankoma.use:
-    description: Kantan Commander の利用を許可する
+    children:
+      kankoma.command.kankoma: true
+      kankoma.command.history: true
+      kankoma.command.library: true
+      kankoma.command.help: true
+      kankoma.command.placed: true
+      kankoma.command.reload: true
+      kankoma.command.gesture: true
+  kankoma.command.kankoma:
+    description: /kankoma によるかんたんコマンダー制御ブロックの付与を許可する
     default: true
+  kankoma.command.history:
+    description: /kankoma history の実行を許可する
+    default: true
+  kankoma.command.library:
+    description: /kankoma library の実行を許可する
+    default: true
+  kankoma.command.help:
+    description: /kankoma help の実行を許可する
+    default: true
+  kankoma.command.placed:
+    description: /kankoma placed の実行を許可する
+    default: false
+  kankoma.command.reload:
+    description: /kankoma reload の実行を許可する
+    default: false
+  kankoma.command.gesture:
+    description: /kankoma gesture の実行を許可する
+    default: false
   kankoma.extended_command_block:
-    description: 拡張コマンドブロックの手動操作を許可する（MWM-Chanponがワールド単位で付与）
+    description: かんたんコマンダー制御ブロックの手動操作を許可する（MWM-Chanponがワールド単位で付与）
     default: false

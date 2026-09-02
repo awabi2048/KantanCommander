@@ -21,18 +21,20 @@ import java.util.UUID
 
 /**
  * Kantan Commanderのアイテム種別。
- * 拡張コマンドブロック（設置用・常に未設定）とプログラムディスク（内容出力用・常に書き込み済み）の2種に分離する。
+ * かんたんコマンダー制御ブロック（設置用・常に未設定）とプログラムディスク（内容出力用・常に書き込み済み）の2種に分離する。
  */
 enum class KantanItemKind { NONE, BLOCK, DISK }
 
 object KantanItemService {
     const val BLOCK_ITEM_ID = "kantan.block"
     const val DISK_ITEM_ID = "kantan.disk"
+    /** `/kankoma` と共通付与APIの両方で、1回に付与できる制御ブロック数を固定します。 */
+    const val MAX_GRANT_AMOUNT = 1
     private val customItemIdKey = NamespacedKey("kantancommander", "custom_item_id")
     private val diskIdKey = NamespacedKey("kantancommander", "disk_id")
 
     /**
-     * 拡張コマンドブロックはバニラのコマンドブロックに相当する設置用アイテム。
+     * かんたんコマンダー制御ブロックはバニラのコマンドブロックに相当する設置用アイテム。
      * 通常のブロック配置判定（BlockPlaceEvent）を使うため、実体素材をINFESTED_STONEへ変更している。
      */
     private val blockMaterial = Material.INFESTED_STONE
@@ -40,7 +42,7 @@ object KantanItemService {
     private val diskMaterial = Material.POISONOUS_POTATO
 
     /**
-     * 未設定の拡張コマンドブロックを生成する。設置時に新しいスクリプトが作られる。
+     * 未設定のかんたんコマンダー制御ブロックを生成する。設置時に新しいスクリプトが作られる。
      * 通常のブロックと同じ体験にするため、Loreや毒じゃがいも用のカスタムコンポーネントは付与しない。
      */
     fun createBlock(player: Player): ItemStack {
@@ -86,7 +88,7 @@ object KantanItemService {
 
     fun isKantanItem(item: ItemStack?): Boolean = kind(item) != KantanItemKind.NONE
 
-    /** プログラムディスクが参照するスクリプトUUID。拡張コマンドブロックや無関係アイテムではnull。 */
+    /** プログラムディスクが参照するスクリプトUUID。制御ブロックや無関係アイテムではnull。 */
     fun diskId(item: ItemStack?): UUID? {
         if (kind(item) != KantanItemKind.DISK) return null
         val meta = item?.itemMeta ?: return null

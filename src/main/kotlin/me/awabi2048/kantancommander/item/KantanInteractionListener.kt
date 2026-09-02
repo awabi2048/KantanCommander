@@ -78,7 +78,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             event.action == Action.RIGHT_CLICK_BLOCK &&
             !player.isSneaking
         ) {
-            // 拡張コマンドブロックを手に持った右クリックは通常のブロック配置を優先し、編集画面を開かない。
+            // かんたんコマンダー制御ブロックを手に持った右クリックは通常のブロック配置を優先し、編集画面を開かない。
             if (itemKind == KantanItemKind.BLOCK) return
             // GUIを開く経路はイベントをキャンセルするため、バニラが送る腕振りが
             // 発生しません。実際に編集／ディスク挿入を受け付ける右クリックだけ、
@@ -126,7 +126,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     }
 
     /**
-     * 拡張コマンドブロックの設置。バニラのブロック配置イベントを捕捉して配置物へ変換する。
+     * かんたんコマンダー制御ブロックの設置。バニラのブロック配置イベントを捕捉して配置物へ変換する。
      *
      * 元のイベントはキャンセルせず、バニラの配置確定とアイテム消費に任せる。
      * キャンセルするとバニラが配置位置を巻き戻し、ガラス実体だけが消えてBlockDisplayが残るため。
@@ -139,10 +139,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         if (!plugin.placementAccess.canManage(player, player.world.name)) {
             event.isCancelled = true
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
-            plugin.logger.info("拡張コマンドブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
+            plugin.logger.info("かんたんコマンダー制御ブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
             return
         }
-        plugin.logger.info("拡張コマンドブロックの設置を検出: player=${player.name}, location=${event.block.location}, material=${event.block.type}")
+        plugin.logger.info("かんたんコマンダー制御ブロックの設置を検出: player=${player.name}, location=${event.block.location}, material=${event.block.type}")
         // バニラの配置イベントが配置位置を保証済み（置換可能性・プレイヤー重なりもバニラが検証済み）のため、
         // 自前の再判定は行わず、既存配置物の重複と保護判定だけを追加確認する。
         // 失敗時は元イベントをキャンセルし、バニラの巻き戻しで配置位置を元へ戻す。
@@ -151,7 +151,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
     }
 
-    /** 拡張コマンドブロックの破壊。管理権限があれば内容をプログラムディスクとして出力して撤去する。 */
+    /** かんたんコマンダー制御ブロックの破壊。管理権限があれば内容をプログラムディスクとして出力して撤去する。 */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onBlockBreak(event: BlockBreakEvent) {
         val block = event.block
@@ -159,7 +159,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         if (!plugin.placementAccess.canManage(event.player, placement.world)) {
             event.isCancelled = true
             event.player.sendMessage(KcI18n.text(event.player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
-            plugin.logger.info("拡張コマンドブロックの破壊を権限不足で拒否: player=${event.player.name}, location=${block.location}")
+            plugin.logger.info("かんたんコマンダー制御ブロックの破壊を権限不足で拒否: player=${event.player.name}, location=${block.location}")
             return
         }
         event.isCancelled = true
@@ -169,7 +169,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     }
 
     /**
-     * 拡張コマンドブロックを配置する。成功時はtrueを返し、失敗時はfalseを返して
+     * かんたんコマンダー制御ブロックを配置する。成功時はtrueを返し、失敗時はfalseを返して
      * 呼び出し側が元のBlockPlaceEventをキャンセルし、バニラの巻き戻しに任せる。
      */
     private fun placeBlock(
@@ -248,7 +248,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         // 後続リスナー（保護プラグイン等）が元イベントをキャンセルして巻き戻した場合に備え、
         // 次のtickで実体が残っているかを確認し、残っていなければ配置を撤去する。
         scheduleGhostCheck(placement, block.location)
-        plugin.logger.info("拡張コマンドブロックを設置: placement=${placement.key}, script=${placedScript.id}")
+        plugin.logger.info("かんたんコマンダー制御ブロックを設置: placement=${placement.key}, script=${placedScript.id}")
         return true
     }
 
@@ -362,6 +362,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
             plugin.logger.info("破壊時のディスク出力完了: location=${block.location}, script=${outputScript?.id}")
         }
-        plugin.logger.info("拡張コマンドブロックの破壊処理完了: placement=${placement.key}")
+        plugin.logger.info("かんたんコマンダー制御ブロックの破壊処理完了: placement=${placement.key}")
     }
 }

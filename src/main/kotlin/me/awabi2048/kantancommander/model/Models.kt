@@ -40,7 +40,7 @@ data class DiskScript(
     var contentModified: Boolean = false,
 )
 
-/** 配置された拡張コマンドブロックからディスクへ出力できる内容があるかを判定します。 */
+/** 配置されたかんたんコマンダー制御ブロックからディスクへ出力できる内容があるかを判定します。 */
 fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotEmpty()
 
 data class TimerSetting(

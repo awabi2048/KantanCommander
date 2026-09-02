@@ -1,8 +1,9 @@
 package me.awabi2048.kantancommander.command
-import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
-import me.awabi2048.kantancommander.KantanCommanderPlugin
 import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.item.KantanItemGrantService
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.command.Command
 import org.bukkit.command.CommandExecutor
@@ -10,61 +11,65 @@ import org.bukkit.command.CommandSender
 import org.bukkit.command.TabCompleter
 import org.bukkit.entity.Player
 
-class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : CommandExecutor, TabCompleter {
+class KantanCommanderCommand(
+    private val plugin: KantanCommanderPlugin,
+    private val itemGrantService: KantanItemGrantService,
+) : CommandExecutor, TabCompleter {
     override fun onCommand(sender: CommandSender, command: Command, label: String, args: Array<out String>): Boolean {
-        when (args.getOrNull(0)?.lowercase()) {
-            "library", "programs" -> {
-                val player = sender as? Player ?: return true
-                CCSystem.getAPI().getMenuCommandService().open(
-                    player,
-                    player,
-                    "kantan:library",
-                    emptyMap()
-                )
-            }
-            "history" -> {
-                val player = sender as? Player ?: return true
-                CCSystem.getAPI().getMenuCommandService().open(
-                    player,
-                    player,
-                    "kantan:history",
-                    emptyMap(),
-                )
-            }
+        val subcommand = args.getOrNull(0)?.lowercase()
+        if (!requireSubcommandPermission(sender, subcommand)) return true
+        when (subcommand) {
+            null -> grantControlBlock(sender)
+            "library" -> openLibrary(sender)
+            "history" -> openHistory(sender)
             "placed" -> listPlaced(sender, args.getOrNull(1)?.toIntOrNull() ?: 1)
-            "reload" -> {
-                if (!sender.hasPermission("kankoma.admin")) return true
-                val key = if (plugin.reloadManagedSettings()) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_RELOADED
-                } else {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_RELOAD_FAILED
-                }
-                sender.sendMessage(KcI18n.text(sender as? Player, key))
-            }
-            "gesture" -> {
-                if (!sender.hasPermission("kankoma.admin")) return true
-                when (args.getOrNull(1)?.lowercase()) {
-                    "on" -> {
-                        plugin.config.set("use-gesture-editor", true)
-                        plugin.saveConfig()
-                        sender.sendMessage("ジェスチャーエディターを使用します。")
-                    }
-                    "off" -> {
-                        plugin.config.set("use-gesture-editor", false)
-                        plugin.saveConfig()
-                        sender.sendMessage("従来のエディターを使用します。")
-                    }
-                    else -> sender.sendMessage("/kankoma gesture <on|off>")
-                }
-            }
+            "reload" -> reload(sender)
+            "gesture" -> configureGesture(sender, args.getOrNull(1)?.lowercase())
+            "help" -> help(sender)
             else -> help(sender)
         }
         return true
     }
 
+    /** 一般ユーザーが自分へ制御ブロックを取得する唯一の直接コマンド入口です。 */
+    private fun grantControlBlock(sender: CommandSender) {
+        val player = sender as? Player ?: return
+        val result = itemGrantService.grant(
+            sender = sender,
+            target = player,
+            amount = 1,
+            source = "/kankoma",
+        )
+        val messageKey = if (result.success) {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_GRANT_SUCCESS
+        } else {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_GRANT_FAILED
+        }
+        player.sendMessage(KcI18n.text(player, messageKey))
+    }
+
+    private fun openLibrary(sender: CommandSender) {
+        val player = sender as? Player ?: return
+        CCSystem.getAPI().getMenuCommandService().open(
+            player,
+            player,
+            "kantan:library",
+            emptyMap(),
+        )
+    }
+
+    private fun openHistory(sender: CommandSender) {
+        val player = sender as? Player ?: return
+        CCSystem.getAPI().getMenuCommandService().open(
+            player,
+            player,
+            "kantan:history",
+            emptyMap(),
+        )
+    }
+
     /** 配置一覧を10件ごとのページで表示する。ページ範囲外の指定は有効範囲へ丸める。 */
     private fun listPlaced(sender: CommandSender, requestedPage: Int) {
-        if (!sender.hasPermission("kankoma.admin")) return
         val player = sender as? Player
         val all = plugin.placements.all()
         val pageSize = 10
@@ -78,26 +83,89 @@ class KantanCommanderCommand(private val plugin: KantanCommanderPlugin) : Comman
                 "x" to it.x,
                 "y" to it.y,
                 "z" to it.z,
-                "script" to it.scriptId
+                "script" to it.scriptId,
             )))
         }
     }
 
-    private fun help(sender: CommandSender) {
-        val player = sender as? Player
-        listOf(
-            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_PROGRAMS,
-            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_PLACED,
-            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_RELOAD,
-        ).forEach {
-            sender.sendMessage(KcI18n.text(player, it))
+    private fun reload(sender: CommandSender) {
+        val key = if (plugin.reloadManagedSettings()) {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_RELOADED
+        } else {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_RELOAD_FAILED
         }
+        sender.sendMessage(KcI18n.text(sender as? Player, key))
+    }
+
+    private fun configureGesture(sender: CommandSender, operation: String?) {
+        when (operation) {
+            "on" -> {
+                plugin.config.set("use-gesture-editor", true)
+                plugin.saveConfig()
+                sender.sendMessage("ジェスチャーエディターを使用します。")
+            }
+            "off" -> {
+                plugin.config.set("use-gesture-editor", false)
+                plugin.saveConfig()
+                sender.sendMessage("従来のエディターを使用します。")
+            }
+            else -> sender.sendMessage("/kankoma gesture <on|off>")
+        }
+    }
+
+    private fun help(sender: CommandSender) {
+        if (!requirePermission(sender, KantanCommandPermissions.HELP)) return
+        val player = sender as? Player
+        buildList {
+            if (sender.hasPermission(KantanCommandPermissions.ROOT)) {
+                add(KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_GRANT)
+            }
+            if (
+                sender.hasPermission(KantanCommandPermissions.LIBRARY) ||
+                sender.hasPermission(KantanCommandPermissions.HISTORY)
+            ) {
+                add(KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_PROGRAMS)
+            }
+            if (sender.hasPermission(KantanCommandPermissions.PLACED)) {
+                add(KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_PLACED)
+            }
+            if (sender.hasPermission(KantanCommandPermissions.RELOAD)) {
+                add(KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_RELOAD)
+            }
+        }.forEach { key ->
+            sender.sendMessage(KcI18n.text(player, key))
+        }
+    }
+
+    private fun requireSubcommandPermission(sender: CommandSender, subcommand: String?): Boolean {
+        val permission = KantanCommandPermissions.forSubcommand(subcommand) ?: return true
+        return requirePermission(sender, permission)
+    }
+
+    private fun requirePermission(sender: CommandSender, permission: String): Boolean {
+        if (sender.hasPermission(permission)) return true
+        sender.sendMessage(KcI18n.text(sender as? Player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PERMISSION))
+        return false
     }
 
     override fun onTabComplete(sender: CommandSender, command: Command, alias: String, args: Array<out String>): List<String> {
         return when (args.size) {
-            1 -> listOf("library", "history", "placed", "reload", "gesture", "help").filter { it.startsWith(args[0], true) }
-            2 -> if (args[0].equals("gesture", true)) listOf("on", "off").filter { it.startsWith(args[1], true) } else emptyList()
+            1 -> buildList {
+                if (sender.hasPermission(KantanCommandPermissions.HISTORY)) add("history")
+                if (sender.hasPermission(KantanCommandPermissions.LIBRARY)) add("library")
+                if (sender.hasPermission(KantanCommandPermissions.PLACED)) add("placed")
+                if (sender.hasPermission(KantanCommandPermissions.RELOAD)) add("reload")
+                if (sender.hasPermission(KantanCommandPermissions.GESTURE)) add("gesture")
+                if (sender.hasPermission(KantanCommandPermissions.HELP)) add("help")
+            }.filter { it.startsWith(args[0], true) }
+            2 -> if (
+                args[0].equals("gesture", true) &&
+                sender.hasPermission(KantanCommandPermissions.GESTURE)
+            ) {
+                listOf("on", "off").filter { it.startsWith(args[1], true) }
+            } else {
+                emptyList()
+            }
             else -> emptyList()
         }
     }
