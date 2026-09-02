@@ -594,7 +594,7 @@ class GestureLowerPanel(
                 },
             )
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
-                Component.text(KcI18n.text(player, field.label)))
+                Component.text(fieldTabLabel(player, node, field)))
             elements.add(GestureGuiElement(
                 elementId = "lower-tab:$index",
                 bounds = rect(-0.7975, cy, 0.47, SETTINGS_TAB_HEIGHT),
@@ -620,6 +620,14 @@ class GestureLowerPanel(
             targetVisualId = "delete-bg",
         ))
     }
+
+    /** 表示時間はグループ名をタブへ、表示継続時間は内部の現在値ラベルへ分離します。 */
+    private fun fieldTabLabel(player: Player, node: CommandNode, field: EditorField): String =
+        if (node.type == CommandType.DISPLAY_TEXT && field.key == "staySeconds") {
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE)
+        } else {
+            KcI18n.text(player, field.label)
+        }
 
     /** 項目名と値を別々のTextDisplayへ配置し、表示領域の分離を明示します。 */
     private fun addValueRow(
@@ -2309,12 +2317,11 @@ class GestureLowerPanel(
         // 互いの領域へ侵入しないようにします。
         const val SETTING_VALUE_Y = 0.27
         const val SETTING_DETAIL_HINT_Y = 0.17
-        // 8項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
-        // DISPLAY_TEXTの時間設定をフェードイン・表示継続時間・フェードアウトへ
-        // 分離しても、下部パネル内へ収まる寸法を維持します。
-        const val SETTINGS_TAB_MAX = 8
-        const val SETTINGS_TAB_TOP_Y = 0.40
-        const val SETTINGS_TAB_PITCH = 0.10
+        // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
+        // タブの高さ0.10に対してピッチ0.11を確保し、意図された0.01の余白を維持します。
+        const val SETTINGS_TAB_MAX = 6
+        const val SETTINGS_TAB_TOP_Y = 0.38
+        const val SETTINGS_TAB_PITCH = 0.11
         const val SETTINGS_TAB_HEIGHT = 0.10
         // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。

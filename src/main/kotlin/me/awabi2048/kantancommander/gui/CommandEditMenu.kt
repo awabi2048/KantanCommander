@@ -2259,10 +2259,21 @@ private data class DetailOption(
 sealed interface DisplayValue {
     data class Literal(val value: String) : DisplayValue
     data class Localized(val key: LocalizationKey<String>) : DisplayValue
+    /** Gesture GUIの「表示時間」タブに3つの現在値を意味付きで表示します。 */
+    data class Timing(
+        val fadeInSeconds: String,
+        val staySeconds: String,
+        val fadeOutSeconds: String,
+    ) : DisplayValue
 
     fun render(player: Player): String = when (this) {
         is Literal -> value
         is Localized -> KcI18n.text(player, key)
+        is Timing -> listOf(
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN)}=${fadeInSeconds}",
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY)}=${staySeconds}",
+            "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT)}=${fadeOutSeconds}",
+        ).joinToString(" / ")
     }
 }
 

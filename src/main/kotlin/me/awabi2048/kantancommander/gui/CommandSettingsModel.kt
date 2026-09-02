@@ -281,42 +281,38 @@ object CommandSettingsModel {
     /**
      * Gesture GUIで表示するフィールドを返します。
      *
-     * Inventory GUIでは3つの時間を一つのDialogでまとめて編集しますが、Gesture GUIの
-     * 設定タブは現在値を直接確認する画面です。そのため同じ保存モデルを維持したまま、
-     * 表示だけをフェードイン・表示継続時間・フェードアウトへ展開します。展開処理を
-     * Gesture側へ複製せず、タブの順序・編集対象・設定済み表示を同じモデルで揃えます。
+     * Inventory GUIとGesture GUIは同じ「表示時間」設定を編集しますが、Gesture GUIでは
+     * タブを増やさず、選択中のタブの現在値欄へ3項目をまとめて表示します。値の結合は
+     * 表示専用の意味型へ閉じ込め、各画面が独自の文字列フォーマットを持たないようにします。
      */
     fun gestureVisibleFields(node: CommandNode): List<EditorField> =
-        visibleFields(node).flatMap { field ->
+        visibleFields(node).map { field ->
             if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)
             ) {
-                listOf(
-                    timingField(field, "fadeInSeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
-                    timingField(field, "staySeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
-                    timingField(field, "fadeOutSeconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
+                field.copy(
+                    value = { currentNode ->
+                        DisplayValue.Timing(
+                            fadeInSeconds = currentNode.string(
+                                "fadeInSeconds",
+                                currentNode.type.defaults["fadeInSeconds"].orEmpty(),
+                            ),
+                            staySeconds = currentNode.string(
+                                "staySeconds",
+                                currentNode.type.defaults["staySeconds"].orEmpty(),
+                            ),
+                            fadeOutSeconds = currentNode.string(
+                                "fadeOutSeconds",
+                                currentNode.type.defaults["fadeOutSeconds"].orEmpty(),
+                            ),
+                        )
+                    },
                 )
             } else {
-                listOf(field)
+                field
             }
         }
-
-    /** 時間の現在値を、空欄なら共通の未設定表示へ変換したGesture用フィールドです。 */
-    private fun timingField(
-        base: EditorField,
-        key: String,
-        label: LocalizationKey<String>,
-    ): EditorField = base.copy(
-        key = key,
-        label = label,
-        value = { node ->
-            node.string(key)
-                .takeIf(String::isNotBlank)
-                ?.let(DisplayValue::Literal)
-                ?: DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-        },
-    )
 
     /**
      * 下部画面の設定タブへ表示する、未完了警告の固定キーを返します。
@@ -446,13 +442,15 @@ object CommandSettingsModel {
     /**
      * 検証側の内部フィールド名を、実際に表示するタブへ正規化します。
      *
-     * 表示時間はInventory GUIでは1項目、Gesture GUIでは3項目へ展開します。
+     * 表示時間はInventory GUIとGesture GUIのどちらでも1項目です。Gesture GUIでは
+     * そのタブの現在値欄だけを3項目表示へ拡張します。
      * また非表示のsubtitleはtextタブで編集するため、検証結果だけが存在しない
      * タブを指さないようにします。
      */
     fun visibleAttentionFieldKey(node: CommandNode, validationFieldKey: String): String? {
         val visibleKey = when (node.type) {
             CommandType.DISPLAY_TEXT -> when (validationFieldKey) {
+                "fadeInSeconds", "staySeconds", "fadeOutSeconds" -> "staySeconds"
                 "subtitle" -> "text"
                 else -> validationFieldKey
             }

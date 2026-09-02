@@ -431,7 +431,7 @@ class GestureSequenceEditor(
      * 実行前検証を、下部パネルの「要確認」表示用の情報へ要約します。
      *
      * 構造化エラー（nodeId/fieldKeys）を表示上のタブへ正規化して集約するため、表示側で
-     * エラー文言を解析する必要はありません。表示時間の3項目もそれぞれのタブへ投影します。
+     * エラー文言を解析する必要はありません。表示時間の3項目は1つの時間タブへ投影します。
      * snapshot内のエラーは主グラフのノードへ対応しないため、存在しないノードIDは除外します。
      */
     private fun attentionState(): GestureAttentionState {
@@ -1357,10 +1357,8 @@ class GestureSequenceEditor(
             applyHeldDisk(player, context)
             return
         }
-        if (fieldKey in setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds") &&
-            node.type == CommandType.DISPLAY_TEXT
-        ) {
-            // 表示時間はGesture上では3項目に分けて現在値を示しつつ、編集時は
+        if (fieldKey == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
+            // 表示時間は1つのタブにまとめ、現在値欄では3項目を表示します。編集時は
             // インベントリGUIと同じ一組の入力欄・最大長・検証を使います。
             showDisplayTimingSettingDialog(player, context, node)
             return
