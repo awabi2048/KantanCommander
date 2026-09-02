@@ -1843,13 +1843,19 @@ class GestureLowerPanel(
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         val categories = CommandCategory.entries
-        categories.forEachIndexed { index, category ->
+        val insertionTarget = state.pendingInsertion
+        val requiresEnclosingMerge = insertionTarget?.continuationId != null
+        // 親の合流へ戻る途中の未合流条件では、通常コマンドの追加先がまだ確定して
+        // いません。先に内側MERGEを選ばせるため、カテゴリもCONTROLへ固定します。
+        val selectedCategory = if (requiresEnclosingMerge) CommandCategory.CONTROL
+            else categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
+        categories.forEachIndexed { index, option ->
             val cy = 0.38 - index * 0.17
-            val on = index == state.pickerCategory
+            val on = option == selectedCategory
             addBlock(visuals, "cat-bg-$index", -0.7975, cy, 0.47, 0.15,
                 if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4)
             addText(visuals, "cat-$index", -0.7975, cy - 0.02, 0.0055, 90,
-                Component.text(KcI18n.text(player, category.labelKey)))
+                Component.text(KcI18n.text(player, option.labelKey)))
             elements.add(GestureGuiElement(
                 elementId = "lower-cat:$index",
                 bounds = rect(-0.7975, cy, 0.47, 0.15),
@@ -1868,8 +1874,7 @@ class GestureLowerPanel(
             targetVisualId = "lower-close-bg",
         ))
 
-        val category = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
-        val categoryDescription = KcI18n.list(player, category.descriptionKey)
+        val categoryDescription = KcI18n.list(player, selectedCategory.descriptionKey)
             .filter(String::isNotBlank)
             .joinToString(" ")
         // カテゴリ名の白行は左タブ列のラベルと重複するため廃止し、灰色の説明1本に
@@ -1880,9 +1885,10 @@ class GestureLowerPanel(
         val mergeConditionId = state.pendingInsertion?.mergeConditionId
         // 候補表示とGraphEditorの実データ検証を同じ条件にし、ネスト未合流の外側へ
         // MERGEを表示してクリック時例外になる不一致を防ぎます。
-        val mergeAvailable = script?.let { GraphEditor.canAppendMerge(it.graph, mergeConditionId) } == true
+        val mergeAvailable = script?.let {
+            GraphEditor.canAppendMerge(it.graph, mergeConditionId, insertionTarget?.continuationId)
+        } == true
         // MERGEは分岐合流用の挿入先だけで候補化し、FOR_END等は単独挿入不可のため除外します。
-        val insertionTarget = state.pendingInsertion
         val insideForBody = script?.graph?.let {
             GraphEditor.isInsideFor(
                 it,
@@ -1890,12 +1896,12 @@ class GestureLowerPanel(
                 insertionTarget?.edge ?: GraphEditor.Edge.ENTRY,
             )
         } == true
-        val types = CommandType.entries.filter { type ->
-            CommandPresentationPolicy.category(type) == category &&
-                (type != CommandType.MERGE || mergeAvailable) &&
-                type != CommandType.FOR_END &&
-                (type != CommandType.BREAK && type != CommandType.CONTINUE || insideForBody)
-        }
+        val types = CommandPickerTypePolicy.types(
+            category = selectedCategory,
+            mergeAvailable = mergeAvailable,
+            insideForBody = insideForBody,
+            requiresEnclosingMerge = requiresEnclosingMerge,
+        )
         val pageCount = ((types.size + PICKER_PAGE_SIZE - 1) / PICKER_PAGE_SIZE).coerceAtLeast(1)
         val page = state.pickerPage.coerceIn(0, pageCount - 1)
         types.drop(page * PICKER_PAGE_SIZE).take(PICKER_PAGE_SIZE).forEachIndexed { index, type ->

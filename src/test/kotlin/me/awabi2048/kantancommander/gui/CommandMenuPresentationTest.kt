@@ -16,6 +16,37 @@ class CommandMenuPresentationTest {
     }
 
     @Test
+    fun `nested open branch picker exposes only merge until the enclosing path is closed`() {
+        assertEquals(
+            emptyList<CommandType>(),
+            CommandPickerTypePolicy.types(
+                category = CommandCategory.EXECUTION,
+                mergeAvailable = true,
+                insideForBody = false,
+                requiresEnclosingMerge = true,
+            ),
+        )
+        assertEquals(
+            listOf(CommandType.MERGE),
+            CommandPickerTypePolicy.types(
+                category = CommandCategory.CONTROL,
+                mergeAvailable = true,
+                insideForBody = false,
+                requiresEnclosingMerge = true,
+            ),
+        )
+        assertEquals(
+            emptyList<CommandType>(),
+            CommandPickerTypePolicy.types(
+                category = CommandCategory.CONTROL,
+                mergeAvailable = false,
+                insideForBody = false,
+                requiresEnclosingMerge = true,
+            ),
+        )
+    }
+
+    @Test
     fun `context footer excludes context and control-only nodes`() {
         assertTrue(CommandPresentationPolicy.supportsContextOverride(CommandType.GIVE_ITEM))
         assertTrue(CommandPresentationPolicy.supportsContextOverride(CommandType.CONDITION))

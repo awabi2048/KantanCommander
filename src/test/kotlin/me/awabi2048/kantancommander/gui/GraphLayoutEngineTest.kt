@@ -220,6 +220,30 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `nested open branch add point carries the enclosing merge continuation`() {
+        val graph = CommandGraph.empty()
+        val outer = GraphEditor.append(graph, CommandType.CONDITION)
+        val outerMerge = GraphEditor.appendMerge(graph, outer.id)
+        val inner = GraphEditor.insert(graph, outer.id, GraphEditor.Edge.FALSE, CommandType.CONDITION)
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val add = layout.cells.values.first {
+            it.kind == MapCellKind.ADD &&
+                it.insertionTarget?.let { target ->
+                    target.sourceId == inner.id && target.edge == GraphEditor.Edge.FALSE
+                } == true
+        }
+        val target = requireNotNull(add.insertionTarget)
+
+        // 左下の追加位置は単なる枝末端ではなく、内側条件を合流してから親へ戻る
+        // 必要があります。継続先を保持することで、UIが通常コマンドを誤表示せず、
+        // MERGEだけを提示できます。
+        assertEquals(inner.id, target.mergeConditionId)
+        assertEquals(outerMerge.id, target.continuationId)
+        assertEquals(null, GraphLayoutEngine.previewInsertion(graph, target))
+    }
+
+    @Test
     fun `open condition with a non-empty false branch exposes the branch head insertion on its stem`() {
         val graph = CommandGraph.empty()
         val outer = GraphEditor.append(graph, CommandType.CONDITION)
@@ -231,9 +255,9 @@ class GraphLayoutEngineTest {
         val innerPoint = requireNotNull(layout.nodePoints[inner.id])
         assertNotNull(layout.nodePoints[falseNode.id])
 
-        // 非空のFALSE枝を持つ縦幹は、開いた枝でも枝の先頭への挿入を受け付けます。
+        // 非空のFALSE枝を持つ縦幹も、親合流へ戻る継続先を保持します。
         assertEquals(
-            InsertionTarget(inner.id, GraphEditor.Edge.FALSE, inner.id),
+            InsertionTarget(inner.id, GraphEditor.Edge.FALSE, inner.id, continuationId = merge.id),
             layout.cells[MapPoint(innerPoint.x, innerPoint.y + 1)]?.insertionTarget,
         )
     }

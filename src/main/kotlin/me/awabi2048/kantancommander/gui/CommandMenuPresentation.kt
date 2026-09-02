@@ -61,6 +61,31 @@ internal object CommandPresentationPolicy {
     fun supportsContextOverride(type: CommandType): Boolean = type.supportsContextOverride()
 }
 
+/**
+ * コマンド選択画面に表示できる種別を、実際の挿入状態から一度だけ決めます。
+ *
+ * 親の合流へ続く未合流条件の枝では、通常コマンドを直接追加すると枝の一方だけが
+ * 親の合流へ到達しない不正グラフになります。その状態では先に内側のMERGEだけを
+ * 選ばせ、合流後に通常コマンドを追加できる順序をGUI共通で保証します。
+ */
+internal object CommandPickerTypePolicy {
+    fun types(
+        category: CommandCategory,
+        mergeAvailable: Boolean,
+        insideForBody: Boolean,
+        requiresEnclosingMerge: Boolean = false,
+    ): List<CommandType> = CommandType.entries.filter { type ->
+        if (requiresEnclosingMerge && type != CommandType.MERGE) return@filter false
+        if (CommandPresentationPolicy.category(type) != category) return@filter false
+        when (type) {
+            CommandType.FOR_END -> false
+            CommandType.MERGE -> mergeAvailable
+            CommandType.BREAK, CommandType.CONTINUE -> insideForBody
+            else -> true
+        }
+    }
+}
+
 /** 設定数が多いコマンドは、意味上の組を崩さない専用配置を使用します。 */
 internal object CommandSettingsSlotPolicy {
     private val fiveFieldSlots = listOf(19, 20, 21, 28, 29)

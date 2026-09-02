@@ -901,15 +901,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             GraphEditor.isInsideFor(it, sourceId, edge ?: GraphEditor.Edge.ENTRY)
         } == true
         val category = CommandCategory.fromRoute(route.payload[PICKER_CATEGORY])
-        val types = CommandType.entries.filter { type ->
-            if (CommandPresentationPolicy.category(type) != category) return@filter false
-            when (type) {
-                CommandType.FOR_END -> false
-                CommandType.MERGE -> GraphEditor.canAppendMerge(script?.graph, mergeConditionId)
-                CommandType.BREAK, CommandType.CONTINUE -> insideFor
-                else -> true
-            }
-        }
+        val types = CommandPickerTypePolicy.types(
+            category = category,
+            mergeAvailable = GraphEditor.canAppendMerge(script?.graph, mergeConditionId),
+            insideForBody = insideFor,
+        )
         val elements = types.mapIndexed { index, type ->
             KcGui.menuEntry(
                 player = player,

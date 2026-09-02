@@ -995,7 +995,7 @@ class GestureSequenceEditor(
             visualId = "back-label",
             x = GestureEditorLayout.BACK_X,
             y = GestureEditorLayout.BACK_Y - 0.02,
-            text = net.kyori.adventure.text.Component.text("先頭に移動する"),
+            text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_GLYPH)),
             size = 0.0055,
             layer = 6,
         ))
@@ -2821,9 +2821,16 @@ class GestureSequenceEditor(
                         ?.insertionTarget
                     if (currentTarget != target) return
                 }
-                if (type == CommandType.FOR_END || (type == CommandType.MERGE &&
-                        (target.mergeConditionId == null || !GraphEditor.canAppendMerge(script.graph, target.mergeConditionId)))) {
-                    // 合流は対応する分岐を持つ経路以外では選択できません。
+                if ((target.continuationId != null && type != CommandType.MERGE) ||
+                    type == CommandType.FOR_END || (type == CommandType.MERGE &&
+                        (target.mergeConditionId == null || !GraphEditor.canAppendMerge(
+                            script.graph,
+                            target.mergeConditionId,
+                            target.continuationId,
+                        )))) {
+                    // 親の合流へ続く未合流条件では、先に内側MERGEを作成します。
+                    // 通常ノードをここで受け付けると、もう一方の枝が親合流へ届かず、
+                    // 保存時のGraphValidatorで例外になるため、表示・入力の両方で拒否します。
                     state.lowerMode = GestureLowerMode.SETTINGS
                     updateLower(player)
                     return
@@ -2840,13 +2847,27 @@ class GestureSequenceEditor(
                     ) { candidateGraph ->
                         if (type == CommandType.MERGE) {
                             // 画面表示後に別操作でグラフが変わる競合にも例外を漏らしません。
-                            if (!GraphEditor.canAppendMerge(candidateGraph, target.mergeConditionId)) {
+                            if (!GraphEditor.canAppendMerge(
+                                    candidateGraph,
+                                    target.mergeConditionId,
+                                    target.continuationId,
+                                )) {
                                 null
                             } else {
-                                GraphEditor.appendMerge(candidateGraph, requireNotNull(target.mergeConditionId))
+                                GraphEditor.appendMerge(
+                                    candidateGraph,
+                                    requireNotNull(target.mergeConditionId),
+                                    continuationId = target.continuationId,
+                                )
                             }
                         } else {
-                            GraphEditor.insert(candidateGraph, target.sourceId, target.edge, type)
+                            GraphEditor.insert(
+                                candidateGraph,
+                                target.sourceId,
+                                target.edge,
+                                type,
+                                continuationId = target.continuationId,
+                            )
                         }
                     }
                 }.getOrElse { failure ->

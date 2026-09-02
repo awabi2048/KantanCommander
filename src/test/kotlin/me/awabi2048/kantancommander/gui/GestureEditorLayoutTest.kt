@@ -165,4 +165,15 @@ class GestureEditorLayoutTest {
             1.0e-9,
         )
     }
+
+    @Test
+    fun `nav cross stays above and left of the zoom rail without overlap`() {
+        assertTrue(GestureEditorLayout.NAV_CENTER_X < 1.05)
+        assertTrue(GestureEditorLayout.NAV_CENTER_Y > -0.32)
+
+        val crossRight = GestureEditorLayout.NAV_CENTER_X +
+            GestureEditorLayout.NAV_PITCH + GestureEditorLayout.NAV_SIZE / 2.0
+        val zoomLeft = GestureEditorLayout.ZOOM_X - GestureEditorLayout.ZOOM_SIZE / 2.0
+        assertTrue(crossRight < zoomLeft)
+    }
 }

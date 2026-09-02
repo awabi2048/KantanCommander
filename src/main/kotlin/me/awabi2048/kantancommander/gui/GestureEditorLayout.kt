@@ -141,18 +141,20 @@ object GestureEditorLayout {
     }
 
     // ---- 十字ナビゲーション（右下、グリッド外） ----
-    const val NAV_CENTER_X: Double = 1.05
-    const val NAV_CENTER_Y: Double = -0.32
+    // 十字キーをズーム列と右下の追加ポイントから離すため、少し左上へ寄せます。
+    const val NAV_CENTER_X: Double = 0.98
+    const val NAV_CENTER_Y: Double = -0.27
     const val NAV_SIZE: Double = 0.12
     const val NAV_PITCH: Double = 0.14
 
-    /** 先頭に戻る（⌂）: 十字の下・左に隣接 */
+    /** 先頭に戻る（🕋）: 十字の下・左に隣接 */
     val BACK_X: Double = NAV_CENTER_X - NAV_PITCH
     val BACK_Y: Double = NAV_CENTER_Y - NAV_PITCH
 
     /** ナビゲーション右側に縦積みするズーム操作領域 */
     const val ZOOM_X: Double = 1.30
-    const val ZOOM_TOP_Y: Double = NAV_CENTER_Y + 0.055
+    // 十字だけを移動し、既存のズーム列の位置は維持します。
+    const val ZOOM_TOP_Y: Double = -0.265
     const val ZOOM_SIZE: Double = NAV_SIZE
     const val ZOOM_PITCH: Double = NAV_SIZE + 0.015
 
