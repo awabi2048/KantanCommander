@@ -259,20 +259,23 @@ class GestureSequenceEditor(
     private var renderRetryAttempts = 0
 
     private fun canOperateSharedActor(ownerId: UUID, actorId: UUID): Boolean {
-        if (actorId == ownerId) return true
-        val placement = state.placement ?: return false
+        val placement = state.placement ?: return actorId == ownerId
         val owner = Bukkit.getPlayer(ownerId) ?: return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
+        val editorAnchor = state.anchor ?: return false
         // ツール権限はMWM-Chanponが現在ワールドへ一時付与するノードです。
         // 建築権限は要求しません。今回の要件では、既存ブロックを編集する
         // 「共有GUI操作」と、配置物を設置・破壊する「管理操作」を分離します。
+        // 所有者も含めて同じ距離・ワールド・権限規則へ通します。所有者だけを無条件で
+        // 通すと、歩いて離れた後も共有画面の可視性と入力claimが残るためです。
         return actor.world.uid == owner.world.uid &&
             actor.world.name == placement.world &&
+            GestureEditorReachPolicy.isWithinInteractionRange(actor, editorAnchor) &&
             actor.hasPermission(PlacementAccessPolicy.EXTENDED_COMMAND_BLOCK_PERMISSION)
     }
 
     internal fun canOperateSharedActor(player: Player): Boolean =
-        sessionOwnerId?.let { canOperateSharedActor(it, player.uniqueId) } == true
+        sessionOwnerId?.let { ownerId -> canOperateSharedActor(ownerId, player.uniqueId) } == true
 
     private fun ownerIdFor(player: Player): UUID = sessionOwnerId ?: player.uniqueId
 
