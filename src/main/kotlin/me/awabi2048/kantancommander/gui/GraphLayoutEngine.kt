@@ -56,6 +56,16 @@ internal val PATH_CELL_KINDS: Set<MapCellKind> = setOf(
     MapCellKind.LOOP_RETURN_PATH,
 )
 
+/**
+ * 戻り経路矢印の起点にできる、body内の横向き経路セルです。
+ * LOOP_RETURN_PATHを除外することで、入れ子forの戻り経路そのものを
+ * 外側forの矢印起点として二重投影しないようにします。
+ */
+private val LOOP_RETURN_ARROW_SOURCE_KINDS: Set<MapCellKind> = setOf(
+    MapCellKind.PATH,
+    MapCellKind.BRANCH_PATH,
+)
+
 internal val CONNECTABLE_CELL_KINDS: Set<MapCellKind> = PATH_CELL_KINDS + setOf(
     MapCellKind.NODE,
     MapCellKind.ADD,
@@ -93,7 +103,7 @@ data class ViewportProjection(
     val height: Int,
     val cells: Map<MapPoint, MapCell>,
     val boundaryConnections: Set<ViewportBoundaryConnection>,
-    /** 戻り経路上で内部ノードの垂線と交差する、矢印表示用の論理スロットです。 */
+    /** body内の中間経路から垂直投影した、戻り経路上の矢印表示用論理スロットです。 */
     val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
     fun contains(local: MapPoint): Boolean =
@@ -114,7 +124,7 @@ data class GraphLayout(
     val nodePoints: Map<UUID, MapPoint>,
     val width: Int,
     val height: Int,
-    /** 戻り経路上へ配置する矢印の論理座標です。 */
+    /** body内の中間経路を戻り経路へ投影して配置する矢印の論理座標です。 */
     val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
     fun viewport(origin: MapPoint, width: Int, height: Int): Map<MapPoint, MapCell> =
@@ -676,23 +686,43 @@ object GraphLayoutEngine {
             putNode(endX, y, end)
 
             val returnY = body.maxY + 2
-            nodePoints
-                .filterKeys { it !in bodyNodeIdsBefore }
-                .values
-                .map { it.x }
-                .filter { it in (x + 1) until endX }
-                .distinct()
-                .forEach { arrowX ->
-                    // 論理セルのXスロットは画面倍率によらず等間隔なので、描画側で
-                    // ピクセル座標を計算せず、戻り経路との交点として正本化します。
-                    loopReturnArrowPoints += MapPoint(arrowX, returnY)
-                }
+            val bodyHasNodes = nodePoints.keys.any { it !in bodyNodeIdsBefore }
+            if (bodyHasNodes) {
+                // ノードの中心列ではなく、body内で実際にノード同士をつなぐ横経路セルを
+                // 矢印の起点にします。経路セルの左右が接続可能なら「内部ノードの中間」
+                // とみなし、その論理X列を戻り経路へ垂直投影します。これにより、分岐の
+                // 下枝や入れ子forを含めても、ノードそのものへ矢印が重ならず、経路上の
+                // 複数スロットへ等間隔に「«」を配置できます。
+                cells.asSequence()
+                    .filter { (point, cell) ->
+                        point.x in (x + 1) until endX &&
+                            point.y in y..body.maxY &&
+                            cell.kind in LOOP_RETURN_ARROW_SOURCE_KINDS &&
+                            isHorizontalBodyPathSlot(point)
+                    }
+                    .map { (point, _) -> point.x }
+                    .distinct()
+                    .forEach { arrowX ->
+                        loopReturnArrowPoints += MapPoint(arrowX, returnY)
+                    }
+            }
             for (verticalY in y + 1..returnY) {
                 putPath(endX, verticalY, MapCellKind.LOOP_RETURN_PATH)
                 putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH)
             }
             fillHorizontal(x, endX, returnY, MapCellKind.LOOP_RETURN_PATH)
             return Segment(endX + 2, returnY, end.id)
+        }
+
+        /**
+         * 経路セルがノード間の水平経路に属するかを判定します。
+         * 縦枝の途中は上下だけで接続されるため、左右の接続可能セルを要求すると、
+         * 縦線や曲がり角を矢印の起点へ誤って採用しません。
+         */
+        private fun isHorizontalBodyPathSlot(point: MapPoint): Boolean {
+            val leftKind = cells[MapPoint(point.x - 1, point.y)]?.kind
+            val rightKind = cells[MapPoint(point.x + 1, point.y)]?.kind
+            return leftKind in CONNECTABLE_CELL_KINDS && rightKind in CONNECTABLE_CELL_KINDS
         }
 
         private fun fillHorizontal(
