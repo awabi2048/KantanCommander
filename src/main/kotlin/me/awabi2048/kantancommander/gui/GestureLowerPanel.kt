@@ -528,7 +528,10 @@ class GestureLowerPanel(
                 val cx = if (column == 0) -0.53 else 0.53
                 val cy = CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH
                 val bgId = "variables-bg-$index"
-                addBlock(visuals, bgId, cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT, Material.WRITABLE_BOOK, 4)
+                // 一覧カードはBlockDisplayの背景として横へ引き伸ばすため、アイテム素材ではなく
+                // 模様のないコンクリートを使います。WRITABLE_BOOKは上部設定カードのアイコン用途
+                // では有効ですが、Bukkit.createBlockDataへ渡すことはできません。
+                addBlock(visuals, bgId, cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT, Material.LIGHT_GRAY_CONCRETE, 4)
                 addText(visuals, "variables-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(name))
                 val detail = KcI18n.text(
                     player,
@@ -558,7 +561,9 @@ class GestureLowerPanel(
                 CHILD_PAGER_Y,
             )
         }
-        addBlock(visuals, "variables-create-bg", 0.0, -0.22, CHILD_CHOICE_WIDTH, 0.10, Material.EMERALD_BLOCK, 4)
+        // エメラルドブロックの模様はカードを横長にした際に視覚的に崩れるため、
+        // 単色のコンクリートへ置き換えます。作成操作の緑色は維持します。
+        addBlock(visuals, "variables-create-bg", 0.0, -0.22, CHILD_CHOICE_WIDTH, 0.10, Material.GREEN_CONCRETE, 4)
         addText(
             visuals,
             "variables-create-label",
