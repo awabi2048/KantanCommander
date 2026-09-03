@@ -34,6 +34,7 @@ import me.awabi2048.kantancommander.model.hasContextOverride
 import me.awabi2048.kantancommander.model.supportsContextOverride
 import java.util.Collections
 import java.util.IdentityHashMap
+import java.util.ArrayDeque
 import java.util.UUID
 
 /** 実行前検証の結果を、表示文字列ではなく対象ノードと設定項目で保持します。 */
@@ -91,11 +92,20 @@ object ExecutableScriptValidator {
             return
         }
         GraphValidator.validate(graph, limits).forEach { errors += ScriptValidationError(path, null, emptySet(), it) }
-        // 一時変数は実行内寿命のため、グラフ内の一時定義を収集して参照検証に使います。
-        // DISK_CALLのスナップショットは隔離されるため、再帰先では収集し直します。
-        val temporaryDefinitions = collectTemporaryDefinitions(graph)
+        // 一時変数はグラフ全体の宣言ではなく、実行時点で到達が保証される定義だけを
+        // 参照可能とします。分岐合流では全経路の共通部分を使い、DISK_CALLの
+        // スナップショットは別グラフとして解析することで、実行時セッションの寿命と
+        // 静的検証の結果を一致させます。
+        val temporaryAvailability = analyzeTemporaryAvailability(graph)
         graph.nodes.values.forEach { node ->
-            validateNode(node, "$path/${node.id}", errors, variableDefinitions, isInsideForBody(graph, node.id), temporaryDefinitions)
+            validateNode(
+                node,
+                "$path/${node.id}",
+                errors,
+                variableDefinitions,
+                isInsideForBody(graph, node.id),
+                temporaryAvailability[node.id] ?: emptyMap(),
+            )
             node.snapshot?.let {
                 validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits, variableDefinitions)
             }
@@ -103,17 +113,82 @@ object ExecutableScriptValidator {
         visited.remove(graph)
     }
 
-    /** グラフ内の「一時変数を設定」ノードから名前→型の定義表を収集します。 */
-    private fun collectTemporaryDefinitions(graph: CommandGraph): Map<String, TemporaryVariableType> = buildMap {
-        graph.nodes.values.forEach { node ->
-            if (node.type != CommandType.TEMP_SET) return@forEach
+    /**
+     * 各ノードの入口で確実に定義済みとなる一時変数の型をデータフロー解析します。
+     *
+     * TEMP_SETは直後の経路へ型を追加・上書きします。条件分岐の合流では、全ての
+     * 到達経路に存在し、かつ型が一致する名前だけを残します。異なる分岐で異なる型を
+     * 設定した名前は、合流後の型を静的に決められないため未定義として扱います。
+     * 実行時のセッション表は別途必ず確認し、動的な参照失敗を防御します。
+     */
+    private fun analyzeTemporaryAvailability(
+        graph: CommandGraph,
+    ): Map<UUID, Map<String, TemporaryVariableType>> {
+        val entry = graph.entryNodeId?.takeIf(graph.nodes::containsKey) ?: return emptyMap()
+        fun successors(node: CommandNode): List<UUID> = when (node.type) {
+            CommandType.CONDITION -> listOfNotNull(node.trueNext, node.falseNext)
+            CommandType.FOR_START -> listOfNotNull(node.trueNext)
+            else -> listOfNotNull(node.next)
+        }
+
+        val reachable = linkedSetOf<UUID>()
+        val visitQueue = ArrayDeque<UUID>()
+        visitQueue.add(entry)
+        while (visitQueue.isNotEmpty()) {
+            val id = visitQueue.removeFirst()
+            if (!reachable.add(id)) continue
+            graph.nodes[id]?.let { node -> successors(node).forEach(visitQueue::addLast) }
+        }
+
+        val predecessors = reachable.associateWith { mutableListOf<UUID>() }.toMutableMap()
+        reachable.forEach { sourceId ->
+            val source = graph.nodes[sourceId] ?: return@forEach
+            successors(source).filter(reachable::contains).forEach { targetId ->
+                predecessors.getValue(targetId) += sourceId
+            }
+        }
+
+        fun join(states: List<Map<String, TemporaryVariableType>>): Map<String, TemporaryVariableType> {
+            if (states.isEmpty()) return emptyMap()
+            return states.first().keys.mapNotNull { name ->
+                val type = states.first().getValue(name)
+                if (states.drop(1).all { it[name] == type }) name to type else null
+            }.toMap()
+        }
+
+        fun transfer(node: CommandNode, input: Map<String, TemporaryVariableType>): Map<String, TemporaryVariableType> {
+            if (node.type != CommandType.TEMP_SET) return input
             val name = TemporaryTemplate.normalized(node.string("name"))
-            if (!CommandValueRules.isVariableName(name)) return@forEach
             val type = runCatching {
                 TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
-            }.getOrNull() ?: return@forEach
-            put(name, type)
+            }.getOrNull()
+            if (!CommandValueRules.isVariableName(name) || type == null) return input
+            return input + (name to type)
         }
+
+        val inputs = mutableMapOf<UUID, Map<String, TemporaryVariableType>>()
+        val outputs = mutableMapOf<UUID, Map<String, TemporaryVariableType>>()
+        val queue = ArrayDeque<UUID>()
+        inputs[entry] = emptyMap()
+        queue.add(entry)
+        while (queue.isNotEmpty()) {
+            val id = queue.removeFirst()
+            val node = graph.nodes[id] ?: continue
+            val input = if (id == entry) {
+                emptyMap()
+            } else {
+                val incoming = predecessors.getValue(id)
+                if (incoming.any { it !in outputs }) continue
+                join(incoming.map(outputs::getValue))
+            }
+            if (inputs[id] == input && id in outputs) continue
+            inputs[id] = input
+            val output = transfer(node, input)
+            val changed = outputs[id] != output
+            outputs[id] = output
+            if (changed) successors(node).filter(reachable::contains).forEach(queue::addLast)
+        }
+        return inputs
     }
 
     private fun validateNode(
@@ -160,7 +235,7 @@ object ExecutableScriptValidator {
             }
             CommandType.GIVE_ITEM -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-                if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
+                if (node.itemTempRef.isNullOrBlank() && CommandValueRules.material(node.string("item"), allowAir = false) == null) {
                     errors += nodeError(node, path, setOf("item"), "アイテムが未設定です")
                 }
                 validatePositiveIntegerInput(node.string("count"), variableDefinitions, node, path, setOf("count"), errors, temporaryDefinitions)
@@ -240,7 +315,7 @@ object ExecutableScriptValidator {
                 if (!CommandValueRules.isEquipmentSlot(node.string("slot"))) {
                     errors += nodeError(node, path, setOf("slot"), "装備するスロットが不正です")
                 }
-                if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
+                if (node.itemTempRef.isNullOrBlank() && CommandValueRules.material(node.string("item"), allowAir = false) == null) {
                     errors += nodeError(node, path, setOf("item"), "装備アイテムが未設定です")
                 }
                 if (node.params["overwrite"]?.toBooleanStrictOrNull() == null) {
@@ -254,10 +329,9 @@ object ExecutableScriptValidator {
                 val tag = node.string("tag")
                 // カンマを特別扱いせず、単一タグの通常の形式検証へ委ねます。
                 // 一時変数 `%{name}%` の参照も文字列欄として許可します。
-                if (TemporaryTemplate.hasMalformedReference(tag) ||
-                    VariableTemplate.hasMalformedReference(tag) ||
-                    (VariableTemplate.references(tag).isEmpty() && TemporaryTemplate.references(tag).isEmpty() &&
-                        !CommandValueRules.isTag(tag))
+                validateTemplate(tag, node, path, "tag", errors, null, temporaries = temporaryDefinitions)
+                if (VariableTemplate.references(tag).isEmpty() && TemporaryTemplate.references(tag).isEmpty() &&
+                    !CommandValueRules.isTag(tag)
                 ) {
                     errors += nodeError(node, path, setOf("tag"), "タグが不正です")
                 }
@@ -314,6 +388,7 @@ object ExecutableScriptValidator {
             rangeMessage = "待機時間は0秒より大きく86400秒以下の数値で指定してください",
             variableDefinitions = variableDefinitions,
             errors = errors,
+            temporaryDefinitions = temporaryDefinitions,
         )
     }
 
@@ -325,7 +400,7 @@ object ExecutableScriptValidator {
     ) {
         val operation = BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))
         if (operation == null) errors += nodeError(node, path, setOf("operation"), "配置方式が不正です")
-        if (CommandValueRules.placementMaterial(node.string("block")) == null) {
+        if (node.blockTempRef.isNullOrBlank() && CommandValueRules.placementMaterial(node.string("block")) == null) {
             errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
         }
         when (operation) {
@@ -372,13 +447,13 @@ object ExecutableScriptValidator {
             }
         }
         spec.tag?.takeIf(String::isNotBlank)?.let {
-            validateTemplate(it, node, path, "target", errors, variableDefinitions, insideForBody)
-            if (VariableTemplate.references(it).isEmpty() && !CommandValueRules.isTag(it)) {
+            validateTemplate(it, node, path, "target", errors, variableDefinitions, insideForBody, temporaryDefinitions)
+            if (VariableTemplate.references(it).isEmpty() && TemporaryTemplate.references(it).isEmpty() && !CommandValueRules.isTag(it)) {
                 errors += nodeError(node, path, emptySet(), "タグが不正です")
             }
         }
         spec.name?.takeIf(String::isNotBlank)?.let {
-            validateTemplate(it, node, path, "target", errors, variableDefinitions, insideForBody)
+            validateTemplate(it, node, path, "target", errors, variableDefinitions, insideForBody, temporaryDefinitions)
             if (it.length > 256) errors += nodeError(node, path, emptySet(), "エンティティ名が長すぎます")
         }
         val distances = listOf(spec.minimumDistance, spec.maximumDistance)
@@ -747,12 +822,12 @@ object ExecutableScriptValidator {
             }
             TemporaryVariableType.ENTITY -> { /* 実行時に解決するため、設定時は検証しません。 */ }
             TemporaryVariableType.SOUND -> {
-                if (!CommandValueRules.isSoundId(node.string("sound"))) {
+                if (node.soundTempRef.isNullOrBlank() && !CommandValueRules.isSoundId(node.string("sound"))) {
                     errors += nodeError(node, path, setOf("value"), "サウンドIDが不正です")
                 }
             }
             TemporaryVariableType.EFFECT -> {
-                if (!CommandValueRules.isEffectId(node.string("effect"))) {
+                if (node.effectTempRef.isNullOrBlank() && !CommandValueRules.isEffectId(node.string("effect"))) {
                     errors += nodeError(node, path, setOf("value"), "エフェクトが不正です")
                 }
             }
@@ -914,12 +989,13 @@ object ExecutableScriptValidator {
             }
         }
         if (temporaries != null) {
-            TemporaryTemplate.references(raw)
-                .map(TemporaryTemplate::normalized)
-                .filter { it !in temporaries }
-                .forEach {
-                    errors += nodeError(node, path, setOf(field), "一時変数が未定義です: $it")
+            TemporaryTemplate.references(raw).map(TemporaryTemplate::normalized).forEach { reference ->
+                when (val type = temporaries[reference]) {
+                    null -> errors += nodeError(node, path, setOf(field), "一時変数が未定義です: $reference")
+                    TemporaryVariableType.NUMBER, TemporaryVariableType.STRING -> Unit
+                    else -> errors += nodeError(node, path, setOf(field), "複合型の一時変数はテキストへ埋め込めません: $reference ($type)")
                 }
+            }
         }
     }
 
@@ -932,7 +1008,12 @@ object ExecutableScriptValidator {
         if (VariableTemplate.references(raw).any {
                 !SystemVariableNames.isSystemName(it) && definitions != null && it !in definitions
             }) return false
-        if (temporaries != null && TemporaryTemplate.references(raw).map(TemporaryTemplate::normalized).any { it !in temporaries }) {
+        if (temporaries != null && TemporaryTemplate.references(raw).map(TemporaryTemplate::normalized).any { reference ->
+                temporaries[reference] == null || temporaries[reference] !in setOf(
+                    TemporaryVariableType.NUMBER,
+                    TemporaryVariableType.STRING,
+                )
+            }) {
             return false
         }
         return VariableTemplate.references(raw).isNotEmpty() || TemporaryTemplate.references(raw).isNotEmpty() ||

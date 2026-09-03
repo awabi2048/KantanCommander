@@ -15,6 +15,7 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -78,6 +79,98 @@ class ExecutableScriptValidatorTest {
         )
 
         assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == variable.id })
+    }
+
+    @Test
+    fun `temporary references are available only after their definition`() {
+        val script = DiskScript(name = "temporary-order", owner = UUID.randomUUID())
+        val display = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+            params["text"] = "%{message}%"
+        }
+        val definition = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "message"
+            params["tempType"] = TemporaryVariableType.STRING.name
+            params["value"] = "ready"
+        }
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.nodeId == display.id && it.message.contains("一時変数が未定義") })
+        assertFalse(errors.any { it.nodeId == definition.id && it.message.contains("一時変数が未定義") })
+    }
+
+    @Test
+    fun `temporary references defined on only one branch are unavailable after merge`() {
+        val script = DiskScript(name = "temporary-branch", owner = UUID.randomUUID())
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        }
+        val definition = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "message"
+            params["tempType"] = TemporaryVariableType.STRING.name
+            params["value"] = "ready"
+        }
+        GraphEditor.append(script.graph, CommandType.WAIT, condition.id)
+        GraphEditor.appendMerge(script.graph, condition.id)
+        val after = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+            params["text"] = "%{message}%"
+        }
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.nodeId == after.id && it.message.contains("一時変数が未定義") })
+        assertFalse(errors.any { it.nodeId == definition.id && it.message.contains("一時変数が未定義") })
+    }
+
+    @Test
+    fun `temporary references defined on every branch retain their common type`() {
+        val script = DiskScript(name = "temporary-branch-common", owner = UUID.randomUUID())
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "message"
+            params["tempType"] = TemporaryVariableType.STRING.name
+            params["value"] = "true"
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET, condition.id).apply {
+            params["name"] = "message"
+            params["tempType"] = TemporaryVariableType.STRING.name
+            params["value"] = "false"
+        }
+        GraphEditor.appendMerge(script.graph, condition.id)
+        val after = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+            params["text"] = "%{message}%"
+        }
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertFalse(errors.any { it.nodeId == after.id && it.message.contains("一時変数が未定義") })
+    }
+
+    @Test
+    fun `temporary redefinition may change type on one execution path`() {
+        val script = DiskScript(name = "temporary-redefinition", owner = UUID.randomUUID())
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "value"
+            params["tempType"] = TemporaryVariableType.STRING.name
+            params["value"] = "text"
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "value"
+            params["tempType"] = TemporaryVariableType.NUMBER.name
+            params["value"] = "2"
+        }
+        val wait = GraphEditor.append(script.graph, CommandType.WAIT).apply {
+            params["seconds"] = "%{value}%"
+        }
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertFalse(errors.any { it.nodeId == wait.id && it.message.contains("一時変数") })
     }
 
     @Test
