@@ -116,6 +116,8 @@ data class GestureEditorState(
     var settingChoicePage: Int = 0,
     /** ワールド内変数一覧だけに使うページ番号です。 */
     var variablePage: Int = 0,
+    /** ワールド内変数の新規作成で、Dialogへ進む前にGestureGUIで選択した型です。 */
+    var pendingWorldVariableType: VariableType? = null,
 )
 
 /** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
@@ -124,6 +126,7 @@ enum class GestureLowerMode {
     PICKER,
     SETTING_CHOICES,
     WORLD_VARIABLES,
+    WORLD_VARIABLE_TYPE,
     CONFIRM,
 }
 
@@ -430,6 +433,7 @@ class GestureSequenceEditor(
             when (state.lowerMode) {
                 GestureLowerMode.SETTING_CHOICES -> lowerPanel.buildSettingChild(state, owner, attention)
                 GestureLowerMode.WORLD_VARIABLES -> lowerPanel.buildWorldVariablesChild(state, owner)
+                GestureLowerMode.WORLD_VARIABLE_TYPE -> lowerPanel.buildWorldVariableTypeChild(state, owner)
                 else -> lowerPanel.build(state, owner, attention)
             }
         } else {
@@ -1210,6 +1214,7 @@ class GestureSequenceEditor(
         state.settingRoute = emptyList()
         state.settingScreen = null
         state.settingChoicePage = 0
+        state.pendingWorldVariableType = null
     }
 
     /** 設定木の現在フレームを既存表示状態へ投影します。 */
@@ -1945,6 +1950,7 @@ class GestureSequenceEditor(
     private fun openWorldVariables(player: Player) {
         if (resolveVariableWorldId() == null) return
         state.variablePage = 0
+        state.pendingWorldVariableType = null
         state.lowerMode = GestureLowerMode.WORLD_VARIABLES
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) {
@@ -1983,6 +1989,7 @@ class GestureSequenceEditor(
         if (settingChildOpen(ownerId)) {
             api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
+        state.pendingWorldVariableType = null
         state.lowerMode = GestureLowerMode.SETTINGS
         updateLower(player)
     }
@@ -1992,30 +1999,9 @@ class GestureSequenceEditor(
         val worldId = resolveVariableWorldId() ?: return
         val current = plugin.variables.get(worldId, name) ?: return
         val type = plugin.variables.definitions(worldId)[name]?.type ?: current.type
-        val spec = when (type) {
-            VariableType.NUMBER -> CommandDialogSpecs.Spec(
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-                32,
-                validate = { raw ->
-                    if (CommandValueRules.parseFiniteDouble(raw) == null) {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
-                    } else null
-                },
-                required = true,
-                format = CommandDialogSpecs.InputFormat.NUMBER,
-            )
-            VariableType.STRING -> CommandDialogSpecs.Spec(
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-                256,
-                validate = { raw ->
-                    if (VariableTemplate.hasMalformedReference(raw)) {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
-                    } else null
-                },
-                required = false,
-                format = CommandDialogSpecs.InputFormat.ANY_STRING,
-            )
-        }
+        // 型ごとの長さ・有限値・参照記法の検証は、Inventory/Gestureで分岐させず
+        // 共通Specへ集約します。画面側はDialogの表示と保存だけを担当します。
+        val spec = CommandDialogSpecs.worldVariableValue(type)
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
@@ -2069,109 +2055,117 @@ class GestureSequenceEditor(
         }
     }
 
-    /** 空一覧・一覧下部から変数を新規作成します。名前→型→初期値の順に入力します。 */
-    private fun showWorldVariableCreateDialog(player: Player) {
+    /**
+     * 一覧から型選択子画面へ遷移します。型選択はDialogの追加操作ではなく、
+     * GestureGUI上の独立した設定画面として扱い、選択状態をstateへ保持します。
+     */
+    private fun openWorldVariableTypeSelection(player: Player) {
         if (resolveVariableWorldId() == null) return
-        showTextInputDialog(player, CommandDialogSpecs.variableName, "") { rawName ->
-            val name = rawName.trim()
-            if (!CommandValueRules.isVariableName(name)) {
-                return@showTextInputDialog KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
-                )
-            }
-            showWorldVariableTypeDialog(player, name)
-            null
+        state.pendingWorldVariableType = null
+        state.lowerMode = GestureLowerMode.WORLD_VARIABLE_TYPE
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildWorldVariableTypeChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ワールド内変数の型選択画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.pendingWorldVariableType = null
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
         }
     }
 
-    /** 新規作成の型選択を、入力画面の追加操作として提示します。 */
-    private fun showWorldVariableTypeDialog(player: Player, name: String) {
-        val numberButton = MenuDialogButton(
-            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER),
-            MenuDialogHandler { target, _ ->
-                if (target.uniqueId != player.uniqueId ||
-                    !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
-                ) {
-                    return@MenuDialogHandler MenuActionResult.Ignored
-                }
-                showWorldVariableInitialValueDialog(player, name, VariableType.NUMBER)
-                MenuActionResult.Success(MenuUpdate.None)
-            },
-        )
-        val stringButton = MenuDialogButton(
-            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT),
-            MenuDialogHandler { target, _ ->
-                if (target.uniqueId != player.uniqueId ||
-                    !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
-                ) {
-                    return@MenuDialogHandler MenuActionResult.Ignored
-                }
-                showWorldVariableInitialValueDialog(player, name, VariableType.STRING)
-                MenuActionResult.Success(MenuUpdate.None)
-            },
-        )
+    /** 型選択画面から一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
+    private fun closeWorldVariableTypeSelection(player: Player) {
+        state.pendingWorldVariableType = null
+        state.lowerMode = GestureLowerMode.WORLD_VARIABLES
+        updateLower(player)
+    }
+
+    /**
+     * 型選択後に表示する変数名Dialogです。
+     *
+     * 初期値入力はここでは行いません。保存層の型専用defineが必要な空値を用意し、
+     * Dialogは名前の検証・定義の確定だけを担当します。
+     */
+    private fun showWorldVariableNameDialog(player: Player, type: VariableType) {
+        if (resolveVariableWorldId() == null) return
+        // Dialogのキャンセル後も一覧へ戻れるよう、背面の状態を先に一覧へ戻します。
+        state.pendingWorldVariableType = null
+        state.lowerMode = GestureLowerMode.WORLD_VARIABLES
+        updateLower(player)
+        val spec = CommandDialogSpecs.variableName
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_CREATE_TITLE),
-            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BODY)),
-            inputs = emptyList(),
-            additionalActions = listOf(numberButton, stringButton),
-        ) { null }
-    }
-
-    /** 新規作成の初期値を入力し、定義として保存します。 */
-    private fun showWorldVariableInitialValueDialog(player: Player, name: String, type: VariableType) {
-        val worldId = resolveVariableWorldId() ?: return
-        val spec = when (type) {
-            VariableType.NUMBER -> CommandDialogSpecs.Spec(
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-                32,
-                validate = { raw ->
-                    if (CommandValueRules.parseFiniteDouble(raw) == null) {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
-                    } else null
-                },
-                required = true,
-                format = CommandDialogSpecs.InputFormat.NUMBER,
-            )
-            VariableType.STRING -> CommandDialogSpecs.Spec(
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-                256,
-                validate = { raw ->
-                    if (VariableTemplate.hasMalformedReference(raw)) {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
-                    } else null
-                },
-                required = false,
-                format = CommandDialogSpecs.InputFormat.ANY_STRING,
-            )
-        }
-        val initial = if (type == VariableType.NUMBER) "0.0" else ""
-        showInputDialog(
-            player = player,
-            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
-            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BODY)),
-            inputs = listOf(CommandDialogSpecs.input(player, "value", initial, spec)),
-        ) { response ->
-            val raw = response.textValue("value")
-            val validationError = spec.validateInput(raw)
-            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
-            val value = when (type) {
-                VariableType.NUMBER -> WorldVariableValue(
-                    VariableType.NUMBER,
-                    numberValue = CommandValueRules.parseFiniteDouble(raw),
-                ).takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
+            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_BODY)),
+            inputs = listOf(
+                CommandDialogSpecs.input(
                     player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+                    id = "name",
+                    initial = "",
+                    spec = spec,
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_NAME),
+                ),
+            ),
+        ) { response ->
+            val name = response.textValue("name").trim()
+            // Dialog側でも検証しますが、将来別経路から呼ばれても保存前の境界を
+            // 失わないよう、このコールバック自身でも同じ名前Specを確認します。
+            val validationError = spec.validateInput(name)
+            if (validationError != null) {
+                return@showInputDialog KcI18n.text(
+                    player,
+                    validationError,
                 )
-                VariableType.STRING -> WorldVariableValue(VariableType.STRING, stringValue = raw)
             }
-            val defined = runCatching { plugin.variables.define(worldId, name, value) }
+            val worldId = resolveVariableWorldId() ?: return@showInputDialog KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+            )
+            val alreadyDefined = runCatching { name in plugin.variables.definitions(worldId) }
                 .getOrElse { failure ->
                     plugin.logger.log(
                         java.util.logging.Level.WARNING,
-                        "ワールド内変数を定義できませんでした: world=$worldId name=$name",
+                        "ワールド内変数の定義を確認できませんでした: world=$worldId name=$name",
+                        failure,
+                    )
+                    return@showInputDialog KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                    )
+                }
+            if (alreadyDefined) {
+                return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DUPLICATE,
+                )
+            }
+            val defined = runCatching { plugin.variables.define(worldId, name, type) }
+                .getOrElse { failure ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "ワールド内変数を定義できませんでした: world=$worldId name=$name type=$type",
                         failure,
                     )
                     return@showInputDialog KcI18n.text(
@@ -2180,9 +2174,11 @@ class GestureSequenceEditor(
                     )
                 }
             if (!defined) {
+                // 同時操作で先に定義された場合も、保存失敗ではなく利用者が修正できる
+                // 重複名として扱います。
                 return@showInputDialog KcI18n.text(
                     player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DUPLICATE,
                 )
             }
             updateLower(player)
@@ -3306,6 +3302,10 @@ class GestureSequenceEditor(
             context.elementId == "lower-script-variables" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 openWorldVariables(player)
             }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLE_TYPE &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeWorldVariableTypeSelection(player)
+            }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLES &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 closeWorldVariables(player)
@@ -3319,8 +3319,21 @@ class GestureSequenceEditor(
                 if (name.isEmpty()) return
                 showWorldVariableValueDialog(player, name)
             }
+            context.elementId.startsWith("lower-world-variable-type:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val type = runCatching {
+                    VariableType.valueOf(context.elementId.removePrefix("lower-world-variable-type:"))
+                }.getOrNull() ?: return
+                state.pendingWorldVariableType = type
+                updateLower(player)
+            }
+            context.elementId == "lower-world-variable-type-next" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val type = state.pendingWorldVariableType ?: return
+                showWorldVariableNameDialog(player, type)
+            }
             context.elementId == "lower-variables-create" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                showWorldVariableCreateDialog(player)
+                openWorldVariableTypeSelection(player)
             }
             context.elementId.startsWith("lower-tab:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return

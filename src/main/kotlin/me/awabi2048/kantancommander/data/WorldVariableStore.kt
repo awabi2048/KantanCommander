@@ -46,7 +46,18 @@ class WorldVariableStore(
         cache[worldId] = candidate
     }
 
-    /** 新しい変数を定義し、初期値を現在値として保存します。 */
+    /**
+     * 型だけを指定して新しい変数を定義します。
+     *
+     * 保存形式は定義と現在値を常に同じ型付き値として持つため、型だけの定義でも
+     * 現在値の入れ物が必要です。ここで型ごとの空値を内部生成し、GUIで利用者へ
+     * 初期値を入力させない定義経路を共通化します。
+     */
+    @Synchronized
+    fun define(worldId: UUID, name: String, type: VariableType): Boolean =
+        define(worldId, name, emptyValue(type))
+
+    /** 新しい変数を定義し、渡された値を現在値として保存します。 */
     @Synchronized
     fun define(worldId: UUID, name: String, value: WorldVariableValue): Boolean {
         require(valid(value)) { "invalid variable value" }
@@ -230,6 +241,12 @@ class WorldVariableStore(
     private fun valid(value: WorldVariableValue): Boolean = when (value.type) {
         VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
         VariableType.STRING -> value.stringValue != null && value.numberValue == null
+    }
+
+    /** 型だけの定義で使う保存層の空値です。利用者が設定した初期値ではありません。 */
+    private fun emptyValue(type: VariableType): WorldVariableValue = when (type) {
+        VariableType.NUMBER -> WorldVariableValue(type, numberValue = 0.0)
+        VariableType.STRING -> WorldVariableValue(type, stringValue = "")
     }
 
     private fun file(worldId: UUID) = directory.resolve("$worldId.json")

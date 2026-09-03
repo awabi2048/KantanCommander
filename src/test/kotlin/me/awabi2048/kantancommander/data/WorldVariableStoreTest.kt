@@ -62,6 +62,21 @@ class WorldVariableStoreTest {
     }
 
     @Test
+    fun `type-only definitions use storage empty values without accepting a user initial value`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+
+        assertTrue(store.define(world, "counter", VariableType.NUMBER))
+        assertEquals(VariableType.NUMBER, store.definitions(world)["counter"]?.type)
+        assertEquals(0.0, store.get(world, "counter")?.numberValue)
+
+        assertTrue(store.define(world, "label", VariableType.STRING))
+        assertEquals(VariableType.STRING, store.definitions(world)["label"]?.type)
+        assertEquals("", store.get(world, "label")?.stringValue)
+        assertTrue(!store.define(world, "counter", VariableType.STRING))
+    }
+
+    @Test
     fun `system variable names cannot be defined or edited as world variables`() {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)

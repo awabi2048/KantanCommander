@@ -161,6 +161,36 @@ class CommandDialogSpecsTest {
     }
 
     @Test
+    fun `world variable value specs reject invalid values at the save boundary`() {
+        val number = CommandDialogSpecs.worldVariableValue(VariableType.NUMBER)
+        assertEquals(32, number.maxLength)
+        assertEquals(CommandDialogSpecs.InputFormat.NUMBER, number.format)
+        assertNull(number.validateInput(" 1.5 "))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            number.validateInput("NaN"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            number.validateInput("Infinity"),
+        )
+
+        val string = CommandDialogSpecs.worldVariableValue(VariableType.STRING)
+        assertEquals(256, string.maxLength)
+        assertEquals(CommandDialogSpecs.InputFormat.ANY_STRING, string.format)
+        assertNull(string.validateInput(""))
+        assertNull(string.validateInput("ordinary text"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            string.validateInput("x".repeat(257)),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            string.validateInput("value=\${BadName}"),
+        )
+    }
+
+    @Test
     fun `timer and multi-value dialogs share strict finite input boundaries`() {
         assertEquals(6, CommandDialogSpecs.timerSeconds.maxLength)
         assertNull(CommandDialogSpecs.timerSeconds.validate("1"))

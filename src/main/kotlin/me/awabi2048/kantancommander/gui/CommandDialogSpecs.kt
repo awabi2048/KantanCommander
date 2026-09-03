@@ -373,6 +373,38 @@ internal object CommandDialogSpecs {
         format = InputFormat.VARIABLE_NAME,
     )
 
+    /**
+     * 一覧から編集するワールド内変数の値入力仕様です。
+     *
+     * ワールド内変数は保存層でNUMBER／STRINGの型を固定するため、画面側でも
+     * 型ごとの入力境界をここへ集約します。入力欄のmaxLengthだけに依存せず、
+     * 応答を直接組み立てた場合も同じ検証を通るよう、文字列長も保存前に確認します。
+     */
+    fun worldVariableValue(type: VariableType): Spec = when (type) {
+        VariableType.NUMBER -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+            32,
+            validate = { raw ->
+                if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                } else null
+            },
+            required = true,
+            format = InputFormat.NUMBER,
+        )
+        VariableType.STRING -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+            WORLD_VARIABLE_STRING_MAX_LENGTH,
+            validate = { raw ->
+                if (raw.length > WORLD_VARIABLE_STRING_MAX_LENGTH || VariableTemplate.hasMalformedReference(raw)) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                } else null
+            },
+            required = false,
+            format = InputFormat.ANY_STRING,
+        )
+    }
+
     /** 符号付き整数（条件の比較値など）。 */
     val signedInteger = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
@@ -910,6 +942,7 @@ internal object CommandDialogSpecs {
 
     private const val MAX_EFFECT_SECONDS = 86_400
     private const val MULTI_VALUE_MAX_LENGTH = 64
+    private const val WORLD_VARIABLE_STRING_MAX_LENGTH = 256
     private val NAMESPACED_ID_FIELDS = setOf("entity", "entityType", "sound", "effect")
 
     /** 数値欄でも単一のワールド変数・一時変数を実行時に数値化できるようにします。 */

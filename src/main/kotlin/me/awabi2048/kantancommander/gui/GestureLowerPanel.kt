@@ -83,6 +83,9 @@ class GestureLowerPanel(
                 suppressHighlight = suppressHighlight,
             )
             GestureLowerMode.WORLD_VARIABLES -> buildSettings(state, player, attention, suppressHighlight)
+            // 型選択はワールド変数一覧の子画面から遷移するため、子画面が何らかの理由で
+            // 閉じられた場合でも、親側へ型選択の内部座標を誤描画しないようにします。
+            GestureLowerMode.WORLD_VARIABLE_TYPE -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
         }
     }
@@ -101,6 +104,12 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
     ): GestureGuiView = buildWorldVariables(state, player)
+
+    /** ワールド変数の型選択子画面を生成します。 */
+    fun buildWorldVariableTypeChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView = buildWorldVariableType(state, player)
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
@@ -517,7 +526,9 @@ class GestureLowerPanel(
                 Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_EMPTY)),
             )
         } else {
-            val pageSize = SETTING_CHOICE_PAGE_SIZE
+            // 下段を「新規作成／戻る」の2ボタンへ固定するため、一覧は3行までにします。
+            // 共通設定候補のページサイズを流用すると、10件目のカードと操作列が重なります。
+            val pageSize = WORLD_VARIABLE_PAGE_SIZE
             val pageCount = (entries.size + pageSize - 1) / pageSize
             val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
             entries.keys.toList().drop(page * pageSize).take(pageSize).forEachIndexed { index, name ->
@@ -561,26 +572,134 @@ class GestureLowerPanel(
                 CHILD_PAGER_Y,
             )
         }
+        // 下段は常設操作列として左右に分離します。作成と戻るを同じ中央列へ積むと、
+        // クリック領域が重なり、表示件数によって操作位置も変わるためです。
         // エメラルドブロックの模様はカードを横長にした際に視覚的に崩れるため、
-        // 単色のコンクリートへ置き換えます。作成操作の緑色は維持します。
-        addBlock(visuals, "variables-create-bg", 0.0, -0.22, CHILD_CHOICE_WIDTH, 0.10, Material.GREEN_CONCRETE, 4)
+        // 単色のコンクリートへ置き換えます。
+        addBlock(visuals, "variables-create-bg", -0.53, -0.43, CHILD_CHOICE_WIDTH, 0.10, Material.GREEN_CONCRETE, 4)
         addText(
             visuals,
             "variables-create-label",
-            0.0,
-            -0.22,
+            -0.53,
+            -0.43,
             0.0048,
             140,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_CREATE)),
         )
         elements.add(GestureGuiElement(
             elementId = "lower-variables-create",
-            bounds = rect(0.0, -0.22, CHILD_CHOICE_WIDTH, 0.10),
+            bounds = rect(-0.53, -0.43, CHILD_CHOICE_WIDTH, 0.10),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "variables-create-bg",
         ))
-        addBackSetting(player, elements, visuals, child = true, centerX = 0.0, width = CHILD_BACK_WIDTH)
+        addBackSetting(player, elements, visuals, child = true, centerX = 0.53, width = CHILD_CHOICE_WIDTH)
         return view(GestureLowerMode.WORLD_VARIABLES, elements, visuals, child = true)
+    }
+
+    /**
+     * ワールド内変数の型をGestureGUIで選択する子画面です。
+     *
+     * 型をDialogの追加ボタンへ押し込まず、一覧→型選択→次へ→名前Dialogの
+     * 一方向の手続きとして表示します。これにより、Dialogを開いた後に型が
+     * 変更されたり、初期値入力が暗黙に要求されたりしません。
+     */
+    private fun buildWorldVariableType(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        val selectedType = state.pendingWorldVariableType
+
+        addText(
+            visuals,
+            "world-variable-type-title",
+            0.0,
+            CHILD_HEADER_Y,
+            0.0060,
+            200,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_CREATE_TITLE)),
+        )
+        addText(
+            visuals,
+            "world-variable-type-description",
+            0.0,
+            CHILD_HOVER_Y,
+            DESCRIPTION_TEXT_SIZE,
+            220,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_TYPE)),
+        )
+
+        listOf(VariableType.NUMBER, VariableType.STRING).forEachIndexed { index, type ->
+            val selected = selectedType == type
+            val choice = GestureSettingTreeNode(
+                id = "world-variable-type:${type.name}",
+                label = variableTypeName(player, type),
+                selected = selected,
+            )
+            val cx = if (index == 0) -0.53 else 0.53
+            val cy = CHILD_CHOICE_TOP_Y
+            val bgId = "world-variable-type-bg-$index"
+            addBlock(
+                visuals,
+                bgId,
+                cx,
+                cy,
+                CHILD_CHOICE_WIDTH,
+                SETTING_CHOICE_HEIGHT,
+                settingChoiceMaterial(choice),
+                4,
+                outlineMaterial = GestureSettingVisualPolicy.nonTabOutlineMaterial(selected),
+            )
+            addText(
+                visuals,
+                "world-variable-type-label-$index",
+                cx,
+                cy - 0.012,
+                0.0045,
+                115,
+                Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+            )
+            elements.add(GestureGuiElement(
+                elementId = "lower-world-variable-type:${type.name}",
+                bounds = rect(cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                targetVisualId = bgId,
+            ))
+        }
+
+        val nextEnabled = selectedType != null
+        addBlock(
+            visuals,
+            "world-variable-type-next-bg",
+            -0.53,
+            -0.43,
+            CHILD_CHOICE_WIDTH,
+            0.10,
+            if (nextEnabled) Material.GREEN_CONCRETE else DisabledGuiVisualPolicy.material,
+            4,
+        )
+        addText(
+            visuals,
+            "world-variable-type-next-label",
+            -0.53,
+            -0.43,
+            0.0048,
+            140,
+            Component.text(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_NEXT),
+                if (nextEnabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+            ),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "lower-world-variable-type-next",
+            bounds = rect(-0.53, -0.43, CHILD_CHOICE_WIDTH, 0.10),
+            acceptedGestures = if (nextEnabled) GestureGuiClickPolicy.CLICK else emptySet(),
+            gestureGuard = if (nextEnabled) null else { _, _ -> false },
+            targetVisualId = "world-variable-type-next-bg",
+        ))
+        addBackSetting(player, elements, visuals, child = true, centerX = 0.53, width = CHILD_CHOICE_WIDTH)
+        return view(GestureLowerMode.WORLD_VARIABLE_TYPE, elements, visuals, child = true)
     }
 
     /** ワールド変数の型名を、ノード設定と同じ表示キーで解決します。 */
@@ -2622,6 +2741,8 @@ class GestureLowerPanel(
         // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
         const val SETTING_CHOICE_PAGE_SIZE = 10
+        // ワールド変数一覧は下段に新規作成／戻るを左右配置するため、2列×3行に制限します。
+        const val WORLD_VARIABLE_PAGE_SIZE = 6
         const val SETTING_CHOICE_WIDTH = 0.66
         const val SETTING_CHOICE_HEIGHT = 0.10
         const val SETTING_CHOICE_PITCH = 0.12
