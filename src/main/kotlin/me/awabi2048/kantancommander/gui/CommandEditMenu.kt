@@ -2812,7 +2812,16 @@ object EditorMenuLayout {
                 add(tempCoordinateField("z"))
             }
             TemporaryVariableType.ITEM ->
-                add(field("item", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM, Material.CHEST))
+                // 一時アイテムは「付与アイテム」ではなく、実行内値として設定する項目です。
+                // コマンド固有の説明キー解決へ流すと item の意味が曖昧になるため、
+                // 一時値用の汎用説明をここで明示します。
+                add(field(
+                    "item",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM,
+                    Material.CHEST,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
             TemporaryVariableType.BLOCK ->
                 add(field("block", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, Material.BRICKS))
             TemporaryVariableType.ENTITY ->
@@ -2831,7 +2840,15 @@ object EditorMenuLayout {
             TemporaryVariableType.EFFECT -> {
                 add(field("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT, Material.POTION))
                 add(field("level", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL, Material.COMPARATOR))
-                add(field("seconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS, Material.CLOCK))
+                // seconds は TEMP_SET ではエフェクトの持続時間だけを表すため、
+                // WAIT などの待機時間向け説明へ誤って依存しないよう明示します。
+                add(field(
+                    "seconds",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
+                    Material.CLOCK,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EFFECT_SECONDS,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EFFECT_SECONDS,
+                ))
             }
         }
     }

@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -150,5 +151,28 @@ class EditorMenuLayoutTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_PARAMETERS,
             soundFields.single { it.key == "soundParameters" }.descriptionKey,
         )
+    }
+
+    @Test
+    fun `temporary variable layouts provide presentation for every temporary type`() {
+        val expectedKeys = mapOf(
+            TemporaryVariableType.NUMBER to setOf("name", "tempType", "value"),
+            TemporaryVariableType.STRING to setOf("name", "tempType", "value"),
+            TemporaryVariableType.POSITION to setOf("name", "tempType", "x", "y", "z"),
+            TemporaryVariableType.ITEM to setOf("name", "tempType", "item"),
+            TemporaryVariableType.BLOCK to setOf("name", "tempType", "block"),
+            TemporaryVariableType.ENTITY to setOf("name", "tempType", "entityId"),
+            TemporaryVariableType.SOUND to setOf("name", "tempType", "sound", "volume", "pitch"),
+            TemporaryVariableType.EFFECT to setOf("name", "tempType", "effect", "level", "seconds"),
+        )
+
+        expectedKeys.forEach { (type, keys) ->
+            val node = CommandType.TEMP_SET.newNode().apply {
+                params["tempType"] = type.name
+            }
+            val fields = EditorMenuLayout.fields(CommandType.TEMP_SET, node)
+
+            assertEquals(keys, fields.map(EditorField::key).toSet(), "temporary type=$type")
+        }
     }
 }
