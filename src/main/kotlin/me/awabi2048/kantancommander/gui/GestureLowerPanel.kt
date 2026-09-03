@@ -599,14 +599,10 @@ class GestureLowerPanel(
         fields.forEachIndexed { index, field ->
             val cy = SETTINGS_TAB_TOP_Y - index * SETTINGS_TAB_PITCH
             val on = index == activeField
-            val fieldState = if (CommandSettingsModel.isFieldConfigured(node, field.key)) {
-                GestureSettingValueState.CONFIGURED
-            } else {
-                GestureSettingValueState.INITIAL
-            }
             val attention = field.key in attentionFields
-            // タブの選択状態は縁取りではなく右へ幅20%伸ばして示します。テキスト位置は
-            // 維持し、背景とヒットボックスだけ拡張します。未完了警告はタブテキストの§cです。
+            // タブの選択状態は縁取りではなく右へ幅15%伸ばし、選択中タブの背景はシアンの
+            // テラコッタで示します。テキスト位置は維持し、背景とヒットボックスだけ拡張します。
+            // 未完了警告はタブテキストの§cです。
             val tabSelected = on && !suppressHighlight
             val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(SETTINGS_TAB_WIDTH, tabSelected)
             val tabCx = GestureSettingVisualPolicy.selectedTabCenterX(SETTINGS_TAB_CENTER_X, SETTINGS_TAB_WIDTH, tabSelected)
@@ -617,10 +613,7 @@ class GestureLowerPanel(
                 cy,
                 tabWidth,
                 SETTINGS_TAB_HEIGHT,
-                GestureSettingVisualPolicy.material(
-                    GestureSettingSelectionMode.EXCLUSIVE,
-                    fieldState,
-                ),
+                GestureSettingVisualPolicy.tabMaterial(tabSelected),
                 4,
             )
             val tabLabel = fieldTabLabel(player, node, field)
@@ -2035,18 +2028,15 @@ class GestureLowerPanel(
         // 枝の終端を引き継ぎ、MERGEを選んだ場合だけ継続先へ再合流します。
         val selectedCategory = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
         categories.forEachIndexed { index, option ->
-            // 新規追加画面の左タブ列も設定タブと同一寸法へ統一します。選択状態は色濃淡では
-            // なく、設定タブと同じ右へ幅20%伸ばす表現だけにします。テキスト位置は維持します。
+            // 新規追加画面の左タブ列も設定タブと同一寸法へ統一します。選択中タブは右へ
+            // 幅15%伸ばし、背景をシアンのテラコッタで示します。テキスト位置は維持します。
             val cy = SETTINGS_TAB_TOP_Y - index * SETTINGS_TAB_PITCH
             val on = option == selectedCategory
             val catWidth = GestureSettingVisualPolicy.selectedTabWidth(SETTINGS_TAB_WIDTH, on)
             val catCx = GestureSettingVisualPolicy.selectedTabCenterX(SETTINGS_TAB_CENTER_X, SETTINGS_TAB_WIDTH, on)
             addBlock(
                 visuals, "cat-bg-$index", catCx, cy, catWidth, SETTINGS_TAB_HEIGHT,
-                GestureSettingVisualPolicy.material(
-                    GestureSettingSelectionMode.EXCLUSIVE,
-                    GestureSettingValueState.INITIAL,
-                ),
+                GestureSettingVisualPolicy.tabMaterial(on),
                 4,
             )
             addText(visuals, "cat-$index", SETTINGS_TAB_CENTER_X, cy - 0.02, 0.0055, 90,

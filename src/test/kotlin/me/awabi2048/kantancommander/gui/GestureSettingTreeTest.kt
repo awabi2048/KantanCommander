@@ -99,12 +99,21 @@ class GestureSettingTreeTest {
             GestureSettingVisualPolicy.tabTextColor(attention = true),
         )
 
-        // タブの選択状態は縁取りではなく右へ幅20%伸ばして示します。テキスト位置は維持します。
-        assertEquals(0.20, GestureSettingVisualPolicy.SELECTED_TAB_EXTENSION_RATIO, 1.0e-9)
-        assertEquals(0.564, GestureSettingVisualPolicy.selectedTabWidth(0.47, selected = true), 1.0e-9)
+        // タブの選択状態は縁取りではなく右へ幅15%伸ばし、選択中タブの背景はシアンの
+        // テラコッタで示します。テキスト位置は維持します。
+        assertEquals(0.15, GestureSettingVisualPolicy.SELECTED_TAB_EXTENSION_RATIO, 1.0e-9)
+        assertEquals(0.5405, GestureSettingVisualPolicy.selectedTabWidth(0.47, selected = true), 1.0e-9)
         assertEquals(0.47, GestureSettingVisualPolicy.selectedTabWidth(0.47, selected = false), 1.0e-9)
         // 左端固定のため、拡張分の半分だけ中心が右へ移動します。
-        assertEquals(-0.7505, GestureSettingVisualPolicy.selectedTabCenterX(-0.7975, 0.47, selected = true), 1.0e-9)
+        assertEquals(-0.76225, GestureSettingVisualPolicy.selectedTabCenterX(-0.7975, 0.47, selected = true), 1.0e-9)
+        assertEquals(
+            org.bukkit.Material.CYAN_TERRACOTTA,
+            GestureSettingVisualPolicy.tabMaterial(selected = true),
+        )
+        assertEquals(
+            org.bukkit.Material.LIGHT_GRAY_CONCRETE,
+            GestureSettingVisualPolicy.tabMaterial(selected = false),
+        )
         assertEquals(-0.7975, GestureSettingVisualPolicy.selectedTabCenterX(-0.7975, 0.47, selected = false), 1.0e-9)
         // タブ以外の設定ボタンは、完了状態にかかわらず選択中だけ白い外周枠で示します。
         assertEquals(org.bukkit.Material.WHITE_CONCRETE, GestureSettingVisualPolicy.nonTabOutlineMaterial(selected = true))
