@@ -49,11 +49,25 @@ enum class GestureSettingValueState {
 /**
  * 設定カードの表示規則を一箇所へ集約します。
  *
- * 設定項目の通常テクスチャは薄灰色、ホバー中のテクスチャはシアンのテラコッタへ
- * 統一します。選択状態は外周枠、要確認状態はタブテキストの§c（Adventureの赤色）で
- * 表します。画面ごとの色分岐を増やさず、視認性を確保します。
+ * 設定項目の通常テクスチャは薄灰色へ統一し、ホバー中もテクスチャを変えません。
+ * タブの選択状態は縁取りではなく右へ幅10%伸ばして示し、テキスト位置は維持します。
+ * 要確認状態はタブテキストの§c（Adventureの赤色）で表します。
+ * 画面ごとの色分岐を増やさず、視認性を確保します。
  */
 internal object GestureSettingVisualPolicy {
+    /** 選択中タブを右へ伸ばす比率です。左端を固定し、幅の10%だけ右へ拡張します。 */
+    const val SELECTED_TAB_EXTENSION_RATIO = 0.10
+
+    /** 選択中なら拡張後の幅、非選択なら基準幅を返します。 */
+    fun selectedTabWidth(baseWidth: Double, selected: Boolean): Double =
+        if (selected) baseWidth * (1.0 + SELECTED_TAB_EXTENSION_RATIO) else baseWidth
+
+    /**
+     * 選択中タブの中心Xを返します。
+     * 左端を固定するため、拡張分の半分だけ右へずらします。テキスト位置は動かしません。
+     */
+    fun selectedTabCenterX(baseCx: Double, baseWidth: Double, selected: Boolean): Double =
+        if (selected) baseCx + baseWidth * SELECTED_TAB_EXTENSION_RATIO / 2.0 else baseCx
     // 設定項目は値状態や択一／複数選択の違いで背景色を変えず、通常時は薄灰色へ
     // 統一します。値状態は枠・テキスト・警告などの意味表現から独立させます。
     fun material(
@@ -72,10 +86,6 @@ internal object GestureSettingVisualPolicy {
     /** 警告タブの文字色です。NamedTextColor.REDはレガシー表記の§cに相当します。 */
     fun tabTextColor(attention: Boolean): NamedTextColor? =
         if (attention) NamedTextColor.RED else null
-
-    /** 選択中タブの外周枠に使う黄色コンクリートです。非選択なら枠を生成しません。 */
-    fun tabOutlineMaterial(selected: Boolean): Material? =
-        if (selected) Material.YELLOW_CONCRETE else null
 
     /** タブ内部・子画面の選択項目の外周枠に使う素材です。 */
     fun nonTabOutlineMaterial(selected: Boolean): Material? =

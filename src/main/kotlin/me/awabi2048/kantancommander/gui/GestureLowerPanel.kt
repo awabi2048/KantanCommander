@@ -546,6 +546,8 @@ class GestureLowerPanel(
                 // 置きます。中段はカード同士の説明が交差しやすいため、常設の右下
                 // 説明領域を置き換えます。1行に複数ボタンが並ぶ場合は最上段として
                 // 上側へ出し、単独ボタンだけを共通説明領域へ集約します。
+                // ホバー中はテクスチャを変えず説明文だけを示します。色付けは実際に
+                // 操作が行われた場合（選択・警告等）に限ります。
                 hoverText = hoverDescription?.let {
                     parallelButtonHover(
                         text = it,
@@ -558,18 +560,7 @@ class GestureLowerPanel(
                         descriptionY = if (child) CHILD_HOVER_Y else HOVER_SLOT_Y,
                         replacesDescription = child,
                         parallel = choices.size > 1,
-                    ).let { hover ->
-                        if (choice.enabled) {
-                            hover.copy(
-                                // ホバー時は本体だけをシアンテラコッタへ差し替え、
-                                // 選択中の縁取りはCC-System側で維持します。
-                                hoverBlockVisualId = bgId,
-                                hoverBlockData = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
-                            )
-                        } else {
-                            hover
-                        }
-                    }
+                    )
                 },
             ))
         }
@@ -614,32 +605,31 @@ class GestureLowerPanel(
                 GestureSettingValueState.INITIAL
             }
             val attention = field.key in attentionFields
-            // タブの選択状態は黄色の外周枠、未完了警告はタブテキストの§cで示します。
+            // タブの選択状態は縁取りではなく右へ幅10%伸ばして示します。テキスト位置は
+            // 維持し、背景とヒットボックスだけ拡張します。未完了警告はタブテキストの§cです。
+            val tabSelected = on && !suppressHighlight
+            val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(SETTINGS_TAB_WIDTH, tabSelected)
+            val tabCx = GestureSettingVisualPolicy.selectedTabCenterX(SETTINGS_TAB_CENTER_X, SETTINGS_TAB_WIDTH, tabSelected)
             addBlock(
                 visuals,
                 "tab-bg-$index",
-                -0.7975,
+                tabCx,
                 cy,
-                0.47,
+                tabWidth,
                 SETTINGS_TAB_HEIGHT,
                 GestureSettingVisualPolicy.material(
                     GestureSettingSelectionMode.EXCLUSIVE,
                     fieldState,
                 ),
                 4,
-                outlineMaterial = if (suppressHighlight) {
-                    null
-                } else {
-                    GestureSettingVisualPolicy.tabOutlineMaterial(on)
-                },
             )
             val tabLabel = fieldTabLabel(player, node, field)
             val tabTextColor = GestureSettingVisualPolicy.tabTextColor(attention)
-            addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
+            addText(visuals, "tab-$index", SETTINGS_TAB_CENTER_X, cy - 0.02, 0.0055, 90,
                 if (tabTextColor == null) Component.text(tabLabel) else Component.text(tabLabel, tabTextColor))
             elements.add(GestureGuiElement(
                 elementId = "lower-tab:$index",
-                bounds = rect(-0.7975, cy, 0.47, SETTINGS_TAB_HEIGHT),
+                bounds = rect(tabCx, cy, tabWidth, SETTINGS_TAB_HEIGHT),
                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "tab-bg-$index",
                 // 要確認タブは色だけでなく状態名も示します。ホバー中は操作説明欄を
@@ -652,12 +642,12 @@ class GestureLowerPanel(
 
 
         val deleteY = -0.43
-        addBlock(visuals, "delete-bg", -0.7975, deleteY, 0.47, 0.10, Material.RED_CONCRETE, 4)
-        addText(visuals, "delete-label", -0.7975, deleteY, 0.0049, 90,
+        addBlock(visuals, "delete-bg", SETTINGS_TAB_CENTER_X, deleteY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT, Material.RED_CONCRETE, 4)
+        addText(visuals, "delete-label", SETTINGS_TAB_CENTER_X, deleteY, 0.0049, 90,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE)))
         elements.add(GestureGuiElement(
             elementId = "lower-delete",
-            bounds = rect(-0.7975, deleteY, 0.47, 0.10),
+            bounds = rect(SETTINGS_TAB_CENTER_X, deleteY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "delete-bg",
         ))
@@ -1830,6 +1820,8 @@ class GestureLowerPanel(
                 acceptedGestures = if (choice.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
+                // ホバー中はテクスチャを変えず説明文だけを示します。色付けは実際に
+                // 操作が行われた場合（選択・警告等）に限ります。
                 hoverText = hoverDescription?.let {
                     parallelButtonHover(
                         text = it,
@@ -1842,17 +1834,7 @@ class GestureLowerPanel(
                         descriptionY = HOVER_SLOT_Y,
                         replacesDescription = false,
                         parallel = choices.size > 1,
-                    ).let { hover ->
-                        if (choice.enabled) {
-                            hover.copy(
-                                // 右下のインライン候補も通常の設定項目と同じホバー契約です。
-                                hoverBlockVisualId = bgId,
-                                hoverBlockData = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
-                            )
-                        } else {
-                            hover
-                        }
-                    }
+                    )
                 },
             )
         }
@@ -2053,29 +2035,36 @@ class GestureLowerPanel(
         // 枝の終端を引き継ぎ、MERGEを選んだ場合だけ継続先へ再合流します。
         val selectedCategory = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
         categories.forEachIndexed { index, option ->
-            val cy = 0.38 - index * 0.17
+            // 新規追加画面の左タブ列も設定タブと同一寸法へ統一します。選択状態は色濃淡では
+            // なく、設定タブと同じ右へ幅10%伸ばす表現だけにします。テキスト位置は維持します。
+            val cy = SETTINGS_TAB_TOP_Y - index * SETTINGS_TAB_PITCH
             val on = option == selectedCategory
-            addBlock(visuals, "cat-bg-$index", -0.7975, cy, 0.47, 0.15,
-                if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4,
-                // コマンド選択子画面のカテゴリも「選択中タブ」なので、設定タブと
-                // 同じ黄色の外周枠で選択状態を統一します。
-                outlineMaterial = GestureSettingVisualPolicy.tabOutlineMaterial(on))
-            addText(visuals, "cat-$index", -0.7975, cy - 0.02, 0.0055, 90,
+            val catWidth = GestureSettingVisualPolicy.selectedTabWidth(SETTINGS_TAB_WIDTH, on)
+            val catCx = GestureSettingVisualPolicy.selectedTabCenterX(SETTINGS_TAB_CENTER_X, SETTINGS_TAB_WIDTH, on)
+            addBlock(
+                visuals, "cat-bg-$index", catCx, cy, catWidth, SETTINGS_TAB_HEIGHT,
+                GestureSettingVisualPolicy.material(
+                    GestureSettingSelectionMode.EXCLUSIVE,
+                    GestureSettingValueState.INITIAL,
+                ),
+                4,
+            )
+            addText(visuals, "cat-$index", SETTINGS_TAB_CENTER_X, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, option.labelKey)))
             elements.add(GestureGuiElement(
                 elementId = "lower-cat:$index",
-                bounds = rect(-0.7975, cy, 0.47, 0.15),
+                bounds = rect(catCx, cy, catWidth, SETTINGS_TAB_HEIGHT),
                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                 targetVisualId = "cat-bg-$index",
             ))
         }
-        val closeCy = 0.38 - categories.size * 0.17
-        addBlock(visuals, "lower-close-bg", -0.7975, closeCy, 0.47, 0.15, Material.BROWN_CONCRETE, 4)
-        addText(visuals, "lower-close", -0.7975, closeCy, 0.006, 90,
+        val closeCy = SETTINGS_TAB_TOP_Y - categories.size * SETTINGS_TAB_PITCH
+        addBlock(visuals, "lower-close-bg", SETTINGS_TAB_CENTER_X, closeCy, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT, Material.BROWN_CONCRETE, 4)
+        addText(visuals, "lower-close", SETTINGS_TAB_CENTER_X, closeCy, 0.006, 90,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)))
         elements.add(GestureGuiElement(
             elementId = "lower-close-picker",
-            bounds = rect(-0.7975, closeCy, 0.47, 0.15),
+            bounds = rect(SETTINGS_TAB_CENTER_X, closeCy, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "lower-close-bg",
         ))
@@ -2421,6 +2410,8 @@ class GestureLowerPanel(
         // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
         // タブの高さ0.10に対してピッチ0.11を確保し、意図された0.01の余白を維持します。
         const val SETTINGS_TAB_MAX = 6
+        const val SETTINGS_TAB_CENTER_X = -0.7975
+        const val SETTINGS_TAB_WIDTH = 0.47
         const val SETTINGS_TAB_TOP_Y = 0.38
         const val SETTINGS_TAB_PITCH = 0.11
         const val SETTINGS_TAB_HEIGHT = 0.10
@@ -2452,8 +2443,8 @@ class GestureLowerPanel(
         // PICKERの下段はページャー（0.28, -0.48）があるため、その上へ置きます。
         const val PICKER_HOVER_SLOT_Y = -0.38
         // 「ほかのエンティティ」の対象三分類は、右ペインの選択カード領域
-        // （SETTING_CHOICE 2列と同じスパン）を3等分し、設定タブ（0.47×0.15）と
-        // およそ同じ寸法で配置します。
+        // （SETTING_CHOICE 2列と同じスパン）を3等分し、設定タブ（0.47×0.10）と
+        // およそ同じ高さの寸法で配置します。
         const val POSITION_TARGET_CHOICE_SPAN_START_X = -0.43
         const val POSITION_TARGET_CHOICE_SPAN_END_X = 1.00
         const val POSITION_TARGET_CHOICE_GAP = 0.04
