@@ -544,18 +544,28 @@ class GestureLowerPanel(
                 // では有効ですが、Bukkit.createBlockDataへ渡すことはできません。
                 addBlock(visuals, bgId, cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT, Material.LIGHT_GRAY_CONCRETE, 4)
                 addText(visuals, "variables-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(name))
-                val detail = KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DETAIL,
-                    mapOf("value" to VariableTemplate.stringify(value), "type" to variableTypeName(player, type)),
+                // 値と型は別の意味行として取得し、ホバー時も別行で表示します。
+                // 一つの翻訳キーへ結合すると、言語ごとの語順変更と行レイアウトを
+                // 同時に扱えないため、各行を型付きキーから組み立てます。
+                val detailRows = listOf(
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_VALUE,
+                        mapOf("value" to VariableTemplate.stringify(value)),
+                    ),
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TYPE,
+                        mapOf("type" to variableTypeName(player, type)),
+                    ),
                 )
                 elements.add(GestureGuiElement(
                     elementId = "lower-variable:$name",
                     bounds = rect(cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
                     acceptedGestures = GestureGuiClickPolicy.CLICK,
                     targetVisualId = bgId,
-                    hoverText = singleLineHover(
-                        detail,
+                    hoverText = multiLineHover(
+                        detailRows,
                         x = 0.0,
                         y = CHILD_HOVER_Y,
                         replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
@@ -1329,26 +1339,47 @@ class GestureLowerPanel(
 
 
     /**
-     * ホバーは1行1エンティティで表示します。1つのTextDisplayへ複数行を
-     * 入れると中央列揃えになり下部パネルのレイアウトが崩れるためです、E
+     * ホバー表示を共通のTextDisplay仕様へ変換します。通常の操作案内は1行、
+     * ワールド変数の値・型のように意味行を分ける情報だけは複数行を渡します。
      * 親画面では常設の灰色説明と対になる画面下段のスロットへ表示し、
-     * 説明を置き換えません。子画面のみ、従来どおり説明スロットの置換を
-     * 使います（replacesVisualId）。
+     * 子画面のみ、従来どおり説明スロットの置換を使います。
      */
-    private fun singleLineHover(
-        text: String,
+    private fun hoverText(
+        text: Component,
         x: Double,
         y: Double,
         replacesVisualId: String? = null,
     ): GestureGuiHoverText =
         GestureGuiHoverText(
-            text = Component.text(text),
+            text = text,
             x = x,
             y = y,
             size = DESCRIPTION_TEXT_SIZE,
             lineWidth = 280,
             replacesVisualId = replacesVisualId,
         )
+
+    private fun singleLineHover(
+        text: String,
+        x: Double,
+        y: Double,
+        replacesVisualId: String? = null,
+    ): GestureGuiHoverText = hoverText(Component.text(text), x, y, replacesVisualId)
+
+    /** 複数の意味行を、空行を挿入せずに一つのホバーTextDisplayへ配置します。 */
+    private fun multiLineHover(
+        lines: List<String>,
+        x: Double,
+        y: Double,
+        replacesVisualId: String? = null,
+    ): GestureGuiHoverText {
+        val nonBlankLines = lines.filter(String::isNotBlank)
+        val text = nonBlankLines.foldIndexed(Component.empty()) { index, result, line ->
+            val component = Component.text(line)
+            if (index == 0) component else result.append(Component.newline()).append(component)
+        }
+        return hoverText(text, x, y, replacesVisualId)
+    }
 
     /**
      * 2列以上の選択肢で、行位置に応じたホバー説明の配置を返します。

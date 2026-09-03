@@ -405,6 +405,12 @@ internal object CommandDialogSpecs {
         )
     }
 
+    /** ワールド内変数の値編集Dialogで表示する案内を、保存型ごとに解決します。 */
+    fun worldVariableValueBody(type: VariableType): LocalizationKey<String> = when (type) {
+        VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY
+        VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY
+    }
+
     /** 符号付き整数（条件の比較値など）。 */
     val signedInteger = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,

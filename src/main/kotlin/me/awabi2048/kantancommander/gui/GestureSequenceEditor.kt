@@ -2005,9 +2005,12 @@ class GestureSequenceEditor(
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
-            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BODY)),
+            body = listOf(KcI18n.component(player, CommandDialogSpecs.worldVariableValueBody(type))),
             inputs = listOf(CommandDialogSpecs.input(player, "value", VariableTemplate.stringify(current), spec)),
-            additionalActions = listOf(
+            // 確定・削除・キャンセルを同じmultiActionへ移し、Dialog本体の最下部へ
+            // 3列で揃えます。追加操作列へ置くと削除だけが確定ボタンの横へ移動し、
+            // キャンセルがexitActionとして別の位置になるためです。
+            footerActions = listOf(
                 MenuDialogButton(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE),
                     MenuDialogHandler { target, _ ->
@@ -2017,10 +2020,14 @@ class GestureSequenceEditor(
                             return@MenuDialogHandler MenuActionResult.Ignored
                         }
                         showWorldVariableDeleteDialog(player, name)
-                        MenuActionResult.Success(MenuUpdate.Close)
+                        // 新しい削除確認Dialogを開いたため、元Dialogを閉じる更新は返しません。
+                        // CC-System側が元Dialogのstale updateで新Dialogを閉じないようにします。
+                        MenuActionResult.Success(MenuUpdate.None)
                     },
                 ),
             ),
+            multiActionWithoutExit = true,
+            columns = 3,
         ) { response ->
             val raw = response.textValue("value")
             val validationError = spec.validateInput(raw)

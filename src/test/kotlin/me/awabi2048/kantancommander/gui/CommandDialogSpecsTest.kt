@@ -163,6 +163,10 @@ class CommandDialogSpecsTest {
     @Test
     fun `world variable value specs reject invalid values at the save boundary`() {
         val number = CommandDialogSpecs.worldVariableValue(VariableType.NUMBER)
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY,
+            CommandDialogSpecs.worldVariableValueBody(VariableType.NUMBER),
+        )
         assertEquals(32, number.maxLength)
         assertEquals(CommandDialogSpecs.InputFormat.NUMBER, number.format)
         assertNull(number.validateInput(" 1.5 "))
@@ -176,6 +180,10 @@ class CommandDialogSpecsTest {
         )
 
         val string = CommandDialogSpecs.worldVariableValue(VariableType.STRING)
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY,
+            CommandDialogSpecs.worldVariableValueBody(VariableType.STRING),
+        )
         assertEquals(256, string.maxLength)
         assertEquals(CommandDialogSpecs.InputFormat.ANY_STRING, string.format)
         assertNull(string.validateInput(""))
