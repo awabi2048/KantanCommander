@@ -565,7 +565,8 @@ object CommandSettingsModel {
      *
      * 構造化値だけを共通setterへ寄せても、条件・表示・変数などのparamsだけが
      * 画面ごとの直接代入に残ると、明示設定の記録や将来の検証を再び分岐させます。
-     * 文字列値の保存と「ユーザーが設定した」状態をここで同時に扱います。
+     * 文字列値の保存と「ユーザーが設定した」状態をここで同時に扱います。空文字は
+     * 入力値の解除を意味するため、明示設定フラグも解除して未設定へ戻します。
      */
     fun setParameter(node: CommandNode, key: String, value: String) {
         require(key.isNotBlank()) { "設定キーが空です" }
@@ -573,7 +574,11 @@ object CommandSettingsModel {
             require(CommandValueRules.isVariableName(value)) { "予約済みまたは不正な変数名です" }
         }
         node.params[key] = value
-        node.markConfigured(key)
+        if (value.isBlank()) {
+            node.clearConfigured(key)
+        } else {
+            node.markConfigured(key)
+        }
     }
 
     /** 複数の文字列パラメータを同じ明示設定契約で保存します。 */
@@ -608,7 +613,15 @@ object CommandSettingsModel {
             CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = spec
             else -> node.targetSpec = spec
         }
-        node.markConfigured(configuredFieldKey("target", role))
+        val configuredKey = configuredFieldKey("target", role)
+        if (isTargetSpecConfigured(spec)) {
+            node.markConfigured(configuredKey)
+        } else {
+            // 方式だけ選択して必須の実値が未入力の場合は、選択履歴を
+            // 「設定完了」として残しません。次の入力で完全なSpecになった時点で
+            // 初めて明示設定へ昇格させます。
+            node.clearConfigured(configuredKey)
+        }
     }
 
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
@@ -666,16 +679,21 @@ object CommandSettingsModel {
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
             else -> error("${node.type} の位置設定役割が不正です: $role")
         }
-        node.markConfigured(
-            configuredFieldKey(
+        val configuredKey = configuredFieldKey(
                 when (role) {
                     CommandSettingRole.SOUND_POSITION -> "soundPosition"
                     CommandSettingRole.SUMMON_POSITION -> "summonPosition"
                     else -> "position"
                 },
                 role,
-            ),
-        )
+            )
+        if (isPositionSpecConfigured(spec)) {
+            node.markConfigured(configuredKey)
+        } else {
+            // COORDINATES/CAPTUREDの方式だけを選んだ段階では、座標や向きが
+            // 未入力なので設定済みにしません。入力ダイアログの確定後だけ記録します。
+            node.clearConfigured(configuredKey)
+        }
     }
 
     fun facingSpec(node: CommandNode, role: CommandSettingRole? = CommandSettingRole.CONTEXT_FACING): FacingSpec? =
@@ -694,10 +712,19 @@ object CommandSettingsModel {
         }
         if (role == CommandSettingRole.DESTINATION_FACING) {
             node.destinationFacingSpec = spec
-            node.markConfigured("destinationFacing")
+            if (isFacingSpecConfigured(spec)) {
+                node.markConfigured("destinationFacing")
+            } else {
+                node.clearConfigured("destinationFacing")
+            }
         } else {
             node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
-            node.markConfigured(configuredFieldKey("facing", CommandSettingRole.CONTEXT_FACING))
+            val configuredKey = configuredFieldKey("facing", CommandSettingRole.CONTEXT_FACING)
+            if (isFacingSpecConfigured(spec)) {
+                node.markConfigured(configuredKey)
+            } else {
+                node.clearConfigured(configuredKey)
+            }
         }
     }
 
@@ -740,7 +767,9 @@ object CommandSettingsModel {
      *
      * 既存JSONにはconfiguredFieldsがないため、まず構造化値／既定値との差を推定し、
      * 新しい画面から明示的に既定値を選んだ場合だけCommandNodeの明示記録を優先します。
-     * これにより、過去データを一律「未設定」と表示する退行を避けられます。
+     * ただし、必須の実値を持つ構造化値は明示フラグだけで完了扱いにしません。
+     * 方式選択後に座標などが未入力の中間Specを保存できるため、実値の完全性を
+     * 最初に確認してから、明示設定フラグを補助的に参照します。
      */
     fun isFieldConfigured(
         node: CommandNode,
@@ -754,40 +783,50 @@ object CommandSettingsModel {
         // contextはcontextSource/contextOverrideの実効値からだけ判定します。履歴的な
         // 明示フラグを先に見ると、BASEへ戻した選択が「設定済み」として残ります。
         if (fieldKey == "context") {
-            return node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
+            return isContextOverrideConfigured(node.contextOverride) ||
+                node.effectiveContextSource != ContextSource.BASE
         }
-        if (node.isExplicitlyConfigured(configuredFieldKey(fieldKey, effectiveRole))) return true
         return when (fieldKey) {
-            "target" -> targetSpec(node, effectiveRole) != null
-            "destination" -> node.destinationSpec != null || node.destinationTargetSpec != null
-            "other" -> node.secondaryTargetSpec != null
-            "executor" -> node.contextOverride?.executor != null
+            "target" -> isTargetSpecConfigured(targetSpec(node, effectiveRole))
+            "destination" -> isPositionSpecConfigured(node.destinationSpec) ||
+                isTargetSpecConfigured(node.destinationTargetSpec)
+            "other" -> isTargetSpecConfigured(node.secondaryTargetSpec)
+            "executor" -> isTargetSpecConfigured(node.contextOverride?.executor)
             "position" -> when (effectiveRole) {
-                CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec != null
-                CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position != null
-                CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec != null
-                CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec != null
-                CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec != null
-                else -> node.contextOverride?.position != null
+                CommandSettingRole.DESTINATION -> isPositionSpecConfigured(node.destinationSpec) ||
+                    isTargetSpecConfigured(node.destinationTargetSpec)
+                CommandSettingRole.CONDITION_POSITION -> isPositionSpecConfigured(node.conditionPositionSpec)
+                CommandSettingRole.CONTEXT_POSITION -> isPositionSpecConfigured(node.contextOverride?.position)
+                CommandSettingRole.BLOCK_POSITION -> isPositionSpecConfigured(node.blockPositionSpec)
+                CommandSettingRole.SOUND_POSITION -> isPositionSpecConfigured(node.soundPositionSpec)
+                CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
+                else -> isPositionSpecConfigured(node.contextOverride?.position)
             }
-            "from" -> node.blockFromSpec != null
-            "to" -> node.blockToSpec != null
-            "destinationFacing" -> node.destinationFacingSpec != null
-            "facing" -> node.contextOverride?.facing != null
-            "soundPosition" -> node.soundPositionSpec != null
-            "summonPosition" -> node.summonPositionSpec != null
+            "from" -> isPositionSpecConfigured(node.blockFromSpec)
+            "to" -> isPositionSpecConfigured(node.blockToSpec)
+            "destinationFacing" -> isFacingSpecConfigured(node.destinationFacingSpec)
+            "facing" -> if (effectiveRole == CommandSettingRole.DESTINATION_FACING) {
+                isFacingSpecConfigured(node.destinationFacingSpec)
+            } else {
+                isFacingSpecConfigured(node.contextOverride?.facing)
+            }
+            "soundPosition" -> isPositionSpecConfigured(node.soundPositionSpec)
+            "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             // 音量とピッチは保存上は別パラメータですが、編集入口は一つです。
             // 旧データも正しく「設定済み」と表示できるよう、両方の実値を確認します。
             "soundParameters" -> listOf("volume", "pitch").any { key ->
                 val value = node.params[key]
-                value != null && value.isNotBlank() && value != node.type.defaults[key]
+                value != null && value.isNotBlank() &&
+                    (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
             }
             "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
             "condition" -> conditionDetailConfigured(node)
             else -> {
                 val value = node.params[fieldKey] ?: return false
-                value.isNotBlank() && value != node.type.defaults[fieldKey]
+                value.isNotBlank() &&
+                    (value != node.type.defaults[fieldKey] ||
+                        node.isExplicitlyConfigured(configuredFieldKey(fieldKey, effectiveRole)))
             }
         }
     }
@@ -799,7 +838,7 @@ object CommandSettingsModel {
         parameter: String,
     ): Boolean {
         val spec = targetSpec(node, role) ?: return false
-        if (node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))) return true
+        val explicitlyConfigured = node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))
         return when (parameter) {
             "kind" -> spec.kind != TargetKind.INHERITED_TARGET
             "entityType" -> !spec.entityType.isNullOrBlank()
@@ -811,7 +850,9 @@ object CommandSettingsModel {
                 else -> spec.dx != null || spec.dy != null || spec.dz != null
             }
             "limit" -> spec.limit != null
-            "sort" -> spec.sort != TargetSort.NEAREST
+            // sortだけは入力欄ではなく択一操作です。既定値を明示選択した履歴も
+            // 保持しますが、文字列・数値入力項目では空値を完了扱いにしません。
+            "sort" -> spec.sort != TargetSort.NEAREST || explicitlyConfigured
             "gameMode" -> !spec.gameMode.isNullOrBlank()
             "tag" -> !spec.tag.isNullOrBlank()
             "name" -> !spec.name.isNullOrBlank()
@@ -820,11 +861,38 @@ object CommandSettingsModel {
     }
 
     private fun conditionDetailConfigured(node: CommandNode): Boolean =
-        node.targetSpec != null || node.conditionPositionSpec != null ||
+        isTargetSpecConfigured(node.targetSpec) || isPositionSpecConfigured(node.conditionPositionSpec) ||
             node.params.any { (key, value) ->
                 key in setOf("sneaking", "variable", "operator", "value", "block", "item", "itemData") &&
-                    value.isNotBlank() && value != node.type.defaults[key]
+                    value.isNotBlank() &&
+                    (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
             }
+
+    /** 固定エンティティだけは、種別を選んだだけでは実行対象が確定しません。 */
+    private fun isTargetSpecConfigured(spec: TargetSpec?): Boolean =
+        spec != null && (spec.kind != TargetKind.FIXED_ENTITY || spec.fixedEntityId != null)
+
+    /** 座標・捕捉方式は必須値が揃った場合だけ設定完了とします。 */
+    private fun isPositionSpecConfigured(spec: PositionSpec?): Boolean = spec != null && when (spec.kind) {
+        PositionKind.COORDINATES -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true }
+        PositionKind.CAPTURED -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true } &&
+            listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
+        else -> true
+    }
+
+    /** 座標・数値回転方式は入力値が揃った場合だけ設定完了とします。 */
+    private fun isFacingSpecConfigured(spec: FacingSpec?): Boolean = spec != null && when (spec.kind) {
+        FacingKind.COORDINATES -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true }
+        FacingKind.CAPTURED, FacingKind.ROTATION -> listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
+        else -> true
+    }
+
+    /** 中間Specしか持たないコンテキストを、設定済みとして親タブへ投影しません。 */
+    private fun isContextOverrideConfigured(context: ExecutionContextSpec?): Boolean =
+        isTargetSpecConfigured(context?.executor) ||
+            isTargetSpecConfigured(context?.target) ||
+            isPositionSpecConfigured(context?.position) ||
+            isFacingSpecConfigured(context?.facing)
 
     fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
         VariableOperation.entries

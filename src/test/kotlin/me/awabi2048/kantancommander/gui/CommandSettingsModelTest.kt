@@ -4,10 +4,13 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import java.util.UUID
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -39,6 +42,93 @@ class CommandSettingsModelTest {
         assertEquals(position, node.contextOverride?.position)
         assertNull(node.destinationSpec)
         assertEquals(position, CommandSettingsModel.positionSpec(node, CommandSettingRole.CONTEXT_POSITION))
+    }
+
+    @Test
+    fun `coordinate position is incomplete until all values are entered`() {
+        val node = CommandType.TELEPORT.newNode()
+
+        CommandSettingsModel.setPositionSpec(
+            node,
+            CommandSettingRole.DESTINATION,
+            PositionSpec(PositionKind.COORDINATES),
+        )
+
+        assertEquals(PositionKind.COORDINATES, CommandSettingsModel.positionKind(node, CommandSettingRole.DESTINATION))
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.DESTINATION))
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "destination"))
+        assertTrue(node.configuredFields == null || "destination" !in node.configuredFields.orEmpty())
+
+        CommandSettingsModel.setPositionSpec(
+            node,
+            CommandSettingRole.DESTINATION,
+            PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0),
+        )
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.DESTINATION))
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "destination"))
+    }
+
+    @Test
+    fun `incomplete structured values never become configured from an old marker`() {
+        val node = CommandType.CONTEXT.newNode().apply {
+            configuredFields = linkedSetOf("context.position")
+            contextOverride = ExecutionContextSpec(position = PositionSpec(PositionKind.COORDINATES))
+        }
+
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.CONTEXT_POSITION))
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "context"))
+    }
+
+    @Test
+    fun `fixed target is incomplete until an entity is captured`() {
+        val node = CommandType.ENTITY_DELETE.newNode()
+        val incomplete = TargetSpec(TargetKind.FIXED_ENTITY)
+
+        CommandSettingsModel.setTargetSpec(node, CommandSettingRole.NODE_TARGET, incomplete)
+
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET))
+        assertFalse(node.isExplicitlyConfigured("target"))
+
+        CommandSettingsModel.setTargetSpec(
+            node,
+            CommandSettingRole.NODE_TARGET,
+            incomplete.copy(fixedEntityId = UUID.randomUUID()),
+        )
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET))
+    }
+
+    @Test
+    fun `coordinate facing is incomplete until all values are entered`() {
+        val node = CommandType.CONTEXT.newNode()
+
+        CommandSettingsModel.setFacingSpec(
+            node,
+            FacingSpec(FacingKind.COORDINATES, x = 1.0, y = null, z = 3.0),
+            CommandSettingRole.CONTEXT_FACING,
+        )
+
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "facing", CommandSettingRole.CONTEXT_FACING))
+        assertFalse(node.isExplicitlyConfigured("context.facing"))
+
+        CommandSettingsModel.setFacingSpec(
+            node,
+            FacingSpec(FacingKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0),
+            CommandSettingRole.CONTEXT_FACING,
+        )
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "facing", CommandSettingRole.CONTEXT_FACING))
+    }
+
+    @Test
+    fun `empty explicitly entered text is not a configured value`() {
+        val node = CommandType.WAIT.newNode()
+
+        CommandSettingsModel.setParameter(node, "seconds", "")
+
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "seconds"))
+        assertFalse(node.isExplicitlyConfigured("seconds"))
     }
 
     @Test

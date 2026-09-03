@@ -239,6 +239,12 @@ class GestureLowerPanel(
             val editVisualText = if (heldMainHandSetting) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
             } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER
+            val editTextColor = if (heldMainHandAvailable) {
+                // クリック後に実値の入力・投入へ進む導線は、値入力を示す§6で統一します。
+                NamedTextColor.GOLD
+            } else {
+                NamedTextColor.GRAY
+            }
             addBlock(
                 visuals,
                 "lower-edit-bg",
@@ -256,7 +262,7 @@ class GestureLowerPanel(
                 SETTING_INPUT_CENTER_Y,
                 0.0055,
                 180,
-                Component.text(KcI18n.text(player, editVisualText)),
+                Component.text(KcI18n.text(player, editVisualText), editTextColor),
             )
             elements.add(GestureGuiElement(
                 elementId = "lower-edit:${field.key}",
@@ -448,8 +454,10 @@ class GestureLowerPanel(
             scale = 0.08,
             layer = 5,
         ))
-        addText(visuals, "$id-label", x, -0.045, 0.0052, 120, Component.text(label))
-        addText(visuals, "$id-value", x, -0.005, 0.0044, 170, Component.text(value))
+        // プログラム全体設定もクリック後に値入力へ進むため、ラベルと現在値を§6で
+        // 統一します。未設定状態は値の文面で示し、背景色へ意味を重ねません。
+        addText(visuals, "$id-label", x, -0.045, 0.0052, 120, Component.text(label, NamedTextColor.GOLD))
+        addText(visuals, "$id-value", x, -0.005, 0.0044, 170, Component.text(value, NamedTextColor.GOLD))
         // アイテム名は表示の識別用に使わず、設定値は常にLore／別TextDisplayへ出します。
         // このカードも同じ規則に従い、クリック対象のNameを持たせず入力面だけを公開します。
         elements.add(GestureGuiElement(
@@ -515,7 +523,15 @@ class GestureLowerPanel(
                     GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)
                 },
             )
-            addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
+            addText(
+                visuals,
+                "setting-choice-label-$index",
+                cx,
+                cy - 0.012,
+                0.0045,
+                115,
+                Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+            )
             val hoverDescription = choice.description.takeIf(String::isNotBlank)
                 ?: choiceDescription(player, choice, fieldKey)
             elements.add(GestureGuiElement(
@@ -542,7 +558,18 @@ class GestureLowerPanel(
                         descriptionY = if (child) CHILD_HOVER_Y else HOVER_SLOT_Y,
                         replacesDescription = child,
                         parallel = choices.size > 1,
-                    )
+                    ).let { hover ->
+                        if (choice.enabled) {
+                            hover.copy(
+                                // ホバー時は本体だけをシアンテラコッタへ差し替え、
+                                // 選択中の縁取りはCC-System側で維持します。
+                                hoverBlockVisualId = bgId,
+                                hoverBlockData = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                            )
+                        } else {
+                            hover
+                        }
+                    }
                 },
             ))
         }
@@ -551,12 +578,8 @@ class GestureLowerPanel(
     /** 操作不能な設定候補は、候補の種類にかかわらず薄灰色コンクリートで表します。 */
     private fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
         if (choice.enabled) {
-            GestureSettingVisualPolicy.material(
-                choice.selectionMode,
-                choice.valueState,
-                choice.selected,
-                choice.attention,
-            )
+            // 択一／複数選択、初期／設定済みの区別は背景色へ反映しません。
+            Material.LIGHT_GRAY_CONCRETE
         } else {
             DisabledGuiVisualPolicy.material
         }
@@ -1276,9 +1299,11 @@ class GestureLowerPanel(
         return when {
             id.startsWith("target:") -> choice.selected &&
                 CommandSettingsModel.targetCategory(CommandSettingsModel.targetSpec(node, context.role)?.kind) ==
-                targetCategoryFromChoice(id)
+                targetCategoryFromChoice(id) &&
+                CommandSettingsModel.isFieldConfigured(node, "target", context.role)
             id.startsWith("kind:") -> choice.selected &&
-                CommandSettingsModel.targetCategory(CommandSettingsModel.targetSpec(node, context.role)?.kind) != TargetCategory.INHERITED
+                CommandSettingsModel.targetCategory(CommandSettingsModel.targetSpec(node, context.role)?.kind) != TargetCategory.INHERITED &&
+                CommandSettingsModel.isFieldConfigured(node, "target", context.role)
             id.startsWith("filter:") -> CommandSettingsModel.isTargetFilterConfigured(
                 node,
                 context.role,
@@ -1287,9 +1312,11 @@ class GestureLowerPanel(
             id.startsWith("block:") -> choice.selected &&
                 CommandSettingsModel.isFieldConfigured(node, "operation", context.role)
             id.startsWith("position:") -> choice.selected &&
-                CommandSettingsModel.positionKind(node, context.role)?.name == id.removePrefix("position:")
+                CommandSettingsModel.positionKind(node, context.role)?.name == id.removePrefix("position:") &&
+                CommandSettingsModel.isFieldConfigured(node, "position", context.role)
             id.startsWith("facing:") -> choice.selected &&
-                CommandSettingsModel.facingSpec(node, context.role)?.kind?.name == id.removePrefix("facing:")
+                CommandSettingsModel.facingSpec(node, context.role)?.kind?.name == id.removePrefix("facing:") &&
+                CommandSettingsModel.isFieldConfigured(node, "facing", context.role)
             id == "condition-target" -> CommandSettingsModel.isFieldConfigured(
                 node,
                 "target",
@@ -1329,12 +1356,24 @@ class GestureLowerPanel(
             id.startsWith("condition-block") -> CommandSettingsModel.isFieldConfigured(node, "block")
             id.startsWith("condition-item-data") -> CommandSettingsModel.isFieldConfigured(node, "itemData")
             id.startsWith("condition-item") -> CommandSettingsModel.isFieldConfigured(node, "item")
-            id.startsWith("changeMode:") -> choice.selected && node.string("changeMode", "ASSIGN") == id.removePrefix("changeMode:")
-            id.startsWith("equipmentSlot:") -> choice.selected && node.string("slot", "HAND") == id.removePrefix("equipmentSlot:")
-            id.startsWith("overwrite:") -> choice.selected && node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean()
-            id.startsWith("tagOperation:") -> choice.selected && node.string("tagOperation", "add") == id.removePrefix("tagOperation:")
-            id.startsWith("shake:") -> choice.selected && node.string("shakeType", "positional") == id.removePrefix("shake:")
-            id.startsWith("soundScope:") -> choice.selected && node.string("soundScope", "CONTEXT") == id.removePrefix("soundScope:")
+            id.startsWith("changeMode:") -> choice.selected &&
+                node.string("changeMode", "ASSIGN") == id.removePrefix("changeMode:") &&
+                CommandSettingsModel.isFieldConfigured(node, "changeMode")
+            id.startsWith("equipmentSlot:") -> choice.selected &&
+                node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
+                CommandSettingsModel.isFieldConfigured(node, "slot")
+            id.startsWith("overwrite:") -> choice.selected &&
+                node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean() &&
+                CommandSettingsModel.isFieldConfigured(node, "overwrite")
+            id.startsWith("tagOperation:") -> choice.selected &&
+                node.string("tagOperation", "add") == id.removePrefix("tagOperation:") &&
+                CommandSettingsModel.isFieldConfigured(node, "tagOperation")
+            id.startsWith("shake:") -> choice.selected &&
+                node.string("shakeType", "positional") == id.removePrefix("shake:") &&
+                CommandSettingsModel.isFieldConfigured(node, "shakeType")
+            id.startsWith("soundScope:") -> choice.selected &&
+                node.string("soundScope", "CONTEXT") == id.removePrefix("soundScope:") &&
+                CommandSettingsModel.isFieldConfigured(node, "soundScope")
             else -> choice.selected && CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)
         }
     }
@@ -1779,7 +1818,7 @@ class GestureLowerPanel(
                 cy - 0.02,
                 0.0055,
                 90,
-                Component.text(choice.label),
+                Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
             )
             val hoverDescription = choice.description.takeIf(String::isNotBlank)
                 ?: choiceDescription(player, choice, fieldKey)
@@ -1803,7 +1842,17 @@ class GestureLowerPanel(
                         descriptionY = HOVER_SLOT_Y,
                         replacesDescription = false,
                         parallel = choices.size > 1,
-                    )
+                    ).let { hover ->
+                        if (choice.enabled) {
+                            hover.copy(
+                                // 右下のインライン候補も通常の設定項目と同じホバー契約です。
+                                hoverBlockVisualId = bgId,
+                                hoverBlockData = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                            )
+                        } else {
+                            hover
+                        }
+                    }
                 },
             )
         }

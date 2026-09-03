@@ -2389,12 +2389,15 @@ class GestureSequenceEditor(
                 if (kind == PositionKind.COORDINATES) {
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
                     if (!wasSelected) {
-                        val location = player.location
+                        // 方式選択と実値入力を分離します。ここでプレイヤー位置を仮値として
+                        // 保存すると、まだ座標を入力していないのに設定完了へ遷移してしまう
+                        // ため、未完成のCOORDINATES Specだけを保持し、完了判定はモデル側へ
+                        // 任せます。次回クリックの入力欄では現在位置を初期候補として使います。
                         if (!updateSettingNode(player, settingContext) {
                                 CommandSettingsModel.setPositionSpec(
                                     it,
                                     settingContext.role,
-                                    PositionSpec(PositionKind.COORDINATES, x = location.x, y = location.y, z = location.z),
+                                    PositionSpec(PositionKind.COORDINATES),
                                 )
                             }) return
                         // 一回目は方式だけを選択し、二回目に入力画面を開きます。

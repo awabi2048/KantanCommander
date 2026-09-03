@@ -49,25 +49,17 @@ enum class GestureSettingValueState {
 /**
  * 設定カードの表示規則を一箇所へ集約します。
  *
- * テクスチャはボタンの種類（選択方式と値状態）を表し、選択状態は外周枠、
- * 要確認状態はタブテキストの§c（Adventureの赤色）で表します。画面ごとの色分岐を
- * 増やさず、視認性を確保します。
+ * 設定項目の通常テクスチャは薄灰色、ホバー中のテクスチャはシアンのテラコッタへ
+ * 統一します。選択状態は外周枠、要確認状態はタブテキストの§c（Adventureの赤色）で
+ * 表します。画面ごとの色分岐を増やさず、視認性を確保します。
  */
 internal object GestureSettingVisualPolicy {
-    // テクスチャはボタンの種類で決まります。選択状態は外周枠で表現します。
+    // 設定項目は値状態や択一／複数選択の違いで背景色を変えず、通常時は薄灰色へ
+    // 統一します。値状態は枠・テキスト・警告などの意味表現から独立させます。
     fun material(
         selectionMode: GestureSettingSelectionMode,
         valueState: GestureSettingValueState,
-    ): Material = when (selectionMode) {
-        GestureSettingSelectionMode.EXCLUSIVE -> when (valueState) {
-            GestureSettingValueState.CONFIGURED -> Material.CYAN_TERRACOTTA
-            GestureSettingValueState.INITIAL -> Material.LIGHT_BLUE_TERRACOTTA
-        }
-        GestureSettingSelectionMode.MULTIPLE -> when (valueState) {
-            GestureSettingValueState.CONFIGURED -> Material.PURPLE_TERRACOTTA
-            GestureSettingValueState.INITIAL -> Material.MAGENTA_TERRACOTTA
-        }
-    }
+    ): Material = Material.LIGHT_GRAY_CONCRETE
 
     // 既存の呼び出し形を維持します。内部ではテクスチャとハイライトを分離します。
     fun material(
@@ -88,6 +80,13 @@ internal object GestureSettingVisualPolicy {
     /** タブ内部・子画面の選択項目の外周枠に使う素材です。 */
     fun nonTabOutlineMaterial(selected: Boolean): Material? =
         if (selected) Material.WHITE_CONCRETE else null
+
+    /** クリック先が子画面なら§b、値入力・値変更なら§6、操作不能なら灰色です。 */
+    fun settingChoiceTextColor(choice: GestureSettingTreeNode): NamedTextColor = when {
+        !choice.enabled -> NamedTextColor.GRAY
+        choice.hasChildren -> NamedTextColor.AQUA
+        else -> NamedTextColor.GOLD
+    }
 }
 
 /** 木構造上の現在位置。表示状態と戻る経路を同じ値から復元します。 */

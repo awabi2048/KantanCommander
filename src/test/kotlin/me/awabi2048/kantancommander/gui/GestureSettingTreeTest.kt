@@ -60,16 +60,16 @@ class GestureSettingTreeTest {
 
     @Test
     fun `visual policy separates selection cardinality and value state`() {
-        // テクスチャはボタンの種類（選択方式と値状態）で決まり、選択状態は外周枠で表現します。
+        // 設定項目の通常背景は選択方式・値状態によらず薄灰色で統一します。
         assertEquals(
-            org.bukkit.Material.CYAN_TERRACOTTA,
+            org.bukkit.Material.LIGHT_GRAY_CONCRETE,
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.EXCLUSIVE,
                 GestureSettingValueState.CONFIGURED,
             ),
         )
         assertEquals(
-            org.bukkit.Material.MAGENTA_TERRACOTTA,
+            org.bukkit.Material.LIGHT_GRAY_CONCRETE,
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.MULTIPLE,
                 GestureSettingValueState.INITIAL,
@@ -77,7 +77,7 @@ class GestureSettingTreeTest {
         )
         // 旧シグネチャは後方互換のためテクスチャに影響しません。
         assertEquals(
-            org.bukkit.Material.CYAN_TERRACOTTA,
+            org.bukkit.Material.LIGHT_GRAY_CONCRETE,
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.EXCLUSIVE,
                 GestureSettingValueState.CONFIGURED,
@@ -85,7 +85,7 @@ class GestureSettingTreeTest {
             ),
         )
         assertEquals(
-            org.bukkit.Material.CYAN_TERRACOTTA,
+            org.bukkit.Material.LIGHT_GRAY_CONCRETE,
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.EXCLUSIVE,
                 GestureSettingValueState.CONFIGURED,
@@ -104,5 +104,22 @@ class GestureSettingTreeTest {
         // タブ以外の設定ボタンは、完了状態にかかわらず選択中だけ白い外周枠で示します。
         assertEquals(org.bukkit.Material.WHITE_CONCRETE, GestureSettingVisualPolicy.nonTabOutlineMaterial(selected = true))
         assertEquals(null, GestureSettingVisualPolicy.nonTabOutlineMaterial(selected = false))
+
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.GOLD,
+            GestureSettingVisualPolicy.settingChoiceTextColor(GestureSettingTreeNode("value", "値")),
+        )
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.AQUA,
+            GestureSettingVisualPolicy.settingChoiceTextColor(
+                GestureSettingTreeNode("child", "詳細", children = listOf(GestureSettingTreeNode("leaf", "項目"))),
+            ),
+        )
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.GRAY,
+            GestureSettingVisualPolicy.settingChoiceTextColor(
+                GestureSettingTreeNode("disabled", "無効", enabled = false),
+            ),
+        )
     }
 }
