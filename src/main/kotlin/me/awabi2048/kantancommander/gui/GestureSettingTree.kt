@@ -1,6 +1,6 @@
 package me.awabi2048.kantancommander.gui
 
-import org.bukkit.Color
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
 
 /**
@@ -49,11 +49,12 @@ enum class GestureSettingValueState {
 /**
  * 設定カードの表示規則を一箇所へ集約します。
  *
- * テクスチャはボタンの種類（選択方式と値状態）を表し、選択状態は内側枠、
- * 要確認状態はGlowで表します。画面ごとの色分岐を増やさず、視認性を確保します。
+ * テクスチャはボタンの種類（選択方式と値状態）を表し、選択状態は外周枠、
+ * 要確認状態はタブテキストの§c（Adventureの赤色）で表します。画面ごとの色分岐を
+ * 増やさず、視認性を確保します。
  */
 internal object GestureSettingVisualPolicy {
-    // テクスチャはボタンの種類で決まります。選択状態は内側枠で表現します。
+    // テクスチャはボタンの種類で決まります。選択状態は外周枠で表現します。
     fun material(
         selectionMode: GestureSettingSelectionMode,
         valueState: GestureSettingValueState,
@@ -76,24 +77,15 @@ internal object GestureSettingVisualPolicy {
         attention: Boolean = false,
     ): Material = material(selectionMode, valueState)
 
-    /**
-     * 下部画面の設定タブ専用の警告Glowです。
-     *
-     * 選択状態はタブの内側枠へ移したため、Glowは要確認状態だけへ使用します。
-     * 選択中かつ要確認の場合は紫、未選択の要確認は赤です。ビューポートの
-     * ノード選択はこのポリシーを通らないため、ノード側の既存色を変更しません。
-     */
-    fun tabGlowColor(selected: Boolean, attention: Boolean = false): Int? = when {
-        selected && attention -> Color.PURPLE.asARGB()
-        attention -> Color.RED.asARGB()
-        else -> null
-    }
+    /** 警告タブの文字色です。NamedTextColor.REDはレガシー表記の§cに相当します。 */
+    fun tabTextColor(attention: Boolean): NamedTextColor? =
+        if (attention) NamedTextColor.RED else null
 
-    /** 選択中タブの内側枠に使う素材です。非選択なら枠を生成しません。 */
+    /** 選択中タブの外周枠に使う黄色コンクリートです。非選択なら枠を生成しません。 */
     fun tabOutlineMaterial(selected: Boolean): Material? =
-        if (selected) Material.BLUE_CONCRETE else null
+        if (selected) Material.YELLOW_CONCRETE else null
 
-    /** タブ内部・子画面の選択項目の内側枠に使う素材です。 */
+    /** タブ内部・子画面の選択項目の外周枠に使う素材です。 */
     fun nonTabOutlineMaterial(selected: Boolean): Material? =
         if (selected) Material.WHITE_CONCRETE else null
 }

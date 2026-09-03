@@ -60,7 +60,7 @@ class GestureSettingTreeTest {
 
     @Test
     fun `visual policy separates selection cardinality and value state`() {
-        // テクスチャはボタンの種類（選択方式と値状態）で決まり、選択状態は内側枠で表現します。
+        // テクスチャはボタンの種類（選択方式と値状態）で決まり、選択状態は外周枠で表現します。
         assertEquals(
             org.bukkit.Material.CYAN_TERRACOTTA,
             GestureSettingVisualPolicy.material(
@@ -92,15 +92,16 @@ class GestureSettingTreeTest {
                 selected = false,
             ),
         )
-        // タブのGlowは警告専用とし、選択状態は内側枠へ移します。
-        assertEquals(null, GestureSettingVisualPolicy.tabGlowColor(selected = true, attention = false))
-        assertEquals(org.bukkit.Color.RED.asARGB(), GestureSettingVisualPolicy.tabGlowColor(selected = false, attention = true))
-        assertEquals(org.bukkit.Color.PURPLE.asARGB(), GestureSettingVisualPolicy.tabGlowColor(selected = true, attention = true))
-        assertEquals(null, GestureSettingVisualPolicy.tabGlowColor(selected = false, attention = false))
+        // タブの警告はGlowではなく、レガシー表記§c相当の赤文字で示します。
+        assertEquals(null, GestureSettingVisualPolicy.tabTextColor(attention = false))
+        assertEquals(
+            net.kyori.adventure.text.format.NamedTextColor.RED,
+            GestureSettingVisualPolicy.tabTextColor(attention = true),
+        )
 
-        assertEquals(org.bukkit.Material.BLUE_CONCRETE, GestureSettingVisualPolicy.tabOutlineMaterial(selected = true))
+        assertEquals(org.bukkit.Material.YELLOW_CONCRETE, GestureSettingVisualPolicy.tabOutlineMaterial(selected = true))
         assertEquals(null, GestureSettingVisualPolicy.tabOutlineMaterial(selected = false))
-        // タブ以外の設定ボタンは、完了状態にかかわらず選択中だけ白い内側枠で示します。
+        // タブ以外の設定ボタンは、完了状態にかかわらず選択中だけ白い外周枠で示します。
         assertEquals(org.bukkit.Material.WHITE_CONCRETE, GestureSettingVisualPolicy.nonTabOutlineMaterial(selected = true))
         assertEquals(null, GestureSettingVisualPolicy.nonTabOutlineMaterial(selected = false))
     }

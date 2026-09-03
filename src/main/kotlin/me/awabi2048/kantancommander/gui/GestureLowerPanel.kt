@@ -436,8 +436,8 @@ class GestureLowerPanel(
                 valueState,
             ),
             4,
-            // プログラム全体設定はタブではないため、未完了でも警告Glowを付けません。
-            // 未完了の状態名はホバーで伝え、Glowの対象はノード設定タブへ限定します。
+            // プログラム全体設定はタブではないため、未完了でも警告表示を付けません。
+            // 未完了の状態名はホバーで伝え、警告表示の対象はノード設定タブへ限定します。
             glowColor = null,
         )
         visuals.add(GestureGuiVisual.Item(
@@ -506,9 +506,9 @@ class GestureLowerPanel(
                 SETTING_CHOICE_HEIGHT,
                 settingChoiceMaterial(choice),
                 4,
-                // 右側の設定ボタンは完了状態にかかわらず、選択中だけ白い内側枠で示します。
+                // 右側の設定ボタンは完了状態にかかわらず、選択中だけ白い外周枠で示します。
                 // attentionはタブへ投影済みの状態情報であり、子画面を含む右側カードの
-                // 警告Glowには使いません。
+                // 警告表示には使いません。
                 outlineMaterial = if (suppressHighlight) {
                     null
                 } else {
@@ -591,8 +591,7 @@ class GestureLowerPanel(
                 GestureSettingValueState.INITIAL
             }
             val attention = field.key in attentionFields
-            // タブの選択状態は青い内側枠、未完了警告はGlowで示します。選択中かつ
-            // 未完了の場合は、内側枠と紫Glowを併用します。
+            // タブの選択状態は黄色の外周枠、未完了警告はタブテキストの§cで示します。
             addBlock(
                 visuals,
                 "tab-bg-$index",
@@ -605,19 +604,16 @@ class GestureLowerPanel(
                     fieldState,
                 ),
                 4,
-                glowColor = if (suppressHighlight) {
-                    null
-                } else {
-                    GestureSettingVisualPolicy.tabGlowColor(on, attention)
-                },
                 outlineMaterial = if (suppressHighlight) {
                     null
                 } else {
                     GestureSettingVisualPolicy.tabOutlineMaterial(on)
                 },
             )
+            val tabLabel = fieldTabLabel(player, node, field)
+            val tabTextColor = GestureSettingVisualPolicy.tabTextColor(attention)
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
-                Component.text(fieldTabLabel(player, node, field)))
+                if (tabTextColor == null) Component.text(tabLabel) else Component.text(tabLabel, tabTextColor))
             elements.add(GestureGuiElement(
                 elementId = "lower-tab:$index",
                 bounds = rect(-0.7975, cy, 0.47, SETTINGS_TAB_HEIGHT),
@@ -1208,7 +1204,7 @@ class GestureLowerPanel(
                 GestureSettingValueState.INITIAL
             },
             // 要確認状態は、この選択肢が属する設定タブが実行前検証で指されていれば
-            // 付与します。右側カード自身は警告Glowを使いませんが、タブ単位の警告文や
+            // 付与します。右側カード自身は警告表示を使いませんが、タブ単位の警告文や
             // 子要素への状態投影には同じfieldKey情報を引き続き使用します。
             attention = settingChoiceTabFieldKeys(choice.id, fieldKey, effectiveContext.role)
                 .any { it in attentionFields },
@@ -1222,7 +1218,7 @@ class GestureLowerPanel(
      * 選択肢が属する設定タブ（fieldKey）の集合を返します。
      *
      * 実行前検証はタブのfieldKey単位で要確認を指すため、警告文の対象タブへ
-     * 投影します。右側カードのGlow色はこの値を直接使わず、settingChoiceConfiguredと
+     * 投影します。右側カードの警告表示はこの値を直接使わず、settingChoiceConfiguredと
      * 同じ選択肢IDの分類に倣います。
      */
     private fun settingChoiceTabFieldKeys(
@@ -1769,7 +1765,7 @@ class GestureLowerPanel(
                 settingChoiceMaterial(choice),
                 4,
                 // 右側へ表示する対象分類ボタンもタブ以外の設定ボタンです。
-                // 選択中は完了状態にかかわらず白い内側枠、未完了警告はタブだけへ残します。
+                // 選択中は完了状態にかかわらず白い外周枠、未完了警告はタブ文字へ残します。
                 outlineMaterial = if (suppressHighlight) {
                     null
                 } else {
@@ -2013,7 +2009,7 @@ class GestureLowerPanel(
             addBlock(visuals, "cat-bg-$index", -0.7975, cy, 0.47, 0.15,
                 if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4,
                 // コマンド選択子画面のカテゴリも「選択中タブ」なので、設定タブと
-                // 同じ青い内側枠で選択状態を統一します。
+                // 同じ黄色の外周枠で選択状態を統一します。
                 outlineMaterial = GestureSettingVisualPolicy.tabOutlineMaterial(on))
             addText(visuals, "cat-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, option.labelKey)))
