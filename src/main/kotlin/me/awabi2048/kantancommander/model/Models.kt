@@ -303,8 +303,9 @@ data class WorldVariableValue(
  * 一時変数（実行内寿命）の型です。context型は作りません。
  *
  * リテラル利用できるのは NUMBER・STRING のみで `%{name}%` 記法を使います。
- * 非リテラル6型（POSITION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）はGUIの
- * 「一時変数を参照」欄からのみ指定し、リテラル記述はエラーとします。
+ * 複合6型（POSITION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）は型付き設定欄で定義し、
+ * 一般テキストへの埋め込みはエラーとします。利用側は対応する構造化Specまたは
+ * コマンド固有の一時変数参照欄から選択します。
  */
 enum class TemporaryVariableType { NUMBER, STRING, POSITION, ITEM, BLOCK, ENTITY, SOUND, EFFECT }
 

@@ -393,7 +393,7 @@ internal object CommandDialogSpecs {
         field(node, "value") ?: conditionValue
 
     /**
-     * 一時変数 NUMBER の値入力です。有限doubleまたは単一 `%name%` 参照を受け付けます。
+     * 一時変数 NUMBER の値入力です。有限doubleまたは単一 `%{name}%` 参照を受け付けます。
      * ワールド変数 `${name}` も数値型として解決できるため同様に許可します。
      */
     val tempNumberValue = Spec(

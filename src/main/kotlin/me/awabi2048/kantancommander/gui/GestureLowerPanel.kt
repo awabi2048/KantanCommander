@@ -25,6 +25,7 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
@@ -197,7 +198,7 @@ class GestureLowerPanel(
             )
         }
         // 「移動先→ほかのエンティティ」は親のSETTINGS画面から選択します。
-        // 子画面側だけへ対象三分類を追加すると、最初の選択直後に親画面へ残る
+        // 子画面側だけへ対象分類を追加すると、最初の選択直後に親画面へ残る
         // 実際の表示経路では候補が消え、保存済みの対象設定も再編集できません。
         // 親画面でもposition:TARGETの選択状態を共通モデルから読み取り、子画面と
         // 同じ右下領域へ描画します、E
@@ -953,13 +954,15 @@ class GestureLowerPanel(
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
     private fun choiceDescription(player: Player, choice: SettingChoice, fieldKey: String?): String? = when {
-        // 対象の三分類は、ラベルと同一の文面ではなく項目の説明を表示します。
+        // 対象分類は、ラベルと同一の文面ではなく項目の説明を表示します。
         choice.id == "target:${TargetCategory.INHERITED.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_INHERITED_TARGET)
         choice.id == "target:${TargetCategory.PLAYER.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PLAYER_TARGET)
         choice.id == "target:${TargetCategory.NON_PLAYER_ENTITY.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ENTITY_TARGET)
+        choice.id == "target:${TargetCategory.TEMPORARY.name}" ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_TEMPORARY)
         // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します、E
         choice.id.startsWith("condition-kind:") -> conditionKindDescription(player, choice.id)
         // コンテキスト系は、「コンテキスト」コマンドのタブ（後続への設定）と
@@ -1007,7 +1010,7 @@ class GestureLowerPanel(
                 PositionKind.DISK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_CONTROL_BLOCK
                 PositionKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_EXECUTOR
                 PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TARGET
-                PositionKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TARGET
+                PositionKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TEMPORARY_VARIABLE
                 PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_MYWORLD_SPAWN
                 PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_COORDINATES
                 PositionKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_CAPTURED
@@ -1020,7 +1023,7 @@ class GestureLowerPanel(
                 FacingKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_CAPTURED
                 FacingKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_EXECUTOR
                 FacingKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_TARGET
-                FacingKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_TARGET
+                FacingKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_TEMPORARY
                 FacingKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_COORDINATES
                 FacingKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_MYWORLD_SPAWN
                 FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_ROTATION
@@ -1536,6 +1539,7 @@ class GestureLowerPanel(
         TargetCategory.INHERITED.name -> TargetCategory.INHERITED
         TargetCategory.PLAYER.name -> TargetCategory.PLAYER
         TargetCategory.NON_PLAYER_ENTITY.name -> TargetCategory.NON_PLAYER_ENTITY
+        TargetCategory.TEMPORARY.name -> TargetCategory.TEMPORARY
         else -> null
     }
 
@@ -1784,7 +1788,25 @@ class GestureLowerPanel(
             SettingChoice("soundScope:CONTEXT", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTEXT_POSITION), node.string("soundScope", "CONTEXT") == "CONTEXT"),
             SettingChoice("soundScope:WORLD", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_WORLD_WIDE), node.string("soundScope", "CONTEXT") == "WORLD"),
         )
-        GestureSettingScreen.VARIABLE_TYPE -> listOf(
+        GestureSettingScreen.VARIABLE_TYPE -> if (node.type == CommandType.TEMP_SET) {
+            TemporaryVariableType.entries.map { type ->
+                val label = when (type) {
+                    TemporaryVariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+                    TemporaryVariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+                    TemporaryVariableType.POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
+                    TemporaryVariableType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+                    TemporaryVariableType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
+                    TemporaryVariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+                    TemporaryVariableType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
+                    TemporaryVariableType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
+                }
+                SettingChoice(
+                    "type:${type.name}",
+                    KcI18n.text(player, label),
+                    node.string("tempType", TemporaryVariableType.NUMBER.name) == type.name,
+                )
+            }
+        } else listOf(
             SettingChoice("type:NUMBER", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER), node.string("type", VariableType.NUMBER.name) == VariableType.NUMBER.name),
             SettingChoice("type:STRING", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT), node.string("type", VariableType.NUMBER.name) == VariableType.STRING.name),
         )
@@ -1904,6 +1926,7 @@ class GestureLowerPanel(
             TargetCategory.INHERITED to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED_TARGET,
             TargetCategory.PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
             TargetCategory.NON_PLAYER_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY,
+            TargetCategory.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
         )
         return choices.map { (category, label) ->
             val selected = CommandSettingsModel.targetCategoryMatches(current, category) &&
@@ -1928,10 +1951,10 @@ class GestureLowerPanel(
     }
 
     /**
-     * 移動先の「他のエンティティ」を選んだときだけ、対象三分類を右下へ並べます。
+     * 移動先の「他のエンティティ」を選んだときだけ、対象分類を右下へ並べます。
      * 座標方式の選択肢と同じ親画面へ置くことで、方式を選ぶ→対象種別を選ぶ→
      * 同じ種別を再クリックして詳細、という導線を保ちます。カードは右ペインの
-     * 選択領域を3等分し、設定タブとおよそ同じ寸法で配置します。
+     * 選択領域を4等分し、設定タブとおよそ同じ寸法で配置します。
      */
     private fun addLowerRightTargetChoiceNodes(
         choices: List<GestureSettingTreeNode>,
@@ -1942,9 +1965,9 @@ class GestureLowerPanel(
         suppressHighlight: Boolean = false,
     ) {
         val span = POSITION_TARGET_CHOICE_SPAN_END_X - POSITION_TARGET_CHOICE_SPAN_START_X
-        val width = (span - POSITION_TARGET_CHOICE_GAP * 2) / 3.0
+        val width = (span - POSITION_TARGET_CHOICE_GAP * 3) / 4.0
         val pitch = width + POSITION_TARGET_CHOICE_GAP
-        choices.take(3).forEachIndexed { index, choice ->
+        choices.take(4).forEachIndexed { index, choice ->
             val cx = POSITION_TARGET_CHOICE_SPAN_START_X + width / 2.0 + index * pitch
             val cy = POSITION_TARGET_CHOICE_Y
             val bgId = "position-target-choice-bg-$index"
@@ -2057,6 +2080,7 @@ class GestureLowerPanel(
             listOf(
                 PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES_SET,
                 PositionKind.TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_OTHER_ENTITY,
+                PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
             )
         } else {
             listOf(
@@ -2065,6 +2089,7 @@ class GestureLowerPanel(
                 PositionKind.TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION,
                 PositionKind.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
                 PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES,
+                PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
             )
         }
         return choices.map { (kind, label) -> SettingChoice("position:${kind.name}", KcI18n.text(player, label), current == kind) }
@@ -2080,6 +2105,7 @@ class GestureLowerPanel(
             FacingKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COORDINATES,
             FacingKind.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
             FacingKind.ROTATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC,
+            FacingKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
         ).map { (kind, label) -> SettingChoice("facing:${kind.name}", KcI18n.text(player, label), current == kind) }
     }
 
@@ -2168,7 +2194,7 @@ class GestureLowerPanel(
         TargetKind.NEAREST_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY
         TargetKind.NEARBY_ENTITIES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES
         TargetKind.FIXED_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
-        TargetKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+        TargetKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
     })
 
     private fun positionKindLabel(player: Player, kind: PositionKind): String = KcI18n.text(player, when (kind) {
@@ -2176,7 +2202,7 @@ class GestureLowerPanel(
         PositionKind.DISK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION
         PositionKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR_POSITION
         PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
-        PositionKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
+        PositionKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
         PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
         PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
     })
@@ -2186,7 +2212,7 @@ class GestureLowerPanel(
         FacingKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_FACING
         FacingKind.EXECUTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EXECUTOR_FACING
         FacingKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET
-        FacingKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET
+        FacingKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
         FacingKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COORDINATES
         FacingKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
         FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC
@@ -2615,8 +2641,8 @@ class GestureLowerPanel(
         const val HOVER_BUTTON_GAP = 0.04
         // PICKERの下段はページャー（0.28, -0.48）があるため、その上へ置きます。
         const val PICKER_HOVER_SLOT_Y = -0.38
-        // 「ほかのエンティティ」の対象三分類は、右ペインの選択カード領域
-        // （SETTING_CHOICE 2列と同じスパン）を3等分し、設定タブ（0.47×0.10）と
+        // 「ほかのエンティティ」の対象分類は、右ペインの選択カード領域
+        // （SETTING_CHOICE 2列と同じスパン）を4等分し、設定タブ（0.47×0.10）と
         // およそ同じ高さの寸法で配置します、E
         const val POSITION_TARGET_CHOICE_SPAN_START_X = -0.43
         const val POSITION_TARGET_CHOICE_SPAN_END_X = 1.00

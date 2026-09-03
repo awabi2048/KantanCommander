@@ -49,6 +49,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
@@ -1311,7 +1312,8 @@ class GestureSequenceEditor(
         if (field.key == "item" && (
                 node.type == CommandType.GIVE_ITEM ||
                     (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name)
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
+                    node.type == CommandType.TEMP_SET
                 )) {
             clearSettingState()
             state.lowerMode = GestureLowerMode.SETTINGS
@@ -1351,14 +1353,16 @@ class GestureSequenceEditor(
         if (fieldKey == "item" && (
                 node.type == CommandType.GIVE_ITEM ||
                     (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name)
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
+                    node.type == CommandType.TEMP_SET
                 )) {
             applyHeldItem(player, context)
             return
         }
         if (fieldKey == "block" && (
                 node.type == CommandType.BLOCK_OPERATION ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name)
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                    (node.type == CommandType.TEMP_SET && node.string("tempType", "NUMBER") == "BLOCK")
                 )) {
             applyHeldBlock(player, context)
             return
@@ -2497,7 +2501,7 @@ class GestureSequenceEditor(
         }
 
         /**
-         * 対象の簡略三分類を保存し、必要なら距離・種類などの詳細へ進みます。
+         * 対象の簡略分類を保存し、必要なら距離・種類などの詳細へ進みます。
          * 移動先の「他のエンティティ」も同じ処理を使うため、インライン選択と
          * 通常の対象設定画面で細分類の保存規則が分岐しないようにします。
          */
@@ -2511,6 +2515,30 @@ class GestureSequenceEditor(
                 currentKind ?: CommandSettingsModel.defaultTargetKind(category)
             } else {
                 CommandSettingsModel.defaultTargetKind(category)
+            }
+            if (category == TargetCategory.TEMPORARY) {
+                // 一時対象はUUIDを対象Specへ直接埋め込まず、実行時に解決する
+                // 一時変数名を保存します。入力完了まで未設定のまま保持し、
+                // 途中状態を「設定済み」と表示しないようにします。
+                beginSettingInput(
+                    player,
+                    CommandDialogSpecs.variableName,
+                    current?.takeIf { it.kind == TargetKind.TEMPORARY }?.tempName.orEmpty(),
+                ) { raw ->
+                    if (!updateSettingNode(player, settingContext.copy(role = role)) {
+                            CommandSettingsModel.setTargetSpec(
+                                it,
+                                role,
+                                TargetSpec(TargetKind.TEMPORARY, tempName = raw.trim()),
+                            )
+                        }) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else {
+                        showSettingScreen()
+                        null
+                    }
+                }
+                return
             }
             val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, "target:$categoryValue")
             val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, "target:$categoryValue")
@@ -2669,7 +2697,7 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.POSITION -> {
                 // 移動先の「他のエンティティ」はPOSITION画面の右下へインライン表示した
-                // 対象三分類です。対象設定画面へ遷移せず、ここでも同じ保存・二段階選択を使います。
+                // 対象分類です。対象設定画面へ遷移せず、ここでも同じ保存・二段階選択を使います。
                 if (settingContext.role == CommandSettingRole.DESTINATION && group == "target") {
                     handleTargetCategory(value)
                     return
@@ -2687,9 +2715,31 @@ class GestureSequenceEditor(
                     if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setTargetSpec(it, settingContext.role, currentTarget)
                         }) return
-                    // 対象三分類は同じPOSITION画面の右下へ表示します。ここで子画面を
+                    // 対象分類は同じPOSITION画面の右下へ表示します。ここで子画面を
                     // 開かないため、座標設定や戻る操作の位置も安定します。
                     showSettingScreen()
+                    return
+                }
+                if (kind == PositionKind.TEMPORARY) {
+                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
+                    beginSettingInput(
+                        player,
+                        CommandDialogSpecs.variableName,
+                        current?.takeIf { it.kind == PositionKind.TEMPORARY }?.tempName.orEmpty(),
+                    ) { raw ->
+                        if (!updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setPositionSpec(
+                                    it,
+                                    settingContext.role,
+                                    PositionSpec(PositionKind.TEMPORARY, tempName = raw.trim()),
+                                )
+                            }) {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                        } else {
+                            showSettingScreen()
+                            null
+                        }
+                    }
                     return
                 }
                 if (kind == PositionKind.COORDINATES) {
@@ -2736,6 +2786,28 @@ class GestureSequenceEditor(
                 if (group != "facing") return
                 val kind = runCatching { FacingKind.valueOf(value) }.getOrNull() ?: return
                 val facingRole = settingContext.role ?: CommandSettingRole.CONTEXT_FACING
+                if (kind == FacingKind.TEMPORARY) {
+                    val current = CommandSettingsModel.facingSpec(node, facingRole)
+                    beginSettingInput(
+                        player,
+                        CommandDialogSpecs.variableName,
+                        current?.takeIf { it.kind == FacingKind.TEMPORARY }?.tempName.orEmpty(),
+                    ) { raw ->
+                        if (!updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setFacingSpec(
+                                    it,
+                                    FacingSpec(FacingKind.TEMPORARY, tempName = raw.trim()),
+                                    facingRole,
+                                )
+                            }) {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                        } else {
+                            showSettingScreen()
+                            null
+                        }
+                    }
+                    return
+                }
                 if (kind == FacingKind.COORDINATES) {
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
                     showCoordinateSettingDialog(
@@ -2915,10 +2987,17 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.VARIABLE_TYPE -> {
                 if (group != "type") return
-                val type = runCatching { VariableType.valueOf(value) }.getOrNull() ?: return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "type", type.name)
-                    }) showSettingScreen()
+                if (node.type == CommandType.TEMP_SET) {
+                    val type = runCatching { TemporaryVariableType.valueOf(value) }.getOrNull() ?: return
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "tempType", type.name)
+                        }) showSettingScreen()
+                } else {
+                    val type = runCatching { VariableType.valueOf(value) }.getOrNull() ?: return
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "type", type.name)
+                        }) showSettingScreen()
+                }
             }
             GestureSettingScreen.VARIABLE_OPERATION -> {
                 if (group != "operation") return

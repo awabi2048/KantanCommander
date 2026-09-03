@@ -5,7 +5,7 @@ package me.awabi2048.kantancommander.model
  *
  * ワールド内変数の `${name}`（VariableTemplate）とは記法を分離し、同名共存を
  * 許可します。リテラル利用できる文字列・数値型だけがこの記法を使い、
- * 非リテラル7型はGUIの「一時変数を参照」欄からのみ指定します。
+ * 複合型は一般テキストへ埋め込まず、型付き設定欄または構造化Specから指定します。
  */
 object TemporaryTemplate {
     private val referencePattern = Regex("%\\{([A-Za-z][A-Za-z0-9_.-]{0,63})}%")

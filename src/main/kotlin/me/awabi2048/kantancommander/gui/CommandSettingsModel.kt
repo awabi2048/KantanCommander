@@ -67,6 +67,7 @@ enum class TargetCategory {
     INHERITED,
     PLAYER,
     NON_PLAYER_ENTITY,
+    TEMPORARY,
 }
 
 /** インベントリ／ジェスチャー双方で共有する設定対象の識別子です。 */
@@ -136,9 +137,10 @@ object CommandSettingsModel {
         TargetKind.FIXED_ENTITY,
     )
 
-    /** 実行時の細分類を、GUIで表示する三つの対象大分類へ写像します。 */
+    /** 実行時の細分類を、GUIで表示する対象大分類へ写像します。 */
     fun targetCategory(kind: TargetKind?): TargetCategory = when (kind) {
         TargetKind.INHERITED_TARGET, null -> TargetCategory.INHERITED
+        TargetKind.TEMPORARY -> TargetCategory.TEMPORARY
         in PLAYER_KINDS -> TargetCategory.PLAYER
         else -> TargetCategory.NON_PLAYER_ENTITY
     }
@@ -148,6 +150,7 @@ object CommandSettingsModel {
         TargetCategory.INHERITED -> TargetKind.INHERITED_TARGET
         TargetCategory.PLAYER -> TargetKind.NEAREST_PLAYER
         TargetCategory.NON_PLAYER_ENTITY -> TargetKind.NEAREST_ENTITY
+        TargetCategory.TEMPORARY -> TargetKind.TEMPORARY
     }
 
     /** 大分類の詳細画面で選択できる実行モデル上の細分類を返します。 */
@@ -164,6 +167,7 @@ object CommandSettingsModel {
             TargetKind.NEARBY_ENTITIES,
             TargetKind.FIXED_ENTITY,
         )
+        TargetCategory.TEMPORARY -> listOf(TargetKind.TEMPORARY)
     }
 
     /** 既存の細分類を維持したまま大分類だけを表示するための所属判定です。 */
@@ -432,7 +436,9 @@ object CommandSettingsModel {
             CommandType.TEMP_SET -> when (fieldKey) {
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
-                "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                "value", "x", "y", "z", "yaw", "pitch", "item", "block", "entityId",
+                "sound", "volume", "effect", "level", "seconds" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.FOR_START -> when (fieldKey) {
@@ -884,14 +890,20 @@ object CommandSettingsModel {
             }
 
     /** 固定エンティティだけは、種別を選んだだけでは実行対象が確定しません。 */
-    private fun isTargetSpecConfigured(spec: TargetSpec?): Boolean =
-        spec != null && (spec.kind != TargetKind.FIXED_ENTITY || spec.fixedEntityId != null)
+    private fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {
+        TargetKind.FIXED_ENTITY -> spec.fixedEntityId != null
+        TargetKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
+            CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
+        else -> true
+    }
 
     /** 座標・捕捉方式は必須値が揃った場合だけ設定完了とします。 */
     private fun isPositionSpecConfigured(spec: PositionSpec?): Boolean = spec != null && when (spec.kind) {
         PositionKind.COORDINATES -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true }
         PositionKind.CAPTURED -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true } &&
             listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
+        PositionKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
+            CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
         else -> true
     }
 
@@ -899,6 +911,8 @@ object CommandSettingsModel {
     private fun isFacingSpecConfigured(spec: FacingSpec?): Boolean = spec != null && when (spec.kind) {
         FacingKind.COORDINATES -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true }
         FacingKind.CAPTURED, FacingKind.ROTATION -> listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
+        FacingKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
+            CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
         else -> true
     }
 

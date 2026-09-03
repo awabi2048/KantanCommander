@@ -10,6 +10,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import java.util.UUID
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -97,6 +98,64 @@ class CommandSettingsModelTest {
         )
 
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET))
+    }
+
+    @Test
+    fun `temporary target position and facing are incomplete until a name is supplied`() {
+        val node = CommandType.TELEPORT.newNode()
+
+        CommandSettingsModel.setTargetSpec(
+            node,
+            CommandSettingRole.NODE_TARGET,
+            TargetSpec(TargetKind.TEMPORARY),
+        )
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET))
+
+        CommandSettingsModel.setTargetSpec(
+            node,
+            CommandSettingRole.NODE_TARGET,
+            TargetSpec(TargetKind.TEMPORARY, tempName = "selected"),
+        )
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET))
+
+        CommandSettingsModel.setPositionSpec(
+            node,
+            CommandSettingRole.DESTINATION,
+            PositionSpec(PositionKind.TEMPORARY),
+        )
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "destination"))
+
+        CommandSettingsModel.setPositionSpec(
+            node,
+            CommandSettingRole.DESTINATION,
+            PositionSpec(PositionKind.TEMPORARY, tempName = "point"),
+        )
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "destination"))
+
+        CommandSettingsModel.setFacingSpec(
+            node,
+            FacingSpec(FacingKind.TEMPORARY),
+            CommandSettingRole.DESTINATION_FACING,
+        )
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "destinationFacing"))
+
+        CommandSettingsModel.setFacingSpec(
+            node,
+            FacingSpec(FacingKind.TEMPORARY, tempName = "point"),
+            CommandSettingRole.DESTINATION_FACING,
+        )
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "destinationFacing"))
+    }
+
+    @Test
+    fun `temporary value fields follow the selected type`() {
+        val node = CommandType.TEMP_SET.newNode()
+
+        assertEquals(listOf("name", "tempType", "value"), CommandSettingsModel.visibleFields(node).map { it.key })
+        node.params["tempType"] = TemporaryVariableType.POSITION.name
+        assertEquals(listOf("name", "tempType", "x", "y", "z"), CommandSettingsModel.visibleFields(node).map { it.key })
+        node.params["tempType"] = TemporaryVariableType.SOUND.name
+        assertEquals(listOf("name", "tempType", "sound", "volume", "pitch"), CommandSettingsModel.visibleFields(node).map { it.key })
     }
 
     @Test
