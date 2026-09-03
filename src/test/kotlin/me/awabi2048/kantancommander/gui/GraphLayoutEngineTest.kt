@@ -903,6 +903,24 @@ class GraphLayoutEngineTest {
 
         assertEquals(end.id, preview.graph.nodes[preview.insertedNodeId]?.next)
         assertTrue(GraphValidator.validate(preview.graph).isEmpty())
+
+        val insertedPoint = requireNotNull(preview.layout.nodePoints[preview.insertedNodeId])
+        val endPoint = requireNotNull(preview.layout.nodePoints[end.id])
+        // 保存グラフ上のTELEPORT.next=FOR_ENDだけでなく、FALSE枝からFOR_END直前へ
+        // 戻るL字経路も描画されていなければ、追加ノードが視覚上の終端になります。
+        assertEquals(
+            GraphEditor.Edge.NEXT,
+            preview.layout.cells[MapPoint(endPoint.x - 1, insertedPoint.y)]?.insertionTarget?.edge,
+        )
+        assertEquals(
+            preview.insertedNodeId,
+            preview.layout.cells[MapPoint(endPoint.x - 1, insertedPoint.y)]?.insertionTarget?.sourceId,
+        )
+        assertTrue(
+            (endPoint.y + 1..insertedPoint.y).all {
+                preview.layout.cells[MapPoint(endPoint.x - 1, it)]?.kind == MapCellKind.BRANCH_PATH
+            },
+        )
     }
 
     @Test
