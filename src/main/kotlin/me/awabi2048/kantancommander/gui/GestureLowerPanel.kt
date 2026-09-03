@@ -47,7 +47,7 @@ private typealias SettingChoice = GestureSettingTreeNode
  *
  * - SETTINGS: 左タブ列＝設定フィールド、右詳細＝現在値＋説明。設定木の直下は親画面で編集
  * - PICKER: 左タブ列＝コマンドカテゴリ（EXECUTION/CONTROL）、右詳細＝種別一覧
- * - CONFIRM: 上部エディターが子画面（openChild・赤ガラス）として開く
+ * - CONFIRM／ワールド内変数削除確認: 上部エディターが子画面（openChild）として開く
  *
  * 親画面は左タブ列＋右詳細の分割型、子画面は子画面全体を使う集中型です。
  * 座標は画面中央原点・ブロック単位です。
@@ -86,6 +86,8 @@ class GestureLowerPanel(
             // 型選択はワールド変数一覧の子画面から遷移するため、子画面が何らかの理由で
             // 閉じられた場合でも、親側へ型選択の内部座標を誤描画しないようにします。
             GestureLowerMode.WORLD_VARIABLE_TYPE -> buildSettings(state, player, attention, suppressHighlight)
+            // 削除確認も一覧と同じ子画面契約で表示し、親画面へ確認ボタンを混在させません。
+            GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
         }
     }
@@ -110,6 +112,12 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
     ): GestureGuiView = buildWorldVariableType(state, player)
+
+    /** ワールド内変数の削除確認子画面を生成します。 */
+    fun buildWorldVariableDeleteConfirmationChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView = buildWorldVariableDeleteConfirmation(state, player)
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
@@ -536,14 +544,30 @@ class GestureLowerPanel(
                 val type = definitions[name]?.type ?: value.type
                 val column = index % 2
                 val row = index / 2
-                val cx = if (column == 0) -0.53 else 0.53
+                // カード本体と削除ボタンを同じ列幅へ収めます。カード全体をクリック領域に
+                // すると削除操作まで値編集へ吸われるため、意味の異なる2要素を隣接させます。
+                val columnCenter = if (column == 0) -0.53 else 0.53
+                val columnLeft = columnCenter - CHILD_CHOICE_WIDTH / 2.0
+                val cardCx = columnLeft + WORLD_VARIABLE_CARD_WIDTH / 2.0
+                val deleteCx = columnLeft + WORLD_VARIABLE_CARD_WIDTH + WORLD_VARIABLE_DELETE_GAP +
+                    WORLD_VARIABLE_DELETE_WIDTH / 2.0
                 val cy = CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH
-                val bgId = "variables-bg-$index"
+                val cardBgId = "variables-bg-$index"
+                val deleteBgId = "variables-delete-bg-$index"
                 // 一覧カードはBlockDisplayの背景として横へ引き伸ばすため、アイテム素材ではなく
                 // 模様のないコンクリートを使います。WRITABLE_BOOKは上部設定カードのアイコン用途
                 // では有効ですが、Bukkit.createBlockDataへ渡すことはできません。
-                addBlock(visuals, bgId, cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT, Material.LIGHT_GRAY_CONCRETE, 4)
-                addText(visuals, "variables-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(name))
+                addBlock(
+                    visuals,
+                    cardBgId,
+                    cardCx,
+                    cy,
+                    WORLD_VARIABLE_CARD_WIDTH,
+                    SETTING_CHOICE_HEIGHT,
+                    Material.LIGHT_GRAY_CONCRETE,
+                    4,
+                )
+                addText(visuals, "variables-label-$index", cardCx, cy - 0.012, 0.0045, 100, Component.text(name))
                 // 値と型は別の意味行として取得し、ホバー時も別行で表示します。
                 // 一つの翻訳キーへ結合すると、言語ごとの語順変更と行レイアウトを
                 // 同時に扱えないため、各行を型付きキーから組み立てます。
@@ -561,11 +585,44 @@ class GestureLowerPanel(
                 )
                 elements.add(GestureGuiElement(
                     elementId = "lower-variable:$name",
-                    bounds = rect(cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
+                    bounds = rect(cardCx, cy, WORLD_VARIABLE_CARD_WIDTH, SETTING_CHOICE_HEIGHT),
                     acceptedGestures = GestureGuiClickPolicy.CLICK,
-                    targetVisualId = bgId,
+                    targetVisualId = cardBgId,
                     hoverText = multiLineHover(
                         detailRows,
+                        x = 0.0,
+                        y = CHILD_HOVER_Y,
+                        replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                    ),
+                ))
+                // 削除は一覧から直接実行せず、必ず確認子画面へ進ませます。Unicodeの
+                // ゴミ箱記号を視認用アイコンにし、ホバー文にはローカライズ済みの操作名を出します。
+                addBlock(
+                    visuals,
+                    deleteBgId,
+                    deleteCx,
+                    cy,
+                    WORLD_VARIABLE_DELETE_WIDTH,
+                    SETTING_CHOICE_HEIGHT,
+                    Material.RED_CONCRETE,
+                    4,
+                )
+                addText(
+                    visuals,
+                    "variables-delete-label-$index",
+                    deleteCx,
+                    cy - 0.012,
+                    0.0048,
+                    40,
+                    Component.text("🗑", NamedTextColor.WHITE),
+                )
+                elements.add(GestureGuiElement(
+                    elementId = "lower-variable-delete:$name",
+                    bounds = rect(deleteCx, cy, WORLD_VARIABLE_DELETE_WIDTH, SETTING_CHOICE_HEIGHT),
+                    acceptedGestures = GestureGuiClickPolicy.CLICK,
+                    targetVisualId = deleteBgId,
+                    hoverText = singleLineHover(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE),
                         x = 0.0,
                         y = CHILD_HOVER_Y,
                         replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
@@ -710,6 +767,113 @@ class GestureLowerPanel(
         ))
         addBackSetting(player, elements, visuals, child = true, centerX = 0.53, width = CHILD_CHOICE_WIDTH)
         return view(GestureLowerMode.WORLD_VARIABLE_TYPE, elements, visuals, child = true)
+    }
+
+    /**
+     * ワールド内変数削除の確認子画面です。
+     *
+     * SS1で示された一覧下端の左右位置をそのまま確認画面の操作列へ使い、
+     * 左を確定、右をキャンセルとして固定します。値編集Dialogへ削除を置かない
+     * ことで、値の保存と定義の破棄を別の操作境界として認識できます。
+     */
+    private fun buildWorldVariableDeleteConfirmation(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        val name = state.pendingWorldVariableDeleteName.orEmpty()
+
+        addText(
+            visuals,
+            "world-variable-delete-title",
+            0.0,
+            CHILD_HEADER_Y,
+            0.0060,
+            200,
+            Component.text(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_TITLE,
+                ),
+            ),
+        )
+        addText(
+            visuals,
+            "world-variable-delete-body",
+            0.0,
+            CHILD_HOVER_Y,
+            DESCRIPTION_TEXT_SIZE,
+            220,
+            Component.text(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_BODY,
+                    mapOf("name" to name),
+                ),
+                NamedTextColor.GRAY,
+            ),
+        )
+
+        // 一覧画面の「新規作成／戻る」と同じ下端の左右位置を維持します。
+        addBlock(
+            visuals,
+            "world-variable-delete-confirm-bg",
+            -0.53,
+            -0.43,
+            CHILD_CHOICE_WIDTH,
+            0.10,
+            Material.RED_CONCRETE,
+            4,
+        )
+        addText(
+            visuals,
+            "world-variable-delete-confirm-label",
+            -0.53,
+            -0.43,
+            0.0048,
+            100,
+            Component.text(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                NamedTextColor.WHITE,
+            ),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "lower-world-variable-delete-confirm",
+            bounds = rect(-0.53, -0.43, CHILD_CHOICE_WIDTH, 0.10),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "world-variable-delete-confirm-bg",
+        ))
+
+        addBlock(
+            visuals,
+            "world-variable-delete-cancel-bg",
+            0.53,
+            -0.43,
+            CHILD_CHOICE_WIDTH,
+            0.10,
+            Material.CYAN_TERRACOTTA,
+            4,
+        )
+        addText(
+            visuals,
+            "world-variable-delete-cancel-label",
+            0.53,
+            -0.43,
+            0.0048,
+            100,
+            Component.text(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                NamedTextColor.WHITE,
+            ),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "lower-setting-back",
+            bounds = rect(0.53, -0.43, CHILD_CHOICE_WIDTH, 0.10),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "world-variable-delete-cancel-bg",
+        ))
+        return view(GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM, elements, visuals, child = true)
     }
 
     /** ワールド変数の型名を、ノード設定と同じ表示キーで解決します。 */
@@ -2789,6 +2953,11 @@ class GestureLowerPanel(
         const val CHILD_DETAIL_HINT_Y = 0.14
         const val CHILD_PAGER_Y = -0.34
         const val CHILD_BACK_WIDTH = 1.70
+        // ワールド内変数の各列は「値編集カード＋削除ボタン」で構成し、列全体の幅を
+        // 既存の0.92へ固定します。ボタンの位置は一覧と確認画面で共通にします。
+        const val WORLD_VARIABLE_CARD_WIDTH = 0.72
+        const val WORLD_VARIABLE_DELETE_GAP = 0.05
+        const val WORLD_VARIABLE_DELETE_WIDTH = 0.15
         const val ACTION_DESCRIPTION_Y = 0.36
         // 親画面のホバー説明は、常設の灰色説明（ACTION_DESCRIPTION_Y）と対になる
         // 画面下段のスロットへ表示します。操作行（-0.43）や対象カード（-0.25）と

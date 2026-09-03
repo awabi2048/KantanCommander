@@ -118,15 +118,18 @@ data class GestureEditorState(
     var variablePage: Int = 0,
     /** ワールド内変数の新規作成で、Dialogへ進む前にGestureGUIで選択した型です。 */
     var pendingWorldVariableType: VariableType? = null,
+    /** ワールド内変数の削除確認で、確認対象として表示している名前です。 */
+    var pendingWorldVariableDeleteName: String? = null,
 )
 
-/** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
+/** 下部パネルの表示モード。各確認画面は親から分離した子画面として開きます。 */
 enum class GestureLowerMode {
     SETTINGS,
     PICKER,
     SETTING_CHOICES,
     WORLD_VARIABLES,
     WORLD_VARIABLE_TYPE,
+    WORLD_VARIABLE_DELETE_CONFIRM,
     CONFIRM,
 }
 
@@ -214,7 +217,8 @@ private data class ViewportMetrics(
 /**
  * ジェスチャーエディターの主要コントローラー。
  * 上部ビューポートと下部パネルをジェスチャーGUIセッションとして管理します。
- * 下部のモード切替はupdateScreen、CONFIRMのみopenChild（赤ガラス）で実現します。
+ * 下部の一覧・型選択・削除確認はSETTING_CHILD_SCREEN_ID、その他のCONFIRMは
+ * 専用の子画面へ切り替え、親画面の操作領域と混在させません。
  */
 class GestureSequenceEditor(
     private val plugin: KantanCommanderPlugin,
@@ -434,6 +438,7 @@ class GestureSequenceEditor(
                 GestureLowerMode.SETTING_CHOICES -> lowerPanel.buildSettingChild(state, owner, attention)
                 GestureLowerMode.WORLD_VARIABLES -> lowerPanel.buildWorldVariablesChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_TYPE -> lowerPanel.buildWorldVariableTypeChild(state, owner)
+                GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> lowerPanel.buildWorldVariableDeleteConfirmationChild(state, owner)
                 else -> lowerPanel.build(state, owner, attention)
             }
         } else {
@@ -1215,6 +1220,7 @@ class GestureSequenceEditor(
         state.settingScreen = null
         state.settingChoicePage = 0
         state.pendingWorldVariableType = null
+        state.pendingWorldVariableDeleteName = null
     }
 
     /** 設定木の現在フレームを既存表示状態へ投影します。 */
@@ -1951,6 +1957,7 @@ class GestureSequenceEditor(
         if (resolveVariableWorldId() == null) return
         state.variablePage = 0
         state.pendingWorldVariableType = null
+        state.pendingWorldVariableDeleteName = null
         state.lowerMode = GestureLowerMode.WORLD_VARIABLES
         val ownerId = ownerIdFor(player)
         if (settingChildOpen(ownerId)) {
@@ -1990,6 +1997,7 @@ class GestureSequenceEditor(
             api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
         }
         state.pendingWorldVariableType = null
+        state.pendingWorldVariableDeleteName = null
         state.lowerMode = GestureLowerMode.SETTINGS
         updateLower(player)
     }
@@ -2007,27 +2015,6 @@ class GestureSequenceEditor(
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
             body = listOf(KcI18n.component(player, CommandDialogSpecs.worldVariableValueBody(type))),
             inputs = listOf(CommandDialogSpecs.input(player, "value", VariableTemplate.stringify(current), spec)),
-            // 確定・削除・キャンセルを同じmultiActionへ移し、Dialog本体の最下部へ
-            // 3列で揃えます。追加操作列へ置くと削除だけが確定ボタンの横へ移動し、
-            // キャンセルがexitActionとして別の位置になるためです。
-            footerActions = listOf(
-                MenuDialogButton(
-                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE),
-                    MenuDialogHandler { target, _ ->
-                        if (target.uniqueId != player.uniqueId ||
-                            !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
-                        ) {
-                            return@MenuDialogHandler MenuActionResult.Ignored
-                        }
-                        showWorldVariableDeleteDialog(player, name)
-                        // 新しい削除確認Dialogを開いたため、元Dialogを閉じる更新は返しません。
-                        // CC-System側が元Dialogのstale updateで新Dialogを閉じないようにします。
-                        MenuActionResult.Success(MenuUpdate.None)
-                    },
-                ),
-            ),
-            multiActionWithoutExit = true,
-            columns = 3,
         ) { response ->
             val raw = response.textValue("value")
             val validationError = spec.validateInput(raw)
@@ -2038,7 +2025,7 @@ class GestureSequenceEditor(
                     numberValue = CommandValueRules.parseFiniteDouble(raw),
                 ).takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
                     player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+                    CommandDialogSpecs.worldVariableValueInvalid(VariableType.NUMBER),
                 )
                 VariableType.STRING -> WorldVariableValue(VariableType.STRING, stringValue = raw)
             }
@@ -2193,37 +2180,100 @@ class GestureSequenceEditor(
         }
     }
 
-    /** 変数定義と現在値を削除します。確認画面で確定した場合だけ実行します。 */
-    private fun showWorldVariableDeleteDialog(player: Player, name: String) {
+    /**
+     * 一覧行の削除ボタンから確認子画面へ遷移します。
+     *
+     * 変数名をstateへ保持してから子画面を開くことで、値編集Dialogとは独立した
+     * 「削除対象の確認→確定」境界を作ります。対象が同時操作で消えていた場合は、
+     * staleな確認画面を表示せず一覧を再描画します。
+     */
+    private fun openWorldVariableDeleteConfirmation(player: Player, name: String) {
         val worldId = resolveVariableWorldId() ?: return
-        showInputDialog(
-            player = player,
-            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_TITLE),
-            body = listOf(KcI18n.component(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_BODY,
-                mapOf("name" to name),
-            )),
-            inputs = emptyList(),
-        ) {
-            val removed = runCatching { plugin.variables.remove(worldId, name) }
-                .getOrElse { failure ->
-                    plugin.logger.log(
-                        java.util.logging.Level.WARNING,
-                        "ワールド内変数を削除できませんでした: world=$worldId name=$name",
-                        failure,
-                    )
-                    false
-                }
-            if (!removed) {
-                return@showInputDialog KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+        val exists = runCatching { plugin.variables.get(worldId, name) != null }
+            .getOrElse { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "ワールド内変数の削除対象を確認できませんでした: world=$worldId name=$name",
+                    failure,
                 )
+                false
             }
+        if (!exists) {
             updateLower(player)
-            null
+            return
         }
+        state.pendingWorldVariableDeleteName = name
+        state.pendingWorldVariableType = null
+        state.lowerMode = GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildWorldVariableDeleteConfirmationChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    // 破壊的操作の確認であることを既存のCONFIRM子画面と同じ赤系素材で示します。
+                    overlayMaterial = Material.RED_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ワールド内変数の削除確認画面のオープンに失敗しました: script=${state.scriptId} name=$name",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.pendingWorldVariableDeleteName = null
+            state.lowerMode = GestureLowerMode.WORLD_VARIABLES
+            updateLower(player)
+        }
+    }
+
+    /** 削除確認子画面を閉じ、削除せずに一覧へ戻ります。 */
+    private fun closeWorldVariableDeleteConfirmation(player: Player) {
+        state.pendingWorldVariableDeleteName = null
+        state.lowerMode = GestureLowerMode.WORLD_VARIABLES
+        updateLower(player)
+    }
+
+    /** 確認子画面の「確定」だけでワールド内変数を削除します。 */
+    private fun confirmWorldVariableDelete(player: Player) {
+        val name = state.pendingWorldVariableDeleteName ?: run {
+            closeWorldVariableDeleteConfirmation(player)
+            return
+        }
+        val worldId = resolveVariableWorldId() ?: run {
+            closeWorldVariableDeleteConfirmation(player)
+            return
+        }
+        val removed = runCatching { plugin.variables.remove(worldId, name) }
+            .getOrElse { failure ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "ワールド内変数を削除できませんでした: world=$worldId name=$name",
+                    failure,
+                )
+                false
+            }
+        if (!removed) {
+            // 確認画面を残して再試行・キャンセルを可能にし、保存失敗を黙って
+            // 成功扱いにしません。画面外へ移動した場合も同じメッセージで通知します。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+            return
+        }
+        player.playSound(player.location, Sound.BLOCK_BAMBOO_HIT, 1.0f, 1.0f)
+        state.pendingWorldVariableDeleteName = null
+        state.lowerMode = GestureLowerMode.WORLD_VARIABLES
+        updateLower(player)
     }
 
     /** DISPLAY_TEXTの3つの時間設定を、インベントリGUIと同じ仕様で編集します。 */
@@ -3309,6 +3359,10 @@ class GestureSequenceEditor(
             context.elementId == "lower-script-variables" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 openWorldVariables(player)
             }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeWorldVariableDeleteConfirmation(player)
+            }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLE_TYPE &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 closeWorldVariableTypeSelection(player)
@@ -3321,10 +3375,21 @@ class GestureSequenceEditor(
                 state.variablePage = context.elementId.removePrefix("lower-variables-page:").toIntOrNull() ?: return
                 updateLower(player)
             }
+            // 「削除」要素は lower-variable: より先に判定します。共通接頭辞の後段を
+            // 値編集の変数名として誤解釈すると、削除クリックでDialogが開いてしまいます。
+            context.elementId.startsWith("lower-variable-delete:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-variable-delete:").trim()
+                if (name.isEmpty()) return
+                openWorldVariableDeleteConfirmation(player, name)
+            }
             context.elementId.startsWith("lower-variable:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val name = context.elementId.removePrefix("lower-variable:").trim()
                 if (name.isEmpty()) return
                 showWorldVariableValueDialog(player, name)
+            }
+            context.elementId == "lower-world-variable-delete-confirm" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                confirmWorldVariableDelete(player)
             }
             context.elementId.startsWith("lower-world-variable-type:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {

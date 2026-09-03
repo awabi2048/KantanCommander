@@ -390,6 +390,7 @@ enum class CommandType(
         "executor" to "", "target" to "", "position" to "", "facing" to ""
     )),
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
+    /** ワールド内変数を定義・変更します。 */
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REDSTONE, mapOf(
         "name" to "",
         "type" to VariableType.NUMBER.name,
@@ -398,7 +399,7 @@ enum class CommandType(
         "value" to "0.0",
     )),
     /** 一時変数を設定します。再設定は上書きとして扱います。 */
-    TEMP_SET(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REPEATER, mapOf(
+    TEMP_SET(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET_DESCRIPTION, Material.REPEATER, mapOf(
         "name" to "",
         "tempType" to TemporaryVariableType.NUMBER.name,
         "value" to "0.0",

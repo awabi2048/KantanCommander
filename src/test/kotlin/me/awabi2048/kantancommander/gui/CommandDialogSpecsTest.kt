@@ -171,11 +171,15 @@ class CommandDialogSpecsTest {
         assertEquals(CommandDialogSpecs.InputFormat.NUMBER, number.format)
         assertNull(number.validateInput(" 1.5 "))
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID,
+            CommandDialogSpecs.worldVariableValueInvalid(VariableType.NUMBER),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID,
             number.validateInput("NaN"),
         )
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID,
             number.validateInput("Infinity"),
         )
 
@@ -189,13 +193,31 @@ class CommandDialogSpecsTest {
         assertNull(string.validateInput(""))
         assertNull(string.validateInput("ordinary text"))
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID,
+            CommandDialogSpecs.worldVariableValueInvalid(VariableType.STRING),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID,
             string.validateInput("x".repeat(257)),
         )
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID,
             string.validateInput("value=\${BadName}"),
         )
+    }
+
+    @Test
+    fun `variable command labels use separate world and temporary keys`() {
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE,
+            CommandType.VARIABLE.key,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET,
+            CommandType.TEMP_SET.key,
+        )
+        assertTrue(CommandType.VARIABLE.key != CommandType.TEMP_SET.key)
+        assertTrue(CommandType.VARIABLE.descriptionKey != CommandType.TEMP_SET.descriptionKey)
     }
 
     @Test

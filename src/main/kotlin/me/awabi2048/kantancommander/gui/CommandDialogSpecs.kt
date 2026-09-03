@@ -386,7 +386,7 @@ internal object CommandDialogSpecs {
             32,
             validate = { raw ->
                 if (CommandValueRules.parseFiniteDouble(raw) == null) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                    worldVariableValueInvalid(VariableType.NUMBER)
                 } else null
             },
             required = true,
@@ -397,7 +397,7 @@ internal object CommandDialogSpecs {
             WORLD_VARIABLE_STRING_MAX_LENGTH,
             validate = { raw ->
                 if (raw.length > WORLD_VARIABLE_STRING_MAX_LENGTH || VariableTemplate.hasMalformedReference(raw)) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                    worldVariableValueInvalid(VariableType.STRING)
                 } else null
             },
             required = false,
@@ -409,6 +409,12 @@ internal object CommandDialogSpecs {
     fun worldVariableValueBody(type: VariableType): LocalizationKey<String> = when (type) {
         VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY
         VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY
+    }
+
+    /** 値編集の入力エラーも型別に解決し、利用者が修正方法を判断できるようにします。 */
+    fun worldVariableValueInvalid(type: VariableType): LocalizationKey<String> = when (type) {
+        VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID
+        VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID
     }
 
     /** 符号付き整数（条件の比較値など）。 */
