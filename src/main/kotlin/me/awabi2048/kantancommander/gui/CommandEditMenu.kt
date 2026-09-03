@@ -1454,7 +1454,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "timer-edit",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_TITLE),
-                body = CommandDialogSpecs.timerBody(player, seconds),
+                body = CommandDialogSpecs.timerBody(player),
                 inputs = listOf(CommandDialogSpecs.timerInput(player, seconds)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ENABLE), MenuDialogHandler { _, response ->
                     val rawValue = response.textValue("seconds").trim()

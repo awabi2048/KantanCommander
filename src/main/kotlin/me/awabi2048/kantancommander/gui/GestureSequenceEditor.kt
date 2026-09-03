@@ -1872,7 +1872,7 @@ class GestureSequenceEditor(
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
-            body = CommandDialogSpecs.timerBody(player, script.timer.intervalSeconds),
+            body = CommandDialogSpecs.timerBody(player),
             inputs = listOf(CommandDialogSpecs.timerInput(player, script.timer.intervalSeconds)),
         ) { response ->
             val rawSeconds = response.textValue("seconds").trim()

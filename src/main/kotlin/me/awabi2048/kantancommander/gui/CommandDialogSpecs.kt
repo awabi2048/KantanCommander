@@ -133,16 +133,9 @@ internal object CommandDialogSpecs {
         format = InputFormat.TIME,
     )
 
-    fun timerBody(player: Player, seconds: Int): List<Component> = listOf(
+    /** タイマー入力の方法だけを表示します。現在の秒数は入力欄に表示します。 */
+    fun timerBody(player: Player): List<Component> = listOf(
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_BODY),
-        Component.text(
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS,
-                mapOf("value" to seconds),
-            ),
-            NamedTextColor.GRAY,
-        ),
     )
 
     fun timerInput(player: Player, seconds: Int): MenuDialogInput.Text =
