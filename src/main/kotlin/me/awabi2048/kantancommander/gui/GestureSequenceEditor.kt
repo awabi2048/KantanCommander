@@ -566,17 +566,17 @@ class GestureSequenceEditor(
         val settingChildWasOpen = settingChildOpen(ownerId)
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
-        // 確認画面も下部画面の子画面です。openChild前の親ビューをGlowなしで
-        // 作っておくことで、親がメイン画面でも設定子画面でも同じ抑制経路を通します。
+        // 確認画面も下部画面の子画面です。openChild前の親ビューからハイライトを
+        // 外しておくことで、親がメイン画面でも設定子画面でも同じ抑制経路を通します。
         val parentView = if (settingChildWasOpen) {
-            lowerPanel.buildSettingChild(state, owner, attention, suppressGlow = true)
+            lowerPanel.buildSettingChild(state, owner, attention, suppressHighlight = true)
         } else {
-            lowerPanel.build(state, owner, attention, suppressGlow = true)
+            lowerPanel.build(state, owner, attention, suppressHighlight = true)
         }
         state.lowerMode = GestureLowerMode.CONFIRM
         val view = lowerPanel.build(state, owner, attention)
         val opened = runCatching {
-            openChildAndSuppressParentGlow(
+            openChildAndSuppressParentHighlight(
                 ownerId,
                 parentView,
                 view,
@@ -612,13 +612,13 @@ class GestureSequenceEditor(
         api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.SETTING_CHILD_SCREEN_ID) == true
 
     /**
-     * 下部画面へ子画面を積み、子画面生成後に親ビューのGlowを一括解除します。
+     * 下部画面へ子画面を積み、子画面生成後に親ビューのハイライトを一括解除します。
      *
-     * CC-SystemのopenChildは親を背面へ残すため、子ビューからGlowを除くだけでは
-     * 親の描画済みGlowが残ります。設定詳細・削除確認・上書き確認を個別対応せず、
-     * 親ビューをGlowなしで差分更新する責務をここへ集約します。
+     * CC-SystemのopenChildは親を背面へ残すため、子ビューからハイライトを除くだけでは
+     * 親の描画済み装飾が残ります。設定詳細・削除確認・上書き確認を個別対応せず、
+     * 親ビューをハイライトなしで差分更新する責務をここへ集約します。
      */
-    private fun openChildAndSuppressParentGlow(
+    private fun openChildAndSuppressParentHighlight(
         ownerId: UUID,
         parentView: GestureGuiView,
         childView: GestureGuiView,
@@ -628,7 +628,7 @@ class GestureSequenceEditor(
         if (!opened) return false
         if (!api.updateScreen(ownerId, parentView)) {
             plugin.logger.warning(
-                "子画面の親ビューからGlowを解除できませんでした: " +
+                "子画面の親ビューからハイライトを解除できませんでした: " +
                     "parent=${parentView.definition.screenId} child=${childView.definition.screenId}",
             )
         }
@@ -649,10 +649,10 @@ class GestureSequenceEditor(
             state,
             owner,
             attention,
-            suppressGlow = true,
+            suppressHighlight = true,
         )
         val opened = runCatching {
-            openChildAndSuppressParentGlow(
+            openChildAndSuppressParentHighlight(
                 ownerId,
                 effectiveParentView,
                 lowerPanel.buildSettingChild(state, owner, attention),
@@ -1230,11 +1230,11 @@ class GestureSequenceEditor(
         val attention = attentionState()
         // stateを子フレームへ進める前に、現在背面にある親ビューを取得します。
         // 進行後のstateで再生成すると、親ビューの構造まで子フレームへ変わるため、
-        // 子画面を積む対象とGlowを解除する対象を正しく特定できません。
+        // 子画面を積む対象とハイライトを解除する対象を正しく特定できません。
         val parentView = if (settingChildOpen(ownerId)) {
-            lowerPanel.buildSettingChild(state, owner, attention, suppressGlow = true)
+            lowerPanel.buildSettingChild(state, owner, attention, suppressHighlight = true)
         } else {
-            lowerPanel.build(state, owner, attention, suppressGlow = true)
+            lowerPanel.build(state, owner, attention, suppressHighlight = true)
         }
         val nextPath = state.settingTreePath?.enterChild(selectedNodeId)?.nodeIds.orEmpty()
         state.settingRoute = state.settingRoute + frame
@@ -1524,9 +1524,9 @@ class GestureSequenceEditor(
         val owner = ownerPlayerFor(player)
         val attention = attentionState()
         val parentView = if (settingChildWasOpen) {
-            lowerPanel.buildSettingChild(state, owner, attention, suppressGlow = true)
+            lowerPanel.buildSettingChild(state, owner, attention, suppressHighlight = true)
         } else {
-            lowerPanel.build(state, owner, attention, suppressGlow = true)
+            lowerPanel.build(state, owner, attention, suppressHighlight = true)
         }
         state.confirmKind = GestureConfirmKind.ITEM_OVERWRITE
         state.confirmNodeId = null
@@ -1535,7 +1535,7 @@ class GestureSequenceEditor(
         state.pendingItemData = itemData
         state.lowerMode = GestureLowerMode.CONFIRM
         val opened = runCatching {
-            openChildAndSuppressParentGlow(
+            openChildAndSuppressParentHighlight(
                 ownerId,
                 parentView,
                 lowerPanel.build(state, owner, attention),

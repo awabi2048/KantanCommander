@@ -49,11 +49,11 @@ enum class GestureSettingValueState {
 /**
  * 設定カードの表示規則を一箇所へ集約します。
  *
- * テクスチャはボタンの種類（選択方式と値状態）を表し、Glow は選択中と
- * 要確認状態を表します。画面ごとの色分岐を増やさず、視認性を確保します。
+ * テクスチャはボタンの種類（選択方式と値状態）を表し、選択状態は内側枠、
+ * 要確認状態はGlowで表します。画面ごとの色分岐を増やさず、視認性を確保します。
  */
 internal object GestureSettingVisualPolicy {
-    // テクスチャはボタンの種類で決まります。選択状態は Glow で表現します。
+    // テクスチャはボタンの種類で決まります。選択状態は内側枠で表現します。
     fun material(
         selectionMode: GestureSettingSelectionMode,
         valueState: GestureSettingValueState,
@@ -68,7 +68,7 @@ internal object GestureSettingVisualPolicy {
         }
     }
 
-    // 後方互換のため旧シグネチャを維持します。内部ではテクスチャと Glow を分離します。
+    // 既存の呼び出し形を維持します。内部ではテクスチャとハイライトを分離します。
     fun material(
         selectionMode: GestureSettingSelectionMode,
         valueState: GestureSettingValueState,
@@ -77,22 +77,25 @@ internal object GestureSettingVisualPolicy {
     ): Material = material(selectionMode, valueState)
 
     /**
-     * 下部画面の設定タブ専用のGlowです。
+     * 下部画面の設定タブ専用の警告Glowです。
      *
-     * 要確認タブを選択している場合は警告色を優先し、それ以外の選択中タブは
-     * 青で統一します。ビューポートのノード選択はこのポリシーを通らないため、
-     * ノード側の既存色を変更せずに下部画面だけの意味を表現できます。
+     * 選択状態はタブの内側枠へ移したため、Glowは要確認状態だけへ使用します。
+     * 選択中かつ要確認の場合は紫、未選択の要確認は赤です。ビューポートの
+     * ノード選択はこのポリシーを通らないため、ノード側の既存色を変更しません。
      */
     fun tabGlowColor(selected: Boolean, attention: Boolean = false): Int? = when {
         selected && attention -> Color.PURPLE.asARGB()
         attention -> Color.RED.asARGB()
-        selected -> Color.BLUE.asARGB()
         else -> null
     }
 
-    /** 下部画面のタブ以外の設定ボタン専用のGlowです。警告状態はタブだけで示します。 */
-    fun nonTabGlowColor(selected: Boolean): Int? =
-        if (selected) Color.WHITE.asARGB() else null
+    /** 選択中タブの内側枠に使う素材です。非選択なら枠を生成しません。 */
+    fun tabOutlineMaterial(selected: Boolean): Material? =
+        if (selected) Material.BLUE_CONCRETE else null
+
+    /** タブ内部・子画面の選択項目の内側枠に使う素材です。 */
+    fun nonTabOutlineMaterial(selected: Boolean): Material? =
+        if (selected) Material.WHITE_CONCRETE else null
 }
 
 /** 木構造上の現在位置。表示状態と戻る経路を同じ値から復元します。 */

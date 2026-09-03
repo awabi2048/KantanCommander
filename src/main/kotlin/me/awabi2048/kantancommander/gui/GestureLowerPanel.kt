@@ -7,6 +7,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiBounds
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
@@ -68,16 +69,16 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
-        suppressGlow: Boolean = false,
+        suppressHighlight: Boolean = false,
     ): GestureGuiView {
         return when (state.lowerMode) {
-            GestureLowerMode.SETTINGS -> buildSettings(state, player, attention, suppressGlow)
+            GestureLowerMode.SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.PICKER -> buildPicker(state, player)
             GestureLowerMode.SETTING_CHOICES -> buildSettingChoices(
                 state,
                 player,
                 attention,
-                suppressGlow = suppressGlow,
+                suppressHighlight = suppressHighlight,
             )
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
         }
@@ -88,16 +89,16 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
-        suppressGlow: Boolean = false,
+        suppressHighlight: Boolean = false,
     ): GestureGuiView =
-        buildSettingChoices(state, player, attention, child = true, suppressGlow = suppressGlow)
+        buildSettingChoices(state, player, attention, child = true, suppressHighlight = suppressHighlight)
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState,
-        suppressGlow: Boolean = false,
+        suppressHighlight: Boolean = false,
     ): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -120,7 +121,7 @@ class GestureLowerPanel(
             visuals,
             elements,
             attentionFields,
-            suppressGlow = suppressGlow,
+            suppressHighlight = suppressHighlight,
         )
         // 設定タブはページ分割せず、常に全フィールドを同じ画面へ描画します。
         // 設定項目はCommandSettingsModelで最大6項目へ整理されているため、
@@ -184,7 +185,7 @@ class GestureLowerPanel(
                 visuals,
                 elements,
                 field.key,
-                suppressGlow = suppressGlow,
+                suppressHighlight = suppressHighlight,
             )
         }
         // 「移動先→ほかのエンティティ」は親のSETTINGS画面から選択します。
@@ -207,7 +208,7 @@ class GestureLowerPanel(
                 visuals,
                 elements,
                 field.key,
-                suppressGlow = suppressGlow,
+                suppressHighlight = suppressHighlight,
             )
         }
 
@@ -480,7 +481,7 @@ class GestureLowerPanel(
         elements: MutableList<GestureGuiElement>,
         fieldKey: String,
         child: Boolean = false,
-        suppressGlow: Boolean = false,
+        suppressHighlight: Boolean = false,
     ) {
         val rowCount = (choices.size + 1) / 2
         choices.forEachIndexed { index, choice ->
@@ -505,13 +506,13 @@ class GestureLowerPanel(
                 SETTING_CHOICE_HEIGHT,
                 settingChoiceMaterial(choice),
                 4,
-                // 右側の設定ボタンは完了状態にかかわらず、選択中だけ白で示します。
+                // 右側の設定ボタンは完了状態にかかわらず、選択中だけ白い内側枠で示します。
                 // attentionはタブへ投影済みの状態情報であり、子画面を含む右側カードの
                 // 警告Glowには使いません。
-                glowColor = if (suppressGlow) {
+                outlineMaterial = if (suppressHighlight) {
                     null
                 } else {
-                    GestureSettingVisualPolicy.nonTabGlowColor(choice.selected)
+                    GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)
                 },
             )
             addText(visuals, "setting-choice-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(choice.label))
@@ -572,7 +573,7 @@ class GestureLowerPanel(
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
         attentionFields: Set<String> = emptySet(),
-        suppressGlow: Boolean = false,
+        suppressHighlight: Boolean = false,
     ) {
         val fields = CommandSettingsModel.gestureVisibleFields(node)
         if (fields.isEmpty()) return
@@ -590,8 +591,8 @@ class GestureLowerPanel(
                 GestureSettingValueState.INITIAL
             }
             val attention = field.key in attentionFields
-            // タブだけが未完了警告のGlowを受け持ち、選択中かつ未完了なら紫、
-            // 選択中のみなら青になります。
+            // タブの選択状態は青い内側枠、未完了警告はGlowで示します。選択中かつ
+            // 未完了の場合は、内側枠と紫Glowを併用します。
             addBlock(
                 visuals,
                 "tab-bg-$index",
@@ -604,10 +605,15 @@ class GestureLowerPanel(
                     fieldState,
                 ),
                 4,
-                glowColor = if (suppressGlow) {
+                glowColor = if (suppressHighlight) {
                     null
                 } else {
                     GestureSettingVisualPolicy.tabGlowColor(on, attention)
+                },
+                outlineMaterial = if (suppressHighlight) {
+                    null
+                } else {
+                    GestureSettingVisualPolicy.tabOutlineMaterial(on)
                 },
             )
             addText(visuals, "tab-$index", -0.7975, cy - 0.02, 0.0055, 90,
@@ -1396,7 +1402,7 @@ class GestureLowerPanel(
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
         child: Boolean = false,
-        suppressGlow: Boolean = false,
+        suppressHighlight: Boolean = false,
     ): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
@@ -1423,7 +1429,7 @@ class GestureLowerPanel(
                 visuals,
                 elements,
                 attentionFields,
-                suppressGlow = suppressGlow,
+                suppressHighlight = suppressHighlight,
             )
         }
         val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
@@ -1469,7 +1475,7 @@ class GestureLowerPanel(
             elements,
             fieldKey,
             child = child,
-            suppressGlow = suppressGlow,
+            suppressHighlight = suppressHighlight,
         )
         val destinationTarget = if (!child && screen == GestureSettingScreen.POSITION &&
             context.role == CommandSettingRole.DESTINATION
@@ -1483,7 +1489,7 @@ class GestureLowerPanel(
                 visuals,
                 elements,
                 fieldKey,
-                suppressGlow = suppressGlow,
+                suppressHighlight = suppressHighlight,
             )
         }
         if (pageCount > 1) addPager(
@@ -1744,7 +1750,7 @@ class GestureLowerPanel(
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
         fieldKey: String,
-        suppressGlow: Boolean = false,
+        suppressHighlight: Boolean = false,
     ) {
         val span = POSITION_TARGET_CHOICE_SPAN_END_X - POSITION_TARGET_CHOICE_SPAN_START_X
         val width = (span - POSITION_TARGET_CHOICE_GAP * 2) / 3.0
@@ -1763,11 +1769,11 @@ class GestureLowerPanel(
                 settingChoiceMaterial(choice),
                 4,
                 // 右側へ表示する対象分類ボタンもタブ以外の設定ボタンです。
-                // 選択中は完了状態にかかわらず白、未完了警告はタブだけへ残します。
-                glowColor = if (suppressGlow) {
+                // 選択中は完了状態にかかわらず白い内側枠、未完了警告はタブだけへ残します。
+                outlineMaterial = if (suppressHighlight) {
                     null
                 } else {
-                    GestureSettingVisualPolicy.nonTabGlowColor(choice.selected)
+                    GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)
                 },
             )
             addText(
@@ -2304,6 +2310,7 @@ class GestureLowerPanel(
         material: Material,
         layer: Int,
         glowColor: Int? = null,
+        outlineMaterial: Material? = null,
     ) {
         visuals.add(GestureGuiVisual.Block(
             visualId = id,
@@ -2312,6 +2319,7 @@ class GestureLowerPanel(
             blockData = Bukkit.createBlockData(material),
             layer = layer,
             glowColor = glowColor,
+            outline = outlineMaterial?.let { GestureGuiOutline(Bukkit.createBlockData(it)) },
         ))
     }
 
