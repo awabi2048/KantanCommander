@@ -21,6 +21,8 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TemporaryTemplate
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableTemplate
@@ -89,13 +91,29 @@ object ExecutableScriptValidator {
             return
         }
         GraphValidator.validate(graph, limits).forEach { errors += ScriptValidationError(path, null, emptySet(), it) }
+        // 一時変数は実行内寿命のため、グラフ内の一時定義を収集して参照検証に使います。
+        // DISK_CALLのスナップショットは隔離されるため、再帰先では収集し直します。
+        val temporaryDefinitions = collectTemporaryDefinitions(graph)
         graph.nodes.values.forEach { node ->
-            validateNode(node, "$path/${node.id}", errors, variableDefinitions, isInsideForBody(graph, node.id))
+            validateNode(node, "$path/${node.id}", errors, variableDefinitions, isInsideForBody(graph, node.id), temporaryDefinitions)
             node.snapshot?.let {
                 validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits, variableDefinitions)
             }
         }
         visited.remove(graph)
+    }
+
+    /** グラフ内の「一時変数を設定」ノードから名前→型の定義表を収集します。 */
+    private fun collectTemporaryDefinitions(graph: CommandGraph): Map<String, TemporaryVariableType> = buildMap {
+        graph.nodes.values.forEach { node ->
+            if (node.type != CommandType.TEMP_SET) return@forEach
+            val name = TemporaryTemplate.normalized(node.string("name"))
+            if (!CommandValueRules.isVariableName(name)) return@forEach
+            val type = runCatching {
+                TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
+            }.getOrNull() ?: return@forEach
+            put(name, type)
+        }
     }
 
     private fun validateNode(
@@ -104,15 +122,17 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         variableDefinitions: Map<String, WorldVariableValue>?,
         insideForBody: Boolean,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
     ) {
         validateSystemReferences(node, path, insideForBody, errors)
         validateRemovedSystemReferences(node, path, errors)
+        validateTemporaryReferences(node, path, errors, temporaryDefinitions)
         val hasContextState = node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
         if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
             errors += nodeError(node, path, emptySet(), "${node.type} では実行コンテキストを設定できません")
         }
         listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach {
-            validateTarget(it, path, node, errors, variableDefinitions, insideForBody)
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
         }
         listOfNotNull(
             node.destinationSpec,
@@ -123,13 +143,13 @@ object ExecutableScriptValidator {
             node.soundPositionSpec,
             node.summonPositionSpec,
             node.contextOverride?.position,
-        ).forEach { validatePosition(it, path, node, errors) }
-        node.destinationFacingSpec?.let { validateFacing(it, path, node, errors) }
+        ).forEach { validatePosition(it, path, node, errors, temporaryDefinitions) }
+        node.destinationFacingSpec?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         node.contextOverride?.let { context ->
             listOfNotNull(context.executor, context.target).forEach {
-                validateTarget(it, path, node, errors, variableDefinitions, insideForBody)
+                validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
             }
-            context.facing?.let { validateFacing(it, path, node, errors) }
+            context.facing?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         }
         when (node.type) {
             CommandType.TELEPORT -> {
@@ -171,6 +191,7 @@ object ExecutableScriptValidator {
                 }
             }
             CommandType.APPLY_EFFECT -> {
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
                 if (!CommandValueRules.isEffectId(node.string("effect"))) {
                     errors += nodeError(node, path, setOf("effect"), "エフェクトが不正です")
                 }
@@ -196,7 +217,8 @@ object ExecutableScriptValidator {
             CommandType.DISK_CALL -> if (node.snapshot == null) {
                 errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
             }
-            CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody)
+            CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+            CommandType.TEMP_SET -> validateTemporary(node, path, errors, temporaryDefinitions)
             CommandType.FOR_START -> validateFor(node, path, errors, variableDefinitions)
             CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
         }
@@ -314,10 +336,15 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         variableDefinitions: Map<String, WorldVariableValue>?,
         insideForBody: Boolean,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
     ) {
         if (spec.kind == TargetKind.FIXED_ENTITY && spec.fixedEntityId == null) {
             errors += nodeError(node, path, emptySet(), "固定エンティティが未設定です")
         }
+        if (spec.kind == TargetKind.TEMPORARY) {
+            checkTemporaryDefinition(spec.tempName, TemporaryVariableType.ENTITY, temporaryDefinitions, node, path, emptySet(), errors)
+        }
+        spec.searchOrigin?.let { validateSearchOrigin(it, path, node, errors, temporaryDefinitions) }
         spec.entityType?.takeIf(String::isNotBlank)?.let {
             if (!CommandValueRules.isEntityTypeId(it)) errors += nodeError(node, path, emptySet(), "エンティティの種類が不正です")
         }
@@ -350,7 +377,17 @@ object ExecutableScriptValidator {
         if (spec.limit?.let { it < 1 } == true) errors += nodeError(node, path, emptySet(), "対象数は1以上で指定してください")
     }
 
-    private fun validatePosition(spec: PositionSpec, path: String, node: CommandNode, errors: MutableList<ScriptValidationError>) {
+    private fun validatePosition(
+        spec: PositionSpec,
+        path: String,
+        node: CommandNode,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        if (spec.kind == PositionKind.TEMPORARY) {
+            checkTemporaryDefinition(spec.tempName, TemporaryVariableType.POSITION, temporaryDefinitions, node, path, emptySet(), errors)
+            return
+        }
         if (spec.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES) &&
             listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }
         ) {
@@ -361,7 +398,17 @@ object ExecutableScriptValidator {
         }
     }
 
-    private fun validateFacing(spec: FacingSpec, path: String, node: CommandNode, errors: MutableList<ScriptValidationError>) {
+    private fun validateFacing(
+        spec: FacingSpec,
+        path: String,
+        node: CommandNode,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        if (spec.kind == FacingKind.TEMPORARY) {
+            checkTemporaryDefinition(spec.tempName, TemporaryVariableType.POSITION, temporaryDefinitions, node, path, emptySet(), errors)
+            return
+        }
         if (spec.kind == FacingKind.COORDINATES && listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }) {
             errors += nodeError(node, path, emptySet(), "向く座標が未設定または有限値ではありません")
         }
@@ -423,6 +470,7 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         variableDefinitions: Map<String, WorldVariableValue>?,
         insideForBody: Boolean,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
     ) {
         val name = node.string("name")
         if (!CommandValueRules.isVariableName(name)) errors += nodeError(node, path, setOf("name"), "変数名が不正です")
@@ -450,16 +498,16 @@ object ExecutableScriptValidator {
                         validateAssignedValue(node.string("value"), VariableType.STRING, variableDefinitions, node, path, errors, insideForBody)
                     }
                     VariableType.NUMBER -> when (mode) {
-                        VariableChangeMode.CALCULATE -> validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody)
-                        VariableChangeMode.ASSIGN -> validateAssignedValue(node.string("value"), VariableType.NUMBER, variableDefinitions, node, path, errors, insideForBody)
+                        VariableChangeMode.CALCULATE -> validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody, temporaryDefinitions)
+                        VariableChangeMode.ASSIGN -> validateAssignedValue(node.string("value"), VariableType.NUMBER, variableDefinitions, node, path, errors, insideForBody, temporaryDefinitions)
                     }
                     null -> if (variableDefinitions == null) {
                         // 配置前は対象変数の型を照会できないため、代入は文字列化して
                         // 実行時へ渡し、計算式だけ構文検証します。
                         if (mode == VariableChangeMode.CALCULATE) {
-                            validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody)
+                            validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody, temporaryDefinitions)
                         } else {
-                            validateAssignedValue(node.string("value"), VariableType.STRING, variableDefinitions, node, path, errors, insideForBody)
+                            validateAssignedValue(node.string("value"), VariableType.STRING, variableDefinitions, node, path, errors, insideForBody, temporaryDefinitions)
                         }
                     }
                 }
@@ -476,9 +524,10 @@ object ExecutableScriptValidator {
         path: String,
         errors: MutableList<ScriptValidationError>,
         insideForBody: Boolean,
+        temporaries: Map<String, TemporaryVariableType>? = null,
     ) {
-        if (type == VariableType.NUMBER) validateNumberInput(raw, definitions, node, path, setOf("value"), errors)
-        else validateTemplate(raw, node, path, "value", errors, definitions)
+        if (type == VariableType.NUMBER) validateNumberInput(raw, definitions, node, path, setOf("value"), errors, temporaries)
+        else validateTemplate(raw, node, path, "value", errors, definitions, temporaries = temporaries)
     }
 
     private fun validateNumericExpression(
@@ -489,6 +538,7 @@ object ExecutableScriptValidator {
         path: String,
         errors: MutableList<ScriptValidationError>,
         insideForBody: Boolean,
+        temporaries: Map<String, TemporaryVariableType>? = null,
     ) {
         val parsed = NumericExpression.parse(raw)
         if (!parsed.isSuccess) {
@@ -505,6 +555,12 @@ object ExecutableScriptValidator {
                 }
             } else if (definitions != null && reference != selfName && definitions[reference]?.type != VariableType.NUMBER) {
                 errors += nodeError(node, path, setOf("value"), "計算式の変数が未定義または数値型ではありません: $reference")
+            }
+        }
+        parsed.expression!!.temporaryReferences.forEach { reference ->
+            val normalized = TemporaryTemplate.normalized(reference)
+            if (temporaries != null && temporaries[normalized] != TemporaryVariableType.NUMBER) {
+                errors += nodeError(node, path, setOf("value"), "計算式の一時変数が未定義または数値型ではありません: $reference")
             }
         }
     }
@@ -541,6 +597,141 @@ object ExecutableScriptValidator {
         }
     }
 
+    /**
+     * 一時変数参照の存在と型を検証します。
+     *
+     * 一時変数は同一グラフ内の「一時変数を設定」ノードで定義されるため、
+     * ワールド内変数とは別の定義表で照合します。定義表自体が無い場合
+     * （単体テスト等）は検証を素通しします。
+     */
+    private fun checkTemporaryDefinition(
+        rawName: String?,
+        expected: TemporaryVariableType,
+        definitions: Map<String, TemporaryVariableType>?,
+        node: CommandNode,
+        path: String,
+        fields: Set<String>,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        val name = rawName?.let(TemporaryTemplate::normalized).orEmpty()
+        if (name.isBlank() || !CommandValueRules.isVariableName(name)) {
+            errors += nodeError(node, path, fields, "一時変数名が不正です")
+            return
+        }
+        if (definitions == null) return
+        val actual = definitions[name]
+        if (actual == null) {
+            errors += nodeError(node, path, fields, "一時変数が未定義です: $name")
+        } else if (actual != expected) {
+            errors += nodeError(node, path, fields, "一時変数の型が一致しません: $name")
+        }
+    }
+
+    /** 「探索の基準」設定を検証します。 */
+    private fun validateSearchOrigin(
+        search: me.awabi2048.kantancommander.model.SearchOriginSpec,
+        path: String,
+        node: CommandNode,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        search.positionTemp?.takeIf(String::isNotBlank)?.let {
+            checkTemporaryDefinition(it, TemporaryVariableType.POSITION, temporaryDefinitions, node, path, emptySet(), errors)
+        }
+        search.position?.let { validatePosition(it, path, node, errors, temporaryDefinitions) }
+    }
+
+    /**
+     * 非リテラル一時変数参照欄の一貫性を検証します。
+     *
+     * 参照指定時は対応するリテラル値の併記を拒否し、参照先の存在と型を確認します。
+     * リテラル欄へ `%name%` 以外の一時記法が混入した場合もここで検出します。
+     */
+    private fun validateTemporaryReferences(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        fun checkRef(rawRef: String?, expected: TemporaryVariableType, literalBlank: Boolean, fields: Set<String>) {
+            val ref = rawRef?.takeIf(String::isNotBlank) ?: return
+            if (!literalBlank) {
+                errors += nodeError(node, path, fields, "一時変数参照と直接指定は併用できません")
+            }
+            checkTemporaryDefinition(ref, expected, temporaryDefinitions, node, path, fields, errors)
+        }
+        checkRef(
+            node.itemTempRef, TemporaryVariableType.ITEM,
+            node.string("item").isBlank() && node.string("itemData").isBlank(), setOf("item"),
+        )
+        checkRef(
+            node.blockTempRef, TemporaryVariableType.BLOCK,
+            node.string("block").isBlank(), setOf("block"),
+        )
+        checkRef(
+            node.soundTempRef, TemporaryVariableType.SOUND,
+            node.string("sound").isBlank(), setOf("sound"),
+        )
+        checkRef(
+            node.effectTempRef, TemporaryVariableType.EFFECT,
+            node.string("effect").isBlank(), setOf("effect"),
+        )
+    }
+
+    /** 「一時変数を設定」ノードを検証します。再設定は上書きのため重複検査しません。 */
+    private fun validateTemporary(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        val name = TemporaryTemplate.normalized(node.string("name"))
+        if (!CommandValueRules.isVariableName(name)) {
+            errors += nodeError(node, path, setOf("name"), "一時変数名が不正です")
+        }
+        val type = runCatching {
+            TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
+        }.getOrNull()
+        if (type == null) {
+            errors += nodeError(node, path, setOf("type"), "一時変数の型が不正です")
+            return
+        }
+        when (type) {
+            TemporaryVariableType.NUMBER -> validateNumberInput(
+                node.string("value"), null, node, path, setOf("value"), errors, temporaryDefinitions,
+            )
+            TemporaryVariableType.STRING -> validateTemplate(
+                node.string("value"), node, path, "value", errors, null, temporaries = temporaryDefinitions,
+            )
+            TemporaryVariableType.POSITION -> {
+                listOf("x" to node.string("x"), "y" to node.string("y"), "z" to node.string("z")).forEach { (field, raw) ->
+                    if (raw.isBlank() || resolvedDouble(raw, null, temporaryDefinitions) == null &&
+                        !deferNumericValidation(raw, null, temporaryDefinitions)
+                    ) {
+                        errors += nodeError(node, path, setOf("value"), "位置の$field が不正です")
+                    }
+                }
+            }
+            TemporaryVariableType.ITEM -> if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
+                errors += nodeError(node, path, setOf("value"), "アイテムが未設定です")
+            }
+            TemporaryVariableType.BLOCK -> if (CommandValueRules.placementMaterial(node.string("block")) == null) {
+                errors += nodeError(node, path, setOf("value"), "ブロックが未設定です")
+            }
+            TemporaryVariableType.ENTITY -> { /* 実行時に解決するため、設定時は検証しません。 */ }
+            TemporaryVariableType.SOUND -> {
+                if (!CommandValueRules.isSoundId(node.string("sound"))) {
+                    errors += nodeError(node, path, setOf("value"), "サウンドIDが不正です")
+                }
+            }
+            TemporaryVariableType.EFFECT -> {
+                if (!CommandValueRules.isEffectId(node.string("effect"))) {
+                    errors += nodeError(node, path, setOf("value"), "エフェクトが不正です")
+                }
+            }
+        }
+    }
+
     private fun validateNumberInput(
         raw: String,
         definitions: Map<String, WorldVariableValue>?,
@@ -548,9 +739,10 @@ object ExecutableScriptValidator {
         path: String,
         fields: Set<String>,
         errors: MutableList<ScriptValidationError>,
+        temporaries: Map<String, TemporaryVariableType>? = null,
     ) {
-        validateTemplate(raw, node, path, fields.firstOrNull() ?: "value", errors, definitions)
-        if (VariableTemplate.hasMalformedReference(raw)) return
+        validateTemplate(raw, node, path, fields.firstOrNull() ?: "value", errors, definitions, temporaries = temporaries)
+        if (VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)) return
         val nonNumericReferences = if (definitions == null) {
             emptyList()
         } else {
@@ -564,10 +756,19 @@ object ExecutableScriptValidator {
             }
             return
         }
-        val deferred = deferNumericValidation(raw, definitions)
-        if (VariableTemplate.references(raw).isEmpty() && resolvedDouble(raw, definitions) == null) {
+        if (temporaries != null) {
+            TemporaryTemplate.references(raw).map(TemporaryTemplate::normalized).forEach { reference ->
+                if (temporaries[reference] != TemporaryVariableType.NUMBER) {
+                    errors += nodeError(node, path, fields, "数値欄の一時変数が未定義または数値型ではありません: $reference")
+                }
+            }
+        }
+        val deferred = deferNumericValidation(raw, definitions, temporaries)
+        if (VariableTemplate.references(raw).isEmpty() && TemporaryTemplate.references(raw).isEmpty() &&
+            resolvedDouble(raw, definitions, temporaries) == null
+        ) {
             errors += nodeError(node, path, fields, "数値で入力してください")
-        } else if (!deferred && definitions != null && resolvedDouble(raw, definitions) == null) {
+        } else if (!deferred && definitions != null && resolvedDouble(raw, definitions, temporaries) == null) {
             errors += nodeError(node, path, fields, "変数展開後の値が数値ではありません")
         }
     }
@@ -662,9 +863,13 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         definitions: Map<String, WorldVariableValue>?,
         insideForBody: Boolean = true,
+        temporaries: Map<String, TemporaryVariableType>? = null,
     ) {
         if (VariableTemplate.hasMalformedReference(raw)) {
             errors += nodeError(node, path, setOf(field), "ワールド内変数の記法が不正です")
+        }
+        if (TemporaryTemplate.hasMalformedReference(raw)) {
+            errors += nodeError(node, path, setOf(field), "一時変数の記法が不正です")
         }
         if (!insideForBody && VariableTemplate.references(raw).any(SystemVariableNames::isSystemName)) {
             errors += nodeError(node, path, setOf(field), "システム変数はfor本体内でのみ参照できます")
@@ -677,6 +882,14 @@ object ExecutableScriptValidator {
                 errors += nodeError(node, path, setOf(field), "ワールド内変数が未定義です: $it")
             }
         }
+        if (temporaries != null) {
+            TemporaryTemplate.references(raw)
+                .map(TemporaryTemplate::normalized)
+                .filter { it !in temporaries }
+                .forEach {
+                    errors += nodeError(node, path, setOf(field), "一時変数が未定義です: $it")
+                }
+        }
     }
 
     private fun isTemplateOrTag(raw: String, definitions: Map<String, WorldVariableValue>?): Boolean {
@@ -688,7 +901,18 @@ object ExecutableScriptValidator {
     }
 
     /** 配置未配置のスクリプトでは、変数の存在だけを将来の実行境界へ委ねます。 */
-    private fun deferNumericValidation(raw: String, definitions: Map<String, WorldVariableValue>?): Boolean {
+    private fun deferNumericValidation(
+        raw: String,
+        definitions: Map<String, WorldVariableValue>?,
+        temporaries: Map<String, TemporaryVariableType>? = null,
+    ): Boolean {
+        TemporaryTemplate.references(raw).singleOrNull()?.let { temp ->
+            if (!TemporaryTemplate.isSingleReference(raw) && VariableTemplate.references(raw).isNotEmpty()) return false
+            if (TemporaryTemplate.isSingleReference(raw)) {
+                val normalized = TemporaryTemplate.normalized(temp)
+                return temporaries == null || temporaries[normalized] == TemporaryVariableType.NUMBER
+            }
+        }
         val reference = VariableTemplate.references(raw).singleOrNull()
             ?: return false
         if (!VariableTemplate.isSingleReference(raw)) return false
@@ -696,11 +920,22 @@ object ExecutableScriptValidator {
             definitions == null || definitions[reference]?.type == VariableType.NUMBER
     }
 
-    private fun resolvedDouble(raw: String, definitions: Map<String, WorldVariableValue>?): Double? {
-        if (VariableTemplate.hasMalformedReference(raw)) return null
-        val expanded = if (VariableTemplate.references(raw).isEmpty()) raw else {
+    private fun resolvedDouble(
+        raw: String,
+        definitions: Map<String, WorldVariableValue>?,
+        temporaries: Map<String, TemporaryVariableType>? = null,
+    ): Double? {
+        if (VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)) return null
+        val tempExpanded = if (TemporaryTemplate.references(raw).isEmpty()) raw else {
+            // 検証時は型表だけを見るため、一時数値は 1.0 へ置換して数値性を判定します。
+            TemporaryTemplate.interpolateText(raw) { name ->
+                val normalized = TemporaryTemplate.normalized(name)
+                if (temporaries == null || temporaries[normalized] == TemporaryVariableType.NUMBER) "1.0" else null
+            } ?: return null
+        }
+        val expanded = if (VariableTemplate.references(tempExpanded).isEmpty()) tempExpanded else {
             if (definitions == null) return null
-            VariableTemplate.interpolate(raw) { definitions[it] } ?: return null
+            VariableTemplate.interpolate(tempExpanded) { definitions[it] } ?: return null
         }
         return expanded.toDoubleOrNull()?.takeIf(Double::isFinite)
     }

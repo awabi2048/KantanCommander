@@ -23,6 +23,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
@@ -428,6 +429,12 @@ object CommandSettingsModel {
                 "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
+            CommandType.TEMP_SET -> when (fieldKey) {
+                "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
+                "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                else -> undefinedWarningKey(node, fieldKey)
+            }
             CommandType.FOR_START -> when (fieldKey) {
                 "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_REPEAT_COUNT
                 else -> undefinedWarningKey(node, fieldKey)
@@ -551,6 +558,11 @@ object CommandSettingsModel {
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
             else -> text()
         }
+        CommandType.TEMP_SET -> when (fieldKey) {
+            "tempType" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
+            "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
+            else -> text()
+        }
         CommandType.FOR_START -> text()
         CommandType.MERGE,
         CommandType.FOR_END,
@@ -572,6 +584,9 @@ object CommandSettingsModel {
         require(key.isNotBlank()) { "設定キーが空です" }
         if (node.type == CommandType.VARIABLE && key == "name") {
             require(CommandValueRules.isVariableName(value)) { "予約済みまたは不正な変数名です" }
+        }
+        if (node.type == CommandType.TEMP_SET && key == "name") {
+            require(CommandValueRules.isVariableName(TemporaryTemplate.normalized(value))) { "予約済みまたは不正な変数名です" }
         }
         node.params[key] = value
         if (value.isBlank()) {

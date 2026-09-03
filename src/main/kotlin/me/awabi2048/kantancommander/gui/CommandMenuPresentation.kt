@@ -49,6 +49,7 @@ internal object CommandPresentationPolicy {
         CommandType.CONTEXT,
         CommandType.DISK_CALL,
         CommandType.VARIABLE,
+        CommandType.TEMP_SET,
         CommandType.MERGE,
         CommandType.FOR_START,
         CommandType.FOR_END,

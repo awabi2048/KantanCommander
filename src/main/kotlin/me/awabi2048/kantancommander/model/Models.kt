@@ -123,8 +123,13 @@ data class CommandNode(
     var blockToSpec: PositionSpec? = null,
     /** PLAY_SOUNDで「マイワールド内全域」以外を選んだ場合の再生位置です。 */
     var soundPositionSpec: PositionSpec? = null,
-    /** エンティティ召喚で指定された場合の召喚位置です。未設定時はコンテキスト位置を使用します。 */
+    /** エンティティ召喚で指定された場合の召喚位置です。未設定時は制御ブロック位置を使用します。 */
     var summonPositionSpec: PositionSpec? = null,
+    /** 非リテラル一時変数の参照名です。空でなければ対応するリテラル値を置き換えます。 */
+    var itemTempRef: String? = null,
+    var blockTempRef: String? = null,
+    var soundTempRef: String? = null,
+    var effectTempRef: String? = null,
     var contextOverride: ExecutionContextSpec? = null,
     /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
     var contextSource: ContextSource? = ContextSource.BASE,
@@ -175,11 +180,21 @@ val CommandNode.effectiveContextSource: ContextSource
     get() = contextSource ?: ContextSource.BASE
 
 enum class TargetKind {
-    INHERITED_TARGET, NEAREST_PLAYER, NEARBY_PLAYERS,
-    ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY,
+    NEAREST_PLAYER, NEARBY_PLAYERS,
+    ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY, TEMPORARY,
+    /** 廃止予定：暗示的継承は行いません。新規設定では使用しません。 */
+    @Deprecated("Context abolished")
+    INHERITED_TARGET,
 }
 
 enum class TargetSort { NEAREST, FURTHEST, RANDOM }
+
+data class SearchOriginSpec(
+    val positionTemp: String? = null,
+    val position: PositionSpec? = null,
+) {
+    fun hasAnySetting(): Boolean = positionTemp != null || position != null
+}
 
 data class TargetSpec(
     val kind: TargetKind,
@@ -196,6 +211,10 @@ data class TargetSpec(
     val dy: Double? = null,
     val dz: Double? = null,
     val fixedEntityId: UUID? = null,
+    /** 対象探索の基準位置です。未設定時は制御ブロック位置を用います。 */
+    val searchOrigin: SearchOriginSpec? = null,
+    /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
+    val tempName: String? = null,
 )
 
 /**
@@ -203,7 +222,13 @@ data class TargetSpec(
  * 実行元の制御ブロックです。表示側では必ず「制御ブロック」として扱います。
  */
 enum class PositionKind {
-    CAPTURED, DISK, EXECUTOR, TARGET, MYWORLD_SPAWN, COORDINATES,
+    CAPTURED, DISK, MYWORLD_SPAWN, COORDINATES, TEMPORARY,
+    /** 廃止予定：コンテキスト経由解決は行いません。 */
+    @Deprecated("Context abolished")
+    EXECUTOR,
+    /** 廃止予定：コンテキスト経由解決は行いません。 */
+    @Deprecated("Context abolished")
+    TARGET,
 }
 data class PositionSpec(
     val kind: PositionKind,
@@ -212,9 +237,22 @@ data class PositionSpec(
     val z: Double? = null,
     val yaw: Float? = null,
     val pitch: Float? = null,
+    /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
+    val tempName: String? = null,
 )
 
-enum class FacingKind { INHERITED, CAPTURED, EXECUTOR, TARGET, COORDINATES, MYWORLD_SPAWN, ROTATION }
+enum class FacingKind {
+    CAPTURED, COORDINATES, MYWORLD_SPAWN, ROTATION, TEMPORARY,
+    /** 廃止予定：向き不変として扱います。 */
+    @Deprecated("Context abolished")
+    INHERITED,
+    /** 廃止予定：コンテキスト経由解決は行いません。 */
+    @Deprecated("Context abolished")
+    EXECUTOR,
+    /** 廃止予定：コンテキスト経由解決は行いません。 */
+    @Deprecated("Context abolished")
+    TARGET,
+}
 data class FacingSpec(
     val kind: FacingKind,
     val x: Double? = null,
@@ -222,6 +260,8 @@ data class FacingSpec(
     val z: Double? = null,
     val yaw: Float? = null,
     val pitch: Float? = null,
+    /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
+    val tempName: String? = null,
 )
 
 data class ExecutionContextSpec(
@@ -257,6 +297,36 @@ data class WorldVariableValue(
     val type: VariableType,
     val numberValue: Double? = null,
     val stringValue: String? = null,
+)
+
+/**
+ * 一時変数（実行内寿命）の型です。context型は作りません。
+ *
+ * リテラル利用できるのは NUMBER・STRING のみで `%name%` 記法を使います。
+ * 非リテラル6型（POSITION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）はGUIの
+ * 「一時変数を参照」欄からのみ指定し、リテラル記述はエラーとします。
+ */
+enum class TemporaryVariableType { NUMBER, STRING, POSITION, ITEM, BLOCK, ENTITY, SOUND, EFFECT }
+
+/** 一時変数の実行時値です。上書き可能で、実行終了時に破棄します。 */
+data class TemporaryValue(
+    val type: TemporaryVariableType,
+    val numberValue: Double? = null,
+    val stringValue: String? = null,
+    /** 位置型の解決済み座標・向きです。 */
+    val position: SavedPosition? = null,
+    /** アイテム型の素材IDと実体（Base64）です。 */
+    val item: String? = null,
+    val itemData: String? = null,
+    /** ブロック・効果・効果音のIDです。 */
+    val block: String? = null,
+    val entityId: UUID? = null,
+    val sound: String? = null,
+    val volume: Double? = null,
+    val pitch: Double? = null,
+    val effect: String? = null,
+    val level: Int? = null,
+    val seconds: Int? = null,
 )
 
 data class SavedPosition(
@@ -326,6 +396,12 @@ enum class CommandType(
         "changeMode" to VariableChangeMode.ASSIGN.name,
         "value" to "0.0",
     )),
+    /** 一時変数を設定します。再設定は上書きとして扱います。 */
+    TEMP_SET(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REPEATER, mapOf(
+        "name" to "",
+        "tempType" to TemporaryVariableType.NUMBER.name,
+        "value" to "0.0",
+    )),
     MERGE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE_DESCRIPTION, Material.HOPPER, emptyMap()),
     FOR_START(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START_DESCRIPTION, Material.REPEATER, mapOf(
         "count" to "1",
@@ -363,6 +439,7 @@ fun CommandType.supportsContextOverride(): Boolean = when (this) {
     CommandType.WAIT,
     CommandType.CONTEXT,
     CommandType.VARIABLE,
+    CommandType.TEMP_SET,
     CommandType.MERGE,
     CommandType.FOR_START,
     CommandType.FOR_END,

@@ -5,7 +5,8 @@ package me.awabi2048.kantancommander.model
  *
  * GUI・実行・バニラ出力がそれぞれ独自にsplitや優先順位処理を持つと、同じ式が
  * 保存時と実行時で別の値になるため、字句解析と構文解析をモデル層へ集約します。
- * 許可する構文は数値リテラル、`${variable_name}` 形式の変数参照、四則演算、括弧です。
+ * 許可する構文は数値リテラル、`${variable_name}` 形式のワールド内変数参照、
+ * `%variable_name%` 形式の一時変数参照、四則演算、括弧です。
  * システム変数は `${CURRENT_LOOP_COUNT}` のように大文字で記述します。
  */
 object NumericExpression {
@@ -38,8 +39,19 @@ object NumericExpression {
         val isSuccess: Boolean get() = expression != null
     }
 
-    class Parsed internal constructor(private val root: Expr, val references: Set<String>) {
-        fun evaluate(resolve: (String) -> Double?): Double? = root.evaluate(resolve)?.takeIf(Double::isFinite)
+    class Parsed internal constructor(
+        private val root: Expr,
+        val references: Set<String>,
+        val temporaryReferences: Set<String> = emptySet(),
+    ) {
+        fun evaluate(resolve: (String) -> Double?): Double? =
+            evaluate(resolve, { null })
+
+        /** ワールド内変数と一時変数を区別して評価します。 */
+        fun evaluate(worldResolve: (String) -> Double?, tempResolve: (String) -> Double?): Double? =
+            root.evaluate { name, temporary ->
+                if (temporary) tempResolve(name) else worldResolve(name)
+            }?.takeIf(Double::isFinite)
 
         /** Vanilla exporterがscoreboard演算へ写像できるよう、式を後置記法で公開します。 */
         internal fun postfix(): List<PostfixToken> = buildList { root.appendPostfix(this) }
@@ -47,7 +59,7 @@ object NumericExpression {
 
     internal sealed interface PostfixToken {
         data class Literal(val value: Double) : PostfixToken
-        data class Reference(val name: String) : PostfixToken
+        data class Reference(val name: String, val temporary: Boolean = false) : PostfixToken
         data class Operator(val value: Char) : PostfixToken
     }
 
@@ -56,7 +68,7 @@ object NumericExpression {
         if (source.isEmpty()) return ParseResult(error = ParseError(ErrorCode.EMPTY))
         return try {
             Parser(source).parse().let { root ->
-                ParseResult(Parsed(root, root.references()))
+                ParseResult(Parsed(root, root.references(), root.temporaryReferences()))
             }
         } catch (failure: ParseFailure) {
             ParseResult(error = failure.error)
@@ -67,9 +79,13 @@ object NumericExpression {
 
     fun referencedNames(raw: String): Set<String> = parse(raw).expression?.references.orEmpty()
 
+    /** 一時変数 `%name%` の参照名だけを返します。 */
+    fun referencedTemporaryNames(raw: String): Set<String> =
+        parse(raw).expression?.temporaryReferences.orEmpty()
+
     private sealed interface Token {
         data class Number(val value: Double) : Token
-        data class Name(val value: String) : Token
+        data class Name(val value: String, val temporary: Boolean = false) : Token
         data object Plus : Token
         data object Minus : Token
         data object Multiply : Token
@@ -138,7 +154,7 @@ object NumericExpression {
         private fun parsePrimary(): Expr {
             return when (val token = advance()) {
                 is Token.Number -> Literal(token.value)
-                is Token.Name -> Name(token.value)
+                is Token.Name -> Name(token.value, token.temporary)
                 Token.LeftParen -> parseAdditive().also {
                     if (advance() !is Token.RightParen) fail(ErrorCode.UNCLOSED_PARENTHESIS)
                 }
@@ -157,14 +173,18 @@ object NumericExpression {
         throw ParseFailure(ParseError(code, token))
 
     internal sealed interface Expr {
-        fun evaluate(resolve: (String) -> Double?): Double?
+        fun evaluate(resolve: (String) -> Double?): Double? =
+            evaluate { name, _ -> resolve(name) }
+
+        fun evaluate(resolve: (String, Boolean) -> Double?): Double?
         fun references(): Set<String>
+        fun temporaryReferences(): Set<String> = emptySet()
     }
 
     private fun Expr.appendPostfix(output: MutableList<PostfixToken>) {
         when (this) {
             is Literal -> output += PostfixToken.Literal(value)
-            is Name -> output += PostfixToken.Reference(value)
+            is Name -> output += PostfixToken.Reference(value, temporary)
             is UnaryMinus -> {
                 operand.appendPostfix(output)
                 output += PostfixToken.Operator('~')
@@ -178,22 +198,24 @@ object NumericExpression {
     }
 
     private data class Literal(val value: Double) : Expr {
-        override fun evaluate(resolve: (String) -> Double?): Double = value
+        override fun evaluate(resolve: (String, Boolean) -> Double?): Double = value
         override fun references(): Set<String> = emptySet()
     }
 
-    private data class Name(val value: String) : Expr {
-        override fun evaluate(resolve: (String) -> Double?): Double? = resolve(value)
-        override fun references(): Set<String> = setOf(value)
+    private data class Name(val value: String, val temporary: Boolean = false) : Expr {
+        override fun evaluate(resolve: (String, Boolean) -> Double?): Double? = resolve(value, temporary)
+        override fun references(): Set<String> = if (temporary) emptySet() else setOf(value)
+        override fun temporaryReferences(): Set<String> = if (temporary) setOf(value) else emptySet()
     }
 
     private data class UnaryMinus(val operand: Expr) : Expr {
-        override fun evaluate(resolve: (String) -> Double?): Double? = operand.evaluate(resolve)?.let { -it }
+        override fun evaluate(resolve: (String, Boolean) -> Double?): Double? = operand.evaluate(resolve)?.let { -it }
         override fun references(): Set<String> = operand.references()
+        override fun temporaryReferences(): Set<String> = operand.temporaryReferences()
     }
 
     private data class Binary(val operator: Char, val left: Expr, val right: Expr) : Expr {
-        override fun evaluate(resolve: (String) -> Double?): Double? {
+        override fun evaluate(resolve: (String, Boolean) -> Double?): Double? {
             val lhs = left.evaluate(resolve) ?: return null
             val rhs = right.evaluate(resolve) ?: return null
             return when (operator) {
@@ -206,6 +228,9 @@ object NumericExpression {
         }
 
         override fun references(): Set<String> = left.references() + right.references()
+
+        override fun temporaryReferences(): Set<String> =
+            left.temporaryReferences() + right.temporaryReferences()
     }
 
     private fun tokenize(source: String): List<Token> {
@@ -248,14 +273,28 @@ object NumericExpression {
                             index = numberEnd
                         } else {
                             val nameEnd = scanName(source, index)
-                            if (nameEnd == null) parseFailure(ErrorCode.INVALID_CHARACTER, char.toString())
-                            val raw = source.substring(index, nameEnd)
-                            val name = raw.removePrefix("${'$'}{").removeSuffix("}")
-                            if (!SystemVariableNames.isReferenceName(name)) {
-                                parseFailure(ErrorCode.INVALID_VARIABLE_NAME, name)
+                            val tempEnd = if (nameEnd == null) scanTemporaryName(source, index) else null
+                            if (nameEnd == null && tempEnd == null) {
+                                parseFailure(ErrorCode.INVALID_CHARACTER, char.toString())
                             }
-                            result += Token.Name(name)
-                            index = nameEnd
+                            if (nameEnd != null) {
+                                val raw = source.substring(index, nameEnd)
+                                val name = raw.removePrefix("${'$'}{").removeSuffix("}")
+                                if (!SystemVariableNames.isReferenceName(name)) {
+                                    parseFailure(ErrorCode.INVALID_VARIABLE_NAME, name)
+                                }
+                                result += Token.Name(name, temporary = false)
+                                index = nameEnd
+                            } else {
+                                val end = requireNotNull(tempEnd)
+                                val raw = source.substring(index, end)
+                                val name = raw.removePrefix("%").removeSuffix("%")
+                                if (!SystemVariableNames.isReferenceName(name)) {
+                                    parseFailure(ErrorCode.INVALID_VARIABLE_NAME, name)
+                                }
+                                result += Token.Name(name, temporary = true)
+                                index = end
+                            }
                         }
                     }
             }
@@ -276,6 +315,19 @@ object NumericExpression {
     private fun scanName(source: String, start: Int): Int? {
         if (source[start] != '$' || source.getOrNull(start + 1) != '{') return null
         val close = source.indexOf('}', start + 2)
+        if (close == -1) parseFailure(ErrorCode.INVALID_VARIABLE_NAME, source.substring(start))
+        return close + 1
+    }
+
+    /**
+     * 一時変数 `%name%` の終端位置を返します。
+     *
+     * `%` 演算子は式言語に存在しないため、`%` 開始は常に参照として扱います。
+     * 閉じ `%` がなければ変数名不正として失敗させます。
+     */
+    private fun scanTemporaryName(source: String, start: Int): Int? {
+        if (source[start] != '%') return null
+        val close = source.indexOf('%', start + 1)
         if (close == -1) parseFailure(ErrorCode.INVALID_VARIABLE_NAME, source.substring(start))
         return close + 1
     }

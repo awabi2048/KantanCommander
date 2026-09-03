@@ -523,6 +523,7 @@ class VanillaDatapackExporter(
                 val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
                 "$base facing entity ${singleSelector(target)} eyes"
             }
+            FacingKind.TEMPORARY -> error("temporary facing is unsupported in vanilla output")
             FacingKind.COORDINATES ->
                 "$base facing ${facing.x ?: error("destination facing x is missing")} " +
                     "${facing.y ?: error("destination facing y is missing")} " +
@@ -551,6 +552,7 @@ class VanillaDatapackExporter(
                 val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
                 "execute at ${singleSelector(target)} run $sound"
             }
+            PositionKind.TEMPORARY -> error("temporary sound position is unsupported in vanilla output")
             PositionKind.MYWORLD_SPAWN -> error("unsupported sound position")
         }
     }
@@ -589,6 +591,7 @@ class VanillaDatapackExporter(
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
         CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node, graph)
+        CommandType.TEMP_SET -> null
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
     }
@@ -1076,6 +1079,7 @@ class VanillaDatapackExporter(
                 PositionKind.TARGET ->
                     // tpの移動先は単一エンティティでなければならないため、limit=1へ固定する。
                     singleSelector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
+                PositionKind.TEMPORARY -> error("temporary teleport destination is unsupported in vanilla output")
                 PositionKind.MYWORLD_SPAWN -> error("unsupported structured teleport destination")
             }
         }
@@ -1115,6 +1119,7 @@ class VanillaDatapackExporter(
             "execute at ${singleSelector(node.contextOverride?.target ?: node.targetSpec ?: error("block target is missing"))} run ",
             "~ ~ ~",
         )
+        PositionKind.TEMPORARY -> error("temporary block position is unsupported in vanilla output")
         PositionKind.MYWORLD_SPAWN -> error("unsupported structured block position")
     }
 

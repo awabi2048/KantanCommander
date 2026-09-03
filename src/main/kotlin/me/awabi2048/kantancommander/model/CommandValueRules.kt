@@ -59,6 +59,12 @@ object CommandValueRules {
 
     fun isVariableName(raw: String): Boolean = SystemVariableNames.isUserName(raw)
 
+    /** 一時変数の `%name%` 参照記法かを返します。 */
+    fun isTemporaryReference(raw: String): Boolean = TemporaryTemplate.isSingleReference(raw)
+
+    /** 一時変数の参照名部分が正当かを返します。 */
+    fun isTemporaryName(raw: String): Boolean = SystemVariableNames.isUserName(raw)
+
     fun isTag(raw: String): Boolean = TAG_PATTERN.matches(raw)
 
     fun isEquipmentSlot(raw: String): Boolean = raw in EQUIPMENT_SLOTS
