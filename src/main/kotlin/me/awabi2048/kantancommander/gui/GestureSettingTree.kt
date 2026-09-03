@@ -50,13 +50,13 @@ enum class GestureSettingValueState {
  * 設定カードの表示規則を一箇所へ集約します。
  *
  * 設定項目の通常テクスチャは薄灰色へ統一し、ホバー中もテクスチャを変えません。
- * タブの選択状態は縁取りではなく右へ幅10%伸ばして示し、テキスト位置は維持します。
+ * タブの選択状態は縁取りではなく右へ幅20%伸ばして示し、テキスト位置は維持します。
  * 要確認状態はタブテキストの§c（Adventureの赤色）で表します。
  * 画面ごとの色分岐を増やさず、視認性を確保します。
  */
 internal object GestureSettingVisualPolicy {
-    /** 選択中タブを右へ伸ばす比率です。左端を固定し、幅の10%だけ右へ拡張します。 */
-    const val SELECTED_TAB_EXTENSION_RATIO = 0.10
+    /** 選択中タブを右へ伸ばす比率です。左端を固定し、幅の20%だけ右へ拡張します。 */
+    const val SELECTED_TAB_EXTENSION_RATIO = 0.20
 
     /** 選択中なら拡張後の幅、非選択なら基準幅を返します。 */
     fun selectedTabWidth(baseWidth: Double, selected: Boolean): Double =

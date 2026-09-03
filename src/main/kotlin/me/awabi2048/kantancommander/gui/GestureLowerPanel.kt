@@ -605,7 +605,7 @@ class GestureLowerPanel(
                 GestureSettingValueState.INITIAL
             }
             val attention = field.key in attentionFields
-            // タブの選択状態は縁取りではなく右へ幅10%伸ばして示します。テキスト位置は
+            // タブの選択状態は縁取りではなく右へ幅20%伸ばして示します。テキスト位置は
             // 維持し、背景とヒットボックスだけ拡張します。未完了警告はタブテキストの§cです。
             val tabSelected = on && !suppressHighlight
             val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(SETTINGS_TAB_WIDTH, tabSelected)
@@ -641,7 +641,7 @@ class GestureLowerPanel(
         }
 
 
-        val deleteY = -0.43
+        val deleteY = SETTINGS_TAB_ACTION_Y
         addBlock(visuals, "delete-bg", SETTINGS_TAB_CENTER_X, deleteY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT, Material.RED_CONCRETE, 4)
         addText(visuals, "delete-label", SETTINGS_TAB_CENTER_X, deleteY, 0.0049, 90,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE)))
@@ -2036,7 +2036,7 @@ class GestureLowerPanel(
         val selectedCategory = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
         categories.forEachIndexed { index, option ->
             // 新規追加画面の左タブ列も設定タブと同一寸法へ統一します。選択状態は色濃淡では
-            // なく、設定タブと同じ右へ幅10%伸ばす表現だけにします。テキスト位置は維持します。
+            // なく、設定タブと同じ右へ幅20%伸ばす表現だけにします。テキスト位置は維持します。
             val cy = SETTINGS_TAB_TOP_Y - index * SETTINGS_TAB_PITCH
             val on = option == selectedCategory
             val catWidth = GestureSettingVisualPolicy.selectedTabWidth(SETTINGS_TAB_WIDTH, on)
@@ -2058,7 +2058,8 @@ class GestureLowerPanel(
                 targetVisualId = "cat-bg-$index",
             ))
         }
-        val closeCy = SETTINGS_TAB_TOP_Y - categories.size * SETTINGS_TAB_PITCH
+        // 閉じるボタンはノード選択中の削除と同じ下端位置へ置きます。
+        val closeCy = SETTINGS_TAB_ACTION_Y
         addBlock(visuals, "lower-close-bg", SETTINGS_TAB_CENTER_X, closeCy, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT, Material.BROWN_CONCRETE, 4)
         addText(visuals, "lower-close", SETTINGS_TAB_CENTER_X, closeCy, 0.006, 90,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)))
@@ -2415,6 +2416,9 @@ class GestureLowerPanel(
         const val SETTINGS_TAB_TOP_Y = 0.38
         const val SETTINGS_TAB_PITCH = 0.11
         const val SETTINGS_TAB_HEIGHT = 0.10
+        // 左列下端の固定操作（ノード選択中の削除／新規追加画面の閉じる）は同じ位置へ置き、
+        // 画面種別が変わっても操作導線を一定に保ちます。
+        const val SETTINGS_TAB_ACTION_Y = -0.43
         // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
         const val SETTING_CHOICE_PAGE_SIZE = 10
