@@ -174,6 +174,44 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `composite temporary values cannot be embedded in generic text`() {
+        val script = DiskScript(name = "temporary-composite-text", owner = UUID.randomUUID())
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "point"
+            params["tempType"] = TemporaryVariableType.POSITION.name
+            params.putAll(mapOf("x" to "1", "y" to "2", "z" to "3"))
+        }
+        val display = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+            params["text"] = "%{point}%"
+        }
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.nodeId == display.id && it.message.contains("複合型") })
+    }
+
+    @Test
+    fun `temporary sound fields use their own validation keys and ranges`() {
+        val script = DiskScript(name = "temporary-sound-range", owner = UUID.randomUUID())
+        val sound = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "sound",
+                    "tempType" to TemporaryVariableType.SOUND.name,
+                    "sound" to "minecraft:block.note_block.harp",
+                    "volume" to "35",
+                    "pitch" to "1",
+                ),
+            )
+        }
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.nodeId == sound.id && it.fieldKeys == setOf("volume") })
+    }
+
+    @Test
     fun `variable rejects per-node execution context`() {
         val script = DiskScript(name = "variable-context", owner = UUID.randomUUID())
         val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)

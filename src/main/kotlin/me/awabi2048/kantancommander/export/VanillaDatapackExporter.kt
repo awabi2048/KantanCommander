@@ -569,7 +569,10 @@ class VanillaDatapackExporter(
                         // 実行されないため、Java版と同じ「対象なし＝条件false」へ
                         // 明示的にフォールバックします。ノード自身の反転時だけ
                         // true枝へ反転します。
-                        val fallback = if (inverted) {
+                        // 欠損時の条件値は常に「対象なし＝raw false」です。
+                        // VARIABLE_STATEの `!=` を表現するためのpredicate反転まで
+                        // ここへ混ぜると、対象欠損時だけ分岐が逆転してしまいます。
+                        val fallback = if (node.boolean("inverted")) {
                             node.trueNext?.let { "return run function kantan:${nodeFunction(prefix, it)}" } ?: "return 1"
                         } else {
                             node.falseNext?.let { "return run function kantan:${nodeFunction(prefix, it)}" } ?: "return 1"
@@ -685,6 +688,16 @@ class VanillaDatapackExporter(
             val value = raw.trim().ifBlank { fallback }
             return if (value.endsWith("d", ignoreCase = true)) value else "${value}d"
         }
+        fun integer(raw: String, fallback: String): String {
+            val value = raw.trim().ifBlank { fallback }
+            val parsed = value.toDoubleOrNull()
+            return if (parsed != null && parsed.isFinite() && parsed == kotlin.math.floor(parsed)) {
+                parsed.toLong().toString()
+            } else {
+                // テンプレートは後段のmacroへ渡すため、ここで型接尾辞を付けません。
+                value
+            }
+        }
         return when (type) {
             TemporaryVariableType.NUMBER ->
                 "data modify storage kantan:variables $destination set value ${number(node.string("value"))}"
@@ -713,8 +726,8 @@ class VanillaDatapackExporter(
                     "pitch:${number(node.string("pitch", "1.0"))}}"
             TemporaryVariableType.EFFECT ->
                 "data modify storage kantan:variables $destination set value " +
-                    "{effect:\"${escape(node.string("effect"))}\",level:${number(node.string("level", "1"))}," +
-                    "seconds:${number(node.string("seconds", "30"))}}"
+                    "{effect:\"${escape(node.string("effect"))}\",level:${integer(node.string("level", "1"), "1")}," +
+                    "seconds:${integer(node.string("seconds", "30"), "30")}}"
         }
     }
 
@@ -1377,9 +1390,16 @@ class VanillaDatapackExporter(
         node: CommandNode,
         context: ExecutionContextSpec?,
     ): TemporaryEntityReference? {
-        val spec = node.targetSpec ?: context?.target ?: context?.executor ?: return null
+        // Java実行側のresolveTargetsと同じく、明示的なINHERITED_TARGETは
+        // context側へ解決を委ねます。CONDITIONの条件対象として実際に効く
+        // TARGET_EXISTS／PLAYER_STATEだけを対象にし、変数・ブロック条件の
+        // 無関係なcontext targetで分岐を変えないようにします。
+        val conditionKind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+        if (conditionKind !in setOf(ConditionKind.TARGET_EXISTS, ConditionKind.PLAYER_STATE)) return null
+        val explicitTarget = node.targetSpec?.takeUnless { it.kind == TargetKind.INHERITED_TARGET }
+        val spec = explicitTarget ?: context?.target ?: context?.executor ?: return null
         if (spec.kind != TargetKind.TEMPORARY) return null
-        val role = if (node.targetSpec != null) "primary" else "context"
+        val role = if (explicitTarget != null) "primary" else "context"
         return temporaryEntityReferences(node, context).firstOrNull { it.role == role }
     }
 

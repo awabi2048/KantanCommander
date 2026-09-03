@@ -413,6 +413,32 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `temporary effect integers are emitted as command-compatible integer tags`() {
+        val store = ScriptStore(temp.resolve("temporary-effect-export"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "temporary-effect-export")
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "effect",
+                    "tempType" to TemporaryVariableType.EFFECT.name,
+                    "effect" to "minecraft:speed",
+                    "level" to "2.0",
+                    "seconds" to "30.0",
+                ),
+            )
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+
+        assertTrue(body.contains("level:2,seconds:30"))
+        assertFalse(body.contains("level:2.0d,seconds:30.0d"))
+    }
+
+    @Test
     fun `temporary entity target is lowered through uuid component scores`() {
         val store = ScriptStore(temp.resolve("temporary-entity-export"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "temporary-entity-export")

@@ -256,7 +256,7 @@ object ExecutableScriptValidator {
                 validateTemplate(node.string("customName"), node, path, "customName", errors, variableDefinitions, temporaries = temporaryDefinitions)
             }
             CommandType.PLAY_SOUND -> {
-                if (!CommandValueRules.isSoundId(node.string("sound"))) {
+                if (node.soundTempRef.isNullOrBlank() && !CommandValueRules.isSoundId(node.string("sound"))) {
                     errors += nodeError(node, path, setOf("sound"), "サウンドIDが不正です")
                 }
                 validateRange(node, path, "volume", 0.0..34.0, "音量は0.0〜34.0の範囲です", errors, variableDefinitions, temporaryDefinitions)
@@ -267,7 +267,7 @@ object ExecutableScriptValidator {
             }
             CommandType.APPLY_EFFECT -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-                if (!CommandValueRules.isEffectId(node.string("effect"))) {
+                if (node.effectTempRef.isNullOrBlank() && !CommandValueRules.isEffectId(node.string("effect"))) {
                     errors += nodeError(node, path, setOf("effect"), "エフェクトが不正です")
                 }
                 validateIntegerRange(node, path, "level", 1..255, "エフェクトレベルは1〜255の範囲です", errors, variableDefinitions, temporaryDefinitions)
@@ -795,7 +795,7 @@ object ExecutableScriptValidator {
             TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
         }.getOrNull()
         if (type == null) {
-            errors += nodeError(node, path, setOf("type"), "一時変数の型が不正です")
+            errors += nodeError(node, path, setOf("tempType"), "一時変数の型が不正です")
             return
         }
         when (type) {
@@ -810,27 +810,116 @@ object ExecutableScriptValidator {
                     if (raw.isBlank() || resolvedDouble(raw, null, temporaryDefinitions) == null &&
                         !deferNumericValidation(raw, null, temporaryDefinitions)
                     ) {
-                        errors += nodeError(node, path, setOf("value"), "位置の$field が不正です")
+                        errors += nodeError(node, path, setOf(field), "位置の$field が不正です")
+                    }
+                }
+                // yaw/pitchは省略時に0として扱いますが、入力された値は
+                // NUMBERと同じテンプレート境界で検証します。POSITIONの方式だけ
+                // 合っていて、向きの不正値が実行時まで残る状態を防ぎます。
+                listOf("yaw", "pitch").forEach { field ->
+                    val raw = node.string(field)
+                    if (raw.isNotBlank()) {
+                        validateNumberInput(raw, null, node, path, setOf(field), errors, temporaryDefinitions)
                     }
                 }
             }
             TemporaryVariableType.ITEM -> if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
-                errors += nodeError(node, path, setOf("value"), "アイテムが未設定です")
+                errors += nodeError(node, path, setOf("item"), "アイテムが未設定です")
             }
             TemporaryVariableType.BLOCK -> if (CommandValueRules.placementMaterial(node.string("block")) == null) {
-                errors += nodeError(node, path, setOf("value"), "ブロックが未設定です")
+                errors += nodeError(node, path, setOf("block"), "ブロックが未設定です")
             }
             TemporaryVariableType.ENTITY -> { /* 実行時に解決するため、設定時は検証しません。 */ }
             TemporaryVariableType.SOUND -> {
                 if (node.soundTempRef.isNullOrBlank() && !CommandValueRules.isSoundId(node.string("sound"))) {
-                    errors += nodeError(node, path, setOf("value"), "サウンドIDが不正です")
+                    errors += nodeError(node, path, setOf("sound"), "サウンドIDが不正です")
                 }
+                validateTemporaryRange(
+                    node,
+                    path,
+                    field = "volume",
+                    raw = node.string("volume", "1.0"),
+                    range = 0.0..34.0,
+                    message = "音量は0.0〜34.0の範囲です",
+                    errors = errors,
+                    temporaryDefinitions = temporaryDefinitions,
+                )
+                validateTemporaryRange(
+                    node,
+                    path,
+                    field = "pitch",
+                    raw = node.string("pitch", "1.0"),
+                    range = 0.5..2.0,
+                    message = "ピッチは0.5〜2.0の範囲です",
+                    errors = errors,
+                    temporaryDefinitions = temporaryDefinitions,
+                )
             }
             TemporaryVariableType.EFFECT -> {
                 if (node.effectTempRef.isNullOrBlank() && !CommandValueRules.isEffectId(node.string("effect"))) {
-                    errors += nodeError(node, path, setOf("value"), "エフェクトが不正です")
+                    errors += nodeError(node, path, setOf("effect"), "エフェクトが不正です")
                 }
+                validateTemporaryIntegerRange(
+                    node,
+                    path,
+                    field = "level",
+                    raw = node.string("level", "1"),
+                    range = 1..255,
+                    message = "エフェクトレベルは1〜255の範囲です",
+                    errors = errors,
+                    temporaryDefinitions = temporaryDefinitions,
+                )
+                validateTemporaryIntegerRange(
+                    node,
+                    path,
+                    field = "seconds",
+                    raw = node.string("seconds", "30"),
+                    range = 1..86_400,
+                    message = "エフェクトの持続時間は1〜86400秒の範囲です",
+                    errors = errors,
+                    temporaryDefinitions = temporaryDefinitions,
+                )
             }
+        }
+    }
+
+    /** TEMP_SETの既定値を展開したうえで、複合値内の小数範囲を検証します。 */
+    private fun validateTemporaryRange(
+        node: CommandNode,
+        path: String,
+        field: String,
+        raw: String,
+        range: ClosedFloatingPointRange<Double>,
+        message: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        validateNumberInput(raw, null, node, path, setOf(field), errors, temporaryDefinitions)
+        val value = resolvedDouble(raw, null, temporaryDefinitions)
+        if (!deferNumericValidation(raw, null, temporaryDefinitions) &&
+            (value == null || value !in range)
+        ) {
+            errors += nodeError(node, path, setOf(field), message)
+        }
+    }
+
+    /** TEMP_SETの既定値を展開したうえで、複合値内の整数範囲を検証します。 */
+    private fun validateTemporaryIntegerRange(
+        node: CommandNode,
+        path: String,
+        field: String,
+        raw: String,
+        range: IntRange,
+        message: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        validateNumberInput(raw, null, node, path, setOf(field), errors, temporaryDefinitions)
+        val value = resolvedDouble(raw, null, temporaryDefinitions)
+        if (!deferNumericValidation(raw, null, temporaryDefinitions) &&
+            (value == null || value != kotlin.math.floor(value) || value.toInt() !in range)
+        ) {
+            errors += nodeError(node, path, setOf(field), message)
         }
     }
 

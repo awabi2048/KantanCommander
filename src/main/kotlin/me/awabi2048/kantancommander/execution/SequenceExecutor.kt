@@ -119,9 +119,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session.executed++
         plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
 
-        val next: (UUID?, Boolean) -> Unit = { target, success ->
-            if (success) runNode(script, graph, target, session, depth, done)
-            else stop(session, script, node.id, depth, "node_failed", done)
+        val next: (UUID?, NodeExecutionOutcome) -> Unit = { target, outcome ->
+            when (outcome) {
+                NodeExecutionOutcome.SUCCESS,
+                NodeExecutionOutcome.SKIPPED,
+                -> runNode(script, graph, target, session, depth, done)
+                NodeExecutionOutcome.FAILED ->
+                    stop(session, script, node.id, depth, "node_failed", done)
+            }
         }
         when (node.type) {
             CommandType.WAIT -> {
@@ -134,7 +139,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ?: return stop(session, script, node.id, depth, "invalid_wait_seconds", done)
                 plugin.server.scheduler.runTaskLater(
                     plugin,
-                    Runnable { next(node.next, true) },
+                    Runnable { next(node.next, NodeExecutionOutcome.SUCCESS) },
                     waitTicks,
                 )
             }
@@ -148,12 +153,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
                 session.previousContext = effectiveContext
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
-                next(if (result) node.trueNext else node.falseNext, true)
+                next(if (result) node.trueNext else node.falseNext, NodeExecutionOutcome.SUCCESS)
             }
             CommandType.CONTEXT -> {
                 session.context = effectiveContext(node, session)
                 session.previousContext = session.context
-                next(node.next, true)
+                next(node.next, NodeExecutionOutcome.SUCCESS)
             }
             CommandType.DISK_CALL -> {
                 val callerContext = session.context
@@ -167,12 +172,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     session.previousContext = callerPrevious
                     session.temporaries.clear()
                     session.temporaries.putAll(callerTemporaries)
-                    next(node.next, success)
+                    next(
+                        node.next,
+                        if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
+                    )
                 }
             }
             CommandType.TEMP_SET -> {
                 val success = executeTemporary(node, session)
-                next(node.next, success)
+                next(
+                    node.next,
+                    if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
+                )
             }
             CommandType.VARIABLE -> {
                 // VARIABLEはノード自身のコンテキスト上書きを持たず、現在の実行文脈だけを使います。
@@ -183,14 +194,29 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     session,
                 )
                 if (success) session.previousContext = session.context
-                next(node.next, success)
+                next(
+                    node.next,
+                    if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
+                )
             }
-            CommandType.MERGE -> next(node.next, true)
+            CommandType.MERGE -> next(node.next, NodeExecutionOutcome.SUCCESS)
             CommandType.FOR_START -> beginFor(script, graph, node, session, depth, done)
             CommandType.FOR_END -> finishForIteration(script, graph, node, session, depth, done)
             CommandType.BREAK -> breakFor(script, graph, node, session, depth, done)
             CommandType.CONTINUE -> continueFor(script, graph, node, session, depth, done)
-            else -> next(node.next, executeImmediate(node, session))
+            else -> {
+                // 一時参照の解決失敗は、入力値そのものの実行失敗とは異なります。
+                // 仕様上は「対象が見つからなかった」と同じくそのノードだけを
+                // スキップし、後続ノードを継続します。静的検証を通過した後でも、
+                // ENTITYの死亡・別ワールド・アンロードは実行時に起こり得るため、
+                // 実処理の前にこの判定を行います。
+                val outcome = when {
+                    hasUnavailableTemporaryReference(node, session) -> NodeExecutionOutcome.SKIPPED
+                    executeImmediate(node, session) -> NodeExecutionOutcome.SUCCESS
+                    else -> NodeExecutionOutcome.FAILED
+                }
+                next(node.next, outcome)
+            }
         }
     }
 
@@ -684,7 +710,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 一時変数を設定します。再設定は上書きとして扱います。
      *
      * NUMBER・STRING はリテラル値を受け付け、`%{name}%` 参照の展開に対応します。
-     * 非リテラル6型はGUIの参照欄経由で解決済み値を保持する想定であり、
+     * 複合6型は型ごとの入力欄で解決済み値を保持する想定であり、
      * ここでは型ごとの最小検証のうえ保存します。
      */
     private fun executeTemporary(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
@@ -728,8 +754,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             TemporaryVariableType.ENTITY -> {
                 val entityId = node.string("entityId").takeIf(String::isNotBlank)
                     ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                    ?: error("invalid entity")
-                session.origin.world.getEntity(entityId) ?: error("entity is unavailable")
+                // UUIDの構文が正しければ、定義時点で実体が見つからなくても
+                // 一時値そのものは保存します。死亡・別ワールド・未ロードは
+                // 参照時の「対象なし」と同じ契約で扱い、後続ノードだけを
+                // スキップできるようにします。
                 TemporaryValue(type, entityId = entityId)
             }
             TemporaryVariableType.SOUND -> {
@@ -742,10 +770,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             TemporaryVariableType.EFFECT -> {
                 if (!CommandValueRules.isEffectId(node.string("effect"))) error("invalid effect")
-                val level = node.string("level", "1").toIntOrNull()
-                    ?.takeIf { it in 1..255 } ?: error("invalid level")
-                val seconds = node.string("seconds", "30").toIntOrNull()
-                    ?.takeIf { it in 1..86_400 } ?: error("invalid seconds")
+                val level = resolveNumber(node.string("level", "1"), session)
+                    ?.takeIf { it == kotlin.math.floor(it) && it in 1.0..255.0 }
+                    ?.toInt() ?: error("invalid level")
+                val seconds = resolveNumber(node.string("seconds", "30"), session)
+                    ?.takeIf { it == kotlin.math.floor(it) && it in 1.0..86_400.0 }
+                    ?.toInt() ?: error("invalid seconds")
                 TemporaryValue(type, effect = node.string("effect"), level = level, seconds = seconds)
             }
         }
@@ -1051,13 +1081,98 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return expanded.toDoubleOrNull()?.takeIf(Double::isFinite)
     }
 
-    /** 一時変数値を文字列へ変換します。数値はワールド内変数と同じ整形規則です。 */
-    private fun stringifyTemporary(value: TemporaryValue): String = when (value.type) {
+    /**
+     * 実行時にだけ確定する一時参照の欠損を、通常のノード失敗と分けて判定します。
+     *
+     * 静的検証は「その経路で定義が存在すること」までしか保証できません。特に
+     * ENTITYは定義後に死亡・別ワールド移動・アンロードが起こるため、
+     * executeImmediateへ渡してfalseを返すだけではスクリプト全体を停止してしまいます。
+     * ここで参照先を確認し、呼び出し側がノード単位のSKIPPEDとして後続へ進めます。
+     */
+    private fun hasUnavailableTemporaryReference(node: CommandNode, session: ExecutionSession): Boolean {
+        fun scalarReferencesAvailable(raw: String): Boolean =
+            TemporaryTemplate.references(raw).all { name ->
+                val value = session.temporaries[TemporaryTemplate.normalized(name)]
+                value != null && value.type in setOf(TemporaryVariableType.NUMBER, TemporaryVariableType.STRING)
+            }
+
+        // テキスト／数値欄に現れる `%{name}%` はスカラーだけを許可します。
+        // POSITION等を空文字へ変換して実行を続けると、型エラーが成功に見えます。
+        if (node.params.values.any { !scalarReferencesAvailable(it) }) return true
+
+        fun entityAvailable(name: String?): Boolean {
+            val value = name?.takeIf(String::isNotBlank)
+                ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+                ?: return false
+            if (value.type != TemporaryVariableType.ENTITY) return false
+            val id = value.entityId ?: return false
+            val entity = session.origin.world.getEntity(id) ?: return false
+            return entity.isValid && !entity.isDead && entity.world == session.origin.world
+        }
+
+        fun positionAvailable(name: String?): Boolean {
+            val value = name?.takeIf(String::isNotBlank)
+                ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+                ?: return false
+            return value.type == TemporaryVariableType.POSITION && value.position != null
+        }
+
+        fun targetUnavailable(spec: TargetSpec?): Boolean =
+            spec?.kind == TargetKind.TEMPORARY && !entityAvailable(spec.tempName)
+
+        fun positionUnavailable(spec: PositionSpec?): Boolean =
+            spec?.kind == PositionKind.TEMPORARY && !positionAvailable(spec.tempName)
+
+        fun facingUnavailable(spec: me.awabi2048.kantancommander.model.FacingSpec?): Boolean =
+            spec?.kind == FacingKind.TEMPORARY && !positionAvailable(spec.tempName)
+
+        val effective = effectiveContext(node, session)
+        return listOf(
+            node.targetSpec,
+            node.secondaryTargetSpec,
+            node.destinationTargetSpec,
+            effective?.target,
+            effective?.executor,
+        ).any(::targetUnavailable) || listOf(
+            node.destinationSpec,
+            node.conditionPositionSpec,
+            node.blockPositionSpec,
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.soundPositionSpec,
+            node.summonPositionSpec,
+            effective?.position,
+        ).any(::positionUnavailable) || listOf(
+            node.destinationFacingSpec,
+            effective?.facing,
+        ).any(::facingUnavailable) || listOfNotNull(
+            node.targetSpec?.searchOrigin,
+            node.secondaryTargetSpec?.searchOrigin,
+            node.destinationTargetSpec?.searchOrigin,
+            effective?.target?.searchOrigin,
+            effective?.executor?.searchOrigin,
+        ).any { search ->
+            search.positionTemp?.let { !positionAvailable(it) } == true ||
+                positionUnavailable(search.position)
+        } || listOfNotNull(
+            node.itemTempRef to TemporaryVariableType.ITEM,
+            node.blockTempRef to TemporaryVariableType.BLOCK,
+            node.soundTempRef to TemporaryVariableType.SOUND,
+            node.effectTempRef to TemporaryVariableType.EFFECT,
+        ).any { (name, expected) ->
+            name?.takeIf(String::isNotBlank)?.let {
+                session.temporaries[TemporaryTemplate.normalized(it)]?.type != expected
+            } == true
+        }
+    }
+
+    /** 一時変数値を文字列へ変換します。複合型は暗黙に空文字へ変換しません。 */
+    private fun stringifyTemporary(value: TemporaryValue): String? = when (value.type) {
         TemporaryVariableType.NUMBER -> value.numberValue?.let {
             if (it.isFinite() && it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
-        }.orEmpty()
-        TemporaryVariableType.STRING -> value.stringValue.orEmpty()
-        else -> ""
+        }
+        TemporaryVariableType.STRING -> value.stringValue
+        else -> null
     }
 
     private fun displayTiming(node: CommandNode, session: ExecutionSession): DisplayTextTiming {
@@ -1114,6 +1229,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         )
         done(false)
     }
+
+    /** ノード処理結果。参照先が無い場合だけ、失敗と区別して後続へ進めます。 */
+    private enum class NodeExecutionOutcome { SUCCESS, SKIPPED, FAILED }
 
     private data class ExecutionSession(
         val rootId: UUID,
