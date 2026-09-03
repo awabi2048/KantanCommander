@@ -94,4 +94,28 @@ class GraphValidatorTest {
         val errors = GraphValidator.validate(graph)
         assertTrue(errors.isEmpty())
     }
+
+    @Test
+    fun `for body allows a terminal nested condition branch without treating for end as a merge`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val outer = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val inner = GraphEditor.insert(
+            graph,
+            outer.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.CONDITION,
+            continuationId = end.id,
+        )
+        GraphEditor.insert(
+            graph,
+            inner.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.WAIT,
+            continuationId = end.id,
+        )
+
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
 }

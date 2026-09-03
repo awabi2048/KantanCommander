@@ -842,19 +842,22 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `body ending with an open condition does not offer ambiguous tail insertion`() {
+    fun `for body condition exposes its explicit true continuation on the main path`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)
-        GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
 
         val layout = GraphLayoutEngine.layout(graph)
         val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
         val endPoint = requireNotNull(layout.nodePoints[end.id])
         val tailPath = layout.cells[MapPoint(endPoint.x - 1, endPoint.y)]
 
-        // 挿入先が曖昧なbody末尾は装飾扱いとし、誤った位置への挿入を防ぐ。
-        assertEquals(null, tailPath?.insertionTarget)
-        // 一方、枝末端の黄色追加アイコンは維持されるため追加導線は失われない。
+        // 条件のTRUE枝がFOR_ENDを明示的に指すため、主経路上の挿入先は一意です。
+        assertEquals(
+            InsertionTarget(condition.id, GraphEditor.Edge.TRUE, condition.id),
+            tailPath?.insertionTarget,
+        )
+        // FALSE枝は独立したNULL終端として、黄色追加アイコンから編集できます。
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.ADD })
     }
 
@@ -873,7 +876,6 @@ class GraphLayoutEngineTest {
             inner.id,
             GraphEditor.Edge.TRUE,
             inner.id,
-            continuationId = end.id,
         )
 
         // 内側条件のFALSE枝で広がった幅をFOR_ENDまで埋める主行にも、TRUE枝の
@@ -901,26 +903,44 @@ class GraphLayoutEngineTest {
             GraphLayoutEngine.previewInsertion(graph, target, CommandType.TELEPORT),
         )
 
-        assertEquals(end.id, preview.graph.nodes[preview.insertedNodeId]?.next)
+        // FALSE枝で追加した通常ノードは、外側FORの終了境界へ暗黙接続せず、
+        // 追加ノード自身を終端として扱います。
+        assertEquals(null, preview.graph.nodes[preview.insertedNodeId]?.next)
         assertTrue(GraphValidator.validate(preview.graph).isEmpty())
 
         val insertedPoint = requireNotNull(preview.layout.nodePoints[preview.insertedNodeId])
-        val endPoint = requireNotNull(preview.layout.nodePoints[end.id])
-        // 保存グラフ上のTELEPORT.next=FOR_ENDだけでなく、FALSE枝からFOR_END直前へ
-        // 戻るL字経路も描画されていなければ、追加ノードが視覚上の終端になります。
-        assertEquals(
-            GraphEditor.Edge.NEXT,
-            preview.layout.cells[MapPoint(endPoint.x - 1, insertedPoint.y)]?.insertionTarget?.edge,
+        val add = preview.layout.cells[MapPoint(insertedPoint.x + 2, insertedPoint.y)]
+        assertEquals(MapCellKind.ADD, add?.kind)
+        assertEquals(preview.insertedNodeId, add?.insertionTarget?.sourceId)
+        assertEquals(GraphEditor.Edge.NEXT, add?.insertionTarget?.edge)
+    }
+
+    @Test
+    fun `nested condition added to a for branch remains terminal at every depth`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val outer = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val layout = GraphLayoutEngine.layout(graph)
+        val target = requireNotNull(layout.cells.values.first {
+            it.kind == MapCellKind.ADD &&
+                it.insertionTarget?.sourceId == outer.id &&
+                it.insertionTarget.edge == GraphEditor.Edge.FALSE
+        }.insertionTarget)
+
+        val preview = requireNotNull(
+            GraphLayoutEngine.previewInsertion(graph, target, CommandType.CONDITION),
         )
-        assertEquals(
-            preview.insertedNodeId,
-            preview.layout.cells[MapPoint(endPoint.x - 1, insertedPoint.y)]?.insertionTarget?.sourceId,
-        )
-        assertTrue(
-            (endPoint.y + 1..insertedPoint.y).all {
-                preview.layout.cells[MapPoint(endPoint.x - 1, it)]?.kind == MapCellKind.BRANCH_PATH
-            },
-        )
+        val previewOuter = preview.graph.nodes[outer.id]!!
+        val inner = preview.graph.nodes[preview.insertedNodeId]!!
+
+        // FOR_ENDは外側条件のTRUE枝だけが使用し、FALSE枝へ追加した条件は
+        // さらに内側のTRUE/FALSE双方をNULL終端として保持します。
+        assertEquals(end.id, previewOuter.trueNext)
+        assertEquals(inner.id, previewOuter.falseNext)
+        assertEquals(null, inner.trueNext)
+        assertEquals(null, inner.falseNext)
+        assertTrue(GraphValidator.validate(preview.graph).isEmpty())
     }
 
     @Test

@@ -145,11 +145,11 @@ object GraphValidator {
         }
         graph.nodes.values.forEach { node ->
             val count = incoming[node.id] ?: 0
-            // MERGEだけでなくFOR_ENDも、ループ本体から到達する複数の条件枝を
-            // 受ける暗黙の境界です。for本体内の未合流条件は、明示的なMERGEを
-            // 追加しなくても、両枝を同じFOR_ENDへ到達させられます。
+            // 複数の実行エッジを受け取れるのは明示的なMERGEだけです。FOR_ENDを
+            // 暗黙の合流点として扱うと、未合流条件の終端枝までループへ接続され、
+            // 構造データと利用者が選択した枝の意味が変わってしまいます。
             val allowed = when {
-                node.type == CommandType.MERGE || node.type == CommandType.FOR_END -> Int.MAX_VALUE
+                node.type == CommandType.MERGE -> Int.MAX_VALUE
                 node.id == graph.entryNodeId -> 0
                 else -> 1
             }
@@ -181,17 +181,21 @@ object GraphValidator {
         return visit(start)
     }
 
-    /** forのbodyは必ず対応FOR_ENDへ到達し、途中終了しない構造を維持します。 */
+    /** forのbodyは対応FOR_ENDまたは明示的な終端へ到達できる構造を維持します。 */
     private fun allPathsReach(graph: CommandGraph, start: UUID?, stop: UUID): Boolean {
         val active = mutableSetOf<UUID>()
         val memo = mutableMapOf<UUID, Boolean>()
         fun visit(id: UUID?): Boolean {
-            if (id == stop) return true
-            if (id == null || !graph.nodes.containsKey(id)) return false
+            // 条件枝のNULL終端は、FOR_ENDへの接続漏れではなく、その枝で実行を
+            // 正常終了する正規の終端です。ここを不正扱いすると、for内の未合流
+            // 条件へ通常コマンドを追加しただけで保存できなくなります。
+            if (id == stop || id == null) return true
+            if (!graph.nodes.containsKey(id)) return false
             memo[id]?.let { return it }
             if (!active.add(id)) return false
             val node = graph.nodes.getValue(id)
-            val result = node.outgoing().isNotEmpty() && node.outgoing().all(::visit)
+            val outgoing = node.outgoing()
+            val result = outgoing.isEmpty() || outgoing.all(::visit)
             active.remove(id)
             memo[id] = result
             return result

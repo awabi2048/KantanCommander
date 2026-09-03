@@ -226,7 +226,7 @@ class GraphEditorTest {
     }
 
     @Test
-    fun `normal insertion into an open condition in a for body joins the for end`() {
+    fun `normal insertion into an open condition in a for body remains a terminal`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)
         val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
@@ -240,8 +240,52 @@ class GraphEditorTest {
             continuationId = end.id,
         )
 
+        assertEquals(end.id, condition.trueNext)
+        assertEquals(null, condition.next)
         assertEquals(inserted.id, condition.falseNext)
-        assertEquals(end.id, inserted.next)
+        assertEquals(null, inserted.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `nested terminal branch never inherits the enclosing for end`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val outer = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val inner = GraphEditor.insert(
+            graph,
+            outer.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.CONDITION,
+            continuationId = end.id,
+        )
+        val first = GraphEditor.insert(
+            graph,
+            inner.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.WAIT,
+            continuationId = end.id,
+        )
+        val second = GraphEditor.insert(
+            graph,
+            first.id,
+            GraphEditor.Edge.NEXT,
+            CommandType.DISPLAY_TEXT,
+            continuationId = end.id,
+        )
+
+        // 外側条件のTRUE枝だけがFOR_ENDへ戻り、内側条件とそのFALSE枝は
+        // それぞれの深さで独立した終端になります。
+        assertEquals(end.id, outer.trueNext)
+        assertEquals(inner.id, outer.falseNext)
+        assertEquals(null, inner.trueNext)
+        assertEquals(first.id, inner.falseNext)
+        assertEquals(second.id, first.next)
+        assertEquals(null, second.next)
+        assertEquals(1, graph.nodes.values.count { node -> node.next == end.id } +
+            graph.nodes.values.count { node -> node.trueNext == end.id } +
+            graph.nodes.values.count { node -> node.falseNext == end.id })
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 

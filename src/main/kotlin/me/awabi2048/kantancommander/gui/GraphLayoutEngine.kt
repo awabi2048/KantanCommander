@@ -18,9 +18,9 @@ data class InsertionTarget(
     */
     val weak: Boolean = false,
     /**
-     * 未合流の入れ子条件を閉じた後に戻る、外側構造の継続先です。
-     * ループ外では明示的にMERGEを追加する場合だけ内側MERGEの次へ接続し、
-     * for本体内では空枝へ通常ノードを追加する際のFOR_END境界としても使用します。
+     * 未合流の入れ子条件を明示的なMERGEで閉じた後に戻る、外側構造の継続先です。
+     * 通常ノードの追加先へ自動的に適用してはならず、条件追加や明示的なMERGE追加の
+     * 構造を組み立てる場合だけ使用します。
      */
     val continuationId: UUID? = null,
 ) {
@@ -341,7 +341,6 @@ object GraphLayoutEngine {
                         hasOpenEnd,
                         mainNextX = branch.mainNextX,
                         mainInsertionTarget = branch.mainInsertionTarget,
-                        boundaryContinuations = branch.boundaryContinuations,
                     )
                 }
                 if (node.type == CommandType.FOR_START && node.pairedNodeId != null) {
@@ -443,14 +442,6 @@ object GraphLayoutEngine {
                 putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
             }
 
-            // 子条件が停止境界へ到達した場合、その枝末端から境界までの接続責務を
-            // 親へ引き継ぎます。情報を返さないと、構造上はstopへ接続済みでも、
-            // 論理マップでは子条件の枝だけが終端に見えてしまいます。
-            val boundaryContinuations = buildList {
-                addAll(collectBoundaryContinuations(condition.id, trueStart, mergeId, trueSegment, y))
-                addAll(collectBoundaryContinuations(condition.id, falseStart, mergeId, falseSegment, falseY))
-            }
-
             // 合流ノードは最長枝の nextX を基準に置き、通常ノード列と同じ2ピッチを保ちます。
             // TRUE枝は従来どおり左側から直進させますが、折り返すFALSE枝は mergeX 列まで
             // 水平に延ばしてから真上へ戻します。これにより、合流ノードの直下セルが最後の
@@ -468,7 +459,6 @@ object GraphLayoutEngine {
                 nodeY = y,
                 verticalStartY = if (falseReachesMerge) y + 1 else null,
                 verticalEndY = if (falseReachesMerge) falseY else null,
-                additionalVerticalOffsets = if (boundaryContinuations.isEmpty()) emptySet() else setOf(-1),
             )
             val mergeNodeX = mergeX
             // 枝の長さ調整で連続する水平経路が生じた場合は、その全セルを同じ
@@ -518,10 +508,6 @@ object GraphLayoutEngine {
                 putVerticalBranchPath(mergeX, y + 1, falseY)
                 markVerticalInsertionTarget(mergeX, y + 1, falseY, falseTarget)
             }
-            // 子条件の未合流枝は、MERGEノード直前の専用列へL字で戻します。
-            // 既存のmergeX列はFALSE→MERGEの縦線に使うため、1列左を使います。
-            renderBoundaryContinuations(boundaryContinuations, mergeX - 1, y)
-
             val merge = graph.nodes[mergeId] ?: return Segment(mergeNodeX, falseSegment.maxY, condition.id)
             // 枝が空／短い場合でも、角セルを合流直前の経路として明示的に
             // 再設定し、「水平枝→L字の角→合流アイコン」の接続を保証します。
@@ -575,40 +561,6 @@ object GraphLayoutEngine {
                 )
                 else -> segment.mainInsertionTarget
             }
-        }
-
-        /**
-         * stopへ直接到達する枝の末端を、親構造が描く境界接続として収集します。
-         *
-         * `renderSequence` はstopノード自身を二重描画しないため、通常ノードの
-         * `next == stop` はノードの直後で描画が止まります。親がこの情報を失うと、
-         * 構造化データ上の接続だけが残り、論理マップでは枝が終端になります。
-         */
-        private fun collectBoundaryContinuations(
-            conditionId: UUID,
-            start: UUID?,
-            stop: UUID?,
-            segment: Segment,
-            y: Int,
-            includeDirectTail: Boolean = false,
-        ): List<BoundaryContinuation> {
-            if (stop == null || start == null || start == stop) return segment.boundaryContinuations
-
-            val continuations = segment.boundaryContinuations.toMutableList()
-            val tail = segment.tail
-            if (includeDirectTail && tail != null && graph.nodes[tail]?.next == stop) {
-                continuations += BoundaryContinuation(
-                    endpointX = segment.nextX - 1,
-                    y = y,
-                    target = InsertionTarget(
-                        sourceId = tail,
-                        edge = GraphEditor.Edge.NEXT,
-                        mergeConditionId = conditionId,
-                        continuationId = stop,
-                    ),
-                )
-            }
-            return continuations
         }
 
         private fun renderOpenCondition(condition: CommandNode, x: Int, y: Int, stop: UUID?): Segment {
@@ -674,13 +626,6 @@ object GraphLayoutEngine {
             if (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop)) {
                 putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id, continuationId = stop)
             }
-            // 親の停止境界（FOR_END／MERGE）へ到達した枝は、末端から境界までの
-            // 描画を親へ委譲します。ここで保持した接続情報にはクリック可能なNEXT
-            // 挿入先も含めるため、見た目と編集対象を同じ構造から再構築できます。
-            val boundaryContinuations = buildList {
-                addAll(collectBoundaryContinuations(condition.id, trueStart, stop, trueSegment, y, includeDirectTail = true))
-                addAll(collectBoundaryContinuations(condition.id, falseStart, stop, falseSegment, falseY, includeDirectTail = true))
-            }
             // 条件直下の縦幹は、FALSE枝の先頭への挿入を受け付けます（開いた枝・
             // 閉じた枝で共通）。空枝（枝の先頭にノードがなく、追加ボタンが枝への
             // 追加を担う場合）では、縦幹は接続専用になります。
@@ -708,7 +653,6 @@ object GraphLayoutEngine {
                 // 全体幅）をそのまま返すと、親の合流補完で経路が空きます。
                 mainNextX = trueSegment.mainNextX,
                 mainInsertionTarget = mainInsertionTarget,
-                boundaryContinuations = boundaryContinuations,
             )
         }
 
@@ -731,7 +675,6 @@ object GraphLayoutEngine {
                 nodeY = y,
                 verticalStartY = y + 1,
                 verticalEndY = returnY,
-                additionalVerticalOffsets = if (body.boundaryContinuations.isEmpty()) emptySet() else setOf(-1),
             )
             when {
                 bodyStart == null || bodyStart == endId ->
@@ -773,10 +716,6 @@ object GraphLayoutEngine {
                     // 枝末端には既に黄色の追加アイコンがあるため追加導線は失われない。
                     putPath(endX - 1, y)
             }
-            // FOR_ENDへ直接接続する未合流条件の枝は、ループ戻り線とは別の列で
-            // L字に接続します。保存グラフのnextだけでなく、画面上の経路も同じ
-            // FOR_END境界へ到達させることで、枝を終端に見せないようにします。
-            renderBoundaryContinuations(body.boundaryContinuations, endX - 1, y)
             val end = graph.nodes[endId] ?: return Segment(endX, body.maxY, start.id)
             putNode(endX, y, end)
 
@@ -810,53 +749,16 @@ object GraphLayoutEngine {
             nodeY: Int,
             verticalStartY: Int?,
             verticalEndY: Int?,
-            additionalVerticalOffsets: Set<Int> = emptySet(),
         ): Int {
             var candidate = startX
             while (
                 isExecutionElement(candidate, nodeY) ||
                 (verticalStartY != null && verticalEndY != null &&
-                    (hasExecutionElementInColumn(candidate, verticalStartY, verticalEndY) ||
-                        additionalVerticalOffsets.any { offset ->
-                            hasExecutionElementInColumn(candidate + offset, verticalStartY, verticalEndY)
-                        }))
+                    hasExecutionElementInColumn(candidate, verticalStartY, verticalEndY))
             ) {
                 candidate += 2
             }
             return candidate
-        }
-
-        /**
-         * stopへ到達した枝を、親構造の直前まで可視化します。
-         *
-         * 接続列は親構造の直前列（`joinX`）に固定し、上段の主経路へ接続する
-         * 縦線と、枝末端から接続列へ向かう水平線を生成します。水平部分へは
-         * 実際のNEXT挿入先を付与するため、表示だけでなくクリック操作も保存グラフ
-         * と一致します。接続列に実行要素がある場合は呼び出し側で列全体を退避済みです。
-         */
-        private fun renderBoundaryContinuations(
-            continuations: List<BoundaryContinuation>,
-            joinX: Int,
-            topY: Int,
-        ) {
-            continuations.forEach { continuation ->
-                if (continuation.y <= topY) return@forEach
-                check(continuation.endpointX <= joinX) {
-                    "境界接続の終端が接続列を越えています: endpointX=${continuation.endpointX} joinX=$joinX"
-                }
-                // 上段の主経路へ接続するセルは、既存の主経路の挿入先を保持します。
-                putPath(joinX, topY, MapCellKind.BRANCH_PATH)
-                for (verticalY in topY + 1..continuation.y) {
-                    putPath(joinX, verticalY, MapCellKind.BRANCH_PATH)
-                }
-                fillHorizontal(
-                    continuation.endpointX,
-                    joinX,
-                    continuation.y,
-                    MapCellKind.BRANCH_PATH,
-                    target = continuation.target,
-                )
-            }
         }
 
         private fun isExecutionElement(x: Int, y: Int): Boolean =
@@ -877,9 +779,7 @@ object GraphLayoutEngine {
         ) {
             if (from > to) return
             // 長さ調整で同じ論理エッジを複数セルへ描く場合は、from..to の全セルを
-            // 同じ挿入判定領域として扱います。子構造から返されたcontinuationIdも
-            // ここで保持し、親の合流へ補償経路を延ばしても、挿入後の再合流情報を
-            // 失わないようにします。
+            // 同じ挿入判定領域として扱います。
             for (pathX in from..to) {
                 putTargetedPath(pathX, y, kind, target)
             }
@@ -946,7 +846,7 @@ object GraphLayoutEngine {
                     it,
                     mergeConditionId,
                     weak = weakInsertionTarget,
-                    continuationId = continuationId,
+                    continuationId = normalizeContinuation(continuationId),
                 )
             }
             val resolvedKind = mergePathKind(existing?.kind, kind)
@@ -962,15 +862,16 @@ object GraphLayoutEngine {
             kind: MapCellKind = MapCellKind.PATH,
             target: InsertionTarget?,
         ) {
+            val normalizedTarget = normalizeInsertionTarget(target)
             putPath(
                 x,
                 y,
                 kind,
-                sourceId = target?.sourceId,
-                edge = target?.edge,
-                mergeConditionId = target?.mergeConditionId,
-                weakInsertionTarget = target?.weak == true,
-                continuationId = target?.continuationId,
+                sourceId = normalizedTarget?.sourceId,
+                edge = normalizedTarget?.edge,
+                mergeConditionId = normalizedTarget?.mergeConditionId,
+                weakInsertionTarget = normalizedTarget?.weak == true,
+                continuationId = normalizedTarget?.continuationId,
             )
         }
 
@@ -980,7 +881,7 @@ object GraphLayoutEngine {
             check(existing.kind in PATH_CELL_KINDS) {
                 "縦経路の挿入判定対象が経路セルではありません: point=$point existing=$existing"
             }
-            val resolved = mergeInsertionTarget(point, existing.insertionTarget, target)
+            val resolved = mergeInsertionTarget(point, existing.insertionTarget, normalizeInsertionTarget(target))
             cells[point] = existing.copy(insertionTarget = resolved)
         }
 
@@ -1000,13 +901,29 @@ object GraphLayoutEngine {
             cells[point] = MapCell(
                 point,
                 MapCellKind.ADD,
-                insertionTarget = InsertionTarget(
+                insertionTarget = normalizeInsertionTarget(InsertionTarget(
                     sourceId,
                     edge,
                     mergeConditionId,
                     continuationId = continuationId,
-                ),
+                )),
             )
+        }
+
+        /**
+         * 継続先は明示的なMERGEに限定します。FOR_ENDはループ本体の境界であり、
+         * 分岐枝の親として再利用すると、深い枝から外側のループへ暗黙接続されます。
+         * レイアウト側でも無効な継続先を除去しておくことで、クリック対象のメタデータ
+         * とGraphEditorの保存規則を同じ構造上の契約に揃えます。
+         */
+        private fun normalizeContinuation(id: UUID?): UUID? =
+            id?.takeIf { graph.nodes[it]?.type == CommandType.MERGE }
+
+        private fun normalizeInsertionTarget(target: InsertionTarget?): InsertionTarget? {
+            if (target == null) return null
+            val continuation = normalizeContinuation(target.continuationId)
+            return if (continuation == target.continuationId) target
+            else target.copy(continuationId = continuation)
         }
 
         private fun ensureCapacity(point: MapPoint) {
@@ -1078,16 +995,5 @@ object GraphLayoutEngine {
         val mainNextX: Int = nextX,
         /** 主行の終端経路を親構造が延長するときに引き継ぐ挿入先。 */
         val mainInsertionTarget: InsertionTarget? = null,
-        /** stopへ接続する必要がある、子構造内の枝末端情報。 */
-        val boundaryContinuations: List<BoundaryContinuation> = emptyList(),
-    )
-
-    private data class BoundaryContinuation(
-        /** 枝末端の直後にある、NEXT経路の開始列。 */
-        val endpointX: Int,
-        /** 枝末端の行。 */
-        val y: Int,
-        /** 枝末端からstopへ進むNEXTの挿入先。 */
-        val target: InsertionTarget,
     )
 }
