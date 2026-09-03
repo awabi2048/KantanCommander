@@ -1656,7 +1656,7 @@ class GestureSequenceEditor(
         val current = "${format(minimum)}..${format(maximum)}"
         showInputDialog(
             player = player,
-            body = CommandDialogSpecs.body(player, spec, current),
+            body = CommandDialogSpecs.body(player, spec),
             inputs = listOf(
                 CommandDialogSpecs.input(
                     player = player,
@@ -1710,7 +1710,7 @@ class GestureSequenceEditor(
         val spec = requireNotNull(CommandDialogSpecs.targetFilter("range"))
         showInputDialog(
             player = player,
-            body = CommandDialogSpecs.rangeBody(player, dx, dy, dz),
+            body = CommandDialogSpecs.rangeBody(player),
             inputs = CommandDialogSpecs.rangeInputs(player, dx, dy, dz),
         ) { response ->
             val raw = listOf("dx", "dy", "dz").associateWith { key ->
@@ -1805,7 +1805,7 @@ class GestureSequenceEditor(
         } else emptyList()
         showInputDialog(
             player = player,
-            body = CommandDialogSpecs.body(player, spec, initial),
+            body = CommandDialogSpecs.body(player, spec),
             inputs = listOf(CommandDialogSpecs.input(player, "value", initial, spec)),
             additionalActions = candidateButtons,
             footerActions = candidateFooterActions,
@@ -1961,7 +1961,7 @@ class GestureSequenceEditor(
         val pitch = node.string("pitch", "1.0")
         showInputDialog(
             player = player,
-            body = CommandDialogSpecs.soundParametersBody(player, volume, pitch),
+            body = CommandDialogSpecs.soundParametersBody(player),
             inputs = CommandDialogSpecs.soundParametersInputs(player, volume, pitch),
         ) { response ->
             val volumeValue = CommandDialogSpecs.normalize("volume", response.textValue("volume"))
@@ -2102,7 +2102,7 @@ class GestureSequenceEditor(
     ) {
         showInputDialog(
             player = player,
-            body = CommandDialogSpecs.coordinateBody(player, x, y, z),
+            body = CommandDialogSpecs.coordinateBody(player),
             inputs = CommandDialogSpecs.coordinateInputs(player, x, y, z),
         ) { response ->
             val rawValues = listOf("x", "y", "z").associateWith { key -> response.textValue(key).trim() }
@@ -2129,7 +2129,7 @@ class GestureSequenceEditor(
     ) {
         showInputDialog(
             player = player,
-            body = CommandDialogSpecs.rotationBody(player, yaw, pitch),
+            body = CommandDialogSpecs.rotationBody(player),
             inputs = CommandDialogSpecs.rotationInputs(player, yaw, pitch),
         ) { response ->
             val rawValues = listOf("yaw", "pitch").associateWith { key -> response.textValue(key).trim() }

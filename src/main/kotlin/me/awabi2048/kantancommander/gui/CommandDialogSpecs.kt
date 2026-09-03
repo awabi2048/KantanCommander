@@ -69,11 +69,11 @@ internal object CommandDialogSpecs {
     }
 
     /**
-     * 単一テキスト入力の共通表示を生成します。
+     * 単一テキスト入力の共通プロンプトを生成します。
      *
-     * Inventory GUIとGesture GUIが個別にbodyや入力欄を組み立てると、
-     * プロンプト、現在値、入力欄ラベルが再び分岐します。表示形式もこの
-     * 仕様オブジェクトから生成し、入力値の意味とUIの表現を同じ境界に置きます。
+     * 入力欄の初期値はMenuDialogInput.Text.initialによって表示されるため、
+     * 本文へ同じ値を「現在値」として重ねて表示しません。本文は入力方法と
+     * 形式・制約の案内だけを担当し、値そのものは入力欄を唯一の表示場所にします。
      */
     fun prompt(player: Player, spec: Spec): String = KcI18n.text(
         player,
@@ -81,22 +81,8 @@ internal object CommandDialogSpecs {
         mapOf("label" to KcI18n.text(player, spec.labelKey)),
     )
 
-    fun body(player: Player, spec: Spec, current: String): List<Component> = buildList {
+    fun body(player: Player, spec: Spec): List<Component> = buildList {
         add(Component.text(prompt(player, spec)))
-        add(
-            Component.text(
-                KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
-                    mapOf(
-                        "value" to current.ifBlank {
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
-                        },
-                    ),
-                ),
-                NamedTextColor.GRAY,
-            ),
-        )
         // テキスト入力を伴う入力画面では、変数参照と色指定の例を入力欄より下へ
         // 表示します。完成済みの日本語文をここへ持たせず、localeごとのカタログ
         // から取得することで、Inventory/Gesture双方の案内を同じ契約にします。
@@ -169,16 +155,8 @@ internal object CommandDialogSpecs {
         )
 
     /** 座標入力の表示・入力長・有限値判定を両GUIで共有します。 */
-    fun coordinateBody(player: Player, x: Double, y: Double, z: Double): List<Component> = listOf(
+    fun coordinateBody(player: Player): List<Component> = listOf(
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_COORDINATE_PROMPT),
-        Component.text(
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_COORDINATE_CURRENT,
-                mapOf("x" to x.toString(), "y" to y.toString(), "z" to z.toString()),
-            ),
-            NamedTextColor.GRAY,
-        ),
     )
 
     fun coordinateSpec(axis: String): Spec = finiteCoordinate(axis)
@@ -190,16 +168,8 @@ internal object CommandDialogSpecs {
     )
 
     /** 回転入力も座標入力と同じく、表示と有限値判定の境界を共有します。 */
-    fun rotationBody(player: Player, yaw: Float, pitch: Float): List<Component> = listOf(
+    fun rotationBody(player: Player): List<Component> = listOf(
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_ROTATION_PROMPT),
-        Component.text(
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_ROTATION_CURRENT,
-                mapOf("yaw" to yaw.toString(), "pitch" to pitch.toString()),
-            ),
-            NamedTextColor.GRAY,
-        ),
     )
 
     fun rotationSpec(axis: String): Spec = finiteRotation(axis)
@@ -209,17 +179,9 @@ internal object CommandDialogSpecs {
         input(player, "pitch", pitch.toString(), rotationSpec("pitch"), Component.text("ピッチ")),
     )
 
-    /** 対象範囲は3軸を一つの設定項目として表示します。 */
-    fun rangeBody(player: Player, dx: Double?, dy: Double?, dz: Double?): List<Component> = listOf(
+    /** 対象範囲の入力方法と制約だけを表示します。各軸の値は入力欄に表示します。 */
+    fun rangeBody(player: Player): List<Component> = listOf(
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_RANGE_BODY),
-        Component.text(
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
-                mapOf("value" to rangeSummary(player, dx, dy, dz)),
-            ),
-            NamedTextColor.GRAY,
-        ),
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_RANGE_CONSTRAINT),
     )
 
@@ -232,22 +194,9 @@ internal object CommandDialogSpecs {
         )
     }
 
-    /** 効果音の音量・ピッチを一つの設定項目として表示・入力します。 */
-    fun soundParametersBody(player: Player, volume: String, pitch: String): List<Component> = listOf(
+    /** 効果音の音量・ピッチの入力方法と制約だけを表示します。値は入力欄に表示します。 */
+    fun soundParametersBody(player: Player): List<Component> = listOf(
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SOUND_PARAMETERS_BODY),
-        Component.text(
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_CURRENT_VALUE,
-                mapOf(
-                    "value" to listOf(
-                        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME)}=$volume",
-                        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH)}=$pitch",
-                    ).joinToString(" / "),
-                ),
-            ),
-            NamedTextColor.GRAY,
-        ),
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SOUND_PARAMETERS_CONSTRAINT),
     )
 
@@ -271,12 +220,6 @@ internal object CommandDialogSpecs {
     private fun formatOptionalNumber(value: Double?): String = value?.let {
         if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
     }.orEmpty()
-
-    private fun rangeSummary(player: Player, dx: Double?, dy: Double?, dz: Double?): String = listOf(
-        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX)}=${formatOptionalNumber(dx).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
-        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY)}=${formatOptionalNumber(dy).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
-        "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)}=${formatOptionalNumber(dz).ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }}",
-    ).joinToString(" / ")
 
     fun finiteDouble(raw: String): Double? = CommandValueRules.parseFiniteDouble(raw)
 

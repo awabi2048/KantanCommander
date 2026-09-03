@@ -1499,7 +1499,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "variable-name",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
-                body = CommandDialogSpecs.body(player, spec, currentName),
+                body = CommandDialogSpecs.body(player, spec),
                 inputs = listOf(CommandDialogSpecs.input(player, "name", currentName, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     // 大文字を暗黙変換せず、Gesture GUIと同じ変数名規則で検証します。
@@ -1607,7 +1607,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "field-$field",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
-                body = CommandDialogSpecs.body(player, spec, currentValue),
+                body = CommandDialogSpecs.body(player, spec),
                 inputs = listOf(CommandDialogSpecs.input(player, field, currentValue, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     val value = CommandDialogSpecs.normalize(field, response.textValue(field))
@@ -1643,7 +1643,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "sound-parameters",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
-                body = CommandDialogSpecs.soundParametersBody(player, volume, pitch),
+                body = CommandDialogSpecs.soundParametersBody(player),
                 inputs = CommandDialogSpecs.soundParametersInputs(player, volume, pitch),
                 confirm = MenuDialogButton(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
@@ -1731,7 +1731,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "parameter-$parameter",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
-                body = CommandDialogSpecs.body(player, spec, current),
+                body = CommandDialogSpecs.body(player, spec),
                 inputs = listOf(CommandDialogSpecs.input(player, parameter, current, spec)),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     val value = CommandDialogSpecs.normalize(parameter, response.textValue(parameter))
@@ -1806,11 +1806,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "facing-rotation",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_TITLE),
-                body = CommandDialogSpecs.rotationBody(
-                    player,
-                    current?.yaw ?: location.yaw,
-                    current?.pitch ?: location.pitch,
-                ),
+                body = CommandDialogSpecs.rotationBody(player),
                 inputs = CommandDialogSpecs.rotationInputs(
                     player,
                     current?.yaw ?: location.yaw,
@@ -1859,7 +1855,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = id,
                 title = Component.text(title),
-                body = CommandDialogSpecs.coordinateBody(player, currentX, currentY, currentZ),
+                body = CommandDialogSpecs.coordinateBody(player),
                 inputs = CommandDialogSpecs.coordinateInputs(player, currentX, currentY, currentZ),
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     val rawValues = listOf("x", "y", "z").associateWith { key -> response.textValue(key).trim() }
@@ -1939,7 +1935,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "target-filter-range",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
-                body = CommandDialogSpecs.rangeBody(player, currentSpec.dx, currentSpec.dy, currentSpec.dz),
+                body = CommandDialogSpecs.rangeBody(player),
                 inputs = CommandDialogSpecs.rangeInputs(player, currentSpec.dx, currentSpec.dy, currentSpec.dz),
                 confirm = MenuDialogButton(
                     KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
@@ -2070,7 +2066,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 owner = SequenceEditorMenu.OWNER,
                 id = "target-filter-$parameter",
                 title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
-                body = CommandDialogSpecs.body(player, inputSpec, current),
+                body = CommandDialogSpecs.body(player, inputSpec),
                 inputs = inputs,
                 confirm = MenuDialogButton(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM), MenuDialogHandler { _, response ->
                     val updated = if (parameter == "distance") {
