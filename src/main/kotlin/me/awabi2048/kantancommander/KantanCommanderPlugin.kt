@@ -15,6 +15,9 @@ import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
+import me.awabi2048.kantancommander.data.WorldVariableUsage
+import me.awabi2048.kantancommander.data.WorldVariableUsageFinder
+import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.execution.SummonedEntityTracker
@@ -43,7 +46,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "692dee434fe5a18c471cd82de1ed59e47f45debcb02a5c75a6b78fac35a3eb54"
+    "33b33ab204540e0c2b2027ef21e855d52c36d918ad4d4a97d5ee95d4de006549"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -51,6 +54,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var placements: PlacementStore
         private set
     lateinit var variables: WorldVariableStore
+        private set
+    lateinit var worldVariableUsageFinder: WorldVariableUsageFinder
         private set
     lateinit var executor: SequenceExecutor
         private set
@@ -139,6 +144,10 @@ class KantanCommanderPlugin : JavaPlugin() {
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(itemGrantService))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
+        worldVariableUsageFinder = WorldVariableUsageFinder(
+            placements = { placements.all() },
+            scripts = { scripts.listAll() },
+        )
         summonedEntities = SummonedEntityTracker(
             this,
             dataFolder.resolve("summoned-entities.csv"),
@@ -247,6 +256,30 @@ class KantanCommanderPlugin : JavaPlugin() {
         maximumMapHeight = config.getInt("limits.max-map-height"),
         maximumBranchDepth = config.getInt("limits.max-branch-depth"),
     )
+
+    /** 一覧表示と削除確認が同じMyWorld単位の使用判定を使うための入口です。 */
+    internal fun findWorldVariableUsages(worldName: String, variableName: String): List<WorldVariableUsage> =
+        worldVariableUsageFinder.find(worldName, variableName)
+
+    internal fun findWorldVariableUsages(
+        worldName: String,
+        variableNames: Collection<String>,
+    ): Map<String, List<WorldVariableUsage>> =
+        worldVariableUsageFinder.findAll(worldName, variableNames)
+
+    /**
+     * ワールド内変数の削除境界です。使用判定と永続化呼び出しを一つの処理へ束ね、
+     * 確認画面を開いた後に使用箇所が増えた場合も、削除を成功扱いにしません。
+     */
+    internal fun removeWorldVariable(
+        worldId: java.util.UUID,
+        worldName: String,
+        variableName: String,
+    ): WorldVariableRemovalResult {
+        val usages = findWorldVariableUsages(worldName, variableName)
+        if (usages.isNotEmpty()) return WorldVariableRemovalResult(removed = false, usages = usages)
+        return WorldVariableRemovalResult(removed = variables.remove(worldId, variableName))
+    }
 
     /**
      * MenuDialogRequestなどのGUI公開ABIが異なるCC-System上では、登録処理より先に停止します。

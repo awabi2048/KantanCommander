@@ -539,9 +539,13 @@ class GestureLowerPanel(
             val pageSize = WORLD_VARIABLE_PAGE_SIZE
             val pageCount = (entries.size + pageSize - 1) / pageSize
             val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+            val usagesByName = state.placement?.world
+                ?.let { worldName -> plugin.findWorldVariableUsages(worldName, entries.keys) }
+                .orEmpty()
             entries.keys.toList().drop(page * pageSize).take(pageSize).forEachIndexed { index, name ->
                 val value = entries.getValue(name)
                 val type = definitions[name]?.type ?: value.type
+                val inUse = usagesByName[name].orEmpty().isNotEmpty()
                 val column = index % 2
                 val row = index / 2
                 // カード本体と削除ボタンを同じ列幅へ収めます。カード全体をクリック領域に
@@ -604,7 +608,9 @@ class GestureLowerPanel(
                     cy,
                     WORLD_VARIABLE_DELETE_WIDTH,
                     SETTING_CHOICE_HEIGHT,
-                    Material.RED_CONCRETE,
+                    // 使用中の削除は無効状態を視覚化します。ただしクリック自体は
+                    // 使用プログラム一覧をチャットへ出すために受け付けます。
+                    if (inUse) DisabledGuiVisualPolicy.material else Material.RED_CONCRETE,
                     4,
                 )
                 addText(
@@ -614,7 +620,10 @@ class GestureLowerPanel(
                     cy - 0.012,
                     0.0048,
                     40,
-                    Component.text("🗑", NamedTextColor.WHITE),
+                    Component.text(
+                        "🗑",
+                        if (inUse) NamedTextColor.GRAY else NamedTextColor.WHITE,
+                    ),
                 )
                 elements.add(GestureGuiElement(
                     elementId = "lower-variable-delete:$name",
@@ -622,7 +631,14 @@ class GestureLowerPanel(
                     acceptedGestures = GestureGuiClickPolicy.CLICK,
                     targetVisualId = deleteBgId,
                     hoverText = singleLineHover(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE),
+                        KcI18n.text(
+                            player,
+                            if (inUse) {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_IN_USE
+                            } else {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE
+                            },
+                        ),
                         x = 0.0,
                         y = CHILD_HOVER_Y,
                         replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,

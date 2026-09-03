@@ -1952,6 +1952,42 @@ class GestureSequenceEditor(
         }.getOrNull()
     }
 
+    /** 現在のMyWorldに配置されたプログラムから、変数の使用一覧を再計算します。 */
+    private fun findWorldVariableUsages(name: String) =
+        state.placement?.world?.let { worldName ->
+            plugin.findWorldVariableUsages(worldName, name)
+        }.orEmpty()
+
+    /** 使用中の変数を削除できない理由と、対象プログラム名をチャットへ通知します。 */
+    private fun sendWorldVariableUsageList(
+        player: Player,
+        variableName: String,
+        usages: List<me.awabi2048.kantancommander.data.WorldVariableUsage>,
+    ) {
+        // プログラム名は利用者データなのでComponent.textへ渡し、チャット装飾コードを
+        // 意図せず解釈しないようにします。固定文とplaceholderは言語カタログから解決します。
+        player.sendMessage(
+            Component.text(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_USAGE_HEADER,
+                    mapOf("name" to variableName),
+                ),
+            ),
+        )
+        usages.forEach { usage ->
+            player.sendMessage(
+                Component.text(
+                    KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_USAGE_ENTRY,
+                        mapOf("name" to usage.programName),
+                    ),
+                ),
+            )
+        }
+    }
+
     /** ワールド内変数一覧の子画面を開きます。 */
     private fun openWorldVariables(player: Player) {
         if (resolveVariableWorldId() == null) return
@@ -2255,16 +2291,34 @@ class GestureSequenceEditor(
             closeWorldVariableDeleteConfirmation(player)
             return
         }
-        val removed = runCatching { plugin.variables.remove(worldId, name) }
+        val worldName = state.placement?.world ?: run {
+            closeWorldVariableDeleteConfirmation(player)
+            return
+        }
+        val result: me.awabi2048.kantancommander.data.WorldVariableRemovalResult? =
+            runCatching { plugin.removeWorldVariable(worldId, worldName, name) }
             .getOrElse { failure ->
                 plugin.logger.log(
                     java.util.logging.Level.WARNING,
                     "ワールド内変数を削除できませんでした: world=$worldId name=$name",
                     failure,
                 )
-                false
+                null
             }
-        if (!removed) {
+        if (result == null) {
+            // 確認画面を残して再試行・キャンセルを可能にし、保存失敗を黙って
+            // 成功扱いにしません。画面外へ移動した場合も同じメッセージで通知します。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+            return
+        }
+        if (result.usages.isNotEmpty()) {
+            // 確認画面を開いた後に使用箇所が増えた場合も、一覧を通知して
+            // 削除確認を閉じます。保存境界で再判定するため、古い画面から削除できません。
+            sendWorldVariableUsageList(player, name, result.usages)
+            closeWorldVariableDeleteConfirmation(player)
+            return
+        }
+        if (!result.removed) {
             // 確認画面を残して再試行・キャンセルを可能にし、保存失敗を黙って
             // 成功扱いにしません。画面外へ移動した場合も同じメッセージで通知します。
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -3380,7 +3434,14 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-variable-delete:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val name = context.elementId.removePrefix("lower-variable-delete:").trim()
                 if (name.isEmpty()) return
-                openWorldVariableDeleteConfirmation(player, name)
+                val usages = findWorldVariableUsages(name)
+                if (usages.isNotEmpty()) {
+                    // 使用中の削除ボタンは灰色表示ですが、クリックを無反応にせず、
+                    // 削除できない理由と使用プログラムをチャットへ示します。
+                    sendWorldVariableUsageList(player, name, usages)
+                } else {
+                    openWorldVariableDeleteConfirmation(player, name)
+                }
             }
             context.elementId.startsWith("lower-variable:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val name = context.elementId.removePrefix("lower-variable:").trim()
