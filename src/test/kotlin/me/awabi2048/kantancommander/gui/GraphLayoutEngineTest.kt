@@ -16,6 +16,15 @@ import org.bukkit.Material
 
 class GraphLayoutEngineTest {
     @Test
+    fun `layout failure can be distinguished through an operation cause`() {
+        val layoutFailure = GraphLayoutException("test layout failure")
+
+        assertTrue(GraphLayoutFailureFeedback.isLayoutFailure(layoutFailure))
+        assertTrue(GraphLayoutFailureFeedback.isLayoutFailure(IllegalStateException(layoutFailure)))
+        assertFalse(GraphLayoutFailureFeedback.isLayoutFailure(IllegalStateException("other failure")))
+    }
+
+    @Test
     fun `commands always have one path cell between them`() {
         val graph = CommandGraph.empty()
         val first = GraphEditor.append(graph, CommandType.WAIT)

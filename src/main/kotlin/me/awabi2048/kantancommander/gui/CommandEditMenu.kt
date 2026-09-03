@@ -116,7 +116,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 failure,
                             )
                             return@MenuActionHandler MenuActionResult.Rejected(
-                                Component.text("コマンドを追加できませんでした。経路を確認してください。"),
+                                GraphLayoutFailureFeedback.operationMessage(context.player, failure),
                             )
                         }
                         if (node == null) return@MenuActionHandler MenuActionResult.Ignored
@@ -950,7 +950,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                     failure,
                                 )
                                 return@MenuActionHandler MenuActionResult.Rejected(
-                                    Component.text("コマンドを削除できませんでした。経路を確認してください。"),
+                                    GraphLayoutFailureFeedback.operationMessage(context.player, failure),
                                 )
                             }
                         if (deleted != true) return@MenuActionHandler MenuActionResult.Ignored

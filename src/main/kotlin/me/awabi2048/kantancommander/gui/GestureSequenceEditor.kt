@@ -231,6 +231,10 @@ class GestureSequenceEditor(
     private var sessionOwnerId: UUID? = null
     /** 保存処理が完了するまで有効な、最後に表示／確認した正本世代です。 */
     private var observedRevision: Long? = null
+    /** 同じ描画失敗でチャットを連続送信しないための通知済みフラグです。 */
+    private var layoutFailureNoticeSent = false
+    /** 現在の画面生成中に描画失敗が発生したかを、成功時の通知解除判定へ渡します。 */
+    private var layoutFailureDuringCurrentRender = false
     /**
      * 外部Dialogは操作者ごとに独立させます。同じ共有画面でAが入力中にBが別の
      * Dialogを開いても、Aの入力を閉じてしまうと「同時編集」ではなく、入力開始順
@@ -777,14 +781,22 @@ class GestureSequenceEditor(
     }
 
     private fun buildUpperViewport(player: Player): GestureGuiView {
+        layoutFailureDuringCurrentRender = false
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
         observedRevision = script.revision
         val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }
-            .getOrElse { return layoutErrorView(player) }
+            .getOrElse { failure ->
+                reportLayoutFailure(
+                    player,
+                    "ジェスチャーGUIの経路描画でレイアウトを生成できません: script=${script.id}",
+                    failure,
+                )
+                return layoutErrorView(player)
+            }
         // 挿入プレビューは「経路クリックによる挿入」のときだけ適用します。
         // 追加ポイントからの追加は、追加ボタン自体が候補位置であり既存ノードが
         // 動かないため、仮ノード入りレイアウトや候補マーカーは二重表示になります。
-        val insertionPreview = insertionPreview(script)
+        val insertionPreview = insertionPreview(script, player)
         val renderGraph = insertionPreview?.graph ?: script.graph
         val layout = insertionPreview?.layout ?: persistedLayout
         val zoomScale = zoomScale()
@@ -886,21 +898,22 @@ class GestureSequenceEditor(
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
-                        if (insertionPreview == null) {
-                            elements.add(GestureGuiElement(
-                                elementId = "node:${node.id}",
-                                bounds = iconBounds(cx, cy, metrics.iconSize),
-                                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                                targetVisualId = "node-icon-${node.id}",
-                                hoverText = GestureGuiHoverText(
-                                    text = hoverText,
-                                    x = cx,
-                                    y = cy + metrics.iconSize * 0.9,
-                                    size = 0.006,
-                                    lineWidth = 180,
-                                ),
-                            ))
-                        }
+                        // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
+                        // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
+                        // 旧選択の解除と新ノードの選択を1クリックで完了させます。
+                        elements.add(GestureGuiElement(
+                            elementId = "node:${node.id}",
+                            bounds = iconBounds(cx, cy, metrics.iconSize),
+                            acceptedGestures = GestureGuiClickPolicy.CLICK,
+                            targetVisualId = "node-icon-${node.id}",
+                            hoverText = GestureGuiHoverText(
+                                text = hoverText,
+                                x = cx,
+                                y = cy + metrics.iconSize * 0.9,
+                                size = 0.006,
+                                lineWidth = 180,
+                            ),
+                        ))
                         if (insertionPreview == null && isSelected && node.type !in setOf(
                                 CommandType.CONDITION,
                                 CommandType.MERGE,
@@ -1193,6 +1206,11 @@ class GestureSequenceEditor(
         val finalElements = clippedElements.filter {
             it.targetVisualId == null || it.targetVisualId in visibleVisualIds
         }
+
+        // 今回の描画が最後まで完了した場合だけ、次回の別障害を通知できるように
+        // 通知抑制を解除します。プレビューだけ失敗した場合は、上の処理で失敗状態を
+        // 保持したまま旧レイアウトを表示するため、同じ障害を画面更新ごとに連投しません。
+        if (!layoutFailureDuringCurrentRender) layoutFailureNoticeSent = false
 
         return GestureGuiView(
             GestureGuiScreenDefinition(
@@ -1611,8 +1629,8 @@ class GestureSequenceEditor(
                 },
             ) != null
         }.onFailure { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
+            reportGraphOperationFailure(
+                player,
                 "アイテム上書きの保存に失敗しました: script=${context.scriptId} node=${context.nodeId}",
                 failure,
             )
@@ -1658,8 +1676,8 @@ class GestureSequenceEditor(
                 change = change,
             ) != null
         }.onFailure { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
+            reportGraphOperationFailure(
+                player,
                 "ジェスチャー設定の保存に失敗しました: script=${context.scriptId} node=${context.nodeId}",
                 failure,
             )
@@ -3265,8 +3283,8 @@ class GestureSequenceEditor(
                         if (GraphEditor.swapAdjacent(candidateGraph, nodeId, direction)) true else null
                     }
                 }.getOrElse { failure ->
-                    plugin.logger.log(
-                        java.util.logging.Level.WARNING,
+                    reportGraphOperationFailure(
+                        player,
                         "ノード入れ替えを保存できませんでした: script=${state.scriptId} node=$nodeId direction=$direction",
                         failure,
                     )
@@ -3318,20 +3336,20 @@ class GestureSequenceEditor(
             context.elementId == "nav-zoom-in" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val next = (state.zoomLevel + 1).coerceAtMost(GestureEditorLayout.MAX_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
-                    setZoomLevel(next)
+                    setZoomLevel(player, next)
                     updateUpper(player)
                 }
             }
             context.elementId == "nav-zoom-out" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val next = (state.zoomLevel - 1).coerceAtLeast(GestureEditorLayout.MIN_ZOOM_LEVEL)
                 if (next != state.zoomLevel) {
-                    setZoomLevel(next)
+                    setZoomLevel(player, next)
                     updateUpper(player)
                 }
             }
             context.elementId == "nav-zoom-reset" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 if (state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL) {
-                    setZoomLevel(GestureEditorLayout.INITIAL_ZOOM_LEVEL)
+                    setZoomLevel(player, GestureEditorLayout.INITIAL_ZOOM_LEVEL)
                     updateUpper(player)
                 }
             }
@@ -3344,7 +3362,7 @@ class GestureSequenceEditor(
                     "nav-right" -> MapPoint(1, 0)
                     else -> return
                 }
-                val layout = currentViewportLayout() ?: return
+                val layout = currentViewportLayout(player) ?: return
                 val metrics = viewportMetrics(zoomScale())
                 val nextOrigin = GestureEditorLayout.clampOrigin(
                     MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
@@ -3363,7 +3381,7 @@ class GestureSequenceEditor(
                 // 最も先頭にある追加ポイントをビューに含めるよう原点を調整
                 // 挿入候補表示中は、後続ノードを右へ移動させた仮想レイアウトを使います。
                 // 永続グラフだけで原点を決めると、候補アイコンと表示範囲の基準が分岐します。
-                val layout = currentViewportLayout() ?: return
+                val layout = currentViewportLayout(player) ?: return
                 val firstAdd = GestureEditorLayout.findFirstAddPoint(layout.cells)
                 if (firstAdd != null) {
                     // 枝が最も進んだ追加ポイントが範囲外なら、右端／下端に
@@ -3394,7 +3412,14 @@ class GestureSequenceEditor(
                 }
                 val gx = context.elementId.removePrefix("add:").substringBefore(":").toIntOrNull() ?: return
                 val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
-                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return
+                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+                    reportLayoutFailure(
+                        player,
+                        "ジェスチャーGUIの追加位置確認でレイアウトを生成できません: script=${script.id}",
+                        failure,
+                    )
+                    return
+                }
                 val cell = layout.cells[MapPoint(gx, gy)]
                 val target = cell?.insertionTarget ?: run {
                     // セルが持たない場合は前後ノードから直接挿入先を導出する（末端追加）
@@ -3421,7 +3446,14 @@ class GestureSequenceEditor(
                 }
                 val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
                 if (point.size != 2) return
-                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return
+                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+                    reportLayoutFailure(
+                        player,
+                        "ジェスチャーGUIの挿入位置確認でレイアウトを生成できません: script=${script.id}",
+                        failure,
+                    )
+                    return
+                }
                 val clickedPoint = MapPoint(point[0], point[1])
                 val cell = layout.cells[clickedPoint] ?: return
                 val target = cell.insertionTarget ?: return
@@ -3543,8 +3575,15 @@ class GestureSequenceEditor(
                 // 挿入先を示すことを確認し、連続経路の装飾セルへの誤挿入を防ぎます。
                 state.selectedInsertionCandidatePoint?.let { point ->
                     val currentTarget = runCatching { GraphLayoutEngine.layout(script.graph) }
-                        .getOrNull()
-                        ?.cells?.get(point)
+                        .getOrElse { failure ->
+                            reportLayoutFailure(
+                                player,
+                                "ジェスチャーGUIの挿入候補確認でレイアウトを生成できません: script=${script.id}",
+                                failure,
+                            )
+                            return
+                        }
+                        .cells[point]
                         ?.insertionTarget
                     if (currentTarget != target) return
                 }
@@ -3593,11 +3632,13 @@ class GestureSequenceEditor(
                         }
                     }
                 }.getOrElse { failure ->
-                    plugin.logger.log(
-                        java.util.logging.Level.WARNING,
+                    reportGraphOperationFailure(
+                        player,
                         "コマンド挿入を保存できませんでした: script=${script.id} type=$type",
                         failure,
                     )
+                    state.pendingInsertion = null
+                    state.selectedInsertionCandidatePoint = null
                     refreshFromStore()
                     return
                 } ?: run {
@@ -3668,8 +3709,8 @@ class GestureSequenceEditor(
                         if (GraphEditor.delete(candidateGraph, nodeId)) true else null
                     }
                 }.getOrElse { failure ->
-                        plugin.logger.log(
-                            java.util.logging.Level.WARNING,
+                        reportGraphOperationFailure(
+                            player,
                             "ジェスチャーGUIからのコマンド削除を保存できませんでした: script=${script.id} node=$nodeId",
                             failure,
                         )
@@ -3742,7 +3783,7 @@ class GestureSequenceEditor(
                 visualId = "viewport-error-title",
                 x = 0.0,
                 y = 0.10,
-                text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_UPPER_RENDER), NamedTextColor.RED),
+                text = GraphLayoutFailureFeedback.renderMessage(player).color(NamedTextColor.RED),
                 size = 0.008,
                 lineWidth = 260,
             ),
@@ -3750,7 +3791,7 @@ class GestureSequenceEditor(
                 visualId = "viewport-error-detail",
                 x = 0.0,
                 y = -0.02,
-                text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT), NamedTextColor.GRAY),
+                text = GraphLayoutFailureFeedback.reopenHint(player).color(NamedTextColor.GRAY),
                 size = 0.005,
                 lineWidth = 260,
             ),
@@ -3772,6 +3813,32 @@ class GestureSequenceEditor(
                 frameWidth = GestureEditorLayout.FRAME_WIDTH,
             ),
         ) {}
+    }
+
+    /**
+     * 描画変換の失敗をログと操作者の両方へ返します。
+     *
+     * 画面更新は保存成功・他プレイヤー操作・入力ガードなど複数の経路から連続して
+     * 呼ばれるため、同じ障害をチャットへ毎回送ると本来の操作結果を隠してしまいます。
+     * 画面生成が一度成功するまで通知を抑制し、エラー画面自体は毎回返します。
+     */
+    private fun reportLayoutFailure(player: Player, operation: String, failure: Throwable) {
+        plugin.logger.log(java.util.logging.Level.WARNING, operation, failure)
+        layoutFailureDuringCurrentRender = true
+        if (!layoutFailureNoticeSent) {
+            GraphLayoutFailureFeedback.sendRenderFailure(player)
+            layoutFailureNoticeSent = true
+        }
+    }
+
+    /** グラフ更新失敗を、描画変換失敗と通常の保存失敗に分けて操作者へ返します。 */
+    private fun reportGraphOperationFailure(player: Player, operation: String, failure: Throwable) {
+        if (GraphLayoutFailureFeedback.isLayoutFailure(failure)) {
+            reportLayoutFailure(player, operation, failure)
+        } else {
+            plugin.logger.log(java.util.logging.Level.WARNING, operation, failure)
+            player.sendMessage(GraphLayoutFailureFeedback.saveMessage(player))
+        }
     }
 
     /**
@@ -3930,18 +3997,39 @@ class GestureSequenceEditor(
      * 動かないためプレビューを適用しません。描画とナビゲーションの両方がこの
      * 共通判定を使うことで、表示と入力判定の基準が分岐しません。
      */
-    private fun insertionPreview(script: DiskScript): InsertionPreview? {
+    private fun insertionPreview(script: DiskScript, player: Player? = null): InsertionPreview? {
         val target = state.pendingInsertion ?: return null
         // 追加起点（ADDセル選択中）ではADDセルの選択glowがそのまま候補位置を示します。
         if (state.selectedInsertionCandidatePoint == null) return null
-        return GraphLayoutEngine.previewInsertion(script.graph, target)
+        return GraphLayoutEngine.previewInsertion(
+            script.graph,
+            target,
+            onLayoutFailure = { failure ->
+                player?.let {
+                    reportLayoutFailure(
+                        it,
+                        "ジェスチャーGUIの挿入プレビューでレイアウトを生成できません: script=${script.id}",
+                        failure,
+                    )
+                }
+            },
+        )
     }
 
     /** 描画・ナビゲーション入力で共有する、現在の永続／仮想レイアウトです。 */
-    private fun currentViewportLayout(): GraphLayout? {
+    private fun currentViewportLayout(player: Player? = null): GraphLayout? {
         val script = plugin.scripts.load(state.scriptId) ?: return null
-        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrNull() ?: return null
-        return insertionPreview(script)?.layout ?: persistedLayout
+        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+            player?.let {
+                reportLayoutFailure(
+                    it,
+                    "ジェスチャーGUIの現在経路確認でレイアウトを生成できません: script=${script.id}",
+                    failure,
+                )
+            }
+            return null
+        }
+        return insertionPreview(script, player)?.layout ?: persistedLayout
     }
 
     /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
@@ -4056,7 +4144,7 @@ class GestureSequenceEditor(
      * 飛び、端の経路とアイコンの対応が崩れます。グラフの範囲を考慮してから
      * 新しい表示可能範囲へ原点をclampすることで、中央基準の投影を維持します。
      */
-    private fun setZoomLevel(level: Int) {
+    private fun setZoomLevel(player: Player, level: Int) {
         val script = plugin.scripts.load(state.scriptId) ?: run {
             state.zoomLevel = level
             return
@@ -4064,9 +4152,15 @@ class GestureSequenceEditor(
         val oldMetrics = viewportMetrics(zoomScale())
         val centerX = state.origin.x + (oldMetrics.columns - 1) / 2.0
         val centerY = state.origin.y + (oldMetrics.rows - 1) / 2.0
+        val oldZoomLevel = state.zoomLevel
         state.zoomLevel = level
         val newMetrics = viewportMetrics(zoomScale())
-        val layout = currentViewportLayout() ?: return
+        val layout = currentViewportLayout(player) ?: run {
+            // レイアウトを得られない場合は倍率だけを先に確定させず、次回の再描画で
+            // 画面状態と入力状態が食い違わないよう変更前へ戻します。
+            state.zoomLevel = oldZoomLevel
+            return
+        }
         state.origin = GestureEditorLayout.clampOrigin(
             MapPoint(
                 (centerX - (newMetrics.columns - 1) / 2.0).roundToInt(),
