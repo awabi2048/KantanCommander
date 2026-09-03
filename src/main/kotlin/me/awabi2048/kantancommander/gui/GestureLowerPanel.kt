@@ -2011,7 +2011,10 @@ class GestureLowerPanel(
             val cy = 0.38 - index * 0.17
             val on = option == selectedCategory
             addBlock(visuals, "cat-bg-$index", -0.7975, cy, 0.47, 0.15,
-                if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4)
+                if (on) Material.CYAN_CONCRETE else Material.CYAN_TERRACOTTA, 4,
+                // コマンド選択子画面のカテゴリも「選択中タブ」なので、設定タブと
+                // 同じ青い内側枠で選択状態を統一します。
+                outlineMaterial = GestureSettingVisualPolicy.tabOutlineMaterial(on))
             addText(visuals, "cat-$index", -0.7975, cy - 0.02, 0.0055, 90,
                 Component.text(KcI18n.text(player, option.labelKey)))
             elements.add(GestureGuiElement(
