@@ -142,7 +142,7 @@ class VanillaDatapackExporter(
                             validatePosition(script, node, node.blockFromSpec, errors)
                             validatePosition(script, node, node.blockToSpec, errors)
                         }
-                        null -> errors += "${script.id}/${node.id}: 不明なブロック操作方式です"
+                        null -> errors += "${script.id}/${node.id}: 不明な配置方式です"
                     }
                 }
                 CommandType.ENTITY_DELETE -> Unit
@@ -228,7 +228,7 @@ class VanillaDatapackExporter(
     ) {
         val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
         if (kind == null) {
-            errors += "${script.id}/${node.id}: 不明な条件種別です"
+            errors += "${script.id}/${node.id}: 不明な条件の種類です"
             return
         }
         when (kind) {
@@ -314,7 +314,7 @@ class VanillaDatapackExporter(
         }
         validatePosition(script, node, context.position, errors)
         if (context.facing?.kind == FacingKind.MYWORLD_SPAWN) {
-            errors += "${script.id}/${node.id}: 出力先のMyWorldスポーンを検証できません"
+            errors += "${script.id}/${node.id}: 出力先のマイワールドのスポーン位置を検証できません"
         }
     }
 
@@ -337,7 +337,7 @@ class VanillaDatapackExporter(
         errors: MutableList<String>,
     ) {
         if (facing?.kind == FacingKind.MYWORLD_SPAWN) {
-            errors += "${script.id}/${node.id}: 出力先のMyWorldスポーンの向きを検証できません"
+            errors += "${script.id}/${node.id}: 出力先のマイワールドのスポーン位置の向きを検証できません"
         }
     }
 

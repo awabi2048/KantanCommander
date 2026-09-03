@@ -94,6 +94,39 @@ class EditorMenuLayoutTest {
     }
 
     @Test
+    fun `shared parameter names do not leak into semantically different command fields`() {
+        val teleportFacing = EditorMenuLayout.fields(CommandType.TELEPORT).single { it.key == "destinationFacing" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESTINATION_FACING, teleportFacing.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DESTINATION_FACING, teleportFacing.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DESTINATION_FACING, teleportFacing.actionKey)
+
+        val tagOperation = EditorMenuLayout.fields(CommandType.ENTITY_ACTION).single { it.key == "tagOperation" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION, tagOperation.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAG_OPERATION, tagOperation.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAG_OPERATION, tagOperation.actionKey)
+
+        val summonFields = EditorMenuLayout.fields(CommandType.SUMMON_ENTITY)
+        val customName = summonFields.single { it.key == "customName" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DISPLAY_NAME, customName.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_DISPLAY_NAME, customName.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_DISPLAY_NAME, customName.actionKey)
+        val summonPosition = summonFields.single { it.key == "summonPosition" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SUMMON_POSITION, summonPosition.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SUMMON_POSITION, summonPosition.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SUMMON_POSITION, summonPosition.actionKey)
+
+        val soundFields = EditorMenuLayout.fields(CommandType.PLAY_SOUND)
+        val soundScope = soundFields.single { it.key == "soundScope" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE, soundScope.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_SCOPE, soundScope.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_SCOPE, soundScope.actionKey)
+        val soundPosition = soundFields.single { it.key == "soundPosition" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_POSITION, soundPosition.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_POSITION, soundPosition.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_POSITION, soundPosition.actionKey)
+    }
+
+    @Test
     fun `entity and sound layouts expose consolidated settings`() {
         val entityFields = EditorMenuLayout.fields(CommandType.ENTITY_ACTION)
         assertEquals(

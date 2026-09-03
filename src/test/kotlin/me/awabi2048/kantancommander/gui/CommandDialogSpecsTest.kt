@@ -111,6 +111,10 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_LEVEL_INVALID,
             requireNotNull(CommandDialogSpecs.field(effect, "level")).validate("256"),
         )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DISPLAY_NAME,
+            requireNotNull(CommandDialogSpecs.field(CommandType.SUMMON_ENTITY.newNode(), "customName")).labelKey,
+        )
 
         val variable = CommandType.VARIABLE.newNode().apply {
             params["type"] = VariableType.NUMBER.name

@@ -48,7 +48,7 @@ object CommandValueRules {
     fun parseNonNegativeInt(raw: String): Int? =
         raw.takeIf(ASCII_INTEGER_PATTERN::matches)?.toIntOrNull()?.takeIf { it >= 0 }
 
-    /** エンティティ種類は実行時と同じENTITY_TYPE Registryで解決します。 */
+    /** エンティティの種類は実行時と同じENTITY_TYPE Registryで解決します。 */
     fun isEntityTypeId(raw: String): Boolean = registered(raw) { key -> Registry.ENTITY_TYPE.get(key) != null }
 
     /** 効果種類は実行時と同じEFFECT Registryで解決します。 */

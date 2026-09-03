@@ -177,6 +177,9 @@ class CommandSettingsModelTest {
         val display = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
         val giveItem = CommandType.GIVE_ITEM.newNode()
         val sound = CommandType.PLAY_SOUND.newNode()
+        val teleport = CommandType.TELEPORT.newNode()
+        val entityAction = CommandType.ENTITY_ACTION.newNode()
+        val summon = CommandType.SUMMON_ENTITY.newNode()
 
         assertEquals(
             "kantan_commander_clean.gui.gesture.warning.duration",
@@ -189,6 +192,26 @@ class CommandSettingsModelTest {
         assertEquals(
             "kantan_commander_clean.gui.gesture.warning.sound_parameters",
             CommandSettingsModel.incompleteWarningKey(sound, "soundParameters").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.destination_facing",
+            CommandSettingsModel.incompleteWarningKey(teleport, "destinationFacing").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.tag_operation",
+            CommandSettingsModel.incompleteWarningKey(entityAction, "tagOperation").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.summon_position",
+            CommandSettingsModel.incompleteWarningKey(summon, "summonPosition").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.sound_scope",
+            CommandSettingsModel.incompleteWarningKey(sound, "soundScope").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.sound_position",
+            CommandSettingsModel.incompleteWarningKey(sound, "soundPosition").id,
         )
     }
 

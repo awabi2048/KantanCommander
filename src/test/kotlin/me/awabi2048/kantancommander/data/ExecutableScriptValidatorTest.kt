@@ -301,7 +301,7 @@ class ExecutableScriptValidatorTest {
             displayErrors.any {
                 it.nodeId == display.id &&
                     it.fieldKeys == setOf("fadeInSeconds") &&
-                    it.message == "時間の設定は、1 tick = 0.05秒 の単位で行ってください"
+                    it.message == "時間の設定は、1ティック = 0.05秒 の単位で行ってください"
             },
         )
 
@@ -311,7 +311,7 @@ class ExecutableScriptValidatorTest {
         wait.params["seconds"] = "0.05"
         assertFalse(
             ExecutableScriptValidator.validate(waitScript).any {
-                it.nodeId == wait.id && it.fieldKeys == setOf("seconds") && it.message.contains("tick")
+                it.nodeId == wait.id && it.fieldKeys == setOf("seconds") && it.message.contains("ティック")
             },
         )
 
@@ -336,7 +336,7 @@ class ExecutableScriptValidatorTest {
             ExecutableScriptValidator.validate(waitScript).any {
                 it.nodeId == wait.id &&
                     it.fieldKeys == setOf("seconds") &&
-                    it.message == "時間の設定は、1 tick = 0.05秒 の単位で行ってください"
+                    it.message == "時間の設定は、1ティック = 0.05秒 の単位で行ってください"
             },
         )
     }

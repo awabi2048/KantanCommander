@@ -150,7 +150,7 @@ object ExecutableScriptValidator {
             CommandType.WAIT -> validateWait(node, path, errors, variableDefinitions)
             CommandType.SUMMON_ENTITY -> {
                 if (!CommandValueRules.isEntityTypeId(node.string("entity"))) {
-                    errors += nodeError(node, path, setOf("entity"), "エンティティ種類が不正です")
+                    errors += nodeError(node, path, setOf("entity"), "エンティティの種類が不正です")
                 }
                 // 召喚タグも単一文字列です。カンマ区切りの複数タグへ展開せず、
                 // 入力された値全体を一つのタグとして検証します。
@@ -172,7 +172,7 @@ object ExecutableScriptValidator {
             }
             CommandType.APPLY_EFFECT -> {
                 if (!CommandValueRules.isEffectId(node.string("effect"))) {
-                    errors += nodeError(node, path, setOf("effect"), "エフェクト種類が不正です")
+                    errors += nodeError(node, path, setOf("effect"), "エフェクトが不正です")
                 }
                 validateIntegerRange(node, path, "level", 1..255, "エフェクトレベルは1〜255の範囲です", errors, variableDefinitions)
                 validateIntegerRange(node, path, "seconds", 1..86_400, "効果時間は1〜86400秒の範囲です", errors, variableDefinitions)
@@ -211,7 +211,7 @@ object ExecutableScriptValidator {
             "dismount" -> Unit
             "equip" -> {
                 if (!CommandValueRules.isEquipmentSlot(node.string("slot"))) {
-                    errors += nodeError(node, path, setOf("slot"), "装備スロットが不正です")
+                    errors += nodeError(node, path, setOf("slot"), "装備するスロットが不正です")
                 }
                 if (CommandValueRules.material(node.string("item"), allowAir = false) == null) {
                     errors += nodeError(node, path, setOf("item"), "装備アイテムが未設定です")
@@ -244,7 +244,7 @@ object ExecutableScriptValidator {
     ) {
         if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
         if (node.string("mode") !in setOf("tellraw", "title", "subtitle", "actionbar")) {
-            errors += nodeError(node, path, setOf("mode"), "不明なテキスト表示位置です")
+            errors += nodeError(node, path, setOf("mode"), "不明な表示形式です")
         }
         validateTemplate(node.string("text"), node, path, "text", errors, variableDefinitions)
         validateTemplate(node.string("subtitle"), node, path, "subtitle", errors, variableDefinitions)
@@ -286,7 +286,7 @@ object ExecutableScriptValidator {
 
     private fun validateBlockOperation(node: CommandNode, path: String, errors: MutableList<ScriptValidationError>) {
         val operation = BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))
-        if (operation == null) errors += nodeError(node, path, setOf("operation"), "ブロック操作方式が不正です")
+        if (operation == null) errors += nodeError(node, path, setOf("operation"), "配置方式が不正です")
         if (CommandValueRules.placementMaterial(node.string("block")) == null) {
             errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
         }
@@ -319,7 +319,7 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, emptySet(), "固定エンティティが未設定です")
         }
         spec.entityType?.takeIf(String::isNotBlank)?.let {
-            if (!CommandValueRules.isEntityTypeId(it)) errors += nodeError(node, path, emptySet(), "エンティティ種別が不正です")
+            if (!CommandValueRules.isEntityTypeId(it)) errors += nodeError(node, path, emptySet(), "エンティティの種類が不正です")
         }
         spec.gameMode?.takeIf(String::isNotBlank)?.let {
             if (it.uppercase() !in setOf("SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")) {
@@ -572,7 +572,7 @@ object ExecutableScriptValidator {
         }
     }
 
-    /** 表示時間とWAITに共通する、秒数・上限・tick単位の検証です。 */
+    /** 表示時間とWAITに共通する、秒数・上限・ティック単位の検証です。 */
     private fun validateTickAlignedTime(
         node: CommandNode,
         path: String,
@@ -598,7 +598,7 @@ object ExecutableScriptValidator {
                 ) ->
                 errors += nodeError(node, path, setOf(field), rangeMessage)
             value != null && !CommandValueRules.isTickAlignedSeconds(value) ->
-                errors += nodeError(node, path, setOf(field), "時間の設定は、1 tick = 0.05秒 の単位で行ってください")
+                errors += nodeError(node, path, setOf(field), "時間の設定は、1ティック = 0.05秒 の単位で行ってください")
         }
     }
 

@@ -205,8 +205,8 @@ internal object CommandDialogSpecs {
     fun rotationSpec(axis: String): Spec = finiteRotation(axis)
 
     fun rotationInputs(player: Player, yaw: Float, pitch: Float): List<MenuDialogInput.Text> = listOf(
-        input(player, "yaw", yaw.toString(), rotationSpec("yaw"), Component.text("Yaw")),
-        input(player, "pitch", pitch.toString(), rotationSpec("pitch"), Component.text("Pitch")),
+        input(player, "yaw", yaw.toString(), rotationSpec("yaw"), Component.text("ヨー")),
+        input(player, "pitch", pitch.toString(), rotationSpec("pitch"), Component.text("ピッチ")),
     )
 
     /** 対象範囲は3軸を一つの設定項目として表示します。 */
@@ -583,7 +583,7 @@ internal object CommandDialogSpecs {
         val labelKey = when (fieldKey) {
             "text" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
             "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TEXT
-            "customName" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME
+            "customName" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DISPLAY_NAME
             "itemData" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
             "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE
             "fadeInSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN

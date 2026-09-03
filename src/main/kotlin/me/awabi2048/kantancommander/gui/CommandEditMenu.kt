@@ -1067,7 +1067,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderTargetFilters(player: Player, route: MenuRoute): InventoryMenuView {
         val spec = selectedTargetSpec(route) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
         // 種別に対して意味を持つ詳細条件だけを提示します
-        // （プレイヤー種別にentityType、エンティティ種別にgameModeは解決しないため）。
+        // （プレイヤー種別にentityType、エンティティの種類にgameModeは解決しないため）。
         val allOptions = listOf(
             DetailOption(Material.TARGET, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET, "kind", displayTarget(spec.kind)),
             DetailOption(Material.ARMOR_STAND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE, "entityType", displayLiteral(spec.entityType)),
@@ -1214,7 +1214,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             ConditionKind.BLOCK_STATE -> listOf(
                 DetailOption(
                     Material.COMPASS,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION,
                     "position",
                     displayPosition(node.conditionPositionSpec?.kind ?: PositionKind.DISK),
                 ),
@@ -2304,6 +2304,10 @@ data class EditorField(
 )
 
 object EditorMenuLayout {
+    /**
+     * 同じJSONパラメータ名でもコマンドごとに意味が異なる項目は、専用の表示キーを使います。
+     * 汎用キーを流用すると、召喚名が変数名として説明されるなど、設定対象と説明文がずれます。
+     */
     fun fields(type: CommandType): List<EditorField> {
         val fields = when (type) {
         CommandType.TELEPORT -> listOf(
@@ -2321,10 +2325,10 @@ object EditorMenuLayout {
             },
             field(
                 "destinationFacing",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESTINATION_FACING,
                 Material.SPYGLASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FACING,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DESTINATION_FACING,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DESTINATION_FACING,
             ) { it.destinationFacingSpec?.kind?.let(::displayFacing) ?: displayUnset() },
         )
         CommandType.GIVE_ITEM -> listOf(
@@ -2377,10 +2381,10 @@ object EditorMenuLayout {
             },
             field(
                 "tagOperation",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION,
                 Material.NAME_TAG,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAG_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAG_OPERATION,
             ) {
                 displayTagOperation(it.string("tagOperation", "add"))
             },
@@ -2436,18 +2440,18 @@ object EditorMenuLayout {
             field("entity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY, Material.ZOMBIE_SPAWN_EGG),
             field(
                 "customName",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DISPLAY_NAME,
                 Material.NAME_TAG,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_DISPLAY_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_DISPLAY_NAME,
             ),
             field("tags", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS, Material.NAME_TAG),
             field(
                 "summonPosition",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SUMMON_POSITION,
                 Material.COMPASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SUMMON_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SUMMON_POSITION,
             ) { it.summonPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
         )
         CommandType.PLAY_SOUND -> listOf(
@@ -2459,13 +2463,13 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_PARAMETERS,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_PARAMETERS,
             ) { displaySoundParameters(it.string("volume", "1.0"), it.string("pitch", "1.0")) },
-            field("soundScope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, Material.GLOBE_BANNER_PATTERN,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            field("soundScope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE, Material.GLOBE_BANNER_PATTERN,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_SCOPE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_SCOPE,
             ) { displaySoundScope(it.string("soundScope", "CONTEXT")) },
-            field("soundPosition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION, Material.COMPASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            field("soundPosition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_POSITION, Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_POSITION,
             ) { it.soundPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
         )
         CommandType.APPLY_EFFECT -> listOf(
@@ -2799,7 +2803,7 @@ private fun displayTagOperation(value: String) = DisplayValue.Localized(
 
 private fun displaySoundScope(value: String) = DisplayValue.Localized(
     if (value == "WORLD") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_WORLD_WIDE
-    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_POSITION,
+    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTEXT_POSITION,
 )
 
 private fun displayGameMode(value: String?) = when (value?.lowercase()) {

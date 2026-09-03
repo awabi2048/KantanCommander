@@ -332,7 +332,7 @@ object CommandSettingsModel {
             CommandType.TELEPORT -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "destination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DESTINATION
-                "destinationFacing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_FACING
+                "destinationFacing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DESTINATION_FACING
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.GIVE_ITEM -> when (fieldKey) {
@@ -348,7 +348,7 @@ object CommandSettingsModel {
                 "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_SLOT
                 "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_ITEM
                 "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
-                "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
                 "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
                 else -> undefinedWarningKey(node, fieldKey)
             }
@@ -368,13 +368,14 @@ object CommandSettingsModel {
                 "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY
                 "customName" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_NAME
                 "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAGS
-                "summonPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                "summonPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SUMMON_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.PLAY_SOUND -> when (fieldKey) {
                 "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND
                 "soundParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_PARAMETERS
-                "soundScope", "soundPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                "soundScope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_SCOPE
+                "soundPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.APPLY_EFFECT -> when (fieldKey) {
@@ -831,7 +832,7 @@ object CommandSettingsModel {
     /**
      * 対象種別に対して詳細条件が意味を持つかを判定します。
      * 実行側の解決（matches）に合わせ、プレイヤー種別へentityType、
-     * エンティティ種別へgameModeを指定しても解決しないため、GUIでは提示しません。
+     * エンティティの種類へgameModeを指定しても解決しないため、GUIでは提示しません。
      */
     fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean = when (parameter) {
         "kind" -> kind != null && kind != TargetKind.INHERITED_TARGET
