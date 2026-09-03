@@ -189,11 +189,15 @@ class GraphLayoutEngineTest {
 
         val layout = GraphLayoutEngine.layout(graph)
         val conditionPoint = requireNotNull(layout.nodePoints[condition.id])
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
         val add = layout.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y + 2)]
 
         assertEquals(MapCellKind.ADD, add?.kind)
         assertEquals(GraphEditor.Edge.FALSE, add?.insertionTarget?.edge)
         assertEquals(merge.id, condition.trueNext)
+        // FALSE枝に親合流への縦線がない場合、開いた枝の存在だけで余白を予約せず、
+        // ADDから次のノードピッチで合流します。
+        assertEquals(add?.point?.x?.plus(2), mergePoint.x)
     }
 
     @Test
@@ -665,8 +669,8 @@ class GraphLayoutEngineTest {
             .first { (point, cell) -> point.y > innerPoint.y && cell.kind == MapCellKind.ADD }
             .key
 
-        // 追加ポイントが存在する列へ親合流の縦線を置かず、1ノード分右へ
-        // 退避します。上段の内側条件→親合流も全セル連続でなければなりません。
+        // 親のFALSE枝は合流へ接続しているため、追加ポイントの列へ親側の縦線を
+        // 置けない場合だけ1ノード分右へ退避します。実際に必要な衝突回避は維持します。
         assertEquals(innerAdd.x + 2, mergePoint.x)
         ((innerPoint.x + 1) until mergePoint.x).forEach { x ->
             assertTrue(layout.cells[MapPoint(x, innerPoint.y)]?.kind in PATH_CELL_KINDS)
@@ -869,5 +873,30 @@ class GraphLayoutEngineTest {
         ((innerPoint.x + 1) until endPoint.x).forEach { x ->
             assertEquals(expected, layout.cells[MapPoint(x, innerPoint.y)]?.insertionTarget)
         }
+    }
+
+    @Test
+    fun `for end column skips an open branch add point used by the loop return`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val body = GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+        val inner = GraphEditor.insert(graph, body.id, GraphEditor.Edge.NEXT, CommandType.CONDITION)
+        GraphEditor.insert(graph, inner.id, GraphEditor.Edge.FALSE, CommandType.WAIT)
+
+        val layout = assertDoesNotThrow<GraphLayout> { GraphLayoutEngine.layout(graph) }
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val endPoint = requireNotNull(layout.nodePoints[end.id])
+        val falseAdd = layout.cells.values.first { it.kind == MapCellKind.ADD && it.point.y > endPoint.y }
+
+        // FALSE枝の追加ポイントとFOR_ENDの戻り縦線を同じ列へ置くと、ADDを経路で
+        // 上書きして例外になります。退避は衝突した列だけに限定し、次の2ピッチへ
+        // FOR_ENDと戻り経路を移動させます。
+        assertEquals(falseAdd.point.x + 2, endPoint.x)
+        assertTrue(
+            (endPoint.y + 1..falseAdd.point.y).all {
+                layout.cells[MapPoint(endPoint.x, it)]?.kind == MapCellKind.LOOP_RETURN_PATH
+            },
+        )
+        assertEquals(MapCellKind.ADD, layout.cells[falseAdd.point]?.kind)
     }
 }

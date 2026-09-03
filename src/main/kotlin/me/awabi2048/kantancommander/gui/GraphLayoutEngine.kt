@@ -175,6 +175,16 @@ data class InsertionPreview(
 )
 
 /**
+ * 構造化グラフを論理マップへ変換できなかったことを表す例外です。
+ *
+ * GUI層では構造編集の失敗と描画変換の失敗を利用者へ別々に通知する必要があるため、
+ * レイアウト内部の衝突を標準の実行時例外のまま外へ渡さず、呼び出し側で判別できる
+ * 型へ包みます。基底型はIllegalArgumentExceptionのままにして、既存の入力検証境界
+ * と互換な扱いも維持します。
+ */
+class GraphLayoutException(message: String, cause: Throwable? = null) : IllegalArgumentException(message, cause)
+
+/**
  * 永続化されたグラフだけから、余白を含む論理マップを毎回再構築します。
  * GUI都合の圧縮、端での例外配置、レーンへの再投影は行いません。
  */
@@ -188,17 +198,23 @@ object GraphLayoutEngine {
      */
     fun layout(graph: CommandGraph, maxCells: Long = Long.MAX_VALUE): GraphLayout {
         require(maxCells > 0L) { "layout cell limit must be positive" }
-        val builder = Builder(graph, maxCells)
-        builder.renderRoot()
-        val maxX = builder.cells.keys.maxOfOrNull(MapPoint::x) ?: 0
-        val maxY = builder.cells.keys.maxOfOrNull(MapPoint::y) ?: 0
-        return GraphLayout(
-            cells = builder.cells.toMap(),
-            nodePoints = builder.nodePoints.toMap(),
-            width = maxX + 2,
-            height = maxY + 2,
-            loopReturnArrowPoints = builder.loopReturnArrowPoints.toSet(),
-        )
+        return try {
+            val builder = Builder(graph, maxCells)
+            builder.renderRoot()
+            val maxX = builder.cells.keys.maxOfOrNull(MapPoint::x) ?: 0
+            val maxY = builder.cells.keys.maxOfOrNull(MapPoint::y) ?: 0
+            GraphLayout(
+                cells = builder.cells.toMap(),
+                nodePoints = builder.nodePoints.toMap(),
+                width = maxX + 2,
+                height = maxY + 2,
+                loopReturnArrowPoints = builder.loopReturnArrowPoints.toSet(),
+            )
+        } catch (failure: GraphLayoutException) {
+            throw failure
+        } catch (failure: RuntimeException) {
+            throw GraphLayoutException("構造化グラフを論理マップへ変換できませんでした", failure)
+        }
     }
 
     /**
@@ -214,6 +230,7 @@ object GraphLayoutEngine {
         graph: CommandGraph,
         target: InsertionTarget,
         placeholderType: CommandType = CommandType.WAIT,
+        onLayoutFailure: ((GraphLayoutException) -> Unit)? = null,
     ): InsertionPreview? {
         if (placeholderType == CommandType.MERGE || placeholderType == CommandType.FOR_END) return null
         val candidate = graph.deepCopy()
@@ -225,7 +242,12 @@ object GraphLayoutEngine {
                 placeholderType,
             )
         }.getOrNull() ?: return null
-        val previewLayout = runCatching { layout(candidate) }.getOrNull() ?: return null
+        val previewLayout = try {
+            layout(candidate)
+        } catch (failure: GraphLayoutException) {
+            onLayoutFailure?.invoke(failure)
+            return null
+        }
         return InsertionPreview(candidate, previewLayout, inserted.id)
     }
 
@@ -418,7 +440,7 @@ object GraphLayoutEngine {
                 putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
             }
 
-            // 合流ノードは最長枝の nextX に置き、通常ノード列と同じ2ピッチを保ちます。
+            // 合流ノードは最長枝の nextX を基準に置き、通常ノード列と同じ2ピッチを保ちます。
             // TRUE枝は従来どおり左側から直進させますが、折り返すFALSE枝は mergeX 列まで
             // 水平に延ばしてから真上へ戻します。これにより、合流ノードの直下セルが最後の
             // 接続端点になり、画面上でもMERGEアイコンの下側ポートへ経路が潜り込みます。
@@ -426,11 +448,16 @@ object GraphLayoutEngine {
             // ただし、枝の中に未合流の条件分岐がある場合、nextXがその枝の追加ポイント
             // 自体を指すことがあります（通常ノードを追加した直後のFALSE枝が該当）。
             // その列へ合流側の縦線を置くと、追加ポイントを経路で上書きして描画例外になり、
-            // UI側では候補選択が無反応に見えます。開いた枝を含むときはノード1個分を
-            // 予約してから合流列を決め、追加ポイントと戻り経路を必ず別列へ分離します。
-            val openBranchClearance =
-                if (trueSegment.hasOpenEnd || falseSegment.hasOpenEnd) 2 else 0
-            val mergeX = maxOf(trueSegment.nextX, falseSegment.nextX) + openBranchClearance
+            // UI側では候補選択が無反応に見えます。以前は開いた枝を含むだけで常に
+            // ノード1個分を予約していましたが、親側に縦線がない場合まで幅を増やし、
+            // SS1のように経路を2マス余分にしていました。構造上実際に置くノードと
+            // 縦線の列だけを検査し、必要な場合だけ次の2ピッチへ退避します。
+            val mergeX = nextAvailableExecutionColumn(
+                startX = maxOf(trueSegment.nextX, falseSegment.nextX),
+                nodeY = y,
+                verticalStartY = if (falseReachesMerge) y + 1 else null,
+                verticalEndY = if (falseReachesMerge) falseY else null,
+            )
             val mergeNodeX = mergeX
             // 枝の長さ調整で連続する水平経路が生じた場合は、その全セルを同じ
             // 挿入判定領域にします。どのセルをクリックしてもエッジ直後へ挿入され、
@@ -638,13 +665,34 @@ object GraphLayoutEngine {
             } else {
                 Segment(x + 2, y, null)
             }
-            val endX = body.nextX
+            val returnY = body.maxY + 2
+            // body.nextXは「次の構造を置く基準列」であり、開いた条件分岐の末端では
+            // 追加ポイント自身の列を指すことがあります。FOR_ENDの縦戻り経路を
+            // その列へ描くとADD/NODEを上書きするため、実際に使う列だけを衝突検査します。
+            val endX = nextAvailableExecutionColumn(
+                startX = body.nextX,
+                nodeY = y,
+                verticalStartY = y + 1,
+                verticalEndY = returnY,
+            )
             when {
                 bodyStart == null || bodyStart == endId ->
                     // 空bodyの開始・終了間の経路は、body先頭への挿入（FOR_BODY）を受け付ける（仕様10.1）。
-                    putPath(endX - 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
+                    fillHorizontal(
+                        body.nextX - 1,
+                        endX - 1,
+                        y,
+                        MapCellKind.PATH,
+                        target = InsertionTarget(start.id, GraphEditor.Edge.FOR_BODY),
+                    )
                 body.tail != null ->
-                    putPath(endX - 1, y, sourceId = body.tail, edge = GraphEditor.Edge.NEXT)
+                    fillHorizontal(
+                        body.nextX - 1,
+                        endX - 1,
+                        y,
+                        MapCellKind.PATH,
+                        target = InsertionTarget(body.tail, GraphEditor.Edge.NEXT),
+                    )
                 body.mainInsertionTarget != null ->
                     // body内の条件・forがFOR_ENDへ到達した場合、末尾ノードを
                     // 返せなくても主行の経路には一意な挿入先があります。
@@ -670,7 +718,6 @@ object GraphLayoutEngine {
             val end = graph.nodes[endId] ?: return Segment(endX, body.maxY, start.id)
             putNode(endX, y, end)
 
-            val returnY = body.maxY + 2
             for (verticalY in y + 1..returnY) {
                 putPath(endX, verticalY, MapCellKind.LOOP_RETURN_PATH)
                 putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH)
@@ -687,6 +734,39 @@ object GraphLayoutEngine {
                 }
             }
             return Segment(endX + 2, returnY, end.id)
+        }
+
+        /**
+         * 実行要素を縦経路で上書きしない、最初の2ピッチ列を返します。
+         *
+         * nextXは構造の幅を表すための値であり、開いた枝のADDセルを指す場合が
+         * あります。空白を一律に予約すると正常なグラフまで幅が膨らむため、
+         * 今回生成するノード行と縦経路の通過範囲だけを実セルで検査します。
+         */
+        private fun nextAvailableExecutionColumn(
+            startX: Int,
+            nodeY: Int,
+            verticalStartY: Int?,
+            verticalEndY: Int?,
+        ): Int {
+            var candidate = startX
+            while (
+                isExecutionElement(candidate, nodeY) ||
+                (verticalStartY != null && verticalEndY != null &&
+                    hasExecutionElementInColumn(candidate, verticalStartY, verticalEndY))
+            ) {
+                candidate += 2
+            }
+            return candidate
+        }
+
+        private fun isExecutionElement(x: Int, y: Int): Boolean =
+            cells[MapPoint(x, y)]?.kind in setOf(MapCellKind.NODE, MapCellKind.ADD)
+
+        private fun hasExecutionElementInColumn(x: Int, fromY: Int, toY: Int): Boolean {
+            val firstY = minOf(fromY, toY)
+            val lastY = maxOf(fromY, toY)
+            return (firstY..lastY).any { y -> isExecutionElement(x, y) }
         }
 
         private fun fillHorizontal(
