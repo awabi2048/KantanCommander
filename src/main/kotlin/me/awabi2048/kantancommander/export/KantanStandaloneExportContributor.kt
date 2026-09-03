@@ -219,6 +219,10 @@ internal class PreparedKantanExport(
             "scoreboard objectives add kc_result dummy",
             "scoreboard objectives add kc_vars dummy",
             "scoreboard objectives add kc_runtime dummy",
+            "scoreboard objectives add kc_tu0 dummy",
+            "scoreboard objectives add kc_tu1 dummy",
+            "scoreboard objectives add kc_tu2 dummy",
+            "scoreboard objectives add kc_tu3 dummy",
             "scoreboard objectives add kc_timer dummy",
         )
         val tick = mutableListOf<String>()

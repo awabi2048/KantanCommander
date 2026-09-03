@@ -19,6 +19,8 @@ import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.TemporaryTemplate
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -80,7 +82,13 @@ class VanillaDatapackExporter(
             Charsets.UTF_8,
         )
         functions.resolve("load.mcfunction").writeText(
-            "scoreboard objectives add kc_result dummy\nscoreboard objectives add kc_vars dummy\nscoreboard objectives add kc_runtime dummy\n",
+            "scoreboard objectives add kc_result dummy\n" +
+                "scoreboard objectives add kc_vars dummy\n" +
+                "scoreboard objectives add kc_runtime dummy\n" +
+                "scoreboard objectives add kc_tu0 dummy\n" +
+                "scoreboard objectives add kc_tu1 dummy\n" +
+                "scoreboard objectives add kc_tu2 dummy\n" +
+                "scoreboard objectives add kc_tu3 dummy\n",
             Charsets.UTF_8,
         )
         loadTags.resolve("load.json").writeText("""{"values":["kantan:load"]}""", Charsets.UTF_8)
@@ -108,11 +116,13 @@ class VanillaDatapackExporter(
             when (node.type) {
                 CommandType.GIVE_ITEM -> {
                     val item = node.string("item")
-                    if (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null) {
+                    if (node.itemTempRef.isNullOrBlank() &&
+                        (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
+                    ) {
                         errors += "${script.id}/${node.id}: バニラに存在しないアイテムです: $item"
                     }
                     val itemData = node.string("itemData")
-                    if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
+                    if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
                         errors += "${script.id}/${node.id}: 保存されたItemStackメタデータは完全バニラ出力に未対応です"
                     }
                 }
@@ -120,11 +130,13 @@ class VanillaDatapackExporter(
                     "ride", "dismount" -> Unit
                     "equip" -> {
                         val item = node.string("item")
-                        if (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null) {
+                        if (node.itemTempRef.isNullOrBlank() &&
+                            (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
+                        ) {
                             errors += "${script.id}/${node.id}: バニラに存在しない装備アイテムです: $item"
                         }
                         val itemData = node.string("itemData")
-                        if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
+                        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
                             errors += "${script.id}/${node.id}: 保存された装備ItemStackメタデータは完全バニラ出力に未対応です"
                         }
                     }
@@ -133,7 +145,9 @@ class VanillaDatapackExporter(
                 }
                 CommandType.BLOCK_OPERATION -> {
                     val block = CommandValueRules.placementMaterial(node.string("block"))
-                    if (!node.string("block").startsWith("minecraft:") || block == null) {
+                    if (node.blockTempRef.isNullOrBlank() &&
+                        (!node.string("block").startsWith("minecraft:") || block == null)
+                    ) {
                         errors += "${script.id}/${node.id}: 完全バニラ出力できない配置ブロックです"
                     }
                     when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
@@ -215,6 +229,18 @@ class VanillaDatapackExporter(
                     .any { it.kind == TargetKind.FIXED_ENTITY }
             ) {
                 errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
+            }
+            val temporaryArgumentNames = listOfNotNull(
+                node.targetSpec,
+                node.secondaryTargetSpec,
+                node.destinationTargetSpec,
+            ).filter { it.kind == TargetKind.TEMPORARY }
+                .mapNotNull { it.tempName?.takeIf(String::isNotBlank)?.let(TemporaryTemplate::normalized) }
+                .distinct()
+            if (temporaryArgumentNames.size > 1) {
+                // vanillaのselectorには別の一時ENTITYを同時に埋め込めないため、
+                // 片方がもう片方へ化ける出力を許可せず、実行前に明示的に止めます。
+                errors += "${script.id}/${node.id}: 複数の異なる一時エンティティを同じコマンド引数へ指定したため完全バニラ出力できません"
             }
         }
         visited.remove(script.graph)
@@ -363,6 +389,9 @@ class VanillaDatapackExporter(
         defineFunction(output, rootFunctionName, if (resetBudget) {
             buildString {
                 appendLine("scoreboard players set #executed kc_runtime 0")
+                // 一時変数の正本はこのstorage配下だけです。実行開始時に
+                // ルートを空にすることで、前回実行や別の入口の値を引き継ぎません。
+                appendLine("data modify storage kantan:variables variables.temporary set value {}")
                 temporaryNames(graph).forEach {
                     appendLine("scoreboard players reset ${variableHolder(it, temporary = true)} kc_vars")
                     appendLine("data remove storage kantan:variables ${VanillaStorageNames.variablePath(it, temporary = true)}")
@@ -424,11 +453,28 @@ class VanillaDatapackExporter(
                     val snapshotPrefix = snapshotPrefix(prefix, node.id)
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
                     val call = "function kantan:$snapshotPrefix"
-                    lines += storeFunctionResult(node, nodeExportContext?.let { wrapContext(it, call) } ?: call)
+                    temporaryEntityReferences(node, nodeExportContext).forEach { reference ->
+                        lines += temporaryEntityPreparation(reference)
+                    }
+                    val backupPath = VanillaStorageNames.callBackupPath(node.id)
+                    // Java版のExecutionSessionと同じく、呼出先の一時変数を
+                    // 呼出元へ漏らしません。storageの一時領域全体を退避し、
+                    // 呼出先終了後に正確に復元します。
+                    lines += "data remove storage kantan:variables $backupPath"
+                    lines += "data modify storage kantan:variables $backupPath set from storage kantan:variables variables.temporary"
+                    lines += "data modify storage kantan:variables variables.temporary set value {}"
+                    lines += storeFunctionResult(node, nodeExportContext?.let { wrapContext(it, call, node) } ?: call)
+                    lines += "data modify storage kantan:variables variables.temporary set value {}"
+                    lines += "data modify storage kantan:variables variables.temporary set from storage kantan:variables $backupPath"
+                    lines += "data remove storage kantan:variables $backupPath"
                 }
                 node.type == CommandType.CONTEXT -> {
+                    val context = contextFrom(node)
+                    temporaryEntityReferences(node, context).forEach { reference ->
+                        lines += temporaryEntityPreparation(reference)
+                    }
                     node.next?.let {
-                        lines += "return run ${wrapContext(contextFrom(node), "function kantan:${nodeFunction(prefix, it)}")}"
+                        lines += "return run ${wrapContext(context, "function kantan:${nodeFunction(prefix, it)}", node)}"
                     } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.VARIABLE &&
@@ -443,30 +489,56 @@ class VanillaDatapackExporter(
                     val command = "function kantan:$helper"
                     lines += storeFunctionResult(
                         node,
-                        nodeExportContext?.let { wrapContext(it, command) } ?: command,
+                        nodeExportContext?.let { wrapContext(it, command, node) } ?: command,
                     )
                 }
                 else -> lower(node, graph)?.let { command ->
+                    val temporaryReferences = temporaryEntityReferences(node, nodeExportContext)
+                    temporaryReferences.forEach { reference ->
+                        lines += temporaryEntityPreparation(reference)
+                    }
+                    val temporaryArgument = temporaryEntityArgumentReference(node)
+                    val targetedCommand = temporaryArgument?.let { reference ->
+                        temporaryEntitySelection(reference, command)
+                    } ?: command
                     if (node.type == CommandType.DISPLAY_TEXT && DisplayTextTimingPolicy.supports(node)) {
                         val timing = DisplayTextTiming.from(node)
                         val times = "title ${effectiveTarget(node)} times " +
                             "${timing.fadeInTicks} " +
                             "${timing.stayTicks} " +
                             "${timing.fadeOutTicks}"
-                        lines += nodeExportContext?.let { wrapContext(it, times) } ?: times
+                        val primaryTarget = temporaryReferences.firstOrNull { it.role == "primary" }
+                        val targetedTimes = primaryTarget?.let { reference ->
+                            temporaryEntitySelection(reference, times)
+                        } ?: times
+                        lines += nodeExportContext?.let { wrapContext(it, targetedTimes, node) } ?: targetedTimes
                     }
-                    val contextual = nodeExportContext?.let { wrapContext(it, command) } ?: command
+                    val contextual = nodeExportContext?.let { wrapContext(it, targetedCommand, node) } ?: targetedCommand
                     val macro = prepareMacro(node, contextual, output, graph)
                     lines += macro.setup
                     lines += storeResult(node, macro.call)
+                    if (temporaryReferences.isNotEmpty()) {
+                        // 対象が見つからないことは「対象なし」のスキップです。
+                        // 実行ノードの成功スコアを補正し、後続関数へ進めます。
+                        lines += "scoreboard players set ${scoreHolder(node.id)} kc_result 1"
+                    }
                 }
             }
 
             when (node.type) {
                 CommandType.CONDITION -> {
                     val conditionContext = conditionContext(node)
+                    val conditionTarget = temporaryConditionTargetReference(node, conditionContext)
+                    val temporaryConditionFound = conditionTarget?.let { conditionTargetFoundHolder(node) }
+                    temporaryEntityReferences(node, conditionContext).forEach { reference ->
+                        lines += temporaryEntityPreparation(reference)
+                    }
+                    if (conditionTarget != null && temporaryConditionFound != null) {
+                        lines += "scoreboard players set $temporaryConditionFound kc_runtime 0"
+                        lines += temporaryEntityPresence(conditionTarget, temporaryConditionFound)
+                    }
                     conditionPreparation(node, graph)?.let { preparation ->
-                        lines += conditionContext?.let { context -> wrapContext(context, preparation) } ?: preparation
+                        lines += conditionContext?.let { context -> wrapContext(context, preparation, node) } ?: preparation
                     }
                     val predicate = predicate(node)
                     val predicateMacro = prepareMacroTemplate(node, predicate, graph)
@@ -484,8 +556,26 @@ class VanillaDatapackExporter(
                     val falseBranch = node.falseNext?.let {
                         "execute $falseCheck $predicateCommand run return run function kantan:${nodeFunction(prefix, it)}"
                     } ?: "execute $falseCheck $predicateCommand run return 1"
-                    lines += conditionContext?.let { context -> wrapContext(context, trueBranch) } ?: trueBranch
-                    lines += conditionContext?.let { context -> wrapContext(context, falseBranch) } ?: falseBranch
+                    val targetedTrueBranch = conditionTarget?.let { reference ->
+                        temporaryEntitySelection(reference, trueBranch)
+                    } ?: trueBranch
+                    val targetedFalseBranch = conditionTarget?.let { reference ->
+                        temporaryEntitySelection(reference, falseBranch)
+                    } ?: falseBranch
+                    lines += conditionContext?.let { context -> wrapContext(context, targetedTrueBranch, node) } ?: targetedTrueBranch
+                    lines += conditionContext?.let { context -> wrapContext(context, targetedFalseBranch, node) } ?: targetedFalseBranch
+                    if (conditionTarget != null && temporaryConditionFound != null) {
+                        // 一時ENTITYが消えている場合、execute as @e の枝は一度も
+                        // 実行されないため、Java版と同じ「対象なし＝条件false」へ
+                        // 明示的にフォールバックします。ノード自身の反転時だけ
+                        // true枝へ反転します。
+                        val fallback = if (inverted) {
+                            node.trueNext?.let { "return run function kantan:${nodeFunction(prefix, it)}" } ?: "return 1"
+                        } else {
+                            node.falseNext?.let { "return run function kantan:${nodeFunction(prefix, it)}" } ?: "return 1"
+                        }
+                        lines += "execute unless score $temporaryConditionFound kc_runtime matches 1 run $fallback"
+                    }
                     lines += "return 0"
                 }
                 CommandType.WAIT ->
@@ -523,7 +613,10 @@ class VanillaDatapackExporter(
                 val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
                 "$base facing entity ${singleSelector(target)} eyes"
             }
-            FacingKind.TEMPORARY -> error("temporary facing is unsupported in vanilla output")
+            FacingKind.TEMPORARY -> {
+                val name = facing.tempName ?: error("temporary facing name is missing")
+                "$base facing ${temporaryPositionCoordinates(name)}"
+            }
             FacingKind.COORDINATES ->
                 "$base facing ${facing.x ?: error("destination facing x is missing")} " +
                     "${facing.y ?: error("destination facing y is missing")} " +
@@ -533,13 +626,20 @@ class VanillaDatapackExporter(
     }
 
     private fun soundCommand(node: CommandNode): String {
-        val sound = "playsound ${node.string("sound")} master @a ~ ~ ~ " +
-            "${node.string("volume", "1.0")} ${node.string("pitch", "1.0")}"
+        val soundName = node.soundTempRef?.takeIf(String::isNotBlank)
+            ?.let { temporaryMarker(it, "sound") }
+            ?: node.string("sound")
+        val volume = node.soundTempRef?.takeIf(String::isNotBlank)
+            ?.let { temporaryMarker(it, "volume") }
+            ?: node.string("volume", "1.0")
+        val pitch = node.soundTempRef?.takeIf(String::isNotBlank)
+            ?.let { temporaryMarker(it, "pitch") }
+            ?: node.string("pitch", "1.0")
+        val sound = "playsound $soundName master @a ~ ~ ~ $volume $pitch"
         if (node.string("soundScope", "CONTEXT") == "WORLD") {
             // 全域指定は各プレイヤー位置を音源位置にするという計画書の定義に合わせ、
             // プレイヤーごとに一度ずつ実行します。
-            return "execute as @a at @s run playsound ${node.string("sound")} master @s ~ ~ ~ " +
-                "${node.string("volume", "1.0")} ${node.string("pitch", "1.0")}"
+            return "execute as @a at @s run playsound $soundName master @s ~ ~ ~ $volume $pitch"
         }
         val position = node.soundPositionSpec ?: return sound
         return when (position.kind) {
@@ -552,17 +652,81 @@ class VanillaDatapackExporter(
                 val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
                 "execute at ${singleSelector(target)} run $sound"
             }
-            PositionKind.TEMPORARY -> error("temporary sound position is unsupported in vanilla output")
+            PositionKind.TEMPORARY -> {
+                val name = position.tempName ?: error("temporary sound position name is missing")
+                "execute positioned ${temporaryPositionCoordinates(name)} run $sound"
+            }
             PositionKind.MYWORLD_SPAWN -> error("unsupported sound position")
+        }
+    }
+
+    /** 一時値を保持するstorageパスです。型ごとの値は同じ名前空間へまとめます。 */
+    private fun temporaryStoragePath(name: String): String =
+        VanillaStorageNames.variablePath(TemporaryTemplate.normalized(name), temporary = true)
+
+    /** POSITION値をコマンド引数へ展開するための、exporter内部macro記法です。 */
+    private fun temporaryPositionCoordinates(name: String): String = listOf("x", "y", "z")
+        .joinToString(" ") { axis -> temporaryMarker(name, axis) }
+
+    /**
+     * 一時変数定義をstorage compoundへ変換します。
+     *
+     * Java実行側のTemporaryValueと同じく、POSITION／SOUND／EFFECT等の複合値も
+     * 1つの名前空間へ保存します。vanilla function macroへ渡す値は後段の
+     * prepareMacroTemplateが必要なフィールドだけを抽出します。
+     */
+    private fun temporarySetCommand(node: CommandNode): String {
+        val name = TemporaryTemplate.normalized(node.string("name"))
+        val destination = temporaryStoragePath(name)
+        val type = runCatching {
+            TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
+        }.getOrElse { error("unknown temporary variable type") }
+        fun number(raw: String, fallback: String = "0.0"): String {
+            val value = raw.trim().ifBlank { fallback }
+            return if (value.endsWith("d", ignoreCase = true)) value else "${value}d"
+        }
+        return when (type) {
+            TemporaryVariableType.NUMBER ->
+                "data modify storage kantan:variables $destination set value ${number(node.string("value"))}"
+            TemporaryVariableType.STRING ->
+                "data modify storage kantan:variables $destination set value \"${escape(node.string("value"))}\""
+            TemporaryVariableType.POSITION ->
+                "data modify storage kantan:variables $destination set value " +
+                    "{x:${number(node.string("x"))},y:${number(node.string("y"))}," +
+                    "z:${number(node.string("z"))},yaw:${number(node.string("yaw"))},pitch:${number(node.string("pitch"))}}"
+            TemporaryVariableType.ITEM ->
+                "data modify storage kantan:variables $destination set value " +
+                    "{item:\"${escape(node.string("item"))}\",itemData:\"${escape(node.string("itemData"))}\"}"
+            TemporaryVariableType.BLOCK ->
+                "data modify storage kantan:variables $destination set value {block:\"${escape(node.string("block"))}\"}"
+            TemporaryVariableType.ENTITY -> {
+                val uuid = runCatching { UUID.fromString(node.string("entityId")) }.getOrNull()
+                // 不正なUUIDも「参照時に対象なし」として扱う契約です。空の
+                // int配列を無理に生成するとSNBT自体が不正になるため、値を空の
+                // compoundとして保存し、参照側の4要素リセットへ委ねます。
+                val value = uuid?.let { "{uuid:${uuidIntArray(it)}}" } ?: "{}"
+                "data modify storage kantan:variables $destination set value $value"
+            }
+            TemporaryVariableType.SOUND ->
+                "data modify storage kantan:variables $destination set value " +
+                    "{sound:\"${escape(node.string("sound"))}\",volume:${number(node.string("volume", "1.0"))}," +
+                    "pitch:${number(node.string("pitch", "1.0"))}}"
+            TemporaryVariableType.EFFECT ->
+                "data modify storage kantan:variables $destination set value " +
+                    "{effect:\"${escape(node.string("effect"))}\",level:${number(node.string("level", "1"))}," +
+                    "seconds:${number(node.string("seconds", "30"))}}"
         }
     }
 
     private fun lower(node: CommandNode, graph: CommandGraph): String? = when (node.type) {
         CommandType.TELEPORT -> teleportCommand(node)
-        CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} ${node.string("item")} ${node.string("count", "1")}"
+        CommandType.GIVE_ITEM -> "give ${effectiveTarget(node)} " +
+            "${node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") } ?: node.string("item")} " +
+            node.string("count", "1")
         CommandType.ENTITY_ACTION -> when (node.string("action")) {
             "dismount" -> "ride ${effectiveTarget(node)} dismount"
-            "equip" -> "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with ${node.string("item")}"
+            "equip" -> "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with " +
+                (node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") } ?: node.string("item"))
             "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
             else -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
         }
@@ -585,13 +749,16 @@ class VanillaDatapackExporter(
         }
         CommandType.PLAY_SOUND -> soundCommand(node)
         CommandType.APPLY_EFFECT ->
-            "effect give ${effectiveTarget(node)} ${node.string("effect")} ${node.string("seconds", "30")} ${effectAmplifier(node.string("level", "1"))}"
+            "effect give ${effectiveTarget(node)} " +
+                (node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "effect") } ?: node.string("effect")) +
+                " ${node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "seconds") } ?: node.string("seconds", "30")} " +
+                effectAmplifier(node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "level") } ?: node.string("level", "1"))
         CommandType.CAMERA_SHAKE -> null
         CommandType.BLOCK_OPERATION -> blockOperationCommand(node)
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
         CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node, graph)
-        CommandType.TEMP_SET -> null
+        CommandType.TEMP_SET -> temporarySetCommand(node)
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
     }
@@ -613,7 +780,9 @@ class VanillaDatapackExporter(
     /** 条件分岐のpredicateなど、関数化せず置換文字列だけが必要な箇所にも使います。 */
     private fun prepareMacroTemplate(node: CommandNode, command: String, graph: CommandGraph): MacroTemplate? {
         val references = VariableTemplate.references(command)
-        if (references.isEmpty()) return null
+        val temporaryReferences = TemporaryTemplate.references(command)
+        val temporaryMarkers = TEMPORARY_MACRO_MARKER.findAll(command).map { it.value }.toSet()
+        if (references.isEmpty() && temporaryReferences.isEmpty() && temporaryMarkers.isEmpty()) return null
         val enclosingLoop = references
             .filter(SystemVariableNames::isSystemName)
             .map { enclosingFor(graph, node.id) }
@@ -625,14 +794,24 @@ class VanillaDatapackExporter(
         }
         val token = node.id.toString().replace("-", "")
         val storagePath = "macro.$token"
-        val replacements = references.associateWith { "v_${shortDigest(it, 10)}" }
-        val macroCommand = Regex("\\$\\{([A-Za-z][A-Za-z0-9_.-]{0,63})}").replace(command) { match ->
-            "${'$'}(${replacements.getValue(match.groupValues[1])})"
+        val worldReplacements = references.associateWith { "v_${shortDigest(it, 10)}" }
+        val temporaryReplacements = temporaryReferences.associateWith { "t_${shortDigest(it, 10)}" }
+        val markerReplacements = temporaryMarkers.associateWith { "m_${shortDigest(it, 10)}" }
+        val macroCommand = TEMPORARY_MACRO_MARKER.replace(command) { match ->
+            "${'$'}(${markerReplacements.getValue(match.value)})"
+        }.let { withoutMarkers ->
+            TEMPORARY_REFERENCE.replace(withoutMarkers) { match ->
+                "${'$'}(${temporaryReplacements.getValue(match.groupValues[1])})"
+            }
+        }.let { withoutTemporaryReferences ->
+            Regex("\\$\\{([A-Za-z][A-Za-z0-9_.-]{0,63})}").replace(withoutTemporaryReferences) { match ->
+                "${'$'}(${worldReplacements.getValue(match.groupValues[1])})"
+            }
         }
         val setup = buildList {
             add("data remove storage kantan:variables $storagePath")
             references.forEach { reference ->
-                val target = "$storagePath.${replacements.getValue(reference)}"
+                val target = "$storagePath.${worldReplacements.getValue(reference)}"
                 if (SystemVariableNames.isSystemName(reference)) {
                     val loop = requireNotNull(enclosingLoop)
                     val source = "#${loopName(loop.id)}_count"
@@ -643,6 +822,22 @@ class VanillaDatapackExporter(
                             "set from storage kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)}",
                     )
                 }
+            }
+            temporaryReferences.forEach { reference ->
+                add(
+                    "data modify storage kantan:variables $storagePath.${temporaryReplacements.getValue(reference)} " +
+                        "set from storage kantan:variables ${temporaryStoragePath(reference)}",
+                )
+            }
+            temporaryMarkers.forEach { marker ->
+                val match = TEMPORARY_MACRO_MARKER.matchEntire(marker)
+                    ?: error("invalid temporary macro marker: $marker")
+                val name = match.groupValues[1]
+                val field = match.groupValues[2]
+                add(
+                    "data modify storage kantan:variables $storagePath.${markerReplacements.getValue(marker)} " +
+                        "set from storage kantan:variables ${temporaryStoragePath(name)}.$field",
+                )
             }
         }
         return MacroTemplate(storagePath, macroCommand, setup)
@@ -819,6 +1014,12 @@ class VanillaDatapackExporter(
                             )
                         }
                     }
+                    TemporaryTemplate.references(raw).singleOrNull()?.let { reference ->
+                        add(
+                            "execute store result score ${conditionValueHolder(node)} kc_runtime run data get storage " +
+                                "kantan:variables ${temporaryStoragePath(reference)} $FIXED_POINT_SCALE",
+                        )
+                    }
                 }
             }.joinToString("\n")
         } else null
@@ -828,6 +1029,9 @@ class VanillaDatapackExporter(
 
     private fun conditionValueHolder(node: CommandNode) =
         "#cv_${node.id.toString().replace("-", "")}"
+
+    private fun conditionTargetFoundHolder(node: CommandNode) =
+        "#ct_${node.id.toString().replace("-", "")}"
 
     private fun conditionNeedsInversion(node: CommandNode): Boolean =
         node.string("kind") == ConditionKind.VARIABLE_STATE.name && node.string("operator") == "!="
@@ -899,6 +1103,9 @@ class VanillaDatapackExporter(
                 is NumericExpression.PostfixToken.Reference -> {
                     val destination = holder(index)
                     when {
+                        token.temporary -> lines +=
+                            "execute store result score $destination kc_runtime run data get storage " +
+                                "kantan:variables ${temporaryStoragePath(token.name)} $FIXED_POINT_SCALE"
                         SystemVariableNames.isSystemName(token.name) -> {
                             val loop = enclosingLoop ?: return listOf("return 0")
                             if (token.name != SystemVariableNames.CURRENT_LOOP_COUNT) return listOf("return 0")
@@ -1009,6 +1216,11 @@ class VanillaDatapackExporter(
             return "execute store result score $destination kc_vars run data get storage " +
                 "kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)} 1"
         }
+        val temporaryReference = TemporaryTemplate.references(raw).singleOrNull()
+        if (temporaryReference != null && TemporaryTemplate.isSingleReference(raw)) {
+            return "execute store result score $destination kc_vars run data get storage " +
+                "kantan:variables ${temporaryStoragePath(temporaryReference)} 1"
+        }
         return "scoreboard players set $destination kc_vars $raw"
     }
 
@@ -1061,11 +1273,151 @@ class VanillaDatapackExporter(
         return visit(start)
     }
 
-    /** 変数はすべてMyWorld単位へ統一したため、実行ローカルscoreboardの初期化は不要です。 */
-    private fun temporaryNames(graph: CommandGraph): Set<String> = emptySet()
+    /**
+     * グラフ内で使う一時変数名を収集します。
+     *
+     * exporterのstorageは実行開始時に空にします。名前を事前に把握しておくと、
+     * 旧形式の値や個別フィールドが残った場合も、ルート関数の初期化で確実に
+     * 消去できます。snapshotの値も同じ実行の一部なので再帰的に走査します。
+     */
+    private fun temporaryNames(graph: CommandGraph): Set<String> = linkedSetOf<String>().also { names ->
+        fun add(raw: String?) {
+            raw?.takeIf(String::isNotBlank)?.let { names += TemporaryTemplate.normalized(it) }
+        }
+        fun scan(current: CommandGraph) {
+            current.nodes.values.forEach { node ->
+                if (node.type == CommandType.TEMP_SET) add(node.string("name"))
+                node.params.values.forEach { raw ->
+                    TemporaryTemplate.references(raw).forEach(::add)
+                }
+                add(node.itemTempRef)
+                add(node.blockTempRef)
+                add(node.soundTempRef)
+                add(node.effectTempRef)
+                listOfNotNull(
+                    node.targetSpec,
+                    node.secondaryTargetSpec,
+                    node.destinationTargetSpec,
+                ).forEach { target ->
+                    if (target.kind == TargetKind.TEMPORARY) add(target.tempName)
+                    target.searchOrigin?.let { search ->
+                        add(search.positionTemp)
+                        if (search.position?.kind == PositionKind.TEMPORARY) add(search.position.tempName)
+                    }
+                }
+                listOfNotNull(
+                    node.destinationSpec,
+                    node.conditionPositionSpec,
+                    node.blockPositionSpec,
+                    node.blockFromSpec,
+                    node.blockToSpec,
+                    node.soundPositionSpec,
+                    node.summonPositionSpec,
+                    node.contextOverride?.position,
+                ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
+                listOfNotNull(
+                    node.destinationFacingSpec,
+                    node.contextOverride?.facing,
+                ).forEach { facing -> if (facing.kind == FacingKind.TEMPORARY) add(facing.tempName) }
+                node.snapshot?.let(::scan)
+            }
+        }
+        scan(graph)
+    }
 
-    private fun effectiveTarget(node: CommandNode): String =
-        selector(requireNotNull(node.targetSpec))
+    private fun effectiveTarget(node: CommandNode): String {
+        val spec = requireNotNull(node.targetSpec)
+        return if (spec.kind == TargetKind.TEMPORARY) "@s" else selector(spec)
+    }
+
+    private data class TemporaryEntityReference(
+        val name: String,
+        val role: String,
+        val holderPrefix: String,
+    ) {
+        fun holder(index: Int): String = "$holderPrefix$index"
+    }
+
+    /**
+     * ノードから実行時ENTITY参照を収集します。
+     *
+     * 一時ENTITYはセレクターへUUIDを直接埋め込めないため、UUIDの4要素を
+     * scoreboardへ写してから `execute as @e if score ...` で選択します。対象欄と
+     * コンテキスト欄は同じノード内で共存できるため、名前ごとにscore holderを分け、
+     * 片方の準備がもう片方の比較値を上書きしないようにします。
+     */
+    private fun temporaryEntityReferences(
+        node: CommandNode,
+        context: ExecutionContextSpec?,
+    ): List<TemporaryEntityReference> = buildList {
+        fun add(role: String, spec: TargetSpec?) {
+            if (spec?.kind != TargetKind.TEMPORARY) return
+            val name = spec.tempName?.takeIf(String::isNotBlank) ?: return
+            val normalized = TemporaryTemplate.normalized(name)
+            val holderPrefix = if (role == "primary") {
+                "#kc_temp_uuid"
+            } else {
+                "#kc_temp_${shortDigest("${node.id}:$role:$normalized", 12)}_"
+            }
+            add(TemporaryEntityReference(normalized, role, holderPrefix))
+        }
+        add("primary", node.targetSpec)
+        add("secondary", node.secondaryTargetSpec)
+        add("destination", node.destinationTargetSpec)
+        add("context", context?.target ?: context?.executor)
+    }.distinctBy { it.role to it.name }
+
+    /** コマンド引数として同時に使われる一時ENTITY参照です。 */
+    private fun temporaryEntityArgumentReference(node: CommandNode): TemporaryEntityReference? =
+        temporaryEntityReferences(node, null)
+            .firstOrNull { it.role == "primary" || it.role == "secondary" || it.role == "destination" }
+
+    /** 条件対象の `%{...}%` 相当となる一時ENTITY参照です。 */
+    private fun temporaryConditionTargetReference(
+        node: CommandNode,
+        context: ExecutionContextSpec?,
+    ): TemporaryEntityReference? {
+        val spec = node.targetSpec ?: context?.target ?: context?.executor ?: return null
+        if (spec.kind != TargetKind.TEMPORARY) return null
+        val role = if (node.targetSpec != null) "primary" else "context"
+        return temporaryEntityReferences(node, context).firstOrNull { it.role == role }
+    }
+
+    /** 一時ENTITYのUUIDをscoreboardへ写し、現在ディメンションの実体を選択します。 */
+    private fun temporaryEntityPreparation(reference: TemporaryEntityReference): List<String> {
+        val path = "kantan:variables ${temporaryStoragePath(reference.name)}.uuid"
+        // data getが対象なしで失敗した場合にも、前回のUUIDを比較値として残さない
+        // よう、読み取り前に4要素をすべて0へ戻します。
+        return (0..3).flatMap { index ->
+            listOf(
+                "scoreboard players set ${reference.holder(index)} kc_tu$index 0",
+                "execute store result score ${reference.holder(index)} kc_tu$index run data get storage $path[$index] 1",
+            )
+        } + listOf(
+            "execute as @e store result score @s kc_tu0 run data get entity @s UUID[0] 1",
+            "execute as @e store result score @s kc_tu1 run data get entity @s UUID[1] 1",
+            "execute as @e store result score @s kc_tu2 run data get entity @s UUID[2] 1",
+            "execute as @e store result score @s kc_tu3 run data get entity @s UUID[3] 1",
+        )
+    }
+
+    private fun temporaryEntitySelection(reference: TemporaryEntityReference, command: String): String {
+        val checks = (0..3).joinToString(" ") { index ->
+            "if score @s kc_tu$index = ${reference.holder(index)} kc_tu$index"
+        }
+        return "execute as @e $checks run $command"
+    }
+
+    /** 一時ENTITYが現在ディメンションに存在するかをフラグへ反映します。 */
+    private fun temporaryEntityPresence(
+        reference: TemporaryEntityReference,
+        foundHolder: String,
+    ): String {
+        val checks = (0..3).joinToString(" ") { index ->
+            "if score @s kc_tu$index = ${reference.holder(index)} kc_tu$index"
+        }
+        return "execute as @e $checks run scoreboard players set $foundHolder kc_runtime 1"
+    }
 
     private fun destination(node: CommandNode): String {
         node.destinationTargetSpec?.let { return singleSelector(it) }
@@ -1079,7 +1431,9 @@ class VanillaDatapackExporter(
                 PositionKind.TARGET ->
                     // tpの移動先は単一エンティティでなければならないため、limit=1へ固定する。
                     singleSelector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
-                PositionKind.TEMPORARY -> error("temporary teleport destination is unsupported in vanilla output")
+                PositionKind.TEMPORARY -> temporaryPositionCoordinates(
+                    spec.tempName ?: error("temporary teleport destination name is missing"),
+                )
                 PositionKind.MYWORLD_SPAWN -> error("unsupported structured teleport destination")
             }
         }
@@ -1087,7 +1441,9 @@ class VanillaDatapackExporter(
 
     /** ブロック操作固有の位置指定を、座標または実行位置へ静的に展開します。 */
     private fun blockOperationCommand(node: CommandNode): String {
-        val block = node.string("block")
+        val block = node.blockTempRef?.takeIf(String::isNotBlank)
+            ?.let { temporaryMarker(it, "block") }
+            ?: node.string("block")
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
                 val position = requireNotNull(node.blockPositionSpec)
@@ -1119,7 +1475,10 @@ class VanillaDatapackExporter(
             "execute at ${singleSelector(node.contextOverride?.target ?: node.targetSpec ?: error("block target is missing"))} run ",
             "~ ~ ~",
         )
-        PositionKind.TEMPORARY -> error("temporary block position is unsupported in vanilla output")
+        PositionKind.TEMPORARY -> BlockAnchor(
+            "",
+            temporaryPositionCoordinates(spec.tempName ?: error("temporary block position name is missing")),
+        )
         PositionKind.MYWORLD_SPAWN -> error("unsupported structured block position")
     }
 
@@ -1131,14 +1490,28 @@ class VanillaDatapackExporter(
         return (inherited ?: ExecutionContextSpec()).copy(position = position)
     }
 
-    private fun wrapContext(context: ExecutionContextSpec, command: String): String {
+    private fun wrapContext(
+        context: ExecutionContextSpec,
+        command: String,
+        node: CommandNode? = null,
+    ): String {
+        val contextTarget = context.target ?: context.executor
+        val temporaryContextTarget = if (contextTarget?.kind == TargetKind.TEMPORARY && node != null) {
+            temporaryEntityReferences(node, context).firstOrNull { it.role == "context" }
+        } else null
         val clauses = buildList {
-            (context.target ?: context.executor)?.let { add("as ${selector(it)}") }
+            // 一時ENTITYはselectorへUUIDを埋め込めないため、最後に専用の
+            // execute asラッパーを付けます。ここで `as @s` を先に追加すると、
+            // 元の実行者を参照してしまい、未ロード時のスキップも検出できません。
+            if (temporaryContextTarget == null) {
+                contextTarget?.let { add("as ${selector(it)}") }
+            }
             context.position?.let {
                 when (it.kind) {
                     PositionKind.COORDINATES, PositionKind.CAPTURED -> add("positioned ${it.x} ${it.y} ${it.z}")
                     PositionKind.EXECUTOR -> add("at @s")
                     PositionKind.TARGET -> context.target?.let { target -> add("at ${selector(target)}") }
+                    PositionKind.TEMPORARY -> it.tempName?.let { name -> add("positioned ${temporaryPositionCoordinates(name)}") }
                     else -> Unit
                 }
             }
@@ -1146,12 +1519,14 @@ class VanillaDatapackExporter(
                 when (facing.kind) {
                     FacingKind.TARGET -> context.target?.let { add("facing entity ${selector(it)} eyes") }
                     FacingKind.COORDINATES -> add("facing ${facing.x} ${facing.y} ${facing.z}")
+                    FacingKind.TEMPORARY -> facing.tempName?.let { name -> add("facing ${temporaryPositionCoordinates(name)}") }
                     FacingKind.ROTATION, FacingKind.CAPTURED -> add("rotated ${facing.yaw} ${facing.pitch}")
                     else -> Unit
                 }
             }
         }
-        return if (clauses.isEmpty()) command else "execute ${clauses.joinToString(" ")} run $command"
+        val wrapped = if (clauses.isEmpty()) command else "execute ${clauses.joinToString(" ")} run $command"
+        return temporaryContextTarget?.let { temporaryEntitySelection(it, wrapped) } ?: wrapped
     }
 
     private fun storeResult(node: CommandNode, command: String): String =
@@ -1231,6 +1606,7 @@ class VanillaDatapackExporter(
 
     private fun selector(spec: TargetSpec): String {
         if (spec.kind == TargetKind.INHERITED_TARGET) return "@s"
+        if (spec.kind == TargetKind.TEMPORARY) return "@s"
         if (spec.kind == TargetKind.FIXED_ENTITY) return "@e[limit=0]"
         val base = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER -> "@a"
@@ -1310,11 +1686,22 @@ class VanillaDatapackExporter(
 
     private fun escape(value: String) = value.replace("\\", "\\\\").replace("\"", "\\\"")
 
+    private fun temporaryMarker(name: String, field: String): String =
+        "@{temp.${TemporaryTemplate.normalized(name)}.$field}"
+
+    private fun uuidIntArray(uuid: UUID): String {
+        val most = uuid.mostSignificantBits
+        val least = uuid.leastSignificantBits
+        return "[I;${(most shr 32).toInt()},${most.toInt()},${(least shr 32).toInt()},${least.toInt()}]"
+    }
+
     private companion object {
         const val FIXED_POINT_SCALE = 1000L
         const val EXPORT_VARIABLE_TYPE = "_exportVariableType"
         const val EXPORT_CAPTURE_FUNCTION = "_exportCaptureFunction"
         val VANILLA_INTEGER_RANGE = Int.MIN_VALUE.toLong()..Int.MAX_VALUE.toLong()
+        val TEMPORARY_REFERENCE = Regex("%\\{([A-Za-z][A-Za-z0-9_.-]{0,63})}%")
+        val TEMPORARY_MACRO_MARKER = Regex("@\\{temp\\.([A-Za-z][A-Za-z0-9_.-]{0,63})\\.([A-Za-z][A-Za-z0-9_.-]{0,32})}")
     }
 }
 
@@ -1351,4 +1738,7 @@ internal object VanillaStorageNames {
             .joinToString("") { "%02x".format(it) }
         return "variables.${if (temporary) "temporary" else "world"}.v_$digest"
     }
+
+    fun callBackupPath(nodeId: UUID): String =
+        "execution.temporary_backup_${nodeId.toString().replace("-", "").take(24)}"
 }

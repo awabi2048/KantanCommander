@@ -12,6 +12,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -350,6 +351,149 @@ class VanillaDatapackExporterTest {
         assertFalse(root.contains("scoreboard players reset"))
         assertTrue(all.contains("set value 1d"))
         assertTrue(all.contains("set value 2d"))
+    }
+
+    @Test
+    fun `temporary values and typed references are emitted to vanilla storage`() {
+        val store = ScriptStore(temp.resolve("temporary-export"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "temporary-export")
+
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "message",
+                    "tempType" to TemporaryVariableType.STRING.name,
+                    "value" to "hello",
+                ),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            params["text"] = "%{message}%"
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "point",
+                    "tempType" to TemporaryVariableType.POSITION.name,
+                    "x" to "1",
+                    "y" to "2",
+                    "z" to "3",
+                ),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.TELEPORT).apply {
+            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            destinationSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "point")
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "stack",
+                    "tempType" to TemporaryVariableType.ITEM.name,
+                    "item" to "minecraft:stone",
+                ),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.GIVE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            itemTempRef = "stack"
+            params["item"] = ""
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+        assertTrue(body.contains("data modify storage kantan:variables variables.temporary"))
+        assertTrue(body.contains("$(m_"), "typed item/position references should use function macros")
+        assertTrue(body.contains("set from storage kantan:variables variables.temporary"))
+        assertFalse(body.contains("temporary teleport destination is unsupported"))
+    }
+
+    @Test
+    fun `temporary entity target is lowered through uuid component scores`() {
+        val store = ScriptStore(temp.resolve("temporary-entity-export"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "temporary-entity-export")
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "entity",
+                    "tempType" to TemporaryVariableType.ENTITY.name,
+                    "entityId" to UUID.randomUUID().toString(),
+                ),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.ENTITY_DELETE).targetSpec =
+            TargetSpec(TargetKind.TEMPORARY, tempName = "entity")
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+        assertTrue(body.contains("kc_tu0"))
+        assertTrue(body.contains("data get entity @s UUID[0]"))
+        assertTrue(body.contains("execute as @e if score @s kc_tu0 = #kc_temp_uuid0 kc_tu0"))
+    }
+
+    @Test
+    fun `temporary entity with an invalid uuid remains a valid export and selects nothing`() {
+        val store = ScriptStore(temp.resolve("temporary-invalid-entity-export"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "temporary-invalid-entity-export")
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "entity",
+                    "tempType" to TemporaryVariableType.ENTITY.name,
+                    "entityId" to "not-a-uuid",
+                ),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.ENTITY_DELETE).targetSpec =
+            TargetSpec(TargetKind.TEMPORARY, tempName = "entity")
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+        assertTrue(body.contains("set value {}"), "invalid UUID must not produce invalid SNBT")
+        assertTrue(body.contains("scoreboard players set #kc_temp_uuid0 kc_tu0 0"))
+    }
+
+    @Test
+    fun `temporary entity is usable as a secondary target and context executor`() {
+        val store = ScriptStore(temp.resolve("temporary-secondary-export"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "temporary-secondary-export")
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "vehicle",
+                    "tempType" to TemporaryVariableType.ENTITY.name,
+                    "entityId" to UUID.randomUUID().toString(),
+                ),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.ENTITY_ACTION).apply {
+            params["action"] = "ride"
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+            secondaryTargetSpec = TargetSpec(TargetKind.TEMPORARY, tempName = "vehicle")
+        }
+        GraphEditor.append(script.graph, CommandType.CONTEXT).apply {
+            contextOverride = ExecutionContextSpec(
+                executor = TargetSpec(TargetKind.TEMPORARY, tempName = "vehicle"),
+            )
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+        assertTrue(body.contains("ride @a"))
+        assertTrue(body.contains("execute as @e if score @s kc_tu0 = #kc_temp_"))
     }
 
     @Test
