@@ -64,7 +64,7 @@ class GestureLowerPanel(
     val SETTING_CHILD_SCREEN_ID = "gesture-editor-setting-child"
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
 
-    /** 子画面の面積を親の50%にするための縦横縮尺です、E*/
+    /** 子画面の面積を親の50%にするための縦横縮尺です。 */
     private val SETTING_CHILD_SCALE = sqrt(0.5)
 
     fun build(
@@ -218,7 +218,7 @@ class GestureLowerPanel(
         // 子画面側だけへ対象分類を追加すると、最初の選択直後に親画面へ残る
         // 実際の表示経路では候補が消え、保存済みの対象設定も再編集できません。
         // 親画面でもposition:TARGETの選択状態を共通モデルから読み取り、子画面と
-        // 同じ右下領域へ描画します、E
+        // 同じ右下領域へ描画します。
         val destinationTarget = if (
             settingScreen == GestureSettingScreen.POSITION &&
             settingContext.role == CommandSettingRole.DESTINATION
@@ -296,11 +296,11 @@ class GestureLowerPanel(
                 elementId = "lower-edit:${field.key}",
                 // すべての入力画面への導線を既存のlower-edit枠へ集約します。
                 // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
-                // 開ける二重導線にはしません、E
+                // 開ける二重導線にはしません。
                 bounds = rect(0.28, SETTING_INPUT_CENTER_Y, 1.2, SETTING_INPUT_HEIGHT),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
                 // 空集合を焼き付けず、クリック時点のガードで判定します。空手時は
-                // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます、E
+                // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
                 acceptedGestures = if (heldMainHandSetting) {
                     GestureGuiClickPolicy.MAIN_HAND
                 } else GestureGuiClickPolicy.CLICK,
@@ -963,7 +963,7 @@ class GestureLowerPanel(
     }
 
     /**
-     * 設定木の現在画面に属する直下ノードを配置します、E
+     * 設定木の現在画面に属する直下ノードを配置します。
      *
      * 親画面ではタブの直下を、子画面では現在選択ノードの直下を描画します。
      * 描画側は子要素の意味を解釈せず、同じノードを選択・ホバー可能にするだけです。
@@ -1029,7 +1029,7 @@ class GestureLowerPanel(
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
                 // 並列カードの説明は、最上段ならカード上側、最下段ならカード下側へ
-                // 置きます。中段はカード同士の説明が交差しやすいため、常設の右丁E
+                // 置きます。中段はカード同士の説明が交差しやすいため、常設の右下
                 // 説明領域を置き換えます。1行に複数ボタンが並ぶ場合は最上段として
                 // 上側へ出し、単独ボタンだけを共通説明領域へ集約します。
                 // ホバー中はテクスチャを変えず説明文だけを示します。色付けは実際に
@@ -1062,8 +1062,8 @@ class GestureLowerPanel(
         }
 
     /**
-     * 設定タブと固定操作を親の設定画面で描画します、E
-     * 詳細子画面へ進んでも親の表示は背面に残るため、子画面側へ同じナビゲーションめE
+     * 設定タブと固定操作を親の設定画面で描画します。
+     * 詳細子画面へ進んでも親の表示は背面に残るため、子画面側へ同じナビゲーションを
      * 複製して操作領域を混在させません。
      */
     private fun addSettingsNavigation(
@@ -1239,7 +1239,7 @@ class GestureLowerPanel(
             .ifBlank { KcI18n.text(player, field.label) }
 
     /**
-     * 現在のタブに対応する固定キーから、設定不足の警告文を解決します、E
+     * 現在のタブに対応する固定キーから、設定不足の警告文を解決します。
      *
      * 検証エラーの文言をそのまま表示せず、タブごとの必要設定を示す文面へ
      * 統一します。キーの選択はCommandSettingsModelへ集約し、表示側でコマンド型の
@@ -1279,7 +1279,7 @@ class GestureLowerPanel(
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ENTITY_TARGET)
         choice.id == "target:${TargetCategory.TEMPORARY.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_TEMPORARY)
-        // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します、E
+        // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します。
         choice.id.startsWith("condition-kind:") -> conditionKindDescription(player, choice.id)
         // コンテキスト系は、「コンテキスト」コマンドのタブ（後続への設定）と
         // コマンド限りの上書き（fieldKey == "context"）で性質が異なるため文面を分けます。
@@ -1941,7 +1941,7 @@ class GestureLowerPanel(
      * 保存されている場合があります。この状態を一回目のクリックとして扱うと、
      * 詳細設定へ二回クリックが必要になるため、現在画面の木を再構築して永続値も
      * 選択状態へ投影します。対象の下位候補（移動先の対象種別など）もfindで同じ
-     * 規則に載せます、E
+     * 規則に載せます。
      */
     internal fun isSettingChoiceSelected(
         state: GestureEditorState,
@@ -1961,9 +1961,9 @@ class GestureLowerPanel(
     /**
      * 専用選択で編集する設定画面です。
      *
-     * ここではInventoryMenuの画面IDを直接再利用せず、同ぁE
+     * ここではInventoryMenuの画面IDを直接再利用せず、同じ
      * CommandSettingEditor／CommandSettingRoleを選択肢へ投影します。これにより、
-     * どのGUIから変更しても同じCommandNodeの構造化フィールドへ保存されます、E
+     * どのGUIから変更しても同じCommandNodeの構造化フィールドへ保存されます。
      * 画面上の値は設定画面と同じく「項目名 設定値」の1行を常に上部へ表示します。
      */
     private fun buildSettingChoices(
@@ -2380,7 +2380,7 @@ class GestureLowerPanel(
                 ?: choiceDescription(player, choice, fieldKey)
             elements += GestureGuiElement(
                 // 共通ハンドラがtarget:<category>を解釈するため、elementIdの接頭辞は
-                // 通常の設定カードと統一します、E
+                // 通常の設定カードと統一します。
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, width, POSITION_TARGET_CHOICE_HEIGHT),
                 acceptedGestures = if (choice.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
@@ -2544,7 +2544,7 @@ class GestureLowerPanel(
         fieldKey: String,
         player: Player,
     ): String = when (screen) {
-        // enum名を直接見せず、インベントリGUIと同じ日本語表示へ統一します、E
+        // enum名を直接見せず、インベントリGUIと同じ日本語表示へ統一します。
         GestureSettingScreen.TARGET -> CommandSettingsModel.targetSpec(node, context.role)?.kind
             ?.let { targetKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.POSITION -> CommandSettingsModel.positionKind(node, context.role)
@@ -2969,7 +2969,7 @@ class GestureLowerPanel(
         const val SCRIPT_SETTING_RIGHT_X = 0.68
         const val SCRIPT_SETTING_WIDTH = 0.60
         const val SETTING_DESCRIPTION_HOVER_ID = "setting-description-hover"
-        /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます、E*/
+        /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます。 */
         const val DESCRIPTION_TEXT_SIZE = 0.0043
         // 既存の1行表示時の位置をアンカーとして保持し、複数の現在値行は
         // GestureSettingValueLayoutでこの2点の間隔から行ピッチを算出します。
@@ -2991,7 +2991,7 @@ class GestureLowerPanel(
         const val SETTINGS_TAB_PITCH = 0.11
         const val SETTINGS_TAB_HEIGHT = 0.10
         // 左列下端の固定操作（ノード選択中の削除／新規追加画面の閉じる）は同じ位置へ置き、
-        // 画面種別が変わっても操作導線を一定に保ちます、E
+        // 画面種別が変わっても操作導線を一定に保ちます。
         const val SETTINGS_TAB_ACTION_Y = -0.43
         // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
@@ -3029,7 +3029,7 @@ class GestureLowerPanel(
         const val PICKER_HOVER_SLOT_Y = -0.38
         // 「ほかのエンティティ」の対象分類は、右ペインの選択カード領域
         // （SETTING_CHOICE 2列と同じスパン）を4等分し、設定タブ（0.47×0.10）と
-        // およそ同じ高さの寸法で配置します、E
+        // およそ同じ高さの寸法で配置します。
         const val POSITION_TARGET_CHOICE_SPAN_START_X = -0.43
         const val POSITION_TARGET_CHOICE_SPAN_END_X = 1.00
         const val POSITION_TARGET_CHOICE_GAP = 0.04
