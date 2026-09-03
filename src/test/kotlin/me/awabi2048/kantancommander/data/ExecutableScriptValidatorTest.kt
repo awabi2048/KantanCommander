@@ -350,7 +350,7 @@ class ExecutableScriptValidatorTest {
         val errors = ExecutableScriptValidator.validate(script)
 
         assertTrue(errors.any { it.message.contains("配置ブロック") })
-        assertTrue(errors.any { it.message.contains("ブロック設置位置") })
+        assertTrue(errors.any { it.message.contains("ブロック配置位置") })
         assertTrue(errors.any { it.message.contains("削除対象") })
     }
 

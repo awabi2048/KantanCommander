@@ -198,6 +198,10 @@ data class TargetSpec(
     val fixedEntityId: UUID? = null,
 )
 
+/**
+ * DISKは保存形式上の既存値ですが、実際に参照するのはプログラムディスクではなく
+ * 実行元の制御ブロックです。表示側では必ず「制御ブロック」として扱います。
+ */
 enum class PositionKind {
     CAPTURED, DISK, EXECUTOR, TARGET, MYWORLD_SPAWN, COORDINATES,
 }

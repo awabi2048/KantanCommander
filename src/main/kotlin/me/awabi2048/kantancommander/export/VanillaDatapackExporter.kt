@@ -748,7 +748,7 @@ class VanillaDatapackExporter(
     private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
         graph.nodes.values.forEach { node ->
             if (node.type == CommandType.CAMERA_SHAKE) {
-                warnings += "$path/${node.id}: カメラ揺れはJava版データパックから省略されました"
+                warnings += "$path/${node.id}: カメラシェイクはJava版データパックから省略されました"
             }
             node.snapshot?.let { collectWarnings(it, "$path/${node.id}/snapshot", warnings) }
         }

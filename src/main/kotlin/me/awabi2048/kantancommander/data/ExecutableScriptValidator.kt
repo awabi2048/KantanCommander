@@ -175,15 +175,15 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("effect"), "エフェクトが不正です")
                 }
                 validateIntegerRange(node, path, "level", 1..255, "エフェクトレベルは1〜255の範囲です", errors, variableDefinitions)
-                validateIntegerRange(node, path, "seconds", 1..86_400, "効果時間は1〜86400秒の範囲です", errors, variableDefinitions)
+                validateIntegerRange(node, path, "seconds", 1..86_400, "エフェクトの持続時間は1〜86400秒の範囲です", errors, variableDefinitions)
             }
             CommandType.CAMERA_SHAKE -> {
-                validateRange(node, path, "intensity", 0.1..4.0, "揺れの強さは0.1〜4.0の範囲です", errors, variableDefinitions)
-                validateRange(node, path, "seconds", 1.0..10.0, "揺れ時間は1.0〜10.0秒の範囲です", errors, variableDefinitions)
+                validateRange(node, path, "intensity", 0.1..4.0, "カメラシェイクの強さは0.1〜4.0の範囲です", errors, variableDefinitions)
+                validateRange(node, path, "seconds", 1.0..10.0, "カメラシェイクの時間は1.0〜10.0秒の範囲です", errors, variableDefinitions)
                 if (node.string("shakeType") !in setOf("positional", "rotational")) {
-                    errors += nodeError(node, path, setOf("shakeType"), "揺れ種類が不正です")
+                    errors += nodeError(node, path, setOf("shakeType"), "カメラシェイクの種類が不正です")
                 }
-                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "カメラ揺れの対象が未設定です")
+                if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "カメラシェイクの対象が未設定です")
             }
             CommandType.BLOCK_OPERATION -> validateBlockOperation(node, path, errors)
             CommandType.ENTITY_DELETE -> {
@@ -292,15 +292,15 @@ object ExecutableScriptValidator {
         }
         when (operation) {
             BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null) {
-                errors += nodeError(node, path, setOf("position"), "ブロック設置位置が未設定です")
+                errors += nodeError(node, path, setOf("position"), "ブロック配置位置が未設定です")
             }
             BlockOperationMode.FILL -> {
                 val from = node.blockFromSpec
                 val to = node.blockToSpec
-                if (from == null) errors += nodeError(node, path, setOf("from"), "範囲設置の始点が未設定です")
-                if (to == null) errors += nodeError(node, path, setOf("to"), "範囲設置の終点が未設定です")
+                if (from == null) errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
+                if (to == null) errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
                 if (from != null && to != null && blockVolume(from, to)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true) {
-                    errors += nodeError(node, path, setOf("from", "to"), "範囲設置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
+                    errors += nodeError(node, path, setOf("from", "to"), "範囲配置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
                 }
             }
             null -> Unit

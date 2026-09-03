@@ -120,7 +120,7 @@ class VanillaDatapackExporterTest {
         assertTrue(body.contains("playsound minecraft:block.note_block.harp"))
         assertTrue(body.contains("effect give"))
         assertTrue(body.contains("item replace entity"))
-        assertTrue(result.warnings.any { it.contains("カメラ揺れ") })
+        assertTrue(result.warnings.any { it.contains("カメラシェイク") })
     }
 
     @Test

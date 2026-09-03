@@ -5,7 +5,7 @@ import org.bukkit.entity.Player
 import org.geysermc.geyser.api.GeyserApi
 import org.geysermc.geyser.api.bedrock.camera.CameraShake
 
-/** Geyser接続のBedrockプレイヤーだけへ揺れを送り、Java版では成功no-opにします。 */
+/** Geyser接続のBedrockプレイヤーだけへカメラシェイクを送り、Java版では成功no-opにします。 */
 object CameraShakeService {
     fun apply(plugin: KantanCommanderPlugin, player: Player, intensity: Float, seconds: Float, type: String) {
         if (!plugin.server.pluginManager.isPluginEnabled("Geyser-Spigot")) return

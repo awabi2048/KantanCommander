@@ -781,23 +781,31 @@ internal object CommandDialogSpecs {
             type == VariableType.NUMBER -> InputFormat.NUMBER
             else -> InputFormat.ANY_STRING
         }
-        return base.copy(required = true, format = format, validate = { raw ->
-            when {
-                type == null && changeMode == VariableChangeMode.CALCULATE ->
-                    numericExpressionValidationError(raw)
-                type == null ->
-                    if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
-                type == VariableType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
-                    numericExpressionValidationError(raw)
-                } else if (isNumericTemplate(raw) || CommandValueRules.parseFiniteDouble(raw) != null
-                ) {
-                    null
-                } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                type == VariableType.STRING ->
-                    if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
-                else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-            }
-        })
+        return base.copy(
+            required = true,
+            format = format,
+            // 通常の条件値と同じ `value` フィールドでも、変数コマンドの保存先は
+            // ワールド内変数です。共通の入力本文をそのまま流用すると、条件値の
+            // 説明まで「変数」になってしまうため、ここで意味を分離します。
+            formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_WORLD_VARIABLE_VALUE_BODY,
+            validate = { raw ->
+                when {
+                    type == null && changeMode == VariableChangeMode.CALCULATE ->
+                        numericExpressionValidationError(raw)
+                    type == null ->
+                        if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
+                    type == VariableType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
+                        numericExpressionValidationError(raw)
+                    } else if (isNumericTemplate(raw) || CommandValueRules.parseFiniteDouble(raw) != null
+                    ) {
+                        null
+                    } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    type == VariableType.STRING ->
+                        if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
+                    else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                }
+            },
+        )
     }
 
     /** NumericExpressionの構文エラーを、入力画面で表示する専用キーへ変換します。 */

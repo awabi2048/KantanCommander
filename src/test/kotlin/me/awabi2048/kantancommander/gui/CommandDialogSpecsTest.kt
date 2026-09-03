@@ -129,6 +129,14 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
             requireNotNull(CommandDialogSpecs.field(variable, "value")).validate("not-a-number"),
         )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_WORLD_VARIABLE_VALUE_BODY,
+            requireNotNull(CommandDialogSpecs.field(variable, "value")).formatHintKey,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VALUE_BODY,
+            requireNotNull(CommandDialogSpecs.field("value")).formatHintKey,
+        )
 
         variable.params["operation"] = VariableOperation.CHANGE.name
         variable.params["changeMode"] = "CALCULATE"
