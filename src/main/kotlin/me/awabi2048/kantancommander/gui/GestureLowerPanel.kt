@@ -28,6 +28,7 @@ import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -62,7 +63,7 @@ class GestureLowerPanel(
     val SETTING_CHILD_SCREEN_ID = "gesture-editor-setting-child"
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
 
-    /** 子画面の面積を親の50%にするための縦横縮尺です。 */
+    /** 子画面の面積を親の50%にするための縦横縮尺です、E*/
     private val SETTING_CHILD_SCALE = sqrt(0.5)
 
     fun build(
@@ -80,6 +81,7 @@ class GestureLowerPanel(
                 attention,
                 suppressHighlight = suppressHighlight,
             )
+            GestureLowerMode.WORLD_VARIABLES -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
         }
     }
@@ -92,6 +94,12 @@ class GestureLowerPanel(
         suppressHighlight: Boolean = false,
     ): GestureGuiView =
         buildSettingChoices(state, player, attention, child = true, suppressHighlight = suppressHighlight)
+
+    /** ワールド変数一覧の子画面を生成します。 */
+    fun buildWorldVariablesChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView = buildWorldVariables(state, player)
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
@@ -192,7 +200,7 @@ class GestureLowerPanel(
         // 子画面側だけへ対象三分類を追加すると、最初の選択直後に親画面へ残る
         // 実際の表示経路では候補が消え、保存済みの対象設定も再編集できません。
         // 親画面でもposition:TARGETの選択状態を共通モデルから読み取り、子画面と
-        // 同じ右下領域へ描画します。
+        // 同じ右下領域へ描画します、E
         val destinationTarget = if (
             settingScreen == GestureSettingScreen.POSITION &&
             settingContext.role == CommandSettingRole.DESTINATION
@@ -268,11 +276,11 @@ class GestureLowerPanel(
                 elementId = "lower-edit:${field.key}",
                 // すべての入力画面への導線を既存のlower-edit枠へ集約します。
                 // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
-                // 開ける二重導線にはしません。
+                // 開ける二重導線にはしません、E
                 bounds = rect(0.28, SETTING_INPUT_CENTER_Y, 1.2, SETTING_INPUT_HEIGHT),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
                 // 空集合を焼き付けず、クリック時点のガードで判定します。空手時は
-                // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
+                // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます、E
                 acceptedGestures = if (heldMainHandSetting) {
                     GestureGuiClickPolicy.MAIN_HAND
                 } else GestureGuiClickPolicy.CLICK,
@@ -378,7 +386,8 @@ class GestureLowerPanel(
                 elements = elements,
                 id = "lower-script-name",
                 backgroundId = "lower-script-name-bg",
-                x = -0.38,
+                x = SCRIPT_SETTING_LEFT_X,
+                width = SCRIPT_SETTING_WIDTH,
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROGRAM_NAME),
                 value = script.name.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) },
                 valueState = programNameState,
@@ -405,16 +414,177 @@ class GestureLowerPanel(
                 elements = elements,
                 id = "lower-script-timer",
                 backgroundId = "lower-script-timer-bg",
-                x = 0.38,
+                x = SCRIPT_SETTING_CENTER_X,
+                width = SCRIPT_SETTING_WIDTH,
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
                 value = timerValue,
                 valueState = timerState,
                 material = Material.CLOCK,
                 attention = attention.timer,
             )
+            val worldId = resolveVariableWorldId(state)
+            val variableCount = worldId?.let { plugin.variables.list(it).size }
+            val variablesState = if ((variableCount ?: 0) > 0) {
+                GestureSettingValueState.CONFIGURED
+            } else {
+                GestureSettingValueState.INITIAL
+            }
+            val variablesValue = if (worldId == null) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+            } else {
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_COUNT,
+                    mapOf("value" to (variableCount ?: 0)),
+                )
+            }
+            addScriptSetting(
+                player = player,
+                visuals = visuals,
+                elements = elements,
+                id = "lower-script-variables",
+                backgroundId = "lower-script-variables-bg",
+                x = SCRIPT_SETTING_RIGHT_X,
+                width = SCRIPT_SETTING_WIDTH,
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES),
+                value = variablesValue,
+                valueState = variablesState,
+                material = Material.WRITABLE_BOOK,
+            )
         }
         return view(GestureLowerMode.SETTINGS, elements, visuals)
     }
+
+    /**
+     * 編集対象ワールドのワールド変数IDを解決します。
+     *
+     * 実行時と同じくMyWorldManagerの所有情報を正とし、未配置・所有外では
+     * nullを返して一覧を開けない状態を表示側へ伝えます。
+     */
+    internal fun resolveVariableWorldId(state: GestureEditorState): java.util.UUID? {
+        val worldName = state.placement?.world ?: return null
+        if (!plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) return null
+        return runCatching {
+            me.awabi2048.myworldmanager.api.MyWorldManagerApi.getWorldRepository()
+                ?.findByWorldName(worldName)?.uuid
+        }.getOrNull()
+    }
+
+    /**
+     * ワールド変数一覧の子画面です。
+     *
+     * 設定候補と同じ2列レイアウトとページ契約を使い、保存済み変数の
+     * 現在の値と型を上部の説明領域へ表示します。空一覧時は新規作成導線だけを出します。
+     *
+     */
+    private fun buildWorldVariables(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        val worldId = resolveVariableWorldId(state)
+        val entries = worldId?.let { plugin.variables.list(it).toSortedMap() }.orEmpty()
+        val definitions = worldId?.let { plugin.variables.definitions(it) }.orEmpty()
+        addText(
+            visuals,
+            "variables-title",
+            0.0,
+            CHILD_HEADER_Y,
+            0.0060,
+            200,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TITLE)),
+        )
+        addDescriptionRows(
+            visuals,
+            player,
+            field = null,
+            fallback = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DESCRIPTION_SINGLE)
+                .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SETTINGS_FIELD_FALLBACK) },
+            centerX = 0.0,
+            hoverY = CHILD_HOVER_Y,
+            detailY = CHILD_DETAIL_HINT_Y,
+        )
+        if (entries.isEmpty()) {
+            addText(
+                visuals,
+                "variables-empty",
+                0.0,
+                CHILD_CHOICE_TOP_Y,
+                0.0052,
+                200,
+                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_EMPTY)),
+            )
+        } else {
+            val pageSize = SETTING_CHOICE_PAGE_SIZE
+            val pageCount = (entries.size + pageSize - 1) / pageSize
+            val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+            entries.keys.toList().drop(page * pageSize).take(pageSize).forEachIndexed { index, name ->
+                val value = entries.getValue(name)
+                val type = definitions[name]?.type ?: value.type
+                val column = index % 2
+                val row = index / 2
+                val cx = if (column == 0) -0.53 else 0.53
+                val cy = CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH
+                val bgId = "variables-bg-$index"
+                addBlock(visuals, bgId, cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT, Material.WRITABLE_BOOK, 4)
+                addText(visuals, "variables-label-$index", cx, cy - 0.012, 0.0045, 115, Component.text(name))
+                val detail = KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DETAIL,
+                    mapOf("value" to VariableTemplate.stringify(value), "type" to variableTypeName(player, type)),
+                )
+                elements.add(GestureGuiElement(
+                    elementId = "lower-variable:$name",
+                    bounds = rect(cx, cy, CHILD_CHOICE_WIDTH, SETTING_CHOICE_HEIGHT),
+                    acceptedGestures = GestureGuiClickPolicy.CLICK,
+                    targetVisualId = bgId,
+                    hoverText = singleLineHover(
+                        detail,
+                        x = 0.0,
+                        y = CHILD_HOVER_Y,
+                        replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                    ),
+                ))
+            }
+            if (pageCount > 1) addPager(
+                visuals,
+                elements,
+                "variables",
+                page,
+                pageCount,
+                0.0,
+                CHILD_PAGER_Y,
+            )
+        }
+        addBlock(visuals, "variables-create-bg", 0.0, -0.22, CHILD_CHOICE_WIDTH, 0.10, Material.EMERALD_BLOCK, 4)
+        addText(
+            visuals,
+            "variables-create-label",
+            0.0,
+            -0.22,
+            0.0048,
+            140,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_CREATE)),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "lower-variables-create",
+            bounds = rect(0.0, -0.22, CHILD_CHOICE_WIDTH, 0.10),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "variables-create-bg",
+        ))
+        addBackSetting(player, elements, visuals, child = true, centerX = 0.0, width = CHILD_BACK_WIDTH)
+        return view(GestureLowerMode.WORLD_VARIABLES, elements, visuals, child = true)
+    }
+
+    /** ワールド変数の型名を、ノード設定と同じ表示キーで解決します。 */
+    private fun variableTypeName(player: Player, type: VariableType): String = KcI18n.text(
+        player,
+        when (type) {
+            VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+            VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+        },
+    )
 
     /** プログラム全体設定のカードと入力面を共通の寸法で生成します。 */
     private fun addScriptSetting(
@@ -429,13 +599,14 @@ class GestureLowerPanel(
         valueState: GestureSettingValueState,
         material: Material,
         attention: Boolean = false,
+        width: Double = 0.68,
     ) {
         addBlock(
             visuals,
             backgroundId,
             x,
             -0.02,
-            0.68,
+            width,
             0.17,
             GestureSettingVisualPolicy.material(
                 GestureSettingSelectionMode.MULTIPLE,
@@ -448,21 +619,19 @@ class GestureLowerPanel(
         )
         visuals.add(GestureGuiVisual.Item(
             visualId = "$id-icon",
-            x = x - 0.27,
+            x = x - width / 2.0 + 0.07,
             y = -0.02,
             item = ItemStack(material),
             scale = 0.08,
             layer = 5,
         ))
-        // プログラム全体設定もクリック後に値入力へ進むため、ラベルと現在値を§6で
-        // 統一します。未設定状態は値の文面で示し、背景色へ意味を重ねません。
-        addText(visuals, "$id-label", x, -0.045, 0.0052, 120, Component.text(label, NamedTextColor.GOLD))
-        addText(visuals, "$id-value", x, -0.005, 0.0044, 170, Component.text(value, NamedTextColor.GOLD))
+        addText(visuals, "$id-label", x, -0.045, 0.0052, 120, Component.text(label))
+        addText(visuals, "$id-value", x, -0.005, 0.0044, 170, Component.text(value))
         // アイテム名は表示の識別用に使わず、設定値は常にLore／別TextDisplayへ出します。
         // このカードも同じ規則に従い、クリック対象のNameを持たせず入力面だけを公開します。
         elements.add(GestureGuiElement(
             elementId = id,
-            bounds = rect(x, -0.02, 0.68, 0.17),
+            bounds = rect(x, -0.02, width, 0.17),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = backgroundId,
             // プログラム全体設定も状態名をホバーで示します（色だけの通知を避ける規則）。
@@ -477,7 +646,7 @@ class GestureLowerPanel(
     }
 
     /**
-     * 設定木の現在画面に属する直下ノードを配置します。
+     * 設定木の現在画面に属する直下ノードを配置します、E
      *
      * 親画面ではタブの直下を、子画面では現在選択ノードの直下を描画します。
      * 描画側は子要素の意味を解釈せず、同じノードを選択・ホバー可能にするだけです。
@@ -543,7 +712,7 @@ class GestureLowerPanel(
                 gestureGuard = if (choice.enabled) null else { _, _ -> false },
                 targetVisualId = bgId,
                 // 並列カードの説明は、最上段ならカード上側、最下段ならカード下側へ
-                // 置きます。中段はカード同士の説明が交差しやすいため、常設の右下
+                // 置きます。中段はカード同士の説明が交差しやすいため、常設の右丁E
                 // 説明領域を置き換えます。1行に複数ボタンが並ぶ場合は最上段として
                 // 上側へ出し、単独ボタンだけを共通説明領域へ集約します。
                 // ホバー中はテクスチャを変えず説明文だけを示します。色付けは実際に
@@ -576,8 +745,8 @@ class GestureLowerPanel(
         }
 
     /**
-     * 設定タブと固定操作を親の設定画面で描画します。
-     * 詳細子画面へ進んでも親の表示は背面に残るため、子画面側へ同じナビゲーションを
+     * 設定タブと固定操作を親の設定画面で描画します、E
+     * 詳細子画面へ進んでも親の表示は背面に残るため、子画面側へ同じナビゲーションめE
      * 複製して操作領域を混在させません。
      */
     private fun addSettingsNavigation(
@@ -753,7 +922,7 @@ class GestureLowerPanel(
             .ifBlank { KcI18n.text(player, field.label) }
 
     /**
-     * 現在のタブに対応する固定キーから、設定不足の警告文を解決します。
+     * 現在のタブに対応する固定キーから、設定不足の警告文を解決します、E
      *
      * 検証エラーの文言をそのまま表示せず、タブごとの必要設定を示す文面へ
      * 統一します。キーの選択はCommandSettingsModelへ集約し、表示側でコマンド型の
@@ -791,7 +960,7 @@ class GestureLowerPanel(
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PLAYER_TARGET)
         choice.id == "target:${TargetCategory.NON_PLAYER_ENTITY.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ENTITY_TARGET)
-        // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します。
+        // 条件種別は、種別ごとの説明を選択肢IDから解決して表示します、E
         choice.id.startsWith("condition-kind:") -> conditionKindDescription(player, choice.id)
         // コンテキスト系は、「コンテキスト」コマンドのタブ（後続への設定）と
         // コマンド限りの上書き（fieldKey == "context"）で性質が異なるため文面を分けます。
@@ -1034,7 +1203,7 @@ class GestureLowerPanel(
 
     /**
      * ホバーは1行1エンティティで表示します。1つのTextDisplayへ複数行を
-     * 入れると中央列揃えになり下部パネルのレイアウトが崩れるためです。
+     * 入れると中央列揃えになり下部パネルのレイアウトが崩れるためです、E
      * 親画面では常設の灰色説明と対になる画面下段のスロットへ表示し、
      * 説明を置き換えません。子画面のみ、従来どおり説明スロットの置換を
      * 使います（replacesVisualId）。
@@ -1392,7 +1561,7 @@ class GestureLowerPanel(
      * 保存されている場合があります。この状態を一回目のクリックとして扱うと、
      * 詳細設定へ二回クリックが必要になるため、現在画面の木を再構築して永続値も
      * 選択状態へ投影します。対象の下位候補（移動先の対象種別など）もfindで同じ
-     * 規則に載せます。
+     * 規則に載せます、E
      */
     internal fun isSettingChoiceSelected(
         state: GestureEditorState,
@@ -1412,9 +1581,9 @@ class GestureLowerPanel(
     /**
      * 専用選択で編集する設定画面です。
      *
-     * ここではInventoryMenuの画面IDを直接再利用せず、同じ
+     * ここではInventoryMenuの画面IDを直接再利用せず、同ぁE
      * CommandSettingEditor／CommandSettingRoleを選択肢へ投影します。これにより、
-     * どのGUIから変更しても同じCommandNodeの構造化フィールドへ保存されます。
+     * どのGUIから変更しても同じCommandNodeの構造化フィールドへ保存されます、E
      * 画面上の値は設定画面と同じく「項目名 設定値」の1行を常に上部へ表示します。
      */
     private fun buildSettingChoices(
@@ -1809,7 +1978,7 @@ class GestureLowerPanel(
                 ?: choiceDescription(player, choice, fieldKey)
             elements += GestureGuiElement(
                 // 共通ハンドラがtarget:<category>を解釈するため、elementIdの接頭辞は
-                // 通常の設定カードと統一します。
+                // 通常の設定カードと統一します、E
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, width, POSITION_TARGET_CHOICE_HEIGHT),
                 acceptedGestures = if (choice.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
@@ -1970,7 +2139,7 @@ class GestureLowerPanel(
         fieldKey: String,
         player: Player,
     ): String = when (screen) {
-        // enum名を直接見せず、インベントリGUIと同じ日本語表示へ統一します。
+        // enum名を直接見せず、インベントリGUIと同じ日本語表示へ統一します、E
         GestureSettingScreen.TARGET -> CommandSettingsModel.targetSpec(node, context.role)?.kind
             ?.let { targetKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.POSITION -> CommandSettingsModel.positionKind(node, context.role)
@@ -2389,8 +2558,13 @@ class GestureLowerPanel(
         )
 
     private companion object {
+        // プログラム全体設定カードを3列で配置するための定数です。
+        const val SCRIPT_SETTING_LEFT_X = -0.68
+        const val SCRIPT_SETTING_CENTER_X = 0.0
+        const val SCRIPT_SETTING_RIGHT_X = 0.68
+        const val SCRIPT_SETTING_WIDTH = 0.60
         const val SETTING_DESCRIPTION_HOVER_ID = "setting-description-hover"
-        /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます。 */
+        /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます、E*/
         const val DESCRIPTION_TEXT_SIZE = 0.0043
         // 既存の1行表示時の位置をアンカーとして保持し、複数の現在値行は
         // GestureSettingValueLayoutでこの2点の間隔から行ピッチを算出します。
@@ -2412,7 +2586,7 @@ class GestureLowerPanel(
         const val SETTINGS_TAB_PITCH = 0.11
         const val SETTINGS_TAB_HEIGHT = 0.10
         // 左列下端の固定操作（ノード選択中の削除／新規追加画面の閉じる）は同じ位置へ置き、
-        // 画面種別が変わっても操作導線を一定に保ちます。
+        // 画面種別が変わっても操作導線を一定に保ちます、E
         const val SETTINGS_TAB_ACTION_Y = -0.43
         // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
@@ -2443,7 +2617,7 @@ class GestureLowerPanel(
         const val PICKER_HOVER_SLOT_Y = -0.38
         // 「ほかのエンティティ」の対象三分類は、右ペインの選択カード領域
         // （SETTING_CHOICE 2列と同じスパン）を3等分し、設定タブ（0.47×0.10）と
-        // およそ同じ高さの寸法で配置します。
+        // およそ同じ高さの寸法で配置します、E
         const val POSITION_TARGET_CHOICE_SPAN_START_X = -0.43
         const val POSITION_TARGET_CHOICE_SPAN_END_X = 1.00
         const val POSITION_TARGET_CHOICE_GAP = 0.04

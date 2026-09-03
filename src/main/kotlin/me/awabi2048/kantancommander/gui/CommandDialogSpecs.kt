@@ -8,6 +8,8 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
+import me.awabi2048.kantancommander.model.TemporaryTemplate
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
@@ -391,6 +393,61 @@ internal object CommandDialogSpecs {
         field(node, "value") ?: conditionValue
 
     /**
+     * 一時変数 NUMBER の値入力です。有限doubleまたは単一 `%name%` 参照を受け付けます。
+     * ワールド変数 `${name}` も数値型として解決できるため同様に許可します。
+     */
+    val tempNumberValue = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        64,
+        validate = { raw ->
+            if (!isNumericTemplate(raw) && CommandValueRules.parseFiniteDouble(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+    )
+
+    /** 一時変数 STRING の値入力です。不正参照記法だけを拒否します。 */
+    val tempStringValue = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        512,
+        validate = { raw ->
+            if (hasMalformedAnyReference(raw)) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = false,
+        format = InputFormat.ANY_STRING,
+    )
+
+    /** 一時位置の座標入力です。数値リテラルまたは単一変数参照を受け付けます。 */
+    val tempCoordinate = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        64,
+        validate = { raw ->
+            if (!isNumericTemplate(raw) && CommandValueRules.parseFiniteDouble(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+    )
+
+    /** 一時エンティティの実体ID入力です。実行時にワールド内解決できるUUIDを要求します。 */
+    val tempEntityId = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        64,
+        validate = { raw ->
+            if (runCatching { java.util.UUID.fromString(raw.trim()) }.isFailure) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = true,
+        format = InputFormat.ANY_STRING,
+    )
+
+    /**
      * コマンド種別を含めてフィールド入力仕様を解決します。
      *
      * 同じ `seconds` でもWAIT／効果／カメラシェイクで保存型と許容範囲が異なるため、
@@ -418,6 +475,29 @@ internal object CommandDialogSpecs {
                 operation = operation,
                 changeMode = changeMode,
             )
+        }
+        if (node.type == CommandType.TEMP_SET) {
+            if (fieldKey == "name") return variableName
+            val tempType = runCatching {
+                TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
+            }.getOrDefault(TemporaryVariableType.NUMBER)
+            when (fieldKey) {
+                "value" -> return when (tempType) {
+                    TemporaryVariableType.NUMBER -> tempNumberValue
+                    TemporaryVariableType.STRING -> tempStringValue
+                    else -> null
+                }
+                "x", "y", "z" -> return tempCoordinate
+                "entityId" -> return tempEntityId
+                "volume" -> return field("volume")
+                "pitch" -> return field("pitch")
+                "level" -> return field("level")
+                "seconds" -> return field("seconds")
+                "sound" -> return field("sound")
+                "effect" -> return field("effect")
+                "item" -> return field("item")
+                "block" -> return block
+            }
         }
         if (node.type == CommandType.CONDITION && fieldKey == "value" &&
             node.string("kind") == me.awabi2048.kantancommander.model.ConditionKind.VARIABLE_STATE.name
@@ -598,7 +678,7 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 fieldKey == "intensity" && !isNumericTemplate(raw) && !CommandValueRules.isFiniteDoubleIn(raw, 0.1..4.0) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey in setOf("text", "subtitle", "customName", "itemData", "value") && VariableTemplate.hasMalformedReference(raw) ->
+                fieldKey in setOf("text", "subtitle", "customName", "itemData", "value") && hasMalformedAnyReference(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 else -> null
             }
@@ -832,6 +912,11 @@ internal object CommandDialogSpecs {
     private const val MULTI_VALUE_MAX_LENGTH = 64
     private val NAMESPACED_ID_FIELDS = setOf("entity", "entityType", "sound", "effect")
 
-    /** 数値欄でも単一のワールド変数を実行時に数値化できるようにします。 */
-    private fun isNumericTemplate(raw: String): Boolean = VariableTemplate.isSingleReference(raw)
+    /** 数値欄でも単一のワールド変数・一時変数を実行時に数値化できるようにします。 */
+    private fun isNumericTemplate(raw: String): Boolean =
+        VariableTemplate.isSingleReference(raw) || TemporaryTemplate.isSingleReference(raw)
+
+    /** 文字列欄で両記法の不正参照を検出します。 */
+    private fun hasMalformedAnyReference(raw: String): Boolean =
+        VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)
 }

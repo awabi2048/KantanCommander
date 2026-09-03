@@ -219,7 +219,7 @@ object CommandSettingsModel {
         // 表示方式ごとの説明は同じ「時間設定」項目でも意味が異なります。
         // フィールド集合を返す段階で文言も文脈化し、インベントリGUIとジェスチャーGUIの
         // どちらでもタイトル用の説明がアクションバーへ誤表示されないようにします。
-        val fields = EditorMenuLayout.fields(node.type).map { field ->
+        val fields = EditorMenuLayout.fields(node.type, node).map { field ->
             if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
                 node.string("mode", "tellraw") == "actionbar"

@@ -35,6 +35,9 @@ import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskPlacement
@@ -110,6 +113,8 @@ data class GestureEditorState(
     var settingScreen: GestureSettingScreen? = null,
     /** 設定候補だけに使うページ番号です。左側の設定タブはページ分割しません。 */
     var settingChoicePage: Int = 0,
+    /** ワールド内変数一覧だけに使うページ番号です。 */
+    var variablePage: Int = 0,
 )
 
 /** 下部パネルの表示モード。CONFIRMのみ子画面（赤ガラス）として開きます。 */
@@ -117,6 +122,7 @@ enum class GestureLowerMode {
     SETTINGS,
     PICKER,
     SETTING_CHOICES,
+    WORLD_VARIABLES,
     CONFIRM,
 }
 
@@ -419,8 +425,12 @@ class GestureSequenceEditor(
         val owner = ownerPlayerFor(player)
         val childOpen = settingChildOpen(owner.uniqueId)
         val attention = attentionState()
-        val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
-            lowerPanel.buildSettingChild(state, owner, attention)
+        val view = if (childOpen) {
+            when (state.lowerMode) {
+                GestureLowerMode.SETTING_CHOICES -> lowerPanel.buildSettingChild(state, owner, attention)
+                GestureLowerMode.WORLD_VARIABLES -> lowerPanel.buildWorldVariablesChild(state, owner)
+                else -> lowerPanel.build(state, owner, attention)
+            }
         } else {
             lowerPanel.build(state, owner, attention)
         }
@@ -1913,6 +1923,302 @@ class GestureSequenceEditor(
         }
     }
 
+    /**
+     * ワールド内変数の編集対象ワールドを解決します。
+     *
+     * 実行時と同じくMyWorldManagerの所蔵情報を正とし、配置なし・所蔵外では
+     * nullを返して一覧を開けないことを呼び出し側へ伝えます。
+     */
+    private fun resolveVariableWorldId(): UUID? {
+        val worldName = state.placement?.world ?: return null
+        if (!plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) return null
+        return runCatching {
+            MyWorldManagerApi.getWorldRepository()?.findByWorldName(worldName)?.uuid
+        }.getOrNull()
+    }
+
+    /** ワールド内変数一覧の子画面を開きます。 */
+    private fun openWorldVariables(player: Player) {
+        if (resolveVariableWorldId() == null) return
+        state.variablePage = 0
+        state.lowerMode = GestureLowerMode.WORLD_VARIABLES
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildWorldVariablesChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ワールド内変数一覧のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    /** ワールド内変数一覧の子画面を閉じて親へ戻します。 */
+    private fun closeWorldVariables(player: Player) {
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+        }
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateLower(player)
+    }
+
+    /** 一覧から選んだ変数の値を編集します。型は定義側を正とし、変更しません。 */
+    private fun showWorldVariableValueDialog(player: Player, name: String) {
+        val worldId = resolveVariableWorldId() ?: return
+        val current = plugin.variables.get(worldId, name) ?: return
+        val type = plugin.variables.definitions(worldId)[name]?.type ?: current.type
+        val spec = when (type) {
+            VariableType.NUMBER -> CommandDialogSpecs.Spec(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+                32,
+                validate = { raw ->
+                    if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                    } else null
+                },
+                required = true,
+                format = CommandDialogSpecs.InputFormat.NUMBER,
+            )
+            VariableType.STRING -> CommandDialogSpecs.Spec(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+                256,
+                validate = { raw ->
+                    if (VariableTemplate.hasMalformedReference(raw)) {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                    } else null
+                },
+                required = false,
+                format = CommandDialogSpecs.InputFormat.ANY_STRING,
+            )
+        }
+        showInputDialog(
+            player = player,
+            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
+            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BODY)),
+            inputs = listOf(CommandDialogSpecs.input(player, "value", VariableTemplate.stringify(current), spec)),
+            additionalActions = listOf(
+                MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE),
+                    MenuDialogHandler { target, _ ->
+                        if (target.uniqueId != player.uniqueId ||
+                            !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                        ) {
+                            return@MenuDialogHandler MenuActionResult.Ignored
+                        }
+                        showWorldVariableDeleteDialog(player, name)
+                        MenuActionResult.Success(MenuUpdate.Close)
+                    },
+                ),
+            ),
+        ) { response ->
+            val raw = response.textValue("value")
+            val validationError = spec.validateInput(raw)
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val value = when (type) {
+                VariableType.NUMBER -> WorldVariableValue(
+                    VariableType.NUMBER,
+                    numberValue = CommandValueRules.parseFiniteDouble(raw),
+                ).takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+                )
+                VariableType.STRING -> WorldVariableValue(VariableType.STRING, stringValue = raw)
+            }
+            val saved = runCatching { plugin.variables.set(worldId, name, value); true }
+                .getOrElse { failure ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "ワールド内変数を保存できませんでした: world=$worldId name=$name",
+                        failure,
+                    )
+                    false
+                }
+            if (!saved) {
+                return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            }
+            updateLower(player)
+            null
+        }
+    }
+
+    /** 空一覧・一覧下部から変数を新規作成します。名前→型→初期値の順に入力します。 */
+    private fun showWorldVariableCreateDialog(player: Player) {
+        if (resolveVariableWorldId() == null) return
+        showTextInputDialog(player, CommandDialogSpecs.variableName, "") { rawName ->
+            val name = rawName.trim()
+            if (!CommandValueRules.isVariableName(name)) {
+                return@showTextInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+                )
+            }
+            showWorldVariableTypeDialog(player, name)
+            null
+        }
+    }
+
+    /** 新規作成の型選択を、入力画面の追加操作として提示します。 */
+    private fun showWorldVariableTypeDialog(player: Player, name: String) {
+        val numberButton = MenuDialogButton(
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER),
+            MenuDialogHandler { target, _ ->
+                if (target.uniqueId != player.uniqueId ||
+                    !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                ) {
+                    return@MenuDialogHandler MenuActionResult.Ignored
+                }
+                showWorldVariableInitialValueDialog(player, name, VariableType.NUMBER)
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+        )
+        val stringButton = MenuDialogButton(
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT),
+            MenuDialogHandler { target, _ ->
+                if (target.uniqueId != player.uniqueId ||
+                    !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                ) {
+                    return@MenuDialogHandler MenuActionResult.Ignored
+                }
+                showWorldVariableInitialValueDialog(player, name, VariableType.STRING)
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+        )
+        showInputDialog(
+            player = player,
+            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_CREATE_TITLE),
+            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BODY)),
+            inputs = emptyList(),
+            additionalActions = listOf(numberButton, stringButton),
+        ) { null }
+    }
+
+    /** 新規作成の初期値を入力し、定義として保存します。 */
+    private fun showWorldVariableInitialValueDialog(player: Player, name: String, type: VariableType) {
+        val worldId = resolveVariableWorldId() ?: return
+        val spec = when (type) {
+            VariableType.NUMBER -> CommandDialogSpecs.Spec(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+                32,
+                validate = { raw ->
+                    if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                    } else null
+                },
+                required = true,
+                format = CommandDialogSpecs.InputFormat.NUMBER,
+            )
+            VariableType.STRING -> CommandDialogSpecs.Spec(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+                256,
+                validate = { raw ->
+                    if (VariableTemplate.hasMalformedReference(raw)) {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID
+                    } else null
+                },
+                required = false,
+                format = CommandDialogSpecs.InputFormat.ANY_STRING,
+            )
+        }
+        val initial = if (type == VariableType.NUMBER) "0.0" else ""
+        showInputDialog(
+            player = player,
+            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
+            body = listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_BODY)),
+            inputs = listOf(CommandDialogSpecs.input(player, "value", initial, spec)),
+        ) { response ->
+            val raw = response.textValue("value")
+            val validationError = spec.validateInput(raw)
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val value = when (type) {
+                VariableType.NUMBER -> WorldVariableValue(
+                    VariableType.NUMBER,
+                    numberValue = CommandValueRules.parseFiniteDouble(raw),
+                ).takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_INVALID,
+                )
+                VariableType.STRING -> WorldVariableValue(VariableType.STRING, stringValue = raw)
+            }
+            val defined = runCatching { plugin.variables.define(worldId, name, value) }
+                .getOrElse { failure ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "ワールド内変数を定義できませんでした: world=$worldId name=$name",
+                        failure,
+                    )
+                    return@showInputDialog KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                    )
+                }
+            if (!defined) {
+                return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            }
+            updateLower(player)
+            null
+        }
+    }
+
+    /** 変数定義と現在値を削除します。確認画面で確定した場合だけ実行します。 */
+    private fun showWorldVariableDeleteDialog(player: Player, name: String) {
+        val worldId = resolveVariableWorldId() ?: return
+        showInputDialog(
+            player = player,
+            title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_TITLE),
+            body = listOf(KcI18n.component(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_BODY,
+                mapOf("name" to name),
+            )),
+            inputs = emptyList(),
+        ) {
+            val removed = runCatching { plugin.variables.remove(worldId, name) }
+                .getOrElse { failure ->
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "ワールド内変数を削除できませんでした: world=$worldId name=$name",
+                        failure,
+                    )
+                    false
+                }
+            if (!removed) {
+                return@showInputDialog KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            }
+            updateLower(player)
+            null
+        }
+    }
+
     /** DISPLAY_TEXTの3つの時間設定を、インベントリGUIと同じ仕様で編集します。 */
     private fun showDisplayTimingSettingDialog(
         player: Player,
@@ -2917,6 +3223,25 @@ class GestureSequenceEditor(
             }
             context.elementId == "lower-script-timer" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 showTimerSettingDialog(player)
+            }
+            context.elementId == "lower-script-variables" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                openWorldVariables(player)
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLES &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeWorldVariables(player)
+            }
+            context.elementId.startsWith("lower-variables-page:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.variablePage = context.elementId.removePrefix("lower-variables-page:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-variable:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-variable:").trim()
+                if (name.isEmpty()) return
+                showWorldVariableValueDialog(player, name)
+            }
+            context.elementId == "lower-variables-create" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                showWorldVariableCreateDialog(player)
             }
             context.elementId.startsWith("lower-tab:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return

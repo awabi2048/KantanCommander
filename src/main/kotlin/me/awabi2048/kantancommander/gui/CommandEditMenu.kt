@@ -37,6 +37,7 @@ import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
@@ -350,7 +351,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (field == "item" && (node.type == CommandType.GIVE_ITEM ||
-                                (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip"))) {
+                                (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+                                node.type == CommandType.TEMP_SET)) {
                             // 付与アイテムはインベントリ内の実物をクリックして選択する
                             // 旧方式へ戻します（インベントリGUIの標準選択導線）。
                             val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -479,10 +481,23 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
+                        if (field == "name" && node.type == CommandType.TEMP_SET) {
+                            showVariableNameDialog(context.player, context.route, node.string("name"))
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        if (field == "tempType" && node.type == CommandType.TEMP_SET) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, TEMP_TYPE_ID))
+                            )
+                        }
+                        if (field == "block" && node.type == CommandType.TEMP_SET) {
+                            return@MenuActionHandler setHeldBlock(context)
+                        }
                         if (field in setOf(
                                 "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
                                  "entity", "tags", "tag", "sound",
-                                "soundParameters", "effect", "level", "intensity",
+                                "soundParameters", "effect", "level", "intensity", "volume", "pitch",
+                                "x", "y", "z", "entityId", "item",
                             )) {
                             showFieldDialog(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
@@ -798,6 +813,27 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         runtime.register(
             InventoryMenuDefinition(
                 SequenceEditorMenu.OWNER,
+                TEMP_TYPE_ID,
+                renderer = { renderTemporaryTypes(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val type = context.payload["tempType"]
+                            ?.let { runCatching { TemporaryVariableType.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "tempType", type.name)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
                 TIMER_ID,
                 renderer = { renderTimer(it.player, it.route) },
                 actions = mapOf(
@@ -1001,7 +1037,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }.toMutableList()
         // 6行レイアウトに合わせ、選択肢があるべき場所が空欄になっている箇所は白の板ガラスで埋めます。
         run {
-            val allKeys = EditorMenuLayout.fields(node.type).map(EditorField::key)
+            val allKeys = EditorMenuLayout.fields(node.type, node).map(EditorField::key)
             val allSlots = runCatching { CommandSettingsSlotPolicy.slots(node.type, allKeys) }.getOrDefault(emptyList())
             val hiddenSlots = allSlots.filter { it !in slots }
             hiddenSlots.forEach { slot ->
@@ -1300,6 +1336,30 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_VARIABLE_TYPE_TITLE)), elements)
     }
 
+    /**
+     * 「一時変数を設定」の型選択です。8型を一覧し、保存は tempType へ行います。
+     * 表示キーは既存の流用に留め、新規キーを増やしません。
+     */
+    private fun renderTemporaryTypes(player: Player): InventoryMenuView {
+        val options = listOf(
+            Triple(TemporaryVariableType.NUMBER, Material.COMPARATOR, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER)),
+            Triple(TemporaryVariableType.STRING, Material.WRITABLE_BOOK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT)),
+            Triple(TemporaryVariableType.POSITION, Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES)),
+            Triple(TemporaryVariableType.ITEM, Material.CHEST, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM)),
+            Triple(TemporaryVariableType.BLOCK, Material.BRICKS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK)),
+            Triple(TemporaryVariableType.ENTITY, Material.ARMOR_STAND, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY)),
+            Triple(TemporaryVariableType.SOUND, Material.NOTE_BLOCK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND)),
+            Triple(TemporaryVariableType.EFFECT, Material.POTION, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT)),
+        )
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(player, layout.itemSlots[index], option.second, option.third,
+                "select", mapOf("tempType" to option.first.name))
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_VARIABLE_TYPE_TITLE)), elements)
+    }
+
     private fun renderEquipmentSlots(player: Player): InventoryMenuView {
         val options = listOf(
             Triple("HAND", Material.ARMOR_STAND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND),
@@ -1558,6 +1618,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "intensity" -> "1.0"
             "shakeType" -> "positional"
             "slot" -> "HAND"
+            "x", "y", "z" -> "0.0"
+            "entityId", "item", "block" -> ""
             else -> return
         }
         val spec = CommandDialogSpecs.field(node, field) ?: return
@@ -2164,6 +2226,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val VARIABLE_OPERATION_ID = "variable_operation"
         private const val VARIABLE_CHANGE_MODE_ID = "variable_change_mode"
         private const val VARIABLE_VALUE_ID = "variable_value"
+        private const val TEMP_TYPE_ID = "temp_type"
         private const val ENTITY_EQUIPMENT_SLOT_ID = "entity_equipment_slot"
         private const val DISPLAY_MODE_ID = "display_mode"
         private const val BLOCK_OPERATION_ID = "block_operation"
@@ -2304,7 +2367,7 @@ object EditorMenuLayout {
      * 同じJSONパラメータ名でもコマンドごとに意味が異なる項目は、専用の表示キーを使います。
      * 汎用キーを流用すると、召喚名が変数名として説明されるなど、設定対象と説明文がずれます。
      */
-    fun fields(type: CommandType): List<EditorField> {
+    fun fields(type: CommandType, node: CommandNode? = null): List<EditorField> {
         val fields = when (type) {
         CommandType.TELEPORT -> listOf(
             field(
@@ -2594,11 +2657,7 @@ object EditorMenuLayout {
             ) { displayVariableChangeMode(it.string("changeMode", "ASSIGN")) },
             field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
         )
-        CommandType.TEMP_SET -> listOf(
-            field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG),
-            field("tempType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) { displayVariableType(it.string("tempType")) },
-            field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
-        )
+        CommandType.TEMP_SET -> tempSetFields(node ?: CommandNode(type = CommandType.TEMP_SET))
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
         CommandType.FOR_START -> listOf(
             field(
@@ -2612,6 +2671,63 @@ object EditorMenuLayout {
         }
         return fields
     }
+
+    /**
+     * 「一時変数を設定」の編集項目を、一時型ごとに切り替えます。
+     *
+     * NUMBER・STRING は値欄、POSITION は座標欄、ITEM・BLOCK・SOUND・EFFECT は
+     * 各ID欄＋数値欄、ENTITY はエンティティID欄を出します。型自体は tempType 欄で
+     * 変更し、再設定は上書きとして扱います。
+     */
+    private fun tempSetFields(node: CommandNode): List<EditorField> = buildList {
+        add(field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG))
+        add(field("tempType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) {
+            displayTemporaryType(it.string("tempType"))
+        })
+        when (runCatching { TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name)) }
+            .getOrDefault(TemporaryVariableType.NUMBER)) {
+            TemporaryVariableType.NUMBER, TemporaryVariableType.STRING ->
+                add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
+                    displayVariableValue(it.string("value"))
+                })
+            TemporaryVariableType.POSITION -> {
+                add(tempCoordinateField("x"))
+                add(tempCoordinateField("y"))
+                add(tempCoordinateField("z"))
+            }
+            TemporaryVariableType.ITEM ->
+                add(field("item", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM, Material.CHEST))
+            TemporaryVariableType.BLOCK ->
+                add(field("block", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, Material.BRICKS))
+            TemporaryVariableType.ENTITY ->
+                add(field(
+                    "entityId",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+                    Material.ARMOR_STAND,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
+            TemporaryVariableType.SOUND -> {
+                add(field("sound", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND, Material.NOTE_BLOCK))
+                add(field("volume", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME, Material.COMPARATOR))
+                add(field("pitch", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH, Material.COMPARATOR))
+            }
+            TemporaryVariableType.EFFECT -> {
+                add(field("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT, Material.POTION))
+                add(field("level", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL, Material.COMPARATOR))
+                add(field("seconds", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS, Material.CLOCK))
+            }
+        }
+    }
+
+    /** 一時位置の座標欄です。説明キーは値欄を流用し、新規キーを増やしません。 */
+    private fun tempCoordinateField(axis: String): EditorField = field(
+        axis,
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        Material.COMPARATOR,
+        descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+        actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+    ) { displayLiteral(it.string(axis)) }
 
     private fun field(
         key: String,
@@ -2752,6 +2868,21 @@ private fun displayVariableType(value: String) = runCatching { VariableType.valu
         VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
     })
 } ?: displayUnset()
+
+/** 一時変数の8型を、既存の表示キーで解決します。新規キーは増やしません。 */
+private fun displayTemporaryType(value: String) =
+    runCatching { TemporaryVariableType.valueOf(value) }.getOrNull()?.let {
+        DisplayValue.Localized(when (it) {
+            TemporaryVariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+            TemporaryVariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+            TemporaryVariableType.POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
+            TemporaryVariableType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+            TemporaryVariableType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
+            TemporaryVariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+            TemporaryVariableType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
+            TemporaryVariableType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
+        })
+    } ?: displayUnset()
 
 private fun displayVariableOperation(value: String) = runCatching { VariableOperation.valueOf(value) }.getOrNull()?.let {
     DisplayValue.Localized(when (it) {
