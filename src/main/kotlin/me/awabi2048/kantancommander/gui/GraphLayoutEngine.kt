@@ -19,7 +19,8 @@ data class InsertionTarget(
     val weak: Boolean = false,
     /**
      * 未合流の入れ子条件を閉じた後に戻る、外側構造の継続先です。
-     * 明示的にMERGEを追加する場合だけ、内側MERGEの次へこの継続先を接続します。
+     * ループ外では明示的にMERGEを追加する場合だけ内側MERGEの次へ接続し、
+     * for本体内では空枝へ通常ノードを追加する際のFOR_END境界としても使用します。
      */
     val continuationId: UUID? = null,
 ) {
@@ -240,6 +241,7 @@ object GraphLayoutEngine {
                 target.sourceId,
                 target.edge,
                 placeholderType,
+                continuationId = target.continuationId,
             )
         }.getOrNull() ?: return null
         val previewLayout = try {

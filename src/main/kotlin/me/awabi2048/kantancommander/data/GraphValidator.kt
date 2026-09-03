@@ -145,7 +145,14 @@ object GraphValidator {
         }
         graph.nodes.values.forEach { node ->
             val count = incoming[node.id] ?: 0
-            val allowed = if (node.type == CommandType.MERGE) 2 else if (node.id == graph.entryNodeId) 0 else 1
+            // MERGEだけでなくFOR_ENDも、ループ本体から到達する複数の条件枝を
+            // 受ける暗黙の境界です。for本体内の未合流条件は、明示的なMERGEを
+            // 追加しなくても、両枝を同じFOR_ENDへ到達させられます。
+            val allowed = when {
+                node.type == CommandType.MERGE || node.type == CommandType.FOR_END -> Int.MAX_VALUE
+                node.id == graph.entryNodeId -> 0
+                else -> 1
+            }
             if (count > allowed) {
                 errors += "${node.type} ${node.id} に複数の親があります: $count"
             }

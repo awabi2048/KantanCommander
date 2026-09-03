@@ -106,7 +106,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                         )
                                     }
                                 } else {
-                                    GraphEditor.insert(candidateGraph, sourceId, edge, type)
+                                    GraphEditor.insert(
+                                        candidateGraph,
+                                        sourceId,
+                                        edge,
+                                        type,
+                                        continuationId = continuationId,
+                                    )
                                 }
                             }
                         }.getOrElse { failure ->

@@ -215,12 +215,33 @@ class GraphEditorTest {
             inner.id,
             GraphEditor.Edge.FALSE,
             CommandType.WAIT,
+            continuationId = outerMerge.id,
         )
 
         assertEquals(null, inner.pairedNodeId)
         assertEquals(outerMerge.id, inner.trueNext)
         assertEquals(inserted.id, inner.falseNext)
         assertEquals(null, inserted.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `normal insertion into an open condition in a for body joins the for end`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+
+        val inserted = GraphEditor.insert(
+            graph,
+            condition.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.WAIT,
+            continuationId = end.id,
+        )
+
+        assertEquals(inserted.id, condition.falseNext)
+        assertEquals(end.id, inserted.next)
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 

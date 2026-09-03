@@ -885,6 +885,27 @@ class GraphLayoutEngineTest {
     }
 
     @Test
+    fun `for body open condition false add preview keeps the loop body valid`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val target = requireNotNull(layout.cells.values.first {
+            it.kind == MapCellKind.ADD &&
+                it.insertionTarget?.sourceId == condition.id &&
+                it.insertionTarget.edge == GraphEditor.Edge.FALSE
+        }.insertionTarget)
+        val preview = requireNotNull(
+            GraphLayoutEngine.previewInsertion(graph, target, CommandType.TELEPORT),
+        )
+
+        assertEquals(end.id, preview.graph.nodes[preview.insertedNodeId]?.next)
+        assertTrue(GraphValidator.validate(preview.graph).isEmpty())
+    }
+
+    @Test
     fun `for end column skips an open branch add point used by the loop return`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)

@@ -3628,6 +3628,7 @@ class GestureSequenceEditor(
                                 target.sourceId,
                                 target.edge,
                                 type,
+                                continuationId = target.continuationId,
                             )
                         }
                     }

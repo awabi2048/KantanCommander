@@ -147,17 +147,24 @@ object GraphEditor {
      * 既存エッジの直後へ通常ノードを挿入します。
      *
      * 条件枝の終端は後続へ再合流する場合と、その枝でプログラムを正常終了する場合を
-     * 区別します。通常ノードの追加は既存エッジの終端をそのまま引き継ぐため、
-     * `null` 終端の枝へ追加しても早期終了の意味を変えません。
+     * 区別します。通常は既存エッジの終端をそのまま引き継ぐため、`null` 終端の枝へ
+     * 追加しても、ループ外では早期終了の意味を変えません。
+     *
+     * ただし、GUIの挿入候補がfor本体内の未合流条件に持つFOR_END継続先は例外です。
+     * for本体は途中終了を許さないため、空枝へ追加したノードを対応FOR_ENDへ接続し、
+     * ループ境界を暗黙の合流として扱います。継続先は表示座標から推測せず、候補が
+     * 生成された構造データの一部として受け取ります。
      */
     fun insert(
         graph: CommandGraph,
         sourceId: UUID?,
         edge: Edge,
         type: CommandType,
+        continuationId: UUID? = null,
     ): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) { "$type はこの経路へ挿入できません" }
-        val target = edgeTarget(graph, sourceId, edge)
+        val edgeTarget = edgeTarget(graph, sourceId, edge)
+        val target = edgeTarget ?: forBoundaryContinuation(graph, sourceId, edge, continuationId)
         val inserted = createBundle(graph, type)
         setEdge(graph, sourceId, edge, inserted.id)
         if (inserted.type == CommandType.CONDITION) {
@@ -206,7 +213,10 @@ object GraphEditor {
         val condition = graph.nodes[conditionId]
             ?.takeIf { it.type == CommandType.CONDITION }
             ?: error("対象の条件分岐が存在しません")
-        val stop = condition.pairedNodeId
+        // 未合流条件がfor本体内にある場合、対応MERGEの代わりにFOR_ENDが枝の
+        // 構造上の停止点です。ここを停止点として扱わないと、2個目以降のfalse枝
+        // 追加時にfor終了後の経路まで枝内へたどってしまいます。
+        val stop = condition.pairedNodeId ?: enclosingForEnd(graph, condition.id)
         val start = condition.falseNext
         if (start == null || start == stop) {
             condition.falseNext = inserted.id
@@ -260,6 +270,27 @@ object GraphEditor {
             inserted.pairedNodeId?.let(graph.nodes::get) ?: inserted
         } else inserted
         if (target != null) tail.next = target
+    }
+
+    /**
+     * for本体内の空枝へ追加した通常ノードの暗黙の継続先を解決します。
+     *
+     * 外側条件のMERGEなど、ループ外でも描画上必要になるcontinuationIdは通常ノード
+     * の早期終了規則を変えてはいけません。そのためFOR_ENDだけを対象にし、さらに
+     * 選択元のエッジが実際にfor本体内にあることを確認してから採用します。
+     */
+    private fun forBoundaryContinuation(
+        graph: CommandGraph,
+        sourceId: UUID?,
+        edge: Edge,
+        continuationId: UUID?,
+    ): UUID? {
+        val continuation = continuationId?.let(graph.nodes::get) ?: return null
+        if (continuation.type != CommandType.FOR_END) return null
+        require(isInsideFor(graph, sourceId, edge)) {
+            "for本体外の挿入元へFOR_END継続先を指定できません"
+        }
+        return continuation.id
     }
 
     private fun connect(source: CommandNode, target: UUID, preferTrue: Boolean) {
@@ -389,6 +420,22 @@ object GraphEditor {
             return graph.nodes[id]?.outgoingIds()?.any(::visit) == true
         }
         return visit(start)
+    }
+
+    /** 指定ノードを含む最も内側のforの終了ノードを返します。 */
+    private fun enclosingForEnd(graph: CommandGraph, nodeId: UUID): UUID? {
+        val candidates = graph.nodes.values.filter { start ->
+            start.type == CommandType.FOR_START &&
+                start.pairedNodeId != null &&
+                containsNodeBefore(graph, start.trueNext, start.pairedNodeId, nodeId)
+        }
+        val innermost = candidates.firstOrNull { candidate ->
+            candidates.none { other ->
+                other.id != candidate.id &&
+                    containsNodeBefore(graph, candidate.trueNext, candidate.pairedNodeId, other.id)
+            }
+        }
+        return innermost?.pairedNodeId
     }
 
     private fun containsUnmergedCondition(
