@@ -683,7 +683,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /**
      * 一時変数を設定します。再設定は上書きとして扱います。
      *
-     * NUMBER・STRING はリテラル値を受け付け、`%name%` 参照の展開に対応します。
+     * NUMBER・STRING はリテラル値を受け付け、`%{name}%` 参照の展開に対応します。
      * 非リテラル6型はGUIの参照欄経由で解決済み値を保持する想定であり、
      * ここでは型ごとの最小検証のうえ保存します。
      */
@@ -998,7 +998,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun resolveText(raw: String, session: ExecutionSession): String? {
-        // 一時変数 `%name%` を先に展開し、残った `${name}` をワールド内変数として展開します。
+        // 一時変数 `%{name}%` を先に展開し、残った `${name}` をワールド内変数として展開します。
         val tempExpanded = if (TemporaryTemplate.references(raw).isEmpty() && !raw.contains('%')) {
             raw
         } else {

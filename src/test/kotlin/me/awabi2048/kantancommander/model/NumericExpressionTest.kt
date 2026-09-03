@@ -35,9 +35,28 @@ class NumericExpressionTest {
         assertFalse(NumericExpression.isValid("\$unknown"))
         assertTrue(NumericExpression.isValid("\${unknown}"))
         assertTrue(NumericExpression.isValid("\${CURRENT_LOOP_COUNT}"))
+        assertTrue(NumericExpression.isValid("%{temporary}% + 1"))
+        assertFalse(NumericExpression.isValid("%temporary% + 1"))
         assertFalse(NumericExpression.isValid("1 +"))
         assertFalse(NumericExpression.isValid("(1 + 2"))
         assertTrue(NumericExpression.isValid("\${my-var} - 1"))
+    }
+
+    @Test
+    fun `parser separates temporary references from world references`() {
+        val expression = requireNotNull(
+            NumericExpression.parse("%{temporary}% + \${world}").expression,
+        )
+
+        assertEquals(setOf("world"), expression.references)
+        assertEquals(setOf("temporary"), expression.temporaryReferences)
+        assertEquals(
+            7.0,
+            expression.evaluate(
+                worldResolve = { if (it == "world") 2.0 else null },
+                tempResolve = { if (it == "temporary") 5.0 else null },
+            ),
+        )
     }
 
     @Test

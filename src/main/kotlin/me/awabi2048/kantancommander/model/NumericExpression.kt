@@ -6,7 +6,7 @@ package me.awabi2048.kantancommander.model
  * GUI・実行・バニラ出力がそれぞれ独自にsplitや優先順位処理を持つと、同じ式が
  * 保存時と実行時で別の値になるため、字句解析と構文解析をモデル層へ集約します。
  * 許可する構文は数値リテラル、`${variable_name}` 形式のワールド内変数参照、
- * `%variable_name%` 形式の一時変数参照、四則演算、括弧です。
+ * `%{variable_name}%` 形式の一時変数参照、四則演算、括弧です。
  * システム変数は `${CURRENT_LOOP_COUNT}` のように大文字で記述します。
  */
 object NumericExpression {
@@ -79,7 +79,7 @@ object NumericExpression {
 
     fun referencedNames(raw: String): Set<String> = parse(raw).expression?.references.orEmpty()
 
-    /** 一時変数 `%name%` の参照名だけを返します。 */
+    /** 一時変数 `%{name}%` の参照名だけを返します。 */
     fun referencedTemporaryNames(raw: String): Set<String> =
         parse(raw).expression?.temporaryReferences.orEmpty()
 
@@ -288,7 +288,7 @@ object NumericExpression {
                             } else {
                                 val end = requireNotNull(tempEnd)
                                 val raw = source.substring(index, end)
-                                val name = raw.removePrefix("%").removeSuffix("%")
+                                val name = raw.removePrefix("%{").removeSuffix("}%")
                                 if (!SystemVariableNames.isReferenceName(name)) {
                                     parseFailure(ErrorCode.INVALID_VARIABLE_NAME, name)
                                 }
@@ -320,15 +320,16 @@ object NumericExpression {
     }
 
     /**
-     * 一時変数 `%name%` の終端位置を返します。
+     * 一時変数 `%{name}%` の終端位置を返します。
      *
      * `%` 演算子は式言語に存在しないため、`%` 開始は常に参照として扱います。
      * 閉じ `%` がなければ変数名不正として失敗させます。
      */
     private fun scanTemporaryName(source: String, start: Int): Int? {
         if (source[start] != '%') return null
-        val close = source.indexOf('%', start + 1)
+        if (source.getOrNull(start + 1) != '{') return null
+        val close = source.indexOf("}%", start + 2)
         if (close == -1) parseFailure(ErrorCode.INVALID_VARIABLE_NAME, source.substring(start))
-        return close + 1
+        return close + 2
     }
 }

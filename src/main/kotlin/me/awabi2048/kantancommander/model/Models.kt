@@ -302,7 +302,7 @@ data class WorldVariableValue(
 /**
  * 一時変数（実行内寿命）の型です。context型は作りません。
  *
- * リテラル利用できるのは NUMBER・STRING のみで `%name%` 記法を使います。
+ * リテラル利用できるのは NUMBER・STRING のみで `%{name}%` 記法を使います。
  * 非リテラル6型（POSITION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）はGUIの
  * 「一時変数を参照」欄からのみ指定し、リテラル記述はエラーとします。
  */

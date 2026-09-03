@@ -253,7 +253,7 @@ object ExecutableScriptValidator {
                 }
                 val tag = node.string("tag")
                 // カンマを特別扱いせず、単一タグの通常の形式検証へ委ねます。
-                // 一時変数 `%name%` の参照も文字列欄として許可します。
+                // 一時変数 `%{name}%` の参照も文字列欄として許可します。
                 if (TemporaryTemplate.hasMalformedReference(tag) ||
                     VariableTemplate.hasMalformedReference(tag) ||
                     (VariableTemplate.references(tag).isEmpty() && TemporaryTemplate.references(tag).isEmpty() &&
@@ -672,7 +672,7 @@ object ExecutableScriptValidator {
      * 非リテラル一時変数参照欄の一貫性を検証します。
      *
      * 参照指定時は対応するリテラル値の併記を拒否し、参照先の存在と型を確認します。
-     * リテラル欄へ `%name%` 以外の一時記法が混入した場合もここで検出します。
+     * リテラル欄へ `%{name}%` 以外の一時記法が混入した場合もここで検出します。
      */
     private fun validateTemporaryReferences(
         node: CommandNode,
