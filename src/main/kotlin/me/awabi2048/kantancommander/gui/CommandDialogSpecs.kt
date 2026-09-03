@@ -522,9 +522,9 @@ internal object CommandDialogSpecs {
         }
         if (node.type == CommandType.TEMP_SET) {
             if (fieldKey == "name") return variableName
-            val tempType = runCatching {
-                TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
-            }.getOrDefault(TemporaryVariableType.NUMBER)
+            val tempType = TemporaryVariableType.parse(
+                node.string("tempType", TemporaryVariableType.NUMBER.name),
+            ) ?: TemporaryVariableType.NUMBER
             when (fieldKey) {
                 "value" -> return when (tempType) {
                     TemporaryVariableType.NUMBER -> tempNumberValue

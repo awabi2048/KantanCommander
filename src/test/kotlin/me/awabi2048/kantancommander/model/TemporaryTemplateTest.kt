@@ -8,6 +8,13 @@ import org.junit.jupiter.api.Test
 
 class TemporaryTemplateTest {
     @Test
+    fun `legacy POSITION names are normalized to LOCATION`() {
+        assertEquals(TemporaryVariableType.LOCATION, TemporaryVariableType.parse("POSITION"))
+        assertEquals(TemporaryVariableType.LOCATION, TemporaryVariableType.parse(" position "))
+        assertNull(TemporaryVariableType.parse("unknown"))
+    }
+
+    @Test
     fun `new reference syntax is extracted and interpolated`() {
         val raw = "value=%{Player_Name}%"
 

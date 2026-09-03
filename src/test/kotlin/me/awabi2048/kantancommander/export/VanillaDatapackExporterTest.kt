@@ -8,6 +8,8 @@ import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
@@ -375,11 +377,19 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "point",
-                    "tempType" to TemporaryVariableType.POSITION.name,
-                    "x" to "1",
-                    "y" to "2",
-                    "z" to "3",
+                    "tempType" to TemporaryVariableType.LOCATION.name,
                 ),
+            )
+            temporaryLocationPositionSpec = PositionSpec(
+                PositionKind.COORDINATES,
+                x = 1.0,
+                y = 2.0,
+                z = 3.0,
+            )
+            temporaryLocationFacingSpec = FacingSpec(
+                FacingKind.ROTATION,
+                yaw = 0f,
+                pitch = 0f,
             )
         }
         GraphEditor.append(script.graph, CommandType.TELEPORT).apply {
@@ -410,6 +420,87 @@ class VanillaDatapackExporterTest {
         assertTrue(body.contains("$(m_"), "typed item/position references should use function macros")
         assertTrue(body.contains("set from storage kantan:variables variables.temporary"))
         assertFalse(body.contains("temporary teleport destination is unsupported"))
+    }
+
+    @Test
+    fun `temporary scalar and compound values resolve temporary references in their definition`() {
+        val store = ScriptStore(temp.resolve("temporary-definition-references"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "temporary-definition-references")
+
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(mapOf("name" to "amount", "tempType" to TemporaryVariableType.NUMBER.name, "value" to "2.5"))
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(mapOf("name" to "copied", "tempType" to TemporaryVariableType.NUMBER.name, "value" to "%{amount}%"))
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(mapOf("name" to "label", "tempType" to TemporaryVariableType.STRING.name, "value" to "prefix-%{copied}%"))
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "sound",
+                    "tempType" to TemporaryVariableType.SOUND.name,
+                    "sound" to "minecraft:block.note_block.harp",
+                    "volume" to "%{amount}%",
+                    "pitch" to "1.0",
+                ),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "effect",
+                    "tempType" to TemporaryVariableType.EFFECT.name,
+                    "effect" to "minecraft:speed",
+                    "level" to "%{copied}%",
+                    "seconds" to "30",
+                ),
+            )
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+
+        assertTrue(body.contains("set from storage kantan:variables variables.temporary"))
+        assertTrue(body.contains("function kantan:") && body.contains("temporary_macro"))
+        assertFalse(body.contains("%{amount}%"), "temporary references must be lowered before output")
+    }
+
+    @Test
+    fun `temporary LOCATION uses shared position and facing specs for dynamic sources`() {
+        val store = ScriptStore(temp.resolve("temporary-location-dynamic"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "temporary-location-dynamic")
+
+        fun location(name: String, x: Double, y: Double, z: Double) {
+            GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+                params.putAll(mapOf("name" to name, "tempType" to TemporaryVariableType.LOCATION.name))
+                temporaryLocationPositionSpec = PositionSpec(PositionKind.COORDINATES, x = x, y = y, z = z)
+                temporaryLocationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = 0f, pitch = 0f)
+            }
+        }
+
+        location("origin", 1.0, 2.0, 3.0)
+        location("target", 5.0, 2.0, 3.0)
+        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params["name"] = "aimed"
+            params["tempType"] = TemporaryVariableType.LOCATION.name
+            temporaryLocationPositionSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "origin")
+            temporaryLocationFacingSpec = FacingSpec(FacingKind.TEMPORARY, tempName = "target")
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+
+        assertTrue(body.contains("execute positioned ${'$'}(m_"), "dynamic LOCATION must use a macro function")
+        assertTrue(body.contains("facing ${'$'}(m_"), "temporary facing must be resolved from LOCATION coordinates")
+        assertFalse(body.contains("@{temp."), "internal marker syntax must not leak into the datapack")
     }
 
     @Test

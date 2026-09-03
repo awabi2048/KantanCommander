@@ -28,6 +28,7 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.effectiveContextSource
@@ -475,9 +476,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ?.takeIf { it.type == TemporaryVariableType.SOUND }
                 val sound = refTemp?.sound ?: node.string("sound")
                 if (NamespacedKey.fromString(sound) == null) return false
-                val volume = (refTemp?.volume ?: resolveNumber(node.string("volume", "1.0"), session)?.toDouble())
+                val volume = (refTemp?.volume ?: resolveNumber(node.string("volume", "1.0"), session))
                     ?.toFloat() ?: return false
-                val pitch = (refTemp?.pitch ?: resolveNumber(node.string("pitch", "1.0"), session)?.toDouble())
+                val pitch = (refTemp?.pitch ?: resolveNumber(node.string("pitch", "1.0"), session))
                     ?.toFloat() ?: return false
                 if (node.string("soundScope", "CONTEXT") == "WORLD") {
                     // 全域指定は各プレイヤー位置を音源位置にするため、現行の
@@ -710,15 +711,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 一時変数を設定します。再設定は上書きとして扱います。
      *
      * NUMBER・STRING はリテラル値を受け付け、`%{name}%` 参照の展開に対応します。
-     * 複合6型は型ごとの入力欄で解決済み値を保持する想定であり、
+     * 複合6型は型ごとの共通設定で解決済み値を保持する想定であり、
      * ここでは型ごとの最小検証のうえ保存します。
      */
     private fun executeTemporary(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
         val name = me.awabi2048.kantancommander.model.TemporaryTemplate.normalized(node.string("name"))
         require(CommandValueRules.isVariableName(name)) { "invalid temporary name" }
-        val type = runCatching {
-            TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
-        }.getOrNull() ?: return false
+        val type = TemporaryVariableType.parse(
+            node.string("tempType", TemporaryVariableType.NUMBER.name),
+        ) ?: return false
         val value = when (type) {
             TemporaryVariableType.NUMBER -> TemporaryValue(
                 type,
@@ -728,17 +729,35 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 type,
                 stringValue = resolveText(node.string("value"), session) ?: error("string is unavailable"),
             )
-            TemporaryVariableType.POSITION -> {
-                val x = resolveNumber(node.string("x"), session) ?: error("invalid x")
-                val y = resolveNumber(node.string("y"), session) ?: error("invalid y")
-                val z = resolveNumber(node.string("z"), session) ?: error("invalid z")
-                val yaw = node.string("yaw").takeIf(String::isNotBlank)
-                    ?.let { resolveNumber(it, session)?.toFloat() } ?: 0f
-                val pitch = node.string("pitch").takeIf(String::isNotBlank)
-                    ?.let { resolveNumber(it, session)?.toFloat() } ?: 0f
+            TemporaryVariableType.LOCATION -> {
+                // 新形式は通常コマンドと同じPositionSpec/FacingSpecから解決します。
+                // 旧POSITIONのx/y/z形式は読み込み済みデータを壊さないため、この実行境界
+                // だけでLOCATIONへ組み立て直します。以後の参照は常に一つのSavedLocationです。
+                val positionSpec = node.temporaryLocationPositionSpec ?: PositionSpec(
+                    PositionKind.COORDINATES,
+                    x = resolveNumber(node.string("x"), session) ?: error("invalid x"),
+                    y = resolveNumber(node.string("y"), session) ?: error("invalid y"),
+                    z = resolveNumber(node.string("z"), session) ?: error("invalid z"),
+                )
+                val facingSpec = node.temporaryLocationFacingSpec ?: FacingSpec(
+                    FacingKind.CAPTURED,
+                    yaw = node.string("yaw").takeIf(String::isNotBlank)
+                        ?.let { resolveNumber(it, session)?.toFloat() } ?: 0f,
+                    pitch = node.string("pitch").takeIf(String::isNotBlank)
+                        ?.let { resolveNumber(it, session)?.toFloat() } ?: 0f,
+                )
+                val location = resolvePosition(positionSpec, session, session.context)
+                    ?: error("location is unavailable")
+                applyFacing(location, facingSpec, session.context, session)
                 TemporaryValue(
                     type,
-                    position = me.awabi2048.kantancommander.model.SavedPosition(x, y, z, yaw, pitch),
+                    location = me.awabi2048.kantancommander.model.SavedLocation(
+                        location.x,
+                        location.y,
+                        location.z,
+                        location.yaw,
+                        location.pitch,
+                    ),
                 )
             }
             TemporaryVariableType.ITEM -> {
@@ -752,12 +771,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 TemporaryValue(type, block = material.name)
             }
             TemporaryVariableType.ENTITY -> {
-                val entityId = node.string("entityId").takeIf(String::isNotBlank)
-                    ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
-                // UUIDの構文が正しければ、定義時点で実体が見つからなくても
-                // 一時値そのものは保存します。死亡・別ワールド・未ロードは
-                // 参照時の「対象なし」と同じ契約で扱い、後続ノードだけを
-                // スキップできるようにします。
+                val targetSpec = node.temporaryEntityTargetSpec
+                val entityId = if (targetSpec != null) {
+                    resolveTargetSpec(targetSpec, session, session.context)?.uniqueId
+                } else {
+                    node.string("entityId").takeIf(String::isNotBlank)
+                        ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+                }
+                // 定義時点で実体が見つからなくても一時値そのものは保存します。
+                // 死亡・別ワールド・未ロードは参照時の「対象なし」と同じ契約で扱い、
+                // 後続ノードだけをスキップできるようにします。
                 TemporaryValue(type, entityId = entityId)
             }
             TemporaryVariableType.SOUND -> {
@@ -935,8 +958,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (search != null) {
             search.positionTemp?.takeIf(String::isNotBlank)?.let { name ->
                 val temp = session.temporaries[TemporaryTemplate.normalized(name)]
-                    ?.takeIf { it.type == TemporaryVariableType.POSITION }
-                    ?.position ?: return null
+                    ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                    ?.location ?: return null
                 return Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
             }
             search.position?.let { return resolvePosition(it, session, context) }
@@ -973,8 +996,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         PositionKind.TEMPORARY -> {
             val temp = spec.tempName
                 ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                ?.takeIf { it.type == TemporaryVariableType.POSITION }
-                ?.position ?: return null
+                    ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                    ?.location ?: return null
             Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
         }
         PositionKind.EXECUTOR -> context?.executor?.let { resolveTargetSpec(it, session, context) }?.location
@@ -1019,8 +1042,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             FacingKind.TEMPORARY -> {
                 val temp = facing.tempName
                     ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.POSITION }
-                    ?.position ?: return
+                    ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                    ?.location ?: return
                 faceLocation(destination, Location(destination.world, temp.x, temp.y, temp.z))
             }
             FacingKind.MYWORLD_SPAWN -> faceLocation(destination, session.origin.world.spawnLocation)
@@ -1114,7 +1137,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             val value = name?.takeIf(String::isNotBlank)
                 ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
                 ?: return false
-            return value.type == TemporaryVariableType.POSITION && value.position != null
+            return value.type == TemporaryVariableType.LOCATION && value.location != null
         }
 
         fun targetUnavailable(spec: TargetSpec?): Boolean =

@@ -158,11 +158,11 @@ class EditorMenuLayoutTest {
         val expectedKeys = mapOf(
             TemporaryVariableType.NUMBER to setOf("name", "tempType", "value"),
             TemporaryVariableType.STRING to setOf("name", "tempType", "value"),
-            TemporaryVariableType.POSITION to setOf("name", "tempType", "x", "y", "z"),
+            TemporaryVariableType.LOCATION to setOf("name", "tempType", "location"),
             TemporaryVariableType.ITEM to setOf("name", "tempType", "item"),
             TemporaryVariableType.BLOCK to setOf("name", "tempType", "block"),
-            TemporaryVariableType.ENTITY to setOf("name", "tempType", "entityId"),
-            TemporaryVariableType.SOUND to setOf("name", "tempType", "sound", "volume", "pitch"),
+            TemporaryVariableType.ENTITY to setOf("name", "tempType", "entity"),
+            TemporaryVariableType.SOUND to setOf("name", "tempType", "sound", "soundParameters"),
             TemporaryVariableType.EFFECT to setOf("name", "tempType", "effect", "level", "seconds"),
         )
 

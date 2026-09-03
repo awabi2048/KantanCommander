@@ -165,6 +165,7 @@ enum class GestureSettingScreen {
     TARGET_FILTERS,
     POSITION,
     FACING,
+    LOCATION,
     CONDITION_KIND,
     CONDITION_DETAIL,
     DISPLAY_MODE,
@@ -1373,7 +1374,8 @@ class GestureSequenceEditor(
         if (fieldKey == "block" && (
                 node.type == CommandType.BLOCK_OPERATION ||
                     (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
-                    (node.type == CommandType.TEMP_SET && node.string("tempType", "NUMBER") == "BLOCK")
+                    (node.type == CommandType.TEMP_SET &&
+                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
                 )) {
             applyHeldBlock(player, context)
             return
@@ -1388,7 +1390,11 @@ class GestureSequenceEditor(
             showDisplayTimingSettingDialog(player, context, node)
             return
         }
-        if (fieldKey == "soundParameters" && node.type == CommandType.PLAY_SOUND) {
+        if (fieldKey == "soundParameters" && (
+                node.type == CommandType.PLAY_SOUND ||
+                    (node.type == CommandType.TEMP_SET &&
+                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.SOUND)
+                )) {
             showSoundParametersSettingDialog(player, context, node)
             return
         }
@@ -2802,6 +2808,32 @@ class GestureSequenceEditor(
                     }
                 }
             }
+            GestureSettingScreen.LOCATION -> {
+                if (group != "location") return
+                val child = when (value) {
+                    "position" -> GestureSettingScreen.POSITION
+                    "facing" -> GestureSettingScreen.FACING
+                    else -> return
+                }
+                val role = when (value) {
+                    "position" -> CommandSettingRole.TEMPORARY_LOCATION_POSITION
+                    "facing" -> CommandSettingRole.TEMPORARY_LOCATION_FACING
+                    else -> return
+                }
+                // LOCATIONの各項目は既存の位置／向き編集木をそのまま子画面として
+                // 開きます。x/y/zを新しい専用入力へ再実装せず、通常コマンドと同じ
+                // 参照元・座標・回転の選択契約を共有するのがこの画面の責務です。
+                rememberSettingNode(encoded)
+                pushSettingFrame(
+                    player,
+                    GestureSettingFrame(
+                        settingContext.copy(role = role),
+                        fieldKey,
+                        child,
+                    ),
+                    encoded,
+                )
+            }
             GestureSettingScreen.POSITION -> {
                 // 移動先の「他のエンティティ」はPOSITION画面の右下へインライン表示した
                 // 対象分類です。対象設定画面へ遷移せず、ここでも同じ保存・二段階選択を使います。
@@ -3095,9 +3127,9 @@ class GestureSequenceEditor(
             GestureSettingScreen.VARIABLE_TYPE -> {
                 if (group != "type") return
                 if (node.type == CommandType.TEMP_SET) {
-                    val type = runCatching { TemporaryVariableType.valueOf(value) }.getOrNull() ?: return
+                    val type = TemporaryVariableType.parse(value) ?: return
                     if (updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setParameter(it, "tempType", type.name)
+                            CommandSettingsModel.changeTemporaryType(it, type)
                         }) showSettingScreen()
                 } else {
                     val type = runCatching { VariableType.valueOf(value) }.getOrNull() ?: return

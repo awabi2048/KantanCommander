@@ -152,10 +152,10 @@ class CommandSettingsModelTest {
         val node = CommandType.TEMP_SET.newNode()
 
         assertEquals(listOf("name", "tempType", "value"), CommandSettingsModel.visibleFields(node).map { it.key })
-        node.params["tempType"] = TemporaryVariableType.POSITION.name
-        assertEquals(listOf("name", "tempType", "x", "y", "z"), CommandSettingsModel.visibleFields(node).map { it.key })
+        node.params["tempType"] = TemporaryVariableType.LOCATION.name
+        assertEquals(listOf("name", "tempType", "location"), CommandSettingsModel.visibleFields(node).map { it.key })
         node.params["tempType"] = TemporaryVariableType.SOUND.name
-        assertEquals(listOf("name", "tempType", "sound", "volume", "pitch"), CommandSettingsModel.visibleFields(node).map { it.key })
+        assertEquals(listOf("name", "tempType", "sound", "soundParameters"), CommandSettingsModel.visibleFields(node).map { it.key })
     }
 
     @Test

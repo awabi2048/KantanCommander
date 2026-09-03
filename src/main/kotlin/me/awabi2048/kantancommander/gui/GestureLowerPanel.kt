@@ -245,7 +245,9 @@ class GestureLowerPanel(
             (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
         val heldBlockSetting = field.key == "block" && (
             node.type == CommandType.BLOCK_OPERATION ||
-                (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name)
+                (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                (node.type == CommandType.TEMP_SET &&
+                    TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
             )
         val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
         val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting
@@ -1629,6 +1631,39 @@ class GestureLowerPanel(
                 choice.copy(children = targetChoices(node, context.copy(role = CommandSettingRole.DESTINATION), player))
             } else choice
         }
+        GestureSettingScreen.LOCATION -> listOf(
+            GestureSettingTreeNode(
+                id = "location:position",
+                label = labeled(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                    CommandSettingsModel.positionKind(node, CommandSettingRole.TEMPORARY_LOCATION_POSITION)
+                        ?.let { positionKindLabel(player, it) },
+                ),
+                selected = node.temporaryLocationPositionSpec != null,
+                children = positionChoices(
+                    node,
+                    context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION),
+                    player,
+                ),
+            ),
+            GestureSettingTreeNode(
+                id = "location:facing",
+                label = labeled(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING,
+                    CommandSettingsModel.facingSpec(node, CommandSettingRole.TEMPORARY_LOCATION_FACING)
+                        ?.kind
+                        ?.let { facingKindLabel(player, it) },
+                ),
+                selected = node.temporaryLocationFacingSpec != null,
+                children = facingChoices(
+                    node,
+                    context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING),
+                    player,
+                ),
+            ),
+        )
         GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player).map { choice ->
             when (choice.id) {
                 "condition-target" -> choice.copy(
@@ -1698,6 +1733,8 @@ class GestureLowerPanel(
             "context:facing" -> context.copy(role = CommandSettingRole.CONTEXT_FACING)
             "condition-target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
             "condition-position" -> context.copy(role = CommandSettingRole.CONDITION_POSITION)
+            "location:position" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION)
+            "location:facing" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING)
             "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
             else -> context
         }
@@ -1707,6 +1744,8 @@ class GestureLowerPanel(
             parentId == "context:position" -> context.copy(role = CommandSettingRole.CONTEXT_POSITION)
             parentId == "condition-target" -> context.copy(role = CommandSettingRole.NODE_TARGET)
             parentId == "condition-position" -> context.copy(role = CommandSettingRole.CONDITION_POSITION)
+            parentId == "location:position" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION)
+            parentId == "location:facing" -> context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING)
             parentId == "position:${PositionKind.TARGET.name}" -> context.copy(role = CommandSettingRole.DESTINATION)
             else -> childContext
         }
@@ -1809,6 +1848,8 @@ class GestureLowerPanel(
             id.startsWith("facing:") -> choice.selected &&
                 CommandSettingsModel.facingSpec(node, context.role)?.kind?.name == id.removePrefix("facing:") &&
                 CommandSettingsModel.isFieldConfigured(node, "facing", context.role)
+            id == "location:position" -> node.temporaryLocationPositionSpec != null
+            id == "location:facing" -> node.temporaryLocationFacingSpec != null
             id == "condition-target" -> CommandSettingsModel.isFieldConfigured(
                 node,
                 "target",
@@ -2071,6 +2112,9 @@ class GestureLowerPanel(
         GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player)
         GestureSettingScreen.FACING -> facingChoices(node, context, player)
+        // LOCATIONはrawSettingTreeNodesで位置・向きの親木を生成します。
+        // ここは網羅性を保ちつつ、親木を単純な択一候補へ誤変換しないため空にします。
+        GestureSettingScreen.LOCATION -> emptyList()
         GestureSettingScreen.CONDITION_KIND -> conditionKindChoices(node, player)
         GestureSettingScreen.CONDITION_DETAIL -> conditionDetailChoices(node, player)
         GestureSettingScreen.DISPLAY_MODE -> listOf(
@@ -2128,7 +2172,7 @@ class GestureLowerPanel(
                 val label = when (type) {
                     TemporaryVariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
                     TemporaryVariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-                    TemporaryVariableType.POSITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
+                    TemporaryVariableType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
                     TemporaryVariableType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
                     TemporaryVariableType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
                     TemporaryVariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
@@ -2138,7 +2182,7 @@ class GestureLowerPanel(
                 SettingChoice(
                     "type:${type.name}",
                     KcI18n.text(player, label),
-                    node.string("tempType", TemporaryVariableType.NUMBER.name) == type.name,
+                    TemporaryVariableType.parse(node.string("tempType", TemporaryVariableType.NUMBER.name)) == type,
                 )
             }
         } else listOf(

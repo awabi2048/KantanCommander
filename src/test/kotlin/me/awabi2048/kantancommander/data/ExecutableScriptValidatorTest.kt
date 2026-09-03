@@ -178,8 +178,18 @@ class ExecutableScriptValidatorTest {
         val script = DiskScript(name = "temporary-composite-text", owner = UUID.randomUUID())
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "point"
-            params["tempType"] = TemporaryVariableType.POSITION.name
-            params.putAll(mapOf("x" to "1", "y" to "2", "z" to "3"))
+            params["tempType"] = TemporaryVariableType.LOCATION.name
+            temporaryLocationPositionSpec = PositionSpec(
+                PositionKind.COORDINATES,
+                x = 1.0,
+                y = 2.0,
+                z = 3.0,
+            )
+            temporaryLocationFacingSpec = FacingSpec(
+                FacingKind.ROTATION,
+                yaw = 0f,
+                pitch = 0f,
+            )
         }
         val display = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
             targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)

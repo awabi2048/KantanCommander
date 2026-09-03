@@ -164,6 +164,7 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.TARGET -> GestureSettingScreen.TARGET
     CommandSettingEditor.POSITION -> GestureSettingScreen.POSITION
     CommandSettingEditor.FACING -> GestureSettingScreen.FACING
+    CommandSettingEditor.LOCATION -> GestureSettingScreen.LOCATION
     CommandSettingEditor.CONDITION_KIND -> GestureSettingScreen.CONDITION_KIND
     CommandSettingEditor.CONDITION_DETAIL -> GestureSettingScreen.CONDITION_DETAIL
     CommandSettingEditor.DISPLAY_MODE -> GestureSettingScreen.DISPLAY_MODE

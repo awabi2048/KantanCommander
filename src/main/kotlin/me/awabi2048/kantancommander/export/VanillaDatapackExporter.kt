@@ -25,6 +25,7 @@ import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.effectiveContextSource
@@ -212,6 +213,22 @@ class VanillaDatapackExporter(
                 CommandType.WAIT -> {
                     errors += "${script.id}/${node.id}: 待機は実行者と実行位置を保持できないため完全バニラ出力できません"
                 }
+                CommandType.TEMP_SET -> {
+                    when (TemporaryVariableType.parse(node.string("tempType"))) {
+                        TemporaryVariableType.LOCATION -> {
+                            if (node.temporaryLocationPositionSpec?.kind == PositionKind.MYWORLD_SPAWN) {
+                                errors += "${script.id}/${node.id}: 一時LOCATIONのMyWorldスポーン位置は完全バニラ出力に未対応です"
+                            }
+                            if (node.temporaryLocationFacingSpec?.kind == FacingKind.MYWORLD_SPAWN) {
+                                errors += "${script.id}/${node.id}: 一時LOCATIONのMyWorldスポーン向きは完全バニラ出力に未対応です"
+                            }
+                        }
+                        TemporaryVariableType.ENTITY -> if (node.temporaryEntityTargetSpec?.kind == TargetKind.FIXED_ENTITY) {
+                            errors += "${script.id}/${node.id}: 一時ENTITYの固定エンティティ参照は完全バニラ出力できません"
+                        }
+                        else -> Unit
+                    }
+                }
                 else -> Unit
             }
             if (resolveExportContext(script.graph, node).second) {
@@ -225,7 +242,12 @@ class VanillaDatapackExporter(
             }
             validatePosition(script, node, node.conditionPositionSpec, errors)
             validateFacing(script, node, node.destinationFacingSpec, errors)
-            if (listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec)
+            if (listOfNotNull(
+                    node.targetSpec,
+                    node.secondaryTargetSpec,
+                    node.destinationTargetSpec,
+                    node.temporaryEntityTargetSpec,
+                )
                     .any { it.kind == TargetKind.FIXED_ENTITY }
             ) {
                 errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
@@ -492,6 +514,23 @@ class VanillaDatapackExporter(
                         nodeExportContext?.let { wrapContext(it, command, node) } ?: command,
                     )
                 }
+                node.type == CommandType.TEMP_SET -> {
+                    // LOCATIONの現位置捕捉やENTITYの対象選択は複数のvanilla命令へ
+                    // 展開されます。通常コマンドの1命令前提へ押し込むと、先頭命令だけが
+                    // scoreへ記録され、残りが実行されないため、ノード専用関数へまとめます。
+                    val helper = nodeFunction(prefix, node.id, "temporary")
+                    val expansion = temporarySetCommands(node, output, graph)
+                    defineFunction(
+                        output,
+                        helper,
+                        expansion.commands.joinToString("\n", postfix = "\n") + "return 1\n",
+                    )
+                    // 値欄や複合値の数値欄に含まれるテンプレートは、専用関数を
+                    // 呼び出す前にmacro用storageへ展開します。LOCATIONの複数命令も
+                    // 同じ関数境界で実行するため、参照値を途中で取り違えません。
+                    lines += expansion.setup
+                    lines += storeFunctionResult(node, "function kantan:$helper")
+                }
                 else -> lower(node, graph)?.let { command ->
                     val temporaryReferences = temporaryEntityReferences(node, nodeExportContext)
                     temporaryReferences.forEach { reference ->
@@ -667,23 +706,23 @@ class VanillaDatapackExporter(
     private fun temporaryStoragePath(name: String): String =
         VanillaStorageNames.variablePath(TemporaryTemplate.normalized(name), temporary = true)
 
-    /** POSITION値をコマンド引数へ展開するための、exporter内部macro記法です。 */
+    /** LOCATION値をコマンド引数へ展開するための、exporter内部macro記法です。 */
     private fun temporaryPositionCoordinates(name: String): String = listOf("x", "y", "z")
         .joinToString(" ") { axis -> temporaryMarker(name, axis) }
 
     /**
      * 一時変数定義をstorage compoundへ変換します。
      *
-     * Java実行側のTemporaryValueと同じく、POSITION／SOUND／EFFECT等の複合値も
+     * Java実行側のTemporaryValueと同じく、LOCATION／SOUND／EFFECT等の複合値も
      * 1つの名前空間へ保存します。vanilla function macroへ渡す値は後段の
      * prepareMacroTemplateが必要なフィールドだけを抽出します。
      */
     private fun temporarySetCommand(node: CommandNode): String {
         val name = TemporaryTemplate.normalized(node.string("name"))
         val destination = temporaryStoragePath(name)
-        val type = runCatching {
-            TemporaryVariableType.valueOf(node.string("tempType", TemporaryVariableType.NUMBER.name))
-        }.getOrElse { error("unknown temporary variable type") }
+        val type = TemporaryVariableType.parse(
+            node.string("tempType", TemporaryVariableType.NUMBER.name),
+        ) ?: error("unknown temporary variable type")
         fun number(raw: String, fallback: String = "0.0"): String {
             val value = raw.trim().ifBlank { fallback }
             return if (value.endsWith("d", ignoreCase = true)) value else "${value}d"
@@ -698,15 +737,51 @@ class VanillaDatapackExporter(
                 value
             }
         }
+        fun directReference(raw: String): String? {
+            TemporaryTemplate.references(raw).singleOrNull()?.let { reference ->
+                if (TemporaryTemplate.isSingleReference(raw)) {
+                    return "data modify storage kantan:variables $destination set from storage " +
+                        "kantan:variables ${temporaryStoragePath(reference)}"
+                }
+            }
+            VariableTemplate.references(raw).singleOrNull()?.let { reference ->
+                if (VariableTemplate.isSingleReference(raw) && !SystemVariableNames.isSystemName(reference)) {
+                    return "data modify storage kantan:variables $destination set from storage " +
+                        "kantan:variables ${VanillaStorageNames.variablePath(reference, temporary = false)}"
+                }
+            }
+            return null
+        }
         return when (type) {
             TemporaryVariableType.NUMBER ->
-                "data modify storage kantan:variables $destination set value ${number(node.string("value"))}"
+                directReference(node.string("value"))
+                    ?: "data modify storage kantan:variables $destination set value ${number(node.string("value"))}"
             TemporaryVariableType.STRING ->
-                "data modify storage kantan:variables $destination set value \"${escape(node.string("value"))}\""
-            TemporaryVariableType.POSITION ->
-                "data modify storage kantan:variables $destination set value " +
-                    "{x:${number(node.string("x"))},y:${number(node.string("y"))}," +
-                    "z:${number(node.string("z"))},yaw:${number(node.string("yaw"))},pitch:${number(node.string("pitch"))}}"
+                directReference(node.string("value"))
+                    ?: "data modify storage kantan:variables $destination set value \"${escape(node.string("value"))}\""
+            TemporaryVariableType.LOCATION -> {
+                val position = node.temporaryLocationPositionSpec
+                val facing = node.temporaryLocationFacingSpec
+                if (position != null && facing != null) {
+                    require(position.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES)) {
+                        "dynamic temporary LOCATION requires expanded commands"
+                    }
+                    require(facing.kind in setOf(FacingKind.INHERITED, FacingKind.CAPTURED, FacingKind.ROTATION)) {
+                        "dynamic temporary LOCATION facing requires expanded commands"
+                    }
+                    "data modify storage kantan:variables $destination set value " +
+                        "{x:${number(position.x?.toString() ?: error("location x is missing"))}," +
+                        "y:${number(position.y?.toString() ?: error("location y is missing"))}," +
+                        "z:${number(position.z?.toString() ?: error("location z is missing"))}," +
+                        "yaw:${number((facing.yaw ?: position.yaw ?: 0f).toString())}," +
+                        "pitch:${number((facing.pitch ?: position.pitch ?: 0f).toString())}}"
+                } else {
+                    // 旧POSITIONのx/y/z/yaw/pitch形式は読み込み境界でだけ残り得ます。
+                    "data modify storage kantan:variables $destination set value " +
+                        "{x:${number(node.string("x"))},y:${number(node.string("y"))}," +
+                        "z:${number(node.string("z"))},yaw:${number(node.string("yaw"))},pitch:${number(node.string("pitch"))}}"
+                }
+            }
             TemporaryVariableType.ITEM ->
                 "data modify storage kantan:variables $destination set value " +
                     "{item:\"${escape(node.string("item"))}\",itemData:\"${escape(node.string("itemData"))}\"}"
@@ -729,6 +804,239 @@ class VanillaDatapackExporter(
                     "{effect:\"${escape(node.string("effect"))}\",level:${integer(node.string("level", "1"), "1")}," +
                     "seconds:${integer(node.string("seconds", "30"), "30")}}"
         }
+    }
+
+    /**
+     * 一時変数定義を、1命令または複数命令のvanilla関数へ展開します。
+     *
+     * LOCATIONの共通PositionSpecは、配置ディスク・実行者・対象・別LOCATIONのような
+     * 実行時参照を持てます。ENTITYの共通TargetSpecも同様にセレクター解決が必要です。
+     * それらを「数値3個の直接代入」として扱うと、GUIで選べる設定とDatapack出力の意味が
+     * ずれるため、実行時にstorageへ値を組み立てる命令列へ明示的に展開します。
+     */
+    private fun temporarySetCommands(
+        node: CommandNode,
+        output: MutableMap<String, String>,
+        graph: CommandGraph,
+    ): TemporarySetExpansion {
+        val type = TemporaryVariableType.parse(
+            node.string("tempType", TemporaryVariableType.NUMBER.name),
+        ) ?: error("unknown temporary variable type")
+        val name = TemporaryTemplate.normalized(node.string("name"))
+        val destination = temporaryStoragePath(name)
+        val commands = when (type) {
+            TemporaryVariableType.LOCATION -> temporaryLocationSetCommands(node, destination)
+            TemporaryVariableType.ENTITY -> temporaryEntitySetCommands(node, destination)
+            else -> listOf(temporarySetCommand(node))
+        }
+        // NUMBER/STRINGの値だけでなく、SOUNDの音量・ピッチ、EFFECTのレベル・
+        // 持続時間、LOCATIONの動的座標も同じmacro入口へ通します。テンプレートが
+        // なければprepareMacroCommandsが元の複数命令をそのまま返すため、静的値の
+        // 出力形式は変わりません。
+        val macro = prepareMacroCommands(
+            node,
+            commands,
+            output,
+            graph,
+            functionPrefix = "temporary_macro",
+        )
+        return macro?.let { TemporarySetExpansion(it.setup, listOf(it.call)) }
+            ?: TemporarySetExpansion(emptyList(), commands)
+    }
+
+    private data class TemporarySetExpansion(
+        val setup: List<String>,
+        val commands: List<String>,
+    )
+
+    private fun temporaryEntitySetCommands(node: CommandNode, destination: String): List<String> {
+        val spec = node.temporaryEntityTargetSpec
+            ?: return listOf(temporarySetCommand(node))
+        val destinationStorage = "kantan:variables $destination"
+        return when (spec.kind) {
+            TargetKind.TEMPORARY -> {
+                val sourceName = spec.tempName?.takeIf(String::isNotBlank)
+                    ?: error("temporary ENTITY source name is missing")
+                listOf(
+                    "data remove storage $destinationStorage",
+                    "execute unless data storage kantan:variables ${temporaryStoragePath(sourceName)}.uuid run return 0",
+                    "data modify storage $destinationStorage set from storage kantan:variables ${temporaryStoragePath(sourceName)}",
+                )
+            }
+            TargetKind.FIXED_ENTITY -> error("fixed entity is not supported by vanilla temporary ENTITY")
+            else -> listOf(
+                // 対象が0体でも定義ノード自体は成功し、空のENTITYとして保存します。
+                // 後続の対象解決はUUID未設定を「対象なし」として扱います。
+                "data modify storage $destinationStorage set value {}",
+                "execute as ${singleSelector(spec)} run data modify storage $destinationStorage.uuid set from entity @s UUID",
+            )
+        }
+    }
+
+    private fun temporaryLocationSetCommands(node: CommandNode, destination: String): List<String> {
+        val position = node.temporaryLocationPositionSpec
+        val facing = node.temporaryLocationFacingSpec
+        if (position == null && facing == null) {
+            // 旧POSITION保存値を読み込んだ場合の境界です。新規GUIからはこの経路へ入りません。
+            return listOf(temporarySetCommand(node))
+        }
+        require(position != null) { "temporary LOCATION position is missing" }
+        require(facing != null) { "temporary LOCATION facing is missing" }
+
+        fun number(value: Number): String = value.toString().let { raw ->
+            if (raw.endsWith("d", ignoreCase = true)) raw else "${raw}d"
+        }
+        val storage = "kantan:variables $destination"
+        val commands = mutableListOf(
+            "data modify storage $storage set value {x:0d,y:0d,z:0d,yaw:0d,pitch:0d}",
+        )
+        when (position.kind) {
+            PositionKind.CAPTURED, PositionKind.COORDINATES -> {
+                commands += "data modify storage $storage.x set value ${number(position.x ?: error("location x is missing"))}"
+                commands += "data modify storage $storage.y set value ${number(position.y ?: error("location y is missing"))}"
+                commands += "data modify storage $storage.z set value ${number(position.z ?: error("location z is missing"))}"
+            }
+            PositionKind.TEMPORARY -> {
+                val sourceName = position.tempName?.takeIf(String::isNotBlank)
+                    ?: error("temporary LOCATION source name is missing")
+                val source = temporaryStoragePath(sourceName)
+                commands += "execute unless data storage kantan:variables $source run return 0"
+                commands += "data modify storage $storage set from storage kantan:variables $source"
+            }
+            PositionKind.DISK,
+            PositionKind.EXECUTOR,
+            PositionKind.TARGET,
+            -> {
+                // TEMP_SET自体はノード限定コンテキストを持たないため、共通位置設定の
+                // 実行者・対象は、呼び出し時点のexecuteコンテキスト位置へ解決します。
+                commands += captureCurrentLocation(storage, node)
+            }
+            PositionKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn position is not supported by vanilla")
+        }
+
+        when (facing.kind) {
+            FacingKind.INHERITED -> if (position.kind != PositionKind.TEMPORARY) {
+                // COORDINATES/CAPTUREDでも「継承」は現在の実行向きを意味します。
+                // 初期値0へ固定すると、Java実行側のsession.origin.yaw/pitchと
+                // Datapack出力だけが分岐するため、位置の取得元にかかわらず捕捉します。
+                commands += captureCurrentRotation(storage)
+            }
+            FacingKind.CAPTURED, FacingKind.ROTATION -> {
+                commands += "data modify storage $storage.yaw set value ${number(facing.yaw ?: error("location yaw is missing"))}"
+                commands += "data modify storage $storage.pitch set value ${number(facing.pitch ?: error("location pitch is missing"))}"
+            }
+            FacingKind.TEMPORARY -> {
+                val sourceName = facing.tempName?.takeIf(String::isNotBlank)
+                    ?: error("temporary LOCATION facing source name is missing")
+                val source = temporaryStoragePath(sourceName)
+                // FacingSpec.TEMPORARYは参照先の向きをコピーするのではなく、
+                // 位置から参照先LOCATIONを見る向きを計算します。実行時と同じ
+                // semanticsを保つため、vanillaのexecute facingで一時markerの
+                // Rotationを得ます。
+                commands += "execute unless data storage kantan:variables $source.x run return 0"
+                commands += captureDynamicRotation(
+                    storage,
+                    node,
+                    positionCoordinates(position),
+                    temporaryPositionCoordinates(sourceName),
+                )
+            }
+            FacingKind.EXECUTOR, FacingKind.TARGET -> commands += captureCurrentRotation(storage)
+            FacingKind.COORDINATES -> {
+                val rotation = staticFacingRotation(position, facing)
+                if (rotation != null) {
+                    commands += "data modify storage $storage.yaw set value ${number(rotation.first)}"
+                    commands += "data modify storage $storage.pitch set value ${number(rotation.second)}"
+                } else {
+                    // 位置が実行時に決まる場合は、現在位置または一時LOCATIONを
+                    // execute positionedへ渡し、座標指定先を向くmarkerを作ります。
+                    commands += captureDynamicRotation(
+                        storage,
+                        node,
+                        positionCoordinates(position),
+                        "${facing.x ?: error("location facing x is missing")} " +
+                            "${facing.y ?: error("location facing y is missing")} " +
+                            "${facing.z ?: error("location facing z is missing")}",
+                    )
+                }
+            }
+            FacingKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn facing is not supported by vanilla")
+        }
+        return commands
+    }
+
+    /** PositionSpecをvanillaのexecute位置引数へ変換します。 */
+    private fun positionCoordinates(position: PositionSpec): String = when (position.kind) {
+        PositionKind.CAPTURED, PositionKind.COORDINATES ->
+            "${position.x ?: error("location x is missing")} " +
+                "${position.y ?: error("location y is missing")} " +
+                "${position.z ?: error("location z is missing")}"
+        PositionKind.TEMPORARY -> temporaryPositionCoordinates(
+            position.tempName?.takeIf(String::isNotBlank)
+                ?: error("temporary LOCATION source name is missing"),
+        )
+        PositionKind.DISK, PositionKind.EXECUTOR, PositionKind.TARGET -> "~ ~ ~"
+        PositionKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn position is not supported by vanilla")
+    }
+
+    private fun captureCurrentLocation(storage: String, node: CommandNode): List<String> {
+        val tag = "kc_loc_${shortDigest(node.id.toString(), 12)}"
+        val marker = "@e[type=marker,tag=$tag,limit=1]"
+        return buildList {
+            add("kill @e[type=marker,tag=$tag]")
+            add("summon marker ~ ~ ~ {Tags:[\"$tag\"]}")
+            add("execute unless entity $marker run return 0")
+            add("execute store result storage $storage.x double 1 run data get entity $marker Pos[0] 1")
+            add("execute store result storage $storage.y double 1 run data get entity $marker Pos[1] 1")
+            add("execute store result storage $storage.z double 1 run data get entity $marker Pos[2] 1")
+            add("kill $marker")
+        }
+    }
+
+    private fun captureCurrentRotation(storage: String): List<String> = listOf(
+        "execute store result storage $storage.yaw double 1 run data get entity @s Rotation[0] 1",
+        "execute store result storage $storage.pitch double 1 run data get entity @s Rotation[1] 1",
+    )
+
+    /** 動的な原点・向き先からvanillaの実行回転を作り、LOCATIONへ保存します。 */
+    private fun captureDynamicRotation(
+        storage: String,
+        node: CommandNode,
+        origin: String,
+        target: String,
+    ): List<String> {
+        val tag = "kc_rot_${shortDigest("${node.id}:rotation", 12)}"
+        val marker = "@e[type=marker,tag=$tag,limit=1]"
+        return listOf(
+            "kill @e[type=marker,tag=$tag]",
+            "execute positioned $origin facing $target run summon marker ~ ~ ~ {Tags:[\"$tag\"]}",
+            // summon時の既定回転に依存せず、execute facingで決まった回転を明示的に
+            // markerへ適用します。relativeな~ ~は現在の実行回転を保持します。
+            "execute positioned $origin facing $target run tp $marker ~ ~ ~ ~ ~",
+            "execute unless entity $marker run return 0",
+            "execute store result storage $storage.yaw double 1 run data get entity $marker Rotation[0] 1",
+            "execute store result storage $storage.pitch double 1 run data get entity $marker Rotation[1] 1",
+            "kill $marker",
+        )
+    }
+
+    private fun staticFacingRotation(
+        position: PositionSpec,
+        facing: me.awabi2048.kantancommander.model.FacingSpec,
+    ): Pair<Float, Float>? {
+        val px = position.x ?: return null
+        val py = position.y ?: return null
+        val pz = position.z ?: return null
+        val tx = facing.x ?: return null
+        val ty = facing.y ?: return null
+        val tz = facing.z ?: return null
+        val dx = tx - px
+        val dy = ty - py
+        val dz = tz - pz
+        val horizontal = kotlin.math.sqrt(dx * dx + dz * dz)
+        if (horizontal == 0.0 && dy == 0.0) return 0f to 0f
+        return Math.toDegrees(kotlin.math.atan2(-dx, dz)).toFloat() to
+            Math.toDegrees(kotlin.math.atan2(-dy, horizontal)).toFloat()
     }
 
     private fun lower(node: CommandNode, graph: CommandGraph): String? = when (node.type) {
@@ -771,7 +1079,9 @@ class VanillaDatapackExporter(
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
         CommandType.DISK_CALL -> null
         CommandType.VARIABLE -> lowerVariable(node, graph)
-        CommandType.TEMP_SET -> temporarySetCommand(node)
+        // TEMP_SETはcompileGraph側で専用関数へ展開します。ここへ到達させると
+        // 複数命令のLOCATION/ENTITY定義が1命令として扱われるため、防御的に無出力とします。
+        CommandType.TEMP_SET -> null
         CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
     }
@@ -782,11 +1092,27 @@ class VanillaDatapackExporter(
         command: String,
         output: MutableMap<String, String>,
         graph: CommandGraph,
-    ): MacroCommand {
-        val template = prepareMacroTemplate(node, command, graph)
-        if (template == null) return MacroCommand(emptyList(), command)
-        val macroName = nodeFunction("macro", node.id)
-        defineFunction(output, macroName, "${'$'}${template.command}\n")
+    ): MacroCommand = prepareMacroCommands(node, listOf(command), output, graph)
+        ?: MacroCommand(emptyList(), command)
+
+    /** 複数命令を一つのfunction macroへまとめ、同じ実行時値を共有します。 */
+    private fun prepareMacroCommands(
+        node: CommandNode,
+        commands: List<String>,
+        output: MutableMap<String, String>,
+        graph: CommandGraph,
+        functionPrefix: String = "macro",
+    ): MacroCommand? {
+        val command = commands.joinToString("\n")
+        val template = prepareMacroTemplate(node, command, graph) ?: return null
+        val macroName = nodeFunction(functionPrefix, node.id)
+        // function macroは命令行ごとに`$`を付けて初めて値展開されます。
+        // LOCATIONの現位置捕捉のように複数行を使う場合も、全行を同じmacro
+        // storageから評価して、原子的な一時値定義として実行します。
+        val macroBody = template.command
+            .split('\n')
+            .joinToString("\n") { line -> "${'$'}$line" }
+        defineFunction(output, macroName, macroBody + "\n")
         return MacroCommand(template.setup, "function kantan:$macroName with storage kantan:variables ${template.storagePath}")
     }
 
@@ -1329,9 +1655,22 @@ class VanillaDatapackExporter(
                     node.contextOverride?.position,
                 ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
                 listOfNotNull(
+                    node.temporaryLocationPositionSpec,
+                ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
+                listOfNotNull(
                     node.destinationFacingSpec,
                     node.contextOverride?.facing,
                 ).forEach { facing -> if (facing.kind == FacingKind.TEMPORARY) add(facing.tempName) }
+                node.temporaryLocationFacingSpec
+                    ?.takeIf { it.kind == FacingKind.TEMPORARY }
+                    ?.let { add(it.tempName) }
+                node.temporaryEntityTargetSpec?.let { target ->
+                    if (target.kind == TargetKind.TEMPORARY) add(target.tempName)
+                    target.searchOrigin?.let { search ->
+                        add(search.positionTemp)
+                        if (search.position?.kind == PositionKind.TEMPORARY) add(search.position.tempName)
+                    }
+                }
                 node.snapshot?.let(::scan)
             }
         }
@@ -1602,6 +1941,9 @@ class VanillaDatapackExporter(
                 .append(":destination=").append(node.destinationSpec)
                 .append(":destinationTarget=").append(node.destinationTargetSpec)
                 .append(":destinationFacing=").append(node.destinationFacingSpec)
+                .append(":temporaryEntity=").append(node.temporaryEntityTargetSpec)
+                .append(":temporaryLocationPosition=").append(node.temporaryLocationPositionSpec)
+                .append(":temporaryLocationFacing=").append(node.temporaryLocationFacingSpec)
                 .append(":conditionPosition=").append(node.conditionPositionSpec)
                 .append(":soundPosition=").append(node.soundPositionSpec)
                 .append(":context=").append(node.contextOverride)

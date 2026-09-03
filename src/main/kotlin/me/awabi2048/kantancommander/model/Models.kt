@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.model
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import org.bukkit.Material
+import java.util.Locale
 import java.util.UUID
 
 const val STRUCTURED_FORMAT_VERSION = 8
@@ -86,6 +87,9 @@ data class CommandGraph(
                 blockToSpec = node.blockToSpec?.copy(),
                 soundPositionSpec = node.soundPositionSpec?.copy(),
                 summonPositionSpec = node.summonPositionSpec?.copy(),
+                temporaryEntityTargetSpec = node.temporaryEntityTargetSpec?.copy(),
+                temporaryLocationPositionSpec = node.temporaryLocationPositionSpec?.copy(),
+                temporaryLocationFacingSpec = node.temporaryLocationFacingSpec?.copy(),
                 snapshot = node.snapshot?.deepCopy(),
             )
         }
@@ -125,6 +129,12 @@ data class CommandNode(
     var soundPositionSpec: PositionSpec? = null,
     /** エンティティ召喚で指定された場合の召喚位置です。未設定時は制御ブロック位置を使用します。 */
     var summonPositionSpec: PositionSpec? = null,
+    /** TEMP_SET ENTITYの参照元です。通常コマンドと同じTargetSpecで対象を解決します。 */
+    var temporaryEntityTargetSpec: TargetSpec? = null,
+    /** TEMP_SET LOCATIONの位置側です。通常コマンドと同じPositionSpecで解決します。 */
+    var temporaryLocationPositionSpec: PositionSpec? = null,
+    /** TEMP_SET LOCATIONの向き側です。通常コマンドと同じFacingSpecで解決します。 */
+    var temporaryLocationFacingSpec: FacingSpec? = null,
     /** 非リテラル一時変数の参照名です。空でなければ対応するリテラル値を置き換えます。 */
     var itemTempRef: String? = null,
     var blockTempRef: String? = null,
@@ -303,19 +313,45 @@ data class WorldVariableValue(
  * 一時変数（実行内寿命）の型です。context型は作りません。
  *
  * リテラル利用できるのは NUMBER・STRING のみで `%{name}%` 記法を使います。
- * 複合6型（POSITION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）は型付き設定欄で定義し、
+ * 複合6型（LOCATION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）は型付き設定欄で定義し、
  * 一般テキストへの埋め込みはエラーとします。利用側は対応する構造化Specまたは
  * コマンド固有の一時変数参照欄から選択します。
  */
-enum class TemporaryVariableType { NUMBER, STRING, POSITION, ITEM, BLOCK, ENTITY, SOUND, EFFECT }
+enum class TemporaryVariableType {
+    NUMBER,
+    STRING,
+    /** 位置と向きを一体として扱う一時値です。旧POSITIONは読み込み時だけ受け付けます。 */
+    LOCATION,
+    ITEM,
+    BLOCK,
+    ENTITY,
+    SOUND,
+    EFFECT,
+    ;
+
+    companion object {
+        /**
+         * 保存済みJSONの旧POSITIONを新しいLOCATIONへ正規化します。
+         * enumへPOSITIONを残すとentries()が増えてGUIへ旧概念が再登場するため、
+         * 互換処理は保存文字列の境界だけに閉じ込めます。
+         */
+        fun parse(raw: String?): TemporaryVariableType? {
+            val normalized = raw?.trim()?.uppercase(Locale.ROOT) ?: return null
+            return when (normalized) {
+                "POSITION" -> LOCATION
+                else -> entries.firstOrNull { it.name == normalized }
+            }
+        }
+    }
+}
 
 /** 一時変数の実行時値です。上書き可能で、実行終了時に破棄します。 */
 data class TemporaryValue(
     val type: TemporaryVariableType,
     val numberValue: Double? = null,
     val stringValue: String? = null,
-    /** 位置型の解決済み座標・向きです。 */
-    val position: SavedPosition? = null,
+    /** LOCATION型の解決済み座標・向きです。位置と向きを分離して保持しません。 */
+    val location: SavedLocation? = null,
     /** アイテム型の素材IDと実体（Base64）です。 */
     val item: String? = null,
     val itemData: String? = null,
@@ -330,7 +366,7 @@ data class TemporaryValue(
     val seconds: Int? = null,
 )
 
-data class SavedPosition(
+data class SavedLocation(
     val x: Double,
     val y: Double,
     val z: Double,

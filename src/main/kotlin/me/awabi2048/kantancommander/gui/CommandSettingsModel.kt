@@ -24,6 +24,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
+import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
@@ -54,6 +55,12 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     BLOCK_TO("block_to", "to"),
     SOUND_POSITION("sound_position", "soundPosition"),
     SUMMON_POSITION("summon_position", "summonPosition"),
+    /** TEMP_SET ENTITYは通常コマンドと同じ対象選択木から1体を解決します。 */
+    TEMPORARY_ENTITY("temporary_entity", "entity"),
+    /** TEMP_SET LOCATIONは位置と向きをまとめた親画面から共通設定へ進みます。 */
+    TEMPORARY_LOCATION("temporary_location", "location"),
+    TEMPORARY_LOCATION_POSITION("temporary_location_position", "location"),
+    TEMPORARY_LOCATION_FACING("temporary_location_facing", "location"),
     ;
 
     companion object {
@@ -96,6 +103,7 @@ enum class CommandSettingEditor {
     TARGET,
     POSITION,
     FACING,
+    LOCATION,
     CONDITION_KIND,
     CONDITION_DETAIL,
     DISPLAY_MODE,
@@ -433,11 +441,11 @@ object CommandSettingsModel {
                 "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
-            CommandType.TEMP_SET -> when (fieldKey) {
+        CommandType.TEMP_SET -> when (fieldKey) {
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
-                "value", "x", "y", "z", "yaw", "pitch", "item", "block", "entityId",
-                "sound", "volume", "effect", "level", "seconds" ->
+                "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
+                "entityId", "sound", "soundParameters", "volume", "effect", "level", "seconds" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
@@ -476,6 +484,13 @@ object CommandSettingsModel {
             }
             CommandType.CONDITION -> when (validationFieldKey) {
                 "sneaking", "variable", "operator", "value", "block", "item", "itemData" -> "condition"
+                else -> validationFieldKey
+            }
+            CommandType.TEMP_SET -> when (validationFieldKey) {
+                // 旧形式のx/y/z/yaw/pitchをLOCATIONの親タブへ投影し、
+                // 新形式のENTITYも対象選択欄へ投影します。
+                "x", "y", "z", "yaw", "pitch", "location" -> "location"
+                "entityId", "entity" -> "entity"
                 else -> validationFieldKey
             }
             else -> validationFieldKey
@@ -564,9 +579,11 @@ object CommandSettingsModel {
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
             else -> text()
         }
-        CommandType.TEMP_SET -> when (fieldKey) {
+            CommandType.TEMP_SET -> when (fieldKey) {
             "tempType" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
+            "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
+            "location" -> CommandSettingDescriptor(CommandSettingEditor.LOCATION, CommandSettingRole.TEMPORARY_LOCATION)
             else -> text()
         }
         CommandType.FOR_START -> text()
@@ -594,6 +611,11 @@ object CommandSettingsModel {
         if (node.type == CommandType.TEMP_SET && key == "name") {
             require(CommandValueRules.isVariableName(TemporaryTemplate.normalized(value))) { "予約済みまたは不正な変数名です" }
         }
+        if (node.type == CommandType.TEMP_SET && key == "tempType") {
+            val type = requireNotNull(TemporaryVariableType.parse(value)) { "不正な一時変数型です" }
+            changeTemporaryType(node, type)
+            return
+        }
         node.params[key] = value
         if (value.isBlank()) {
             node.clearConfigured(key)
@@ -612,7 +634,37 @@ object CommandSettingsModel {
         CommandSettingRole.CONTEXT_EXECUTOR -> node.contextOverride?.executor
         CommandSettingRole.CONTEXT_TARGET -> node.contextOverride?.target
         CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec
+        CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec
         else -> node.targetSpec
+    }
+
+    /**
+     * 一時変数の型変更を、古い型の入力値が新しい型へ幽霊表示されない単一操作にします。
+     *
+     * 一時値は型によって入力経路も実行時の保存形式も変わります。型だけを書き換えて
+     * 旧payloadを残すと、いったんLOCATIONへ変えた後にNUMBERへ戻した際などに、見えない
+     * 値が実行・出力側へ流れます。型変更時は共通の可変部分を全消去し、次の型の入力を
+     * 必ずその型の設定画面から開始させます。
+     */
+    fun changeTemporaryType(node: CommandNode, type: TemporaryVariableType) {
+        check(node.type == CommandType.TEMP_SET) { "一時変数型を持たないノードです: ${node.type}" }
+        val current = TemporaryVariableType.parse(node.string("tempType", TemporaryVariableType.NUMBER.name))
+        if (current != type) {
+            setOf(
+                "value", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
+                "sound", "volume", "effect", "level", "seconds",
+            ).forEach(node.params::remove)
+            node.temporaryEntityTargetSpec = null
+            node.temporaryLocationPositionSpec = null
+            node.temporaryLocationFacingSpec = null
+            node.clearConfigured(
+                "value", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
+                "sound", "volume", "effect", "level", "seconds", "entity", "location",
+                "locationPosition", "locationFacing",
+            )
+        }
+        node.params["tempType"] = type.name
+        node.markConfigured("tempType")
     }
 
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
@@ -622,20 +674,26 @@ object CommandSettingsModel {
         ) {
             "${node.type} は実行コンテキスト上書きを持てません"
         }
+        // TEMP_SET ENTITYは対象を複数保持できないTemporaryValueへ変換するため、
+        // 共通TargetSpecの詳細条件はそのまま利用しつつ、解決数だけ1体へ正規化します。
+        val normalizedSpec = if (role == CommandSettingRole.TEMPORARY_ENTITY) {
+            spec.copy(limit = 1)
+        } else spec
         when (role) {
             CommandSettingRole.DESTINATION -> {
-                node.destinationTargetSpec = spec
+                node.destinationTargetSpec = normalizedSpec
                 node.destinationSpec = null
             }
             CommandSettingRole.CONTEXT_EXECUTOR -> node.contextOverride =
-                (node.contextOverride ?: ExecutionContextSpec()).copy(executor = spec)
+                (node.contextOverride ?: ExecutionContextSpec()).copy(executor = normalizedSpec)
             CommandSettingRole.CONTEXT_TARGET -> node.contextOverride =
-                (node.contextOverride ?: ExecutionContextSpec()).copy(target = spec)
-            CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = spec
-            else -> node.targetSpec = spec
+                (node.contextOverride ?: ExecutionContextSpec()).copy(target = normalizedSpec)
+            CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = normalizedSpec
+            CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec = normalizedSpec
+            else -> node.targetSpec = normalizedSpec
         }
         val configuredKey = configuredFieldKey("target", role)
-        if (isTargetSpecConfigured(spec)) {
+        if (isTargetSpecConfigured(normalizedSpec)) {
             node.markConfigured(configuredKey)
         } else {
             // 方式だけ選択して必須の実値が未入力の場合は、選択履歴を
@@ -654,6 +712,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
         CommandSettingRole.BLOCK_TO -> node.blockToSpec
+        CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec
         else -> null
     }
 
@@ -678,6 +737,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
+        CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec?.kind
         else -> null
     }
 
@@ -698,16 +758,18 @@ object CommandSettingsModel {
             CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec = spec
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
+            CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec = spec
             else -> error("${node.type} の位置設定役割が不正です: $role")
         }
         val configuredKey = configuredFieldKey(
-                when (role) {
-                    CommandSettingRole.SOUND_POSITION -> "soundPosition"
-                    CommandSettingRole.SUMMON_POSITION -> "summonPosition"
-                    else -> "position"
-                },
-                role,
-            )
+            when (role) {
+                CommandSettingRole.SOUND_POSITION -> "soundPosition"
+                CommandSettingRole.SUMMON_POSITION -> "summonPosition"
+                CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
+                else -> "position"
+            },
+            role,
+        )
         if (isPositionSpecConfigured(spec)) {
             node.markConfigured(configuredKey)
         } else {
@@ -717,8 +779,11 @@ object CommandSettingsModel {
         }
     }
 
-    fun facingSpec(node: CommandNode, role: CommandSettingRole? = CommandSettingRole.CONTEXT_FACING): FacingSpec? =
-        if (role == CommandSettingRole.DESTINATION_FACING) node.destinationFacingSpec else node.contextOverride?.facing
+    fun facingSpec(node: CommandNode, role: CommandSettingRole? = CommandSettingRole.CONTEXT_FACING): FacingSpec? = when (role) {
+        CommandSettingRole.DESTINATION_FACING -> node.destinationFacingSpec
+        CommandSettingRole.TEMPORARY_LOCATION_FACING -> node.temporaryLocationFacingSpec
+        else -> node.contextOverride?.facing
+    }
 
     fun setFacingSpec(
         node: CommandNode,
@@ -727,6 +792,7 @@ object CommandSettingsModel {
     ) {
         check(
             role == CommandSettingRole.DESTINATION_FACING ||
+                role == CommandSettingRole.TEMPORARY_LOCATION_FACING ||
                 node.type == CommandType.CONTEXT || node.type.supportsContextOverride()
         ) {
             "${node.type} は実行コンテキスト上書きを持てません"
@@ -737,6 +803,14 @@ object CommandSettingsModel {
                 node.markConfigured("destinationFacing")
             } else {
                 node.clearConfigured("destinationFacing")
+            }
+        } else if (role == CommandSettingRole.TEMPORARY_LOCATION_FACING) {
+            node.temporaryLocationFacingSpec = spec
+            val configuredKey = configuredFieldKey("facing", role)
+            if (isFacingSpecConfigured(spec)) {
+                node.markConfigured(configuredKey)
+            } else {
+                node.clearConfigured(configuredKey)
             }
         } else {
             node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
@@ -809,6 +883,9 @@ object CommandSettingsModel {
         }
         return when (fieldKey) {
             "target" -> isTargetSpecConfigured(targetSpec(node, effectiveRole))
+            "entity" -> isTargetSpecConfigured(node.temporaryEntityTargetSpec)
+            "location" -> isPositionSpecConfigured(node.temporaryLocationPositionSpec) &&
+                isFacingSpecConfigured(node.temporaryLocationFacingSpec)
             "destination" -> isPositionSpecConfigured(node.destinationSpec) ||
                 isTargetSpecConfigured(node.destinationTargetSpec)
             "other" -> isTargetSpecConfigured(node.secondaryTargetSpec)
@@ -821,6 +898,7 @@ object CommandSettingsModel {
                 CommandSettingRole.BLOCK_POSITION -> isPositionSpecConfigured(node.blockPositionSpec)
                 CommandSettingRole.SOUND_POSITION -> isPositionSpecConfigured(node.soundPositionSpec)
                 CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
+                CommandSettingRole.TEMPORARY_LOCATION_POSITION -> isPositionSpecConfigured(node.temporaryLocationPositionSpec)
                 else -> isPositionSpecConfigured(node.contextOverride?.position)
             }
             "from" -> isPositionSpecConfigured(node.blockFromSpec)
@@ -828,6 +906,8 @@ object CommandSettingsModel {
             "destinationFacing" -> isFacingSpecConfigured(node.destinationFacingSpec)
             "facing" -> if (effectiveRole == CommandSettingRole.DESTINATION_FACING) {
                 isFacingSpecConfigured(node.destinationFacingSpec)
+            } else if (effectiveRole == CommandSettingRole.TEMPORARY_LOCATION_FACING) {
+                isFacingSpecConfigured(node.temporaryLocationFacingSpec)
             } else {
                 isFacingSpecConfigured(node.contextOverride?.facing)
             }
@@ -1098,6 +1178,10 @@ object CommandSettingsModel {
         CommandSettingRole.CONDITION_POSITION -> "condition.position"
         CommandSettingRole.SOUND_POSITION -> "soundPosition"
         CommandSettingRole.SUMMON_POSITION -> "summonPosition"
+        CommandSettingRole.TEMPORARY_ENTITY -> "entity"
+        CommandSettingRole.TEMPORARY_LOCATION -> "location"
+        CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
+        CommandSettingRole.TEMPORARY_LOCATION_FACING -> "locationFacing"
         CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
             "destination.$fieldKey"
         } else "destination"
