@@ -61,9 +61,13 @@ import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.NamespacedKey
+import org.bukkit.Registry
 import org.bukkit.Sound
+import org.bukkit.SoundCategory
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
+import org.bukkit.potion.PotionEffect
 import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
 import kotlin.math.roundToInt
@@ -1510,6 +1514,55 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
+    /**
+     * ITEM／BLOCK／SOUND／EFFECTの設定元を選択します。
+     *
+     * 一時変数は、他の構造化設定と同じく方式選択と参照名入力を別操作にします。
+     * 直接値を選んだ場合は、選択直後に既存のメインハンド設定またはDialog入力へ
+     * 引き継ぎ、設定元の選択だけで未完成の値を完了扱いにしないようにします。
+     */
+    private fun selectTypedValueSource(
+        player: Player,
+        fieldKey: String,
+        source: CommandValueSource,
+    ) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        observedRevision = script.revision
+        val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+        if (!CommandSettingsModel.supportsTemporaryValueReference(node, fieldKey)) return
+        val context = CommandSettingContext(
+            state.scriptId,
+            node.id,
+            CommandSettingsModel.descriptor(node, fieldKey).role,
+        )
+        val currentSource = CommandSettingsModel.temporaryValueSource(node, fieldKey)
+        if (source == CommandValueSource.TEMPORARY) {
+            if (currentSource != CommandValueSource.TEMPORARY) {
+                if (!updateSettingNode(player, context, configuredFields = emptySet()) {
+                        CommandSettingsModel.selectTemporaryValueSource(it, fieldKey)
+                    }) return
+                return
+            }
+            beginSettingInput(
+                player,
+                CommandDialogSpecs.variableName,
+                CommandSettingsModel.temporaryValueReference(node, fieldKey).orEmpty(),
+            ) { raw ->
+                if (!updateSettingNode(player, context, configuredFields = emptySet()) {
+                        CommandSettingsModel.setTemporaryValueReference(it, fieldKey, raw)
+                    }) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                } else null
+            }
+            return
+        }
+
+        if (!updateSettingNode(player, context, configuredFields = emptySet()) {
+                CommandSettingsModel.selectLiteralValueSource(it, fieldKey)
+            }) return
+        beginSelectedFieldEdit(player, fieldKey)
+    }
+
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
     private fun applyHeldItem(
         player: Player,
@@ -1625,6 +1678,57 @@ class GestureSequenceEditor(
         (ItemStackCodec.decode(node.string("itemData"))
             ?: Material.matchMaterial(node.string("item"))?.let(::ItemStack))
             ?.takeUnless { it.type == Material.AIR }
+
+    private fun configuredBlock(node: CommandNode): ItemStack? =
+        Material.matchMaterial(node.string("block"))
+            ?.takeUnless { it == Material.AIR || !it.isBlock }
+            ?.let(::ItemStack)
+
+    private data class ConfiguredSound(
+        val name: String,
+        val volume: Float,
+        val pitch: Float,
+    )
+
+    private fun configuredSound(node: CommandNode): ConfiguredSound? {
+        val name = node.string("sound").takeIf(String::isNotBlank) ?: return null
+        if (NamespacedKey.fromString(name) == null) return null
+        val volume = node.string("volume", "1.0").toFloatOrNull()?.takeIf(Float::isFinite) ?: return null
+        val pitch = node.string("pitch", "1.0").toFloatOrNull()?.takeIf(Float::isFinite) ?: return null
+        return ConfiguredSound(name, volume, pitch)
+    }
+
+    private data class ConfiguredEffect(
+        val type: org.bukkit.potion.PotionEffectType,
+        val durationTicks: Int,
+        val amplifier: Int,
+    )
+
+    private fun configuredEffect(node: CommandNode): ConfiguredEffect? {
+        val key = NamespacedKey.fromString(node.string("effect")) ?: return null
+        val type = Registry.EFFECT.get(key) ?: return null
+        val seconds = node.string("seconds").toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val level = node.string("level").toIntOrNull()?.takeIf { it > 0 } ?: return null
+        val durationTicks = runCatching { Math.multiplyExact(seconds, 20) }.getOrNull() ?: return null
+        return ConfiguredEffect(type, durationTicks, level - 1)
+    }
+
+    private fun playConfiguredSound(player: Player, node: CommandNode): Boolean {
+        val sound = configuredSound(node) ?: return false
+        player.playSound(player.location, sound.name, SoundCategory.MASTER, sound.volume, sound.pitch)
+        return true
+    }
+
+    private fun applyConfiguredEffect(player: Player, node: CommandNode): Boolean {
+        val effect = configuredEffect(node) ?: return false
+        player.addPotionEffect(PotionEffect(effect.type, effect.durationTicks, effect.amplifier))
+        return true
+    }
+
+    /** 条件等、設定元切替を持たない従来の確認ボタンも引き続き有効にします。 */
+    private fun isDirectTypedValuePreview(node: CommandNode, fieldKey: String): Boolean =
+        !CommandSettingsModel.supportsTemporaryValueReference(node, fieldKey) ||
+            CommandSettingsModel.temporaryValueSource(node, fieldKey) == CommandValueSource.LITERAL
 
     private fun openItemOverwriteConfirm(
         player: Player,
@@ -3702,6 +3806,14 @@ class GestureSequenceEditor(
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 handleSettingAction(context, player)
             }
+            context.elementId.startsWith("lower-value-source:") &&
+                (context.gesture in GestureGuiClickPolicy.MAIN_HAND ||
+                    GestureGuiClickPolicy.isPrimaryClick(context.gesture)) -> {
+                val encoded = context.elementId.removePrefix("lower-value-source:").split(":")
+                if (encoded.size != 2) return
+                val source = runCatching { CommandValueSource.valueOf(encoded[1]) }.getOrNull() ?: return
+                selectTypedValueSource(player, encoded[0], source)
+            }
             context.elementId.startsWith("lower-edit:") &&
                 context.gesture in GestureGuiClickPolicy.MAIN_HAND -> {
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
@@ -3710,11 +3822,33 @@ class GestureSequenceEditor(
             context.elementId == "lower-item-get" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return
                 val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+                if (!isDirectTypedValuePreview(node, "item")) return
                 val item = configuredItem(node) ?: return
                 player.inventory.addItem(item.clone()).values.forEach { overflow ->
                     player.world.dropItemNaturally(player.location, overflow)
                 }
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_TAKEN))
+            }
+            context.elementId == "lower-block-get" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+                if (!isDirectTypedValuePreview(node, "block")) return
+                val block = configuredBlock(node) ?: return
+                player.inventory.addItem(block.clone()).values.forEach { overflow ->
+                    player.world.dropItemNaturally(player.location, overflow)
+                }
+            }
+            context.elementId == "lower-sound-preview" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+                if (!isDirectTypedValuePreview(node, "sound")) return
+                playConfiguredSound(player, node)
+            }
+            context.elementId == "lower-effect-preview" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+                if (!isDirectTypedValuePreview(node, "effect")) return
+                applyConfiguredEffect(player, node)
             }
             context.elementId.startsWith("lower-cat:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return

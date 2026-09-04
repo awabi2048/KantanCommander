@@ -112,6 +112,18 @@ enum class CommandSettingEditor {
     BLOCK_OPERATION,
 }
 
+/**
+ * 実行時に値を解決する元です。
+ *
+ * ITEM／BLOCK／SOUND／EFFECTは、画面上で「直接値を設定する」か「一時変数を
+ * 参照する」かを選べます。TEMP_SET自身の値入力は別の責務なので、この型は
+ * 通常コマンドの値フィールドだけに適用します。
+ */
+enum class CommandValueSource {
+    LITERAL,
+    TEMPORARY,
+}
+
 data class CommandSettingDescriptor(
     val editor: CommandSettingEditor,
     val role: CommandSettingRole? = null,
@@ -123,6 +135,123 @@ data class CommandSettingDescriptor(
  * インベントリGUIのルートとジェスチャーGUIの選択画面が同じ役割を受け取ります。
  */
 object CommandSettingsModel {
+    /** 通常コマンドの複合値を、保存フィールドと一時参照フィールドへ対応付けます。 */
+    private data class TemporaryValueBinding(
+        val referenceKey: String,
+        val literalKeys: Set<String>,
+    )
+
+    /**
+     * GUIで設定元を選べる通常コマンドの値だけを列挙します。
+     *
+     * CONDITIONのitem/blockは同名の保存欄を使いますが、BLOCK_STATEは実行側が
+     * blockTempRefを解決せず、条件詳細も独立した値入力画面です。そのため、ここへ
+     * 含めるのは実行処理・バニラ出力・既存UIが同じ意味を共有する4つの通常値です。
+     */
+    private fun temporaryValueBinding(node: CommandNode, fieldKey: String): TemporaryValueBinding? {
+        if (node.type == CommandType.TEMP_SET) return null
+        return when (fieldKey) {
+            "item" -> when (node.type) {
+                CommandType.GIVE_ITEM -> TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
+                CommandType.ENTITY_ACTION ->
+                    if (node.string("action", "ride") == "equip") {
+                        TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
+                    } else null
+                else -> null
+            }
+            "block" -> if (node.type == CommandType.BLOCK_OPERATION) {
+                TemporaryValueBinding("blockTempRef", setOf("block"))
+            } else null
+            "sound" -> if (node.type == CommandType.PLAY_SOUND) {
+                TemporaryValueBinding("soundTempRef", setOf("sound", "volume", "pitch"))
+            } else null
+            "effect" -> if (node.type == CommandType.APPLY_EFFECT) {
+                TemporaryValueBinding("effectTempRef", setOf("effect", "level", "seconds"))
+            } else null
+            else -> null
+        }
+    }
+
+    /** 指定フィールドが通常値／一時変数の設定元を持つかを返します。 */
+    fun supportsTemporaryValueReference(node: CommandNode, fieldKey: String): Boolean =
+        temporaryValueBinding(node, fieldKey) != null
+
+    /** 設定元を、保存済み参照の有無と入力途中の選択マーカーから復元します。 */
+    fun temporaryValueSource(node: CommandNode, fieldKey: String): CommandValueSource? {
+        val binding = temporaryValueBinding(node, fieldKey) ?: return null
+        val reference = temporaryReference(node, binding.referenceKey)
+        return if (reference != null || node.isExplicitlyConfigured(binding.referenceKey)) {
+            CommandValueSource.TEMPORARY
+        } else {
+            CommandValueSource.LITERAL
+        }
+    }
+
+    /** 現在の一時変数参照名を返します。入力途中の空参照は未設定として扱います。 */
+    fun temporaryValueReference(node: CommandNode, fieldKey: String): String? {
+        val binding = temporaryValueBinding(node, fieldKey) ?: return null
+        return temporaryReference(node, binding.referenceKey)
+    }
+
+    /**
+     * 一時変数モードを選択します。
+     *
+     * 直接値を残したまま参照モードへ切り替えると、実行時には参照値だけが採用
+     * されるにもかかわらず、画面には古い直接値が残ります。設定元を一つにする
+     * ため、選択時点で直接値を消し、参照名の入力途中マーカーだけを保存します。
+     */
+    fun selectTemporaryValueSource(node: CommandNode, fieldKey: String) {
+        val binding = requireNotNull(temporaryValueBinding(node, fieldKey)) {
+            "一時変数参照に対応しないフィールドです: ${node.type}.$fieldKey"
+        }
+        binding.literalKeys.forEach { key ->
+            node.params.remove(key)
+            node.clearConfigured(key)
+        }
+        setTemporaryReference(node, binding.referenceKey, null)
+        node.markConfigured(binding.referenceKey)
+    }
+
+    /** 直接値モードを選択し、既存の一時変数参照と入力途中マーカーを解除します。 */
+    fun selectLiteralValueSource(node: CommandNode, fieldKey: String) {
+        val binding = requireNotNull(temporaryValueBinding(node, fieldKey)) {
+            "一時変数参照に対応しないフィールドです: ${node.type}.$fieldKey"
+        }
+        setTemporaryReference(node, binding.referenceKey, null)
+        node.clearConfigured(binding.referenceKey)
+    }
+
+    /** 一時変数名を確定し、対応する直接値を再び実行へ流さない状態にします。 */
+    fun setTemporaryValueReference(node: CommandNode, fieldKey: String, name: String) {
+        val binding = requireNotNull(temporaryValueBinding(node, fieldKey)) {
+            "一時変数参照に対応しないフィールドです: ${node.type}.$fieldKey"
+        }
+        binding.literalKeys.forEach { key ->
+            node.params.remove(key)
+            node.clearConfigured(key)
+        }
+        setTemporaryReference(node, binding.referenceKey, name.trim())
+        node.markConfigured(binding.referenceKey)
+    }
+
+    private fun temporaryReference(node: CommandNode, referenceKey: String): String? = when (referenceKey) {
+        "itemTempRef" -> node.itemTempRef
+        "blockTempRef" -> node.blockTempRef
+        "soundTempRef" -> node.soundTempRef
+        "effectTempRef" -> node.effectTempRef
+        else -> error("未定義の一時変数参照フィールドです: $referenceKey")
+    }?.takeIf(String::isNotBlank)
+
+    private fun setTemporaryReference(node: CommandNode, referenceKey: String, value: String?) {
+        when (referenceKey) {
+            "itemTempRef" -> node.itemTempRef = value
+            "blockTempRef" -> node.blockTempRef = value
+            "soundTempRef" -> node.soundTempRef = value
+            "effectTempRef" -> node.effectTempRef = value
+            else -> error("未定義の一時変数参照フィールドです: $referenceKey")
+        }
+    }
+
     private val PLAYER_KINDS = setOf(
         TargetKind.NEAREST_PLAYER,
         TargetKind.NEARBY_PLAYERS,
@@ -250,7 +379,15 @@ object CommandSettingsModel {
             fieldKey != "destinationFacing" || node.destinationSpec?.kind != PositionKind.TEMPORARY
 
         CommandType.PLAY_SOUND ->
-            fieldKey != "soundPosition" || node.string("soundScope", "POSITION") != "WORLD"
+            when {
+                fieldKey == "soundPosition" -> node.string("soundScope", "POSITION") != "WORLD"
+                fieldKey == "soundParameters" -> temporaryValueSource(node, "sound") != CommandValueSource.TEMPORARY
+                else -> true
+            }
+
+        CommandType.APPLY_EFFECT ->
+            fieldKey !in setOf("level", "seconds") ||
+                temporaryValueSource(node, "effect") != CommandValueSource.TEMPORARY
 
         else -> true
     }
@@ -559,6 +696,13 @@ object CommandSettingsModel {
             changeTemporaryType(node, type)
             return
         }
+        // 通常値を直接入力した時点で、同じ値欄の一時変数参照を解除します。
+        // TEMP_SETのitem/sound等は「一時値そのもの」の入力であり、この切替を
+        // 適用すると自分自身の保存経路を壊すため、temporaryValueBinding側で除外します。
+        temporaryValueBinding(node, key)?.let { binding ->
+            setTemporaryReference(node, binding.referenceKey, null)
+            node.clearConfigured(binding.referenceKey)
+        }
         node.params[key] = value
         if (value.isBlank()) {
             node.clearConfigured(key)
@@ -793,7 +937,8 @@ object CommandSettingsModel {
                 value != null && value.isNotBlank() &&
                     (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
             }
-            "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+            "item" -> typedValueConfigured(node, "item")
+            "block", "sound", "effect" -> typedValueConfigured(node, fieldKey)
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
             "condition" -> conditionDetailConfigured(node)
             else -> {
@@ -1047,6 +1192,18 @@ object CommandSettingsModel {
             "other.$fieldKey"
         } else "other"
         else -> fieldKey
+    }
+
+    /** ITEM／BLOCK／SOUND／EFFECTの主値に対する完了判定を共通化します。 */
+    private fun typedValueConfigured(node: CommandNode, fieldKey: String): Boolean {
+        return when (temporaryValueSource(node, fieldKey)) {
+            CommandValueSource.TEMPORARY -> temporaryValueReference(node, fieldKey) != null
+            CommandValueSource.LITERAL -> when (fieldKey) {
+                "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+                else -> node.string(fieldKey).isNotBlank()
+            }
+            null -> node.string(fieldKey).isNotBlank()
+        }
     }
 
     private val FILTERABLE_TARGET_KINDS = PLAYER_KINDS + ENTITY_KINDS
