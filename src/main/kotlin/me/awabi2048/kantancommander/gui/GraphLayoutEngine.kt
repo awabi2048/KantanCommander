@@ -268,7 +268,7 @@ object GraphLayoutEngine {
                 return
             }
             val segment = renderSequence(entry, null, 1, 1)
-            segment.tail?.let { tail ->
+            segment.terminalTail()?.let { tail ->
                 putTailAdd(segment.nextX, nodePoints[tail]?.y ?: 1, tail)
             }
         }
@@ -279,18 +279,59 @@ object GraphLayoutEngine {
             x: Int,
             y: Int,
             continuationId: UUID? = null,
+            context: RenderContext = RenderContext.EMPTY,
         ): Segment {
             var currentId: UUID? = start
             var cursorX = x
             var maximumY = y
             var hasOpenEnd = false
             val visited = mutableSetOf<UUID>()
-            while (currentId != null && currentId != stop && visited.add(currentId)) {
+            while (currentId != null && visited.add(currentId)) {
+                if (currentId == stop) {
+                    // stop自身は呼び出し元の構造が一度だけ描画します。子枝の中で
+                    // stopを通常ノードとして描くと、同じ構造ノードが別の座標へ複製
+                    // され、画面要素IDの重複だけでなく経路の深さも壊れます。
+                    return Segment(
+                        cursorX,
+                        maximumY,
+                        null,
+                        end = SegmentExit.Boundary(currentId),
+                        mainEnd = SegmentExit.Boundary(currentId),
+                    )
+                }
+                context.boundaryFor(currentId)?.let { boundary ->
+                    // 現在の枝より外側のFOR_END／MERGEへ到達した場合も、子枝は
+                    // そのノードを所有しません。境界情報だけを親へ返し、親が
+                    // 自分の深さで所有ノードと接続を描きます。
+                    return Segment(
+                        cursorX,
+                        maximumY,
+                        null,
+                        end = SegmentExit.Boundary(currentId),
+                        mainEnd = SegmentExit.Boundary(currentId),
+                    )
+                }
                 val node = graph.nodes[currentId] ?: break
                 if (node.type == CommandType.CONDITION && node.pairedNodeId != null) {
-                    val branch = renderCondition(node, cursorX, y)
+                    val branch = renderCondition(node, cursorX, y, context)
                     cursorX = branch.nextX
                     maximumY = maxOf(maximumY, branch.maxY)
+                    hasOpenEnd = hasOpenEnd || branch.hasOpenEnd
+                    if (branch.end == SegmentExit.None) {
+                        // 対応MERGEが外側のFOR_END後など、現在の描画スコープの
+                        // 外側へ属する場合は、条件枝だけを描いてここで返します。
+                        // 外側の親が後続経路とMERGEを一度だけ所有します。
+                        return Segment(
+                            cursorX,
+                            maximumY,
+                            null,
+                            hasOpenEnd,
+                            mainNextX = branch.mainNextX,
+                            mainInsertionTarget = branch.mainInsertionTarget,
+                            end = branch.end,
+                            mainEnd = branch.mainEnd,
+                        )
+                    }
                     // 合流後の水平経路は「合流と次コマンドの間」への弱い挿入候補（仕様13.5）。
                     // 外側分岐の調整経路とセルを共有する場合はそちらへ譲る。
                     val mergeNode = graph.nodes[node.pairedNodeId]
@@ -300,7 +341,7 @@ object GraphLayoutEngine {
                             InsertionTarget(it.id, GraphEditor.Edge.NEXT, weak = true)
                         }
                         putTargetedPath(cursorX - 1, y, target = continuationTarget)
-                        if (currentId == stop) {
+                        if (currentId == stop || context.boundaryFor(currentId) != null) {
                             // ここで親の合流へ到達した場合、合流後の補償経路を
                             // 上位のrenderConditionへ返します。targetを失うと、
                             // 上位側が横幅を合わせるために延ばしたセルだけが
@@ -311,14 +352,19 @@ object GraphLayoutEngine {
                                 null,
                                 hasOpenEnd,
                                 mainInsertionTarget = continuationTarget,
+                                end = SegmentExit.Boundary(currentId),
+                                mainEnd = SegmentExit.Boundary(currentId),
                             )
                         }
                     } else return Segment(
                         cursorX,
                         maximumY,
                         branch.tail,
-                        branch.hasOpenEnd,
+                        hasOpenEnd,
                         mainNextX = branch.mainNextX,
+                        mainInsertionTarget = branch.mainInsertionTarget,
+                        end = branch.end,
+                        mainEnd = branch.mainEnd,
                     )
                     continue
                 }
@@ -326,7 +372,7 @@ object GraphLayoutEngine {
                     // 親の分岐内では、開いた条件のTRUE/FALSE枝も親の合流境界で
                     // 停止させます。これをnullで描画すると、既存のMERGEを
                     // 子条件の通常ノードとして二重描画してセルが衝突します。
-                    val branch = renderOpenCondition(node, cursorX, y, stop)
+                    val branch = renderOpenCondition(node, cursorX, y, stop, context)
                     cursorX = branch.nextX
                     maximumY = maxOf(maximumY, branch.maxY)
                     hasOpenEnd = hasOpenEnd || branch.hasOpenEnd
@@ -341,10 +387,12 @@ object GraphLayoutEngine {
                         hasOpenEnd,
                         mainNextX = branch.mainNextX,
                         mainInsertionTarget = branch.mainInsertionTarget,
+                        end = branch.end,
+                        mainEnd = branch.mainEnd,
                     )
                 }
                 if (node.type == CommandType.FOR_START && node.pairedNodeId != null) {
-                    val loop = renderFor(node, cursorX, y)
+                    val loop = renderFor(node, cursorX, y, context)
                     cursorX = loop.nextX
                     maximumY = maxOf(maximumY, loop.maxY)
                     // for終了後の水平経路は「for終了と次コマンドの間」への弱い挿入候補（仕様13.5）。
@@ -355,7 +403,7 @@ object GraphLayoutEngine {
                             InsertionTarget(it.id, GraphEditor.Edge.NEXT, weak = true)
                         }
                         putTargetedPath(cursorX - 1, y, target = continuationTarget)
-                        if (currentId == stop) {
+                        if (currentId == stop || context.boundaryFor(currentId) != null) {
                             // FOR_ENDの直前へ到達した経路も、親分岐の合流経路と
                             // 同じく上位の幅調整へ引き継ぎます。
                             return Segment(
@@ -363,15 +411,46 @@ object GraphLayoutEngine {
                                 maximumY,
                                 null,
                                 mainInsertionTarget = continuationTarget,
+                                end = SegmentExit.Boundary(currentId),
+                                mainEnd = SegmentExit.Boundary(currentId),
                             )
                         }
-                    } else return Segment(cursorX, maximumY, loop.tail, mainNextX = loop.mainNextX)
+                    } else return Segment(
+                        cursorX,
+                        maximumY,
+                        loop.tail,
+                        mainNextX = loop.mainNextX,
+                        mainInsertionTarget = loop.mainInsertionTarget,
+                        end = loop.end,
+                        mainEnd = loop.mainEnd,
+                    )
                     continue
                 }
                 putNode(cursorX, y, node)
                 maximumY = maxOf(maximumY, y)
                 val next = node.next
-                if (next == null || next == stop) return Segment(cursorX + 2, maximumY, node.id)
+                if (next == null || next == stop || context.boundaryFor(next) != null) {
+                    // 内側枝から外側境界へ明示接続されている場合は、境界までの
+                    // 最後の通常ノードだけを保持します。外側ノードそのものは
+                    // 親構造が描画するため、ここで複製しません。
+                    if (next != null && next != stop) {
+                        putPath(
+                            cursorX + 1,
+                            y,
+                            sourceId = node.id,
+                            edge = GraphEditor.Edge.NEXT,
+                            continuationId = continuationId,
+                        )
+                    }
+                    val end = SegmentExit.Node(node.id, next)
+                    return Segment(
+                        cursorX + 2,
+                        maximumY,
+                        node.id,
+                        end = end,
+                        mainEnd = end,
+                    )
+                }
                 putPath(
                     cursorX + 1,
                     y,
@@ -382,17 +461,36 @@ object GraphLayoutEngine {
                 cursorX += 2
                 currentId = next
             }
-            return Segment(cursorX, maximumY, null, hasOpenEnd)
+            return Segment(cursorX, maximumY, null, hasOpenEnd, end = SegmentExit.Open)
         }
 
-        private fun renderCondition(condition: CommandNode, x: Int, y: Int): Segment {
+        private fun renderCondition(
+            condition: CommandNode,
+            x: Int,
+            y: Int,
+            context: RenderContext,
+        ): Segment {
             putNode(x, y, condition)
-            val mergeId = condition.pairedNodeId ?: return Segment(x + 2, y, condition.id)
+            val mergeId = condition.pairedNodeId ?: return Segment(
+                x + 2,
+                y,
+                condition.id,
+                end = SegmentExit.Node(condition.id, condition.next),
+                mainEnd = SegmentExit.Node(condition.id, condition.next),
+            )
+            if (context.boundaryFor(mergeId) != null) {
+                // 対応MERGEが外側FOR_ENDの直後などにある場合、そのMERGEの所有者は
+                // 現在の条件ではありません。通常のpaired条件としてMERGEをここへ
+                // 描くと、親スコープで同じノードを二重描画するため、open条件と同じ
+                // 枝描画だけを行い、外側へ終端情報を返します。
+                return renderOpenCondition(condition, x, y, mergeId, context)
+            }
+            val branchContext = context.push(RenderBoundary.ConditionMerge(condition.id, mergeId))
 
             val trueStart = condition.trueNext
             val trueSegment = if (trueStart != null && trueStart != mergeId) {
                 putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
-                renderSequence(trueStart, mergeId, x + 2, y)
+                renderSequence(trueStart, mergeId, x + 2, y, context = branchContext)
             } else {
                 putPath(x + 1, y, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.TRUE, condition.id)
                 if (trueStart == null) {
@@ -400,16 +498,24 @@ object GraphLayoutEngine {
                     // 追加ポイントは「合流へ進むための経路」と区別せず、枝へ次の
                     // コマンドを追加できる通常の終端として表示します。
                     putAdd(x + 2, y, condition.id, GraphEditor.Edge.TRUE, condition.id)
-                    Segment(x + 4, y, null, hasOpenEnd = true)
+                    Segment(x + 4, y, null, hasOpenEnd = true, end = SegmentExit.Empty)
                 } else {
                     // trueNext == mergeId は既に合流へ接続済みの空枝です。
-                    Segment(x + 2, y, null)
+                    Segment(
+                        x + 2,
+                        y,
+                        null,
+                        end = SegmentExit.Boundary(mergeId),
+                        mainEnd = SegmentExit.Boundary(mergeId),
+                    )
                 }
             }
             val trueReachesMerge = trueStart != null && hasPathTo(trueStart, mergeId)
-            if (!trueReachesMerge && trueSegment.tail != null) {
+            if (!trueReachesMerge) {
                 // 通常ノード列がNULLで終わる場合は、列の末尾にも枝追加点を置きます。
-                putTailAdd(trueSegment.nextX, y, trueSegment.tail, condition.id)
+                trueSegment.terminalTail()?.let { tail ->
+                    putTailAdd(trueSegment.nextX, y, tail, condition.id)
+                }
             }
 
             val falseY = trueSegment.maxY + 2
@@ -427,19 +533,27 @@ object GraphLayoutEngine {
             )
             val falseStart = condition.falseNext
             val falseSegment = if (falseStart != null && falseStart != mergeId) {
-                renderSequence(falseStart, mergeId, x + 2, falseY)
+                renderSequence(falseStart, mergeId, x + 2, falseY, context = branchContext)
             } else {
                 if (falseStart == null) {
                     putAdd(x + 2, falseY, condition.id, GraphEditor.Edge.FALSE, condition.id)
-                    Segment(x + 4, falseY, null, hasOpenEnd = true)
+                    Segment(x + 4, falseY, null, hasOpenEnd = true, end = SegmentExit.Empty)
                 } else {
                     putPath(x + 1, falseY, MapCellKind.BRANCH_PATH, condition.id, GraphEditor.Edge.FALSE, condition.id)
-                    Segment(x + 2, falseY, null)
+                    Segment(
+                        x + 2,
+                        falseY,
+                        null,
+                        end = SegmentExit.Boundary(mergeId),
+                        mainEnd = SegmentExit.Boundary(mergeId),
+                    )
                 }
             }
             val falseReachesMerge = falseStart != null && hasPathTo(falseStart, mergeId)
-            if (!falseReachesMerge && falseSegment.tail != null) {
-                putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id)
+            if (!falseReachesMerge) {
+                falseSegment.terminalTail()?.let { tail ->
+                    putTailAdd(falseSegment.nextX, falseY, tail, condition.id)
+                }
             }
 
             // 合流ノードは最長枝の nextX を基準に置き、通常ノード列と同じ2ピッチを保ちます。
@@ -508,14 +622,44 @@ object GraphLayoutEngine {
                 putVerticalBranchPath(mergeX, y + 1, falseY)
                 markVerticalInsertionTarget(mergeX, y + 1, falseY, falseTarget)
             }
-            val merge = graph.nodes[mergeId] ?: return Segment(mergeNodeX, falseSegment.maxY, condition.id)
+            val merge = graph.nodes[mergeId] ?: return Segment(
+                mergeNodeX,
+                falseSegment.maxY,
+                condition.id,
+                end = SegmentExit.Node(condition.id, condition.next),
+                mainEnd = SegmentExit.Node(condition.id, condition.next),
+            )
             // 枝が空／短い場合でも、角セルを合流直前の経路として明示的に
             // 再設定し、「水平枝→L字の角→合流アイコン」の接続を保証します。
             // 合流直前の角も水平経路の一部として同じ判定領域を維持します。縦線側へ
             // 候補を複製しないことで、L字の接続方向と挿入方向を混同しません。
             if (trueReachesMerge) putPath(mergeX - 1, y, MapCellKind.BRANCH_PATH)
             putNode(mergeNodeX, y, merge)
-            return Segment(mergeNodeX + 2, maxOf(falseSegment.maxY, falseY), merge.id)
+            val mergeEnd = SegmentExit.Node(merge.id, merge.next)
+            val mainLeavesToOuterBoundary = trueSegment.reachesOuterBoundary(context, mergeId)
+            val mainInsertionTarget = if (mainLeavesToOuterBoundary) {
+                trueSegment.mainInsertionTarget
+                    ?: boundaryInsertionTarget(
+                        condition.id,
+                        GraphEditor.Edge.TRUE,
+                        trueSegment,
+                        context,
+                        mergeId,
+                    )
+            } else {
+                null
+            }
+            return Segment(
+                mergeNodeX + 2,
+                maxOf(falseSegment.maxY, falseY),
+                merge.id,
+                mainInsertionTarget = mainInsertionTarget,
+                end = mergeEnd,
+                // TRUE枝が外側の境界へ明示接続されている場合だけ、その枝を
+                // 親構造の主経路として返します。NULL終端や内側MERGEで止まる
+                // TRUE枝は、条件自身のMERGEを経由する構造として扱います。
+                mainEnd = if (mainLeavesToOuterBoundary) trueSegment.mainEnd else mergeEnd,
+            )
         }
 
         /** 枝内に対応MERGEへ到達する経路が一つでもあるかを調べます。 */
@@ -533,6 +677,96 @@ object GraphLayoutEngine {
                 return next.any(::visit)
             }
             return visit(start)
+        }
+
+        /**
+         * 主経路が、現在の構造より外側の境界へ明示的に抜けるかを判定します。
+         *
+         * `nextX`や`tail`は描画幅・追加位置を表すための情報であり、枝がどこで
+         * 終わるかを表しません。ここではSegmentの終端を型付きで確認し、内側の
+         * 条件が外側のFOR_END／MERGEへ接続されている場合だけ親へ引き継ぎます。
+         */
+        private fun Segment.reaches(target: UUID?): Boolean {
+            return end.reaches(target)
+        }
+
+        private fun SegmentExit.reaches(target: UUID?): Boolean {
+            if (target == null) return false
+            return when (val exit = this) {
+                is SegmentExit.Boundary -> exit.boundaryId == target
+                is SegmentExit.Node -> exit.nextId == target
+                else -> false
+            }
+        }
+
+        private fun Segment.terminalTail(): UUID? =
+            (end as? SegmentExit.Node)
+                ?.takeIf { it.nextId == null && it.nodeId == tail }
+                ?.nodeId
+
+        private fun Segment.reachesOuterBoundary(context: RenderContext, localBoundaryId: UUID): Boolean =
+            when (val exit = mainEnd) {
+                is SegmentExit.Boundary ->
+                    exit.boundaryId != localBoundaryId && context.boundaryFor(exit.boundaryId) != null
+                is SegmentExit.Node ->
+                    exit.nextId?.let { nextId ->
+                        nextId != localBoundaryId && context.boundaryFor(nextId) != null
+                    } == true
+                else -> false
+            }
+
+        private fun Segment.reachesActiveBoundary(context: RenderContext): Boolean =
+            when (val exit = mainEnd) {
+                is SegmentExit.Boundary -> context.boundaryFor(exit.boundaryId) != null
+                is SegmentExit.Node -> exit.nextId?.let { context.boundaryFor(it) != null } == true
+                else -> false
+            }
+
+        /** 外側境界へ抜ける枝の、実際に編集すべきNEXT／枝先を返します。 */
+        private fun boundaryInsertionTarget(
+            conditionId: UUID,
+            edge: GraphEditor.Edge,
+            segment: Segment,
+            context: RenderContext,
+            localBoundaryId: UUID,
+        ): InsertionTarget? {
+            if (!segment.reachesOuterBoundary(context, localBoundaryId)) return null
+            return when (val exit = segment.mainEnd) {
+                is SegmentExit.Node -> InsertionTarget(
+                    exit.nodeId,
+                    GraphEditor.Edge.NEXT,
+                    conditionId,
+                )
+                is SegmentExit.Boundary -> InsertionTarget(conditionId, edge, conditionId)
+                else -> null
+            }
+        }
+
+        /** 現在のスコープで主経路が到達する境界へ向けた挿入先です。 */
+        private fun activeBoundaryInsertionTarget(
+            conditionId: UUID,
+            edge: GraphEditor.Edge,
+            segment: Segment,
+            context: RenderContext,
+            continuationId: UUID? = null,
+        ): InsertionTarget? {
+            if (!segment.reachesActiveBoundary(context)) return null
+            val normalizedContinuation = normalizeContinuation(continuationId)
+            return when (val exit = segment.mainEnd) {
+                is SegmentExit.Node -> InsertionTarget(
+                    exit.nodeId,
+                    GraphEditor.Edge.NEXT,
+                    conditionId,
+                    continuationId = normalizedContinuation,
+                )
+                is SegmentExit.Boundary -> InsertionTarget(
+                    conditionId,
+                    edge,
+                    conditionId,
+                    continuationId = normalizedContinuation,
+                )
+                else -> null
+            }
         }
 
         /**
@@ -563,7 +797,13 @@ object GraphLayoutEngine {
             }
         }
 
-        private fun renderOpenCondition(condition: CommandNode, x: Int, y: Int, stop: UUID?): Segment {
+        private fun renderOpenCondition(
+            condition: CommandNode,
+            x: Int,
+            y: Int,
+            stop: UUID?,
+            context: RenderContext,
+        ): Segment {
             putNode(x, y, condition)
             putPath(
                 x + 1,
@@ -576,8 +816,21 @@ object GraphLayoutEngine {
             )
             val trueStart = condition.trueNext
             val trueSegment = when {
-                trueStart != null && trueStart == stop -> Segment(x + 2, y, null)
-                trueStart != null -> renderSequence(trueStart, stop, x + 2, y, continuationId = stop)
+                trueStart != null && trueStart == stop -> Segment(
+                    x + 2,
+                    y,
+                    null,
+                    end = SegmentExit.Boundary(trueStart),
+                    mainEnd = SegmentExit.Boundary(trueStart),
+                )
+                trueStart != null -> renderSequence(
+                    trueStart,
+                    stop,
+                    x + 2,
+                    y,
+                    continuationId = stop,
+                    context = context,
+                )
                 else -> {
                     putAdd(
                         x + 2,
@@ -587,11 +840,11 @@ object GraphLayoutEngine {
                         condition.id,
                         continuationId = stop,
                     )
-                    Segment(x + 4, y, null, hasOpenEnd = true)
+                    Segment(x + 4, y, null, hasOpenEnd = true, end = SegmentExit.Empty)
                 }
             }
-            if (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop)) {
-                putTailAdd(trueSegment.nextX, y, trueSegment.tail, condition.id, continuationId = stop)
+            trueSegment.terminalTail()?.let { tail ->
+                putTailAdd(trueSegment.nextX, y, tail, condition.id, continuationId = stop)
             }
             val falseY = trueSegment.maxY + 2
             // FALSE枝は条件分岐アイコンの中心列から真下へ降ろします。縦線も
@@ -609,8 +862,21 @@ object GraphLayoutEngine {
             )
             val falseStart = condition.falseNext
             val falseSegment = when {
-                falseStart != null && falseStart == stop -> Segment(x + 2, falseY, null)
-                falseStart != null -> renderSequence(falseStart, stop, x + 2, falseY, continuationId = stop)
+                falseStart != null && falseStart == stop -> Segment(
+                    x + 2,
+                    falseY,
+                    null,
+                    end = SegmentExit.Boundary(falseStart),
+                    mainEnd = SegmentExit.Boundary(falseStart),
+                )
+                falseStart != null -> renderSequence(
+                    falseStart,
+                    stop,
+                    x + 2,
+                    falseY,
+                    continuationId = stop,
+                    context = context,
+                )
                 else -> {
                     putAdd(
                         x + 2,
@@ -620,11 +886,11 @@ object GraphLayoutEngine {
                         condition.id,
                         continuationId = stop,
                     )
-                    Segment(x + 4, falseY, null, hasOpenEnd = true)
+                    Segment(x + 4, falseY, null, hasOpenEnd = true, end = SegmentExit.Empty)
                 }
             }
-            if (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop)) {
-                putTailAdd(falseSegment.nextX, falseY, falseSegment.tail, condition.id, continuationId = stop)
+            falseSegment.terminalTail()?.let { tail ->
+                putTailAdd(falseSegment.nextX, falseY, tail, condition.id, continuationId = stop)
             }
             // 条件直下の縦幹は、FALSE枝の先頭への挿入を受け付けます（開いた枝・
             // 閉じた枝で共通）。空枝（枝の先頭にノードがなく、追加ボタンが枝への
@@ -639,11 +905,17 @@ object GraphLayoutEngine {
                 stop,
                 trueSegment,
                 continuationId = stop,
+            ) ?: activeBoundaryInsertionTarget(
+                condition.id,
+                GraphEditor.Edge.TRUE,
+                trueSegment,
+                context,
+                continuationId = stop,
             )
             val trueOpen = trueStart == null || trueSegment.hasOpenEnd ||
-                (trueSegment.tail != null && (stop == null || graph.nodes[trueSegment.tail]?.next != stop))
+                (!trueSegment.reaches(stop) && !trueSegment.reachesActiveBoundary(context))
             val falseOpen = falseStart == null || falseSegment.hasOpenEnd ||
-                (falseSegment.tail != null && (stop == null || graph.nodes[falseSegment.tail]?.next != stop))
+                (!falseSegment.reaches(stop) && !falseSegment.reachesActiveBoundary(context))
             return Segment(
                 maxOf(trueSegment.nextX, falseSegment.nextX),
                 falseSegment.maxY,
@@ -653,18 +925,49 @@ object GraphLayoutEngine {
                 // 全体幅）をそのまま返すと、親の合流補完で経路が空きます。
                 mainNextX = trueSegment.mainNextX,
                 mainInsertionTarget = mainInsertionTarget,
+                end = SegmentExit.None,
+                mainEnd = trueSegment.mainEnd,
             )
         }
 
-        private fun renderFor(start: CommandNode, x: Int, y: Int): Segment {
+        private fun renderFor(
+            start: CommandNode,
+            x: Int,
+            y: Int,
+            context: RenderContext,
+        ): Segment {
             putNode(x, y, start)
-            val endId = start.pairedNodeId ?: return Segment(x + 2, y, start.id)
+            val endId = start.pairedNodeId ?: return Segment(
+                x + 2,
+                y,
+                start.id,
+                end = SegmentExit.Node(start.id, start.next),
+                mainEnd = SegmentExit.Node(start.id, start.next),
+            )
             val bodyStart = start.trueNext
             val body = if (bodyStart != null && bodyStart != endId) {
                 putPath(x + 1, y, sourceId = start.id, edge = GraphEditor.Edge.FOR_BODY)
-                renderSequence(bodyStart, endId, x + 2, y)
+                renderSequence(
+                    bodyStart,
+                    endId,
+                    x + 2,
+                    y,
+                    context = context.push(
+                        RenderBoundary.ForEnd(
+                            start.id,
+                            endId,
+                            continuationId = graph.nodes[endId]?.next,
+                        ),
+                    ),
+                )
             } else {
-                Segment(x + 2, y, null)
+                Segment(
+                    x + 2,
+                    y,
+                    null,
+                    end = SegmentExit.Boundary(endId),
+                    mainEnd = SegmentExit.Boundary(endId),
+                )
             }
             val returnY = body.maxY + 2
             // body.nextXは「次の構造を置く基準列」であり、開いた条件分岐の末端では
@@ -676,6 +979,7 @@ object GraphLayoutEngine {
                 verticalStartY = y + 1,
                 verticalEndY = returnY,
             )
+            val bodyReachesEnd = body.mainEnd.reaches(endId)
             when {
                 bodyStart == null || bodyStart == endId ->
                     // 空bodyの開始・終了間の経路は、body先頭への挿入（FOR_BODY）を受け付ける（仕様10.1）。
@@ -686,15 +990,7 @@ object GraphLayoutEngine {
                         MapCellKind.PATH,
                         target = InsertionTarget(start.id, GraphEditor.Edge.FOR_BODY),
                     )
-                body.tail != null ->
-                    fillHorizontal(
-                        body.nextX - 1,
-                        endX - 1,
-                        y,
-                        MapCellKind.PATH,
-                        target = InsertionTarget(body.tail, GraphEditor.Edge.NEXT),
-                    )
-                body.mainInsertionTarget != null ->
+                bodyReachesEnd && body.mainInsertionTarget != null ->
                     // body内の条件・forがFOR_ENDへ到達した場合、末尾ノードを
                     // 返せなくても主行の経路には一意な挿入先があります。
                     // そのtargetをFOR_END直前の補償経路全体へ引き継ぎます。
@@ -711,12 +1007,31 @@ object GraphLayoutEngine {
                         },
                         target = body.mainInsertionTarget,
                     )
+                bodyReachesEnd && body.mainEnd is SegmentExit.Node -> {
+                    // 通常ノードのNEXTがFOR_ENDを明示的に指す場合だけ、
+                    // そのNEXTをFOR_ENDまで延長します。tailの有無だけで
+                    // 接続すると、next=nullの終端枝をFORへ誤接続します。
+                    val endNode = body.mainEnd
+                    fillHorizontal(
+                        body.nextX - 1,
+                        endX - 1,
+                        y,
+                        MapCellKind.PATH,
+                        target = InsertionTarget(endNode.nodeId, GraphEditor.Edge.NEXT),
+                    )
+                }
                 else ->
-                    // 未合流分岐など挿入先が曖昧なbody末尾では誤挿入より無反応が安全なため装飾扱いにする。
-                    // 枝末端には既に黄色の追加アイコンがあるため追加導線は失われない。
-                    putPath(endX - 1, y)
+                    // 外側境界へ到達しないNULL終端枝は、FOR_ENDへ経路を補完しません。
+                    // 終端枝の追加ポイントを残したまま、別の明示経路だけを描きます。
+                    Unit
             }
-            val end = graph.nodes[endId] ?: return Segment(endX, body.maxY, start.id)
+            val end = graph.nodes[endId] ?: return Segment(
+                endX,
+                body.maxY,
+                start.id,
+                end = SegmentExit.Node(start.id, start.next),
+                mainEnd = SegmentExit.Node(start.id, start.next),
+            )
             putNode(endX, y, end)
 
             for (verticalY in y + 1..returnY) {
@@ -734,7 +1049,14 @@ object GraphLayoutEngine {
                     loopReturnArrowPoints += arrowPoint
                 }
             }
-            return Segment(endX + 2, returnY, end.id)
+            val endExit = SegmentExit.Node(end.id, end.next)
+            return Segment(
+                endX + 2,
+                returnY,
+                end.id,
+                end = endExit,
+                mainEnd = endExit,
+            )
         }
 
         /**
@@ -817,9 +1139,17 @@ object GraphLayoutEngine {
             check(existing == null || (existing.kind == MapCellKind.NODE && existing.nodeId == node.id)) {
                 "ノードが既存の経路または別ノードと衝突しています: point=$point existing=$existing node=${node.id}"
             }
-            // 同じ構造ノードが分岐の描画経路上へ再登場する場合があります。
-            // そのときは最新位置をクリック対象として採用しますが、経路／追加ポイント
-            // の上書きだけは上の衝突検査で必ず拒否します。
+            val previousPoint = nodePoints[node.id]
+            if (previousPoint != null && previousPoint != point) {
+                // 同じ構造ノードを別の深さの経路へ再描画することは、単なる画面上の
+                // 重複ではなく、どの親構造がそのノードを所有するかの破綻です。
+                // ここで隠すとelementIdの重複を温存したまま経路だけが不正になるため、
+                // 境界伝播の漏れとして明示的に失敗させます。
+                throw GraphLayoutException(
+                    "同じ構造ノードを複数の描画経路へ配置できません: " +
+                        "node=${node.id} type=${node.type} first=$previousPoint second=$point",
+                )
+            }
             ensureCapacity(point)
             cells[point] = MapCell(point, MapCellKind.NODE, node.id)
             nodePoints[node.id] = point
@@ -981,8 +1311,72 @@ object GraphLayoutEngine {
             // 弱い候補は、同じセルを共有する明示的な調整経路へ譲る。
             existing.weak && !incoming.weak -> incoming
             incoming.weak && !existing.weak -> existing
-            else -> error("異なる挿入位置が同じセルを共有しています: point=$point existing=$existing incoming=$incoming")
+            existing.sourceId == incoming.sourceId &&
+                existing.edge == incoming.edge &&
+                existing.continuationId == incoming.continuationId &&
+                existing.mergeConditionId == null &&
+                incoming.mergeConditionId != null -> incoming
+            existing.sourceId == incoming.sourceId &&
+                existing.edge == incoming.edge &&
+                existing.continuationId == incoming.continuationId &&
+                existing.mergeConditionId != null &&
+                incoming.mergeConditionId == null -> existing
+            else -> error(
+                "異なる挿入位置が同じセルを共有しています: point=$point " +
+                    "existing=$existing incoming=$incoming " +
+                    "sourceType=${existing.sourceId?.let { graph.nodes[it]?.type }}",
+            )
         }
+    }
+
+    /** 描画中に現在の枝より外側で所有される構造境界です。 */
+    private sealed interface RenderBoundary {
+        val id: UUID
+        fun matches(candidate: UUID): Boolean
+
+        data class ConditionMerge(val conditionId: UUID, override val id: UUID) : RenderBoundary {
+            override fun matches(candidate: UUID): Boolean = candidate == id
+        }
+
+        data class ForEnd(
+            val startId: UUID,
+            override val id: UUID,
+            val continuationId: UUID? = null,
+        ) : RenderBoundary {
+            override fun matches(candidate: UUID): Boolean = candidate == id || candidate == continuationId
+        }
+    }
+
+    /**
+     * 子枝へ引き継ぐ構造境界のスタックです。
+     *
+     * 分岐の入れ子深さを単なる整数で渡すと、どのMERGE／FOR_ENDを停止すべきかが
+     * 失われます。境界ノードのUUIDと種類をスタックで持つことで、内側の描画は
+     * 自分が所有しない外側ノードを描画せず、親構造へ到達情報だけを返せます。
+     */
+    private data class RenderContext(val boundaries: List<RenderBoundary>) {
+        fun push(boundary: RenderBoundary): RenderContext =
+            RenderContext(boundaries + boundary)
+
+        fun boundaryFor(id: UUID): RenderBoundary? =
+            boundaries.asReversed().firstOrNull { it.matches(id) }
+
+        companion object {
+            val EMPTY = RenderContext(emptyList())
+        }
+    }
+
+    /** Segmentの末端を、通常ノード・構造境界・未解決終端に分けます。 */
+    private sealed interface SegmentExit {
+        data class Node(val nodeId: UUID, val nextId: UUID?) : SegmentExit
+
+        data class Boundary(val boundaryId: UUID) : SegmentExit
+
+        data object None : SegmentExit
+
+        data object Empty : SegmentExit
+
+        data object Open : SegmentExit
     }
 
     private data class Segment(
@@ -995,5 +1389,9 @@ object GraphLayoutEngine {
         val mainNextX: Int = nextX,
         /** 主行の終端経路を親構造が延長するときに引き継ぐ挿入先。 */
         val mainInsertionTarget: InsertionTarget? = null,
+        /** 構造上の主な末端。tailだけではNULL終端と境界到達を区別できません。 */
+        val end: SegmentExit = SegmentExit.None,
+        /** 親構造が延長する主行の末端。分岐のTRUE枝を優先します。 */
+        val mainEnd: SegmentExit = end,
     )
 }

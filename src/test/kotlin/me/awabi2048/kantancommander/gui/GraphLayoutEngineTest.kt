@@ -967,4 +967,92 @@ class GraphLayoutEngineTest {
         )
         assertEquals(MapCellKind.ADD, layout.cells[falseAdd.point]?.kind)
     }
+
+    @Test
+    fun `nested paired condition keeps outer boundary nodes in their owning scope`() {
+        val graph = CommandGraph.empty()
+        fun add(type: CommandType) = type.newNode().also { graph.nodes[it.id] = it }
+
+        val entry = add(CommandType.TELEPORT)
+        val outer = add(CommandType.CONDITION)
+        val beforeFor = add(CommandType.ENTITY_ACTION)
+        val start = add(CommandType.FOR_START)
+        val end = add(CommandType.FOR_END)
+        val bodyCondition = add(CommandType.CONDITION)
+        val bodyFalseFirst = add(CommandType.TELEPORT)
+        val bodyFalseSecond = add(CommandType.TELEPORT)
+        val nestedCondition = add(CommandType.CONDITION)
+        val nestedMerge = add(CommandType.MERGE)
+        val bodyMerge = add(CommandType.MERGE)
+        val outerFalse = add(CommandType.TELEPORT)
+
+        graph.entryNodeId = entry.id
+        entry.next = outer.id
+        outer.trueNext = beforeFor.id
+        outer.falseNext = outerFalse.id
+        beforeFor.next = start.id
+
+        start.pairedNodeId = end.id
+        end.pairedNodeId = start.id
+        start.trueNext = bodyCondition.id
+        // この参照が今回の再現条件です。bodyConditionのtrue枝からFOR_ENDへ
+        // 進んだ後、FOR_ENDのNEXTへbodyMergeが続きます。
+        end.next = bodyMerge.id
+
+        bodyCondition.pairedNodeId = bodyMerge.id
+        bodyMerge.pairedNodeId = bodyCondition.id
+        bodyCondition.trueNext = end.id
+        bodyCondition.falseNext = bodyFalseFirst.id
+        bodyFalseFirst.next = bodyFalseSecond.id
+        bodyFalseSecond.next = nestedCondition.id
+
+        nestedCondition.pairedNodeId = nestedMerge.id
+        nestedMerge.pairedNodeId = nestedCondition.id
+        nestedCondition.trueNext = nestedMerge.id
+        nestedCondition.falseNext = nestedMerge.id
+        nestedMerge.next = bodyMerge.id
+
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+        val layout = assertDoesNotThrow<GraphLayout> { GraphLayoutEngine.layout(graph) }
+
+        assertEquals(graph.nodes.keys, layout.nodePoints.keys)
+        assertEquals(1, layout.nodePoints.values.count { it == layout.nodePoints.getValue(end.id) })
+        assertEquals(1, layout.nodePoints.values.count { it == layout.nodePoints.getValue(bodyMerge.id) })
+
+        assertEquals(
+            layout.nodePoints.size,
+            layout.nodePoints.values.toSet().size,
+            "構造ノードを別の深さへ二重描画してはいけません",
+        )
+
+        // 外側条件のFALSE枝は、このグラフではNULL終端です。内側FOR／条件の
+        // MERGEやFOR_ENDを、その枝の後続として暗黙に接続してはいけません。
+        val outerFalsePoint = requireNotNull(layout.nodePoints[outerFalse.id])
+        assertEquals(
+            MapCellKind.PATH,
+            layout.cells[MapPoint(outerFalsePoint.x + 1, outerFalsePoint.y)]?.kind,
+        )
+        assertEquals(
+            MapCellKind.ADD,
+            layout.cells[MapPoint(outerFalsePoint.x + 2, outerFalsePoint.y)]?.kind,
+        )
+        assertEquals(
+            InsertionTarget(outerFalse.id, GraphEditor.Edge.NEXT, outer.id),
+            layout.cells[MapPoint(outerFalsePoint.x + 2, outerFalsePoint.y)]?.insertionTarget,
+        )
+
+        val terminalTarget = requireNotNull(
+            layout.cells[MapPoint(outerFalsePoint.x + 2, outerFalsePoint.y)]?.insertionTarget,
+        )
+        val preview = assertDoesNotThrow<InsertionPreview?> {
+            GraphLayoutEngine.previewInsertion(graph, terminalTarget, CommandType.TELEPORT)
+        }
+        val insertedId = requireNotNull(preview).insertedNodeId
+        assertEquals(null, preview.graph.nodes[insertedId]?.next)
+        val insertedPoint = requireNotNull(preview.layout.nodePoints[insertedId])
+        assertEquals(
+            MapCellKind.ADD,
+            preview.layout.cells[MapPoint(insertedPoint.x + 2, insertedPoint.y)]?.kind,
+        )
+    }
 }
