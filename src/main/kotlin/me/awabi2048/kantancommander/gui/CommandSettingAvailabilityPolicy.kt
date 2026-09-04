@@ -45,3 +45,16 @@ internal object HeldBlockSettingPolicy {
     internal fun materialId(materialKey: String, isAir: Boolean, isBlock: Boolean): String? =
         materialKey.takeIf { isAir || isBlock }
 }
+
+/**
+ * メインハンドから値を設定する項目の上書き判定を共有します。
+ *
+ * アイテムはIDとItemStackスナップショットの2項目、ブロックはIDの1項目を
+ * 保存するため、各画面が個別に「空文字なら未設定」と判定すると確認漏れが
+ * 発生します。保存される全フィールドを渡し、どれか一つでも値があれば同じ
+ * 確認画面へ進めます。minecraft:airも明示設定値なので空文字とは区別します。
+ */
+internal object HeldSettingOverwritePolicy {
+    fun requiresConfirmation(vararg existingValues: String): Boolean =
+        existingValues.any { it.isNotBlank() }
+}

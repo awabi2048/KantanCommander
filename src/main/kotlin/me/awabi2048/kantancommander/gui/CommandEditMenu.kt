@@ -1453,6 +1453,18 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             context.player.sendMessage("§cメインハンドにブロックを持ってください。")
             return MenuActionResult.Ignored
         }
+        val currentNode = node(context.route) ?: return MenuActionResult.Ignored
+        if (HeldSettingOverwritePolicy.requiresConfirmation(currentNode.string("block"))) {
+            // Dialogへ渡す値と確認時の保存世代を固定します。確認中に別の編集が
+            // 入った場合は古い設定を上書きせず、保存失敗としてDialogへ戻します。
+            showBlockOverwriteDialog(
+                context.player,
+                context.route,
+                blockId,
+                script(context.route)?.revision,
+            )
+            return MenuActionResult.Success(MenuUpdate.None)
+        }
         if (!updateNode(context.player, context.route) {
                 CommandSettingsModel.setParameter(it, "block", blockId)
             }) {
@@ -1461,6 +1473,45 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
         }
         return MenuActionResult.Success(MenuUpdate.Refresh)
+    }
+
+    /** インベントリGUIの既存ブロック設定を確認してから、クリック時の値を保存します。 */
+    private fun showBlockOverwriteDialog(
+        player: Player,
+        route: MenuRoute,
+        blockId: String,
+        expectedRevision: Long?,
+    ) {
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = "block-overwrite",
+                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_TITLE),
+                body = listOf(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_WARN),
+                ),
+                confirm = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                    MenuDialogHandler { _, _ ->
+                        if (!updateNode(
+                                player,
+                                route,
+                                configuredFields = setOf("block"),
+                                expectedRevision = expectedRevision,
+                            ) { node ->
+                                CommandSettingsModel.setParameter(node, "block", blockId)
+                            }) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(
+                                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Replace(route))
+                    },
+                ),
+                cancel = dialogCancel(player, route),
+            ),
+        )
     }
 
     private fun renderVariableTypes(player: Player): InventoryMenuView {
@@ -2421,6 +2472,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         player: Player,
         route: MenuRoute,
         configuredFields: Set<String> = emptySet(),
+        expectedRevision: Long? = null,
         change: (CommandNode) -> Unit,
     ): Boolean {
         val context = CommandSettingContext.from(route) ?: return false
@@ -2430,6 +2482,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 context,
                 configuredFields,
                 editorId = player.uniqueId,
+                expectedRevision = expectedRevision,
                 change = change,
             ) != null
         }

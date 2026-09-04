@@ -2784,7 +2784,17 @@ class GestureLowerPanel(
     private fun buildConfirm(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
-        val overwrite = state.confirmKind == GestureConfirmKind.ITEM_OVERWRITE
+        val overwrite = state.confirmKind != GestureConfirmKind.DELETE
+        val titleKey = when (state.confirmKind) {
+            GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
+            GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_TITLE
+            GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_TITLE
+        }
+        val warningKey = when (state.confirmKind) {
+            GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
+            GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_WARN
+            GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_WARN
+        }
         addText(
             visuals,
             "confirm-title",
@@ -2792,11 +2802,7 @@ class GestureLowerPanel(
             0.11,
             0.005,
             180,
-            Component.text(KcI18n.text(
-                player,
-                if (overwrite) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
-                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_TITLE,
-            )),
+            Component.text(KcI18n.text(player, titleKey)),
         )
         addText(
             visuals,
@@ -2805,11 +2811,7 @@ class GestureLowerPanel(
             0.05,
             0.004,
             180,
-            Component.text(KcI18n.text(
-                player,
-                if (overwrite) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
-                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_WARN,
-            ), NamedTextColor.GRAY),
+            Component.text(KcI18n.text(player, warningKey), NamedTextColor.GRAY),
         )
 
         addBlock(visuals, "confirm-yes-bg", -0.27, -0.08, 0.48, 0.12, Material.RED_CONCRETE, 4)

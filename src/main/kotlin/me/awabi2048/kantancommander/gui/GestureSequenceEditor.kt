@@ -90,12 +90,15 @@ data class GestureEditorState(
     var pickerPage: Int = 0,
     /** CONFIRM対象のノードID（削除確認） */
     var confirmNodeId: UUID? = null,
-    /** 確認子画面の用途（削除／アイテム上書き） */
+    /** 確認子画面の用途（削除／アイテム・ブロック上書き） */
     var confirmKind: GestureConfirmKind = GestureConfirmKind.DELETE,
     /** アイテム上書き確認が保持する対象と完全なItemStackデータ */
     var pendingItemContext: CommandSettingContext? = null,
     var pendingItemKey: String? = null,
     var pendingItemData: String? = null,
+    /** ブロック上書き確認が保持する対象と、クリック時点のブロックID */
+    var pendingBlockContext: CommandSettingContext? = null,
+    var pendingBlockId: String? = null,
     /** PICKERで選択中の挿入先（addポイントクリック時に保持） */
     var pendingInsertion: InsertionTarget? = null,
     /** PICKERへ遷移した追加ポイントの選択状態。既存ノード選択とは独立して表示します。 */
@@ -154,6 +157,7 @@ data class GestureAttentionState(
 enum class GestureConfirmKind {
     DELETE,
     ITEM_OVERWRITE,
+    BLOCK_OVERWRITE,
 }
 
 /**
@@ -351,6 +355,8 @@ class GestureSequenceEditor(
             state.selectedAddPoint = null
             state.selectedInsertionCandidatePoint = null
             clearSettingState()
+            clearPendingOverwriteState()
+            state.confirmKind = GestureConfirmKind.DELETE
             state.lowerMode = GestureLowerMode.SETTINGS
             api.closeChild(owner.uniqueId, lowerPanel.CONFIRM_SCREEN_ID)
             api.closeChild(owner.uniqueId, lowerPanel.SETTING_CHILD_SCREEN_ID)
@@ -625,9 +631,7 @@ class GestureSequenceEditor(
         if (!opened) {
             state.confirmKind = GestureConfirmKind.DELETE
             state.confirmNodeId = null
-            state.pendingItemContext = null
-            state.pendingItemKey = null
-            state.pendingItemData = null
+            clearPendingOverwriteState()
             state.lowerMode = if (settingChildWasOpen) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
             updateLower(player)
         }
@@ -1284,6 +1288,15 @@ class GestureSequenceEditor(
         state.pendingWorldVariableDeleteName = null
     }
 
+    /** アイテム／ブロック上書き確認の保留値を、確認画面の全終了経路で一括破棄します。 */
+    private fun clearPendingOverwriteState() {
+        state.pendingItemContext = null
+        state.pendingItemKey = null
+        state.pendingItemData = null
+        state.pendingBlockContext = null
+        state.pendingBlockId = null
+    }
+
     /** 設定木の現在フレームを既存表示状態へ投影します。 */
     private fun activateSettingFrame(
         frame: GestureSettingFrame,
@@ -1516,7 +1529,10 @@ class GestureSequenceEditor(
         val itemKey = held.type.key.toString()
         val itemData = ItemStackCodec.encode(held)
         val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId) ?: return false
-        val hasExistingItem = node.string(parameter).isNotBlank() || node.string("itemData").isNotBlank()
+        val hasExistingItem = HeldSettingOverwritePolicy.requiresConfirmation(
+            node.string(parameter),
+            node.string("itemData"),
+        )
         if (parameter == "item" && hasExistingItem) {
             openItemOverwriteConfirm(player, context, itemKey, itemData)
             return false
@@ -1535,11 +1551,21 @@ class GestureSequenceEditor(
                 updateLower(player)
                 return false
             }
-        val updated = updateSettingNode(player, context, configuredFields = setOf("block")) {
-            CommandSettingsModel.setParameter(it, "block", blockId)
+        val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId) ?: return false
+        if (HeldSettingOverwritePolicy.requiresConfirmation(node.string("block"))) {
+            openBlockOverwriteConfirm(player, context, blockId)
+            return false
         }
-        if (updated) updateLower(player)
-        return updated
+        return saveHeldBlock(player, context, blockId)
+    }
+
+    /** 確認不要なブロック設定の保存を、アイテム設定と同じ共通更新境界へ通します。 */
+    private fun saveHeldBlock(
+        player: Player,
+        context: CommandSettingContext,
+        blockId: String,
+    ): Boolean = updateSettingNode(player, context, configuredFields = setOf("block")) {
+        CommandSettingsModel.setParameter(it, "block", blockId)
     }
 
     /**
@@ -1620,6 +1646,7 @@ class GestureSequenceEditor(
         }
         state.confirmKind = GestureConfirmKind.ITEM_OVERWRITE
         state.confirmNodeId = null
+        clearPendingOverwriteState()
         state.pendingItemContext = context
         state.pendingItemKey = itemKey
         state.pendingItemData = itemData
@@ -1645,9 +1672,56 @@ class GestureSequenceEditor(
         }
         if (!opened) {
             state.confirmKind = GestureConfirmKind.DELETE
-            state.pendingItemContext = null
-            state.pendingItemKey = null
-            state.pendingItemData = null
+            clearPendingOverwriteState()
+            state.lowerMode = if (parentId == lowerPanel.SETTING_CHILD_SCREEN_ID) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    private fun openBlockOverwriteConfirm(
+        player: Player,
+        context: CommandSettingContext,
+        blockId: String,
+    ) {
+        val ownerId = ownerIdFor(player)
+        if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
+        val settingChildWasOpen = settingChildOpen(ownerId)
+        val parentId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val owner = ownerPlayerFor(player)
+        val attention = attentionState()
+        val parentView = if (settingChildWasOpen) {
+            lowerPanel.buildSettingChild(state, owner, attention, suppressHighlight = true)
+        } else {
+            lowerPanel.build(state, owner, attention, suppressHighlight = true)
+        }
+        state.confirmKind = GestureConfirmKind.BLOCK_OVERWRITE
+        state.confirmNodeId = null
+        clearPendingOverwriteState()
+        state.pendingBlockContext = context
+        state.pendingBlockId = blockId
+        state.lowerMode = GestureLowerMode.CONFIRM
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                parentView,
+                lowerPanel.build(state, owner, attention),
+                GestureGuiChildOptions(
+                    parentScreenId = parentId,
+                    overlayMaterial = Material.RED_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ブロック上書き確認子画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.confirmKind = GestureConfirmKind.DELETE
+            clearPendingOverwriteState()
             state.lowerMode = if (parentId == lowerPanel.SETTING_CHILD_SCREEN_ID) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
             updateLower(player)
         }
@@ -1681,13 +1755,51 @@ class GestureSequenceEditor(
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_ITEM_SAVE_RETRY))
             return
         }
-        state.pendingItemContext = null
-        state.pendingItemKey = null
-        state.pendingItemData = null
+        clearPendingOverwriteState()
         state.confirmKind = GestureConfirmKind.DELETE
         val ownerId = ownerIdFor(player)
         api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_OVERWRITTEN, mapOf("item" to itemKey)))
+        state.lowerMode = if (settingChildOpen(ownerId) && state.settingContext != null) {
+            GestureLowerMode.SETTING_CHOICES
+        } else {
+            clearSettingState()
+            GestureLowerMode.SETTINGS
+        }
+        updateUpper(player)
+        updateLower(player)
+    }
+
+    private fun confirmBlockOverwrite(player: Player) {
+        val context = state.pendingBlockContext ?: return
+        val blockId = state.pendingBlockId ?: return
+        val saved = runCatching {
+            CommandSettingsModel.updateNode(
+                plugin,
+                context,
+                configuredFields = setOf("block"),
+                editorId = player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+                change = { node ->
+                    CommandSettingsModel.setParameter(node, "block", blockId)
+                },
+            ) != null
+        }.onFailure { failure ->
+            reportGraphOperationFailure(
+                player,
+                "ブロック上書きの保存に失敗しました: script=${context.scriptId} node=${context.nodeId}",
+                failure,
+            )
+        }.getOrDefault(false)
+        if (!saved) {
+            // 確認子画面を閉じず、保存失敗時も同じ対象で再試行できるようにします。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+            return
+        }
+        clearPendingOverwriteState()
+        state.confirmKind = GestureConfirmKind.DELETE
+        val ownerId = ownerIdFor(player)
+        api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
         state.lowerMode = if (settingChildOpen(ownerId) && state.settingContext != null) {
             GestureLowerMode.SETTING_CHOICES
         } else {
@@ -3733,11 +3845,16 @@ class GestureSequenceEditor(
             context.elementId == "lower-delete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.confirmNodeId = state.selectedNodeId ?: return
                 state.confirmKind = GestureConfirmKind.DELETE
+                clearPendingOverwriteState()
                 openConfirmChild(player)
             }
             context.elementId == "confirm-delete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 if (state.confirmKind == GestureConfirmKind.ITEM_OVERWRITE) {
                     confirmItemOverwrite(player)
+                    return
+                }
+                if (state.confirmKind == GestureConfirmKind.BLOCK_OVERWRITE) {
+                    confirmBlockOverwrite(player)
                     return
                 }
                 val nodeId = state.confirmNodeId ?: return
@@ -3768,6 +3885,7 @@ class GestureSequenceEditor(
                     // 確認子画面と古い設定対象を閉じ、最新状態へ戻します。
                     state.confirmNodeId = null
                     state.confirmKind = GestureConfirmKind.DELETE
+                    clearPendingOverwriteState()
                     state.selectedNodeId = null
                     clearSettingState()
                     state.lowerMode = GestureLowerMode.SETTINGS
@@ -3780,6 +3898,7 @@ class GestureSequenceEditor(
                 val settingChildWasOpen = settingChildOpen(ownerId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE
+                clearPendingOverwriteState()
                 state.selectedNodeId = null
                 state.selectedAddPoint = null
                 state.selectedInsertionCandidatePoint = null
@@ -3794,9 +3913,7 @@ class GestureSequenceEditor(
                 val settingChildWasOpen = settingChildOpen(ownerId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE
-                state.pendingItemContext = null
-                state.pendingItemKey = null
-                state.pendingItemData = null
+                clearPendingOverwriteState()
                 api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
                 state.lowerMode = if (settingChildWasOpen && state.settingContext != null) {
                     GestureLowerMode.SETTING_CHOICES
