@@ -307,6 +307,8 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: アイテムデータ付き所持判定は完全バニラ出力に未対応です"
                 }
             }
+            ConditionKind.CONTROL_BLOCK_STATE ->
+                errors += "${script.id}/${node.id}: 制御ブロックの状態条件は完全バニラ出力に未対応です"
             else -> Unit
         }
     }
@@ -1234,6 +1236,10 @@ class VanillaDatapackExporter(
         }
         ConditionKind.BLOCK_STATE ->
             "block ~ ~ ~ ${node.string("block", "minecraft:air")}"
+        // 制御ブロック状態はプラグインの実行元ブロックを参照する条件であり、
+        // 完全バニラ出力へ誤変換できないため、検証で拒否したうえでここでも明示的に止めます。
+        ConditionKind.CONTROL_BLOCK_STATE ->
+            error("制御ブロックの状態条件は完全バニラ出力に未対応です")
     }
 
     private fun conditionPreparation(node: CommandNode, graph: CommandGraph): String? =

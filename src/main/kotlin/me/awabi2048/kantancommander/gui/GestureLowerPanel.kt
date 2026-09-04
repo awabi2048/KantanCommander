@@ -20,6 +20,7 @@ import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
@@ -29,6 +30,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -1738,6 +1740,8 @@ class GestureLowerPanel(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE)
             ConditionKind.BLOCK_STATE ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE)
+            ConditionKind.CONTROL_BLOCK_STATE ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_CONTROL_BLOCK_STATE)
             null -> null
         }
 
@@ -1764,6 +1768,8 @@ class GestureLowerPanel(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_COUNT)
             "condition-position" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_POSITION)
+            "condition-control-block-state:${ControlBlockStateKind.REDSTONE_INPUT.name}" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_REDSTONE_INPUT)
             else -> null
         }
 
@@ -2090,6 +2096,12 @@ class GestureLowerPanel(
                 "position",
                 CommandSettingRole.CONDITION_POSITION,
             )
+            id.startsWith("condition-control-block-state:") -> {
+                val controlState = runCatching {
+                    ControlBlockStateKind.valueOf(id.removePrefix("condition-control-block-state:"))
+                }.getOrNull()
+                controlState != null && controlState in node.selectedControlBlockStates()
+            }
             id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "sneaking")
             id.startsWith("condition-variable") -> CommandSettingsModel.isFieldConfigured(node, "variable")
             id.startsWith("condition-operator") -> CommandSettingsModel.isFieldConfigured(node, "operator")
@@ -2728,6 +2740,15 @@ class GestureLowerPanel(
                 SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION), node.conditionPositionSpec != null),
                 SettingChoice("condition-block", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, node.string("block", "minecraft:air"))),
             )
+            // 制御ブロック自身の状態は、今後の項目追加を前提に複数選択の木として
+            // 表示します。選択済み集合の評価は実行モデル側でANDへ集約します。
+            ConditionKind.CONTROL_BLOCK_STATE -> ControlBlockStateKind.entries.map { state ->
+                SettingChoice(
+                    "condition-control-block-state:${state.name}",
+                    KcI18n.text(player, state.key),
+                    state in node.selectedControlBlockStates(),
+                )
+            }
         }
     }
 

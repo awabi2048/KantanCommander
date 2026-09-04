@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
@@ -60,6 +62,23 @@ class ExecutableScriptValidatorTest {
         assertTrue(
             errors.all { it.rendered() == "${it.path}: ${it.message}" },
         )
+    }
+
+    @Test
+    fun `control block state condition requires at least one selected state`() {
+        val script = DiskScript(name = "control-state", owner = UUID.randomUUID())
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+            params["kind"] = ConditionKind.CONTROL_BLOCK_STATE.name
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == condition.id && it.fieldKeys == setOf("condition")
+            },
+        )
+
+        condition.controlBlockStates = linkedSetOf(ControlBlockStateKind.REDSTONE_INPUT)
+        assertFalse(ExecutableScriptValidator.validate(script).any { it.nodeId == condition.id })
     }
 
     @Test

@@ -9,6 +9,7 @@ import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ControlBlockStateConditionPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.NumericExpression
@@ -16,6 +17,7 @@ import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.TemporaryValue
 import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.normalizedTemporaryName
+import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
@@ -663,6 +665,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
                 location.world == session.origin.world &&
                     location.block.type == CommandValueRules.material(node.string("block"))
+            }
+            ConditionKind.CONTROL_BLOCK_STATE -> {
+                // 制御ブロック自身の現在状態を判定します。複数項目はポリシー側でAND評価し、
+                // 外側の反転指定は既存の条件実行共通処理へ任せます。
+                ControlBlockStateConditionPolicy.matches(
+                    node.selectedControlBlockStates(),
+                    RedstoneInputReader.isPowered(session.origin.block),
+                )
             }
         }
     }

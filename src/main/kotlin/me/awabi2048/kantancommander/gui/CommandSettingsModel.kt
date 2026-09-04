@@ -10,6 +10,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.FacingKind
@@ -981,6 +982,7 @@ object CommandSettingsModel {
 
     private fun conditionDetailConfigured(node: CommandNode): Boolean =
         isTargetSpecConfigured(node.targetSpec) || isPositionSpecConfigured(node.conditionPositionSpec) ||
+            node.selectedControlBlockStates().isNotEmpty() ||
             node.params.any { (key, value) ->
                 key in setOf("sneaking", "variable", "operator", "value", "block", "item", "itemData") &&
                     value.isNotBlank() &&
