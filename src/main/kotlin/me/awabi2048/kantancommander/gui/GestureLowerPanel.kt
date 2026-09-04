@@ -244,6 +244,8 @@ class GestureLowerPanel(
 
         // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
         // 文字列・数値だけを右ペインの入力画面導線へ残し、専用子画面を増やしません。
+        val typedValueSourceSetting =
+            CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
         val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
             (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
             (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
@@ -263,7 +265,20 @@ class GestureLowerPanel(
         }
         val dialogInputSetting = !heldMainHandSetting &&
             descriptor.editor == CommandSettingEditor.TEXT && field.key in TEXT_EDITABLE_KEYS
-        if (heldMainHandSetting || dialogInputSetting) {
+        if (typedValueSourceSetting) {
+            // ITEM／BLOCK／SOUND／EFFECTは「設定元」と「実値入力」を分離します。
+            // 一時変数を選んだときだけ参照名の入力へ進み、直接値を選んだときは
+            // 既存のメインハンド設定／Dialogを次の操作として開きます。
+            addTypedValueSourceControls(
+                node = node,
+                fieldKey = field.key,
+                scriptId = state.scriptId,
+                player = player,
+                visuals = visuals,
+                elements = elements,
+                suppressHighlight = suppressHighlight,
+            )
+        } else if (heldMainHandSetting || dialogInputSetting) {
             // 入力欄は、既存 lower-edit（例:「待機する秒数を設定する」）
             // の位置を唯一の設定入口として再利用します。同じ枠・寸法・装飾で入力方法を
             // 表示し、上のアクション説明行や新しい配置へ設定導線を増やしません。
@@ -330,7 +345,7 @@ class GestureLowerPanel(
                 ),
             ))
         }
-        if (heldItemSetting) {
+        if (heldItemSetting && !typedValueSourceSetting) {
             val itemConfigured = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
             addBlock(
                 visuals,
@@ -363,6 +378,113 @@ class GestureLowerPanel(
             ))
         }
         return view(GestureLowerMode.SETTINGS, elements, visuals)
+    }
+
+    /**
+     * ITEM／BLOCK／SOUND／EFFECTの設定元を、既存の入力欄と同じ右下領域へ2分割で表示します。
+     *
+     * 直接値側はITEM／BLOCKならメインハンド、SOUND／EFFECTならDialogへ進みます。
+     * 一時変数側は他の二段階設定と同じく、1回目を方式選択、2回目を名前入力とします。
+     */
+    private fun addTypedValueSourceControls(
+        node: CommandNode,
+        fieldKey: String,
+        scriptId: java.util.UUID,
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        suppressHighlight: Boolean,
+    ) {
+        val selectedSource = CommandSettingsModel.temporaryValueSource(node, fieldKey)
+            ?: CommandValueSource.LITERAL
+        val sources = listOf(CommandValueSource.LITERAL, CommandValueSource.TEMPORARY)
+        val width = TYPED_VALUE_SOURCE_WIDTH
+        val centers = listOf(TYPED_VALUE_SOURCE_LEFT_X, TYPED_VALUE_SOURCE_RIGHT_X)
+        sources.forEachIndexed { index, source ->
+            val selected = source == selectedSource
+            val enabled = source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(player, fieldKey)
+            val choice = GestureSettingTreeNode(
+                id = "value-source:${fieldKey}:${source.name}",
+                label = typedValueSourceLines(player, fieldKey, source).joinToString(" "),
+                selected = selected,
+                enabled = enabled,
+            )
+            val x = centers[index]
+            val lines = typedValueSourceLines(player, fieldKey, source)
+            val background = if (enabled) {
+                if (selected) Material.CYAN_TERRACOTTA else Material.LIGHT_GRAY_CONCRETE
+            } else DisabledGuiVisualPolicy.material
+            addBlock(
+                visuals,
+                "lower-value-source-bg-${source.name.lowercase()}",
+                x,
+                SETTING_INPUT_CENTER_Y,
+                width,
+                SETTING_INPUT_HEIGHT,
+                background,
+                4,
+                outlineMaterial = if (suppressHighlight) {
+                    null
+                } else {
+                    GestureSettingVisualPolicy.nonTabOutlineMaterial(selected)
+                },
+            )
+            addText(
+                visuals,
+                "lower-value-source-label-${source.name.lowercase()}",
+                x,
+                SETTING_INPUT_CENTER_Y,
+                0.0043,
+                92,
+                typedValueSourceComponent(lines).color(
+                    if (choice.enabled) NamedTextColor.GOLD else DisabledChoiceVisualPolicy.textColor,
+                ),
+            )
+            elements += GestureGuiElement(
+                elementId = "lower-value-source:$fieldKey:${source.name}",
+                bounds = rect(x, SETTING_INPUT_CENTER_Y, width, SETTING_INPUT_HEIGHT),
+                acceptedGestures = if (enabled) {
+                    typedValueSourceGestures(fieldKey, source)
+                } else emptySet(),
+                // メインハンドの所持状態は画面生成後にも変わるため、クリック時点で
+                // 同じ有効性を再確認します。一時変数側は空の名前でも方式選択を許可します。
+                gestureGuard = if (enabled) {
+                    { actor, _ -> source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(actor, fieldKey) }
+                } else {
+                    { _, _ -> false }
+                },
+                targetVisualId = "lower-value-source-bg-${source.name.lowercase()}",
+                hoverText = multiLineHover(lines, x = x, y = HOVER_SLOT_Y),
+            )
+        }
+        addTypedValuePreview(
+            node = node,
+            fieldKey = fieldKey,
+            source = selectedSource,
+            scriptId = scriptId,
+            player = player,
+            visuals = visuals,
+            elements = elements,
+        )
+    }
+
+    private fun typedValueSourceAvailable(player: Player, fieldKey: String): Boolean = when (fieldKey) {
+        "item" -> GestureGuiClickPolicy.hasMainHandItem(player)
+        "block" -> HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
+        // SOUND／EFFECTはDialog入力なので、メインハンドの状態に依存しません。
+        "sound", "effect" -> true
+        else -> false
+    }
+
+    private fun typedValueSourceGestures(
+        fieldKey: String,
+        source: CommandValueSource,
+    ): Set<GestureGuiGesture> = if (
+        source == CommandValueSource.TEMPORARY || fieldKey !in setOf("item", "block")
+    ) {
+        GestureGuiClickPolicy.CLICK
+    } else {
+        GestureGuiClickPolicy.MAIN_HAND
     }
 
     /**
@@ -1056,6 +1178,93 @@ class GestureLowerPanel(
                 },
             ))
         }
+    }
+
+    /**
+     * 直接値を確認するための実行ボタンです。
+     *
+     * 一時変数は実行時にその時点の値へ解決されるため、編集画面で固定値を
+     * 「現在設定値」として取り出したり再生したりできません。したがって、
+     * このボタン自体を直接値モードのときだけ描画します。
+     */
+    private fun addTypedValuePreview(
+        node: CommandNode,
+        fieldKey: String,
+        source: CommandValueSource,
+        scriptId: java.util.UUID,
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+    ) {
+        if (source != CommandValueSource.LITERAL) return
+        val configured = typedValuePreviewConfigured(node, fieldKey)
+        val (labelKey, elementId, material) = when (fieldKey) {
+            "item" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_CONFIGURED_ITEM,
+                "lower-item-get",
+                Material.BROWN_CONCRETE,
+            )
+            "block" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_CONFIGURED_BLOCK,
+                "lower-block-get",
+                Material.GRAY_CONCRETE,
+            )
+            "sound" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
+                "lower-sound-preview",
+                Material.PURPLE_CONCRETE,
+            )
+            "effect" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_APPLY_CONFIGURED_EFFECT,
+                "lower-effect-preview",
+                Material.MAGENTA_CONCRETE,
+            )
+            else -> return
+        }
+        val lines = KcI18n.list(player, labelKey).filter(String::isNotBlank)
+        val centerY = TYPED_VALUE_PREVIEW_CENTER_Y
+        val height = TYPED_VALUE_PREVIEW_HEIGHT
+        val background = if (configured) material else DisabledGuiVisualPolicy.material
+        addBlock(
+            visuals,
+            "$elementId-bg",
+            TYPED_VALUE_PREVIEW_CENTER_X,
+            centerY,
+            TYPED_VALUE_PREVIEW_WIDTH,
+            height,
+            background,
+            4,
+        )
+        addText(
+            visuals,
+            elementId,
+            TYPED_VALUE_PREVIEW_CENTER_X,
+            centerY,
+            0.0043,
+            180,
+            typedValueSourceComponent(lines).color(if (configured) NamedTextColor.GOLD else NamedTextColor.GRAY),
+        )
+        elements += GestureGuiElement(
+            elementId = elementId,
+            bounds = rect(TYPED_VALUE_PREVIEW_CENTER_X, centerY, TYPED_VALUE_PREVIEW_WIDTH, height),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            gestureGuard = { _, _ ->
+                plugin.scripts.load(scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                    CommandSettingsModel.temporaryValueSource(current, fieldKey) == CommandValueSource.LITERAL &&
+                        typedValuePreviewConfigured(current, fieldKey)
+                } == true
+            },
+            targetVisualId = "$elementId-bg",
+            hoverText = multiLineHover(lines, x = HOVER_SLOT_X, y = HOVER_SLOT_Y),
+        )
+    }
+
+    private fun typedValuePreviewConfigured(node: CommandNode, fieldKey: String): Boolean = when (fieldKey) {
+        "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+        "block" -> Material.matchMaterial(node.string("block"))
+            ?.takeUnless { it == Material.AIR } != null
+        "sound", "effect" -> node.string(fieldKey).isNotBlank()
+        else -> false
     }
 
     /**
@@ -2914,6 +3123,14 @@ class GestureLowerPanel(
         const val TIMING_ROW_GAP_RATIO = 0.30
         const val SETTING_INPUT_CENTER_Y = 0.02
         const val SETTING_INPUT_HEIGHT = 0.16
+        // 既存の入力欄（幅1.20）を、外周余白と中央間隔を保ったまま2分割します。
+        const val TYPED_VALUE_SOURCE_WIDTH = 0.56
+        const val TYPED_VALUE_SOURCE_LEFT_X = -0.04
+        const val TYPED_VALUE_SOURCE_RIGHT_X = 0.60
+        const val TYPED_VALUE_PREVIEW_CENTER_X = 0.28
+        const val TYPED_VALUE_PREVIEW_CENTER_Y = -0.17
+        const val TYPED_VALUE_PREVIEW_WIDTH = 1.20
+        const val TYPED_VALUE_PREVIEW_HEIGHT = 0.16
         // 詳細・警告行は入力欄の上端から一定距離を空け、値行の計算結果が
         // 入力欄へ入り込む場合は値行ブロック全体を上へ移動します。
         const val SETTING_DETAIL_INPUT_GAP = 0.02

@@ -446,4 +446,79 @@ class CommandSettingsModelTest {
         assertEquals(CommandSettingRole.BLOCK_FROM, CommandSettingsModel.descriptor(node, "from").role)
     }
 
+    @Test
+    fun `typed command values switch between literal and temporary sources as one binding`() {
+        val item = CommandType.GIVE_ITEM.newNode().apply {
+            params["item"] = "minecraft:stone"
+            params["itemData"] = "encoded"
+        }
+
+        assertEquals(CommandValueSource.LITERAL, CommandSettingsModel.temporaryValueSource(item, "item"))
+        assertTrue(CommandSettingsModel.isFieldConfigured(item, "item"))
+
+        CommandSettingsModel.selectTemporaryValueSource(item, "item")
+        assertEquals(CommandValueSource.TEMPORARY, CommandSettingsModel.temporaryValueSource(item, "item"))
+        assertNull(CommandSettingsModel.temporaryValueReference(item, "item"))
+        assertTrue(item.params["item"].isNullOrBlank())
+        assertTrue(item.params["itemData"].isNullOrBlank())
+        assertFalse(CommandSettingsModel.isFieldConfigured(item, "item"))
+
+        CommandSettingsModel.setTemporaryValueReference(item, "item", "gift")
+        assertEquals("gift", item.itemTempRef)
+        assertTrue(CommandSettingsModel.isFieldConfigured(item, "item"))
+
+        CommandSettingsModel.selectLiteralValueSource(item, "item")
+        assertEquals(CommandValueSource.LITERAL, CommandSettingsModel.temporaryValueSource(item, "item"))
+        assertNull(item.itemTempRef)
+    }
+
+    @Test
+    fun `all executable composite value fields share the source selector`() {
+        val cases = listOf(
+            CommandType.GIVE_ITEM.newNode() to "item",
+            CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "equip" } to "item",
+            CommandType.BLOCK_OPERATION.newNode() to "block",
+            CommandType.PLAY_SOUND.newNode() to "sound",
+            CommandType.APPLY_EFFECT.newNode() to "effect",
+        )
+
+        cases.forEach { (node, field) ->
+            assertTrue(CommandSettingsModel.supportsTemporaryValueReference(node, field))
+            assertEquals(CommandValueSource.LITERAL, CommandSettingsModel.temporaryValueSource(node, field))
+
+            CommandSettingsModel.selectTemporaryValueSource(node, field)
+            assertEquals(CommandValueSource.TEMPORARY, CommandSettingsModel.temporaryValueSource(node, field))
+            assertFalse(CommandSettingsModel.isFieldConfigured(node, field))
+
+            CommandSettingsModel.setTemporaryValueReference(node, field, "shared")
+            assertEquals("shared", CommandSettingsModel.temporaryValueReference(node, field))
+            assertTrue(CommandSettingsModel.isFieldConfigured(node, field))
+        }
+    }
+
+    @Test
+    fun `editing a typed literal clears an old temporary reference`() {
+        val sound = CommandType.PLAY_SOUND.newNode().apply {
+            soundTempRef = "soundValue"
+            configuredFields = linkedSetOf("soundTempRef")
+        }
+
+        CommandSettingsModel.setParameter(sound, "sound", "minecraft:block.note_block.harp")
+
+        assertNull(sound.soundTempRef)
+        assertEquals(CommandValueSource.LITERAL, CommandSettingsModel.temporaryValueSource(sound, "sound"))
+        assertTrue(CommandSettingsModel.isFieldConfigured(sound, "sound"))
+    }
+
+    @Test
+    fun `temporary sound and effect sources hide direct-only parameters`() {
+        val sound = CommandType.PLAY_SOUND.newNode().apply { soundTempRef = "soundValue" }
+        val effect = CommandType.APPLY_EFFECT.newNode().apply { effectTempRef = "effectValue" }
+
+        assertFalse(CommandSettingsModel.visibleFields(sound).any { it.key == "soundParameters" })
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
+        assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "level" })
+        assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "seconds" })
+    }
+
 }
