@@ -3993,6 +3993,64 @@ class GestureSequenceEditor(
                     api.leave(context.actorId)
                 }
             }
+            context.elementId == "lower-duplicate" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val nodeId = state.selectedNodeId ?: return
+                observedRevision = script.revision
+                // 表示時と同じ構造・上限判定をクリック時にも再確認します。画面表示後に
+                // 別操作者が構造を変更しても、古いボタンから複製を強行しません。
+                if (!GraphEditor.canDuplicate(
+                        script.graph,
+                        nodeId,
+                        plugin.graphLimits().maximumNodeCount,
+                    )) {
+                    refreshFromStore()
+                    return
+                }
+                val duplicated = runCatching {
+                    CommandSettingsModel.updateGraph(
+                        plugin,
+                        script.id,
+                        player.uniqueId,
+                        expectedRevision = expectedMutationRevision(player),
+                    ) { candidateGraph ->
+                        GraphEditor.duplicate(
+                            candidateGraph,
+                            nodeId,
+                            plugin.graphLimits().maximumNodeCount,
+                        )
+                    }
+                }.getOrElse { failure ->
+                    reportGraphOperationFailure(
+                        player,
+                        "ジェスチャーGUIからのコマンド複製を保存できませんでした: script=${script.id} node=$nodeId",
+                        failure,
+                    )
+                    refreshFromStore()
+                    return
+                } ?: run {
+                    // CAS競合や保存直前の可否変化では、古い選択状態を再利用せず、
+                    // 最新グラフを表示してから利用者にもう一度選択させます。
+                    refreshFromStore()
+                    return
+                }
+                player.playSound(player.location, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1.0f, 2.0f)
+                if (settingChildOpen(ownerId)) {
+                    api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+                }
+                state.pendingInsertion = null
+                state.selectedAddPoint = null
+                state.selectedInsertionCandidatePoint = null
+                clearSettingState()
+                // 複製したノードをそのまま選択し、複製結果の設定内容を即座に確認・編集
+                // できるよう、通常のノード選択と同じ初期表示経路へ戻します。
+                state.selectedNodeId = duplicated.id
+                state.lowerMode = GestureLowerMode.SETTINGS
+                state.settingsTab = 0
+                updateUpper(player)
+                updateLower(player)
+                openSettingsTab(player, 0)
+            }
             context.elementId == "lower-delete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.confirmNodeId = state.selectedNodeId ?: return
                 state.confirmKind = GestureConfirmKind.DELETE

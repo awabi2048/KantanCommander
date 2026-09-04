@@ -12,6 +12,20 @@ object GraphEditor {
     enum class Edge { ENTRY, NEXT, TRUE, FALSE, FOR_BODY }
 
     /**
+     * 単独ノードとして複製できない構造ノードです。
+     *
+     * CONDITION／FOR_STARTだけを除外すると、それらの対応ノードであるMERGE／FOR_END
+     * が通常ノードとして複製され、分岐・ループの対応関係を壊します。構造の入口と
+     * 境界を同じ集合で扱い、画面表示と保存処理の判定を一つに揃えます。
+     */
+    private val STRUCTURAL_TYPES = setOf(
+        CommandType.CONDITION,
+        CommandType.MERGE,
+        CommandType.FOR_START,
+        CommandType.FOR_END,
+    )
+
+    /**
      * ビューポート上の左右入れ替え操作で使う方向です。
      *
      * グラフは表示座標を保存しないため、左右のボタンは座標だけを動かすのではなく、
@@ -54,6 +68,16 @@ object GraphEditor {
             }
         }
     }
+
+    /** 構造を分解せず、設定ノード単位で複製できる種類かを判定します。 */
+    fun isDuplicable(node: CommandNode): Boolean = node.type !in STRUCTURAL_TYPES
+
+    /** 複製ボタンの表示・クリック受理で共有する上限を含む可否判定です。 */
+    fun canDuplicate(
+        graph: CommandGraph,
+        nodeId: UUID,
+        maximumNodeCount: Int = Int.MAX_VALUE,
+    ): Boolean = graph.nodes.size < maximumNodeCount && graph.nodes[nodeId]?.let(::isDuplicable) == true
 
     fun canAppendMerge(graph: CommandGraph?, conditionId: UUID?, continuationId: UUID? = null): Boolean {
         val currentGraph = graph ?: return false
@@ -188,6 +212,40 @@ object GraphEditor {
             connectBundleTail(graph, inserted, target)
         }
         return inserted
+    }
+
+    /**
+     * 選択中ノードの直後へ、設定内容だけを引き継いだ新しいノードを挿入します。
+     *
+     * ノードIDと実行リンクは設定ではないため、IDは必ず新規発行し、分岐・ループの
+     * リンクは複製しません。通常ノードのNEXTだけを「元ノード -> 複製 -> 元の後続」へ
+     * 付け替えることで、主経路・条件枝・for本体のどの直列経路でも同じ意味で動作します。
+     * snapshotはDISK_CALLの実行内容なので、参照共有による後編集の巻き込みを防ぐため
+     * グラフ全体を独立コピーします。
+     *
+     * 構造ノードおよびノード上限到達時はnullを返し、表示側と同じ境界で拒否します。
+     */
+    fun duplicate(
+        graph: CommandGraph,
+        nodeId: UUID,
+        maximumNodeCount: Int = Int.MAX_VALUE,
+    ): CommandNode? {
+        if (!canDuplicate(graph, nodeId, maximumNodeCount)) return null
+        val source = graph.nodes.getValue(nodeId)
+        val successor = source.next
+        var cloneId = UUID.randomUUID()
+        while (cloneId in graph.nodes) cloneId = UUID.randomUUID()
+
+        val clone = source.deepCopy().copy(
+            id = cloneId,
+            next = successor,
+            trueNext = null,
+            falseNext = null,
+            pairedNodeId = null,
+        )
+        graph.nodes[clone.id] = clone
+        source.next = clone.id
+        return clone
     }
 
     fun delete(graph: CommandGraph, nodeId: UUID): Boolean {
@@ -333,12 +391,7 @@ object GraphEditor {
         return true
     }
 
-    private fun isLinearReorderable(node: CommandNode): Boolean = node.type !in setOf(
-        CommandType.CONDITION,
-        CommandType.MERGE,
-        CommandType.FOR_START,
-        CommandType.FOR_END,
-    )
+    private fun isLinearReorderable(node: CommandNode): Boolean = node.type !in STRUCTURAL_TYPES
 
     private data class ExecutionLink(val sourceId: UUID?, val edge: Edge)
 

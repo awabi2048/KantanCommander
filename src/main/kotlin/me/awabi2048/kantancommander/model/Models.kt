@@ -72,25 +72,7 @@ data class CommandGraph(
     fun deepCopy(): CommandGraph {
         val copied = linkedMapOf<UUID, CommandNode>()
         nodes.forEach { (id, node) ->
-            copied[id] = node.copy(
-                params = node.params.toMutableMap(),
-                configuredFields = node.configuredFields?.toMutableSet(),
-                targetSpec = node.targetSpec?.copy(),
-                secondaryTargetSpec = node.secondaryTargetSpec?.copy(),
-                destinationSpec = node.destinationSpec?.copy(),
-                destinationTargetSpec = node.destinationTargetSpec?.copy(),
-                destinationFacingSpec = node.destinationFacingSpec?.copy(),
-                conditionPositionSpec = node.conditionPositionSpec?.copy(),
-                blockPositionSpec = node.blockPositionSpec?.copy(),
-                blockFromSpec = node.blockFromSpec?.copy(),
-                blockToSpec = node.blockToSpec?.copy(),
-                soundPositionSpec = node.soundPositionSpec?.copy(),
-                summonPositionSpec = node.summonPositionSpec?.copy(),
-                temporaryEntityTargetSpec = node.temporaryEntityTargetSpec?.copy(),
-                temporaryLocationPositionSpec = node.temporaryLocationPositionSpec?.copy(),
-                temporaryLocationFacingSpec = node.temporaryLocationFacingSpec?.copy(),
-                snapshot = node.snapshot?.deepCopy(),
-            )
+            copied[id] = node.deepCopy()
         }
         return CommandGraph(entryNodeId, copied)
     }
@@ -145,6 +127,27 @@ data class CommandNode(
     fun int(key: String, default: Int = 0) = params[key]?.toIntOrNull() ?: default
     fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
     fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
+
+    /** グラフ更新とコマンド複製が同じ設定コピー規則を使うための、再帰的なノード複製です。 */
+    fun deepCopy(): CommandNode = copy(
+        params = params.toMutableMap(),
+        configuredFields = configuredFields?.toMutableSet(),
+        targetSpec = targetSpec?.copy(),
+        secondaryTargetSpec = secondaryTargetSpec?.copy(),
+        destinationSpec = destinationSpec?.copy(),
+        destinationTargetSpec = destinationTargetSpec?.copy(),
+        destinationFacingSpec = destinationFacingSpec?.copy(),
+        conditionPositionSpec = conditionPositionSpec?.copy(),
+        blockPositionSpec = blockPositionSpec?.copy(),
+        blockFromSpec = blockFromSpec?.copy(),
+        blockToSpec = blockToSpec?.copy(),
+        soundPositionSpec = soundPositionSpec?.copy(),
+        summonPositionSpec = summonPositionSpec?.copy(),
+        temporaryEntityTargetSpec = temporaryEntityTargetSpec?.copy(),
+        temporaryLocationPositionSpec = temporaryLocationPositionSpec?.copy(),
+        temporaryLocationFacingSpec = temporaryLocationFacingSpec?.copy(),
+        snapshot = snapshot?.deepCopy(),
+    )
 
     fun isExplicitlyConfigured(key: String): Boolean = configuredFields?.contains(key) == true
 

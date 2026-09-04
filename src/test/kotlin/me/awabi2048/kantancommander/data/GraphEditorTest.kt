@@ -1,14 +1,132 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.SearchOriginSpec
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
+import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotSame
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class GraphEditorTest {
+    @Test
+    fun `duplicate copies every command setting and inserts after the source`() {
+        val graph = CommandGraph.empty()
+        val source = configuredNode(CommandType.WAIT)
+        val successor = CommandType.GIVE_ITEM.newNode()
+        graph.entryNodeId = source.id
+        source.next = successor.id
+        graph.nodes[source.id] = source
+        graph.nodes[successor.id] = successor
+
+        val clone = requireNotNull(GraphEditor.duplicate(graph, source.id))
+
+        assertNotEquals(source.id, clone.id)
+        assertEquals(source.type, clone.type)
+        assertEquals(source.params, clone.params)
+        assertNotSame(source.params, clone.params)
+        assertEquals(source.configuredFields, clone.configuredFields)
+        assertNotSame(source.configuredFields, clone.configuredFields)
+        assertEquals(source.targetSpec, clone.targetSpec)
+        assertNotSame(source.targetSpec, clone.targetSpec)
+        assertEquals(source.secondaryTargetSpec, clone.secondaryTargetSpec)
+        assertNotSame(source.secondaryTargetSpec, clone.secondaryTargetSpec)
+        assertEquals(source.destinationSpec, clone.destinationSpec)
+        assertNotSame(source.destinationSpec, clone.destinationSpec)
+        assertEquals(source.destinationTargetSpec, clone.destinationTargetSpec)
+        assertNotSame(source.destinationTargetSpec, clone.destinationTargetSpec)
+        assertEquals(source.destinationFacingSpec, clone.destinationFacingSpec)
+        assertNotSame(source.destinationFacingSpec, clone.destinationFacingSpec)
+        assertEquals(source.conditionPositionSpec, clone.conditionPositionSpec)
+        assertNotSame(source.conditionPositionSpec, clone.conditionPositionSpec)
+        assertEquals(source.blockPositionSpec, clone.blockPositionSpec)
+        assertNotSame(source.blockPositionSpec, clone.blockPositionSpec)
+        assertEquals(source.blockFromSpec, clone.blockFromSpec)
+        assertNotSame(source.blockFromSpec, clone.blockFromSpec)
+        assertEquals(source.blockToSpec, clone.blockToSpec)
+        assertNotSame(source.blockToSpec, clone.blockToSpec)
+        assertEquals(source.soundPositionSpec, clone.soundPositionSpec)
+        assertNotSame(source.soundPositionSpec, clone.soundPositionSpec)
+        assertEquals(source.summonPositionSpec, clone.summonPositionSpec)
+        assertNotSame(source.summonPositionSpec, clone.summonPositionSpec)
+        assertEquals(source.temporaryEntityTargetSpec, clone.temporaryEntityTargetSpec)
+        assertNotSame(source.temporaryEntityTargetSpec, clone.temporaryEntityTargetSpec)
+        assertEquals(source.temporaryLocationPositionSpec, clone.temporaryLocationPositionSpec)
+        assertNotSame(source.temporaryLocationPositionSpec, clone.temporaryLocationPositionSpec)
+        assertEquals(source.temporaryLocationFacingSpec, clone.temporaryLocationFacingSpec)
+        assertNotSame(source.temporaryLocationFacingSpec, clone.temporaryLocationFacingSpec)
+        assertEquals(source.itemTempRef, clone.itemTempRef)
+        assertEquals(source.blockTempRef, clone.blockTempRef)
+        assertEquals(source.soundTempRef, clone.soundTempRef)
+        assertEquals(source.effectTempRef, clone.effectTempRef)
+        assertEquals(source.snapshot, clone.snapshot)
+        assertNotSame(source.snapshot, clone.snapshot)
+        clone.params["custom"] = "changed"
+        assertEquals("value", source.params["custom"])
+        val snapshotNodeId = requireNotNull(requireNotNull(source.snapshot).entryNodeId)
+        requireNotNull(clone.snapshot).nodes.getValue(snapshotNodeId).params["seconds"] = "5"
+        assertEquals("1", requireNotNull(source.snapshot).nodes.getValue(snapshotNodeId).params["seconds"])
+        assertEquals(successor.id, clone.next)
+        assertEquals(clone.id, source.next)
+        assertNull(clone.trueNext)
+        assertNull(clone.falseNext)
+        assertNull(clone.pairedNodeId)
+        assertTrue(clone.id in graph.nodes)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `duplicate keeps a terminal successor position inside a branch`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val source = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val successor = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        val clone = requireNotNull(GraphEditor.duplicate(graph, source.id))
+
+        assertEquals(clone.id, source.next)
+        assertEquals(successor.id, clone.next)
+        assertEquals(merge.id, successor.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `duplicate rejects structural nodes and the node count limit`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val forStart = GraphEditor.append(graph, CommandType.FOR_START)
+        val forEnd = requireNotNull(forStart.pairedNodeId).let(graph.nodes::get)!!
+        val structuralNodes = listOf(condition, merge, forStart, forEnd)
+        val originalIds = graph.nodes.keys.toSet()
+
+        structuralNodes.forEach { node ->
+            assertFalse(GraphEditor.isDuplicable(node))
+            assertFalse(GraphEditor.canDuplicate(graph, node.id))
+            assertNull(GraphEditor.duplicate(graph, node.id))
+        }
+
+        val ordinary = GraphEditor.append(graph, CommandType.WAIT)
+        assertFalse(GraphEditor.canDuplicate(graph, ordinary.id, graph.nodes.size))
+        assertNull(GraphEditor.duplicate(graph, ordinary.id, graph.nodes.size))
+        assertTrue(GraphEditor.canDuplicate(graph, ordinary.id, graph.nodes.size + 1))
+        assertEquals(originalIds + ordinary.id, graph.nodes.keys)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
     @Test
     fun `adjacent reorder swaps execution order without changing node identity`() {
         val graph = CommandGraph.empty()
@@ -387,5 +505,49 @@ class GraphEditorTest {
         assertEquals(null, condition.pairedNodeId)
         assertEquals(after.id, trueCommand.next)
         assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    /** 構造化設定とDISK_CALLのsnapshotを含む、複製対象の全設定を一つのテストデータへ集約します。 */
+    private fun configuredNode(type: CommandType): CommandNode {
+        val nested = CommandType.WAIT.newNode()
+        return type.newNode().also { node ->
+            node.params["custom"] = "value"
+            node.configuredFields = linkedSetOf("custom", "seconds")
+            node.targetSpec = TargetSpec(
+                kind = TargetKind.NEAREST_ENTITY,
+                entityType = "minecraft:zombie",
+                minimumDistance = 1.5,
+                maximumDistance = 8.0,
+                limit = 2,
+                gameMode = "survival",
+                tag = "target",
+                name = "Target",
+                dx = 1.0,
+                dy = 2.0,
+                dz = 3.0,
+                searchOrigin = SearchOriginSpec(
+                    positionTemp = "origin",
+                    position = PositionSpec(PositionKind.COORDINATES, 4.0, 5.0, 6.0),
+                ),
+            )
+            node.secondaryTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY, fixedEntityId = UUID.randomUUID())
+            node.destinationSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "destination")
+            node.destinationTargetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            node.destinationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = 45f, pitch = 10f)
+            node.conditionPositionSpec = PositionSpec(PositionKind.MYWORLD_SPAWN)
+            node.blockPositionSpec = PositionSpec(PositionKind.CAPTURED)
+            node.blockFromSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+            node.blockToSpec = PositionSpec(PositionKind.COORDINATES, 4.0, 5.0, 6.0)
+            node.soundPositionSpec = PositionSpec(PositionKind.TARGET)
+            node.summonPositionSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "summon")
+            node.temporaryEntityTargetSpec = TargetSpec(TargetKind.TEMPORARY, tempName = "entity")
+            node.temporaryLocationPositionSpec = PositionSpec(PositionKind.COORDINATES, 7.0, 8.0, 9.0)
+            node.temporaryLocationFacingSpec = FacingSpec(FacingKind.COORDINATES, 10.0, 11.0, 12.0)
+            node.itemTempRef = "item"
+            node.blockTempRef = "block"
+            node.soundTempRef = "sound"
+            node.effectTempRef = "effect"
+            node.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
+        }
     }
 }
