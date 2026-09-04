@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.data
 
+import com.awabi2048.ccsystem.CCSystem
 import com.google.gson.GsonBuilder
 import com.google.gson.reflect.TypeToken
 import me.awabi2048.kantancommander.KantanCommanderPlugin
@@ -184,6 +185,7 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 KcI18n.text(null, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_NAME_BLOCK),
                 NamedTextColor.AQUA,
             ))
+            CCSystem.getAPI().getSystemEntityRegistry().mark(it, plugin)
             it.addScoreboardTag(DISPLAY_TAG)
             it.transformation = Transformation(
                 Vector3f(-0.375f, 0.125f, -0.375f),

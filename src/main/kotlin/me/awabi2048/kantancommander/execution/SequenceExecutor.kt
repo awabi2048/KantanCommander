@@ -1,7 +1,6 @@
 package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
-import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -32,6 +31,7 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.effectiveContextSource
+import com.awabi2048.ccsystem.CCSystem
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
@@ -527,9 +527,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             CommandType.BLOCK_OPERATION -> executeBlockOperation(node, session, effectiveContext)
             CommandType.ENTITY_DELETE -> {
-                val removable = targets.filterNot { PlacementStore.DISPLAY_TAG in it.scoreboardTags }
-                if (removable.isEmpty()) return false
-                removable.forEach(Entity::remove)
+                if (targets.isEmpty()) return false
+                targets.forEach(Entity::remove)
                 true
             }
             else -> true
@@ -581,13 +580,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
                 val location = node.blockPositionSpec?.let { resolvePosition(it, session, context) } ?: return false
+                val world = location.world ?: return false
+                if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
+                    // 拡張コマンドブロックの位置は、setblockでも常に変更を拒否します。
+                    return false
+                }
                 location.block.setType(material, false)
                 true
             }
             BlockOperationMode.FILL -> {
                 val from = node.blockFromSpec?.let { resolvePosition(it, session, context) } ?: return false
                 val to = node.blockToSpec?.let { resolvePosition(it, session, context) } ?: return false
-                if (from.world != to.world) return false
+                val world = from.world ?: return false
+                if (world != to.world) return false
                 val minX = minOf(from.blockX, to.blockX)
                 val maxX = maxOf(from.blockX, to.blockX)
                 val minY = minOf(from.blockY, to.blockY)
@@ -598,10 +603,23 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     (maxY.toLong() - minY.toLong() + 1L) *
                     (maxZ.toLong() - minZ.toLong() + 1L)
                 if (volume !in 1L..MAX_BLOCK_OPERATION_VOLUME) return false
+                // 1座標でも保護対象なら、通常のfillのように対象外だけを飛ばさず、
+                // 変更前にコマンド全体を失敗させます。これにより部分変更を残しません。
+                if (BlockOperationProtectionPolicy.hasProtectedBlock(
+                        minX,
+                        maxX,
+                        minY,
+                        maxY,
+                        minZ,
+                        maxZ,
+                    ) { coordinate ->
+                        plugin.placements.isRegistered(world, coordinate.x, coordinate.y, coordinate.z)
+                    }
+                ) return false
                 for (x in minX..maxX) {
                     for (y in minY..maxY) {
                         for (z in minZ..maxZ) {
-                            from.world.getBlockAt(x, y, z).setType(material, false)
+                            world.getBlockAt(x, y, z).setType(material, false)
                         }
                     }
                 }
@@ -876,7 +894,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 session.origin.world.entities.filter { matches(it, resolvedSpec, session, context) }
             TargetKind.FIXED_ENTITY -> listOfNotNull(resolvedSpec.fixedEntityId?.let(session.origin.world::getEntity))
         }
-        val inMyWorld = candidates.filter { it.world == session.origin.world }
+        // 対象種別・固定UUID・一時変数・継承対象の全経路をここで同じように検閲します。
+        // 個別の操作実装で除外すると、新しいコマンド種別の追加時に抜け道になります。
+        val inMyWorld = candidates
+            .filter { it.world == session.origin.world }
+            .filterNot { CCSystem.getAPI().getSystemEntityRegistry().isSystemEntity(it) }
         val sorted = when {
             resolvedSpec.kind == TargetKind.RANDOM_PLAYER || resolvedSpec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
                 inMyWorld.shuffled()
@@ -912,9 +934,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec?,
     ): Boolean {
-        // ディスク本体の表示実体（BlockDisplay）は設置物であり、対象選択の相手になるべきではない。
-        // すべてのエンティティ系対象から恒常的に除外する。
-        if (PlacementStore.DISPLAY_TAG in entity.scoreboardTags) return false
         if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
         if (spec.name != null && entity.name != spec.name) return false
         if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
@@ -1130,7 +1149,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             if (value.type != TemporaryVariableType.ENTITY) return false
             val id = value.entityId ?: return false
             val entity = session.origin.world.getEntity(id) ?: return false
-            return entity.isValid && !entity.isDead && entity.world == session.origin.world
+            return entity.isValid &&
+                !entity.isDead &&
+                entity.world == session.origin.world &&
+                !CCSystem.getAPI().getSystemEntityRegistry().isSystemEntity(entity)
         }
 
         fun positionAvailable(name: String?): Boolean {

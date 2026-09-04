@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.execution
 
+import com.awabi2048.ccsystem.CCSystem
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import org.bukkit.NamespacedKey
 import org.bukkit.World
@@ -48,6 +49,7 @@ class SummonedEntityTracker(
 
     fun register(entity: Entity, scriptId: UUID) {
         check(canSummon(entity.world.uid)) { "Kantan召喚数が上限へ到達しています" }
+        CCSystem.getAPI().getSystemEntityRegistry().mark(entity, plugin)
         entity.persistentDataContainer.set(markerKey, PersistentDataType.BYTE, 1)
         entity.persistentDataContainer.set(scriptKey, PersistentDataType.STRING, scriptId.toString())
         val worldEntities = tracked.getOrPut(entity.world.uid, ::linkedSetOf)
