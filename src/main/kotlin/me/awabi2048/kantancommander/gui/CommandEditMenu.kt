@@ -31,6 +31,7 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
@@ -596,13 +597,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             showSoundParametersDialog(context.player, context.route, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
+                        if (field == "particleParameters" && node.type == CommandType.PARTICLE) {
+                            showParticleParametersDialog(context.player, context.route, node)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
                         if (field == "block" && node.type == CommandType.TEMP_SET) {
                             return@MenuActionHandler setHeldBlock(context)
                         }
                         if (field in setOf(
                                 "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
                                  "entity", "tags", "tag", "sound",
-                                "soundParameters", "effect", "level", "intensity", "volume", "pitch",
+                                "soundParameters", "particle", "particleData", "effect", "level", "intensity", "volume", "pitch",
                                 "x", "y", "z", "entityId", "item",
                             )) {
                             showFieldDialog(context.player, context.route, field, node)
@@ -621,6 +626,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "to" && node.type == CommandType.BLOCK_OPERATION ->
                                 positionRoute(context.route, "block_to")
                             field == "soundPosition" -> positionRoute(context.route, "sound_position")
+                            field == "position" && node.type == CommandType.PARTICLE ->
+                                positionRoute(context.route, "particle_position")
                             field == "summonPosition" -> positionRoute(context.route, "summon_position")
                             field == "position" && node.type == CommandType.CONDITION ->
                                 positionRoute(context.route, "condition_position")
@@ -1848,6 +1855,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "text", "subtitle", "customName", "itemData", "value", "tags", "tag" -> ""
             "entity" -> "minecraft:pig"
             "sound" -> "minecraft:block.note_block.harp"
+            "particle" -> ParticleSettings.particle(node)?.name ?: "FLAME"
+            "particleData" -> ""
             "volume", "pitch" -> "1.0"
             "effect" -> "minecraft:speed"
             "level" -> "1"
@@ -1968,6 +1977,57 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                     command,
                                     mapOf("volume" to volumeValue, "pitch" to pitchValue),
                                 )
+                            }) {
+                            return@MenuDialogHandler MenuActionResult.Rejected(
+                                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Replace(route))
+                    },
+                ),
+                cancel = dialogCancel(player, route),
+            ),
+        )
+    }
+
+    /** パーティクルの範囲・速度・個数を1回の確認で保存します。 */
+    private fun showParticleParametersDialog(player: Player, route: MenuRoute, node: CommandNode) {
+        val fields = listOf(
+            ParticleSettings.PARAM_DELTA_X,
+            ParticleSettings.PARAM_DELTA_Y,
+            ParticleSettings.PARAM_DELTA_Z,
+            ParticleSettings.PARAM_SPEED,
+            ParticleSettings.PARAM_COUNT,
+        )
+        val specs = fields.associateWith { requireNotNull(CommandDialogSpecs.field(node, it)) }
+        val values = fields.associateWith { node.string(it, node.type.defaults[it].orEmpty()) }
+        CCSystem.getAPI().getMenuDialogService().show(
+            player,
+            MenuDialogRequest(
+                owner = SequenceEditorMenu.OWNER,
+                id = "particle-parameters",
+                title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                body = CommandDialogSpecs.particleParametersBody(player),
+                inputs = CommandDialogSpecs.particleParametersInputs(
+                    player,
+                    values.getValue(ParticleSettings.PARAM_DELTA_X),
+                    values.getValue(ParticleSettings.PARAM_DELTA_Y),
+                    values.getValue(ParticleSettings.PARAM_DELTA_Z),
+                    values.getValue(ParticleSettings.PARAM_SPEED),
+                    values.getValue(ParticleSettings.PARAM_COUNT),
+                ),
+                confirm = MenuDialogButton(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                    MenuDialogHandler { _, response ->
+                        val rawValues = fields.associateWith { key ->
+                            CommandDialogSpecs.normalize(key, response.textValue(key))
+                        }
+                        val error = fields.asSequence()
+                            .mapNotNull { key -> specs.getValue(key).validateInput(rawValues.getValue(key)) }
+                            .firstOrNull()
+                        if (error != null) return@MenuDialogHandler MenuActionResult.Rejected(KcI18n.component(player, error))
+                        if (!updateNode(player, route, configuredFields = setOf("particleParameters")) { command ->
+                                CommandSettingsModel.setParameters(command, rawValues)
                             }) {
                             return@MenuDialogHandler MenuActionResult.Rejected(
                                 KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
@@ -2583,6 +2643,23 @@ sealed interface DisplayValue {
         )
     }
 
+    /** パーティクルの範囲3軸・速度・個数を、設定画面の現在値にも意味付きで表示します。 */
+    data class ParticleParameters(
+        val deltaX: String,
+        val deltaY: String,
+        val deltaZ: String,
+        val speed: String,
+        val count: String,
+    ) : DisplayValue {
+        fun rows(player: Player): List<TimingRow> = listOf(
+            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX), deltaX),
+            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY), deltaY),
+            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ), deltaZ),
+            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SPEED), speed),
+            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT), count),
+        )
+    }
+
     /** LOCATIONの位置・向きを、一つの設定欄で現在値として表示します。 */
     data class Location(
         val position: DisplayValue?,
@@ -2593,6 +2670,7 @@ sealed interface DisplayValue {
         is Literal -> value
         is Localized -> KcI18n.text(player, key)
         is Timing -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
+        is ParticleParameters -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is Location -> buildList {
             position?.let {
                 add("${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION)}=${it.render(player)}")
@@ -2781,6 +2859,44 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_POSITION,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_POSITION,
             ) { it.soundPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+        )
+        CommandType.PARTICLE -> listOf(
+            field(
+                ParticleSettings.PARAM_PARTICLE,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
+                Material.FIREWORK_STAR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE,
+            ),
+            field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.particlePositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "particleParameters",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS,
+                Material.SNOWBALL,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE_PARAMETERS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE_PARAMETERS,
+            ) {
+                DisplayValue.ParticleParameters(
+                    it.string(ParticleSettings.PARAM_DELTA_X, "0.0"),
+                    it.string(ParticleSettings.PARAM_DELTA_Y, "0.0"),
+                    it.string(ParticleSettings.PARAM_DELTA_Z, "0.0"),
+                    it.string(ParticleSettings.PARAM_SPEED, "0.0"),
+                    it.string(ParticleSettings.PARAM_COUNT, "1"),
+                )
+            },
+            field(
+                ParticleSettings.PARAM_DATA,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DATA,
+                Material.PAPER,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE_DATA,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE_DATA,
+            ),
         )
         CommandType.APPLY_EFFECT -> listOf(
             field(

@@ -141,6 +141,39 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `particle command uses current SNBT options and all-world viewers`() {
+        val store = ScriptStore(temp.resolve("particle-position"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "particle position")
+        GraphEditor.append(script.graph, CommandType.PARTICLE).apply {
+            params.putAll(
+                mapOf(
+                    "particle" to "DUST",
+                    "particleData" to "#ff0000 2",
+                    "particleDeltaX" to "0.25",
+                    "particleDeltaY" to "-0.5",
+                    "particleDeltaZ" to "0",
+                    "particleSpeed" to "0.5",
+                    "particleCount" to "3",
+                )
+            )
+            particlePositionSpec = PositionSpec(PositionKind.COORDINATES, 10.0, 64.0, -2.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(
+            body.contains(
+                "execute positioned 10.0 64.0 -2.0 run particle " +
+                    "minecraft:dust{color:[1,0,0],scale:2} ~ ~ ~ 0.25 -0.5 0 0.5 3 force @a"
+            ),
+            body,
+        )
+    }
+
+    @Test
     fun `summon command-specific position remains in vanilla output`() {
         val store = ScriptStore(temp.resolve("summon-position"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "summon position")

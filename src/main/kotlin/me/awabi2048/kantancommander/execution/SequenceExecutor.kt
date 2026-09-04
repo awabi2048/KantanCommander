@@ -26,6 +26,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.DisplayTextTiming
@@ -210,8 +211,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // 実処理の前にこの判定を行います。
                 val outcome = when {
                     hasUnavailableTemporaryReference(node, session) -> NodeExecutionOutcome.SKIPPED
-                    executeImmediate(node, session) -> NodeExecutionOutcome.SUCCESS
-                    else -> NodeExecutionOutcome.FAILED
+                    else -> when (executeImmediate(node, session)) {
+                        ImmediateExecutionResult.SUCCESS -> NodeExecutionOutcome.SUCCESS
+                        ImmediateExecutionResult.SKIPPED -> NodeExecutionOutcome.SKIPPED
+                        ImmediateExecutionResult.FAILED -> NodeExecutionOutcome.FAILED
+                    }
                 }
                 next(node.next, outcome)
             }
@@ -299,7 +303,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         runGraph(synthetic, snapshot, session, depth + 1, done)
     }
 
-    private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
+    private fun executeImmediate(node: CommandNode, session: ExecutionSession): ImmediateExecutionResult = try {
+        if (executeImmediateBoolean(node, session)) ImmediateExecutionResult.SUCCESS
+        else ImmediateExecutionResult.FAILED
+    } catch (_: ParticleQuotaRejected) {
+        // 上限超過は入力・実行失敗ではなく、このノードだけを送信せず後続へ進める
+        // 制御結果です。通常の例外ログへ混ぜると、運用上の想定内の抑止が障害に見えます。
+        ImmediateExecutionResult.SKIPPED
+    } catch (failure: Throwable) {
+        plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
+        ImmediateExecutionResult.FAILED
+    }
+
+    private fun executeImmediateBoolean(node: CommandNode, session: ExecutionSession): Boolean = run {
         val effectiveContext = effectiveContext(session)
         val targets = resolveTargets(effectiveContext, node.targetSpec, session)
         val effectiveOrigin = if (effectiveContext?.position != null) {
@@ -487,6 +503,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
                 true
             }
+            CommandType.PARTICLE -> executeParticle(node, session, effectiveContext, effectiveOrigin)
             CommandType.APPLY_EFFECT -> {
                 val refTemp = node.effectTempRef?.takeIf(String::isNotBlank)
                     ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
@@ -532,9 +549,59 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         if (success) session.previousContext = effectiveContext
         success
-    }.onFailure {
-        plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", it)
-    }.getOrDefault(false)
+    }
+
+    /**
+     * Particleの送信は対象指定を持たず、中心位置のワールドにいる全プレイヤーへ
+     * 1回のパケット送信で届けます。個数の上限判定はパケット送信前に行い、拒否時に
+     * 部分表示が発生しないようにします。
+     */
+    private fun executeParticle(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        effectiveOrigin: Location,
+    ): Boolean {
+        val particle = ParticleSettings.particle(node) ?: return false
+        val deltaX = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_X, "0.0"), session)
+            ?.takeIf(Double::isFinite) ?: return false
+        val deltaY = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Y, "0.0"), session)
+            ?.takeIf(Double::isFinite) ?: return false
+        val deltaZ = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Z, "0.0"), session)
+            ?.takeIf(Double::isFinite) ?: return false
+        val speed = resolveNumber(node.string(ParticleSettings.PARAM_SPEED, "0.0"), session)
+            ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
+        val count = resolvePositiveInt(node.string(ParticleSettings.PARAM_COUNT, "1"), session) ?: return false
+        val origin = node.particlePositionSpec
+            ?.let { resolvePosition(it, session, context) ?: return false }
+            ?: effectiveOrigin
+        val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
+            .getOrNull() ?: return false
+        val bukkitData = data.toBukkitData(origin)
+        if (ParticleSettings.requiresData(particle) && bukkitData == null) return false
+
+        if (!plugin.particleQuota.tryAcquire(origin.world.uid, count)) {
+            throw ParticleQuotaRejected()
+        }
+        // world.playersを明示的にreceiverへ渡すことで、「実行位置周囲の対象」ではなく
+        // 「表示中心と同じワールドの全プレイヤー」という仕様をAPI呼び出しにも残します。
+        origin.world.spawnParticle(
+            particle,
+            origin.world.players,
+            null,
+            origin.x,
+            origin.y,
+            origin.z,
+            count,
+            deltaX,
+            deltaY,
+            deltaZ,
+            speed,
+            bukkitData,
+            true,
+        )
+        return true
+    }
 
     private fun giveItem(player: Player, template: ItemStack, count: Int): Boolean {
         var remaining = count
@@ -1158,6 +1225,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             node.blockFromSpec,
             node.blockToSpec,
             node.soundPositionSpec,
+            node.particlePositionSpec,
             node.summonPositionSpec,
             effective?.position,
         ).any(::positionUnavailable) || listOf(
@@ -1268,6 +1336,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             0.5f,
         )
     }
+
+    /** 即時ノード処理結果。Particle上限超過は失敗ではなく、そのノードだけを省略します。 */
+    private enum class ImmediateExecutionResult { SUCCESS, SKIPPED, FAILED }
+
+    /** 上限超過を通常の実行例外と区別する内部制御例外です。 */
+    private class ParticleQuotaRejected : RuntimeException()
 
     /** ノード処理結果。参照先が無い場合だけ、失敗と区別して後続へ進めます。 */
     private enum class NodeExecutionOutcome { SUCCESS, SKIPPED, FAILED }

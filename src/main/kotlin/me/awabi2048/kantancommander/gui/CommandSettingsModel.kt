@@ -18,6 +18,7 @@ import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -45,6 +46,7 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     BLOCK_FROM("block_from", "from"),
     BLOCK_TO("block_to", "to"),
     SOUND_POSITION("sound_position", "soundPosition"),
+    PARTICLE_POSITION("particle_position", "position"),
     SUMMON_POSITION("summon_position", "summonPosition"),
     /** TEMP_SET ENTITYは通常コマンドと同じ対象選択木から1体を解決します。 */
     TEMPORARY_ENTITY("temporary_entity", "entity"),
@@ -252,6 +254,12 @@ object CommandSettingsModel {
         CommandType.PLAY_SOUND ->
             fieldKey != "soundPosition" || node.string("soundScope", "POSITION") != "WORLD"
 
+        CommandType.PARTICLE ->
+            // 詳細データを必要としないParticleでは、空欄を入力するための
+            // 不要なタブを出さず、データ型を持つParticleだけ表示します。
+            fieldKey != "particleData" || ParticleSettings.particle(node)
+                ?.let(ParticleSettings::requiresData) != false
+
         else -> true
     }
 
@@ -283,6 +291,18 @@ object CommandSettingsModel {
                                 "fadeOutSeconds",
                                 currentNode.type.defaults["fadeOutSeconds"].orEmpty(),
                             ),
+                        )
+                    },
+                )
+            } else if (node.type == CommandType.PARTICLE && field.key == "particleParameters") {
+                field.copy(
+                    value = { currentNode ->
+                        DisplayValue.ParticleParameters(
+                            currentNode.string(ParticleSettings.PARAM_DELTA_X, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_DELTA_Y, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_DELTA_Z, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_SPEED, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_COUNT, "1"),
                         )
                     },
                 )
@@ -349,6 +369,12 @@ object CommandSettingsModel {
                 "soundParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_PARAMETERS
                 "soundScope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_SCOPE
                 "soundPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_POSITION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.PARTICLE -> when (fieldKey) {
+                "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
+                "particleParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
+                "particleData" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DATA
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.APPLY_EFFECT -> when (fieldKey) {
@@ -435,6 +461,15 @@ object CommandSettingsModel {
                 "soundPosition" -> "soundScope"
                 else -> validationFieldKey
             }
+            CommandType.PARTICLE -> when (validationFieldKey) {
+                ParticleSettings.PARAM_DELTA_X,
+                ParticleSettings.PARAM_DELTA_Y,
+                ParticleSettings.PARAM_DELTA_Z,
+                ParticleSettings.PARAM_SPEED,
+                ParticleSettings.PARAM_COUNT,
+                -> "particleParameters"
+                else -> validationFieldKey
+            }
             CommandType.CONDITION -> when (validationFieldKey) {
                 "sneaking", "variable", "operator", "value", "block", "item", "itemData" -> "condition"
                 else -> validationFieldKey
@@ -488,6 +523,10 @@ object CommandSettingsModel {
         CommandType.PLAY_SOUND -> when (fieldKey) {
             "soundPosition" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.SOUND_POSITION)
             "soundScope" -> CommandSettingDescriptor(CommandSettingEditor.SOUND_SCOPE)
+            else -> text()
+        }
+        CommandType.PARTICLE -> when (fieldKey) {
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
             else -> text()
         }
         CommandType.APPLY_EFFECT -> if (fieldKey == "target") {
@@ -637,6 +676,7 @@ object CommandSettingsModel {
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
+        CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec
         CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
@@ -662,6 +702,7 @@ object CommandSettingsModel {
         }
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec?.kind
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec?.kind
+        CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec?.kind
         CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec?.kind
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
@@ -677,6 +718,7 @@ object CommandSettingsModel {
                 node.destinationTargetSpec = null
             }
             CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec = spec
+            CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec = spec
             CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec = spec
             CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec = spec
             CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec = spec
@@ -688,6 +730,7 @@ object CommandSettingsModel {
         val configuredKey = configuredFieldKey(
             when (role) {
                 CommandSettingRole.SOUND_POSITION -> "soundPosition"
+                CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
                 CommandSettingRole.SUMMON_POSITION -> "summonPosition"
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
                 else -> "position"
@@ -770,6 +813,7 @@ object CommandSettingsModel {
                 CommandSettingRole.CONDITION_POSITION -> isPositionSpecConfigured(node.conditionPositionSpec)
                 CommandSettingRole.BLOCK_POSITION -> isPositionSpecConfigured(node.blockPositionSpec)
                 CommandSettingRole.SOUND_POSITION -> isPositionSpecConfigured(node.soundPositionSpec)
+                CommandSettingRole.PARTICLE_POSITION -> isPositionSpecConfigured(node.particlePositionSpec)
                 CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> isPositionSpecConfigured(node.temporaryLocationPositionSpec)
                 else -> false
@@ -785,6 +829,7 @@ object CommandSettingsModel {
                 false
             }
             "soundPosition" -> isPositionSpecConfigured(node.soundPositionSpec)
+            "particlePosition" -> isPositionSpecConfigured(node.particlePositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             // 音量とピッチは保存上は別パラメータですが、編集入口は一つです。
             // 旧データも正しく「設定済み」と表示できるよう、両方の実値を確認します。
@@ -792,6 +837,22 @@ object CommandSettingsModel {
                 val value = node.params[key]
                 value != null && value.isNotBlank() &&
                     (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
+            }
+            "particleParameters" -> listOf(
+                ParticleSettings.PARAM_DELTA_X,
+                ParticleSettings.PARAM_DELTA_Y,
+                ParticleSettings.PARAM_DELTA_Z,
+                ParticleSettings.PARAM_SPEED,
+                ParticleSettings.PARAM_COUNT,
+            ).any { key ->
+                val value = node.params[key]
+                value != null && value.isNotBlank() &&
+                    (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
+            }
+            "particleData" -> {
+                val particle = ParticleSettings.particle(node)
+                if (particle != null && !ParticleSettings.requiresData(particle)) true
+                else node.params[ParticleSettings.PARAM_DATA]?.isNotBlank() == true
             }
             "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
@@ -1035,6 +1096,7 @@ object CommandSettingsModel {
     private fun configuredFieldKey(fieldKey: String, role: CommandSettingRole?): String = when (role) {
         CommandSettingRole.CONDITION_POSITION -> "condition.position"
         CommandSettingRole.SOUND_POSITION -> "soundPosition"
+        CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
         CommandSettingRole.SUMMON_POSITION -> "summonPosition"
         CommandSettingRole.TEMPORARY_ENTITY -> "entity"
         CommandSettingRole.TEMPORARY_LOCATION -> "location"

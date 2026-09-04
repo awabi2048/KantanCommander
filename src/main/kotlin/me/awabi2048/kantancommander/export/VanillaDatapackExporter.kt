@@ -26,6 +26,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.item.ItemStackCodec
@@ -139,6 +140,21 @@ class VanillaDatapackExporter(
                     "tag" -> Unit
                     else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
+                CommandType.PARTICLE -> {
+                    val particle = ParticleSettings.particle(node)
+                    if (particle == null) {
+                        errors += "${script.id}/${node.id}: パーティクルの種類が不正です"
+                    } else {
+                        val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA)).getOrNull()
+                        if (data == null) {
+                            errors += "${script.id}/${node.id}: パーティクルの詳細データが不正です"
+                        } else if (data is ParticleSettings.ParticleDataSpec.Item &&
+                            (!data.raw.startsWith("minecraft:") || CommandValueRules.material(data.raw, allowAir = false) == null)
+                        ) {
+                            errors += "${script.id}/${node.id}: ItemStackの詳細データは完全バニラ出力に未対応です"
+                        }
+                    }
+                }
                 CommandType.BLOCK_OPERATION -> {
                     val block = CommandValueRules.placementMaterial(node.string("block"))
                     if (node.blockTempRef.isNullOrBlank() &&
@@ -227,9 +243,13 @@ class VanillaDatapackExporter(
             }
             validatePosition(script, node, node.conditionPositionSpec, errors)
             validatePosition(script, node, node.soundPositionSpec, errors)
+            validatePosition(script, node, node.particlePositionSpec, errors)
             validatePosition(script, node, node.summonPositionSpec, errors)
             if (node.soundPositionSpec?.kind == PositionKind.TARGET) {
                 errors += "${script.id}/${node.id}: 効果音の対象位置指定は完全バニラ出力に未対応です"
+            }
+            if (node.particlePositionSpec?.kind == PositionKind.TARGET) {
+                errors += "${script.id}/${node.id}: パーティクルの対象位置指定は完全バニラ出力に未対応です"
             }
             if (node.summonPositionSpec?.kind == PositionKind.TARGET) {
                 errors += "${script.id}/${node.id}: 召喚の対象位置指定は完全バニラ出力に未対応です"
@@ -307,8 +327,8 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: アイテムデータ付き所持判定は完全バニラ出力に未対応です"
                 }
             }
-            else -> Unit
-        }
+                else -> Unit
+            }
     }
 
     private fun annotateVariableTypes(
@@ -667,6 +687,40 @@ class VanillaDatapackExporter(
         }
     }
 
+    /**
+     * PARTICLEをvanillaの/particleへ変換します。対象selectorに@aを明示し、
+     * execute positionedで表示中心だけを移動することで、同じワールドの全プレイヤーを
+     * 表示対象にします。force指定による512ブロックのvanilla距離制限は仕様として許容します。
+     */
+    private fun particleCommand(node: CommandNode): String {
+        val particle = ParticleSettings.particle(node) ?: error("particle type is missing")
+        val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
+            .getOrElse { error("particle data is invalid") }
+        // 追加データは1つのSNBT引数としてParticle IDへ直結します。旧版の
+        // `/particle dust r g b scale ...`形式を出力すると、現行pack_formatの
+        // データパックではコマンド解析に失敗するため、変換はParticleSettingsへ集約します。
+        val dataArgument = data.vanillaArgument(particle)
+        val command = "particle ${particle.key}$dataArgument " +
+            "~ ~ ~ " +
+            "${node.string(ParticleSettings.PARAM_DELTA_X, "0.0")} " +
+            "${node.string(ParticleSettings.PARAM_DELTA_Y, "0.0")} " +
+            "${node.string(ParticleSettings.PARAM_DELTA_Z, "0.0")} " +
+            "${node.string(ParticleSettings.PARAM_SPEED, "0.0")} " +
+            "${node.string(ParticleSettings.PARAM_COUNT, "1")} force @a"
+        val position = node.particlePositionSpec ?: return command
+        return when (position.kind) {
+            PositionKind.CAPTURED, PositionKind.COORDINATES ->
+                "execute positioned ${position.x ?: error("particle x is missing")} " +
+                    "${position.y ?: error("particle y is missing")} ${position.z ?: error("particle z is missing")} run $command"
+            PositionKind.DISK -> command
+            PositionKind.TEMPORARY -> "execute positioned ${temporaryPositionCoordinates(
+                position.tempName ?: error("temporary particle position name is missing"),
+            )} run $command"
+            PositionKind.TARGET -> error("particle target position is not supported")
+            PositionKind.MYWORLD_SPAWN -> error("unsupported particle position")
+        }
+    }
+
     /** 一時値を保持するstorageパスです。型ごとの値は同じ名前空間へまとめます。 */
     private fun temporaryStoragePath(name: String): String =
         VanillaStorageNames.variablePath(TemporaryTemplate.normalized(name), temporary = true)
@@ -1017,6 +1071,7 @@ class VanillaDatapackExporter(
         }
         CommandType.SUMMON_ENTITY -> summonCommand(node)
         CommandType.PLAY_SOUND -> soundCommand(node)
+        CommandType.PARTICLE -> particleCommand(node)
         CommandType.APPLY_EFFECT ->
             "effect give ${effectiveTarget(node)} " +
                 (node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "effect") } ?: node.string("effect")) +
@@ -1562,6 +1617,7 @@ class VanillaDatapackExporter(
                     node.blockFromSpec,
                     node.blockToSpec,
                     node.soundPositionSpec,
+                    node.particlePositionSpec,
                     node.summonPositionSpec,
                 ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
                 listOfNotNull(
@@ -1842,6 +1898,7 @@ class VanillaDatapackExporter(
                 .append(":temporaryLocationFacing=").append(node.temporaryLocationFacingSpec)
                 .append(":conditionPosition=").append(node.conditionPositionSpec)
                 .append(":soundPosition=").append(node.soundPositionSpec)
+                .append(":particlePosition=").append(node.particlePositionSpec)
             node.snapshot?.let {
                 append(":snapshot={").append(graphFingerprint(it)).append('}')
             }

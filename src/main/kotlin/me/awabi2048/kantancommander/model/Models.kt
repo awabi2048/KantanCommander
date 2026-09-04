@@ -85,6 +85,7 @@ data class CommandGraph(
                 blockFromSpec = node.blockFromSpec?.copy(),
                 blockToSpec = node.blockToSpec?.copy(),
                 soundPositionSpec = node.soundPositionSpec?.copy(),
+                particlePositionSpec = node.particlePositionSpec?.copy(),
                 summonPositionSpec = node.summonPositionSpec?.copy(),
                 temporaryEntityTargetSpec = node.temporaryEntityTargetSpec?.copy(),
                 temporaryLocationPositionSpec = node.temporaryLocationPositionSpec?.copy(),
@@ -126,6 +127,8 @@ data class CommandNode(
     var blockToSpec: PositionSpec? = null,
     /** PLAY_SOUNDで「マイワールド内全域」以外を選んだ場合の再生位置です。 */
     var soundPositionSpec: PositionSpec? = null,
+    /** PARTICLEの散布中心です。未設定時は実行コンテキストの位置を使用します。 */
+    var particlePositionSpec: PositionSpec? = null,
     /** エンティティ召喚で指定された場合の召喚位置です。未設定時は制御ブロック位置を使用します。 */
     var summonPositionSpec: PositionSpec? = null,
     /** TEMP_SET ENTITYの参照元です。通常コマンドと同じTargetSpecで対象を解決します。 */
@@ -379,6 +382,15 @@ enum class CommandType(
     )),
     PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
         "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "POSITION"
+    )),
+    PARTICLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_DESCRIPTION, Material.FIREWORK_STAR, mapOf(
+        "particle" to "FLAME",
+        "particleDeltaX" to "0.0",
+        "particleDeltaY" to "0.0",
+        "particleDeltaZ" to "0.0",
+        "particleSpeed" to "0.0",
+        "particleCount" to "1",
+        "particleData" to "",
     )),
     APPLY_EFFECT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT_DESCRIPTION, Material.POTION, mapOf(
         "effect" to "", "level" to "1", "seconds" to "30"

@@ -19,6 +19,7 @@ import me.awabi2048.kantancommander.data.WorldVariableUsage
 import me.awabi2048.kantancommander.data.WorldVariableUsageFinder
 import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
+import me.awabi2048.kantancommander.execution.ParticleQuotaService
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.execution.SummonedEntityTracker
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
@@ -46,7 +47,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "72943427a7fdd55dcbb632e84b896adf5e9aab2def8cce4f89e0a61ac158d4cd"
+    "d32ce0317a5ea3f6aaf3758ace33f320a2f7359e305b5d97f1f31fbaf2ed588e"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -60,6 +61,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var executor: SequenceExecutor
         private set
     lateinit var summonedEntities: SummonedEntityTracker
+        private set
+    lateinit var particleQuota: ParticleQuotaService
         private set
     lateinit var programListMenu: ProgramListMenu
         private set
@@ -92,7 +95,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 4,
+                    currentVersion = 5,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -113,6 +116,9 @@ class KantanCommanderPlugin : JavaPlugin() {
                             // 旧ディスク名設定を残すと利用者が古い名称へ戻せてしまいます。
                             config.set("default-disk-name", null)
                         },
+                        4 to ConfigMigration { config ->
+                            config.set("execution.max-particles-per-world-per-second", 600)
+                        },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.max-nodes-per-activation") >= 1)
@@ -120,6 +126,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                         require(config.getInt("execution.max-summoned-entities-per-world") >= 1)
                         require(config.getInt("execution.max-summoned-entities-server") >=
                             config.getInt("execution.max-summoned-entities-per-world"))
+                        require(config.getInt("execution.max-particles-per-world-per-second") >= 1)
                         require(config.getInt("timer.minimum-seconds", 1) == 1)
                         require(config.getInt("timer.maximum-seconds", 86400) == 86400)
                         require(config.getInt("limits.max-nodes-per-disk") >= 1)
@@ -152,6 +159,12 @@ class KantanCommanderPlugin : JavaPlugin() {
             this,
             dataFolder.resolve("summoned-entities.csv"),
         )
+        // Particleの表示寿命はサーバー側で追跡できないため、実行個数を直近1秒の
+        // ワールド別送信台帳へ加算します。limitProviderを遅延評価し、設定リロード後
+        // の上限変更を次回の送信判定から反映します。
+        particleQuota = ParticleQuotaService(limitProvider = {
+            config.getInt("execution.max-particles-per-world-per-second", 600)
+        })
         executor = SequenceExecutor(this)
 
         programListMenu = ProgramListMenu(this)
