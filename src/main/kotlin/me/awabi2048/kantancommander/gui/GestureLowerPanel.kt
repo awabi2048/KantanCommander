@@ -132,6 +132,9 @@ class GestureLowerPanel(
         if (node == null) {
             return buildScriptSettings(state, player, script, attention)
         }
+        val canDuplicate = script?.let {
+            GraphEditor.canDuplicate(it.graph, node.id, plugin.graphLimits().maximumNodeCount)
+        } == true
 
         val fields = CommandSettingsModel.gestureVisibleFields(node)
         if (fields.isEmpty()) {
@@ -140,7 +143,7 @@ class GestureLowerPanel(
             // ノードにも、通常ノードと同じ削除導線を常設します。削除処理自体は
             // lower-deleteの既存確認画面へ集約し、設定項目の有無で操作可能性を
             // 変えないことが共通UI仕様上の契約です。
-            addDeleteAction(player, visuals, elements)
+            addNodeActions(player, visuals, elements, canDuplicate)
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
@@ -152,6 +155,7 @@ class GestureLowerPanel(
             elements,
             attentionFields,
             suppressHighlight = suppressHighlight,
+            canDuplicate = canDuplicate,
         )
         // 設定タブはページ分割せず、常に全フィールドを同じ画面へ描画します。
         // 設定項目はCommandSettingsModelで最大6項目へ整理されているため、
@@ -1084,13 +1088,14 @@ class GestureLowerPanel(
         elements: MutableList<GestureGuiElement>,
         attentionFields: Set<String> = emptySet(),
         suppressHighlight: Boolean = false,
+        canDuplicate: Boolean,
     ) {
         val fields = CommandSettingsModel.gestureVisibleFields(node)
         if (fields.isEmpty()) {
             // 設定選択子画面から親のナビゲーションを再構成する場合も、制御ノードの
             // 削除ボタンだけは欠落させません。通常の設定タブがないことと、ノードを
             // 削除できないことは別の状態です。
-            addDeleteAction(player, visuals, elements)
+            addNodeActions(player, visuals, elements, canDuplicate)
             return
         }
         val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
@@ -1136,7 +1141,52 @@ class GestureLowerPanel(
         }
 
 
+        addNodeActions(player, visuals, elements, canDuplicate)
+    }
+
+    /** ノード選択中の固定操作を、表示可否と配置の契約ごとまとめて描画します。 */
+    private fun addNodeActions(
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        canDuplicate: Boolean,
+    ) {
+        if (canDuplicate) addDuplicateAction(player, visuals, elements)
         addDeleteAction(player, visuals, elements)
+    }
+
+    /** 選択中ノードの直後へ同じ設定のコマンドを挿入する操作です。 */
+    private fun addDuplicateAction(
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+    ) {
+        val duplicateY = SETTINGS_TAB_DUPLICATE_Y
+        addBlock(
+            visuals,
+            "duplicate-bg",
+            SETTINGS_TAB_CENTER_X,
+            duplicateY,
+            SETTINGS_TAB_WIDTH,
+            SETTINGS_TAB_HEIGHT,
+            Material.CYAN_CONCRETE,
+            4,
+        )
+        addText(
+            visuals,
+            "duplicate-label",
+            SETTINGS_TAB_CENTER_X,
+            duplicateY,
+            0.0049,
+            90,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DUPLICATE)),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "lower-duplicate",
+            bounds = rect(SETTINGS_TAB_CENTER_X, duplicateY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "duplicate-bg",
+        ))
     }
 
     /**
@@ -1936,7 +1986,7 @@ class GestureLowerPanel(
         }
 
         // 親画面では設定タブを保持します。子画面は詳細設定に集中させ、
-        // 親のタブ・コンテキスト・削除操作を重ねて表示しません。
+        // 親のタブ・コンテキスト・固定操作を重ねて表示しません。
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
         if (!child) {
             addSettingsNavigation(
@@ -1947,6 +1997,9 @@ class GestureLowerPanel(
                 elements,
                 attentionFields,
                 suppressHighlight = suppressHighlight,
+                canDuplicate = script?.let {
+                    GraphEditor.canDuplicate(it.graph, node.id, plugin.graphLimits().maximumNodeCount)
+                } == true,
             )
         }
         val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
@@ -2928,6 +2981,8 @@ class GestureLowerPanel(
         // 左列下端の固定操作（ノード選択中の削除／新規追加画面の閉じる）は同じ位置へ置き、
         // 画面種別が変わっても操作導線を一定に保ちます。
         const val SETTINGS_TAB_ACTION_Y = -0.43
+        // 複製は削除の直上へ置き、設定タブ列と下端の固定操作を同じ左列に揃えます。
+        const val SETTINGS_TAB_DUPLICATE_Y = SETTINGS_TAB_ACTION_Y + SETTINGS_TAB_PITCH
         // 設定候補とコマンド追加候補は、同じ2列×5行のページ契約を共有します。
         // 下端の操作列とは0.08ブロック以上離し、ページャーの重なりも防ぎます。
         const val SETTING_CHOICE_PAGE_SIZE = 10
