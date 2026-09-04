@@ -215,12 +215,97 @@ class GraphEditorTest {
             inner.id,
             GraphEditor.Edge.FALSE,
             CommandType.WAIT,
+            continuationId = outerMerge.id,
         )
 
         assertEquals(null, inner.pairedNodeId)
         assertEquals(outerMerge.id, inner.trueNext)
         assertEquals(inserted.id, inner.falseNext)
         assertEquals(null, inserted.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `normal insertion into an open condition in a for body remains a terminal`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+
+        val inserted = GraphEditor.insert(
+            graph,
+            condition.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.WAIT,
+            continuationId = end.id,
+        )
+
+        assertEquals(end.id, condition.trueNext)
+        assertEquals(null, condition.next)
+        assertEquals(inserted.id, condition.falseNext)
+        assertEquals(null, inserted.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `merge without a continuation argument infers the enclosing for end`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val falseNode = GraphEditor.insert(graph, condition.id, GraphEditor.Edge.FALSE, CommandType.WAIT)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+
+        // 旧呼び出し元が境界IDを渡さなくても、条件の所属FOR_ENDを直接参照から
+        // 復元し、MERGEをFOR本体の末尾へ接続できることを確認します。
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        assertEquals(merge.id, condition.trueNext)
+        assertEquals(falseNode.id, condition.falseNext)
+        assertEquals(merge.id, falseNode.next)
+        assertEquals(end.id, merge.next)
+        assertEquals(null, end.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `nested terminal branch never inherits the enclosing for end`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val outer = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val inner = GraphEditor.insert(
+            graph,
+            outer.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.CONDITION,
+            continuationId = end.id,
+        )
+        val first = GraphEditor.insert(
+            graph,
+            inner.id,
+            GraphEditor.Edge.FALSE,
+            CommandType.WAIT,
+            continuationId = end.id,
+        )
+        val second = GraphEditor.insert(
+            graph,
+            first.id,
+            GraphEditor.Edge.NEXT,
+            CommandType.DISPLAY_TEXT,
+            continuationId = end.id,
+        )
+
+        // 外側条件のTRUE枝だけがFOR_ENDへ戻り、内側条件とそのFALSE枝は
+        // それぞれの深さで独立した終端になります。
+        assertEquals(end.id, outer.trueNext)
+        assertEquals(inner.id, outer.falseNext)
+        assertEquals(null, inner.trueNext)
+        assertEquals(first.id, inner.falseNext)
+        assertEquals(second.id, first.next)
+        assertEquals(null, second.next)
+        assertEquals(1, graph.nodes.values.count { node -> node.next == end.id } +
+            graph.nodes.values.count { node -> node.trueNext == end.id } +
+            graph.nodes.values.count { node -> node.falseNext == end.id })
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 

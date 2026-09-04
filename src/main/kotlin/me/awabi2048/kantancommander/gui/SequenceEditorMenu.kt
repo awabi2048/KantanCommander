@@ -168,7 +168,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 "インベントリGUIの経路移動でレイアウトを生成できません: script=${script.id}",
                 failure,
             )
-            return MenuActionResult.Rejected(Component.text("経路を表示できないため移動できません。"))
+            // 移動操作の拒否理由をイベントログだけに残さず、操作者へ即時に返します。
+            return MenuActionResult.Rejected(GraphLayoutFailureFeedback.renderMessage(context.player))
         }
         val origin = origin(context.route)
         val delta = ViewportNavigation.delta(
@@ -201,9 +202,11 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         player = player,
                         slot = 22,
                         material = Material.BARRIER,
-                        name = "経路を表示できません",
+                        name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_UPPER_RENDER),
                         style = GuiNameStyle.DANGER,
-                        description = listOf("保存内容を確認してから再度開いてください。"),
+                        description = listOf(
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT),
+                        ),
                     ),
                 ),
             )

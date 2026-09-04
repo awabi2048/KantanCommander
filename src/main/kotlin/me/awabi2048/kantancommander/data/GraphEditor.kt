@@ -107,10 +107,17 @@ object GraphEditor {
             ?.takeIf { it.type == CommandType.CONDITION }
             ?: error("対象の条件分岐が存在しません")
         require(condition.pairedNodeId == null) { "条件分岐には既に対応する合流があります" }
-        require(canAppendMerge(graph, conditionId, continuationId)) {
+        // FOR本体の未合流条件は、生成時点でTRUE枝またはFALSE枝が対応FOR_ENDを
+        // 直接指します。古いUIやインベントリ経路が境界IDを渡し損ねても、ここで
+        // 現在の所属FORを復元してから末尾探索を止めます。これを行わないと、
+        // connectOpenTailがFOR_END.nextまで進み、MERGEをFORの外側へ配置します。
+        // 推測対象は「条件自身を含むFORの対応FOR_ENDへの直接参照」に限定し、
+        // 深い枝のNULL終端や親MERGEを暗黙に継続先へ変換しません。
+        val resolvedContinuationId = continuationId ?: directEnclosingForEnd(graph, condition)
+        require(canAppendMerge(graph, conditionId, resolvedContinuationId)) {
             "内側の条件分岐を先に合流してください"
         }
-        continuationId?.let { continuation ->
+        resolvedContinuationId?.let { continuation ->
             require(continuation in graph.nodes) { "合流後の継続先が存在しません: $continuation" }
             require(continuation != conditionId) { "条件分岐自身へは継続できません" }
         }
@@ -119,9 +126,9 @@ object GraphEditor {
         graph.nodes[merge.id] = merge
         condition.pairedNodeId = merge.id
         merge.pairedNodeId = condition.id
-        connectOpenTail(graph, condition.trueNext, condition, true, merge.id, continuationId)
-        connectOpenTail(graph, condition.falseNext, condition, false, merge.id, continuationId)
-        merge.next = continuationId
+        connectOpenTail(graph, condition.trueNext, condition, true, merge.id, resolvedContinuationId)
+        connectOpenTail(graph, condition.falseNext, condition, false, merge.id, resolvedContinuationId)
+        merge.next = resolvedContinuationId
         return merge
     }
 
@@ -147,17 +154,29 @@ object GraphEditor {
      * 既存エッジの直後へ通常ノードを挿入します。
      *
      * 条件枝の終端は後続へ再合流する場合と、その枝でプログラムを正常終了する場合を
-     * 区別します。通常ノードの追加は既存エッジの終端をそのまま引き継ぐため、
-     * `null` 終端の枝へ追加しても早期終了の意味を変えません。
+     * 区別します。通常は既存エッジの終端をそのまま引き継ぐため、`null` 終端の枝へ
+     * 追加しても、ループ外では早期終了の意味を変えません。
+     *
+     * GUIの挿入候補に含まれるcontinuationIdは、条件ノードを既存の主経路へ挿入する
+     * 場合のTRUE枝の継続先としてだけ使用します。通常ノードのNULL終端へ同じ値を
+     * 適用すると、未合流枝をMERGEやFOR_ENDへ暗黙接続してしまい、枝の終端意味を
+     * 破壊するためです。
      */
     fun insert(
         graph: CommandGraph,
         sourceId: UUID?,
         edge: Edge,
         type: CommandType,
+        continuationId: UUID? = null,
     ): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) { "$type はこの経路へ挿入できません" }
-        val target = edgeTarget(graph, sourceId, edge)
+        val edgeTarget = edgeTarget(graph, sourceId, edge)
+        // NULL終端の枝へ通常ノードを追加した場合は、その終端をそのまま引き継ぎます。
+        // continuationIdは、明示的なMERGEを外側の継続先とする条件追加にだけ使います。
+        // FOR_ENDはループ境界であって合流ノードではないため、内側の枝へ持ち込むと
+        // 複数の枝が同じFOR_ENDへ入り、枝の深さと終端意味を同時に壊してしまいます。
+        val target = edgeTarget ?: continuationId
+            ?.takeIf { type == CommandType.CONDITION && graph.nodes[it]?.type == CommandType.MERGE }
         val inserted = createBundle(graph, type)
         setEdge(graph, sourceId, edge, inserted.id)
         if (inserted.type == CommandType.CONDITION) {
@@ -206,6 +225,9 @@ object GraphEditor {
         val condition = graph.nodes[conditionId]
             ?.takeIf { it.type == CommandType.CONDITION }
             ?: error("対象の条件分岐が存在しません")
+        // 対応MERGEがある条件だけを停止境界にします。未合流条件の枝には境界を
+        // 補わず、NULL終端までを同じ枝として扱います。FOR_ENDを停止点にすると、
+        // 条件より外側の深さへ枝を延長し、終端枝をループへ誤接続してしまいます。
         val stop = condition.pairedNodeId
         val start = condition.falseNext
         if (start == null || start == stop) {
@@ -256,10 +278,22 @@ object GraphEditor {
     }
 
     private fun connectBundleTail(graph: CommandGraph, inserted: CommandNode, target: UUID?) {
-        val tail = if (inserted.type == CommandType.FOR_START) {
-            inserted.pairedNodeId?.let(graph.nodes::get) ?: inserted
-        } else inserted
-        if (target != null) tail.next = target
+        if (target == null) return
+        when (inserted.type) {
+            CommandType.FOR_START -> {
+                // FOR_STARTの次経路は対応FOR_ENDから続くため、ペア末尾へ接続します。
+                val end = inserted.pairedNodeId?.let(graph.nodes::get) ?: inserted
+                end.next = target
+            }
+            CommandType.CONDITION -> {
+                // 条件ノードには通常のNEXT実行経路がありません。ここでnextへ書くと
+                // FOR_BODYの終了先が実行グラフから消え、FOR_ENDが到達不能になります。
+                // 条件を既存経路へ置いた場合の主経路はTRUE枝として表現します。
+                inserted.trueNext = target
+                inserted.next = null
+            }
+            else -> inserted.next = target
+        }
     }
 
     private fun connect(source: CommandNode, target: UUID, preferTrue: Boolean) {
@@ -407,6 +441,25 @@ object GraphEditor {
             return node.outgoingIds().any(::visit)
         }
         return visit(start)
+    }
+
+    /**
+     * FOR本体の未合流条件が直接参照しているFOR_ENDを、明示的な合流境界として返します。
+     *
+     * この補正は、境界メタデータをまだ保持していない旧呼び出し元への防御です。
+     * 条件がFOR本体内に存在することも同時に確認するため、トップレベルの不正な
+     * FOR_END参照や、別の深さにある境界を拾って枝へ接続することはありません。
+     */
+    private fun directEnclosingForEnd(graph: CommandGraph, condition: CommandNode): UUID? {
+        val directBoundaryIds = listOfNotNull(condition.trueNext, condition.falseNext)
+            .filter { graph.nodes[it]?.type == CommandType.FOR_END }
+        return directBoundaryIds.firstOrNull { endId ->
+            graph.nodes.values.any { start ->
+                start.type == CommandType.FOR_START &&
+                    start.pairedNodeId == endId &&
+                    containsNodeBefore(graph, start.trueNext, endId, condition.id)
+            }
+        }
     }
 
     private fun branchTail(graph: CommandGraph, start: UUID?, stop: UUID): CommandNode? {
