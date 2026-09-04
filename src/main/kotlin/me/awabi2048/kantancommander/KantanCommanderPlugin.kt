@@ -19,6 +19,7 @@ import me.awabi2048.kantancommander.data.WorldVariableUsage
 import me.awabi2048.kantancommander.data.WorldVariableUsageFinder
 import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
+import me.awabi2048.kantancommander.execution.ParticleQuotaService
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.execution.SummonedEntityTracker
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
@@ -60,6 +61,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var executor: SequenceExecutor
         private set
     lateinit var summonedEntities: SummonedEntityTracker
+        private set
+    lateinit var particleQuota: ParticleQuotaService
         private set
     lateinit var programListMenu: ProgramListMenu
         private set
@@ -119,6 +122,10 @@ class KantanCommanderPlugin : JavaPlugin() {
                             // 移行時に削除します。残したままにすると、設定ファイル上の
                             // 値と実際のGUI経路が一致しない状態になります。
                             config.set("use-gesture-editor", null)
+                            config.set("execution.max-particles-per-world-per-second", 600)
+                            // Particleの追加上限も同じ設定世代で導入します。旧設定に
+                            // このキーがない場合だけ既定値を補い、BE/JEの表示方式移行と
+                            // 実行上限の追加を一つの原子的な設定移行として完了させます。
                         },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
@@ -127,6 +134,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                         require(config.getInt("execution.max-summoned-entities-per-world") >= 1)
                         require(config.getInt("execution.max-summoned-entities-server") >=
                             config.getInt("execution.max-summoned-entities-per-world"))
+                        require(config.getInt("execution.max-particles-per-world-per-second") >= 1)
                         require(config.getInt("timer.minimum-seconds", 1) == 1)
                         require(config.getInt("timer.maximum-seconds", 86400) == 86400)
                         require(config.getInt("limits.max-nodes-per-disk") >= 1)
@@ -159,6 +167,12 @@ class KantanCommanderPlugin : JavaPlugin() {
             this,
             dataFolder.resolve("summoned-entities.csv"),
         )
+        // Particleの表示寿命はサーバー側で追跡できないため、実行個数を直近1秒の
+        // ワールド別送信台帳へ加算します。limitProviderを遅延評価し、設定リロード後
+        // の上限変更を次回の送信判定から反映します。
+        particleQuota = ParticleQuotaService(limitProvider = {
+            config.getInt("execution.max-particles-per-world-per-second", 600)
+        })
         executor = SequenceExecutor(this)
 
         programListMenu = ProgramListMenu(this)

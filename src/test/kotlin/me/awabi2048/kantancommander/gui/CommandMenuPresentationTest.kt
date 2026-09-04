@@ -31,7 +31,9 @@ class CommandMenuPresentationTest {
         assertTrue(CommandType.TELEPORT in executionTypes)
         assertTrue(CommandType.CONDITION in controlTypes)
         assertTrue(CommandType.MERGE in controlTypes)
-        assertTrue(executionTypes.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+        // Particle追加後は実行系が2ページになります。候補一覧全体ではなく、
+        // ページャーが返すページ数で収まることを検証します。
+        assertEquals(2, GestureCommandPickerLayoutPolicy.pageCount(executionTypes.size))
         assertTrue(controlTypes.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE)
     }
 

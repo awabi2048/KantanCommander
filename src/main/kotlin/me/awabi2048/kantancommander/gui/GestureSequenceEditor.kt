@@ -47,6 +47,7 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
@@ -1533,6 +1534,13 @@ class GestureSequenceEditor(
             showSoundParametersSettingDialog(player, context, node)
             return
         }
+        if (fieldKey == "particleParameters" && node.type == CommandType.PARTICLE) {
+            // パーティクルの散布範囲・速度・個数は、Inventoryと同じく
+            // 1つの「表示設定」ダイアログで縦に編集します。個別入力へ分解すると
+            // 3軸のうち一部だけ保存されるため、必ず一括検証・一括保存します。
+            showParticleParametersSettingDialog(player, context, node)
+            return
+        }
         val screen = gestureSettingScreenFor(descriptor.editor)
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目は、チャットを横取りせず
@@ -2743,6 +2751,49 @@ class GestureSequenceEditor(
                         command,
                         mapOf("volume" to volumeValue, "pitch" to pitchValue),
                     )
+                }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            null
+        }
+    }
+
+    /** パーティクルの範囲・速度・個数を一括検証して保存します。 */
+    private fun showParticleParametersSettingDialog(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+    ) {
+        val parameterKeys = listOf(
+            ParticleSettings.PARAM_DELTA_X,
+            ParticleSettings.PARAM_DELTA_Y,
+            ParticleSettings.PARAM_DELTA_Z,
+            ParticleSettings.PARAM_SPEED,
+            ParticleSettings.PARAM_COUNT,
+        )
+        val specs = parameterKeys.associateWith { key -> requireNotNull(CommandDialogSpecs.field(node, key)) }
+        val values = parameterKeys.associateWith { key -> node.string(key) }
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.particleParametersBody(player),
+            inputs = CommandDialogSpecs.particleParametersInputs(
+                player,
+                values.getValue(ParticleSettings.PARAM_DELTA_X),
+                values.getValue(ParticleSettings.PARAM_DELTA_Y),
+                values.getValue(ParticleSettings.PARAM_DELTA_Z),
+                values.getValue(ParticleSettings.PARAM_SPEED),
+                values.getValue(ParticleSettings.PARAM_COUNT),
+            ),
+        ) { response ->
+            val rawValues = parameterKeys.associateWith { key ->
+                CommandDialogSpecs.normalize(key, response.textValue(key))
+            }
+            val validationError = rawValues.entries
+                .mapNotNull { (key, value) -> specs.getValue(key).validateInput(value) }
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            if (!updateSettingNode(player, context, configuredFields = setOf("particleParameters")) { command ->
+                    CommandSettingsModel.setParameters(command, rawValues)
                 }) {
                 return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
             }

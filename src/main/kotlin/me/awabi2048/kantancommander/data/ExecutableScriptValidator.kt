@@ -17,6 +17,7 @@ import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.NumericExpression
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
@@ -215,6 +216,7 @@ object ExecutableScriptValidator {
             node.blockFromSpec,
             node.blockToSpec,
             node.soundPositionSpec,
+            node.particlePositionSpec,
             node.summonPositionSpec,
         ).forEach { validatePosition(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationPositionSpec?.let {
@@ -263,6 +265,7 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("soundPosition"), "サウンドの再生位置が不正です")
                 }
             }
+            CommandType.PARTICLE -> validateParticle(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.APPLY_EFFECT -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
                 if (node.effectTempRef.isNullOrBlank() && !CommandValueRules.isEffectId(node.string("effect"))) {
@@ -291,6 +294,71 @@ object ExecutableScriptValidator {
             CommandType.TEMP_SET -> validateTemporary(node, path, errors, temporaryDefinitions)
             CommandType.FOR_START -> validateFor(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
+        }
+    }
+
+    /** PARTICLEの共通入力を、vanilla /particleと同じ有限値・正の個数で検証します。 */
+    private fun validateParticle(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        val particle = ParticleSettings.particle(node)
+        if (particle == null) {
+            errors += nodeError(node, path, setOf(ParticleSettings.PARAM_PARTICLE), "パーティクルの種類が不正です")
+        } else {
+            val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
+            if (data.isFailure) {
+                errors += nodeError(node, path, setOf(ParticleSettings.PARAM_DATA), "パーティクルの詳細データが不正です")
+            }
+        }
+        val parameterField = setOf("particleParameters")
+        validateParticleRange(node, path, ParticleSettings.PARAM_DELTA_X, "X方向の散布範囲", errors, variableDefinitions, temporaryDefinitions, parameterField)
+        validateParticleRange(node, path, ParticleSettings.PARAM_DELTA_Y, "Y方向の散布範囲", errors, variableDefinitions, temporaryDefinitions, parameterField)
+        validateParticleRange(node, path, ParticleSettings.PARAM_DELTA_Z, "Z方向の散布範囲", errors, variableDefinitions, temporaryDefinitions, parameterField)
+        validateParticleRange(
+            node,
+            path,
+            ParticleSettings.PARAM_SPEED,
+            "速度",
+            errors,
+            variableDefinitions,
+            temporaryDefinitions,
+            parameterField,
+            minimum = 0.0,
+        )
+        validatePositiveIntegerInput(
+            node.string(ParticleSettings.PARAM_COUNT, "1"),
+            variableDefinitions,
+            node,
+            path,
+            parameterField,
+            errors,
+            temporaryDefinitions,
+        )
+    }
+
+    private fun validateParticleRange(
+        node: CommandNode,
+        path: String,
+        field: String,
+        message: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+        fields: Set<String>,
+        minimum: Double? = null,
+    ) {
+        val raw = node.string(field, "0.0")
+        validateNumberInput(raw, variableDefinitions, node, path, fields, errors, temporaryDefinitions)
+        val value = resolvedDouble(raw, variableDefinitions, temporaryDefinitions)
+        if (!deferNumericValidation(raw, variableDefinitions, temporaryDefinitions) &&
+            (value == null || (minimum != null && value < minimum))
+        ) {
+            val constraint = if (minimum != null) "0以上の有限な数値" else "有限な数値"
+            errors += nodeError(node, path, fields, "${message}は${constraint}で指定してください")
         }
     }
 

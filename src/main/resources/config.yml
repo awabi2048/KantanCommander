@@ -3,6 +3,8 @@ execution:
   max-disk-call-depth: 3
   max-summoned-entities-per-world: 256
   max-summoned-entities-server: 2048
+  # 直近1秒にワールド全体へ送信できるParticle個数です。実行個数そのものを加算します。
+  max-particles-per-world-per-second: 600
 limits:
   max-nodes-per-disk: 512
   max-map-width: 1024
