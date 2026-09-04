@@ -72,6 +72,39 @@ class ScriptStoreTest {
     }
 
     @Test
+    fun `normal mutations are blocked atomically and bypass mutations notify after success`() {
+        var locked = false
+        val bypassed = mutableListOf<Pair<UUID, ScriptMutationOperation>>()
+        val store = ScriptStore(
+            temp.resolve("test-lock"),
+            Logger.getAnonymousLogger(),
+            mutationGuard = { id, _, operation ->
+                if (locked) throw ScriptMutationLockedException(id, operation)
+            },
+            bypassedMutationNotifier = { id, operation -> bypassed += id to operation },
+        )
+        val script = store.create(UUID.randomUUID(), "locked")
+        val edited = requireNotNull(store.load(script.id)).apply { name = "edited" }
+
+        locked = true
+        assertThrows(ScriptMutationLockedException::class.java) { store.save(edited) }
+        assertEquals("locked", requireNotNull(store.load(script.id)).name)
+
+        store.saveBypassingExecutionLock(edited)
+        assertEquals("edited", requireNotNull(store.load(script.id)).name)
+        store.deleteBypassingExecutionLock(script.id)
+
+        assertEquals(
+            listOf(
+                script.id to ScriptMutationOperation.SAVE,
+                script.id to ScriptMutationOperation.DELETE,
+            ),
+            bypassed,
+        )
+        assertNull(store.load(script.id))
+    }
+
+    @Test
     fun `concurrent updates serialize read modify write and preserve independent node edits`() {
         val store = ScriptStore(temp.resolve("concurrent"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "concurrent")

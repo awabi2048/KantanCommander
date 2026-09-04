@@ -13,6 +13,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisibilityPolicy
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
@@ -62,6 +63,7 @@ class GestureLowerPanel(
     /** 個別設定専用。親の下部画面へモーダルに重ねます。 */
     val SETTING_CHILD_SCREEN_ID = "gesture-editor-setting-child"
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
+    val TEST_CONFIRM_SCREEN_ID = "gesture-editor-test-confirm"
 
     /** 子画面の面積を親の50%にするための縦横縮尺です。 */
     private val SETTING_CHILD_SCALE = sqrt(0.5)
@@ -88,6 +90,9 @@ class GestureLowerPanel(
             // 削除確認も一覧と同じ子画面契約で表示し、親画面へ確認ボタンを混在させません。
             GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirm(state, player)
+            GestureLowerMode.TEST_CONFIRM -> buildTestConfirmation(state, player, child = true)
+            GestureLowerMode.TEST_STATUS -> buildTestStatus(state, player)
+            GestureLowerMode.TEST_RESULT -> buildTestResult(state, player)
         }
     }
 
@@ -117,6 +122,12 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
     ): GestureGuiView = buildWorldVariableDeleteConfirmation(state, player)
+
+    /** テスト開始確認は下部中央画面へ重ねる専用子画面です。 */
+    fun buildTestConfirmationChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView = buildTestConfirmation(state, player, child = true)
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
@@ -2530,6 +2541,269 @@ class GestureLowerPanel(
         FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC
     })
 
+    /** テスト開始確認子画面。設定値はプレイヤー単位の保存値を初期表示します。 */
+    private fun buildTestConfirmation(
+        state: GestureEditorState,
+        player: Player,
+        child: Boolean,
+    ): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        addText(
+            visuals,
+            "test-confirm-title",
+            0.0,
+            0.34,
+            0.008,
+            220,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CONFIRM_TITLE)),
+        )
+        addText(
+            visuals,
+            "test-confirm-description",
+            0.0,
+            0.25,
+            0.0045,
+            230,
+            Component.text(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DEBUG_MODE_DESCRIPTION),
+                NamedTextColor.GRAY,
+            ),
+        )
+        addTestToggle(
+            visuals,
+            elements,
+            player = player,
+            id = "test-confirm-debug",
+            centerY = 0.13,
+            label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DEBUG_MODE),
+            enabled = test.debugMode,
+        )
+        addTestToggle(
+            visuals,
+            elements,
+            player = player,
+            id = "test-confirm-log",
+            centerY = -0.02,
+            label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT),
+            enabled = test.logOutput,
+        )
+        addBlock(visuals, "test-confirm-start-bg", -0.30, -0.34, 0.50, 0.12, Material.CYAN_TERRACOTTA, 4)
+        addText(
+            visuals,
+            "test-confirm-start-label",
+            -0.30,
+            -0.34,
+            0.005,
+            100,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CONFIRM)),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "test-confirm-start",
+            bounds = rect(-0.30, -0.34, 0.50, 0.12),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "test-confirm-start-bg",
+        ))
+        addBlock(visuals, "test-confirm-cancel-bg", 0.30, -0.34, 0.50, 0.12, Material.BROWN_CONCRETE, 4)
+        addText(
+            visuals,
+            "test-confirm-cancel-label",
+            0.30,
+            -0.34,
+            0.005,
+            100,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CANCEL)),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "test-confirm-cancel",
+            bounds = rect(0.30, -0.34, 0.50, 0.12),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "test-confirm-cancel-bg",
+        ))
+        return view(GestureLowerMode.TEST_CONFIRM, elements, visuals, child = child)
+    }
+
+    private fun addTestToggle(
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        player: Player,
+        id: String,
+        centerY: Double,
+        label: String,
+        enabled: Boolean,
+    ) {
+        val width = 1.55
+        addBlock(
+            visuals,
+            "$id-bg",
+            0.0,
+            centerY,
+            width,
+            0.12,
+            if (enabled) Material.CYAN_TERRACOTTA else Material.GRAY_CONCRETE,
+            4,
+        )
+        val value = KcI18n.text(
+            player,
+            if (enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON
+            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF,
+        )
+        val text = Component.text(label, NamedTextColor.WHITE)
+            .append(Component.text("  ", NamedTextColor.GRAY))
+            .append(Component.text(value, if (enabled) NamedTextColor.GREEN else NamedTextColor.GRAY))
+        addText(visuals, "$id-label", 0.0, centerY, 0.0055, 230, text)
+        elements.add(GestureGuiElement(
+            elementId = id,
+            bounds = rect(0.0, centerY, width, 0.12),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "$id-bg",
+        ))
+    }
+
+    /** 実行中ステータス。項目と値を1つの左詰めTextDisplayへ縦2行で出します。 */
+    private fun buildTestStatus(state: GestureEditorState, player: Player): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        val visuals = mutableListOf<GestureGuiVisual>()
+        addText(
+            visuals,
+            "test-status-title",
+            0.0,
+            0.39,
+            0.007,
+            220,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_STATUS_TITLE)),
+        )
+        addTestInfoRow(
+            visuals,
+            "test-status-elapsed",
+            0.21,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
+            formatTestElapsed(test.elapsedTicks),
+        )
+        addTestInfoRow(
+            visuals,
+            "test-status-count",
+            0.00,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
+            test.successfulNodeCount.toString(),
+        )
+        addTestInfoRow(
+            visuals,
+            "test-status-log",
+            -0.21,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT),
+            if (test.logOutput) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON)
+            else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF),
+        )
+        addText(
+            visuals,
+            "test-status-hint",
+            0.0,
+            -0.42,
+            0.0042,
+            220,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RUNNING_HINT), NamedTextColor.GRAY),
+        )
+        return view(GestureLowerMode.TEST_STATUS, emptyList(), visuals)
+    }
+
+    /** 実行結果。失敗時だけ原因行を追加し、完了操作は下端中央へ固定します。 */
+    private fun buildTestResult(state: GestureEditorState, player: Player): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        val result = test.result
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        addText(
+            visuals,
+            "test-result-title",
+            0.0,
+            0.39,
+            0.008,
+            220,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RESULT_TITLE)),
+        )
+        addTestInfoRow(
+            visuals,
+            "test-result-duration",
+            0.20,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DURATION),
+            formatTestElapsed(result?.elapsedTicks ?: test.elapsedTicks),
+        )
+        addTestInfoRow(
+            visuals,
+            "test-result-count",
+            -0.01,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
+            (result?.successfulNodeCount ?: test.successfulNodeCount).toString(),
+        )
+        val status = when (result?.status) {
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.SUCCESS ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_SUCCESS)
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.CANCELLED ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_INTERRUPTED)
+            else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FAILURE)
+        }
+        addTestInfoRow(
+            visuals,
+            "test-result-status",
+            -0.22,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FINAL_RESULT),
+            status,
+        )
+        if (result?.status == me.awabi2048.kantancommander.execution.ExecutionFinishStatus.FAILURE) {
+            addTestInfoRow(
+                visuals,
+                "test-result-cause",
+                -0.40,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE),
+                result.reason ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+            )
+        }
+        addBlock(visuals, "test-result-complete-bg", 0.0, -0.48, 0.70, 0.10, Material.CYAN_TERRACOTTA, 4)
+        addText(
+            visuals,
+            "test-result-complete-label",
+            0.0,
+            -0.48,
+            0.005,
+            120,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMPLETE)),
+        )
+        elements.add(GestureGuiElement(
+            elementId = "test-result-complete",
+            bounds = rect(0.0, -0.48, 0.70, 0.10),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "test-result-complete-bg",
+        ))
+        return view(GestureLowerMode.TEST_RESULT, elements, visuals)
+    }
+
+    private fun addTestInfoRow(
+        visuals: MutableList<GestureGuiVisual>,
+        id: String,
+        centerY: Double,
+        label: String,
+        value: String,
+    ) {
+        addText(
+            visuals,
+            id,
+            -0.90,
+            centerY,
+            0.005,
+            230,
+            Component.text(label, NamedTextColor.GRAY)
+                .append(Component.newline())
+                .append(Component.text(value, NamedTextColor.WHITE)),
+            alignment = GestureGuiTextAlignment.LEFT,
+        )
+    }
+
+    private fun formatTestElapsed(ticks: Long): String {
+        return TestExecutionTimeFormatter.formatTicks(ticks)
+    }
+
     /** PICKER: 左タブ列＝カテゴリ（EXECUTION/CONTROL）、右詳細＝コマンド種別一覧 */
     private fun buildPicker(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
@@ -2730,6 +3004,7 @@ class GestureLowerPanel(
         GestureGuiScreenDefinition(
             when {
                 mode == GestureLowerMode.CONFIRM -> CONFIRM_SCREEN_ID
+                mode == GestureLowerMode.TEST_CONFIRM -> TEST_CONFIRM_SCREEN_ID
                 child -> SETTING_CHILD_SCREEN_ID
                 else -> LOWER_SCREEN_ID
             },
@@ -2873,6 +3148,7 @@ class GestureLowerPanel(
         size: Double,
         lineWidth: Int,
         text: Component,
+        alignment: GestureGuiTextAlignment = GestureGuiTextAlignment.CENTER,
     ) {
         visuals.add(GestureGuiVisual.Text(
             visualId = id,
@@ -2880,6 +3156,7 @@ class GestureLowerPanel(
             text = text,
             size = size,
             lineWidth = lineWidth,
+            alignment = alignment,
         ))
     }
 

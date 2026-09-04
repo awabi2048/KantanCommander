@@ -59,8 +59,22 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
                 lastRunTick = previousRun,
             )
             if (shouldRun) {
+                val normalExecution = plugin.testExecution.beginNormal(placement.key) ?: return@forEach
                 runtimeState.markRun(script.id, now)
-                plugin.executor.execute(script.id, block.location.add(0.5, 0.5, 0.5))
+                runCatching {
+                    plugin.executor.execute(script.id, block.location.add(0.5, 0.5, 0.5)) {
+                        normalExecution.close()
+                    }
+                }.onFailure { failure ->
+                    // 実行開始前の例外でも配置単位の通常実行カウンタを残さないよう、
+                    // テスト排他トークンを必ず解放します。
+                    normalExecution.close()
+                    plugin.logger.log(
+                        java.util.logging.Level.WARNING,
+                        "通常実行の開始に失敗しました: placement=${placement.key}",
+                        failure,
+                    )
+                }
             }
         }
     }

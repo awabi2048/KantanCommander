@@ -15,6 +15,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiBounds
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiChildOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiCloseReason
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOpenOptions
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
@@ -24,12 +25,17 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionListener
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisibilityPolicy
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenLayout
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVerticalSlot
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.execution.ExecutionFinishStatus
+import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
+import me.awabi2048.kantancommander.execution.ExecutionResult
+import me.awabi2048.kantancommander.execution.NodeExecutionOutcome
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
@@ -121,6 +127,8 @@ data class GestureEditorState(
     var pendingWorldVariableType: VariableType? = null,
     /** ワールド内変数の削除確認で、確認対象として表示している名前です。 */
     var pendingWorldVariableDeleteName: String? = null,
+    /** テスト実行中だけ共有する表示・復元状態です。 */
+    var testExecution: GestureTestState? = null,
 )
 
 /** 下部パネルの表示モード。各確認画面は親から分離した子画面として開きます。 */
@@ -132,6 +140,9 @@ enum class GestureLowerMode {
     WORLD_VARIABLE_TYPE,
     WORLD_VARIABLE_DELETE_CONFIRM,
     CONFIRM,
+    TEST_CONFIRM,
+    TEST_STATUS,
+    TEST_RESULT,
 }
 
 /**
@@ -284,6 +295,8 @@ class GestureSequenceEditor(
     private var renderRetryTask: BukkitTask? = null
     private var renderRetrySessionId: UUID? = null
     private var renderRetryAttempts = 0
+    /** 実行中の経過時間・現在ノードを画面へ反映する周期タスクです。 */
+    private var testRefreshTask: BukkitTask? = null
 
     private fun canViewSharedActor(ownerId: UUID, actorId: UUID): Boolean {
         val placement = state.placement ?: return actorId == ownerId
@@ -300,6 +313,10 @@ class GestureSequenceEditor(
     }
 
     private fun canOperateSharedActor(ownerId: UUID, actorId: UUID): Boolean {
+        // テスト中の中断導線は距離・追従アンカーの状態に依存させません。オーナーが
+        // 離れても「テスト実行」「閉じる」だけは受け付け、ほかの操作者は下の
+        // Actionハンドラで明示的に拒否します。
+        if (state.testExecution?.ownerId == actorId) return true
         val placement = state.placement ?: return actorId == ownerId
         if (!canViewSharedActor(ownerId, actorId)) return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
@@ -417,8 +434,23 @@ class GestureSequenceEditor(
             listOf(upper, lower),
             GestureGuiOpenOptions(
                 anchor = state.anchor,
-                sessionListener = GestureGuiSessionListener { ownerId, sessionId ->
-                    onGestureSessionClosed(ownerId, sessionId)
+                sessionListener = object : GestureGuiSessionListener {
+                    override fun onClosed(ownerId: UUID, sessionId: UUID) {
+                        onGestureSessionClosed(ownerId, sessionId)
+                    }
+
+                    override fun onCloseRequested(
+                        ownerId: UUID,
+                        sessionId: UUID,
+                        actorId: UUID,
+                        reason: GestureGuiCloseReason,
+                    ) {
+                        if (reason == GestureGuiCloseReason.SHIFT_JUMP && actorId == ownerId) {
+                            // CC-Systemが画面を閉じる直前に停止だけを確定します。
+                            // SHIFT_JUMPは「閉じる」と同じく結果画面を経由しません。
+                            interruptTestWithoutResult("shift_jump")
+                        }
+                    }
                 },
                 layout = layout,
                 verticalSlots = listOf(GestureGuiVerticalSlot.TOP, GestureGuiVerticalSlot.MIDDLE),
@@ -439,20 +471,25 @@ class GestureSequenceEditor(
 
     fun updateLower(player: Player): Boolean {
         val owner = ownerPlayerFor(player)
+        return updateScreen(owner, buildCurrentLowerView(owner), RenderTarget.LOWER)
+    }
+
+    /** 通常更新とOPENING後の再試行で、子画面の優先順位を同じにします。 */
+    private fun buildCurrentLowerView(owner: Player): GestureGuiView {
         val childOpen = settingChildOpen(owner.uniqueId)
+        val testChildOpen = testConfirmationChildOpen(owner.uniqueId)
         val attention = attentionState()
-        val view = if (childOpen) {
-            when (state.lowerMode) {
+        return when {
+            testChildOpen -> lowerPanel.buildTestConfirmationChild(state, owner)
+            childOpen -> when (state.lowerMode) {
                 GestureLowerMode.SETTING_CHOICES -> lowerPanel.buildSettingChild(state, owner, attention)
                 GestureLowerMode.WORLD_VARIABLES -> lowerPanel.buildWorldVariablesChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_TYPE -> lowerPanel.buildWorldVariableTypeChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> lowerPanel.buildWorldVariableDeleteConfirmationChild(state, owner)
                 else -> lowerPanel.build(state, owner, attention)
             }
-        } else {
-            lowerPanel.build(state, owner, attention)
+            else -> lowerPanel.build(state, owner, attention)
         }
-        return updateScreen(owner, view, RenderTarget.LOWER)
     }
 
     /**
@@ -547,12 +584,7 @@ class GestureSequenceEditor(
         }
         if (pendingLowerRender) {
             val owner = ownerPlayerFor(player)
-            val childOpen = settingChildOpen(owner.uniqueId)
-            val view = if (state.lowerMode == GestureLowerMode.SETTING_CHOICES && childOpen) {
-                lowerPanel.buildSettingChild(state, owner, attentionState())
-            } else {
-                lowerPanel.build(state, owner, attentionState())
-            }
+            val view = buildCurrentLowerView(owner)
             if (api.updateScreen(owner.uniqueId, view)) pendingLowerRender = false
         }
         if (!pendingUpperRender && !pendingLowerRender) {
@@ -586,6 +618,329 @@ class GestureSequenceEditor(
     private enum class RenderTarget {
         UPPER,
         LOWER,
+    }
+
+    /** 現在の正本がテスト可能かを、ボタン表示と開始時の両方で共有します。 */
+    private fun testValidationErrors(): List<me.awabi2048.kantancommander.data.ScriptValidationError> {
+        val script = plugin.scripts.load(state.scriptId) ?: return emptyList()
+        val placement = state.placement ?: return listOf(
+            me.awabi2048.kantancommander.data.ScriptValidationError(
+                "root",
+                null,
+                emptySet(),
+                "テスト対象の配置がありません",
+            ),
+        )
+        // 実行器と同じMyWorld／ワールド変数の正本を使います。ここを構文検証だけに
+        // すると、ボタン表示時は有効でも実行開始時の変数定義検証で失敗します。
+        if (!plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
+            return listOf(
+                me.awabi2048.kantancommander.data.ScriptValidationError(
+                    "root",
+                    null,
+                    emptySet(),
+                    "MyWorldManagerを利用できません",
+                ),
+            )
+        }
+        val worldData = runCatching {
+            MyWorldManagerApi.getWorldRepository()?.findByWorldName(placement.world)
+        }.getOrNull() ?: return listOf(
+            me.awabi2048.kantancommander.data.ScriptValidationError(
+                "root",
+                null,
+                emptySet(),
+                "テスト対象のMyWorldが見つかりません",
+            ),
+        )
+        if (Bukkit.getWorld(placement.world) == null) {
+            return listOf(
+                me.awabi2048.kantancommander.data.ScriptValidationError(
+                    "root",
+                    null,
+                    emptySet(),
+                    "テスト対象のワールドが読み込まれていません",
+                ),
+            )
+        }
+        return ExecutableScriptValidator.validate(
+            script,
+            plugin.graphLimits(),
+            plugin.variables.definitions(worldData.uuid),
+        )
+    }
+
+    private fun canStartTest(): Boolean {
+        val placement = state.placement ?: return false
+        return !plugin.testExecution.isActive(placement.key) &&
+            plugin.scripts.load(state.scriptId) != null &&
+            testValidationErrors().isEmpty()
+    }
+
+    /** テスト確認子画面を開きます。グラフの固定は「確定」クリック時に行います。 */
+    private fun openTestConfirmation(player: Player) {
+        if (!canStartTest() || state.testExecution != null) return
+        val current = plugin.scripts.load(state.scriptId) ?: return
+        val ownerId = ownerIdFor(player)
+        // テスト開始前に子画面を閉じるため、完了後は必ず通常のエディター親画面へ
+        // 戻します。SETTING_CHOICES等をそのまま保存すると、子画面を閉じた後に
+        // 親画面へ子画面専用の内部状態を描画してしまいます。
+        val originalMode = state.lowerMode.takeIf {
+            it == GestureLowerMode.SETTINGS || it == GestureLowerMode.PICKER
+        } ?: GestureLowerMode.SETTINGS
+        val parentView = lowerPanel.build(state, ownerPlayerFor(player), attentionState(), suppressHighlight = true)
+        if (settingChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+        val placement = state.placement ?: return
+        state.testExecution = GestureTestState(
+            scopeKey = placement.key,
+            snapshot = current.copy(graph = current.graph.deepCopy()),
+            ownerId = ownerId,
+            originalOrigin = state.origin,
+            originalZoomLevel = state.zoomLevel,
+            originalSelectedNodeId = state.selectedNodeId,
+            originalLowerMode = originalMode,
+            debugMode = plugin.testExecutionPreferences.debugMode(player),
+            logOutput = plugin.testExecutionPreferences.logOutput(player),
+        )
+        state.lowerMode = GestureLowerMode.TEST_CONFIRM
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                parentView,
+                lowerPanel.buildTestConfirmationChild(state, ownerPlayerFor(player)),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.RED_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "テスト実行確認子画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.testExecution = null
+            state.lowerMode = originalMode
+            updateLower(player)
+        }
+    }
+
+    private fun testConfirmationChildOpen(ownerId: UUID): Boolean =
+        api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.TEST_CONFIRM_SCREEN_ID) == true
+
+    /** 最小倍率でマップ全体を表示し、指定ノードが端から切れない原点を求めます。 */
+    private fun fitTestViewport(targetNodeId: UUID? = null) {
+        val test = state.testExecution ?: return
+        val layout = runCatching { GraphLayoutEngine.layout(test.snapshot.graph) }.getOrNull() ?: return
+        state.zoomLevel = GestureEditorLayout.MIN_ZOOM_LEVEL
+        val metrics = viewportMetrics(zoomScale())
+        val target = targetNodeId?.let(layout.nodePoints::get)
+        state.origin = if (target != null) {
+            // 実行中ノードを中心にした「最小ズームと同じ大きさ」の近傍を
+            // 毎回作り、マップ外へ出る場合だけ端へ最小限clampします。
+            GestureEditorLayout.clampOrigin(
+                MapPoint(
+                    target.x - ((metrics.columns - 1) / 2.0).roundToInt(),
+                    target.y - ((metrics.rows - 1) / 2.0).roundToInt(),
+                ),
+                layout,
+                metrics.columns,
+                metrics.rows,
+            )
+        } else {
+            GestureEditorLayout.clampOrigin(state.origin, layout, metrics.columns, metrics.rows)
+        }
+    }
+
+    private fun startTestExecution(player: Player) {
+        val test = state.testExecution ?: return
+        if (test.ownerId != player.uniqueId) return
+        if (!canStartTest()) {
+            // 確認画面を開いた後に管理経路で正本が不正化・撤去された場合は、
+            // 不正な内容を実行せず、通常編集画面へ戻してテストボタンを非表示にします。
+            cancelTestConfirmation(player)
+            return
+        }
+        val current = plugin.scripts.load(state.scriptId) ?: run {
+            cancelTestConfirmation(player)
+            return
+        }
+        val origin = state.placement?.let { placement ->
+            Bukkit.getWorld(placement.world)?.let { world ->
+                Location(world, placement.x + 0.5, placement.y + 0.5, placement.z + 0.5)
+            }
+        } ?: run {
+            cancelTestConfirmation(player)
+            return
+        }
+        // 確定クリック時点で最新グラフを複製して固定します。以後のGUI／外部保存は
+        // このスナップショットを変更せず、同じ配置を見ている全員へ状態を配布します。
+        test.snapshot = current.copy(graph = current.graph.deepCopy())
+        test.startedAtTick = plugin.server.currentTick.toLong()
+        test.phase = GestureTestPhase.RUNNING
+        state.lowerMode = GestureLowerMode.TEST_STATUS
+        if (testConfirmationChildOpen(test.ownerId)) {
+            api.closeChild(test.ownerId, lowerPanel.TEST_CONFIRM_SCREEN_ID)
+        }
+        fitTestViewport()
+        startTestRefreshTask()
+        val observer = GestureTestExecutionObserver(
+            test,
+            onChanged = { onTestStateChanged() },
+            onLog = { event -> if (test.logOutput) sendTestLog(event) },
+            onResult = { result ->
+                if (result.status == ExecutionFinishStatus.CANCELLED && result.reason != "manual_stop") {
+                    discardTestWithoutResult()
+                } else {
+                    finishTest(result)
+                }
+            },
+        )
+        val started = plugin.testExecution.startTest(
+            scopeKey = test.scopeKey,
+            script = test.snapshot,
+            ownerId = test.ownerId,
+            origin = origin,
+            debugMode = test.debugMode,
+            observer = observer,
+            // 結果画面への反映は observer.onFinished が担当する。ここでは実行器側の
+            // 協調状態だけを解放し、UI状態を二重に終了させない。
+            onFinished = {},
+        )
+        if (!started) {
+            finishTest(
+                ExecutionResult(
+                    status = ExecutionFinishStatus.FAILURE,
+                    elapsedTicks = 0L,
+                    successfulNodeCount = 0,
+                    attemptCount = 0,
+                    reason = "test_start_rejected",
+                ),
+            )
+        }
+    }
+
+    private fun startTestRefreshTask() {
+        testRefreshTask?.cancel()
+        testRefreshTask = plugin.server.scheduler.runTaskTimer(plugin, Runnable {
+            val test = state.testExecution
+            if (test?.phase != GestureTestPhase.RUNNING) {
+                testRefreshTask?.cancel()
+                testRefreshTask = null
+                return@Runnable
+            }
+            test.elapsedTicks = (plugin.server.currentTick.toLong() - test.startedAtTick).coerceAtLeast(0L)
+            onTestStateChanged()
+        }, 1L, 1L)
+    }
+
+    private fun onTestStateChanged() {
+        val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
+        state.testExecution?.currentNodeId?.let(::fitTestViewport)
+        updateUpper(owner)
+        updateLower(owner)
+    }
+
+    private fun finishTest(result: ExecutionResult) {
+        val test = state.testExecution ?: return
+        test.result = result
+        test.elapsedTicks = result.elapsedTicks
+        test.failedNodeId = result.failedNodeId ?: test.failedNodeId
+        test.phase = GestureTestPhase.RESULT
+        test.currentNodeId = test.failedNodeId
+        state.lowerMode = GestureLowerMode.TEST_RESULT
+        testRefreshTask?.cancel()
+        testRefreshTask = null
+        onTestStateChanged()
+    }
+
+    /** 確認子画面を閉じ、テストを開始していない通常編集状態へ戻します。 */
+    private fun cancelTestConfirmation(player: Player) {
+        val test = state.testExecution ?: return
+        if (test.phase != GestureTestPhase.CONFIRM) return
+        if (testConfirmationChildOpen(test.ownerId)) {
+            api.closeChild(test.ownerId, lowerPanel.TEST_CONFIRM_SCREEN_ID)
+        }
+        state.testExecution = null
+        state.lowerMode = test.originalLowerMode
+        updateUpper(player)
+        updateLower(player)
+    }
+
+    /** 終了要求で結果画面を出さないテストを、表示状態ごと破棄します。 */
+    private fun discardTestWithoutResult() {
+        val test = state.testExecution ?: return
+        testRefreshTask?.cancel()
+        testRefreshTask = null
+        state.testExecution = null
+        state.lowerMode = test.originalLowerMode
+        onTestStateChanged()
+    }
+
+    private fun interruptTestWithoutResult(reason: String) {
+        val test = state.testExecution ?: return
+        plugin.testExecution.cancel(test.scopeKey, showResult = false, reason = reason)
+        // Coordinatorがすでに完了させた競合状態でも、必ずローカル表示を
+        // 通常画面へ戻します。通常はcancel()内の観測者が先に同じ処理を行います。
+        if (state.testExecution === test) discardTestWithoutResult()
+    }
+
+    private fun interruptTestWithResult() {
+        val test = state.testExecution ?: return
+        plugin.testExecution.cancel(test.scopeKey, showResult = true, reason = "manual_stop")
+    }
+
+    /** 結果画面の完了で、テスト開始前の編集表示へ戻します。 */
+    private fun completeTest(player: Player) {
+        val test = state.testExecution ?: return
+        if (test.ownerId != player.uniqueId || test.phase != GestureTestPhase.RESULT) return
+        if (testConfirmationChildOpen(test.ownerId)) {
+            api.closeChild(test.ownerId, lowerPanel.TEST_CONFIRM_SCREEN_ID)
+        }
+        state.origin = test.originalOrigin
+        state.zoomLevel = test.originalZoomLevel
+        state.selectedNodeId = test.originalSelectedNodeId
+        state.lowerMode = test.originalLowerMode
+        state.testExecution = null
+        testRefreshTask?.cancel()
+        testRefreshTask = null
+        updateUpper(player)
+        updateLower(player)
+    }
+
+    private fun sendTestLog(event: ExecutionNodeFinished) {
+        val ownerId = state.testExecution?.ownerId ?: return
+        val player = Bukkit.getPlayer(ownerId)?.takeIf(Player::isOnline) ?: return
+        if (!player.isOnline) return
+        val command = KcI18n.text(player, event.nodeType.key)
+        val key = if (event.outcome == NodeExecutionOutcome.FAILED) {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_LOG_FAILURE
+        } else {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_LOG_SUCCESS
+        }
+        val text = KcI18n.text(
+            player,
+            key,
+            mapOf("attempt" to event.attemptNumber, "command" to command),
+        )
+        val detail = buildString {
+            event.detail?.takeIf(String::isNotBlank)?.let(::append)
+            event.reason?.takeIf(String::isNotBlank)?.let {
+                if (isNotEmpty()) append('\n')
+                append(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE))
+                    .append(": ")
+                    .append(it)
+            }
+        }
+        val component = Component.text(text).takeIf { detail.isBlank() } ?:
+            Component.text(text).hoverEvent(
+                net.kyori.adventure.text.event.HoverEvent.showText(Component.text(detail)),
+            )
+        player.sendMessage(component)
     }
 
     fun openConfirmChild(player: Player) {
@@ -766,6 +1121,11 @@ class GestureSequenceEditor(
     private fun detachLocalSession(ownerId: UUID, sessionId: UUID?) {
         if (sessionId != null && gestureSessionId != sessionId) return
         invalidateInputs()
+        // オーナー退出時は実行本体を止めませんが、この画面専用の再描画タスクは
+        // セッションが無いため解放します。テスト結果は、オーナーがいない間は
+        // 画面へ投影せず、処理自体だけをCoordinator側で継続します。
+        testRefreshTask?.cancel()
+        testRefreshTask = null
         // 古いセッションの再試行が新セッションの画面を上書きしないよう、終了時に必ず破棄します。
         cancelRenderRetry()
         if (sessionId != null) {
@@ -803,8 +1163,10 @@ class GestureSequenceEditor(
 
     private fun buildUpperViewportContent(player: Player): GestureGuiView {
         layoutFailureDuringCurrentRender = false
-        val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
-        observedRevision = script.revision
+        val test = state.testExecution
+        val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
+        val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return emptyView()
+        if (!testActive) observedRevision = script.revision
         val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }
             .getOrElse { failure ->
                 reportLayoutFailure(
@@ -817,7 +1179,7 @@ class GestureSequenceEditor(
         // 挿入プレビューは「経路クリックによる挿入」のときだけ適用します。
         // 追加ポイントからの追加は、追加ボタン自体が候補位置であり既存ノードが
         // 動かないため、仮ノード入りレイアウトや候補マーカーは二重表示になります。
-        val insertionPreview = insertionPreview(script, player)
+        val insertionPreview = if (testActive) null else insertionPreview(script, player)
         val renderGraph = insertionPreview?.graph ?: script.graph
         val layout = insertionPreview?.layout ?: persistedLayout
         val zoomScale = zoomScale()
@@ -852,16 +1214,18 @@ class GestureSequenceEditor(
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
-        elements.add(GestureGuiElement(
-            elementId = "viewport-empty",
-            bounds = GestureGuiBounds(
-                -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
-                -GestureEditorLayout.UPPER_H / 2.0 + GestureEditorLayout.FRAME_WIDTH,
-                GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
-                GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
-            ),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-        ))
+        if (!testActive) {
+            elements.add(GestureGuiElement(
+                elementId = "viewport-empty",
+                bounds = GestureGuiBounds(
+                    -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    -GestureEditorLayout.UPPER_H / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                    GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                ),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+            ))
+        }
 
         cells.forEach { (localPoint, cell) ->
             // セル検索はグリッド座標、配置は列/行インデックスで行う（origin移動してもグリッド位置は固定）
@@ -875,8 +1239,15 @@ class GestureSequenceEditor(
                 MapCellKind.NODE -> {
                     val node = cell.nodeId?.let { renderGraph.nodes[it] }
                     if (node != null && node.id != insertionPreview?.insertedNodeId) {
-                        val isSelected = state.selectedNodeId == node.id
-                        val glowColor = if (isSelected) Color.YELLOW.asARGB() else null
+                        val isSelected = !testActive && state.selectedNodeId == node.id
+                        val testGlowColor = when {
+                            test?.failedNodeId == node.id -> Color.fromRGB(255, 85, 85).asARGB()
+                            test?.phase == GestureTestPhase.RUNNING && test.currentNodeId == node.id ->
+                                Color.fromRGB(85, 255, 255).asARGB()
+                            test?.successfulNodeIds?.contains(node.id) == true -> Color.fromRGB(85, 255, 85).asARGB()
+                            else -> null
+                        }
+                        val glowColor = testGlowColor ?: if (isSelected) Color.YELLOW.asARGB() else null
                         val incomplete = node.id in incompleteNodeIds
                         val backgroundMaterial = when {
                             incomplete -> Material.ORANGE_CONCRETE
@@ -916,7 +1287,7 @@ class GestureSequenceEditor(
                         // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
                         // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
                         // 旧選択の解除と新ノードの選択を1クリックで完了させます。
-                        elements.add(GestureGuiElement(
+                        if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
                             bounds = iconBounds(cx, cy, metrics.iconSize),
                             acceptedGestures = GestureGuiClickPolicy.CLICK,
@@ -929,7 +1300,7 @@ class GestureSequenceEditor(
                                 lineWidth = 180,
                             ),
                         ))
-                        if (insertionPreview == null && isSelected && node.type !in setOf(
+                        if (!testActive && insertionPreview == null && isSelected && node.type !in setOf(
                                 CommandType.CONDITION,
                                 CommandType.MERGE,
                                 CommandType.FOR_START,
@@ -1003,7 +1374,7 @@ class GestureSequenceEditor(
                         size = 0.012,
                         layer = GestureEditorLayout.ICON_LAYER,
                     ))
-                    if (insertionPreview == null) {
+                    if (!testActive && insertionPreview == null) {
                         elements.add(GestureGuiElement(
                             elementId = "add:$gx:$gy",
                             bounds = iconBounds(cx, cy, metrics.iconSize),
@@ -1022,7 +1393,7 @@ class GestureSequenceEditor(
                     }
                 }
                 MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
-                    if (insertionPreview == null && cell.kind == MapCellKind.LOOP_RETURN_PATH) {
+                    if (!testActive && insertionPreview == null && cell.kind == MapCellKind.LOOP_RETURN_PATH) {
                         // 戻り経路は処理の流れを示す表示専用要素です。クリック操作は受け付けず、
                         // ホバー時だけ「戻って処理を繰り返します」と説明します。矢印と同じ論理セルを
                         // 当たり判定に使うため、パン・ズーム後も水色経路上の説明がずれません。
@@ -1047,7 +1418,7 @@ class GestureSequenceEditor(
                     } else {
                         // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
                         val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
-                        if (insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
+                        if (!testActive && insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
                             elements.add(GestureGuiElement(
                                 elementId = "path:${gx}:${gy}",
                                 bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
@@ -1068,12 +1439,29 @@ class GestureSequenceEditor(
             }
         }
 
+        val testPathGlow: ((MapPoint, MapCell) -> Int?)? = test?.takeIf { testActive }?.let { activeTest ->
+            val cyanGlow = Color.fromRGB(85, 255, 255).asARGB()
+            val greenGlow = Color.fromRGB(85, 255, 85).asARGB()
+            val glow: (MapPoint, MapCell) -> Int? = { _, cell ->
+                when {
+                    activeTest.loopReturnActive && cell.kind == MapCellKind.LOOP_RETURN_PATH -> cyanGlow
+                    cell.insertionTarget?.let { target ->
+                        target.sourceId?.let { sourceId ->
+                            activeTest.passedEdges.contains(TestExecutionEdge(sourceId, target.edge))
+                        }
+                    } == true -> greenGlow
+                    else -> null
+                }
+            }
+            glow
+        }
         GesturePathRenderer.buildSegments(
             cells,
             boundaryConnections = projection.boundaryConnections,
             xCenter = metrics::x,
             yCenter = metrics::y,
             thickness = metrics.pathThickness,
+            glowColorFor = testPathGlow,
             clipBounds = GesturePathRenderer.ClipBounds(
                 // 仮想境界セルをグラフ領域の端までだけ延長します。これより外側へ
                 // 経路を出さないため、ナビゲーション列との重なりが発生しません。
@@ -1094,6 +1482,7 @@ class GestureSequenceEditor(
                     if (isLoopReturn) Material.LIGHT_BLUE_CONCRETE else Material.WHITE_CONCRETE,
                 ),
                 layer = 1,
+                glowColor = seg.glowColor,
             ))
         }
 
@@ -1148,35 +1537,42 @@ class GestureSequenceEditor(
             ))
         }
 
-        addNavigation(visuals, elements, layout, metrics.columns, metrics.rows)
+        if (!testActive) {
+            addNavigation(visuals, elements, layout, metrics.columns, metrics.rows)
 
-        // back-to-start（十字の下・左に隣接）
-        visuals.add(GestureGuiVisual.Block(
-            visualId = "back-block",
-            x = GestureEditorLayout.BACK_X,
-            y = GestureEditorLayout.BACK_Y,
-            width = GestureEditorLayout.NAV_SIZE,
-            height = GestureEditorLayout.NAV_SIZE,
-            blockData = Bukkit.createBlockData(Material.BROWN_CONCRETE),
-            layer = 4,
-        ))
-        visuals.add(GestureGuiVisual.Text(
-            visualId = "back-label",
-            x = GestureEditorLayout.BACK_X,
-            y = GestureEditorLayout.BACK_Y - 0.02,
-            text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_GLYPH)),
-            size = 0.0055,
-            layer = 6,
-        ))
-        elements.add(GestureGuiElement(
-            elementId = "back-to-start",
-            bounds = navBounds(GestureEditorLayout.BACK_X, GestureEditorLayout.BACK_Y, GestureEditorLayout.NAV_SIZE),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            targetVisualId = "back-label",
-        ))
+            // back-to-start（十字の下・左に隣接）
+            visuals.add(GestureGuiVisual.Block(
+                visualId = "back-block",
+                x = GestureEditorLayout.BACK_X,
+                y = GestureEditorLayout.BACK_Y,
+                width = GestureEditorLayout.NAV_SIZE,
+                height = GestureEditorLayout.NAV_SIZE,
+                blockData = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                layer = 4,
+            ))
+            visuals.add(GestureGuiVisual.Text(
+                visualId = "back-label",
+                x = GestureEditorLayout.BACK_X,
+                y = GestureEditorLayout.BACK_Y - 0.02,
+                text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_GLYPH)),
+                size = 0.0055,
+                layer = 6,
+            ))
+            elements.add(GestureGuiElement(
+                elementId = "back-to-start",
+                bounds = navBounds(GestureEditorLayout.BACK_X, GestureEditorLayout.BACK_Y, GestureEditorLayout.NAV_SIZE),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                targetVisualId = "back-label",
+            ))
 
-        addZoomControls(player, visuals, elements)
-        addCloseButton(player, visuals, elements)
+            addZoomControls(player, visuals, elements)
+        }
+        if (test?.phase != GestureTestPhase.RESULT) addCloseButton(player, visuals, elements)
+        when {
+            test?.phase == GestureTestPhase.RUNNING -> addTestExecutionButton(player, visuals, elements, running = true)
+            state.testExecution == null && !testActive && canStartTest() ->
+                addTestExecutionButton(player, visuals, elements, running = false)
+        }
 
         // ズームはビューポート内容とその当たり判定だけを同じ倍率で変換します。
         // IDの接頭辞判定はisMapVisual/isMapElementへ集約し、表示だけ・入力だけが
@@ -3423,11 +3819,60 @@ class GestureSequenceEditor(
     private fun handleUpperAction(context: GestureGuiActionContext) {
         val player = Bukkit.getPlayer(context.actorId) ?: return
         val ownerId = context.ownerId
+        state.testExecution?.let { test ->
+            // テスト中のエディター操作は全員分を遮断します。指定された操作も
+            // 確定したオーナーだけが実行でき、共有画面の第三者は離脱も含めて
+            // テスト状態へ触れません。
+            if (context.actorId != test.ownerId) return
+            when (test.phase) {
+                GestureTestPhase.CONFIRM -> when {
+                    context.elementId == "test-confirm-debug" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        test.debugMode = !test.debugMode
+                        plugin.testExecutionPreferences.save(player, test.debugMode, test.logOutput)
+                        updateLower(player)
+                    }
+                    context.elementId == "test-confirm-log" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        test.logOutput = !test.logOutput
+                        plugin.testExecutionPreferences.save(player, test.debugMode, test.logOutput)
+                        updateLower(player)
+                    }
+                    context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        cancelTestConfirmation(player)
+                        closeImmediately(ownerId)
+                    }
+                    context.elementId == "test-confirm-start" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        plugin.testExecutionPreferences.save(player, test.debugMode, test.logOutput)
+                        startTestExecution(player)
+                    }
+                    context.elementId == "test-confirm-cancel" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        cancelTestConfirmation(player)
+                    }
+                }
+                GestureTestPhase.RUNNING -> when {
+                    context.elementId == "test-execution" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        interruptTestWithResult()
+                    }
+                    context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        interruptTestWithoutResult("close")
+                        closeImmediately(ownerId)
+                    }
+                }
+                GestureTestPhase.RESULT -> {
+                    if (context.elementId == "test-result-complete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture)) {
+                        completeTest(player)
+                    }
+                }
+            }
+            return
+        }
         if (!canOperateSharedActor(ownerId, context.actorId)) return
         // 画面操作が発生した時点で、古い入力画面の入力を無効化します。
         // close/open以外の遷移でも遅延コールバックが設定を書き換えないようにします。
         invalidateInput(player.uniqueId)
         when {
+            context.elementId == "test-execution" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                openTestConfirmation(player)
+            }
             context.elementId.startsWith("node-reorder:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val encoded = context.elementId.removePrefix("node-reorder:")
                 val directionName = encoded.substringBefore(":")
@@ -4186,7 +4631,9 @@ class GestureSequenceEditor(
 
     /** 描画・ナビゲーション入力で共有する、現在の永続／仮想レイアウトです。 */
     private fun currentViewportLayout(player: Player? = null): GraphLayout? {
-        val script = plugin.scripts.load(state.scriptId) ?: return null
+        val test = state.testExecution
+        val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
+        val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return null
         val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
             player?.let {
                 reportLayoutFailure(
@@ -4197,7 +4644,7 @@ class GestureSequenceEditor(
             }
             return null
         }
-        return insertionPreview(script, player)?.layout ?: persistedLayout
+        return if (testActive) persistedLayout else insertionPreview(script, player)?.layout ?: persistedLayout
     }
 
     /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
@@ -4297,6 +4744,60 @@ class GestureSequenceEditor(
                 y = y - size,
                 size = 0.0055,
                 lineWidth = 80,
+            ),
+        ))
+    }
+
+    /** 通常時はズームアウトの上、実行中はズームリセットの位置へ置くテストボタンです。 */
+    private fun addTestExecutionButton(
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        running: Boolean,
+    ) {
+        val x = GestureEditorLayout.ZOOM_X
+        val y = if (running) {
+            GestureEditorLayout.ZOOM_TOP_Y - GestureEditorLayout.ZOOM_PITCH
+        } else {
+            GestureEditorLayout.ZOOM_TOP_Y + GestureEditorLayout.ZOOM_PITCH * 2.0
+        }
+        val size = GestureEditorLayout.ZOOM_SIZE
+        val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
+        if (lamp is org.bukkit.block.data.Lightable) lamp.isLit = running
+        visuals.add(GestureGuiVisual.Block(
+            visualId = "test-execution-block",
+            x = x,
+            y = y,
+            width = size,
+            height = size,
+            blockData = lamp,
+            layer = 4,
+        ))
+        visuals.add(GestureGuiVisual.Text(
+            visualId = "test-execution-glyph",
+            x = x,
+            y = y - 0.01,
+            text = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
+            size = 0.010,
+            layer = 6,
+        ))
+        elements.add(GestureGuiElement(
+            elementId = "test-execution",
+            bounds = navBounds(x, y, size),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "test-execution-glyph",
+            hoverText = GestureGuiHoverText(
+                text = Component.text(
+                    if (running) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RUNNING_HINT)
+                    } else {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION)
+                    },
+                ),
+                x = x,
+                y = y - size,
+                size = 0.0055,
+                lineWidth = 120,
             ),
         ))
     }

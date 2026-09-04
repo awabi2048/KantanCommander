@@ -66,6 +66,8 @@ object GestureEditorLayout {
         val w: Double,
         val h: Double,
         val kind: MapCellKind = MapCellKind.PATH,
+        /** テスト実行時の通過状態。通常表示ではnullです。 */
+        val glowColor: Int? = null,
     )
 
     fun horizontalPath(y: Double, xFrom: Double, xTo: Double): PathSegment {
