@@ -2,7 +2,6 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
-import org.bukkit.Location
 import org.bukkit.entity.Player
 import org.bukkit.permissions.PermissionAttachment
 import java.util.UUID
@@ -18,15 +17,20 @@ class GestureEditorFacade(
     private val externalEditorSuppressions = mutableMapOf<UUID, PermissionAttachment>()
 
     fun open(player: Player, placement: DiskPlacement) {
-        open(player, placement, followPlayer = false)
+        openPlacement(player, placement)
     }
 
-    /** 制御ブロック上ではなく、プレイヤーの視線と位置に追従するGesture GUIを開きます。 */
+    /**
+     * 制御ブロック上ではなく、プレイヤーの視線と位置に追従するGesture GUIを開きます。
+     *
+     * 旧来の明示入口は残しますが、Gesture GUIの表示モードは常に追従を初期値とし、
+     * 画面上のクリップ操作を押したときだけ共通サービス側で現在poseを固定します。
+     */
     fun openFollowingPlayer(player: Player, placement: DiskPlacement) {
-        open(player, placement, followPlayer = true)
+        openPlacement(player, placement)
     }
 
-    private fun open(player: Player, placement: DiskPlacement, followPlayer: Boolean) {
+    private fun openPlacement(player: Player, placement: DiskPlacement) {
         // 同じ配置を複数人が開いた場合は新しい所有者画面を作らず、最初の
         // Gestureセッションを共有します。別セッションを作ると表示・選択状態が
         // 分岐し、第三者操作の入力先も共有できなくなるためです。
@@ -37,25 +41,13 @@ class GestureEditorFacade(
             releaseExternalEditorSuppression(player.uniqueId)
             return
         }
-        val scriptId = placement.scriptId
-        val world = org.bukkit.Bukkit.getWorld(placement.world)
-        val anchor: Location? = if (!followPlayer && world != null) {
-            // ブロック実体との視線干渉を避け、ジェスチャー画面全体を
-            // 基準位置から合計0.8ブロック上へ配置します（従来の0.3ブロックに
-            // 今回の追加0.5ブロックを加算）。上部・下部の両画面は
-            // 同じanchorから姿勢を算出するため、相対位置は変わりません。
-            Location(world, placement.x + 0.5, placement.y + 0.5 + GESTURE_DISPLAY_VERTICAL_OFFSET, placement.z + 0.5)
-        } else {
-            // スニーク操作ではアンカーを渡さず、CC-Systemのプレイヤー追従モードを
-            // 使用します。プレイヤーの移動・視線変更に追従する設定を、固定表示の
-            // 通常編集と明示的に分けます。
-            null
-        }
         val state = GestureEditorState(
-            scriptId = scriptId,
+            scriptId = placement.scriptId,
             placement = placement,
             origin = MapPoint(0, 0),
-            anchor = anchor,
+            // anchor=nullはCC-Systemのプレイヤー追従モードです。固定化はGUI上の
+            // クリップ操作からのみ行い、開き方によって固定／追従が分岐しないようにします。
+            anchor = null,
         )
         openEditor(player, state)
     }
@@ -183,7 +175,6 @@ class GestureEditorFacade(
     }
 
     private companion object {
-        const val GESTURE_DISPLAY_VERTICAL_OFFSET: Double = 0.8
         const val EASY_ARMOR_STANDS_PLUGIN = "EasyArmorStands"
         const val EAS_EDIT_PERMISSION = "easyarmorstands.edit"
     }

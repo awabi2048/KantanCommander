@@ -83,7 +83,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             // バニラのブロック配置を優先します。スニーク時は同じアイテムを持っていても
             // 明示的な追従GestureGUI操作になるため、この分岐へ進みます。
             if (placementInteraction == KantanPlacementInteraction.VANILLA_PLACE) return
-            // GUIを開く経路はイベントをキャンセルするため、バニラが送る腕振りが
+            // GUIを開く経路はイベントと使用結果をキャンセルするため、バニラが送る腕振りが
             // 発生しません。実際に編集／ディスク挿入を受け付ける右クリックだけ、
             // 使用した手に対応するスイングを明示的に送って操作の成立を見せます。
             if (event.hand == EquipmentSlot.OFF_HAND) {
@@ -91,6 +91,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             } else {
                 player.swingMainHand()
             }
+            event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
+            event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
             event.isCancelled = true
             val canManagePlacement = plugin.placementAccess.canManage(player, clickedPlacement.world)
             // 既存のGesture画面を操作するだけの第三者には、設置・破壊・
@@ -112,9 +114,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 KantanPlacementInteraction.WRITE_CONFIRM -> {
                     val diskScriptId = diskId ?: return
                     plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
-                }
-                KantanPlacementInteraction.FIXED_GESTURE -> {
-                    plugin.gestureEditor.open(player, clickedPlacement)
                 }
                 KantanPlacementInteraction.INVENTORY_EDITOR -> {
                     plugin.editorMenu.open(player, clickedPlacement)

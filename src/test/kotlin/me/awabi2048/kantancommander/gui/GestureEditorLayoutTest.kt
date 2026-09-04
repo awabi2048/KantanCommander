@@ -176,4 +176,22 @@ class GestureEditorLayoutTest {
         val zoomLeft = GestureEditorLayout.ZOOM_X - GestureEditorLayout.ZOOM_SIZE / 2.0
         assertTrue(crossRight < zoomLeft)
     }
+
+    @Test
+    fun `clip button is the same size and directly left of close`() {
+        assertEquals(GestureEditorLayout.CLOSE_X - GestureEditorLayout.NAV_PITCH, GestureEditorLayout.CLIP_X, 1.0e-9)
+        assertEquals(GestureEditorLayout.CLOSE_Y, GestureEditorLayout.CLIP_Y, 1.0e-9)
+        assertEquals(GestureEditorLayout.NAV_SIZE, GestureEditorLayout.CLIP_SIZE, 1.0e-9)
+    }
+
+    @Test
+    fun `navigation hover region spans from the cross left edge to the zoom right edge`() {
+        val crossLeft = GestureEditorLayout.NAV_CENTER_X -
+            GestureEditorLayout.NAV_PITCH - GestureEditorLayout.NAV_SIZE / 2.0
+        val zoomRight = GestureEditorLayout.ZOOM_X + GestureEditorLayout.ZOOM_SIZE / 2.0
+        assertEquals(crossLeft, GestureEditorLayout.NAV_HOVER_MIN_X, 1.0e-9)
+        assertEquals(zoomRight, GestureEditorLayout.NAV_HOVER_MAX_X, 1.0e-9)
+        assertEquals((crossLeft + zoomRight) / 2.0, GestureEditorLayout.NAV_HOVER_X, 1.0e-9)
+        assertTrue(GestureEditorLayout.NAV_HOVER_LINE_WIDTH >= 200)
+    }
 }
