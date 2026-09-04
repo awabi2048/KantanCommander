@@ -51,6 +51,8 @@ import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private val timedActionBar = TimedActionBarService(plugin)
+    private val systemEntityRegistry
+        get() = CCSystem.getAPI().getSystemEntityRegistry()
 
     fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
         val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
@@ -898,7 +900,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         // 個別の操作実装で除外すると、新しいコマンド種別の追加時に抜け道になります。
         val inMyWorld = candidates
             .filter { it.world == session.origin.world }
-            .filterNot { CCSystem.getAPI().getSystemEntityRegistry().isSystemEntity(it) }
+            .filterNot(systemEntityRegistry::isSystemEntity)
         val sorted = when {
             resolvedSpec.kind == TargetKind.RANDOM_PLAYER || resolvedSpec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
                 inMyWorld.shuffled()
@@ -1152,7 +1154,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             return entity.isValid &&
                 !entity.isDead &&
                 entity.world == session.origin.world &&
-                !CCSystem.getAPI().getSystemEntityRegistry().isSystemEntity(entity)
+                !systemEntityRegistry.isSystemEntity(entity)
         }
 
         fun positionAvailable(name: String?): Boolean {
