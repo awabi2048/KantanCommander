@@ -280,7 +280,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "select" to MenuActionHandler { context ->
                     val kind = context.payload["kind"]?.let { runCatching { PositionKind.valueOf(it) }.getOrNull() }
                         ?: return@MenuActionHandler MenuActionResult.Ignored
-                    val currentKind = node(context.route)?.let { CommandSettingsModel.positionKind(it, CommandSettingRole.fromRoute(context.route.payload[ROLE])) }
+                    val currentNode = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                    val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
+                    if (!CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(currentNode, role, kind)) {
+                        // 表示後に操作条件が変化しても、保存入口で同じ判定を再実行します。
+                        return@MenuActionHandler MenuActionResult.Ignored
+                    }
+                    val currentKind = CommandSettingsModel.positionKind(currentNode, role)
                     if (kind == PositionKind.COORDINATES) {
                         // 座標は「選択」と「入力」を別操作にします。未選択からの
                         // クリックでは座標方式だけを確定し、次のクリックで入力画面を開きます。
@@ -289,7 +295,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             if (!updateNode(context.player, context.route) { node ->
                                 CommandSettingsModel.setPositionSpec(
                                     node,
-                                    CommandSettingRole.fromRoute(context.route.payload[ROLE]),
+                                    role,
                                     PositionSpec(PositionKind.COORDINATES, location.x, location.y, location.z),
                                 )
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -309,7 +315,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (!updateNode(context.player, context.route) { node ->
                             CommandSettingsModel.setPositionSpec(
                                 node,
-                                CommandSettingRole.fromRoute(context.route.payload[ROLE]),
+                                role,
                                 spec,
                             )
                         }) {
@@ -1063,9 +1069,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     ): MenuElement = KcGui.menuEntry(
         player = player,
         slot = slot,
-        material = if (enabled) material else DisabledGuiVisualPolicy.material,
+        material = if (enabled) material else DisabledChoiceVisualPolicy.material,
         name = name,
-        style = style,
+        style = if (enabled) style else DisabledChoiceVisualPolicy.nameStyle,
         description = description
             ?: KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CHOICE_DESCRIPTION, mapOf("value" to name)),
         data = if (dataLabel == null || dataValue == null) emptyList() else listOf(GuiMenuEntryData(dataLabel, dataValue)),
@@ -1222,6 +1228,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun renderPosition(player: Player, route: MenuRoute): InventoryMenuView {
         val destination = route.payload[ROLE] == "destination"
+        val positionRole = CommandSettingRole.fromRoute(route.payload[ROLE])
+        val currentNode = node(route)
         // 「設定時の位置を保存」は編集画面の選択肢から廃止しました。
         // 既存データのCAPTURED値は読み込み・実行側で引き続き扱えますが、
         // 新規設定では座標／ディスク／対象など明示的な方式だけを提示します。
@@ -1252,7 +1260,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             options.mapIndexed { index, option ->
                 choiceElement(player, layout.itemSlots[index], option.second, option.third,
-                    "select", mapOf("kind" to option.first.name))
+                    "select", mapOf("kind" to option.first.name),
+                    enabled = currentNode?.let {
+                        CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(it, positionRole, option.first)
+                    } ?: true,
+                )
             }.toMutableList()
         }
         elements += backElement(player, layout.backSlot)

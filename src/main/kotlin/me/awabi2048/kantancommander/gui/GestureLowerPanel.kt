@@ -1057,13 +1057,17 @@ class GestureLowerPanel(
         }
     }
 
-    /** 操作不能な設定候補は、候補の種類にかかわらず薄灰色コンクリートで表します。 */
+    /**
+     * 操作不能な設定候補は、候補専用の共通ポリシーで赤コンクリートへ変更します。
+     * 通常の設定項目や空欄の無効表示とは意味が異なるため、無効な選択肢だけを
+     * DisabledChoiceVisualPolicyへ通します。
+     */
     private fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
         if (choice.enabled) {
             // 択一／複数選択、初期／設定済みの区別は背景色へ反映しません。
             Material.LIGHT_GRAY_CONCRETE
         } else {
-            DisabledGuiVisualPolicy.material
+            DisabledChoiceVisualPolicy.material
         }
 
     /**
@@ -2512,7 +2516,14 @@ class GestureLowerPanel(
                 PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
             )
         }
-        return choices.map { (kind, label) -> SettingChoice("position:${kind.name}", KcI18n.text(player, label), current == kind) }
+        return choices.map { (kind, label) ->
+            SettingChoice(
+                id = "position:${kind.name}",
+                label = KcI18n.text(player, label),
+                selected = current == kind,
+                enabled = CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(node, context.role, kind),
+            )
+        }
     }
 
     private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {

@@ -102,7 +102,7 @@ internal object GestureSettingVisualPolicy {
 
     /** クリック先が子画面なら§b、値入力・値変更なら§6、操作不能なら灰色です。 */
     fun settingChoiceTextColor(choice: GestureSettingTreeNode): NamedTextColor = when {
-        !choice.enabled -> NamedTextColor.GRAY
+        !choice.enabled -> DisabledChoiceVisualPolicy.textColor
         choice.hasChildren -> NamedTextColor.AQUA
         else -> NamedTextColor.GOLD
     }

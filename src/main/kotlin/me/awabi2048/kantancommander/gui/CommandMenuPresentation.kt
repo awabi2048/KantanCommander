@@ -2,13 +2,26 @@ package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import com.awabi2048.ccsystem.api.gui.GuiNameStyle
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.supportsContextOverride
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
 
-/** 操作不能な選択肢の見た目を両GUIで統一します。効果音の有無は入力契約側で制御します。 */
+/** 一般の操作不能なUI部品の見た目です。選択肢専用の表示はDisabledChoiceVisualPolicyを使います。 */
 internal object DisabledGuiVisualPolicy {
     val material: Material = Material.LIGHT_GRAY_CONCRETE
+}
+
+/**
+ * 「選択肢だが現在の状態では選べない」項目の共通表示です。
+ * 背景や単なる実行不能ボタンはDisabledGuiVisualPolicyのまま扱い、選択肢だけを
+ * 赤コンクリートと灰色文字で明示します。両GUIで同じ意味を同じ外観へ投影します。
+ */
+internal object DisabledChoiceVisualPolicy {
+    val material: Material = Material.RED_CONCRETE
+    val textColor: NamedTextColor = NamedTextColor.GRAY
+    val nameStyle: GuiNameStyle = GuiNameStyle.MUTED
 }
 
 /** コマンド選択画面で、実処理と実行順序の制御を混在させないための表示分類です。 */

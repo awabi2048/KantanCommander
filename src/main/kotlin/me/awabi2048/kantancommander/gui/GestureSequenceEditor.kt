@@ -2903,6 +2903,10 @@ class GestureSequenceEditor(
                 }
                 if (group != "position") return
                 val kind = runCatching { PositionKind.valueOf(value) }.getOrNull() ?: return
+                if (!CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(node, settingContext.role, kind)) {
+                    // 表示時点から状態が変わっている場合も、保存入口で同じ制約を再確認します。
+                    return
+                }
                 val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                 rememberSettingNode(encoded)
                 if (kind == PositionKind.TARGET && settingContext.role == CommandSettingRole.DESTINATION) {

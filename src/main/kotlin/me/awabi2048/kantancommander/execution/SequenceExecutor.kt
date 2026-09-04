@@ -81,6 +81,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             rootId = scriptId,
             origin = origin.clone(),
             actor = actor,
+            creatorId = script.owner,
+            programName = script.name,
             budget = plugin.config.getInt("execution.max-nodes-per-activation"),
             maxDepth = plugin.config.getInt("execution.max-disk-call-depth"),
             worldId = worldData.uuid,
@@ -1274,7 +1276,28 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 "world=${session.origin.world.name} " +
                 "location=${session.origin.blockX},${session.origin.blockY},${session.origin.blockZ}"
         )
+        notifyCreatorOfFailure(session)
         done(false)
+    }
+
+    /**
+     * 実行途中の失敗を最上位プログラムの作成者へ一度だけ通知します。
+     * DISK_CALLの入れ子や非同期WAITから同じ失敗経路へ戻っても、作成者への通知が
+     * 重複しないようセッション単位で抑制します。オフラインの場合は送信先がないため、
+     * 実行ログだけを正本として通知を捨てます。
+     */
+    private fun notifyCreatorOfFailure(session: ExecutionSession) {
+        if (session.failureNotified) return
+        session.failureNotified = true
+        val creator = plugin.server.getPlayer(session.creatorId) ?: return
+        creator.sendMessage("§cかんたんコマンダープログラム【${session.programName}】の実行に失敗しました。")
+        creator.playSound(
+            creator.location,
+            "minecraft:block.note_block.bit",
+            SoundCategory.MASTER,
+            1.0f,
+            0.5f,
+        )
     }
 
     /** ノード処理結果。参照先が無い場合だけ、失敗と区別して後続へ進めます。 */
@@ -1284,10 +1307,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val rootId: UUID,
         val origin: Location,
         val actor: Player?,
+        /** 入れ子呼び出しでも通知先を変えないため、最上位スクリプトの作成者を保持します。 */
+        val creatorId: UUID,
+        val programName: String,
         val budget: Int,
         val maxDepth: Int,
         val worldId: UUID,
         var executed: Int = 0,
+        var failureNotified: Boolean = false,
         var context: ExecutionContextSpec? = null,
         var previousContext: ExecutionContextSpec? = null,
         val loops: MutableList<LoopFrame> = mutableListOf(),
