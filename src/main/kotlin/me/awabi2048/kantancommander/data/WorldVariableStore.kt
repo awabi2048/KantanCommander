@@ -119,8 +119,22 @@ class WorldVariableStore(
             else runCatching {
                 val source = JsonParser.parseString(target.readText(Charsets.UTF_8)).asJsonObject
                 val migrated = migrate(source, target)
-                gson.fromJson(migrated, WorldVariables::class.java)
+                val loaded = gson.fromJson(migrated, WorldVariables::class.java)
                     ?: error("JSON root is null")
+                val normalized = normalize(loaded, target)
+                if (migrated.toString() != source.toString() || normalized != loaded) {
+                    // 読み込み時点で定義と現在値を同じ正規形へ戻します。次回起動時に
+                    // 同じ不整合を再解釈しないよう、修復結果も原子的に保存します。
+                    runCatching { persist(worldId, normalized) }
+                        .onFailure { failure ->
+                            logger.log(
+                                Level.WARNING,
+                                "ワールド変数データの正規化結果を保存できませんでした: ${target.absolutePath}",
+                                failure,
+                            )
+                        }
+                }
+                normalized
             }.getOrElse { failure ->
                 quarantine(target, failure)
                 WorldVariables()
@@ -134,9 +148,19 @@ class WorldVariableStore(
      */
     private fun migrate(source: JsonObject, file: File): JsonObject {
         val result = JsonObject()
-        result.add("definitions", migrateMap(source.getAsJsonObject("definitions"), file, "定義"))
-        result.add("values", migrateMap(source.getAsJsonObject("values"), file, "現在値"))
+        result.add("definitions", migrateMap(section(source, "definitions", file), file, "定義"))
+        result.add("values", migrateMap(section(source, "values", file), file, "現在値"))
         return result
+    }
+
+    /** JSONのセクション形状を先に確認し、片側の破損でファイル全体を落としません。 */
+    private fun section(source: JsonObject, name: String, file: File): JsonObject? {
+        val element = source.get(name) ?: return null
+        if (!element.isJsonObject) {
+            warnDropped(file, "構造", name, "セクションがオブジェクトではありません")
+            return null
+        }
+        return element.asJsonObject
     }
 
     private fun migrateMap(source: JsonObject?, file: File, section: String): JsonObject {
@@ -208,6 +232,41 @@ class WorldVariableStore(
         logger.warning("ワールド変数を移行時に破棄しました: file=${file.absolutePath}, section=$section, name=$name, reason=$reason")
     }
 
+    /**
+     * Gsonは保存JSONの欠落・null・型不一致をKotlinの非nullモデルへ無検証で詰めるため、
+     * 読み込み直後に定義と現在値を一対一の組へ再構成します。片側だけ存在する値や
+     * 型が異なる組を残すと、一覧の表示・編集・使用箇所スキャンで別々の例外になります。
+     */
+    private fun normalize(loaded: WorldVariables, file: File): WorldVariables {
+        val normalized = WorldVariables()
+        val names = (loaded.definitions.keys + loaded.values.keys).distinct().sorted()
+        names.forEach { name ->
+            val definition = loaded.definitions[name]
+            val value = loaded.values[name]
+            if (definition == null || value == null) {
+                warnDropped(file, "整合性", name, "定義と現在値が対になっていません")
+                return@forEach
+            }
+            val definitionType = runCatching { definition.type }.getOrNull()
+            val valueType = runCatching { value.type }.getOrNull()
+            if (definitionType == null || valueType == null) {
+                warnDropped(file, "整合性", name, "型がありません")
+                return@forEach
+            }
+            if (definitionType != valueType) {
+                warnDropped(file, "整合性", name, "定義と現在値の型が異なります")
+                return@forEach
+            }
+            if (!valid(definition) || !valid(value)) {
+                warnDropped(file, "整合性", name, "値の構造が型と一致しません")
+                return@forEach
+            }
+            normalized.definitions[name] = definition.copy()
+            normalized.values[name] = value.copy()
+        }
+        return normalized
+    }
+
     private fun quarantine(file: File, error: Throwable) {
         val quarantineDir = directory.resolve("corrupt").also(File::mkdirs)
         val target = quarantineDir.resolve("${file.nameWithoutExtension}-${System.currentTimeMillis()}.json")
@@ -238,9 +297,13 @@ class WorldVariableStore(
         }
     }
 
-    private fun valid(value: WorldVariableValue): Boolean = when (value.type) {
-        VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
-        VariableType.STRING -> value.stringValue != null && value.numberValue == null
+    private fun valid(value: WorldVariableValue?): Boolean {
+        if (value == null) return false
+        val type = runCatching { value.type }.getOrNull() ?: return false
+        return when (type) {
+            VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
+            VariableType.STRING -> value.stringValue != null && value.numberValue == null
+        }
     }
 
     /** 型だけの定義で使う保存層の空値です。利用者が設定した初期値ではありません。 */

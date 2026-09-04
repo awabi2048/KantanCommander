@@ -21,6 +21,22 @@ data class WorldVariableUsage(
 data class WorldVariableRemovalResult(
     val removed: Boolean,
     val usages: List<WorldVariableUsage> = emptyList(),
+    /** 使用箇所を完全に確認できた場合だけ削除境界を通過させます。 */
+    val scanComplete: Boolean = true,
+)
+
+/**
+ * 保存済みプログラムからの使用箇所スキャン結果です。
+ *
+ * 一覧表示は、配置やスクリプトの一部が壊れていてもワールド変数の保存状態を
+ * 表示できなければなりません。一方で、使用箇所を確認できない状態で削除を
+ * 許可すると参照切れを作るため、complete=false は「削除不可」を意味します。
+ */
+data class WorldVariableUsageScanResult(
+    val usages: Map<String, List<WorldVariableUsage>>,
+    val complete: Boolean,
+    /** ログへ記録するための原因です。画面層はこの値を表示文へ変換しません。 */
+    val failure: Throwable? = null,
 )
 
 /**
@@ -39,6 +55,27 @@ class WorldVariableUsageFinder(
 
     fun findAll(worldName: String, variableNames: Collection<String>): Map<String, List<WorldVariableUsage>> =
         findAll(worldName, variableNames, placements(), scripts())
+
+    /**
+     * 保存データの不正で一覧更新まで失敗させないための安全なスキャン入口です。
+     * 走査自体の例外は入力形式エラーではなく、データ整合性の問題なので、原因を
+     * 保持したまま不完全結果として返します。削除側はこの状態を必ず拒否します。
+     */
+    fun findAllSafely(
+        worldName: String,
+        variableNames: Collection<String>,
+    ): WorldVariableUsageScanResult = runCatching {
+        WorldVariableUsageScanResult(
+            usages = findAll(worldName, variableNames),
+            complete = true,
+        )
+    }.getOrElse { failure ->
+        WorldVariableUsageScanResult(
+            usages = variableNames.associateWith { emptyList() },
+            complete = false,
+            failure = failure,
+        )
+    }
 
     companion object {
         /**
