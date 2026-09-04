@@ -215,6 +215,39 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `execution dependent fields are hidden without clearing saved values`() {
+        val teleport = CommandType.TELEPORT.newNode()
+        val savedFacing = FacingSpec(FacingKind.ROTATION, yaw = 90.0f, pitch = 15.0f)
+        CommandSettingsModel.setFacingSpec(
+            teleport,
+            savedFacing,
+            CommandSettingRole.DESTINATION_FACING,
+        )
+        CommandSettingsModel.setPositionSpec(
+            teleport,
+            CommandSettingRole.DESTINATION,
+            PositionSpec(PositionKind.TEMPORARY, tempName = "point"),
+        )
+
+        assertFalse(CommandSettingsModel.visibleFields(teleport).any { it.key == "destinationFacing" })
+        assertEquals(savedFacing, teleport.destinationFacingSpec)
+
+        CommandSettingsModel.setPositionSpec(
+            teleport,
+            CommandSettingRole.DESTINATION,
+            PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0),
+        )
+        assertTrue(CommandSettingsModel.visibleFields(teleport).any { it.key == "destinationFacing" })
+
+        val sound = CommandType.PLAY_SOUND.newNode()
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
+        sound.params["soundScope"] = "WORLD"
+        assertFalse(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
+        sound.params["soundScope"] = "POSITION"
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
+    }
+
+    @Test
     fun `gesture display timing stays one tab while showing each current value`() {
         val title = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
 

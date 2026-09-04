@@ -166,6 +166,21 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             CommandSettingsModel.defaultTargetKind(category)
                         }
                         if (category == TargetCategory.TEMPORARY) {
+                            if (currentKind != TargetKind.TEMPORARY) {
+                                // 一時変数は1回目を方式選択、2回目を変数名入力とします。
+                                // TargetSpecのsetterが入力前のSpecを未設定として扱うため、
+                                // 方式だけ選択した状態で値未入力のまま確定しません。
+                                if (!updateNode(context.player, context.route) { target ->
+                                        CommandSettingsModel.setTargetSpec(
+                                            target,
+                                            routeRole,
+                                            TargetSpec(TargetKind.TEMPORARY),
+                                        )
+                                    }) {
+                                    return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                                }
+                                return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Replace(context.route))
+                            }
                             showTemporaryTargetDialog(
                                 context.player,
                                 context.route,
@@ -300,6 +315,18 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         if (kind == PositionKind.TEMPORARY) {
+                            if (currentKind != PositionKind.TEMPORARY) {
+                                // 一時変数の方式選択と変数名入力を分離し、1回目は
+                                // 未完成のPositionSpecだけを保存して入力画面は開きません。
+                                if (!updateNode(context.player, context.route) { node ->
+                                        CommandSettingsModel.setPositionSpec(
+                                            node,
+                                            role,
+                                            PositionSpec(PositionKind.TEMPORARY),
+                                        )
+                                    }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                                return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Replace(context.route))
+                            }
                             showTemporaryPositionDialog(context.player, context.route)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -343,6 +370,21 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         if (kind == FacingKind.TEMPORARY) {
+                            val currentNode = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                            val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
+                                ?: CommandSettingRole.DESTINATION_FACING
+                            if (CommandSettingsModel.facingSpec(currentNode, role)?.kind != FacingKind.TEMPORARY) {
+                                // 一時変数は1回目を方式選択、2回目を変数名入力とし、
+                                // 入力前のFacingSpecを設定済みにはしません。
+                                if (!updateNode(context.player, context.route) { node ->
+                                        CommandSettingsModel.setFacingSpec(
+                                            node,
+                                            FacingSpec(FacingKind.TEMPORARY),
+                                            role,
+                                        )
+                                    }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                                return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Replace(context.route))
+                            }
                             showTemporaryFacingDialog(context.player, context.route)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -396,6 +438,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "field" to MenuActionHandler { context ->
                         val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (settingsFields(node).none { it.key == field }) {
+                            // 依存値の変更後に残った古い設定タブからの操作を受け付けず、
+                            // 表示と同じ共通フィールド集合を保存入口でも適用します。
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
                         if (field == "item" && (node.type == CommandType.GIVE_ITEM ||
                                 (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
                                 node.type == CommandType.TEMP_SET)) {

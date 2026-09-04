@@ -1950,9 +1950,23 @@ class GestureLowerPanel(
             )
         }
         val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
-        val fieldLabel = field?.let { KcI18n.text(player, it.label) } ?: fieldKey
-        val fieldValue = field?.value?.invoke(node)?.render(player)
-            ?: settingCurrentValue(node, context, screen, fieldKey, player)
+        if (field == null) {
+            // 依存値の変更直後に古い設定経路が一瞬残っても、非表示フィールドの
+            // 選択肢を描画しません。親タブは共通可視性判定で既に再構成されています。
+            addText(
+                visuals,
+                "setting-hidden",
+                if (child) 0.0 else 0.28,
+                if (child) 0.12 else 0.20,
+                0.008,
+                220,
+                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS)),
+            )
+            addBackSetting(player, elements, visuals, child = child)
+            return view(GestureLowerMode.SETTING_CHOICES, elements, visuals, child = child)
+        }
+        val fieldLabel = KcI18n.text(player, field.label)
+        val fieldValue = field.value(node).render(player)
         val choices = settingTreeNodes(node, context, screen, fieldKey, player, attentionFields).map { choice ->
             if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
                 choice.copy(selected = true)
