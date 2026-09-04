@@ -18,9 +18,42 @@ import org.bukkit.event.block.Action
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.player.PlayerInteractEvent
+import io.papermc.paper.event.player.PlayerPickBlockEvent
 import org.bukkit.inventory.EquipmentSlot
 
 class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Listener {
+    /**
+     * クリエイティブのホイールクリックはPaperのPickBlockイベントで差し替えます。
+     * バニラの素材だけを返すと制御ブロックのプログラムが失われるため、配置台帳から
+     * 最新スクリプトを読み、完全なスナップショットを同梱したアイテムを返します。
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    fun onPickControlBlock(event: PlayerPickBlockEvent) {
+        val placement = plugin.placements.find(event.block.location) ?: return
+        val script = plugin.scripts.load(placement.scriptId) ?: return
+        val item = runCatching { KantanItemService.createBlock(script, event.player) }
+            .getOrElse { error ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "制御ブロックのプログラム同梱アイテム生成に失敗: location=${event.block.location}, script=${script.id}",
+                    error,
+                )
+                return
+            }
+        // Paperの既定PickBlockは元ブロックの素材だけを返すため、イベントを止めて
+        // 同じ取得先スロットへカスタムアイテムを配置します。
+        event.isCancelled = true
+        if (event.targetSlot >= 0) {
+            event.player.inventory.setItem(event.targetSlot, item)
+        } else {
+            // 通常のクリエイティブ経路では発生しませんが、異常な取得先でもアイテムを
+            // 消失させないよう、空きスロットへフォールバックします。
+            event.player.inventory.addItem(item).values.forEach { overflow ->
+                event.player.world.dropItemNaturally(event.player.location, overflow)
+            }
+        }
+    }
+
     /**
      * EASのSessionListener（通常優先度）より先に、Kantanブロック操作の右クリックを
      * 判定します。EASはPlayerInteractEventがキャンセル済みでもSessionを開始し得るため、
@@ -153,11 +186,26 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.logger.info("かんたんコマンダー制御ブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
             return
         }
+        // 同梱プログラムの有無を一度だけ確定し、復元失敗時の拒否判定と配置処理で
+        // 判定基準がずれないようにします。
+        val hasEmbeddedProgram = KantanItemService.hasEmbeddedProgram(event.itemInHand)
+        val embeddedProgram = if (hasEmbeddedProgram) {
+            KantanItemService.embeddedProgram(event.itemInHand).also { program ->
+                if (program == null) {
+                    event.isCancelled = true
+                    plugin.logger.warning(
+                        "制御ブロックアイテムの埋め込みプログラムを復元できないため設置を拒否: " +
+                            "player=${player.name}, location=${event.block.location}",
+                    )
+                }
+            }
+        } else null
+        if (hasEmbeddedProgram && embeddedProgram == null) return
         plugin.logger.info("かんたんコマンダー制御ブロックの設置を検出: player=${player.name}, location=${event.block.location}, material=${event.block.type}")
         // バニラの配置イベントが配置位置を保証済み（置換可能性・プレイヤー重なりもバニラが検証済み）のため、
         // 自前の再判定は行わず、既存配置物の重複と保護判定だけを追加確認する。
         // 失敗時は元イベントをキャンセルし、バニラの巻き戻しで配置位置を元へ戻す。
-        if (!placeBlock(player, event.block.location, event.hand)) {
+        if (!placeBlock(player, event.block.location, event.hand, embeddedProgram)) {
             event.isCancelled = true
         }
     }
@@ -187,6 +235,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         player: Player,
         location: Location,
         hand: EquipmentSlot,
+        embeddedProgram: me.awabi2048.kantancommander.model.DiskScript? = null,
     ): Boolean {
         val block = location.block
         // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにする。
@@ -206,12 +255,14 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return false
         }
 
-        // 配置直後の初期名は設定値ではなく作成者を明示します。ライブラリ／履歴から
-        // 複製した後も、元の作成者とプログラム名を識別できるようにするためです。
-        val placedScript = plugin.scripts.createPlacement(
-            player.uniqueId,
-            "${player.name}のプログラム",
-        )
+        // 同梱データは参照UUIDではなく内容のスナップショットです。配置時に新しい
+        // 正本へ複製することで、元アイテムや元配置の後続編集と独立させます。
+        val placedScript = if (embeddedProgram != null) {
+            plugin.scripts.copyForPlacement(embeddedProgram)
+        } else {
+            // 通常の空アイテムから置いた場合だけ、配置者を初期名へ使います。
+            plugin.scripts.createPlacement(player.uniqueId, "${player.name}のプログラム")
+        }
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)

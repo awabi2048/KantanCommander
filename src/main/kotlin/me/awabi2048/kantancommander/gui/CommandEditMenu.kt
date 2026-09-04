@@ -27,6 +27,9 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ControlBlockStateKind
+import me.awabi2048.kantancommander.model.selectedControlBlockStates
+import me.awabi2048.kantancommander.model.toggleControlBlockState
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -684,6 +687,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         )
                     },
                     "block" to MenuActionHandler { context -> setHeldBlock(context) },
+                    "controlBlockState" to MenuActionHandler { context ->
+                        val state = context.payload["state"]
+                            ?.let { runCatching { ControlBlockStateKind.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) { it.toggleControlBlockState(state) }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
                     // 条件のアイテムもインベントリ内クリック選択へ統一します。
                     "item" to materialSelection("item"),
                 ),
@@ -1342,6 +1356,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             Triple(ConditionKind.PLAYER_STATE, Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE)),
             Triple(ConditionKind.VARIABLE_STATE, Material.REDSTONE, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE)),
             Triple(ConditionKind.BLOCK_STATE, Material.GRASS_BLOCK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE)),
+            Triple(ConditionKind.CONTROL_BLOCK_STATE, Material.COMMAND_BLOCK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE)),
         )
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
@@ -1380,10 +1395,29 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 ),
                 DetailOption(Material.GRASS_BLOCK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, "block", DisplayValue.Literal(node.string("block", "minecraft:air"))),
             )
+            ConditionKind.CONTROL_BLOCK_STATE -> ControlBlockStateKind.entries.map { state ->
+                DetailOption(
+                    Material.REDSTONE_TORCH,
+                    state.key,
+                    "controlBlockState",
+                    DisplayValue.Literal(
+                        KcI18n.text(
+                            player,
+                            if (state in node.selectedControlBlockStates()) {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED
+                            } else {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NOT_SELECTED
+                            },
+                        ),
+                    ),
+                    payload = mapOf("state" to state.name),
+                )
+            }
         }
         val layout = ChoiceMenuLayoutPolicy.layout(options.size)
         val elements = options.mapIndexed { index, option ->
             choiceElement(player, layout.itemSlots[index], option.material, KcI18n.text(player, option.nameKey), option.action,
+                payload = option.payload,
                 dataLabel = KcI18n.text(player, option.nameKey), dataValue = option.value.render(player))
         }.toMutableList()
         elements += backElement(player, layout.backSlot)
@@ -2546,6 +2580,7 @@ private data class DetailOption(
     val nameKey: LocalizationKey<String>,
     val action: String,
     val value: DisplayValue,
+    val payload: Map<String, String> = emptyMap(),
 )
 
 /**

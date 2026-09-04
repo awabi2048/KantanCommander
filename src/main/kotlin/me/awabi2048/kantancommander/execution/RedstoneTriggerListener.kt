@@ -45,8 +45,8 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
             val script = plugin.scripts.load(placement.scriptId) ?: return@forEach
             // 隣接ブロック自身の集約電力ではなく、対象ブロックへ入力された面を読む。
             // これによりリピーターの入力側など、出力方向でない信号を誤検知しません。
-            val powerMask = incomingPowerMask(block)
-            val hasPower = powerMask != 0
+            val powerMask = RedstoneInputReader.incomingPowerMask(block)
+            val hasPower = RedstoneInputReader.isPowered(powerMask)
             val previous = runtimeState.observePower(placement.key, powerMask)
             val previousRun = runtimeState.timerAnchor(script.id, script.timer.enabled, now)
             val shouldRun = RedstoneActivationPolicy.shouldRun(
@@ -96,22 +96,32 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
         wireTopology.restoreAfterExtendedRemoval(block)
     }
 
-    private fun incomingPowerMask(block: Block): Int = POWER_FACES.mapIndexedNotNull { index, face ->
+}
+
+/**
+ * 制御ブロックへ実際に入力されているレッドストーン信号を読む共通境界です。
+ * 起動トリガーと「制御ブロックの状態」条件が異なる面判定を使うと、起動したのに
+ * 条件だけ偽になるため、入力面の集約ロジックをここへ閉じ込めます。
+ */
+internal object RedstoneInputReader {
+    fun isPowered(block: Block): Boolean = isPowered(incomingPowerMask(block))
+
+    fun isPowered(powerMask: Int): Boolean = powerMask != 0
+
+    fun incomingPowerMask(block: Block): Int = POWER_FACES.mapIndexedNotNull { index, face ->
         // 対象側のgetBlockPower(face)は現在のPaper実装でダスト以外の信号強度を
         // 取りこぼすため、隣接ブロック自身が対象方向へ出力しているかを調べます。
         block.getRelative(face).isBlockFacePowered(face).takeIf { it }?.let { 1 shl index }
     }.fold(0, Int::or)
 
-    companion object {
-        private val POWER_FACES = listOf(
-            BlockFace.UP,
-            BlockFace.DOWN,
-            BlockFace.NORTH,
-            BlockFace.SOUTH,
-            BlockFace.EAST,
-            BlockFace.WEST,
-        )
-    }
+    private val POWER_FACES = listOf(
+        BlockFace.UP,
+        BlockFace.DOWN,
+        BlockFace.NORTH,
+        BlockFace.SOUTH,
+        BlockFace.EAST,
+        BlockFace.WEST,
+    )
 }
 
 internal class RedstoneRuntimeState {

@@ -7,6 +7,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
@@ -550,6 +551,11 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("condition"), "判定するブロックが未設定です")
                 }
                 // 判定位置が未設定の場合は、実行元の制御ブロック位置を使います。
+            }
+            ConditionKind.CONTROL_BLOCK_STATE -> {
+                if (node.selectedControlBlockStates().isEmpty()) {
+                    errors += nodeError(node, path, setOf("condition"), "制御ブロックの状態が未設定です")
+                }
             }
         }
     }

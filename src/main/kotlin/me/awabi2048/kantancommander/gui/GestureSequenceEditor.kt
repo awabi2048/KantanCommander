@@ -39,6 +39,7 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
@@ -52,6 +53,7 @@ import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.toggleControlBlockState
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -132,6 +134,27 @@ enum class GestureLowerMode {
     WORLD_VARIABLE_TYPE,
     WORLD_VARIABLE_DELETE_CONFIRM,
     CONFIRM,
+}
+
+/**
+ * 共有エディターを第三者が操作できる状態を、画面描画や個別イベントから独立して定義します。
+ *
+ * 配置物の共有画面は、所有者が編集中のノード・設定木・確認画面を持つ間に別のプレイヤーが
+ * 保存操作を行うと、表示世代と入力経路の組み合わせを壊します。そのため第三者へ許可するのは、
+ * ノード未選択かつ設定ルート深さ0で、子画面・保留中の遷移も存在しないルート画面だけにします。
+ */
+internal object GestureSharedOperationPolicy {
+    fun allowsOtherPlayer(
+        lowerMode: GestureLowerMode,
+        settingRouteDepth: Int,
+        hasSelection: Boolean,
+        hasChildScreen: Boolean,
+        hasPendingState: Boolean,
+    ): Boolean = lowerMode == GestureLowerMode.SETTINGS &&
+        settingRouteDepth == 0 &&
+        !hasSelection &&
+        !hasChildScreen &&
+        !hasPendingState
 }
 
 /**
@@ -299,9 +322,42 @@ class GestureSequenceEditor(
             actor.hasPermission(PlacementAccessPolicy.EXTENDED_COMMAND_BLOCK_PERMISSION)
     }
 
+    /**
+     * 所有者以外へ操作を渡せる、完全な深さ0の状態かを判定します。
+     * CC-Systemの子画面一覧だけでは、子画面へ遷移する直前の設定木やPICKERの保留状態を
+     * 見落とすため、描画状態と遷移状態をまとめて同じポリシーへ渡します。
+     */
+    private fun isSharedOperationRoot(ownerId: UUID): Boolean {
+        val hasSelection = state.selectedNodeId != null ||
+            state.selectedAddPoint != null ||
+            state.selectedInsertionCandidatePoint != null ||
+            state.confirmNodeId != null
+        val hasPendingState = state.pendingInsertion != null ||
+            state.pendingItemContext != null ||
+            state.pendingItemKey != null ||
+            state.pendingItemData != null ||
+            state.pendingBlockContext != null ||
+            state.pendingBlockId != null ||
+            state.settingContext != null ||
+            state.settingFieldKey != null ||
+            state.settingTreePath != null ||
+            state.settingScreen != null ||
+            state.pendingWorldVariableType != null ||
+            state.pendingWorldVariableDeleteName != null
+        val hasChildScreen = api.snapshot(ownerId)?.childScreenIds?.isNotEmpty() == true
+        return GestureSharedOperationPolicy.allowsOtherPlayer(
+            lowerMode = state.lowerMode,
+            settingRouteDepth = state.settingRoute.size,
+            hasSelection = hasSelection,
+            hasChildScreen = hasChildScreen,
+            hasPendingState = hasPendingState,
+        )
+    }
+
     private fun canOperateSharedActor(ownerId: UUID, actorId: UUID): Boolean {
         val placement = state.placement ?: return actorId == ownerId
         if (!canViewSharedActor(ownerId, actorId)) return false
+        if (actorId != ownerId && !isSharedOperationRoot(ownerId)) return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
         val editorAnchor = state.anchor ?: return false
         // 距離は操作の認可だけへ適用します。これにより、遠ざかったプレイヤーは
@@ -3280,6 +3336,12 @@ class GestureSequenceEditor(
                                     else -> ""
                                 }
                                 CommandSettingsModel.setParameter(it, "sneaking", next)
+                            }) updateLower(player)
+                    }
+                    "condition-control-block-state" -> {
+                        val controlState = runCatching { ControlBlockStateKind.valueOf(value) }.getOrNull() ?: return
+                        if (updateSettingNode(player, settingContext) {
+                                it.toggleControlBlockState(controlState)
                             }) updateLower(player)
                     }
                     "condition-operator" -> {

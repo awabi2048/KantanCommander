@@ -81,6 +81,7 @@ data class CommandGraph(
                 destinationTargetSpec = node.destinationTargetSpec?.copy(),
                 destinationFacingSpec = node.destinationFacingSpec?.copy(),
                 conditionPositionSpec = node.conditionPositionSpec?.copy(),
+                controlBlockStates = node.controlBlockStates?.toMutableSet(),
                 blockPositionSpec = node.blockPositionSpec?.copy(),
                 blockFromSpec = node.blockFromSpec?.copy(),
                 blockToSpec = node.blockToSpec?.copy(),
@@ -119,6 +120,8 @@ data class CommandNode(
     /** テレポート先へ適用するノード単位の向きです。 */
     var destinationFacingSpec: FacingSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
+    /** 制御ブロック状態条件で選択された判定項目です。複数選択時はAND評価します。 */
+    var controlBlockStates: MutableSet<ControlBlockStateKind>? = null,
     /** ブロック操作の単一配置位置（setblock相当）。 */
     var blockPositionSpec: PositionSpec? = null,
     /** ブロック操作の範囲始点・終点（fill相当）。 */
@@ -271,6 +274,35 @@ enum class ConditionKind(val key: LocalizationKey<String>) {
     PLAYER_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
     VARIABLE_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
     BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
+    CONTROL_BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
+}
+
+/** 制御ブロックの状態条件として選択できる判定項目です。 */
+enum class ControlBlockStateKind(val key: LocalizationKey<String>) {
+    REDSTONE_INPUT(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT),
+}
+
+/**
+ * 制御ブロック状態条件の集合評価を一箇所へ集約します。
+ * 将来の判定項目追加時も、複数選択の意味（すべて成立するAND）を実行器とテストで共有します。
+ */
+object ControlBlockStateConditionPolicy {
+    fun matches(selected: Set<ControlBlockStateKind>, redstoneInput: Boolean): Boolean =
+        selected.isNotEmpty() && selected.all { state ->
+            when (state) {
+                ControlBlockStateKind.REDSTONE_INPUT -> redstoneInput
+            }
+        }
+}
+
+/** Gsonで旧JSONを読み込んだ場合もnull集合を空集合として扱う共通アクセサです。 */
+fun CommandNode.selectedControlBlockStates(): Set<ControlBlockStateKind> = controlBlockStates.orEmpty()
+
+/** 制御ブロック状態条件の選択を反映し、空集合は保存上nullへ正規化します。 */
+fun CommandNode.toggleControlBlockState(state: ControlBlockStateKind) {
+    val next = controlBlockStates.orEmpty().toMutableSet()
+    if (!next.add(state)) next.remove(state)
+    controlBlockStates = next.takeIf { it.isNotEmpty() }
 }
 
 /** ワールド内変数の保存型。数値は常にdoubleで保持します。 */
