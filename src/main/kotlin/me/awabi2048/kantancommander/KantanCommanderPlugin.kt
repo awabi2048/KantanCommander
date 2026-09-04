@@ -114,10 +114,11 @@ class KantanCommanderPlugin : JavaPlugin() {
                             config.set("default-disk-name", null)
                         },
                         4 to ConfigMigration { config ->
-                            // 追従を標準とするGesture GUIへ移行します。旧設定は残して
-                            // 既存の /kankoma gesture on|off を壊さず、未設定時だけ
-                            // 従来どおりインベントリエディターへフォールバックします。
-                            config.set("use-gesture-editor", config.getBoolean("use-gesture-editor", false))
+                            // エディターの表示方式は固定設定ではなく、操作プレイヤーの
+                            // Java版／統合版環境から決定するため、デバッグ用の旧設定を
+                            // 移行時に削除します。残したままにすると、設定ファイル上の
+                            // 値と実際のGUI経路が一致しない状態になります。
+                            config.set("use-gesture-editor", null)
                         },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->

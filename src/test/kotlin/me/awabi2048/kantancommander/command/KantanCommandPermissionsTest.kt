@@ -18,12 +18,12 @@ class KantanCommandPermissionsTest {
     fun `management subcommands retain their own permission nodes`() {
         assertEquals(KantanCommandPermissions.PLACED, KantanCommandPermissions.forSubcommand("placed"))
         assertEquals(KantanCommandPermissions.RELOAD, KantanCommandPermissions.forSubcommand("reload"))
-        assertEquals(KantanCommandPermissions.GESTURE, KantanCommandPermissions.forSubcommand("gesture"))
         assertEquals(KantanCommandPermissions.HELP, KantanCommandPermissions.forSubcommand("help"))
     }
 
     @Test
     fun `unknown subcommands do not inherit a valid command permission`() {
         assertEquals(null, KantanCommandPermissions.forSubcommand("unknown"))
+        assertEquals(null, KantanCommandPermissions.forSubcommand("gesture"))
     }
 }

@@ -1,4 +1,3 @@
-use-gesture-editor: false
 execution:
   max-nodes-per-activation: 1024
   max-disk-call-depth: 3

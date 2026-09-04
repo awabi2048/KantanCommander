@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.item
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.gui.EditorGuiMode
+import me.awabi2048.kantancommander.gui.EditorGuiModeResolver
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
@@ -107,14 +109,18 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
 
         if (clickedPlacement != null && event.action == Action.RIGHT_CLICK_BLOCK) {
+            // Gesture GUIはJE専用、BEは同じ編集内容をインベントリGUIで表示します。
+            // ここで一度だけ解決した方式を、入口ポリシーと共有画面の権限判定へ渡し、
+            // 入口ごとに別の環境判定を行わないようにします。
+            val editorGuiMode = EditorGuiModeResolver.resolve(player)
             val placementInteraction = KantanPlacementInteractionPolicy.resolve(
                 itemKind = itemKind,
                 sneaking = player.isSneaking,
-                useGestureEditor = plugin.config.getBoolean("use-gesture-editor", false),
+                editorGuiMode = editorGuiMode,
             )
             // かんたんコマンダー制御ブロックを手に持った通常右クリックは、従来どおり
             // バニラのブロック配置を優先します。スニーク時は同じアイテムを持っていても
-            // 明示的な追従GestureGUI操作になるため、この分岐へ進みます。
+            // 環境に対応したエディターを開くため、この分岐へ進みます。
             if (placementInteraction == KantanPlacementInteraction.VANILLA_PLACE) return
             // GUIを開く経路はイベントと使用結果をキャンセルするため、バニラが送る腕振りが
             // 発生しません。実際に編集／ディスク挿入を受け付ける右クリックだけ、
@@ -132,7 +138,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             // ディスク書き込みを許可しません。共有GUIへの参加経路だけを
             // 建築権限から分離します。
             val canOperateExistingGesture =
-                itemKind != KantanItemKind.DISK &&
+                editorGuiMode == EditorGuiMode.GESTURE &&
+                    itemKind != KantanItemKind.DISK &&
                     plugin.gestureEditor.canOperateExisting(player, clickedPlacement)
             if (!canManagePlacement && !canOperateExistingGesture) {
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
