@@ -248,6 +248,26 @@ class GraphEditorTest {
     }
 
     @Test
+    fun `merge without a continuation argument infers the enclosing for end`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val falseNode = GraphEditor.insert(graph, condition.id, GraphEditor.Edge.FALSE, CommandType.WAIT)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+
+        // 旧呼び出し元が境界IDを渡さなくても、条件の所属FOR_ENDを直接参照から
+        // 復元し、MERGEをFOR本体の末尾へ接続できることを確認します。
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        assertEquals(merge.id, condition.trueNext)
+        assertEquals(falseNode.id, condition.falseNext)
+        assertEquals(merge.id, falseNode.next)
+        assertEquals(end.id, merge.next)
+        assertEquals(null, end.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
     fun `nested terminal branch never inherits the enclosing for end`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)

@@ -1241,13 +1241,19 @@ object GraphLayoutEngine {
         }
 
         /**
-         * 継続先は明示的なMERGEに限定します。FOR_ENDはループ本体の境界であり、
-         * 分岐枝の親として再利用すると、深い枝から外側のループへ暗黙接続されます。
-         * レイアウト側でも無効な継続先を除去しておくことで、クリック対象のメタデータ
-         * とGraphEditorの保存規則を同じ構造上の契約に揃えます。
+         * 明示的なMERGEと、MERGE追加時だけ使うFOR_END境界を継続先として保持します。
+         *
+         * FOR_ENDは通常ノード追加の継続先ではありません。GraphEditor.insertは
+         * この値を通常ノードへ適用しないため、未合流枝の終端をループへ暗黙接続する
+         * ことはありません。一方、条件枝からMERGEを追加する操作では、MERGEの
+         * `next`をFOR_ENDへ向ける必要があるため、描画候補から境界IDを落としては
+         * なりません。候補生成と保存処理でこの用途を分離することが、枝の深さを
+         * 保ったままFOR内の合流を正しく配置する条件です。
          */
         private fun normalizeContinuation(id: UUID?): UUID? =
-            id?.takeIf { graph.nodes[it]?.type == CommandType.MERGE }
+            id?.takeIf {
+                graph.nodes[it]?.type in setOf(CommandType.MERGE, CommandType.FOR_END)
+            }
 
         private fun normalizeInsertionTarget(target: InsertionTarget?): InsertionTarget? {
             if (target == null) return null

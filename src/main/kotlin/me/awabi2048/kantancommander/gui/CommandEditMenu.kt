@@ -982,13 +982,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val edge = route.payload[EDGE]?.let { runCatching { GraphEditor.Edge.valueOf(it) }.getOrNull() }
         val mergeConditionId = route.payload[MERGE_CONDITION_ID]?.takeIf(String::isNotBlank)
             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        val continuationId = route.payload[CONTINUATION_ID]?.takeIf(String::isNotBlank)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
         val insideFor = script?.graph?.let {
             GraphEditor.isInsideFor(it, sourceId, edge ?: GraphEditor.Edge.ENTRY)
         } == true
         val category = CommandCategory.fromRoute(route.payload[PICKER_CATEGORY])
         val types = CommandPickerTypePolicy.types(
             category = category,
-            mergeAvailable = GraphEditor.canAppendMerge(script?.graph, mergeConditionId),
+            mergeAvailable = GraphEditor.canAppendMerge(script?.graph, mergeConditionId, continuationId),
             insideForBody = insideFor,
         )
         val elements = types.mapIndexed { index, type ->

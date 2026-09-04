@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.gui
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.GraphValidator
 import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -854,11 +855,76 @@ class GraphLayoutEngineTest {
 
         // 条件のTRUE枝がFOR_ENDを明示的に指すため、主経路上の挿入先は一意です。
         assertEquals(
-            InsertionTarget(condition.id, GraphEditor.Edge.TRUE, condition.id),
+            InsertionTarget(condition.id, GraphEditor.Edge.TRUE, condition.id, continuationId = end.id),
             tailPath?.insertionTarget,
         )
         // FALSE枝は独立したNULL終端として、黄色追加アイコンから編集できます。
         assertTrue(layout.cells.values.any { it.kind == MapCellKind.ADD })
+    }
+
+    @Test
+    fun `merge selected from a for body branch is inserted before the matching for end`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val condition = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
+        val falseNode = GraphEditor.insert(graph, condition.id, GraphEditor.Edge.FALSE, CommandType.WAIT)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+
+        // 画面上のMERGE候補が保持するFOR_ENDを、そのまま明示的な継続先として
+        // グラフ編集へ渡します。ここで境界を失うと、true枝の末尾探索がFOR_END.next
+        // へ進み、MERGEがループ外へ移動するためです。
+        val openLayout = GraphLayoutEngine.layout(graph)
+        val mergeTarget = requireNotNull(openLayout.cells.values.first {
+            it.insertionTarget?.mergeConditionId == condition.id &&
+                it.insertionTarget.edge == GraphEditor.Edge.TRUE &&
+                it.insertionTarget.continuationId == end.id
+        }.insertionTarget)
+        val merge = GraphEditor.appendMerge(graph, condition.id, mergeTarget.continuationId)
+
+        assertEquals(merge.id, condition.trueNext)
+        assertEquals(falseNode.id, condition.falseNext)
+        assertEquals(merge.id, falseNode.next)
+        assertEquals(end.id, merge.next)
+        assertEquals(null, end.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+
+        val layout = GraphLayoutEngine.layout(graph)
+        val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+        val endPoint = requireNotNull(layout.nodePoints[end.id])
+        assertTrue(mergePoint.x < endPoint.x, "MERGEは対応FOR_ENDより前の深さへ配置されます")
+        assertEquals(graph.nodes.keys, layout.nodePoints.keys)
+        assertEquals(layout.nodePoints.size, layout.nodePoints.values.toSet().size)
+    }
+
+    @Test
+    fun `nested for condition merges keep their matching depth through construction`() {
+        val graph = CommandGraph.empty()
+        var currentFor = GraphEditor.append(graph, CommandType.FOR_START)
+        val scopes = mutableListOf<Triple<CommandNode, CommandNode, CommandNode>>()
+
+        repeat(4) { depth ->
+            val condition = GraphEditor.appendToForBody(graph, currentFor.id, CommandType.CONDITION)
+            val end = requireNotNull(currentFor.pairedNodeId).let(graph.nodes::get)!!
+            // 各階層で、画面から境界IDが渡されない旧経路も通して確認します。
+            val merge = GraphEditor.appendMerge(graph, condition.id)
+            scopes += Triple(condition, merge, end)
+            if (depth < 3) {
+                currentFor = GraphEditor.appendToForBody(graph, currentFor.id, CommandType.FOR_START)
+            }
+        }
+
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+        val layout = GraphLayoutEngine.layout(graph)
+
+        scopes.forEach { (condition, merge, end) ->
+            val conditionPoint = requireNotNull(layout.nodePoints[condition.id])
+            val mergePoint = requireNotNull(layout.nodePoints[merge.id])
+            val endPoint = requireNotNull(layout.nodePoints[end.id])
+            assertTrue(conditionPoint.x < mergePoint.x, "条件の合流は条件より後ろです")
+            assertTrue(mergePoint.x < endPoint.x, "合流は同じFORの終了より前です")
+        }
+        assertEquals(graph.nodes.keys, layout.nodePoints.keys)
+        assertEquals(layout.nodePoints.size, layout.nodePoints.values.toSet().size)
     }
 
     @Test
@@ -876,6 +942,7 @@ class GraphLayoutEngineTest {
             inner.id,
             GraphEditor.Edge.TRUE,
             inner.id,
+            continuationId = end.id,
         )
 
         // 内側条件のFALSE枝で広がった幅をFOR_ENDまで埋める主行にも、TRUE枝の
@@ -995,13 +1062,13 @@ class GraphLayoutEngineTest {
         start.pairedNodeId = end.id
         end.pairedNodeId = start.id
         start.trueNext = bodyCondition.id
-        // この参照が今回の再現条件です。bodyConditionのtrue枝からFOR_ENDへ
-        // 進んだ後、FOR_ENDのNEXTへbodyMergeが続きます。
-        end.next = bodyMerge.id
+        // bodyConditionの両枝は、対応MERGEへ到達した後にFOR_ENDへ進みます。
+        // FOR_END.nextへbodyMergeを置く形は「合流がFOR外へずれた」不正構造なので、
+        // ここでは正しい所有スコープを明示します。
 
         bodyCondition.pairedNodeId = bodyMerge.id
         bodyMerge.pairedNodeId = bodyCondition.id
-        bodyCondition.trueNext = end.id
+        bodyCondition.trueNext = bodyMerge.id
         bodyCondition.falseNext = bodyFalseFirst.id
         bodyFalseFirst.next = bodyFalseSecond.id
         bodyFalseSecond.next = nestedCondition.id
@@ -1011,6 +1078,7 @@ class GraphLayoutEngineTest {
         nestedCondition.trueNext = nestedMerge.id
         nestedCondition.falseNext = nestedMerge.id
         nestedMerge.next = bodyMerge.id
+        bodyMerge.next = end.id
 
         assertTrue(GraphValidator.validate(graph).isEmpty())
         val layout = assertDoesNotThrow<GraphLayout> { GraphLayoutEngine.layout(graph) }
