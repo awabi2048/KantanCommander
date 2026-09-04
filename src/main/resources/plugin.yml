@@ -48,6 +48,3 @@ permissions:
   kankoma.command.gesture:
     description: /kankoma gesture の実行を許可する
     default: false
-  kankoma.extended_command_block:
-    description: かんたんコマンダー制御ブロックの手動操作を許可する（MWM-Chanponがワールド単位で付与）
-    default: false
