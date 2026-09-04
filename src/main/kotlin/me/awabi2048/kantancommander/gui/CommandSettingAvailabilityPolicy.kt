@@ -15,7 +15,7 @@ import org.bukkit.Material
  */
 internal object CommandSettingAvailabilityPolicy {
     /** 制御ブロック位置を選べない理由として、無効項目のホバーへ表示します。 */
-    const val CONTROL_BLOCK_POSITION_DISABLED_HOVER = "制御ブロックのある位置は操作できませんん"
+    const val CONTROL_BLOCK_POSITION_DISABLED_HOVER = "制御ブロックのある位置は操作できません"
 
     fun isPositionChoiceEnabled(
         node: CommandNode,
@@ -37,6 +37,9 @@ internal object HeldBlockSettingPolicy {
         if (material == Material.AIR) return material.key.toString()
         return materialId(material.key.toString(), isAir = false, isBlock = material.isBlock)
     }
+
+    /** 表示・クリック受付も保存処理と同じ入力契約を使い、空手を有効な設定として扱います。 */
+    fun canSet(material: Material): Boolean = materialId(material) != null
 
     /** プラットフォーム判定と保存値変換を分離し、空手を含む保存契約を検証可能にします。 */
     internal fun materialId(materialKey: String, isAir: Boolean, isBlock: Boolean): String? =

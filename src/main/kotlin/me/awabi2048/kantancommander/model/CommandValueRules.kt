@@ -37,8 +37,8 @@ object CommandValueRules {
         return material.takeIf { allowAir || it != Material.AIR }
     }
 
-    /** 実行時にブロック配置へ使えるMaterialかを返します。 */
-    fun placementMaterial(raw: String): Material? = material(raw, allowAir = false)
+    /** 実行時にブロック配置へ使えるMaterialかを返します。setblock/fillのAIRも許可します。 */
+    fun placementMaterial(raw: String): Material? = material(raw, allowAir = true)
 
     /** GUI・保存時検証・実行時が共有する符号なしの正整数パーサーです。 */
     fun parsePositiveInt(raw: String): Int? =

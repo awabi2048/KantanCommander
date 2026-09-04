@@ -17,7 +17,7 @@ class DisabledChoiceVisualPolicyTest {
     @Test
     fun `無効理由ホバーは通常ホバーを上書きします`() {
         assertEquals(
-            "制御ブロックのある位置は操作できませんん",
+            "制御ブロックのある位置は操作できません",
             DisabledChoiceVisualPolicy.hoverText(
                 enabled = false,
                 normal = "通常の説明",
@@ -25,7 +25,7 @@ class DisabledChoiceVisualPolicyTest {
             ),
         )
         assertEquals(
-            listOf("制御ブロックのある位置は操作できませんん"),
+            listOf("制御ブロックのある位置は操作できません"),
             DisabledChoiceVisualPolicy.hoverLines(
                 enabled = false,
                 normal = listOf("通常の説明"),

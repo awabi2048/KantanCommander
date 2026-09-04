@@ -258,8 +258,7 @@ class GestureLowerPanel(
         val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting
         val heldMainHandAvailable = when {
             heldItemSetting -> GestureGuiClickPolicy.hasMainHandItem(player)
-            heldBlockSetting -> GestureGuiClickPolicy.hasMainHandItem(player) &&
-                player.inventory.itemInMainHand.type.isBlock
+            heldBlockSetting -> HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
             heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
             else -> true
         }
@@ -304,8 +303,8 @@ class GestureLowerPanel(
                 // 開ける二重導線にはしません。
                 bounds = rect(0.28, SETTING_INPUT_CENTER_Y, 1.2, SETTING_INPUT_HEIGHT),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
-                // 空集合を焼き付けず、クリック時点のガードで判定します。空手時は
-                // 既存仕様どおり効果音・Actionを発生させず、保持時だけハンドラへ届けます。
+                // 空集合を焼き付けず、クリック時点のガードで判定します。ブロック設定は
+                // 空手もAIRとして有効なので、保存契約と同じポリシーをここでも使います。
                 acceptedGestures = if (heldMainHandSetting) {
                     GestureGuiClickPolicy.MAIN_HAND
                 } else GestureGuiClickPolicy.CLICK,
@@ -314,8 +313,7 @@ class GestureLowerPanel(
                         if (heldDiskSetting) {
                             KantanItemService.diskId(actor.inventory.itemInMainHand) != null
                         } else if (heldBlockSetting) {
-                            GestureGuiClickPolicy.hasMainHandItem(actor) &&
-                                actor.inventory.itemInMainHand.type.isBlock
+                            HeldBlockSettingPolicy.canSet(actor.inventory.itemInMainHand.type)
                         } else {
                             GestureGuiClickPolicy.hasMainHandItem(actor)
                         }

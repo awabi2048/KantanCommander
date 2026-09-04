@@ -270,10 +270,7 @@ class CommandDialogSpecsTest {
         val placement = requireNotNull(CommandDialogSpecs.field(CommandType.BLOCK_OPERATION.newNode(), "block"))
         val condition = requireNotNull(CommandDialogSpecs.field(CommandType.CONDITION.newNode(), "block"))
 
-        assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
-            placement.validate("minecraft:air"),
-        )
+        assertNull(placement.validate("minecraft:air"))
         assertNull(condition.validate("minecraft:air"))
     }
 

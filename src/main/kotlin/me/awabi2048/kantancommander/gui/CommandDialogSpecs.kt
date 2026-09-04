@@ -607,7 +607,7 @@ internal object CommandDialogSpecs {
         format = InputFormat.MATERIAL_ID,
     )
 
-    /** ブロック操作はAIRを配置できないため、条件ブロックとは別の規則を使います。 */
+    /** ブロック操作は配置可能なブロック値（AIRを含む）として専用の規則を使います。 */
     private val placementBlock = block.copy(
         validate = { raw ->
             if (CommandValueRules.placementMaterial(raw) == null) {
