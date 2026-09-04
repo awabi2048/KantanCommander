@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 8
+const val STRUCTURED_FORMAT_VERSION = 9
 const val TICKS_PER_SECOND = 20
 const val MIN_TIMER_SECONDS = 1
 const val MAX_TIMER_SECONDS = 86_400
@@ -75,7 +75,6 @@ data class CommandGraph(
             copied[id] = node.copy(
                 params = node.params.toMutableMap(),
                 configuredFields = node.configuredFields?.toMutableSet(),
-                contextOverride = node.contextOverride?.copy(),
                 targetSpec = node.targetSpec?.copy(),
                 secondaryTargetSpec = node.secondaryTargetSpec?.copy(),
                 destinationSpec = node.destinationSpec?.copy(),
@@ -140,9 +139,6 @@ data class CommandNode(
     var blockTempRef: String? = null,
     var soundTempRef: String? = null,
     var effectTempRef: String? = null,
-    var contextOverride: ExecutionContextSpec? = null,
-    /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
-    var contextSource: ContextSource? = ContextSource.BASE,
     var snapshot: CommandGraph? = null,
 ) {
     fun string(key: String, default: String = "") = params[key]?.takeIf(String::isNotBlank) ?: default
@@ -173,8 +169,6 @@ data class CommandNode(
     }
 }
 
-enum class ContextSource { BASE, PREVIOUS }
-
 /** ブロック操作が実行時に採用する配置方式です。保存値は明示的な小文字文字列にします。 */
 enum class BlockOperationMode(val value: String) {
     SETBLOCK("setblock"),
@@ -186,15 +180,9 @@ enum class BlockOperationMode(val value: String) {
     }
 }
 
-val CommandNode.effectiveContextSource: ContextSource
-    get() = contextSource ?: ContextSource.BASE
-
 enum class TargetKind {
     NEAREST_PLAYER, NEARBY_PLAYERS,
     ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY, TEMPORARY,
-    /** 廃止予定：暗示的継承は行いません。新規設定では使用しません。 */
-    @Deprecated("Context abolished")
-    INHERITED_TARGET,
 }
 
 enum class TargetSort { NEAREST, FURTHEST, RANDOM }
@@ -216,7 +204,7 @@ data class TargetSpec(
     val gameMode: String? = null,
     val tag: String? = null,
     val name: String? = null,
-    /** セレクターのdx/dy/dzに対応する非負の範囲です。基準は実行コンテキスト位置です。 */
+    /** セレクターのdx/dy/dzに対応する非負の範囲です。基準は実行位置です。 */
     val dx: Double? = null,
     val dy: Double? = null,
     val dz: Double? = null,
@@ -233,11 +221,7 @@ data class TargetSpec(
  */
 enum class PositionKind {
     CAPTURED, DISK, MYWORLD_SPAWN, COORDINATES, TEMPORARY,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
-    EXECUTOR,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
+    /** テレポート先など、コマンド固有の「対象エンティティ位置」です。 */
     TARGET,
 }
 data class PositionSpec(
@@ -253,14 +237,7 @@ data class PositionSpec(
 
 enum class FacingKind {
     CAPTURED, COORDINATES, MYWORLD_SPAWN, ROTATION, TEMPORARY,
-    /** 廃止予定：向き不変として扱います。 */
-    @Deprecated("Context abolished")
-    INHERITED,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
-    EXECUTOR,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
+    /** テレポート先など、コマンド固有の「対象エンティティ方向」です。 */
     TARGET,
 }
 data class FacingSpec(
@@ -274,18 +251,20 @@ data class FacingSpec(
     val tempName: String? = null,
 )
 
-data class ExecutionContextSpec(
+/**
+ * 実行エンジンがコマンドをMinecraftの実行状態へ変換するための内部状態です。
+ * GUIから保存する設定ではなく、実行元・対象・位置・向きを一つの状態として
+ * 引き回す必要がある処理だけで使用します。
+ */
+internal data class ExecutionContextSpec(
     val executor: TargetSpec? = null,
     val target: TargetSpec? = null,
     val position: PositionSpec? = null,
     val facing: FacingSpec? = null,
 ) {
-    /** 空のコンテキストは設定値ではなく、未設定と同じ意味になります。 */
+    /** 空の実行状態は、追加のexecute句が不要であることを表します。 */
     fun hasAnySetting(): Boolean = executor != null || target != null || position != null || facing != null
 }
-
-/** 実効値を持つノード単位コンテキストだけを「上書きあり」と判定します。 */
-fun CommandNode.hasContextOverride(): Boolean = contextOverride?.hasAnySetting() == true
 
 enum class ConditionKind(val key: LocalizationKey<String>) {
     TARGET_EXISTS(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS),
@@ -310,7 +289,7 @@ data class WorldVariableValue(
 )
 
 /**
- * 一時変数（実行内寿命）の型です。context型は作りません。
+ * 一時変数（実行内寿命）の型です。実行状態そのものを保存する型は作りません。
  *
  * リテラル利用できるのは NUMBER・STRING のみで `%{name}%` 記法を使います。
  * 複合6型（LOCATION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）は型付き設定欄で定義し、
@@ -399,7 +378,7 @@ enum class CommandType(
         "entity" to "", "tags" to "", "customName" to ""
     )),
     PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
-        "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "CONTEXT"
+        "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "POSITION"
     )),
     APPLY_EFFECT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT_DESCRIPTION, Material.POTION, mapOf(
         "effect" to "", "level" to "1", "seconds" to "30"
@@ -421,9 +400,6 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
-    )),
-    CONTEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT_DESCRIPTION, Material.RECOVERY_COMPASS, mapOf(
-        "executor" to "", "target" to "", "position" to "", "facing" to ""
     )),
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
     /** ワールド内変数を定義・変更します。 */
@@ -449,41 +425,6 @@ enum class CommandType(
     CONTINUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE_DESCRIPTION, Material.ARROW, emptyMap());
 
     fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
-}
-
-/**
- * ノード自身へ実行コンテキストを上書きできるかを表すドメイン契約です。
- *
- * CONTEXTは専用コマンドとしてコンテキストを生成するため、この契約の対象外です。
- * VARIABLEも、値の読み書きと実行位置・対象の選択を一つの設定へ混在させないため、
- * ノード単位の上書きを持ちません。GUIだけで隠すと保存済みデータや実行経路に
- * 同じ機能が残るため、検証・実行・エクスポートもこの契約を参照します。
- */
-fun CommandType.supportsContextOverride(): Boolean = when (this) {
-    CommandType.TELEPORT,
-    CommandType.GIVE_ITEM,
-    CommandType.ENTITY_ACTION,
-    CommandType.DISPLAY_TEXT,
-    CommandType.SUMMON_ENTITY,
-    CommandType.PLAY_SOUND,
-    CommandType.APPLY_EFFECT,
-    CommandType.CAMERA_SHAKE,
-    CommandType.BLOCK_OPERATION,
-    CommandType.ENTITY_DELETE,
-    CommandType.CONDITION,
-    CommandType.DISK_CALL,
-    -> true
-
-    CommandType.WAIT,
-    CommandType.CONTEXT,
-    CommandType.VARIABLE,
-    CommandType.TEMP_SET,
-    CommandType.MERGE,
-    CommandType.FOR_START,
-    CommandType.FOR_END,
-    CommandType.BREAK,
-    CommandType.CONTINUE,
-    -> false
 }
 
 data class DiskPlacement(

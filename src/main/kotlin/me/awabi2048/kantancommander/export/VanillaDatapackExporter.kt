@@ -27,12 +27,7 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
-import me.awabi2048.kantancommander.model.ContextSource
-import me.awabi2048.kantancommander.model.effectiveContextSource
-import me.awabi2048.kantancommander.model.hasContextOverride
-import me.awabi2048.kantancommander.model.supportsContextOverride
 import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
-import me.awabi2048.kantancommander.execution.ExecutionSemantics
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import java.io.File
 import java.math.BigInteger
@@ -175,7 +170,6 @@ class VanillaDatapackExporter(
                         validate(script.copy(graph = node.snapshot!!), errors, visited, callDepth + 1, worldVariableTypes)
                 }
                 CommandType.CONDITION -> validateCondition(script, node, errors, worldVariableTypes)
-                CommandType.CONTEXT -> validateContext(script, node, contextFrom(node), errors)
                 CommandType.VARIABLE -> {
                     if (node.string("name").isBlank()) errors += "${script.id}/${node.id}: variable name is missing"
                     val operation = runCatching {
@@ -231,16 +225,15 @@ class VanillaDatapackExporter(
                 }
                 else -> Unit
             }
-            if (resolveExportContext(script.graph, node).second) {
-                errors += "${script.id}/${node.id}: 直前コンテキスト(PREVIOUS)の継承内容が経路ごとに確定しないため、完全バニラ出力できません"
-            }
-            val hasContextState = node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
-            if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
-                errors += "${script.id}/${node.id}: ${node.type} では実行コンテキストを設定できません"
-            } else {
-                node.contextOverride?.let { validateContext(script, node, it, errors) }
-            }
             validatePosition(script, node, node.conditionPositionSpec, errors)
+            validatePosition(script, node, node.soundPositionSpec, errors)
+            validatePosition(script, node, node.summonPositionSpec, errors)
+            if (node.soundPositionSpec?.kind == PositionKind.TARGET) {
+                errors += "${script.id}/${node.id}: 効果音の対象位置指定は完全バニラ出力に未対応です"
+            }
+            if (node.summonPositionSpec?.kind == PositionKind.TARGET) {
+                errors += "${script.id}/${node.id}: 召喚の対象位置指定は完全バニラ出力に未対応です"
+            }
             validateFacing(script, node, node.destinationFacingSpec, errors)
             if (listOfNotNull(
                     node.targetSpec,
@@ -356,16 +349,6 @@ class VanillaDatapackExporter(
         annotate(graph)
     }
 
-    private fun validateContext(script: DiskScript, node: CommandNode, context: ExecutionContextSpec, errors: MutableList<String>) {
-        if (context.target?.kind == TargetKind.FIXED_ENTITY || context.executor?.kind == TargetKind.FIXED_ENTITY) {
-            errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
-        }
-        validatePosition(script, node, context.position, errors)
-        if (context.facing?.kind == FacingKind.MYWORLD_SPAWN) {
-            errors += "${script.id}/${node.id}: 出力先のマイワールドのスポーン位置を検証できません"
-        }
-    }
-
     private fun validatePosition(
         script: DiskScript,
         node: CommandNode,
@@ -423,7 +406,6 @@ class VanillaDatapackExporter(
         } else entryCall)
         graph.nodes.values.forEach { node ->
             val lines = mutableListOf<String>()
-            val nodeExportContext = exportContext(graph, node)
             val emptyFor = node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId
             if (!emptyFor) {
                 lines += "execute if score #executed kc_runtime matches ${maximumCommandCount.coerceAtLeast(1)}.. run return 0"
@@ -475,7 +457,7 @@ class VanillaDatapackExporter(
                     val snapshotPrefix = snapshotPrefix(prefix, node.id)
                     node.snapshot?.let { compileGraph(it, snapshotPrefix, output, resetBudget = false) }
                     val call = "function kantan:$snapshotPrefix"
-                    temporaryEntityReferences(node, nodeExportContext).forEach { reference ->
+                    temporaryEntityReferences(node, null).forEach { reference ->
                         lines += temporaryEntityPreparation(reference)
                     }
                     val backupPath = VanillaStorageNames.callBackupPath(node.id)
@@ -485,19 +467,10 @@ class VanillaDatapackExporter(
                     lines += "data remove storage kantan:variables $backupPath"
                     lines += "data modify storage kantan:variables $backupPath set from storage kantan:variables variables.temporary"
                     lines += "data modify storage kantan:variables variables.temporary set value {}"
-                    lines += storeFunctionResult(node, nodeExportContext?.let { wrapContext(it, call, node) } ?: call)
+                    lines += storeFunctionResult(node, call)
                     lines += "data modify storage kantan:variables variables.temporary set value {}"
                     lines += "data modify storage kantan:variables variables.temporary set from storage kantan:variables $backupPath"
                     lines += "data remove storage kantan:variables $backupPath"
-                }
-                node.type == CommandType.CONTEXT -> {
-                    val context = contextFrom(node)
-                    temporaryEntityReferences(node, context).forEach { reference ->
-                        lines += temporaryEntityPreparation(reference)
-                    }
-                    node.next?.let {
-                        lines += "return run ${wrapContext(context, "function kantan:${nodeFunction(prefix, it)}", node)}"
-                    } ?: run { lines += "return 1" }
                 }
                 node.type == CommandType.VARIABLE &&
                     node.string("operation") == VariableOperation.CHANGE.name &&
@@ -509,10 +482,7 @@ class VanillaDatapackExporter(
                         lowerArithmeticVariable(node, graph).joinToString("\n", postfix = "\n"),
                     )
                     val command = "function kantan:$helper"
-                    lines += storeFunctionResult(
-                        node,
-                        nodeExportContext?.let { wrapContext(it, command, node) } ?: command,
-                    )
+                    lines += storeFunctionResult(node, command)
                 }
                 node.type == CommandType.TEMP_SET -> {
                     // LOCATIONの現位置捕捉やENTITYの対象選択は複数のvanilla命令へ
@@ -532,7 +502,7 @@ class VanillaDatapackExporter(
                     lines += storeFunctionResult(node, "function kantan:$helper")
                 }
                 else -> lower(node, graph)?.let { command ->
-                    val temporaryReferences = temporaryEntityReferences(node, nodeExportContext)
+                    val temporaryReferences = temporaryEntityReferences(node, null)
                     temporaryReferences.forEach { reference ->
                         lines += temporaryEntityPreparation(reference)
                     }
@@ -550,10 +520,9 @@ class VanillaDatapackExporter(
                         val targetedTimes = primaryTarget?.let { reference ->
                             temporaryEntitySelection(reference, times)
                         } ?: times
-                        lines += nodeExportContext?.let { wrapContext(it, targetedTimes, node) } ?: targetedTimes
+                        lines += targetedTimes
                     }
-                    val contextual = nodeExportContext?.let { wrapContext(it, targetedCommand, node) } ?: targetedCommand
-                    val macro = prepareMacro(node, contextual, output, graph)
+                    val macro = prepareMacro(node, targetedCommand, output, graph)
                     lines += macro.setup
                     lines += storeResult(node, macro.call)
                     if (temporaryReferences.isNotEmpty()) {
@@ -624,7 +593,6 @@ class VanillaDatapackExporter(
                     node.next?.let {
                         lines += "schedule function kantan:${nodeFunction(prefix, it)} ${node.int("seconds", 1).coerceAtLeast(1).toLong() * TICKS_PER_SECOND}t replace"
                     }
-                CommandType.CONTEXT -> Unit
                 CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
                 CommandType.MERGE -> node.next?.let {
                     lines += "return run function kantan:${nodeFunction(prefix, it)}"
@@ -647,12 +615,10 @@ class VanillaDatapackExporter(
         val base = "tp ${effectiveTarget(node)} ${destination(node)}"
         val facing = node.destinationFacingSpec ?: return base
         return when (facing.kind) {
-            FacingKind.INHERITED -> base
             FacingKind.ROTATION, FacingKind.CAPTURED ->
                 "$base ${facing.yaw ?: 0f} ${facing.pitch ?: 0f}"
-            FacingKind.EXECUTOR -> "$base facing entity @s eyes"
             FacingKind.TARGET -> {
-                val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
+                val target = node.targetSpec ?: error("destination target is missing")
                 "$base facing entity ${singleSelector(target)} eyes"
             }
             FacingKind.TEMPORARY -> {
@@ -678,7 +644,7 @@ class VanillaDatapackExporter(
             ?.let { temporaryMarker(it, "pitch") }
             ?: node.string("pitch", "1.0")
         val sound = "playsound $soundName master @a ~ ~ ~ $volume $pitch"
-        if (node.string("soundScope", "CONTEXT") == "WORLD") {
+        if (node.string("soundScope", "POSITION") == "WORLD") {
             // 全域指定は各プレイヤー位置を音源位置にするという計画書の定義に合わせ、
             // プレイヤーごとに一度ずつ実行します。
             return "execute as @a at @s run playsound $soundName master @s ~ ~ ~ $volume $pitch"
@@ -689,11 +655,10 @@ class VanillaDatapackExporter(
                 "execute positioned ${position.x ?: error("sound x is missing")} " +
                     "${position.y ?: error("sound y is missing")} ${position.z ?: error("sound z is missing")} run $sound"
             PositionKind.DISK -> sound
-            PositionKind.EXECUTOR -> "execute at @s run $sound"
-            PositionKind.TARGET -> {
-                val target = node.contextOverride?.target ?: node.targetSpec ?: TargetSpec(TargetKind.INHERITED_TARGET)
-                "execute at ${singleSelector(target)} run $sound"
-            }
+            // TARGETはテレポート先だけのコマンド固有値です。音の位置へ
+            // 対象欄を暗黙に読み替えると、廃止した共通コンテキストへ戻るため、
+            // 事前検証で拒否し、実行時にも別の意味へ変換しません。
+            PositionKind.TARGET -> error("sound target position is not supported")
             PositionKind.TEMPORARY -> {
                 val name = position.tempName ?: error("temporary sound position name is missing")
                 "execute positioned ${temporaryPositionCoordinates(name)} run $sound"
@@ -766,7 +731,7 @@ class VanillaDatapackExporter(
                     require(position.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES)) {
                         "dynamic temporary LOCATION requires expanded commands"
                     }
-                    require(facing.kind in setOf(FacingKind.INHERITED, FacingKind.CAPTURED, FacingKind.ROTATION)) {
+                    require(facing.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION)) {
                         "dynamic temporary LOCATION facing requires expanded commands"
                     }
                     "data modify storage kantan:variables $destination set value " +
@@ -809,10 +774,10 @@ class VanillaDatapackExporter(
     /**
      * 一時変数定義を、1命令または複数命令のvanilla関数へ展開します。
      *
-     * LOCATIONの共通PositionSpecは、配置ディスク・実行者・対象・別LOCATIONのような
-     * 実行時参照を持てます。ENTITYの共通TargetSpecも同様にセレクター解決が必要です。
-     * それらを「数値3個の直接代入」として扱うと、GUIで選べる設定とDatapack出力の意味が
-     * ずれるため、実行時にstorageへ値を組み立てる命令列へ明示的に展開します。
+     * LOCATIONのPositionSpecは、制御ブロック位置・座標・別LOCATION一時変数の
+     * ような位置指定をstorageへ展開します。ENTITYのTargetSpecも同様にセレクター
+     * 解決が必要です。それらを「数値3個の直接代入」として扱うと、GUIで選べる設定と
+     * Datapack出力の意味がずれるため、実行時にstorageへ値を組み立てます。
      */
     private fun temporarySetCommands(
         node: CommandNode,
@@ -903,24 +868,16 @@ class VanillaDatapackExporter(
                 commands += "execute unless data storage kantan:variables $source run return 0"
                 commands += "data modify storage $storage set from storage kantan:variables $source"
             }
-            PositionKind.DISK,
-            PositionKind.EXECUTOR,
-            PositionKind.TARGET,
-            -> {
-                // TEMP_SET自体はノード限定コンテキストを持たないため、共通位置設定の
-                // 実行者・対象は、呼び出し時点のexecuteコンテキスト位置へ解決します。
+            PositionKind.DISK -> {
+                // DISKは実行元の制御ブロック位置を意味します。実行者・対象を
+                // GUIから暗黙に読み替える経路は持たせません。
                 commands += captureCurrentLocation(storage, node)
             }
+            PositionKind.TARGET -> error("temporary LOCATION target position is not supported")
             PositionKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn position is not supported by vanilla")
         }
 
         when (facing.kind) {
-            FacingKind.INHERITED -> if (position.kind != PositionKind.TEMPORARY) {
-                // COORDINATES/CAPTUREDでも「継承」は現在の実行向きを意味します。
-                // 初期値0へ固定すると、Java実行側のsession.origin.yaw/pitchと
-                // Datapack出力だけが分岐するため、位置の取得元にかかわらず捕捉します。
-                commands += captureCurrentRotation(storage)
-            }
             FacingKind.CAPTURED, FacingKind.ROTATION -> {
                 commands += "data modify storage $storage.yaw set value ${number(facing.yaw ?: error("location yaw is missing"))}"
                 commands += "data modify storage $storage.pitch set value ${number(facing.pitch ?: error("location pitch is missing"))}"
@@ -941,7 +898,7 @@ class VanillaDatapackExporter(
                     temporaryPositionCoordinates(sourceName),
                 )
             }
-            FacingKind.EXECUTOR, FacingKind.TARGET -> commands += captureCurrentRotation(storage)
+            FacingKind.TARGET -> error("temporary LOCATION target facing is not supported")
             FacingKind.COORDINATES -> {
                 val rotation = staticFacingRotation(position, facing)
                 if (rotation != null) {
@@ -975,7 +932,8 @@ class VanillaDatapackExporter(
             position.tempName?.takeIf(String::isNotBlank)
                 ?: error("temporary LOCATION source name is missing"),
         )
-        PositionKind.DISK, PositionKind.EXECUTOR, PositionKind.TARGET -> "~ ~ ~"
+        PositionKind.DISK -> "~ ~ ~"
+        PositionKind.TARGET -> error("temporary LOCATION target position is not supported")
         PositionKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn position is not supported by vanilla")
     }
 
@@ -1057,17 +1015,7 @@ class VanillaDatapackExporter(
             "actionbar" -> "title ${effectiveTarget(node)} actionbar {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
             else -> "tellraw ${effectiveTarget(node)} {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
         }
-        CommandType.SUMMON_ENTITY -> {
-            // 召喚タグは一つの文字列としてNBTへ一要素だけを書き込みます。
-            // 入力中のカンマを複数タグの区切りとして再解釈しません。
-            val tag = node.string("tags").takeIf(String::isNotBlank)
-            val tagNbt = tag?.let { "Tags:[\\\"${escape(it)}\\\"]" }.orEmpty()
-            val customName = node.string("customName").takeIf(String::isNotBlank)
-                ?.let { "CustomName:\"{\\\"text\\\":\\\"${escape(it.replace('&', '§'))}\\\"}\"" }
-            val nbtFields = listOfNotNull(tagNbt.takeIf(String::isNotBlank), customName)
-            val nbt = nbtFields.takeIf { it.isNotEmpty() }?.let { " {${it.joinToString(",")}}" }.orEmpty()
-            "summon ${node.string("entity")} ~ ~ ~$nbt"
-        }
+        CommandType.SUMMON_ENTITY -> summonCommand(node)
         CommandType.PLAY_SOUND -> soundCommand(node)
         CommandType.APPLY_EFFECT ->
             "effect give ${effectiveTarget(node)} " +
@@ -1082,8 +1030,42 @@ class VanillaDatapackExporter(
         // TEMP_SETはcompileGraph側で専用関数へ展開します。ここへ到達させると
         // 複数命令のLOCATION/ENTITY定義が1命令として扱われるため、防御的に無出力とします。
         CommandType.TEMP_SET -> null
-        CommandType.WAIT, CommandType.CONTEXT, CommandType.CONDITION, CommandType.MERGE,
+        CommandType.WAIT, CommandType.CONDITION, CommandType.MERGE,
         CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
+    }
+
+    /** SUMMON_ENTITYのコマンド固有位置を、summonの座標またはexecute atへ変換します。 */
+    private fun summonCommand(node: CommandNode): String {
+        // 召喚タグは一つの文字列としてNBTへ一要素だけを書き込みます。
+        // 入力中のカンマを複数タグの区切りとして再解釈しません。
+        val tag = node.string("tags").takeIf(String::isNotBlank)
+        val tagNbt = tag?.let { "Tags:[\\\"${escape(it)}\\\"]" }.orEmpty()
+        val customName = node.string("customName").takeIf(String::isNotBlank)
+            ?.let { "CustomName:\"{\\\"text\\\":\\\"${escape(it.replace('&', '§'))}\\\"}\"" }
+        val nbtFields = listOfNotNull(tagNbt.takeIf(String::isNotBlank), customName)
+        val nbt = nbtFields.takeIf { it.isNotEmpty() }?.let { " {${it.joinToString(",")}}" }.orEmpty()
+        val entity = node.string("entity")
+        val summon = { coordinates: String -> "summon $entity $coordinates$nbt" }
+        return when (val position = node.summonPositionSpec) {
+            null -> summon("~ ~ ~")
+            else -> when (position.kind) {
+                PositionKind.CAPTURED, PositionKind.COORDINATES -> summon(
+                    "${position.x ?: error("summon x is missing")} " +
+                        "${position.y ?: error("summon y is missing")} " +
+                        "${position.z ?: error("summon z is missing")}",
+                )
+                PositionKind.DISK -> summon("~ ~ ~")
+                // TARGETはテレポート先だけのコマンド固有値です。召喚位置で
+                // 対象欄を暗黙利用する旧コンテキスト解釈は受け付けません。
+                PositionKind.TARGET -> error("summon target position is not supported")
+                PositionKind.TEMPORARY -> summon(
+                    temporaryPositionCoordinates(
+                        position.tempName ?: error("temporary summon position name is missing"),
+                    ),
+                )
+                PositionKind.MYWORLD_SPAWN -> error("unsupported summon position")
+            }
+        }
     }
 
     /** 動的な文字列・数値入力はJava版のfunction macroへ一元的に変換します。 */
@@ -1211,77 +1193,6 @@ class VanillaDatapackExporter(
         else -> "weapon.mainhand"
     }
 
-    /**
-     * PREVIOUSは、直前に実行したノードの有効コンテキストへ静的に展開できる場合だけ出力できます。
-     * 2つ目の戻り値は「先行経路ごとに継承内容が確定せず静的展開できない」ことを示します。
-     * MERGEやfor終了など直前実行情報を更新しない経由ノードは、さらに手前の実行ノードへ遡って解決します。
-     */
-    private fun resolveExportContext(
-        graph: CommandGraph,
-        node: CommandNode,
-    ): Pair<ExecutionContextSpec?, Boolean> {
-        // VARIABLEはCONTEXTコマンド／現在の実行文脈をそのまま受け取り、ノード自身の
-        // contextOverrideやPREVIOUS指定を解釈しません。検証で旧状態は拒否しますが、
-        // 防御的にもエクスポート経路へ混入させないようここで遮断します。
-        if (node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) return null to false
-        if (node.effectiveContextSource != ContextSource.PREVIOUS) {
-            return ExecutionSemantics.mergeContexts(null, node.contextOverride) to false
-        }
-        val directPredecessors = graphPredecessors(graph, node)
-        val candidates = if (directPredecessors.isEmpty()) setOf<ExecutionContextSpec?>(null)
-        else previousContextCandidates(graph, directPredecessors)
-        if (candidates.size >= 2) return null to true
-        return ExecutionSemantics.mergeContexts(candidates.singleOrNull(), node.contextOverride) to false
-    }
-
-    /** 直前実行情報（PREVIOUS継承元）を更新しないため、解決をさらに手前へ透過させるノード種別。 */
-    private fun passesThroughPreviousContext(node: CommandNode): Boolean = when (node.type) {
-        CommandType.WAIT, CommandType.MERGE, CommandType.FOR_START,
-        CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE,
-        CommandType.DISK_CALL -> true
-        else -> false
-    }
-
-    private fun graphPredecessors(graph: CommandGraph, node: CommandNode): List<CommandNode> =
-        graph.nodes.values.filter { node.id in listOfNotNull(it.next, it.trueNext, it.falseNext) }
-
-    /** ノード自身の有効コンテキスト。PREVIOUS指定時は先行ノードの直前実行値を単一候補として解決します。 */
-    private fun ownExportContext(graph: CommandGraph, current: CommandNode): ExecutionContextSpec? {
-        if (current.type != CommandType.CONTEXT && !current.type.supportsContextOverride()) return null
-        if (current.effectiveContextSource != ContextSource.PREVIOUS) {
-            return ExecutionSemantics.mergeContexts(null, current.contextOverride)
-        }
-        val predecessors = graphPredecessors(graph, current)
-        val inherited = previousContextCandidates(graph, predecessors).singleOrNull()
-        return ExecutionSemantics.mergeContexts(inherited, current.contextOverride)
-    }
-
-    /** 先行ノード群それぞれを「直前に実行した」ときのpreviousContext候補をすべて収集します。 */
-    private fun previousContextCandidates(
-        graph: CommandGraph,
-        starts: List<CommandNode>,
-    ): Set<ExecutionContextSpec?> {
-        val candidates = linkedSetOf<ExecutionContextSpec?>()
-        fun visit(current: CommandNode, visited: MutableSet<UUID>) {
-            if (!visited.add(current.id)) return
-            if (passesThroughPreviousContext(current)) {
-                val predecessors = graphPredecessors(graph, current)
-                if (predecessors.isEmpty()) {
-                    candidates += null
-                    return
-                }
-                predecessors.forEach { visit(it, mutableSetOf()) }
-                return
-            }
-            candidates += ownExportContext(graph, current)
-        }
-        starts.forEach { visit(it, mutableSetOf()) }
-        return candidates
-    }
-
-    private fun exportContext(graph: CommandGraph, node: CommandNode): ExecutionContextSpec? =
-        resolveExportContext(graph, node).first
-
     private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
         graph.nodes.values.forEach { node ->
             if (node.type == CommandType.CAMERA_SHAKE) {
@@ -1379,8 +1290,8 @@ class VanillaDatapackExporter(
         node.string("operator").takeUnless { it == "!=" } ?: "=="
 
     private fun conditionTarget(node: CommandNode): String {
-        val spec = node.targetSpec ?: node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET)
-        return selector(if (spec.kind == TargetKind.INHERITED_TARGET) spec else spec.copy(limit = 1))
+        val spec = node.targetSpec ?: error("condition target is missing")
+        return selector(spec.copy(limit = 1))
     }
 
     private fun lowerVariable(node: CommandNode, graph: CommandGraph): String? {
@@ -1652,14 +1563,12 @@ class VanillaDatapackExporter(
                     node.blockToSpec,
                     node.soundPositionSpec,
                     node.summonPositionSpec,
-                    node.contextOverride?.position,
                 ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
                 listOfNotNull(
                     node.temporaryLocationPositionSpec,
                 ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
                 listOfNotNull(
                     node.destinationFacingSpec,
-                    node.contextOverride?.facing,
                 ).forEach { facing -> if (facing.kind == FacingKind.TEMPORARY) add(facing.tempName) }
                 node.temporaryLocationFacingSpec
                     ?.takeIf { it.kind == FacingKind.TEMPORARY }
@@ -1694,9 +1603,9 @@ class VanillaDatapackExporter(
      * ノードから実行時ENTITY参照を収集します。
      *
      * 一時ENTITYはセレクターへUUIDを直接埋め込めないため、UUIDの4要素を
-     * scoreboardへ写してから `execute as @e if score ...` で選択します。対象欄と
-     * コンテキスト欄は同じノード内で共存できるため、名前ごとにscore holderを分け、
-     * 片方の準備がもう片方の比較値を上書きしないようにします。
+     * scoreboardへ写してから `execute as @e if score ...` で選択します。通常の対象欄と
+     * 実行エンジン内部の対象状態は同じノード内で共存できるため、名前ごとにscore
+     * holderを分け、片方の準備がもう片方の比較値を上書きしないようにします。
      */
     private fun temporaryEntityReferences(
         node: CommandNode,
@@ -1716,7 +1625,7 @@ class VanillaDatapackExporter(
         add("primary", node.targetSpec)
         add("secondary", node.secondaryTargetSpec)
         add("destination", node.destinationTargetSpec)
-        add("context", context?.target ?: context?.executor)
+        add("runtime", context?.target ?: context?.executor)
     }.distinctBy { it.role to it.name }
 
     /** コマンド引数として同時に使われる一時ENTITY参照です。 */
@@ -1729,16 +1638,14 @@ class VanillaDatapackExporter(
         node: CommandNode,
         context: ExecutionContextSpec?,
     ): TemporaryEntityReference? {
-        // Java実行側のresolveTargetsと同じく、明示的なINHERITED_TARGETは
-        // context側へ解決を委ねます。CONDITIONの条件対象として実際に効く
-        // TARGET_EXISTS／PLAYER_STATEだけを対象にし、変数・ブロック条件の
-        // 無関係なcontext targetで分岐を変えないようにします。
+        // CONDITIONの条件対象として実際に効くTARGET_EXISTS／PLAYER_STATEだけを
+        // 対象にし、変数・ブロック条件の無関係な内部対象状態で分岐を変えません。
         val conditionKind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
         if (conditionKind !in setOf(ConditionKind.TARGET_EXISTS, ConditionKind.PLAYER_STATE)) return null
-        val explicitTarget = node.targetSpec?.takeUnless { it.kind == TargetKind.INHERITED_TARGET }
+        val explicitTarget = node.targetSpec
         val spec = explicitTarget ?: context?.target ?: context?.executor ?: return null
         if (spec.kind != TargetKind.TEMPORARY) return null
-        val role = if (explicitTarget != null) "primary" else "context"
+        val role = if (explicitTarget != null) "primary" else "runtime"
         return temporaryEntityReferences(node, context).firstOrNull { it.role == role }
     }
 
@@ -1786,10 +1693,7 @@ class VanillaDatapackExporter(
                 PositionKind.CAPTURED, PositionKind.COORDINATES ->
                     "${spec.x ?: "~"} ${spec.y ?: "~"} ${spec.z ?: "~"}"
                 PositionKind.DISK -> "~ ~ ~"
-                PositionKind.EXECUTOR -> "@s"
-                PositionKind.TARGET ->
-                    // tpの移動先は単一エンティティでなければならないため、limit=1へ固定する。
-                    singleSelector(node.contextOverride?.target ?: TargetSpec(TargetKind.INHERITED_TARGET))
+                PositionKind.TARGET -> error("teleport target position must use destinationTargetSpec")
                 PositionKind.TEMPORARY -> temporaryPositionCoordinates(
                     spec.tempName ?: error("temporary teleport destination name is missing"),
                 )
@@ -1806,12 +1710,12 @@ class VanillaDatapackExporter(
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
                 val position = requireNotNull(node.blockPositionSpec)
-                val anchor = blockAnchor(node, position)
+                val anchor = blockAnchor(position)
                 "${anchor.prefix}setblock ${anchor.coordinates} $block"
             }
             BlockOperationMode.FILL -> {
-                val from = blockAnchor(node, requireNotNull(node.blockFromSpec))
-                val to = blockAnchor(node, requireNotNull(node.blockToSpec))
+                val from = blockAnchor(requireNotNull(node.blockFromSpec))
+                val to = blockAnchor(requireNotNull(node.blockToSpec))
                 require(from.prefix == to.prefix) {
                     "fillの始点と終点は同じ基準位置で指定してください"
                 }
@@ -1823,17 +1727,13 @@ class VanillaDatapackExporter(
 
     private data class BlockAnchor(val prefix: String, val coordinates: String)
 
-    private fun blockAnchor(node: CommandNode, spec: me.awabi2048.kantancommander.model.PositionSpec): BlockAnchor = when (spec.kind) {
+    private fun blockAnchor(spec: PositionSpec): BlockAnchor = when (spec.kind) {
         PositionKind.CAPTURED, PositionKind.COORDINATES -> BlockAnchor(
             "",
             "${spec.x ?: error("block x is missing")} ${spec.y ?: error("block y is missing")} ${spec.z ?: error("block z is missing")}",
         )
         PositionKind.DISK -> BlockAnchor("", "~ ~ ~")
-        PositionKind.EXECUTOR -> BlockAnchor("execute at @s run ", "~ ~ ~")
-        PositionKind.TARGET -> BlockAnchor(
-            "execute at ${singleSelector(node.contextOverride?.target ?: node.targetSpec ?: error("block target is missing"))} run ",
-            "~ ~ ~",
-        )
+        PositionKind.TARGET -> error("block target position is not supported")
         PositionKind.TEMPORARY -> BlockAnchor(
             "",
             temporaryPositionCoordinates(spec.tempName ?: error("temporary block position name is missing")),
@@ -1841,12 +1741,9 @@ class VanillaDatapackExporter(
         PositionKind.MYWORLD_SPAWN -> error("unsupported structured block position")
     }
 
-    private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
-
     private fun conditionContext(node: CommandNode): ExecutionContextSpec? {
-        val inherited = node.contextOverride
-        val position = node.conditionPositionSpec ?: return inherited
-        return (inherited ?: ExecutionContextSpec()).copy(position = position)
+        val position = node.conditionPositionSpec ?: return null
+        return ExecutionContextSpec(position = position)
     }
 
     private fun wrapContext(
@@ -1856,7 +1753,7 @@ class VanillaDatapackExporter(
     ): String {
         val contextTarget = context.target ?: context.executor
         val temporaryContextTarget = if (contextTarget?.kind == TargetKind.TEMPORARY && node != null) {
-            temporaryEntityReferences(node, context).firstOrNull { it.role == "context" }
+            temporaryEntityReferences(node, context).firstOrNull { it.role == "runtime" }
         } else null
         val clauses = buildList {
             // 一時ENTITYはselectorへUUIDを埋め込めないため、最後に専用の
@@ -1868,7 +1765,6 @@ class VanillaDatapackExporter(
             context.position?.let {
                 when (it.kind) {
                     PositionKind.COORDINATES, PositionKind.CAPTURED -> add("positioned ${it.x} ${it.y} ${it.z}")
-                    PositionKind.EXECUTOR -> add("at @s")
                     PositionKind.TARGET -> context.target?.let { target -> add("at ${selector(target)}") }
                     PositionKind.TEMPORARY -> it.tempName?.let { name -> add("positioned ${temporaryPositionCoordinates(name)}") }
                     else -> Unit
@@ -1946,7 +1842,6 @@ class VanillaDatapackExporter(
                 .append(":temporaryLocationFacing=").append(node.temporaryLocationFacingSpec)
                 .append(":conditionPosition=").append(node.conditionPositionSpec)
                 .append(":soundPosition=").append(node.soundPositionSpec)
-                .append(":context=").append(node.contextOverride)
             node.snapshot?.let {
                 append(":snapshot={").append(graphFingerprint(it)).append('}')
             }
@@ -1967,7 +1862,6 @@ class VanillaDatapackExporter(
     }
 
     private fun selector(spec: TargetSpec): String {
-        if (spec.kind == TargetKind.INHERITED_TARGET) return "@s"
         if (spec.kind == TargetKind.TEMPORARY) return "@s"
         if (spec.kind == TargetKind.FIXED_ENTITY) return "@e[limit=0]"
         val base = when (spec.kind) {
@@ -2005,12 +1899,7 @@ class VanillaDatapackExporter(
         return if (arguments.isEmpty()) base else "$base[${arguments.joinToString(",")}]"
     }
 
-    private fun singleSelector(spec: TargetSpec): String =
-        if (spec.kind == TargetKind.INHERITED_TARGET) {
-            selector(spec)
-        } else {
-            selector(spec.copy(limit = 1))
-        }
+    private fun singleSelector(spec: TargetSpec): String = selector(spec.copy(limit = 1))
 
     private fun appendSelectorArguments(selector: String, argument: String): String =
         if (selector.endsWith("]")) selector.dropLast(1) + ",$argument]"

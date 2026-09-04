@@ -7,7 +7,6 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
-import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
@@ -29,9 +28,6 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
-import me.awabi2048.kantancommander.model.effectiveContextSource
-import me.awabi2048.kantancommander.model.hasContextOverride
-import me.awabi2048.kantancommander.model.supportsContextOverride
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.ArrayDeque
@@ -202,10 +198,6 @@ object ExecutableScriptValidator {
         validateSystemReferences(node, path, insideForBody, errors)
         validateRemovedSystemReferences(node, path, errors)
         validateTemporaryReferences(node, path, errors, temporaryDefinitions)
-        val hasContextState = node.hasContextOverride() || node.effectiveContextSource != ContextSource.BASE
-        if (hasContextState && node.type != CommandType.CONTEXT && !node.type.supportsContextOverride()) {
-            errors += nodeError(node, path, emptySet(), "${node.type} では実行コンテキストを設定できません")
-        }
         listOfNotNull(node.targetSpec, node.secondaryTargetSpec, node.destinationTargetSpec).forEach {
             validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
         }
@@ -223,7 +215,6 @@ object ExecutableScriptValidator {
             node.blockToSpec,
             node.soundPositionSpec,
             node.summonPositionSpec,
-            node.contextOverride?.position,
         ).forEach { validatePosition(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationPositionSpec?.let {
             validatePosition(it, path, node, errors, temporaryDefinitions)
@@ -231,12 +222,6 @@ object ExecutableScriptValidator {
         node.destinationFacingSpec?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationFacingSpec?.let {
             validateFacing(it, path, node, errors, temporaryDefinitions)
-        }
-        node.contextOverride?.let { context ->
-            listOfNotNull(context.executor, context.target).forEach {
-                validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
-            }
-            context.facing?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         }
         when (node.type) {
             CommandType.TELEPORT -> {
@@ -273,7 +258,7 @@ object ExecutableScriptValidator {
                 }
                 validateRange(node, path, "volume", 0.0..34.0, "音量は0.0〜34.0の範囲です", errors, variableDefinitions, temporaryDefinitions)
                 validateRange(node, path, "pitch", 0.5..2.0, "ピッチは0.5〜2.0の範囲です", errors, variableDefinitions, temporaryDefinitions)
-                if (node.string("soundScope", "CONTEXT") !in setOf("CONTEXT", "WORLD")) {
+                if (node.string("soundScope", "POSITION") !in setOf("POSITION", "WORLD")) {
                     errors += nodeError(node, path, setOf("soundPosition"), "サウンドの再生位置が不正です")
                 }
             }
@@ -298,9 +283,6 @@ object ExecutableScriptValidator {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
             }
             CommandType.CONDITION -> validateCondition(node, path, errors, variableDefinitions, temporaryDefinitions)
-            CommandType.CONTEXT -> if (!node.hasContextOverride()) {
-                errors += nodeError(node, path, setOf("context"), "コンテキストが未設定です")
-            }
             CommandType.DISK_CALL -> if (node.snapshot == null) {
                 errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
             }
@@ -447,8 +429,8 @@ object ExecutableScriptValidator {
         if (spec.kind == TargetKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, TemporaryVariableType.ENTITY, temporaryDefinitions, node, path, emptySet(), errors)
         }
-        // 暗示的継承は廃止予定です。新規設定のGUIでは選択肢を出さず、
-        // 既存データの読み・実行・出力は第2段階の読替まで維持します。
+        // 対象は各コマンドのTargetSpecだけで解決し、未設定の対象を
+        // 前段ノードから暗黙に継承する経路は検証しません。
         spec.searchOrigin?.let { validateSearchOrigin(it, path, node, errors, temporaryDefinitions) }
         spec.entityType?.takeIf(String::isNotBlank)?.let {
             if (!CommandValueRules.isEntityTypeId(it)) errors += nodeError(node, path, emptySet(), "エンティティの種類が不正です")
@@ -493,8 +475,8 @@ object ExecutableScriptValidator {
             checkTemporaryDefinition(spec.tempName, TemporaryVariableType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
             return
         }
-        // コンテキスト経由解決は廃止予定です。新規設定のGUIでは選択肢を出さず、
-        // 既存データの読み・実行・出力は第2段階の読替まで維持します。
+        // 位置は各コマンドのPositionSpecだけで解決し、実行者・前段対象を
+        // 位置設定へ暗黙に読み替える経路は検証しません。
         if (spec.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES) &&
             listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }
         ) {
@@ -516,8 +498,8 @@ object ExecutableScriptValidator {
             checkTemporaryDefinition(spec.tempName, TemporaryVariableType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
             return
         }
-        // 継承向きは廃止予定です。新規設定のGUIでは選択肢を出さず、
-        // 既存データの読み・実行・出力は第2段階の読替まで維持します。
+        // 向きは各コマンドのFacingSpecだけで解決し、前段の向きを
+        // GUI設定として指定する経路は検証しません。
         if (spec.kind == FacingKind.COORDINATES && listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }) {
             errors += nodeError(node, path, emptySet(), "向く座標が未設定または有限値ではありません")
         }
@@ -567,11 +549,7 @@ object ExecutableScriptValidator {
                 if (CommandValueRules.material(node.string("block")) == null) {
                     errors += nodeError(node, path, setOf("condition"), "判定するブロックが未設定です")
                 }
-                // 暗示的コンテキスト廃止後は判定位置を必須化します。
-                // 第2段階の読替までは既存データのため未設定を許容します。
-                if (node.conditionPositionSpec == null && node.contextOverride?.position == null) {
-                    // コンテキスト位置を既定値として使うため、未設定は有効です。
-                }
+                // 判定位置が未設定の場合は、実行元の制御ブロック位置を使います。
             }
         }
     }

@@ -39,7 +39,6 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.model.ConditionKind
-import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
@@ -53,7 +52,6 @@ import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.hasContextOverride
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -184,7 +182,6 @@ enum class GestureSettingScreen {
     CONDITION_INVERSION,
     CAMERA_SHAKE_TYPE,
     SOUND_SCOPE,
-    CONTEXT_OVERRIDE,
     BLOCK_OPERATION,
 }
 
@@ -881,20 +878,14 @@ class GestureSequenceEditor(
                         val isSelected = state.selectedNodeId == node.id
                         val glowColor = if (isSelected) Color.YELLOW.asARGB() else null
                         val incomplete = node.id in incompleteNodeIds
-                        val hasContextOverride = node.hasContextOverride()
                         val backgroundMaterial = when {
                             incomplete -> Material.ORANGE_CONCRETE
-                            hasContextOverride -> Material.CYAN_CONCRETE
                             else -> Material.LIGHT_GRAY_CONCRETE
                         }
                         val statusLine = when {
                             incomplete -> Component.text(
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_INCOMPLETE),
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
                                 NamedTextColor.RED,
-                            )
-                            hasContextOverride -> Component.text(
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_CONTEXT_STATUS),
-                                NamedTextColor.AQUA,
                             )
                             else -> null
                         }
@@ -2791,7 +2782,6 @@ class GestureSequenceEditor(
          */
         fun handleTargetCategory(categoryValue: String) {
             val category = runCatching { TargetCategory.valueOf(categoryValue) }.getOrNull() ?: return
-            if (!CommandSettingsModel.targetCategoryAvailable(script.graph, node.id, category)) return
             val role = settingContext.role
             val current = CommandSettingsModel.targetSpec(node, role)
             val currentKind = current?.kind
@@ -3025,7 +3015,7 @@ class GestureSequenceEditor(
                     // PositionSpec(TARGET)へ保存すると、対象の種類・距離が失われるため、
                     // targetSpecの共通setterへ初期対象だけを渡して親子の境界を保ちます。
                     val currentTarget = CommandSettingsModel.targetSpec(node, settingContext.role)
-                        ?: TargetSpec(TargetKind.INHERITED_TARGET)
+                        ?: TargetSpec(TargetKind.NEAREST_PLAYER)
                     if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setTargetSpec(it, settingContext.role, currentTarget)
                         }) return
@@ -3099,7 +3089,7 @@ class GestureSequenceEditor(
             GestureSettingScreen.FACING -> {
                 if (group != "facing") return
                 val kind = runCatching { FacingKind.valueOf(value) }.getOrNull() ?: return
-                val facingRole = settingContext.role ?: CommandSettingRole.CONTEXT_FACING
+                val facingRole = settingContext.role ?: return
                 if (kind == FacingKind.TEMPORARY) {
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
                     beginSettingInput(
@@ -3294,7 +3284,7 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.SOUND_SCOPE -> {
-                if (group != "soundScope" || value !in setOf("CONTEXT", "WORLD")) return
+                if (group != "soundScope" || value !in setOf("POSITION", "WORLD")) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "soundScope", value)
                     }) showSettingScreen()
@@ -3351,66 +3341,6 @@ class GestureSequenceEditor(
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, fieldKey, value.toBoolean().toString())
                     }) showSettingScreen()
-            }
-            GestureSettingScreen.CONTEXT_OVERRIDE -> {
-                when (value) {
-                    "executor", "target" -> {
-                        val role = if (value == "executor") CommandSettingRole.CONTEXT_EXECUTOR else CommandSettingRole.CONTEXT_TARGET
-                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                        rememberSettingNode(encoded)
-                        when (settingSelectionAction(wasSelected, hasChildren)) {
-                            GestureSettingSelectionAction.ENTER_CHILD -> {
-                                pushSettingFrame(
-                                    player,
-                                    GestureSettingFrame(settingContext.copy(role = role), fieldKey, GestureSettingScreen.TARGET),
-                                    encoded,
-                                )
-                            }
-                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                        }
-                    }
-                    "position" -> {
-                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                        rememberSettingNode(encoded)
-                        when (settingSelectionAction(wasSelected, hasChildren)) {
-                            GestureSettingSelectionAction.ENTER_CHILD -> {
-                                pushSettingFrame(
-                                    player,
-                                    GestureSettingFrame(
-                                        settingContext.copy(role = CommandSettingRole.CONTEXT_POSITION),
-                                        fieldKey,
-                                        GestureSettingScreen.POSITION,
-                                    ),
-                                    encoded,
-                                )
-                            }
-                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                        }
-                    }
-                    "facing" -> {
-                        val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                        val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                        rememberSettingNode(encoded)
-                        when (settingSelectionAction(wasSelected, hasChildren)) {
-                            GestureSettingSelectionAction.ENTER_CHILD -> {
-                                pushSettingFrame(
-                                    player,
-                                    GestureSettingFrame(settingContext.copy(role = CommandSettingRole.CONTEXT_FACING), fieldKey, GestureSettingScreen.FACING),
-                                    encoded,
-                                )
-                            }
-                            GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                        }
-                    }
-                    "source" -> {
-                        if (updateSettingNode(player, settingContext) { CommandSettingsModel.toggleContextSource(it) }) updateLower(player)
-                    }
-                    "inherit" -> if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.clearContextOverride(it)
-                    }) showSettingScreen()
-                }
             }
         }
     }
