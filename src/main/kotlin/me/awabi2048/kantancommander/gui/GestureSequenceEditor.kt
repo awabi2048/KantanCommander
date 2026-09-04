@@ -1424,6 +1424,14 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(state.scriptId) ?: return
         observedRevision = script.revision
         val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+        if (CommandSettingsModel.gestureVisibleFields(node).none { it.key == fieldKey }) {
+            // 状態更新の直後に古いタブ操作が届いても、実行時に不要な設定を
+            // 隠した共通モデルの可視性を操作入口でも再確認します。
+            clearSettingState()
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+            return
+        }
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
         if (fieldKey == "item" && (
@@ -1804,7 +1812,7 @@ class GestureSequenceEditor(
     private fun updateSettingNode(
         player: Player,
         context: CommandSettingContext,
-        configuredFields: Set<String> = emptySet(),
+        configuredFields: Set<String>? = null,
         change: (me.awabi2048.kantancommander.model.CommandNode) -> Unit,
     ): Boolean {
         val saved = runCatching {
@@ -1815,7 +1823,10 @@ class GestureSequenceEditor(
                 // タブ選択直後は画面を常に親設定へ戻すためsettingFieldKeyが空に
                 // なります。設定済み判定はUI状態に依存させず、実際に変更した
                 // 項目を呼び出し元から明示します。
-                configuredFields = configuredFields.ifEmpty { setOfNotNull(state.settingFieldKey) },
+                // nullは従来どおり現在の設定項目を完了扱いにします。
+                // 空集合は方式だけを選択した未完成状態を明示し、TEMPORARYや
+                // COORDINATESの二段階入力で値未入力のまま確定しないようにします。
+                configuredFields = configuredFields ?: setOfNotNull(state.settingFieldKey),
                 expectedRevision = expectedMutationRevision(player),
                 change = change,
             ) != null
@@ -2765,6 +2776,14 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(settingContext.scriptId) ?: return
         observedRevision = script.revision
         val node = script.graph.nodes[settingContext.nodeId] ?: return
+        if (CommandSettingsModel.gestureVisibleFields(node).none { it.key == fieldKey }) {
+            // 依存値の変更後に残った古い子画面からの操作を受け付けません。
+            if (settingChildOpen(ownerId)) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
+            clearSettingState()
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+            return
+        }
 
         fun showSettingScreen(openChild: Boolean = false) {
             state.lowerMode = if (settingChildOpen(ownerId) || state.settingRoute.size > 1) {
@@ -2790,14 +2809,30 @@ class GestureSequenceEditor(
             } else {
                 CommandSettingsModel.defaultTargetKind(category)
             }
+            val encodedCategory = "target:$categoryValue"
+            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encodedCategory)
             if (category == TargetCategory.TEMPORARY) {
-                // 一時対象はUUIDを対象Specへ直接埋め込まず、実行時に解決する
-                // 一時変数名を保存します。入力完了まで未設定のまま保持し、
-                // 途中状態を「設定済み」と表示しないようにします。
+                if (!wasSelected || currentKind != TargetKind.TEMPORARY) {
+                    // 一時変数は通常の選択肢と同じく、1回目は方式の選択だけにします。
+                    // 値未入力のTargetSpecを設定済み扱いにしないため、明示的に
+                    // configuredFieldsを空集合へ指定します。
+                    if (!updateSettingNode(
+                            player,
+                            settingContext.copy(role = role),
+                            configuredFields = emptySet(),
+                        ) {
+                            CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                        }) return
+                    rememberSettingNode(encodedCategory)
+                    showSettingScreen()
+                    return
+                }
+                // 二回目のクリックで初めて一時変数名を入力します。入力完了まで
+                // 未設定のまま保持し、途中状態を「設定済み」と表示しません。
                 beginSettingInput(
                     player,
                     CommandDialogSpecs.variableName,
-                    current?.takeIf { it.kind == TargetKind.TEMPORARY }?.tempName.orEmpty(),
+                    current.takeIf { it.kind == TargetKind.TEMPORARY }?.tempName.orEmpty(),
                 ) { raw ->
                     if (!updateSettingNode(player, settingContext.copy(role = role)) {
                             CommandSettingsModel.setTargetSpec(
@@ -2814,8 +2849,7 @@ class GestureSequenceEditor(
                 }
                 return
             }
-            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, "target:$categoryValue")
-            val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, "target:$categoryValue")
+            val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encodedCategory)
             val fixedId = if (kind == TargetKind.FIXED_ENTITY) {
                 current?.fixedEntityId ?: player.getTargetEntity(32)?.uniqueId ?: run {
                     player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_NO_ENTITY_IN_SIGHT))
@@ -2834,7 +2868,6 @@ class GestureSequenceEditor(
                         ),
                     )
                 }) return
-            val encodedCategory = "target:$categoryValue"
             rememberSettingNode(encodedCategory)
             when (settingSelectionAction(wasSelected, hasChildren)) {
                 GestureSettingSelectionAction.ENTER_CHILD -> {
@@ -3026,10 +3059,28 @@ class GestureSequenceEditor(
                 }
                 if (kind == PositionKind.TEMPORARY) {
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
+                    if (!wasSelected || current?.kind != PositionKind.TEMPORARY) {
+                        // 一時変数は1回目を方式選択、2回目を変数名入力とします。
+                        // 保存するSpecは入力前の未完成状態なので、設定済み項目として
+                        // マークしないことを明示します。
+                        if (!updateSettingNode(
+                                player,
+                                settingContext,
+                                configuredFields = emptySet(),
+                            ) {
+                                CommandSettingsModel.setPositionSpec(
+                                    it,
+                                    settingContext.role,
+                                    PositionSpec(PositionKind.TEMPORARY),
+                                )
+                            }) return
+                        showSettingScreen()
+                        return
+                    }
                     beginSettingInput(
                         player,
                         CommandDialogSpecs.variableName,
-                        current?.takeIf { it.kind == PositionKind.TEMPORARY }?.tempName.orEmpty(),
+                        current.takeIf { it.kind == PositionKind.TEMPORARY }?.tempName.orEmpty(),
                     ) { raw ->
                         if (!updateSettingNode(player, settingContext) {
                                 CommandSettingsModel.setPositionSpec(
@@ -3053,7 +3104,11 @@ class GestureSequenceEditor(
                         // 保存すると、まだ座標を入力していないのに設定完了へ遷移してしまう
                         // ため、未完成のCOORDINATES Specだけを保持し、完了判定はモデル側へ
                         // 任せます。次回クリックの入力欄では現在位置を初期候補として使います。
-                        if (!updateSettingNode(player, settingContext) {
+                        if (!updateSettingNode(
+                                player,
+                                settingContext,
+                                configuredFields = emptySet(),
+                            ) {
                                 CommandSettingsModel.setPositionSpec(
                                     it,
                                     settingContext.role,
@@ -3092,10 +3147,30 @@ class GestureSequenceEditor(
                 val facingRole = settingContext.role ?: return
                 if (kind == FacingKind.TEMPORARY) {
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
+                    val encodedFacing = "facing:${kind.name}"
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encodedFacing)
+                    if (!wasSelected || current?.kind != FacingKind.TEMPORARY) {
+                        // 他の設定値と同じく、最初のクリックでは方式だけを選びます。
+                        // 変数名がまだないため、configuredFieldsは空集合のままにします。
+                        if (!updateSettingNode(
+                                player,
+                                settingContext,
+                                configuredFields = emptySet(),
+                            ) {
+                                CommandSettingsModel.setFacingSpec(
+                                    it,
+                                    FacingSpec(FacingKind.TEMPORARY),
+                                    facingRole,
+                                )
+                            }) return
+                        rememberSettingNode(encodedFacing)
+                        showSettingScreen()
+                        return
+                    }
                     beginSettingInput(
                         player,
                         CommandDialogSpecs.variableName,
-                        current?.takeIf { it.kind == FacingKind.TEMPORARY }?.tempName.orEmpty(),
+                        current.takeIf { it.kind == FacingKind.TEMPORARY }?.tempName.orEmpty(),
                     ) { raw ->
                         if (!updateSettingNode(player, settingContext) {
                                 CommandSettingsModel.setFacingSpec(

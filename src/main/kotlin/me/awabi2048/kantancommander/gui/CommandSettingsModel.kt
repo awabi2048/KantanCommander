@@ -232,7 +232,27 @@ object CommandSettingsModel {
             }
             else -> fields
         }
-        return conditionalFields
+        // 実行時に参照されない設定は、保存値を変更せずに両GUIから隠します。
+        // ここで一元判定することで、表示だけ残って実行結果へ反映されない
+        // 「テレポート先の向き」「サウンド位置」の設定入口を作りません。
+        return conditionalFields.filter { isFieldVisible(node, it.key) }
+    }
+
+    /**
+     * コマンドの現在値に応じた実行依存フィールドの可視性を返します。
+     *
+     * 古い保存値を移行・消去する責務は持たせず、現在の実行意味論に不要な
+     * 入力だけをGUIから隠します。これにより、保存済みデータを無視するという
+     * 方針を保ったまま、表示と実行の入口だけを一致させられます。
+     */
+    fun isFieldVisible(node: CommandNode, fieldKey: String): Boolean = when (node.type) {
+        CommandType.TELEPORT ->
+            fieldKey != "destinationFacing" || node.destinationSpec?.kind != PositionKind.TEMPORARY
+
+        CommandType.PLAY_SOUND ->
+            fieldKey != "soundPosition" || node.string("soundScope", "POSITION") != "WORLD"
+
+        else -> true
     }
 
     /**
