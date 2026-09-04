@@ -24,6 +24,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiSessionListener
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisibilityPolicy
+import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenLayout
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVerticalSlot
@@ -1152,7 +1153,7 @@ class GestureSequenceEditor(
             ))
         }
 
-        addNavigation(visuals, elements, layout, metrics.columns, metrics.rows)
+        addNavigation(player, visuals, elements, layout, metrics.columns, metrics.rows)
 
         // back-to-start（十字の下・左に隣接）
         visuals.add(GestureGuiVisual.Block(
@@ -1177,9 +1178,11 @@ class GestureSequenceEditor(
             bounds = navBounds(GestureEditorLayout.BACK_X, GestureEditorLayout.BACK_Y, GestureEditorLayout.NAV_SIZE),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "back-label",
+            hoverText = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_ACTION),
         ))
 
         addZoomControls(player, visuals, elements)
+        addClipButton(player, visuals, elements)
         addCloseButton(player, visuals, elements)
 
         // ズームはビューポート内容とその当たり判定だけを同じ倍率で変換します。
@@ -3619,6 +3622,15 @@ class GestureSequenceEditor(
                     updateUpper(player)
                 }
             }
+            context.elementId == "nav-clip" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                // 共有画面の第三者には、所有者の表示モードを変更する権限を渡しません。
+                // pinToCurrentPositionは実行時poseを保持したまま追従だけを止めるため、
+                // クリック直後の表示と当たり判定の位置がずれません。
+                if (context.actorId != ownerId || state.anchor != null) return
+                if (!api.pinToCurrentPosition(ownerId)) return
+                state.anchor = player.eyeLocation.clone()
+                updateUpper(player)
+            }
             context.elementId.startsWith("nav-") && context.elementId != "nav-close" &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val delta = when (context.elementId) {
@@ -4225,6 +4237,16 @@ class GestureSequenceEditor(
         return GestureGuiBounds(cx - h, cy - h, cx + h, cy + h)
     }
 
+    /** ナビゲーション列の各ボタンが共有する、参照画像準拠の説明欄を生成します。 */
+    private fun navigationHover(player: Player, key: LocalizationKey<String>): GestureGuiHoverText =
+        GestureGuiHoverText(
+            text = Component.text(KcI18n.text(player, key)),
+            x = GestureEditorLayout.NAV_HOVER_X,
+            y = GestureEditorLayout.NAV_HOVER_Y,
+            size = GestureEditorLayout.NAV_HOVER_SIZE,
+            lineWidth = GestureEditorLayout.NAV_HOVER_LINE_WIDTH,
+        )
+
     private fun rect(cx: Double, cy: Double, width: Double, height: Double): GestureGuiBounds =
         GestureGuiBounds(cx - width / 2.0, cy - height / 2.0, cx + width / 2.0, cy + height / 2.0)
 
@@ -4233,6 +4255,7 @@ class GestureSequenceEditor(
 
     /** 十字ナビゲーション（75%サイズ・右下） */
     private fun addNavigation(
+        player: Player,
         visuals: MutableList<GestureGuiVisual>,
         elements: MutableList<GestureGuiElement>,
         layout: GraphLayout,
@@ -4253,6 +4276,13 @@ class GestureSequenceEditor(
             val ny = cy + quad.third * p
             val delta = MapPoint(quad.second, -quad.third)
             val enabled = layout.canMove(state.origin, delta.x, delta.y, viewportWidth, viewportHeight)
+            val hoverKey = when (quad.first) {
+                "nav-up" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP
+                "nav-down" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN
+                "nav-left" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT
+                "nav-right" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT
+                else -> error("unknown gesture navigation button: ${quad.first}")
+            }
             visuals.add(GestureGuiVisual.Block(
                 visualId = "${quad.first}-block",
                 x = nx, y = ny,
@@ -4279,6 +4309,7 @@ class GestureSequenceEditor(
                 // ナビゲーションでは効果音・Actionを発生させません。
                 gestureGuard = { _, _ -> canMoveCurrentViewport(delta) },
                 targetVisualId = "${quad.first}-glyph",
+                hoverText = navigationHover(player, hoverKey),
             ))
         }
     }
@@ -4344,6 +4375,11 @@ class GestureSequenceEditor(
             } else {
                 state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
             }
+            val hoverKey = if (id == "nav-zoom-in") {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_IN
+            } else {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_OUT
+            }
             // 利用できない操作は灰色で常時表示し、操作可能かを視線で判別できるようにします。
             visuals.add(GestureGuiVisual.Block(
                 visualId = "$id-block", x = x, y = y,
@@ -4372,6 +4408,7 @@ class GestureSequenceEditor(
                     }
                 },
                 targetVisualId = "$id-glyph",
+                hoverText = navigationHover(player, hoverKey),
             ))
         }
         val resetY = GestureEditorLayout.ZOOM_TOP_Y - GestureEditorLayout.ZOOM_PITCH
@@ -4395,6 +4432,57 @@ class GestureSequenceEditor(
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             gestureGuard = { _, _ -> state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL },
             targetVisualId = "nav-zoom-reset-glyph",
+            hoverText = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_RESET),
+        ))
+    }
+
+    /**
+     * 追従画面を現在の表示位置へ固定するクリップ操作です。
+     * 共通サービスが保持する実行時poseをそのまま凍結するため、ボタンの再描画で
+     * 固定位置を再計算せず、クリックした瞬間の画面と入力判定を一致させます。
+     */
+    private fun addClipButton(
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+    ) {
+        val x = GestureEditorLayout.CLIP_X
+        val y = GestureEditorLayout.CLIP_Y
+        val size = GestureEditorLayout.CLIP_SIZE
+        val following = state.anchor == null
+        visuals.add(GestureGuiVisual.Block(
+            visualId = "nav-clip-block",
+            x = x,
+            y = y,
+            width = size,
+            height = size,
+            blockData = Bukkit.createBlockData(
+                if (following) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+            ),
+            layer = 4,
+        ))
+        visuals.add(GestureGuiVisual.Text(
+            visualId = "nav-clip-glyph",
+            x = x,
+            y = y - 0.01,
+            text = Component.text("@"),
+            size = 0.010,
+            layer = 6,
+        ))
+        elements.add(GestureGuiElement(
+            elementId = "nav-clip",
+            bounds = navBounds(x, y, size),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            gestureGuard = { actor, _ -> following && actor.uniqueId == sessionOwnerId },
+            targetVisualId = "nav-clip-glyph",
+            hoverText = navigationHover(
+                player,
+                if (following) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP_FIXED
+                },
+            ),
         ))
     }
 
@@ -4425,13 +4513,7 @@ class GestureSequenceEditor(
             bounds = navBounds(x, y, size),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "nav-close-glyph",
-            hoverText = GestureGuiHoverText(
-                text = net.kyori.adventure.text.Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)),
-                x = x,
-                y = y - size,
-                size = 0.0055,
-                lineWidth = 80,
-            ),
+            hoverText = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE),
         ))
     }
 

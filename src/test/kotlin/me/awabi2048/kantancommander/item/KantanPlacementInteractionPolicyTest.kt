@@ -29,7 +29,7 @@ class KantanPlacementInteractionPolicyTest {
             KantanPlacementInteractionPolicy.resolve(KantanItemKind.DISK, sneaking = false, useGestureEditor = true),
         )
         assertEquals(
-            KantanPlacementInteraction.FIXED_GESTURE,
+            KantanPlacementInteraction.FOLLOWING_GESTURE,
             KantanPlacementInteractionPolicy.resolve(KantanItemKind.NONE, sneaking = false, useGestureEditor = true),
         )
         assertEquals(
