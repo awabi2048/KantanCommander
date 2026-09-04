@@ -137,6 +137,11 @@ class GestureLowerPanel(
         val fields = CommandSettingsModel.gestureVisibleFields(node)
         if (fields.isEmpty()) {
             addText(visuals, "lower-hint", 0.28, 0.20, 0.010, 160, Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS)))
+            // MERGE／FOR_END／BREAK／CONTINUEのように設定値を持たない構造制御
+            // ノードにも、通常ノードと同じ削除導線を常設します。削除処理自体は
+            // lower-deleteの既存確認画面へ集約し、設定項目の有無で操作可能性を
+            // 変えないことが共通UI仕様上の契約です。
+            addDeleteAction(player, visuals, elements)
             return view(GestureLowerMode.SETTINGS, elements, visuals)
         }
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
@@ -1076,7 +1081,13 @@ class GestureLowerPanel(
         suppressHighlight: Boolean = false,
     ) {
         val fields = CommandSettingsModel.gestureVisibleFields(node)
-        if (fields.isEmpty()) return
+        if (fields.isEmpty()) {
+            // 設定選択子画面から親のナビゲーションを再構成する場合も、制御ノードの
+            // 削除ボタンだけは欠落させません。通常の設定タブがないことと、ノードを
+            // 削除できないことは別の状態です。
+            addDeleteAction(player, visuals, elements)
+            return
+        }
         val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
             ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
         check(fields.size <= SETTINGS_TAB_MAX) {
@@ -1120,10 +1131,40 @@ class GestureLowerPanel(
         }
 
 
+        addDeleteAction(player, visuals, elements)
+    }
+
+    /**
+     * 設定値の有無に依存しない、ノード削除の固定操作です。
+     *
+     * 表示位置・要素ID・クリック契約を通常の設定画面と共有し、入力側の
+     * `lower-delete`から既存の削除確認／保存失敗フィードバックへ接続します。
+     */
+    private fun addDeleteAction(
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+    ) {
         val deleteY = SETTINGS_TAB_ACTION_Y
-        addBlock(visuals, "delete-bg", SETTINGS_TAB_CENTER_X, deleteY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT, Material.RED_CONCRETE, 4)
-        addText(visuals, "delete-label", SETTINGS_TAB_CENTER_X, deleteY, 0.0049, 90,
-            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE)))
+        addBlock(
+            visuals,
+            "delete-bg",
+            SETTINGS_TAB_CENTER_X,
+            deleteY,
+            SETTINGS_TAB_WIDTH,
+            SETTINGS_TAB_HEIGHT,
+            Material.RED_CONCRETE,
+            4,
+        )
+        addText(
+            visuals,
+            "delete-label",
+            SETTINGS_TAB_CENTER_X,
+            deleteY,
+            0.0049,
+            90,
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE)),
+        )
         elements.add(GestureGuiElement(
             elementId = "lower-delete",
             bounds = rect(SETTINGS_TAB_CENTER_X, deleteY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT),
