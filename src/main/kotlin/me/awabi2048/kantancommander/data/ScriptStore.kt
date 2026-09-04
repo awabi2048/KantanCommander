@@ -39,6 +39,12 @@ class ScriptStore(
      */
     private val cache = ConcurrentHashMap<UUID, DiskScript>()
     /**
+     * 隔離先へ移動できなかったファイルの負のキャッシュです。監視処理や一覧更新が
+     * 同じ不正ファイルを毎回解析してログを繰り返さないようにします。ファイルの
+     * 更新時刻またはサイズが変わった場合だけ、修復された可能性を確認して再読込します。
+     */
+    private val rejectedFiles = ConcurrentHashMap<UUID, RejectedFileFingerprint>()
+    /**
      * 読み込み・変更・検証・保存を同じロックへ束ねます。ファイル置換だけを
      * atomicにしても、2つの画面が古いコピーを保存すれば後勝ちで変更を失うため、
      * プログラム単位のread-modify-write全体を直列化します。
@@ -153,6 +159,7 @@ class ScriptStore(
         script.revision = (previous?.revision ?: script.revision).inc()
         atomicWrite(file(script.id), gson.toJson(script))
         // 検証に通った時点の内容だけを正本として採用する。以後の呼び出し側変更は反映されない。
+        rejectedFiles.remove(script.id)
         cache[script.id] = script.deepCopy()
         editorId?.let { recordHistory(it, script.id) }
     }
@@ -175,6 +182,7 @@ class ScriptStore(
             throw IllegalStateException("プログラムディスクを削除できません: ${target.absolutePath}")
         }
         cache.remove(id)
+        rejectedFiles.remove(id)
     }
 
     fun listAll(): List<DiskScript> =
@@ -309,8 +317,27 @@ class ScriptStore(
 
     private fun cached(id: UUID): DiskScript? {
         cache[id]?.let { return it }
-        if (!file(id).isFile) return null
-        val loaded = read(file(id)) ?: return null
+        val target = file(id)
+        if (!target.isFile) {
+            rejectedFiles.remove(id)
+            return null
+        }
+        val fingerprint = RejectedFileFingerprint.from(target)
+        rejectedFiles[id]?.let { rejected ->
+            if (rejected == fingerprint) return null
+            rejectedFiles.remove(id, rejected)
+        }
+        val loaded = read(target) ?: run {
+            // 隔離に失敗した場合だけ元ファイルが残ります。次回以降は同じファイルの
+            // 更新を検知するまで、読み込み・隔離・警告を繰り返しません。
+            if (target.isFile) {
+                rejectedFiles[id] = RejectedFileFingerprint.from(target)
+            } else {
+                rejectedFiles.remove(id)
+            }
+            return null
+        }
+        rejectedFiles.remove(id)
         cache[id] = loaded
         return loaded
     }
@@ -352,41 +379,61 @@ class ScriptStore(
 
     private fun read(file: File): DiskScript? = try {
         val source = JsonParser.parseString(file.readText(Charsets.UTF_8)).asJsonObject
-        val sourceVersion = source["formatVersion"]?.asInt ?: return null
+        val sourceVersion = source["formatVersion"]
+            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+            ?.asString
+            ?.toIntOrNull()
+            ?: error("formatVersionがありません、または整数ではありません")
         val migrated = when (sourceVersion) {
             STRUCTURED_FORMAT_VERSION -> source
             LEGACY_COMMAND_FORMAT_VERSION -> migrateCommandFormat(source)
             LEGACY_TICK_FORMAT_VERSION -> migrateCommandFormat(migrateLegacyTickFormat(source))
             else -> {
-                logger.warning("未対応の構造化プログラムディスク形式を読み込みません: ${file.absolutePath} version=$sourceVersion")
+                quarantine(
+                    file,
+                    QuarantineKind.INCOMPATIBLE,
+                    "formatVersion=$sourceVersion",
+                    fileTag = "v$sourceVersion",
+                )
                 return null
             }
         }
-        gson.fromJson(migrated, DiskScript::class.java)
-            ?.takeIf { it.formatVersion == STRUCTURED_FORMAT_VERSION }
-            ?.also { script ->
-                // 構造そのものの違反は破損データとして隔離する。
-                val structuralViolations = validateRecursively(script.graph, UNBOUNDED_LIMITS)
-                require(structuralViolations.isEmpty()) { structuralViolations.joinToString("; ") }
-                // config上限だけを超えるデータは、リロードでの上限引き下げ時に
-                // 既存データを失わせないため、警告のみで読み込みを続行する（仕様18 既存グラフを変更しない）。
-                // 実行可否は実行前検証が別途判定する。
-                val limitViolations = validateRecursively(script.graph, limits)
-                if (limitViolations.isNotEmpty()) {
-                    logger.warning(
-                        "設定上限を超える保存済みプログラムディスクを読み込みました（隔離していません）: " +
-                            "${file.absolutePath} (${limitViolations.joinToString("; ")})"
-                    )
-                }
-                if (sourceVersion != STRUCTURED_FORMAT_VERSION) {
-                    // 旧形式を読み込んだ時点でv9の正本へ書き戻し、次回以降に
-                    // 旧tick値や廃止コマンドを二重解釈しないようにします。
-                    atomicWrite(file, gson.toJson(migrated))
-                    logger.info("構造化プログラムディスクをv9形式へ移行しました: ${file.absolutePath}")
-                }
-            }
+        val schemaViolations = PersistedScriptValidator.validate(migrated)
+        require(schemaViolations.isEmpty()) {
+            "保存データの型・enum検証に失敗しました: ${schemaViolations.joinToString("; ")}"
+        }
+        val script = gson.fromJson(migrated, DiskScript::class.java)
+            ?: error("保存データをプログラムディスクへ復元できません")
+        require(script.formatVersion == STRUCTURED_FORMAT_VERSION) {
+            "移行後のプログラムディスク形式が不正です: ${script.formatVersion}"
+        }
+        // 構造そのものの違反は破損データとして隔離する。
+        val structuralViolations = validateRecursively(script.graph, UNBOUNDED_LIMITS)
+        require(structuralViolations.isEmpty()) { structuralViolations.joinToString("; ") }
+        // config上限だけを超えるデータは、リロードでの上限引き下げ時に
+        // 既存データを失わせないため、警告のみで読み込みを続行する（仕様18 既存グラフを変更しない）。
+        // 実行可否は実行前検証が別途判定する。
+        val limitViolations = validateRecursively(script.graph, limits)
+        if (limitViolations.isNotEmpty()) {
+            logger.warning(
+                "設定上限を超える保存済みプログラムディスクを読み込みました（隔離していません）: " +
+                    "${file.absolutePath} (${limitViolations.joinToString("; ")})"
+            )
+        }
+        if (sourceVersion != STRUCTURED_FORMAT_VERSION) {
+            // 旧形式を読み込んだ時点でv9の正本へ書き戻し、次回以降に
+            // 旧tick値や廃止コマンドを二重解釈しないようにします。
+            atomicWrite(file, gson.toJson(migrated))
+            logger.info("構造化プログラムディスクをv9形式へ移行しました: ${file.absolutePath}")
+        }
+        script
     } catch (error: Exception) {
-        quarantine(file, error)
+        quarantine(
+            file,
+            QuarantineKind.CORRUPT,
+            "JSON解析または保存データ検証に失敗しました",
+            error = error,
+        )
         null
     }
 
@@ -607,11 +654,53 @@ class ScriptStore(
         params.remove(oldKey)
     }
 
-    private fun quarantine(file: File, error: Exception) {
-        val quarantine = dir.resolve("corrupt").also(File::mkdirs)
-        val target = quarantine.resolve("${file.nameWithoutExtension}-${System.currentTimeMillis()}.json")
-        runCatching { Files.move(file.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING) }
-        logger.log(Level.WARNING, "構造化プログラムディスクを隔離しました: ${file.absolutePath}", error)
+    private fun quarantine(
+        file: File,
+        kind: QuarantineKind,
+        reason: String,
+        fileTag: String = "invalid",
+        error: Throwable? = null,
+    ): Boolean {
+        val quarantine = dir.resolve(kind.directoryName)
+        if (!quarantine.isDirectory && !quarantine.mkdirs() && !quarantine.isDirectory) {
+            logger.log(
+                Level.WARNING,
+                "構造化プログラムディスクを隔離できませんでした（隔離先を準備できません）: " +
+                    "${file.absolutePath} reason=$reason",
+                error,
+            )
+            return false
+        }
+        val target = uniqueQuarantineTarget(quarantine, file, fileTag)
+        val moveFailure = runCatching {
+            // 同名の隔離済みファイルを上書きしないことで、過去のデータを失わないようにします。
+            Files.move(file.toPath(), target.toPath())
+        }.exceptionOrNull()
+        if (moveFailure == null) {
+            val message = "構造化プログラムディスクを${kind.label}へ隔離しました: " +
+                "${file.absolutePath} -> ${target.absolutePath} reason=$reason"
+            if (error == null) logger.warning(message) else logger.log(Level.WARNING, message, error)
+            return true
+        }
+        logger.log(
+            Level.WARNING,
+            "構造化プログラムディスクを${kind.label}へ隔離できませんでした: " +
+                "${file.absolutePath} reason=$reason",
+            moveFailure,
+        )
+        return false
+    }
+
+    private fun uniqueQuarantineTarget(directory: File, source: File, fileTag: String): File {
+        val safeTag = fileTag.replace(Regex("[^A-Za-z0-9._-]"), "_").take(64)
+        val base = "${source.nameWithoutExtension}-$safeTag-${System.currentTimeMillis()}"
+        var target = directory.resolve("$base.json")
+        var suffix = 1
+        while (target.exists()) {
+            target = directory.resolve("$base-$suffix.json")
+            suffix++
+        }
+        return target
     }
 
     private fun validateRecursively(
@@ -679,5 +768,19 @@ class ScriptStore(
             maximumMapHeight = Int.MAX_VALUE,
             maximumBranchDepth = Int.MAX_VALUE,
         )
+    }
+
+    private enum class QuarantineKind(val directoryName: String, val label: String) {
+        CORRUPT("corrupt", "破損データ"),
+        INCOMPATIBLE("incompatible", "非対応形式"),
+    }
+
+    private data class RejectedFileFingerprint(
+        val lastModified: Long,
+        val size: Long,
+    ) {
+        companion object {
+            fun from(file: File) = RejectedFileFingerprint(file.lastModified(), file.length())
+        }
     }
 }
