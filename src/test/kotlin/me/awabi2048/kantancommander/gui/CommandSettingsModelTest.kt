@@ -2,8 +2,6 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ContextSource
-import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -34,18 +32,6 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `context position role does not overwrite destination`() {
-        val node = CommandNode(type = CommandType.CONTEXT)
-        val position = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
-
-        CommandSettingsModel.setPositionSpec(node, CommandSettingRole.CONTEXT_POSITION, position)
-
-        assertEquals(position, node.contextOverride?.position)
-        assertNull(node.destinationSpec)
-        assertEquals(position, CommandSettingsModel.positionSpec(node, CommandSettingRole.CONTEXT_POSITION))
-    }
-
-    @Test
     fun `coordinate position is incomplete until all values are entered`() {
         val node = CommandType.TELEPORT.newNode()
 
@@ -72,13 +58,13 @@ class CommandSettingsModelTest {
 
     @Test
     fun `incomplete structured values never become configured from an old marker`() {
-        val node = CommandType.CONTEXT.newNode().apply {
-            configuredFields = linkedSetOf("context.position")
-            contextOverride = ExecutionContextSpec(position = PositionSpec(PositionKind.COORDINATES))
+        val node = CommandType.TELEPORT.newNode().apply {
+            configuredFields = linkedSetOf("destination")
+            destinationSpec = PositionSpec(PositionKind.COORDINATES)
         }
 
-        assertFalse(CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.CONTEXT_POSITION))
-        assertFalse(CommandSettingsModel.isFieldConfigured(node, "context"))
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.DESTINATION))
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "destination"))
     }
 
     @Test
@@ -160,24 +146,24 @@ class CommandSettingsModelTest {
 
     @Test
     fun `coordinate facing is incomplete until all values are entered`() {
-        val node = CommandType.CONTEXT.newNode()
+        val node = CommandType.TELEPORT.newNode()
 
         CommandSettingsModel.setFacingSpec(
             node,
             FacingSpec(FacingKind.COORDINATES, x = 1.0, y = null, z = 3.0),
-            CommandSettingRole.CONTEXT_FACING,
+            CommandSettingRole.DESTINATION_FACING,
         )
 
-        assertFalse(CommandSettingsModel.isFieldConfigured(node, "facing", CommandSettingRole.CONTEXT_FACING))
-        assertFalse(node.isExplicitlyConfigured("context.facing"))
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "facing", CommandSettingRole.DESTINATION_FACING))
+        assertFalse(node.isExplicitlyConfigured("destinationFacing"))
 
         CommandSettingsModel.setFacingSpec(
             node,
             FacingSpec(FacingKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0),
-            CommandSettingRole.CONTEXT_FACING,
+            CommandSettingRole.DESTINATION_FACING,
         )
 
-        assertTrue(CommandSettingsModel.isFieldConfigured(node, "facing", CommandSettingRole.CONTEXT_FACING))
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "facing", CommandSettingRole.DESTINATION_FACING))
     }
 
     @Test
@@ -191,75 +177,11 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `position lookup never silently falls back to context for another role`() {
-        val node = CommandType.APPLY_EFFECT.newNode().apply {
-            contextOverride = ExecutionContextSpec(
-                position = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0),
-            )
-        }
+    fun `position lookup does not invent a command position for another role`() {
+        val node = CommandType.APPLY_EFFECT.newNode()
 
         assertNull(CommandSettingsModel.positionSpec(node, CommandSettingRole.NODE_TARGET))
         assertNull(CommandSettingsModel.positionKind(node, CommandSettingRole.NODE_TARGET))
-    }
-
-    @Test
-    fun `clearing context resets both override values and source selection`() {
-        val node = CommandType.APPLY_EFFECT.newNode().apply {
-            contextOverride = ExecutionContextSpec()
-            contextSource = me.awabi2048.kantancommander.model.ContextSource.PREVIOUS
-        }
-
-        CommandSettingsModel.clearContextOverride(node)
-
-        assertNull(node.contextOverride)
-        assertEquals(me.awabi2048.kantancommander.model.ContextSource.BASE, node.contextSource)
-        assertFalse(CommandSettingsModel.isFieldConfigured(node, "context"))
-    }
-
-    @Test
-    fun `context fields use a separate configured namespace from node target`() {
-        val node = CommandType.APPLY_EFFECT.newNode()
-        val target = TargetSpec(TargetKind.NEAREST_PLAYER)
-        val contextTarget = TargetSpec(TargetKind.ALL_PLAYERS)
-
-        CommandSettingsModel.setTargetSpec(node, null, target)
-        CommandSettingsModel.setTargetSpec(node, CommandSettingRole.CONTEXT_TARGET, contextTarget)
-
-        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target"))
-        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.CONTEXT_TARGET))
-
-        CommandSettingsModel.clearContextOverride(node)
-
-        assertEquals(target, node.targetSpec)
-        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target"))
-        assertFalse(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.CONTEXT_TARGET))
-    }
-
-    @Test
-    fun `clearing context removes nested configured detail state`() {
-        val node = CommandType.APPLY_EFFECT.newNode().apply {
-            markConfigured("target", "context.target", "context.target.entityType", "context.position")
-            contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.NEAREST_ENTITY))
-        }
-
-        CommandSettingsModel.clearContextOverride(node)
-
-        assertEquals(setOf("target"), node.configuredFields)
-    }
-
-    @Test
-    fun `context source returning to base clears its configured marker`() {
-        val node = CommandType.APPLY_EFFECT.newNode()
-
-        CommandSettingsModel.toggleContextSource(node)
-        assertEquals(ContextSource.PREVIOUS, node.contextSource)
-        assertTrue(CommandSettingsModel.isFieldConfigured(node, "context"))
-
-        CommandSettingsModel.toggleContextSource(node)
-
-        assertEquals(ContextSource.BASE, node.contextSource)
-        assertFalse(CommandSettingsModel.isFieldConfigured(node, "context"))
-        assertFalse(node.isExplicitlyConfigured("context"))
     }
 
     @Test
@@ -297,11 +219,11 @@ class CommandSettingsModelTest {
         val title = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
 
         assertEquals(
-            listOf("target", "mode", "text", "subtitle", "staySeconds", "context"),
+            listOf("target", "mode", "text", "subtitle", "staySeconds"),
             CommandSettingsModel.visibleFields(title).map { it.key },
         )
         assertEquals(
-            listOf("target", "mode", "text", "subtitle", "staySeconds", "context"),
+            listOf("target", "mode", "text", "subtitle", "staySeconds"),
             CommandSettingsModel.gestureVisibleFields(title).map { it.key },
         )
         assertEquals(
@@ -316,7 +238,7 @@ class CommandSettingsModelTest {
 
         val tellraw = CommandType.DISPLAY_TEXT.newNode()
         assertEquals(
-            listOf("target", "mode", "text", "context"),
+            listOf("target", "mode", "text"),
             CommandSettingsModel.gestureVisibleFields(tellraw).map { it.key },
         )
     }
@@ -388,28 +310,14 @@ class CommandSettingsModelTest {
             return CommandSettingsModel.visibleFields(node).map { it.key }
         }
 
-        assertEquals(listOf("target", "action", "other", "context"), keys("ride"))
-        assertEquals(listOf("target", "action", "context"), keys("dismount"))
-        assertEquals(listOf("target", "action", "slot", "item", "overwrite", "context"), keys("equip"))
-        assertEquals(listOf("target", "action", "tagOperation", "tag", "context"), keys("tag"))
+        assertEquals(listOf("target", "action", "other"), keys("ride"))
+        assertEquals(listOf("target", "action"), keys("dismount"))
+        assertEquals(listOf("target", "action", "slot", "item", "overwrite"), keys("equip"))
+        assertEquals(listOf("target", "action", "tagOperation", "tag"), keys("tag"))
     }
 
     @Test
     fun `descriptor maps structured fields to shared editors`() {
-        val context = CommandSettingsModel.descriptor(CommandNode(type = CommandType.CONTEXT), "position")
-        assertEquals(CommandSettingEditor.POSITION, context.editor)
-        assertEquals(CommandSettingRole.CONTEXT_POSITION, context.role)
-
-        val nodeContext = CommandType.APPLY_EFFECT.newNode()
-        assertTrue(CommandSettingsModel.visibleFields(nodeContext).any { it.key == "context" })
-        assertEquals(
-            CommandSettingEditor.CONTEXT,
-            CommandSettingsModel.descriptor(nodeContext, "context").editor,
-        )
-
-        val variableContext = CommandType.VARIABLE.newNode()
-        assertFalse(CommandSettingsModel.visibleFields(variableContext).any { it.key == "context" })
-
         val condition = CommandSettingsModel.descriptor(CommandNode(type = CommandType.CONDITION), "condition")
         assertEquals(CommandSettingEditor.CONDITION_DETAIL, condition.editor)
 
@@ -440,7 +348,7 @@ class CommandSettingsModelTest {
             CommandSettingsModel.targetKinds(TargetCategory.PLAYER),
         )
         assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.NEAREST_PLAYER, "kind"))
-        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.INHERITED_TARGET, "kind"))
+        assertFalse(CommandSettingsModel.targetFilterApplies(null, "kind"))
     }
 
     @Test
@@ -483,7 +391,7 @@ class CommandSettingsModelTest {
         val node = CommandType.PLAY_SOUND.newNode()
         val fields = CommandSettingsModel.visibleFields(node)
 
-        assertEquals(listOf("sound", "soundParameters", "soundScope", "soundPosition", "context"), fields.map { it.key })
+        assertEquals(listOf("sound", "soundParameters", "soundScope", "soundPosition"), fields.map { it.key })
         assertFalse(fields.any { it.key == "volume" || it.key == "pitch" })
 
         node.params["volume"] = "0.5"
@@ -505,37 +413,4 @@ class CommandSettingsModelTest {
         assertEquals(CommandSettingRole.BLOCK_FROM, CommandSettingsModel.descriptor(node, "from").role)
     }
 
-    @Test
-    fun `inheritance needs a context command with a concrete target`() {
-        val graph = me.awabi2048.kantancommander.model.CommandGraph.empty()
-        val first = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
-        first.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-        val second = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
-
-        // 通常コマンドのtargetSpecは実行文脈へ入らないため、継承対象は確立されません。
-        assertFalse(CommandSettingsModel.hasPriorTargetContext(graph, second.id))
-    }
-
-    @Test
-    fun `context command with a concrete target enables inheritance`() {
-        val graph = me.awabi2048.kantancommander.model.CommandGraph.empty()
-        val context = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.CONTEXT)
-        context.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.NEAREST_PLAYER))
-        val teleport = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
-
-        assertTrue(CommandSettingsModel.hasPriorTargetContext(graph, teleport.id))
-    }
-
-    @Test
-    fun `explicit inherited context target clears the established target`() {
-        val graph = me.awabi2048.kantancommander.model.CommandGraph.empty()
-        val establish = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.CONTEXT)
-        establish.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.NEAREST_PLAYER))
-        val reset = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.CONTEXT)
-        reset.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.INHERITED_TARGET))
-        val teleport = me.awabi2048.kantancommander.data.GraphEditor.append(graph, CommandType.TELEPORT)
-
-        // 明示的にINHERITEDを設定したCONTEXTは参照先を消すため、確立状態を解除します。
-        assertFalse(CommandSettingsModel.hasPriorTargetContext(graph, teleport.id))
-    }
 }

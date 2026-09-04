@@ -8,7 +8,7 @@ import org.bukkit.Material
  *
  * 画面IDや親画面IDを持たせず、選択肢が子要素を持つかどうかだけを
  * 「詳細設定が存在する」という事実として表現します。これにより、
- * 対象・位置・条件・コンテキストを同じ描画／クリック規則へ載せられます。
+ * 対象・位置・条件を同じ描画／クリック規則へ載せられます。
  */
 data class GestureSettingTreeNode(
     val id: String,
@@ -181,7 +181,6 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.CONDITION_INVERSION -> GestureSettingScreen.CONDITION_INVERSION
     CommandSettingEditor.CAMERA_SHAKE_TYPE -> GestureSettingScreen.CAMERA_SHAKE_TYPE
     CommandSettingEditor.SOUND_SCOPE -> GestureSettingScreen.SOUND_SCOPE
-    CommandSettingEditor.CONTEXT -> GestureSettingScreen.CONTEXT_OVERRIDE
     CommandSettingEditor.BLOCK_OPERATION -> GestureSettingScreen.BLOCK_OPERATION
     CommandSettingEditor.TEXT -> null
 }

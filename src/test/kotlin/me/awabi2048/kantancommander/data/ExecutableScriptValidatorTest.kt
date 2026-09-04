@@ -13,7 +13,6 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.BlockOperationMode
-import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.TemporaryVariableType
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -26,14 +25,12 @@ class ExecutableScriptValidatorTest {
     fun `incomplete command settings fail execution preflight`() {
         val script = DiskScript(name = "incomplete", owner = UUID.randomUUID())
         GraphEditor.append(script.graph, CommandType.DISK_CALL)
-        GraphEditor.append(script.graph, CommandType.CONTEXT)
         val ride = GraphEditor.append(script.graph, CommandType.ENTITY_ACTION)
         ride.params["other"] = ""
 
         val errors = ExecutableScriptValidator.validate(script)
 
         assertTrue(errors.any { it.message.contains("ディスク内容が未設定") })
-        assertTrue(errors.any { it.message.contains("コンテキストが未設定") })
         assertTrue(errors.any { it.message.contains("乗り物となる対象が未設定") })
     }
 
@@ -222,36 +219,6 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `variable rejects per-node execution context`() {
-        val script = DiskScript(name = "variable-context", owner = UUID.randomUUID())
-        val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
-        variable.params.putAll(
-            mapOf(
-                "name" to "value",
-                "type" to VariableType.NUMBER.name,
-                "operation" to VariableOperation.DEFINE.name,
-                "value" to "1",
-            )
-        )
-        variable.contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
-
-        assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.message.contains("実行コンテキストを設定できません") },
-        )
-    }
-
-    @Test
-    fun `empty context command is incomplete`() {
-        val script = DiskScript(name = "empty-context", owner = UUID.randomUUID())
-        val context = GraphEditor.append(script.graph, CommandType.CONTEXT)
-        context.contextOverride = ExecutionContextSpec()
-
-        assertTrue(
-            ExecutableScriptValidator.validate(script).any { it.message.contains("コンテキストが未設定") },
-        )
-    }
-
-    @Test
     fun `always active and interval require an enabled valid timer`() {
         val script = DiskScript(
             name = "timer",
@@ -324,9 +291,7 @@ class ExecutableScriptValidatorTest {
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
         teleport.destinationSpec = PositionSpec(PositionKind.CAPTURED, 1.0, 2.0, 3.0, null, null)
-        teleport.contextOverride = me.awabi2048.kantancommander.model.ExecutionContextSpec(
-            facing = FacingSpec(FacingKind.CAPTURED, yaw = null, pitch = null),
-        )
+        teleport.destinationFacingSpec = FacingSpec(FacingKind.CAPTURED, yaw = null, pitch = null)
 
         val errors = ExecutableScriptValidator.validate(script)
 

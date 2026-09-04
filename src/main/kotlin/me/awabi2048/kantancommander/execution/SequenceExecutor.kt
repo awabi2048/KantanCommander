@@ -28,9 +28,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
-import me.awabi2048.kantancommander.model.ContextSource
 import me.awabi2048.kantancommander.model.DisplayTextTiming
-import me.awabi2048.kantancommander.model.effectiveContextSource
 import com.awabi2048.ccsystem.CCSystem
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
@@ -149,7 +147,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 )
             }
             CommandType.CONDITION -> {
-                val effectiveContext = effectiveContext(node, session)
+                val effectiveContext = effectiveContext(session)
                 val rawResult = evaluateCondition(
                     node,
                     session,
@@ -160,18 +158,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, NodeExecutionOutcome.SUCCESS)
             }
-            CommandType.CONTEXT -> {
-                session.context = effectiveContext(node, session)
-                session.previousContext = session.context
-                next(node.next, NodeExecutionOutcome.SUCCESS)
-            }
             CommandType.DISK_CALL -> {
                 val callerContext = session.context
                 val callerPrevious = session.previousContext
                 // 一時変数は呼出先へ引き継がず、復帰時に復元します（隔離）。
                 val callerTemporaries = session.temporaries.toMap()
                 session.temporaries.clear()
-                session.context = effectiveContext(node, session)
+                // 実行状態はDISK_CALLの境界を越えて共有しません。現在はGUIから
+                // コンテキストを生成しませんが、内部呼出し元が保持している実行状態
+                // を呼出先の処理へ渡す境界として、この保存・復元を残します。
+                session.context = effectiveContext(session)
                 runDiskCall(node, session, depth) { success ->
                     session.context = callerContext
                     session.previousContext = callerPrevious
@@ -191,14 +187,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 )
             }
             CommandType.VARIABLE -> {
-                // VARIABLEはノード自身のコンテキスト上書きを持たず、現在の実行文脈だけを使います。
-                // 対象・位置の取得を値操作へ直接追加すると、CONTEXTコマンドとの責務境界が崩れ、
-                // GUIだけでなくエクスポート時の実行順序も別仕様になってしまいます。
                 val success = executeVariable(
                     node,
                     session,
                 )
-                if (success) session.previousContext = session.context
+                if (success) session.previousContext = effectiveContext(session)
                 next(
                     node.next,
                     if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
@@ -307,7 +300,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
-        val effectiveContext = effectiveContext(node, session)
+        val effectiveContext = effectiveContext(session)
         val targets = resolveTargets(effectiveContext, node.targetSpec, session)
         val effectiveOrigin = if (effectiveContext?.position != null) {
             resolvePosition(effectiveContext.position, session, effectiveContext) ?: return false
@@ -484,7 +477,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ?.toFloat() ?: return false
                 val pitch = (refTemp?.pitch ?: resolveNumber(node.string("pitch", "1.0"), session))
                     ?.toFloat() ?: return false
-                if (node.string("soundScope", "CONTEXT") == "WORLD") {
+                if (node.string("soundScope", "POSITION") == "WORLD") {
                     // 全域指定は各プレイヤー位置を音源位置にするため、現行の
                     // 「起動ワールドの全プレイヤーへ確実に届ける」挙動を維持します。
                     effectiveOrigin.world.players.forEach { it.playSound(it.location, sound, SoundCategory.MASTER, volume, pitch) }
@@ -861,11 +854,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
         nodeTarget: TargetSpec?,
         session: ExecutionSession,
-    ): List<Entity> = resolveTargetSpecs(
-        nodeTarget ?: context?.target ?: context?.executor ?: TargetSpec(TargetKind.INHERITED_TARGET),
-        session,
-        context,
-    )
+    ): List<Entity> = nodeTarget?.let { resolveTargetSpecs(it, session, context) }
+        ?: context?.target?.let { resolveTargetSpecs(it, session, context) }
+        ?: context?.executor?.let { resolveTargetSpecs(it, session, context) }
+        ?: emptyList()
 
     private fun resolveTargetSpec(
         spec: TargetSpec,
@@ -881,11 +873,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val resolvedSpec = resolveTargetFilter(spec, session) ?: return emptyList()
         val selectionOrigin = selectionOrigin(context, session) ?: return emptyList()
         val candidates: List<Entity> = when (resolvedSpec.kind) {
-            TargetKind.INHERITED_TARGET -> listOfNotNull(
-                context?.target
-                    ?.takeUnless { it.kind == TargetKind.INHERITED_TARGET }
-                    ?.let { resolveTargetSpec(it, session, context) }
-            )
             TargetKind.TEMPORARY -> listOfNotNull(
                 resolvedSpec.tempName
                     ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
@@ -898,7 +885,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 session.origin.world.entities.filter { matches(it, resolvedSpec, session, context) }
             TargetKind.FIXED_ENTITY -> listOfNotNull(resolvedSpec.fixedEntityId?.let(session.origin.world::getEntity))
         }
-        // 対象種別・固定UUID・一時変数・継承対象の全経路をここで同じように検閲します。
+        // 対象種別・固定UUID・一時変数の全経路をここで同じように検閲します。
         // 個別の操作実装で除外すると、新しいコマンド種別の追加時に抜け道になります。
         val inMyWorld = candidates
             .filter { it.world == session.origin.world }
@@ -912,7 +899,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         val defaultLimit = when (resolvedSpec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY,
-            TargetKind.INHERITED_TARGET, TargetKind.FIXED_ENTITY, TargetKind.TEMPORARY -> 1
+            TargetKind.FIXED_ENTITY, TargetKind.TEMPORARY -> 1
             else -> Int.MAX_VALUE
         }
         return sorted.take((resolvedSpec.limit ?: defaultLimit).coerceAtLeast(1))
@@ -965,10 +952,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 PositionKind.CAPTURED, PositionKind.COORDINATES,
                 PositionKind.DISK, PositionKind.MYWORLD_SPAWN, PositionKind.TEMPORARY ->
                     resolvePosition(position, session, context)
-                PositionKind.EXECUTOR ->
-                    context.executor?.let { resolveTargetSpec(it, session, context) }?.location
-                PositionKind.TARGET ->
-                    context.target?.let { resolveTargetSpec(it, session, context) }?.location
+                // TARGETはテレポート先などのコマンド固有設定でのみ使用します。
+                PositionKind.TARGET -> null
             }
         }
 
@@ -990,17 +975,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return selectionOrigin(context, session)
     }
 
-    private fun contextFrom(node: CommandNode) = node.contextOverride ?: ExecutionContextSpec()
-
-    /** 現在ノードの明示設定を最優先し、PREVIOUS指定時だけ直前の有効execute指定を基準にします。 */
-    private fun effectiveContext(node: CommandNode, session: ExecutionSession): ExecutionContextSpec? {
-        return ExecutionSemantics.effectiveContext(
-            session.context,
-            session.previousContext,
-            node.effectiveContextSource,
-            node.contextOverride,
-        )
-    }
+    /** GUI設定ではなく、実行エンジンが現在保持している内部状態だけを返します。 */
+    private fun effectiveContext(session: ExecutionSession): ExecutionContextSpec? = session.context
 
     private fun resolvePosition(
         spec: PositionSpec,
@@ -1023,8 +999,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ?.location ?: return null
             Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
         }
-        PositionKind.EXECUTOR -> context?.executor?.let { resolveTargetSpec(it, session, context) }?.location
-        PositionKind.TARGET -> context?.target?.let { resolveTargetSpec(it, session, context) }?.location
+        // TARGETはテレポート先などのコマンド固有設定で解決するため、通常の
+        // 実行位置へ渡された場合は静的検証と同じく未解決として扱います。
+        PositionKind.TARGET -> null
         PositionKind.MYWORLD_SPAWN -> session.origin.world.spawnLocation
     }
 
@@ -1035,17 +1012,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
     ) {
         when (facing.kind) {
-            FacingKind.INHERITED -> Unit
             FacingKind.ROTATION, FacingKind.CAPTURED -> {
                 destination.yaw = facing.yaw ?: destination.yaw
                 destination.pitch = facing.pitch ?: destination.pitch
-            }
-            FacingKind.EXECUTOR -> {
-                val location = context?.executor
-                    ?.let { resolveTargetSpec(it, session, context) }
-                    ?.location ?: return
-                destination.yaw = location.yaw
-                destination.pitch = location.pitch
             }
             FacingKind.TARGET -> {
                 val location = context?.target
@@ -1175,7 +1144,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         fun facingUnavailable(spec: me.awabi2048.kantancommander.model.FacingSpec?): Boolean =
             spec?.kind == FacingKind.TEMPORARY && !positionAvailable(spec.tempName)
 
-        val effective = effectiveContext(node, session)
+        val effective = effectiveContext(session)
         return listOf(
             node.targetSpec,
             node.secondaryTargetSpec,
@@ -1369,15 +1338,5 @@ internal object ExecutionSemantics {
             facing = override.facing ?: inherited.facing,
         )
     }
-
-    fun effectiveContext(
-        base: ExecutionContextSpec?,
-        previous: ExecutionContextSpec?,
-        source: ContextSource,
-        override: ExecutionContextSpec?,
-    ): ExecutionContextSpec? = mergeContexts(
-        if (source == ContextSource.PREVIOUS) previous ?: base else base,
-        override,
-    )
 
 }

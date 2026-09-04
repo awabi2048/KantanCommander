@@ -44,10 +44,10 @@ class MenuSlotDistributionTest {
         assertEquals(listOf(19, 20, 21), DistributedSettingSlots.slots(3))
         assertEquals(listOf(19, 20, 21, 22), DistributedSettingSlots.slots(4))
         assertEquals(
-            listOf(19, 20, 21, 28, 29),
+            listOf(19, 20, 21, 22),
             CommandSettingsSlotPolicy.slots(
                 CommandType.APPLY_EFFECT,
-                listOf("target", "effect", "level", "seconds", "context"),
+                listOf("target", "effect", "level", "seconds"),
             ),
         )
     }

@@ -121,12 +121,6 @@ class KantanStandaloneExportContributor(
                 node.targetSpec = namespaceTarget(node.targetSpec, namespace)
                 node.secondaryTargetSpec = namespaceTarget(node.secondaryTargetSpec, namespace)
                 node.destinationTargetSpec = namespaceTarget(node.destinationTargetSpec, namespace)
-                node.contextOverride = node.contextOverride?.let { context ->
-                    context.copy(
-                        executor = namespaceTarget(context.executor, namespace),
-                        target = namespaceTarget(context.target, namespace),
-                    )
-                }
                 val operation = node.string("operation", VariableOperation.DEFINE.name)
                 node.params.keys.toList().forEach { key ->
                     val raw = node.params[key] ?: return@forEach

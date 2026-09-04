@@ -379,10 +379,10 @@ class ScriptStore(
                     )
                 }
                 if (sourceVersion != STRUCTURED_FORMAT_VERSION) {
-                    // 旧形式を読み込んだ時点でv8の正本へ書き戻し、次回以降に
+                    // 旧形式を読み込んだ時点でv9の正本へ書き戻し、次回以降に
                     // 旧tick値や廃止コマンドを二重解釈しないようにします。
                     atomicWrite(file, gson.toJson(migrated))
-                    logger.info("構造化プログラムディスクをv8形式へ移行しました: ${file.absolutePath}")
+                    logger.info("構造化プログラムディスクをv9形式へ移行しました: ${file.absolutePath}")
                 }
             }
     } catch (error: Exception) {
@@ -409,7 +409,7 @@ class ScriptStore(
         return migrated
     }
 
-    /** v7のコマンド・型モデルをv8へ意味変換します。 */
+    /** v7のコマンド・型モデルをv9へ意味変換します。 */
     private fun migrateCommandFormat(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
@@ -535,15 +535,6 @@ class ScriptStore(
                 if (kind == "TEMPORARY_VARIABLE" || kind == "WORLD_VARIABLE") {
                     logger.warning("v7の変数位置参照を移行時に破棄します: node=${node["id"]?.asString} field=$field")
                     node.remove(field)
-                }
-            }
-        }
-        node["contextOverride"]?.takeIf { it.isJsonObject }?.asJsonObject?.let { context ->
-            context["position"]?.takeIf { it.isJsonObject }?.asJsonObject?.let { position ->
-                val kind = position["kind"]?.asString
-                if (kind == "TEMPORARY_VARIABLE" || kind == "WORLD_VARIABLE") {
-                    logger.warning("v7のコンテキスト変数位置参照を移行時に破棄します: node=${node["id"]?.asString}")
-                    context.remove("position")
                 }
             }
         }

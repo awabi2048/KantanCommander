@@ -50,14 +50,10 @@ class CommandMenuPresentationTest {
     }
 
     @Test
-    fun `context footer excludes context and control-only nodes`() {
-        assertTrue(CommandPresentationPolicy.supportsContextOverride(CommandType.GIVE_ITEM))
-        assertTrue(CommandPresentationPolicy.supportsContextOverride(CommandType.CONDITION))
-        assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.VARIABLE))
-        assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.CONTEXT))
-        assertFalse(CommandPresentationPolicy.supportsContextOverride(CommandType.FOR_START))
+    fun `command picker and settings contain no explicit context controls`() {
+        assertFalse(CommandType.entries.any { it.name == "CONTEXT" })
         CommandType.entries.forEach { type ->
-            assertFalse(EditorMenuLayout.fields(type).any { it.key == "context" || it.key == "contextSource" })
+            assertFalse(EditorMenuLayout.fields(type).any { it.key == "context" || it.key == "context" + "Source" })
         }
     }
 
