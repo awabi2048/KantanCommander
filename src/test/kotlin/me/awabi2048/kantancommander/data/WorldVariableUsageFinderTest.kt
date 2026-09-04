@@ -8,6 +8,8 @@ import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import java.util.UUID
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class WorldVariableUsageFinderTest {
@@ -57,6 +59,20 @@ class WorldVariableUsageFinderTest {
         )
 
         assertEquals(listOf("nested"), usages.map(WorldVariableUsage::programName))
+    }
+
+    @Test
+    fun `safe scan returns an incomplete result instead of propagating malformed data`() {
+        val finder = WorldVariableUsageFinder(
+            placements = { error("malformed placements") },
+            scripts = { emptyList() },
+        )
+
+        val result = finder.findAllSafely("world", listOf("counter"))
+
+        assertFalse(result.complete)
+        assertTrue(result.failure is IllegalStateException)
+        assertEquals(emptyList<WorldVariableUsage>(), result.usages["counter"])
     }
 
     private fun script(name: String, graph: CommandGraph): DiskScript =

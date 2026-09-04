@@ -37,6 +37,7 @@ import me.awabi2048.kantancommander.execution.ExecutionFinishStatus
 import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
 import me.awabi2048.kantancommander.execution.NodeExecutionOutcome
+import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
@@ -533,7 +534,19 @@ class GestureSequenceEditor(
 
     fun updateLower(player: Player): Boolean {
         val owner = ownerPlayerFor(player)
-        return updateScreen(owner, buildCurrentLowerView(owner), RenderTarget.LOWER)
+        return runCatching {
+            updateScreen(owner, buildCurrentLowerView(owner), RenderTarget.LOWER)
+        }.getOrElse { failure ->
+            // 下部画面の再描画は保存処理の成功条件ではありません。保存済みデータの
+            // 破損でここが失敗しても、入力を「形式不正」と誤判定しないよう、GUI境界で
+            // 失敗をBooleanへ閉じ込め、原因だけをログへ残します。
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ジェスチャーGUI下部画面の生成または更新に失敗しました: script=${state.scriptId} mode=${state.lowerMode}",
+                failure,
+            )
+            false
+        }
     }
 
     /** 通常更新とOPENING後の再試行で、子画面の優先順位を同じにします。 */
@@ -2698,11 +2711,43 @@ class GestureSequenceEditor(
         }.getOrNull()
     }
 
-    /** 現在のMyWorldに配置されたプログラムから、変数の使用一覧を再計算します。 */
-    private fun findWorldVariableUsages(name: String) =
+    /** 現在のMyWorldに配置されたプログラムから、変数の使用一覧を安全に再計算します。 */
+    private fun findWorldVariableUsages(name: String): WorldVariableUsageScanResult =
         state.placement?.world?.let { worldName ->
-            plugin.findWorldVariableUsages(worldName, name)
-        }.orEmpty()
+            plugin.findWorldVariableUsagesSafely(worldName, listOf(name))
+        } ?: WorldVariableUsageScanResult(emptyMap(), complete = true)
+
+    /**
+     * 保存成功後の一覧更新を入力確定処理から切り離します。
+     * 画面更新は保存の成否ではなく、次tickで行う表示副作用として扱います。
+     */
+    private fun scheduleWorldVariableListRefresh(player: Player, operation: String) {
+        runCatching {
+            Bukkit.getScheduler().runTask(plugin, Runnable {
+                if (!player.isOnline) return@Runnable
+                val updated = runCatching { updateLower(player) }
+                    .getOrElse { failure ->
+                        plugin.logger.log(
+                            java.util.logging.Level.WARNING,
+                            "ワールド内変数の${operation}後の一覧更新に失敗しました: script=${state.scriptId}",
+                            failure,
+                        )
+                        false
+                    }
+                if (!updated) {
+                    plugin.logger.warning(
+                        "ワールド内変数の${operation}後の一覧更新が拒否されました: script=${state.scriptId}",
+                    )
+                }
+            })
+        }.onFailure { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ワールド内変数の${operation}後の一覧更新を予約できませんでした: script=${state.scriptId}",
+                failure,
+            )
+        }
+    }
 
     /** 使用中の変数を削除できない理由と、対象プログラム名をチャットへ通知します。 */
     private fun sendWorldVariableUsageList(
@@ -2797,6 +2842,7 @@ class GestureSequenceEditor(
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
             body = listOf(KcI18n.component(player, CommandDialogSpecs.worldVariableValueBody(type))),
             inputs = listOf(CommandDialogSpecs.input(player, "value", VariableTemplate.stringify(current), spec)),
+            afterSubmit = { scheduleWorldVariableListRefresh(player, "値保存") },
         ) { response ->
             val raw = response.textValue("value")
             val validationError = spec.validateInput(raw)
@@ -2826,7 +2872,6 @@ class GestureSequenceEditor(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
                 )
             }
-            updateLower(player)
             null
         }
     }
@@ -2904,6 +2949,7 @@ class GestureSequenceEditor(
                     label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_NAME),
                 ),
             ),
+            afterSubmit = { scheduleWorldVariableListRefresh(player, "定義保存") },
         ) { response ->
             val name = response.textValue("name").trim()
             // Dialog側でも検証しますが、将来別経路から呼ばれても保存前の境界を
@@ -2957,7 +3003,6 @@ class GestureSequenceEditor(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DUPLICATE,
                 )
             }
-            updateLower(player)
             null
         }
     }
@@ -3054,6 +3099,12 @@ class GestureSequenceEditor(
         if (result == null) {
             // 確認画面を残して再試行・キャンセルを可能にし、保存失敗を黙って
             // 成功扱いにしません。画面外へ移動した場合も同じメッセージで通知します。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+            return
+        }
+        if (!result.scanComplete) {
+            // 使用箇所を確認できない状態で削除すると、破損していた配置から
+            // 参照切れを作るため、確認画面を残して再スキャンを待ちます。
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
             return
         }
@@ -3211,6 +3262,7 @@ class GestureSequenceEditor(
         footerActions: List<MenuDialogButton> = emptyList(),
         multiActionWithoutExit: Boolean = false,
         columns: Int = 1,
+        afterSubmit: (() -> Unit)? = null,
         onSubmit: (MenuDialogResponse) -> String?,
     ) {
         invalidateInput(player.uniqueId)
@@ -3256,7 +3308,17 @@ class GestureSequenceEditor(
                                 return@MenuDialogHandler MenuActionResult.Ignored
                             }
                             val error = runCatching { onSubmit(response) }
-                                .getOrElse { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT) }
+                                .getOrElse { failure ->
+                                    // 入力検証の戻り値と、保存・データ処理の例外を分離します。
+                                    // 後者を入力形式エラーへ変換すると、保存済みの変数だけが
+                                    // 残ったままDialogをキャンセルできる今回の不整合を再発させます。
+                                    plugin.logger.log(
+                                        java.util.logging.Level.WARNING,
+                                        "入力ダイアログの確定処理に失敗しました: dialog=$dialogId",
+                                        failure,
+                                    )
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                }
                             if (error != null) {
                                 // RejectedはCC-System側で同じ入力画面を入力値付きで
                                 // 再表示するため、入力セッションを維持したまま修正できます。
@@ -3265,6 +3327,15 @@ class GestureSequenceEditor(
                                 )
                             }
                             clearInputState(player.uniqueId, token)
+                            // 保存成功後の表示更新は、確定成功を覆さない別処理です。
+                            runCatching { afterSubmit?.invoke() }
+                                .onFailure { failure ->
+                                    plugin.logger.log(
+                                        java.util.logging.Level.WARNING,
+                                        "入力ダイアログ確定後の後処理に失敗しました: dialog=$dialogId",
+                                        failure,
+                                    )
+                                }
                             MenuActionResult.Success(MenuUpdate.Close)
                         },
                     ),
@@ -4334,8 +4405,15 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-variable-delete:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val name = context.elementId.removePrefix("lower-variable-delete:").trim()
                 if (name.isEmpty()) return
-                val usages = findWorldVariableUsages(name)
-                if (usages.isNotEmpty()) {
+                val usageScan = findWorldVariableUsages(name)
+                if (!usageScan.complete) {
+                    // 一覧カードも削除不可表示にしているため、クリックされた場合も
+                    // 確認画面へ進めず、完全スキャンが可能になるまで保存を保護します。
+                    player.sendMessage(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                    )
+                } else if (usageScan.usages[name].orEmpty().isNotEmpty()) {
+                    val usages = usageScan.usages[name].orEmpty()
                     // 使用中の削除ボタンは灰色表示ですが、クリックを無反応にせず、
                     // 削除できない理由と使用プログラムをチャットへ示します。
                     sendWorldVariableUsageList(player, name, usages)

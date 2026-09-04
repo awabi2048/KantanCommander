@@ -17,6 +17,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -682,13 +683,16 @@ class GestureLowerPanel(
             val pageSize = WORLD_VARIABLE_PAGE_SIZE
             val pageCount = (entries.size + pageSize - 1) / pageSize
             val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
-            val usagesByName = state.placement?.world
-                ?.let { worldName -> plugin.findWorldVariableUsages(worldName, entries.keys) }
-                .orEmpty()
+            val usageScan = state.placement?.world
+                ?.let { worldName -> plugin.findWorldVariableUsagesSafely(worldName, entries.keys) }
+                ?: WorldVariableUsageScanResult(emptyMap(), complete = true)
+            val usagesByName = usageScan.usages
             entries.keys.toList().drop(page * pageSize).take(pageSize).forEachIndexed { index, name ->
                 val value = entries.getValue(name)
                 val type = definitions[name]?.type ?: value.type
-                val inUse = usagesByName[name].orEmpty().isNotEmpty()
+                // スキャン不完全時も削除を許可しません。破損した配置を「未使用」と
+                // 誤認して削除すると、後から参照切れを復元できなくなるためです。
+                val inUse = !usageScan.complete || usagesByName[name].orEmpty().isNotEmpty()
                 val column = index % 2
                 val row = index / 2
                 // カード本体と削除ボタンを同じ列幅へ収めます。カード全体をクリック領域に

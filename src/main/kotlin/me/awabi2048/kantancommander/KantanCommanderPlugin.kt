@@ -15,9 +15,9 @@ import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
-import me.awabi2048.kantancommander.data.WorldVariableUsage
 import me.awabi2048.kantancommander.data.WorldVariableUsageFinder
 import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
+import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.ParticleQuotaService
 import me.awabi2048.kantancommander.execution.SequenceExecutor
@@ -298,15 +298,24 @@ class KantanCommanderPlugin : JavaPlugin() {
         maximumBranchDepth = config.getInt("limits.max-branch-depth"),
     )
 
-    /** 一覧表示と削除確認が同じMyWorld単位の使用判定を使うための入口です。 */
-    internal fun findWorldVariableUsages(worldName: String, variableName: String): List<WorldVariableUsage> =
-        worldVariableUsageFinder.find(worldName, variableName)
-
-    internal fun findWorldVariableUsages(
+    /**
+     * GUIの一覧表示・削除確認が保存済みプログラムの破損へ巻き込まれないための入口です。
+     * 原因はここでログへ残し、画面層には構造化された「完全／不完全」だけを渡します。
+     */
+    internal fun findWorldVariableUsagesSafely(
         worldName: String,
         variableNames: Collection<String>,
-    ): Map<String, List<WorldVariableUsage>> =
-        worldVariableUsageFinder.findAll(worldName, variableNames)
+    ): WorldVariableUsageScanResult {
+        val result = worldVariableUsageFinder.findAllSafely(worldName, variableNames)
+        result.failure?.let { failure ->
+            logger.log(
+                java.util.logging.Level.WARNING,
+                "ワールド内変数の使用箇所を完全には確認できませんでした: world=$worldName names=$variableNames",
+                failure,
+            )
+        }
+        return result
+    }
 
     /**
      * ワールド内変数の削除境界です。使用判定と永続化呼び出しを一つの処理へ束ね、
@@ -317,7 +326,12 @@ class KantanCommanderPlugin : JavaPlugin() {
         worldName: String,
         variableName: String,
     ): WorldVariableRemovalResult {
-        val usages = findWorldVariableUsages(worldName, variableName)
+        val scan = findWorldVariableUsagesSafely(worldName, listOf(variableName))
+        if (!scan.complete) {
+            // 使用箇所が不明なときは、参照切れを作らないことを優先します。
+            return WorldVariableRemovalResult(removed = false, scanComplete = false)
+        }
+        val usages = scan.usages[variableName].orEmpty()
         if (usages.isNotEmpty()) return WorldVariableRemovalResult(removed = false, usages = usages)
         return WorldVariableRemovalResult(removed = variables.remove(worldId, variableName))
     }
