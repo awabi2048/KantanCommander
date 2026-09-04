@@ -22,10 +22,25 @@ import java.util.logging.Level
 import java.util.logging.Logger
 import kotlin.concurrent.withLock
 
+enum class ScriptMutationOperation {
+    UPDATE,
+    SAVE,
+    DELETE,
+}
+
+class ScriptMutationLockedException(
+    val scriptId: UUID,
+    val operation: ScriptMutationOperation,
+) : IllegalStateException("プログラムはテスト実行中のため変更できません: script=$scriptId operation=$operation")
+
 class ScriptStore(
     private val dir: File,
     private val logger: Logger,
     private val limits: GraphLimits = GraphLimits(),
+    /** テスト実行中の通常の編集経路を遮断する共有ガードです。 */
+    private val mutationGuard: (UUID, UUID?, ScriptMutationOperation) -> Unit = { _, _, _ -> },
+    /** ロックを意図的に越えた管理経路を、実行中テストへ通知する共有境界です。 */
+    private val bypassedMutationNotifier: (UUID, ScriptMutationOperation) -> Unit = { _, _ -> },
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
     private val relationFile = dir.resolve("relations.json")
@@ -117,6 +132,7 @@ class ScriptStore(
         expectedRevision: Long? = null,
         change: (DiskScript) -> T?,
     ): T? = withScriptLock(id) {
+        mutationGuard(id, editorId, ScriptMutationOperation.UPDATE)
         val script = cached(id)?.deepCopy() ?: return@withScriptLock null
         if (expectedRevision != null && script.revision != expectedRevision) {
             return@withScriptLock null
@@ -129,8 +145,18 @@ class ScriptStore(
     @Suppress("DEPRECATION")
     fun save(script: DiskScript, editorId: UUID? = null) {
         withScriptLock(script.id) {
+            mutationGuard(script.id, editorId, ScriptMutationOperation.SAVE)
             saveLocked(script, editorId)
         }
+    }
+
+    /** 管理コマンド等の明示的なバイパス経路です。保存成功後に共有通知を発行します。 */
+    @Suppress("DEPRECATION")
+    fun saveBypassingExecutionLock(script: DiskScript, editorId: UUID? = null) {
+        withScriptLock(script.id) {
+            saveLocked(script, editorId)
+        }
+        bypassedMutationNotifier(script.id, ScriptMutationOperation.SAVE)
     }
 
     @Suppress("DEPRECATION")
@@ -165,6 +191,21 @@ class ScriptStore(
     }
 
     fun delete(id: UUID) = withScriptLock(id) {
+        // 保存と同じプログラムロック内で判定します。ガードの直後にテストが
+        // 開始されても、削除だけが実行中テストをすり抜けないようにします。
+        mutationGuard(id, null, ScriptMutationOperation.DELETE)
+        deleteContentsLocked(id)
+    }
+
+    /** 管理コマンド等の明示的な削除バイパス経路です。削除成功後に共有通知を発行します。 */
+    fun deleteBypassingExecutionLock(id: UUID) {
+        withScriptLock(id) {
+            deleteContentsLocked(id)
+        }
+        bypassedMutationNotifier(id, ScriptMutationOperation.DELETE)
+    }
+
+    private fun deleteContentsLocked(id: UUID) {
         // 履歴は「編集したプログラム」を無条件に追跡するため、配置撤去や
         // ライブラリからの除外だけで正本を消してはなりません。履歴に残る間は
         // ライブラリ関係だけを外し、JSONと履歴関係を保持します。
@@ -176,7 +217,7 @@ class ScriptStore(
             libraryPrograms.entries.removeIf { it.value.isEmpty() }
             writeRelationsLocked()
         }
-        if (isInHistory) return@withScriptLock
+        if (isInHistory) return
         val target = file(id)
         if (target.exists() && !target.delete()) {
             throw IllegalStateException("プログラムディスクを削除できません: ${target.absolutePath}")

@@ -43,6 +43,7 @@ import org.bukkit.entity.Entity
 import org.bukkit.entity.LivingEntity
 import org.bukkit.entity.Player
 import org.bukkit.inventory.ItemStack
+import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
 import java.util.logging.Level
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
@@ -50,20 +51,146 @@ import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.inventory.EquipmentSlot
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 
+/** テスト実行の終了理由です。手動停止は失敗と区別して表示します。 */
+enum class ExecutionFinishStatus {
+    SUCCESS,
+    FAILURE,
+    CANCELLED,
+}
+
+/** ノード処理結果。参照先が無い場合だけ、失敗と区別して後続へ進めます。 */
+enum class NodeExecutionOutcome {
+    SUCCESS,
+    SKIPPED,
+    FAILED,
+}
+
+/** テスト実行へ通知する、最上位グラフのノード開始イベントです。 */
+data class ExecutionNodeStarted(
+    val scriptId: UUID,
+    val nodeId: UUID,
+    val nodeType: CommandType,
+    val depth: Int,
+    val attemptNumber: Int,
+    val tick: Long,
+)
+
+/** テスト実行へ通知する、最上位グラフのノード完了イベントです。 */
+data class ExecutionNodeFinished(
+    val scriptId: UUID,
+    val nodeId: UUID,
+    val nodeType: CommandType,
+    val depth: Int,
+    val attemptNumber: Int,
+    val outcome: NodeExecutionOutcome,
+    val successfulNodeCount: Int,
+    val nextNodeId: UUID?,
+    val tick: Long,
+    val detail: String? = null,
+    val reason: String? = null,
+    val loopReturn: Boolean = false,
+)
+
+/** テスト実行の最終結果です。successfulNodeCountは失敗ノードを含みません。 */
+data class ExecutionResult(
+    val status: ExecutionFinishStatus,
+    val elapsedTicks: Long,
+    val successfulNodeCount: Int,
+    val attemptCount: Int,
+    val failedNodeId: UUID? = null,
+    val reason: String? = null,
+)
+
+/** 実行中のノードイベントと終了結果を受け取る観測者です。 */
+interface ExecutionObserver {
+    fun onNodeStarted(event: ExecutionNodeStarted) {}
+    fun onNodeFinished(event: ExecutionNodeFinished) {}
+    fun onFinished(result: ExecutionResult) {}
+}
+
+data class ExecutionOptions(
+    val observer: ExecutionObserver? = null,
+    val debugDelayTicks: Long = 0L,
+    val suppressCreatorFailureNotification: Boolean = false,
+)
+
+/** 非同期テスト実行を途中終了するためのハンドルです。 */
+class ExecutionHandle internal constructor() {
+    @Volatile
+    var isActive: Boolean = true
+        private set
+
+    private var cancelAction: ((String) -> Unit)? = null
+
+    fun cancel(reason: String = "manual_stop") {
+        cancelAction?.invoke(reason)
+    }
+
+    internal fun bind(action: (String) -> Unit) {
+        cancelAction = action
+    }
+
+    internal fun complete() {
+        isActive = false
+        cancelAction = null
+    }
+}
+
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private val timedActionBar = TimedActionBarService(plugin)
     private val systemEntityRegistry
         get() = CCSystem.getAPI().getSystemEntityRegistry()
 
     fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
+        val script = plugin.scripts.load(scriptId) ?: return callback(false)
+        startExecution(
+            script = script,
+            origin = origin,
+            actor = actor,
+            options = ExecutionOptions(),
+        ) { result -> callback(result.status == ExecutionFinishStatus.SUCCESS) }
+    }
+
+    /**
+     * 保存済み正本を変更せずに、配置ブロック上のスナップショットを実行します。
+     * テスト実行は実ワールドへ作用するため、通常実行と同じ実行器を通しつつ、
+     * 観測者へ最上位グラフのノード境界だけを公開します。DISK_CALL内部は1ノード
+     * として扱い、内部グラフのイベントやデバッグ待機は外へ漏らしません。
+     */
+    fun executeTest(
+        snapshot: DiskScript,
+        origin: Location,
+        options: ExecutionOptions = ExecutionOptions(),
+        callback: (ExecutionResult) -> Unit = {},
+    ): ExecutionHandle = startExecution(
+        script = snapshot.copy(graph = snapshot.graph.deepCopy()),
+        origin = origin,
+        actor = null,
+        options = options,
+        callback = callback,
+    )
+
+    private fun startExecution(
+        script: DiskScript,
+        origin: Location,
+        actor: Player?,
+        options: ExecutionOptions,
+        callback: (ExecutionResult) -> Unit,
+    ): ExecutionHandle {
+        val handle = ExecutionHandle()
+        val startTick = plugin.server.currentTick.toLong()
         val worldData = if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
             MyWorldManagerApi.getWorldRepository()?.findByWorldName(origin.world.name)
         } else null
         if (worldData == null) {
-            plugin.logger.warning("[KantanCommander] rejected disk=$scriptId reason=outside_myworld world=${origin.world.name}")
-            return callback(false)
+            plugin.logger.warning("[KantanCommander] rejected disk=${script.id} reason=outside_myworld world=${origin.world.name}")
+            return completeWithoutSession(
+                handle,
+                options,
+                callback,
+                ExecutionResult(ExecutionFinishStatus.FAILURE, 0L, 0, 0, reason = "outside_myworld"),
+            )
         }
-        val script = plugin.scripts.load(scriptId) ?: return callback(false)
         val validationErrors = ExecutableScriptValidator.validate(
             script,
             plugin.graphLimits(),
@@ -71,15 +198,26 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         )
         if (validationErrors.isNotEmpty()) {
             plugin.logger.warning(
-                "[KantanCommander] rejected disk=$scriptId reason=invalid_script " +
+                "[KantanCommander] rejected disk=${script.id} reason=invalid_script " +
                     "errors=${validationErrors.joinToString(" | ") { it.rendered() }}"
             )
-            return callback(false)
+            return completeWithoutSession(
+                handle,
+                options,
+                callback,
+                ExecutionResult(
+                    ExecutionFinishStatus.FAILURE,
+                    0L,
+                    0,
+                    0,
+                    reason = "invalid_script: ${validationErrors.joinToString(" | ") { it.rendered() }}",
+                ),
+            )
         }
-        // 同一ディスクの再トリガー（タイマーとレッドストーンの同時到来、WAIT中の再起動など）は
-        // 実行可能な範囲で並行許可する。各起動は独立したExecutionSessionを持つため干渉しない。
+        // 通常実行とテスト実行は同じセッション実装を使います。テストだけが
+        // observer/debugDelayTicksを持ち、actor=nullで暗黙の実行者を作りません。
         val session = ExecutionSession(
-            rootId = scriptId,
+            rootId = script.id,
             origin = origin.clone(),
             actor = actor,
             creatorId = script.owner,
@@ -87,12 +225,34 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             budget = plugin.config.getInt("execution.max-nodes-per-activation"),
             maxDepth = plugin.config.getInt("execution.max-disk-call-depth"),
             worldId = worldData.uuid,
+            options = options,
+            startTick = startTick,
+            handle = handle,
+            callback = callback,
         )
-        plugin.logger.info("[KantanCommander] start disk=$scriptId world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
+        handle.bind { reason -> cancelSession(session, reason) }
+        plugin.logger.info("[KantanCommander] start disk=${script.id} world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
         runGraph(script, script.graph, session, 0) { success ->
-            plugin.logger.info("[KantanCommander] finish disk=$scriptId success=$success executed=${session.executed}/${session.budget}")
-            callback(success)
+            finishSession(
+                session,
+                if (success) ExecutionFinishStatus.SUCCESS else ExecutionFinishStatus.FAILURE,
+                session.failureReason,
+            )
         }
+        return handle
+    }
+
+    private fun completeWithoutSession(
+        handle: ExecutionHandle,
+        options: ExecutionOptions,
+        callback: (ExecutionResult) -> Unit,
+        result: ExecutionResult,
+    ): ExecutionHandle {
+        handle.complete()
+        runCatching { options.observer?.onFinished(result) }
+            .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] execution observer failed", failure) }
+        callback(result)
+        return handle
     }
 
     private fun runGraph(
@@ -102,6 +262,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         depth: Int,
         done: (Boolean) -> Unit,
     ) {
+        if (!session.isActive) return
         runNode(script, graph, graph.entryNodeId, session, depth, done)
     }
 
@@ -113,6 +274,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         depth: Int,
         done: (Boolean) -> Unit,
     ) {
+        if (!session.isActive) return
         if (nodeId == null) return done(true)
         val node = graph.nodes[nodeId] ?: return stop(session, script, nodeId, depth, "missing_node", done)
         if (node.type == CommandType.FOR_START && node.trueNext == node.pairedNodeId) {
@@ -120,34 +282,122 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             return runNode(script, graph, after, session, depth, done)
         }
         if (!ExecutionSemantics.withinBudget(session.executed, session.budget)) {
-            return stop(session, script, nodeId, depth, "command_limit", done)
+            // 上限超過も「そのノードを実行しようとして失敗した」結果です。
+            // ここで開始／終了イベントを省くと、テスト画面では赤色表示も失敗ログも
+            // 欠落し、実行コマンド数とログの通し番号の関係も崩れます。
+            val attemptNumber = if (depth == 0) {
+                session.attemptCount++
+            } else {
+                0
+            }
+            if (depth == 0) {
+                session.currentAttemptNumber = attemptNumber
+                session.currentRootNodeId = node.id
+                notifyNodeStarted(
+                    session,
+                    ExecutionNodeStarted(
+                        scriptId = script.id,
+                        nodeId = node.id,
+                        nodeType = node.type,
+                        depth = depth,
+                        attemptNumber = attemptNumber,
+                        tick = plugin.server.currentTick.toLong(),
+                    ),
+                )
+            }
+            session.lastDetail = "実行上限に達したため実行できなかった"
+            return advanceNode(
+                script = script,
+                graph = graph,
+                node = node,
+                session = session,
+                depth = depth,
+                attemptNumber = attemptNumber,
+                target = null,
+                outcome = NodeExecutionOutcome.FAILED,
+                done = done,
+                reason = "command_limit",
+            )
         }
         session.executed++
         plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
+        val attemptNumber = if (depth == 0) {
+            session.attemptCount++
+        } else {
+            0
+        }
+        if (depth == 0) {
+            session.currentAttemptNumber = attemptNumber
+            session.currentRootNodeId = node.id
+            notifyNodeStarted(
+                session,
+                ExecutionNodeStarted(
+                    scriptId = script.id,
+                    nodeId = node.id,
+                    nodeType = node.type,
+                    depth = depth,
+                    attemptNumber = attemptNumber,
+                    tick = plugin.server.currentTick.toLong(),
+                ),
+            )
+        }
+        session.lastDetail = null
+        session.lastFailureReason = null
 
         val next: (UUID?, NodeExecutionOutcome) -> Unit = { target, outcome ->
-            when (outcome) {
-                NodeExecutionOutcome.SUCCESS,
-                NodeExecutionOutcome.SKIPPED,
-                -> runNode(script, graph, target, session, depth, done)
-                NodeExecutionOutcome.FAILED ->
-                    stop(session, script, node.id, depth, "node_failed", done)
-            }
+            advanceNode(
+                script = script,
+                graph = graph,
+                node = node,
+                session = session,
+                depth = depth,
+                attemptNumber = attemptNumber,
+                target = target,
+                outcome = outcome,
+                done = done,
+                reason = if (outcome == NodeExecutionOutcome.FAILED) {
+                    // DISK_CALL は内部実行で設定した失敗理由を外側へ引き継ぎます。
+                    // ここを直前ノード専用の値だけにすると、ホバーと結果画面が
+                    // 「command_failed」に戻り、実際の失敗原因を失ってしまいます。
+                    session.lastFailureReason ?: session.failureReason ?: "command_failed"
+                } else {
+                    null
+                },
+            )
         }
         when (node.type) {
             CommandType.WAIT -> {
                 // 保存・入力値は秒を正本とし、Minecraftのスケジューラ境界でだけtickへ変換します。
                 val seconds = resolveNumber(node.string("seconds"), session)
                     ?.takeIf(CommandValueRules::isWaitSeconds)
-                    ?: return stop(session, script, node.id, depth, "invalid_wait_seconds", done)
+                    ?: return advanceNode(
+                        script,
+                        graph,
+                        node,
+                        session,
+                        depth,
+                        attemptNumber,
+                        node.next,
+                        NodeExecutionOutcome.FAILED,
+                        done,
+                        "invalid_wait_seconds",
+                    )
                 val waitTicks = CommandValueRules.secondsToTicks(seconds)
                     ?.takeIf { it >= 1L }
-                    ?: return stop(session, script, node.id, depth, "invalid_wait_seconds", done)
-                plugin.server.scheduler.runTaskLater(
-                    plugin,
-                    Runnable { next(node.next, NodeExecutionOutcome.SUCCESS) },
-                    waitTicks,
-                )
+                    ?: return advanceNode(
+                        script,
+                        graph,
+                        node,
+                        session,
+                        depth,
+                        attemptNumber,
+                        node.next,
+                        NodeExecutionOutcome.FAILED,
+                        done,
+                        "invalid_wait_seconds",
+                    )
+                session.lastDetail = "WAIT: ${waitTicks} tick待機"
+                schedule(session, waitTicks) { next(node.next, NodeExecutionOutcome.SUCCESS) }
             }
             CommandType.CONDITION -> {
                 val effectiveContext = effectiveContext(session)
@@ -158,6 +408,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 )
                 val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
                 session.previousContext = effectiveContext
+                session.lastDetail = "分岐: ${if (result) "TRUE" else "FALSE"} に進んだ"
                 plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, NodeExecutionOutcome.SUCCESS)
             }
@@ -176,6 +427,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     session.previousContext = callerPrevious
                     session.temporaries.clear()
                     session.temporaries.putAll(callerTemporaries)
+                    session.lastDetail = if (success) "ディスク呼び出しに成功した" else "ディスク呼び出しに失敗した"
                     next(
                         node.next,
                         if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
@@ -184,6 +436,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             CommandType.TEMP_SET -> {
                 val success = executeTemporary(node, session)
+                session.lastDetail = if (success) "一時変数を設定した" else "一時変数の設定に失敗した"
                 next(
                     node.next,
                     if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
@@ -193,14 +446,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val success = executeVariable(
                     node,
                     session,
-                )
+            )
                 if (success) session.previousContext = effectiveContext(session)
+                session.lastDetail = if (success) "ワールド内変数を更新した" else "ワールド内変数の更新に失敗した"
                 next(
                     node.next,
                     if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
                 )
             }
-            CommandType.MERGE -> next(node.next, NodeExecutionOutcome.SUCCESS)
+            CommandType.MERGE -> {
+                session.lastDetail = "分岐を合流した"
+                next(node.next, NodeExecutionOutcome.SUCCESS)
+            }
             CommandType.FOR_START -> beginFor(script, graph, node, session, depth, done)
             CommandType.FOR_END -> finishForIteration(script, graph, node, session, depth, done)
             CommandType.BREAK -> breakFor(script, graph, node, session, depth, done)
@@ -212,7 +469,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // ENTITYの死亡・別ワールド・アンロードは実行時に起こり得るため、
                 // 実処理の前にこの判定を行います。
                 val outcome = when {
-                    hasUnavailableTemporaryReference(node, session) -> NodeExecutionOutcome.SKIPPED
+                    hasUnavailableTemporaryReference(node, session) -> {
+                        session.lastDetail = "参照先が見つからないためスキップした"
+                        NodeExecutionOutcome.SKIPPED
+                    }
                     else -> when (executeImmediate(node, session)) {
                         ImmediateExecutionResult.SUCCESS -> NodeExecutionOutcome.SUCCESS
                         ImmediateExecutionResult.SKIPPED -> NodeExecutionOutcome.SKIPPED
@@ -224,6 +484,126 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
     }
 
+    /** ノード完了通知、失敗停止、デバッグ待機を一つの遷移境界へ束ねます。 */
+    private fun advanceNode(
+        script: DiskScript,
+        graph: CommandGraph,
+        node: CommandNode,
+        session: ExecutionSession,
+        depth: Int,
+        attemptNumber: Int,
+        target: UUID?,
+        outcome: NodeExecutionOutcome,
+        done: (Boolean) -> Unit,
+        reason: String?,
+        loopReturn: Boolean = false,
+    ) {
+        if (!session.isActive) return
+        val success = outcome == NodeExecutionOutcome.SUCCESS || outcome == NodeExecutionOutcome.SKIPPED
+        if (depth == 0 && success) session.successfulRootNodeCount++
+        if (depth == 0) {
+            notifyNodeFinished(
+                session,
+                ExecutionNodeFinished(
+                    scriptId = script.id,
+                    nodeId = node.id,
+                    nodeType = node.type,
+                    depth = depth,
+                    attemptNumber = attemptNumber,
+                    outcome = outcome,
+                    successfulNodeCount = session.successfulRootNodeCount,
+                    nextNodeId = target,
+                    tick = plugin.server.currentTick.toLong(),
+                    detail = session.lastDetail,
+                    reason = reason,
+                    loopReturn = loopReturn,
+                ),
+            )
+        }
+        if (!success) {
+            if (depth == 0) session.failedNodeId = node.id
+            session.failureReason = session.failureReason ?: reason ?: "node_failed"
+            return stop(session, script, node.id, depth, session.failureReason!!, done)
+        }
+        if (target == null) return runNode(script, graph, null, session, depth, done)
+        val debugDelay = session.options.debugDelayTicks
+        if (depth == 0 && debugDelay > 0L) {
+            schedule(session, debugDelay) { runNode(script, graph, target, session, depth, done) }
+        } else {
+            runNode(script, graph, target, session, depth, done)
+        }
+    }
+
+    private fun notifyNodeStarted(session: ExecutionSession, event: ExecutionNodeStarted) {
+        runCatching { session.options.observer?.onNodeStarted(event) }
+            .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] node-start observer failed", failure) }
+    }
+
+    private fun notifyNodeFinished(session: ExecutionSession, event: ExecutionNodeFinished) {
+        runCatching { session.options.observer?.onNodeFinished(event) }
+            .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] node-finish observer failed", failure) }
+    }
+
+    /** ログのホバーへ出す人間向けのコマンド種別説明です。 */
+    private fun immediateDetail(type: CommandType): String = when (type) {
+        CommandType.TELEPORT -> "対象を指定位置へテレポートした"
+        CommandType.GIVE_ITEM -> "対象へアイテムを付与した"
+        CommandType.ENTITY_ACTION -> "対象へエンティティ操作を行った"
+        CommandType.DISPLAY_TEXT -> "対象へテキストを表示した"
+        CommandType.SUMMON_ENTITY -> "エンティティを召喚した"
+        CommandType.PLAY_SOUND -> "サウンドを再生した"
+        CommandType.APPLY_EFFECT -> "対象へ効果を適用した"
+        CommandType.CAMERA_SHAKE -> "対象のカメラを揺らした"
+        CommandType.BLOCK_OPERATION -> "ブロックを変更した"
+        CommandType.ENTITY_DELETE -> "対象を削除した"
+        else -> "コマンドを実行した"
+    }
+
+    private fun schedule(session: ExecutionSession, delayTicks: Long, action: () -> Unit) {
+        if (!session.isActive) return
+        lateinit var task: BukkitTask
+        task = plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            session.scheduledTasks.remove(task)
+            if (session.isActive) action()
+        }, delayTicks.coerceAtLeast(1L))
+        session.scheduledTasks += task
+    }
+
+    private fun cancelSession(session: ExecutionSession, reason: String) {
+        if (!session.isActive) return
+        session.cancelled = true
+        session.failureReason = reason
+        session.scheduledTasks.toList().forEach(BukkitTask::cancel)
+        session.scheduledTasks.clear()
+        finishSession(session, ExecutionFinishStatus.CANCELLED, reason)
+    }
+
+    private fun finishSession(session: ExecutionSession, status: ExecutionFinishStatus, reason: String?) {
+        if (session.finished) return
+        session.finished = true
+        session.scheduledTasks.toList().forEach(BukkitTask::cancel)
+        session.scheduledTasks.clear()
+        val elapsed = (plugin.server.currentTick.toLong() - session.startTick).coerceAtLeast(0L)
+        val result = ExecutionResult(
+            status = status,
+            elapsedTicks = elapsed,
+            successfulNodeCount = session.successfulRootNodeCount,
+            attemptCount = session.attemptCount,
+            failedNodeId = session.failedNodeId,
+            reason = reason,
+        )
+        session.handle.complete()
+        runCatching { session.options.observer?.onFinished(result) }
+            .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] finish observer failed", failure) }
+        runCatching { session.callback(result) }
+            .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] execution callback failed", failure) }
+        plugin.logger.info(
+            "[KantanCommander] finish disk=${session.rootId} status=$status " +
+                "successful=${session.successfulRootNodeCount} attempts=${session.attemptCount} " +
+                "executed=${session.executed}/${session.budget} elapsedTicks=$elapsed",
+        )
+    }
+
     private fun beginFor(
         script: DiskScript,
         graph: CommandGraph,
@@ -232,12 +612,22 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         depth: Int,
         done: (Boolean) -> Unit,
     ) {
-        val endId = node.pairedNodeId ?: return stop(session, script, node.id, depth, "missing_for_end", done)
+        val endId = node.pairedNodeId ?: return advanceNode(
+            script, graph, node, session, depth, session.currentAttemptNumber, null,
+            NodeExecutionOutcome.FAILED, done, "missing_for_end",
+        )
         val count = resolvePositiveInt(node.string("count", "1"), session)
-            ?: return stop(session, script, node.id, depth, "invalid_for_count", done)
+            ?: return advanceNode(
+                script, graph, node, session, depth, session.currentAttemptNumber, null,
+                NodeExecutionOutcome.FAILED, done, "invalid_for_count",
+            )
         session.loops += LoopFrame(node.id, endId, count.toLong(), 1, session.context)
         session.currentLoopCount = 1
-        runNode(script, graph, node.trueNext, session, depth, done)
+        session.lastDetail = "ループを開始した"
+        advanceNode(
+            script, graph, node, session, depth, session.currentAttemptNumber, node.trueNext,
+            NodeExecutionOutcome.SUCCESS, done, reason = null,
+        )
     }
 
     private fun finishForIteration(
@@ -249,19 +639,33 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         val frame = session.loops.lastOrNull { it.endId == node.id }
-            ?: return stop(session, script, node.id, depth, "for_frame_missing", done)
+            ?: return advanceNode(
+                script, graph, node, session, depth, session.currentAttemptNumber, null,
+                NodeExecutionOutcome.FAILED, done, "for_frame_missing",
+            )
         val startNode = graph.nodes[frame.startId]
-            ?: return stop(session, script, node.id, depth, "for_start_missing", done)
+            ?: return advanceNode(
+                script, graph, node, session, depth, session.currentAttemptNumber, null,
+                NodeExecutionOutcome.FAILED, done, "for_start_missing",
+            )
         session.context = frame.startContext
         if (ExecutionSemantics.shouldRunNextLoopIteration(frame.count, frame.limit)) {
             frame.count = requireNotNull(ExecutionSemantics.nextLoopCount(frame.count))
             session.currentLoopCount = frame.count
-            runNode(script, graph, startNode.trueNext, session, depth, done)
+            session.lastDetail = "ループを継続した"
+            advanceNode(
+                script, graph, node, session, depth, session.currentAttemptNumber, startNode.trueNext,
+                NodeExecutionOutcome.SUCCESS, done, reason = null, loopReturn = true,
+            )
         } else {
             plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=count_complete iterations=${frame.count}")
             session.loops.remove(frame)
             session.currentLoopCount = session.loops.lastOrNull()?.count
-            runNode(script, graph, node.next, session, depth, done)
+            session.lastDetail = "ループを終了した"
+            advanceNode(
+                script, graph, node, session, depth, session.currentAttemptNumber, node.next,
+                NodeExecutionOutcome.SUCCESS, done, reason = null,
+            )
         }
     }
 
@@ -274,11 +678,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         val frame = session.loops.removeLastOrNull()
-            ?: return stop(session, script, node.id, depth, "break_outside_for", done)
+            ?: return advanceNode(
+                script, graph, node, session, depth, session.currentAttemptNumber, null,
+                NodeExecutionOutcome.FAILED, done, "break_outside_for",
+            )
         plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=break iterations=${frame.count}")
         session.context = frame.startContext
         session.currentLoopCount = session.loops.lastOrNull()?.count
-        runNode(script, graph, graph.nodes[frame.endId]?.next, session, depth, done)
+        session.lastDetail = "ループを中断した"
+        advanceNode(
+            script, graph, node, session, depth, session.currentAttemptNumber, graph.nodes[frame.endId]?.next,
+            NodeExecutionOutcome.SUCCESS, done, reason = null,
+        )
     }
 
     private fun continueFor(
@@ -290,9 +701,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
     ) {
         val frame = session.loops.lastOrNull()
-            ?: return stop(session, script, node.id, depth, "continue_outside_for", done)
+            ?: return advanceNode(
+                script, graph, node, session, depth, session.currentAttemptNumber, null,
+                NodeExecutionOutcome.FAILED, done, "continue_outside_for",
+            )
         session.context = frame.startContext
-        runNode(script, graph, frame.endId, session, depth, done)
+        session.lastDetail = "ループの次の反復へ進んだ"
+        advanceNode(
+            script, graph, node, session, depth, session.currentAttemptNumber, frame.endId,
+            NodeExecutionOutcome.SUCCESS, done, reason = null,
+        )
     }
 
     private fun runDiskCall(node: CommandNode, session: ExecutionSession, depth: Int, done: (Boolean) -> Unit) {
@@ -306,13 +724,25 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): ImmediateExecutionResult = try {
-        if (executeImmediateBoolean(node, session)) ImmediateExecutionResult.SUCCESS
-        else ImmediateExecutionResult.FAILED
+        if (executeImmediateBoolean(node, session)) {
+            if (session.lastDetail.isNullOrBlank()) session.lastDetail = immediateDetail(node.type)
+            ImmediateExecutionResult.SUCCESS
+        } else {
+            if (session.lastDetail.isNullOrBlank()) {
+                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）"
+            }
+            session.lastFailureReason = session.lastFailureReason ?: "command_failed"
+            ImmediateExecutionResult.FAILED
+        }
     } catch (_: ParticleQuotaRejected) {
         // 上限超過は入力・実行失敗ではなく、このノードだけを送信せず後続へ進める
         // 制御結果です。通常の例外ログへ混ぜると、運用上の想定内の抑止が障害に見えます。
+        session.lastDetail = "Particle上限超過のためスキップした"
         ImmediateExecutionResult.SKIPPED
     } catch (failure: Throwable) {
+        val reason = failure.message?.takeIf(String::isNotBlank) ?: failure::class.simpleName ?: "command_failed"
+        session.lastFailureReason = reason
+        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）"
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
         ImmediateExecutionResult.FAILED
     }
@@ -549,7 +979,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             else -> true
         }
-        if (success) session.previousContext = effectiveContext
+        if (success) {
+            session.previousContext = effectiveContext
+            session.lastDetail = executionDetail(node, targets, effectiveOrigin, session)
+        }
         success
     }
 
@@ -604,6 +1037,36 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         )
         return true
     }
+
+    /** 実行後のホバーへ、解決済み対象と展開後の設定値をまとめて表示します。 */
+    private fun executionDetail(
+        node: CommandNode,
+        targets: List<Entity>,
+        origin: Location,
+        session: ExecutionSession,
+    ): String = buildString {
+        append(immediateDetail(node.type))
+        if (targets.isNotEmpty()) {
+            append("（対象: ")
+            append(targets.joinToString("、") { entity -> entity.name })
+            append('）')
+        }
+        val expandedParameters = node.params.entries
+            .filter { (_, value) -> value.isNotBlank() }
+            .map { (key, value) ->
+                val expanded = resolveText(value, session) ?: value
+                "$key=$expanded"
+            }
+        if (expandedParameters.isNotEmpty()) {
+            append("\n実行値: ")
+            append(expandedParameters.joinToString(", "))
+        }
+        append("\n位置: ")
+        append(formatLocation(origin))
+    }
+
+    private fun formatLocation(location: Location): String =
+        "${location.world.name} (${location.blockX}, ${location.blockY}, ${location.blockZ})"
 
     private fun giveItem(player: Player, template: ItemStack, count: Int): Boolean {
         var remaining = count
@@ -1317,13 +1780,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         reason: String,
         done: (Boolean) -> Unit,
     ) {
+        if (session.failureReason == null) session.failureReason = reason
+        if (depth == 0 && session.failedNodeId == null) session.failedNodeId = nodeId
         plugin.logger.warning(
             "[KantanCommander] forced-stop root=${session.rootId} disk=${script.id} node=$nodeId " +
                 "reason=$reason executed=${session.executed} limit=${session.budget} depth=$depth " +
                 "world=${session.origin.world.name} " +
                 "location=${session.origin.blockX},${session.origin.blockY},${session.origin.blockZ}"
         )
-        notifyCreatorOfFailure(session)
+        if (!session.options.suppressCreatorFailureNotification) notifyCreatorOfFailure(session)
         done(false)
     }
 
@@ -1355,7 +1820,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     /** ノード処理結果。参照先が無い場合だけ、失敗と区別して後続へ進めます。 */
     private enum class NodeExecutionOutcome { SUCCESS, SKIPPED, FAILED }
-
     private data class ExecutionSession(
         val rootId: UUID,
         val origin: Location,
@@ -1366,15 +1830,32 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val budget: Int,
         val maxDepth: Int,
         val worldId: UUID,
+        val options: ExecutionOptions,
+        val startTick: Long,
+        val handle: ExecutionHandle,
+        val callback: (ExecutionResult) -> Unit,
         var executed: Int = 0,
         var failureNotified: Boolean = false,
+        var attemptCount: Int = 0,
+        var successfulRootNodeCount: Int = 0,
+        var currentAttemptNumber: Int = 0,
+        var currentRootNodeId: UUID? = null,
+        var failedNodeId: UUID? = null,
+        var failureReason: String? = null,
+        var lastDetail: String? = null,
+        var lastFailureReason: String? = null,
+        var cancelled: Boolean = false,
+        var finished: Boolean = false,
         var context: ExecutionContextSpec? = null,
         var previousContext: ExecutionContextSpec? = null,
         val loops: MutableList<LoopFrame> = mutableListOf(),
         var currentLoopCount: Long? = null,
         /** 一時変数の実行内保持域です。実行終了時に破棄し、DISK_CALL越境では隔離します。 */
         val temporaries: MutableMap<String, TemporaryValue> = linkedMapOf(),
-    )
+    ) {
+        val isActive: Boolean get() = !cancelled && !finished
+        val scheduledTasks: MutableSet<BukkitTask> = linkedSetOf()
+    }
 
     private data class LoopFrame(
         val startId: UUID,

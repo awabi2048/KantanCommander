@@ -48,6 +48,7 @@ internal object GesturePathRenderer {
         yCenter: (Int) -> Double,
         thickness: Double,
         clipBounds: ClipBounds? = null,
+        glowColorFor: ((MapPoint, MapCell) -> Int?)? = null,
     ): List<GestureEditorLayout.PathSegment> {
         if (cells.isEmpty()) return emptyList()
 
@@ -180,13 +181,32 @@ internal object GesturePathRenderer {
             val length = (high - low).coerceAtLeast(0.0)
             if (length <= 1.0e-6) return
             val third = length / 3.0
+            val glowColors = if (glowColorFor == null) {
+                emptyList()
+            } else {
+                val minCoordinate = if (segmentAxis == Axis.HORIZONTAL) minOf(first.x, second.x) else minOf(first.y, second.y)
+                val maxCoordinate = if (segmentAxis == Axis.HORIZONTAL) maxOf(first.x, second.x) else maxOf(first.y, second.y)
+                (minCoordinate..maxCoordinate).mapNotNull { coordinate ->
+                    val point = if (segmentAxis == Axis.HORIZONTAL) {
+                        MapPoint(coordinate, first.y)
+                    } else {
+                        MapPoint(first.x, coordinate)
+                    }
+                    allCells[point]?.let { cell -> glowColorFor(point, cell) }
+                }
+            }
+            val glowColor = when {
+                glowColors.any { it == GLOW_CYAN } -> GLOW_CYAN
+                glowColors.any { it == GLOW_GREEN } -> GLOW_GREEN
+                else -> glowColors.firstOrNull()
+            }
             repeat(3) { index ->
                 val center = low + third * (index + 0.5)
                 val kind = segmentKind(first, second)
                 segments += if (segmentAxis == Axis.HORIZONTAL) {
-                    GestureEditorLayout.PathSegment(center, yCenter(first.y), third, thickness, kind)
+                    GestureEditorLayout.PathSegment(center, yCenter(first.y), third, thickness, kind, glowColor)
                 } else {
-                    GestureEditorLayout.PathSegment(xCenter(first.x), center, thickness, third, kind)
+                    GestureEditorLayout.PathSegment(xCenter(first.x), center, thickness, third, kind, glowColor)
                 }
             }
         }
@@ -222,6 +242,7 @@ internal object GesturePathRenderer {
                 thickness,
                 thickness,
                 kind,
+                glowColor = glowColorFor?.invoke(point, allCells.getValue(point)),
             )
         }
         val uniqueSegments = segments.distinct()
@@ -241,7 +262,12 @@ internal object GesturePathRenderer {
                 w = right - left,
                 h = top - bottom,
                 kind = segment.kind,
+                glowColor = segment.glowColor,
             )
         }.distinct()
     }
+
+    // テスト経路の色はエディターと共有する固定ARGB値です。
+    private const val GLOW_CYAN: Int = 0xFF55FFFF.toInt()
+    private const val GLOW_GREEN: Int = 0xFF55FF55.toInt()
 }

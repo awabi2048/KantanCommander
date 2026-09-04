@@ -228,6 +228,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
         event.isCancelled = true
+        // テストの実ワールド作用と配置物の撤去を同時に走らせないため、保存・表示の
+        // 終了より先に実行セッションを安全停止します。削除経路では結果画面を出しません。
+        plugin.testExecution.cancel(placement.key, showResult = false, reason = "placement_removed")
         // 編集中の表示Entity・入力クレームを先に解放し、破壊後に古い画面が残らないようにします。
         plugin.gestureEditor.closeForPlacement(placement)
         outputDiskAndRemove(event.player, block, placement)

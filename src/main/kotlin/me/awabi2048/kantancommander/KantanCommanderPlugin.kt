@@ -21,6 +21,8 @@ import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
 import me.awabi2048.kantancommander.execution.ParticleQuotaService
 import me.awabi2048.kantancommander.execution.SequenceExecutor
+import me.awabi2048.kantancommander.execution.TestExecutionCoordinator
+import me.awabi2048.kantancommander.execution.TestExecutionPreferences
 import me.awabi2048.kantancommander.execution.SummonedEntityTracker
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
@@ -59,6 +61,10 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var worldVariableUsageFinder: WorldVariableUsageFinder
         private set
     lateinit var executor: SequenceExecutor
+        private set
+    lateinit var testExecution: TestExecutionCoordinator
+        private set
+    lateinit var testExecutionPreferences: TestExecutionPreferences
         private set
     lateinit var summonedEntities: SummonedEntityTracker
         private set
@@ -144,6 +150,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     },
                     reloadAction = {
                         reloadConfig()
+                        if (::testExecution.isInitialized) testExecution.abortAll()
                         if (::scripts.isInitialized) rebuildConfiguredServices()
                     }
                 )
@@ -174,6 +181,8 @@ class KantanCommanderPlugin : JavaPlugin() {
             config.getInt("execution.max-particles-per-world-per-second", 600)
         })
         executor = SequenceExecutor(this)
+        testExecution = TestExecutionCoordinator(executor)
+        testExecutionPreferences = TestExecutionPreferences(this)
 
         programListMenu = ProgramListMenu(this)
         CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan")
@@ -215,6 +224,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     override fun onDisable() {
+        runCatching { if (::testExecution.isInitialized) testExecution.shutdown() }
         runCatching { if (::gestureEditor.isInitialized) gestureEditor.closeAll() }
         standaloneExportContributor?.let(StandaloneExportContributors::unregister)
         standaloneExportContributor = null
@@ -261,6 +271,16 @@ class KantanCommanderPlugin : JavaPlugin() {
             dataFolder.resolve("structured-disks"),
             logger,
             graphLimits,
+            mutationGuard = { scriptId, _, operation ->
+                if (::testExecution.isInitialized) {
+                    testExecution.assertMutationAllowed(scriptId, operation)
+                }
+            },
+            bypassedMutationNotifier = { scriptId, operation ->
+                if (::testExecution.isInitialized) {
+                    testExecution.notifyBypassedMutation(scriptId, operation)
+                }
+            },
         )
         exporter = VanillaDatapackExporter(
             scripts,
