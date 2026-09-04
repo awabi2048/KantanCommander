@@ -780,7 +780,27 @@ class GestureSequenceEditor(
         observedRevision = null
     }
 
-    private fun buildUpperViewport(player: Player): GestureGuiView {
+    /**
+     * 上部画面の構築全体を保護します。
+     *
+     * レイアウト変換が成功しても、画面要素IDの重複やCC-Systemの画面定義検証で
+     * 例外になる可能性があります。画面定義の生成を呼び出し側へ漏らすと、保存後の
+     * refreshだけが失敗して操作者には無反応に見えるため、描画不能画面へ退避し、
+     * レイアウト変換失敗と同じ通知経路へ集約します。
+     */
+    private fun buildUpperViewport(player: Player): GestureGuiView =
+        try {
+            buildUpperViewportContent(player)
+        } catch (failure: RuntimeException) {
+            reportLayoutFailure(
+                player,
+                "ジェスチャーGUIの画面定義生成に失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            layoutErrorView(player)
+        }
+
+    private fun buildUpperViewportContent(player: Player): GestureGuiView {
         layoutFailureDuringCurrentRender = false
         val script = plugin.scripts.load(state.scriptId) ?: return emptyView()
         observedRevision = script.revision
@@ -1206,6 +1226,7 @@ class GestureSequenceEditor(
         val finalElements = clippedElements.filter {
             it.targetVisualId == null || it.targetVisualId in visibleVisualIds
         }
+        ensureUniqueScreenElementIds(finalElements, script.id)
 
         // 今回の描画が最後まで完了した場合だけ、次回の別障害を通知できるように
         // 通知抑制を解除します。プレビューだけ失敗した場合は、上の処理で失敗状態を
@@ -1229,6 +1250,27 @@ class GestureSequenceEditor(
                 frameWidth = GestureEditorLayout.FRAME_WIDTH,
             ),
         ) { context -> handleUpperAction(context) }
+    }
+
+    /**
+     * CC-Systemへ渡す直前に、画面要素IDの重複を構造エラーとして明示します。
+     *
+     * 重複要素をdistinctByで捨てると、どのノード／操作が消えたか分からないまま
+     * 画面だけが部分的に表示され、構造化グラフと編集操作の対応が壊れます。ここでは
+     * 一つも隠さず例外化し、buildUpperViewportの保護処理から操作者へ通知します。
+     */
+    private fun ensureUniqueScreenElementIds(elements: List<GestureGuiElement>, scriptId: UUID) {
+        val duplicateIds = elements
+            .groupingBy(GestureGuiElement::elementId)
+            .eachCount()
+            .filterValues { it > 1 }
+            .keys
+        if (duplicateIds.isNotEmpty()) {
+            throw GraphLayoutException(
+                "ジェスチャーGUIの要素IDが重複しています: script=$scriptId " +
+                    "elementIds=${duplicateIds.joinToString(", ")}",
+            )
+        }
     }
 
     private fun clearSettingState() {
