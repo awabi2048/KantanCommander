@@ -1066,14 +1066,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         description: List<String>? = null,
         style: GuiNameStyle = GuiNameStyle.PRIMARY,
         enabled: Boolean = true,
+        disabledDescription: List<String>? = null,
     ): MenuElement = KcGui.menuEntry(
         player = player,
         slot = slot,
         material = if (enabled) material else DisabledChoiceVisualPolicy.material,
         name = name,
         style = if (enabled) style else DisabledChoiceVisualPolicy.nameStyle,
-        description = description
-            ?: KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CHOICE_DESCRIPTION, mapOf("value" to name)),
+        description = DisabledChoiceVisualPolicy.hoverLines(
+            enabled = enabled,
+            normal = description
+                ?: KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CHOICE_DESCRIPTION, mapOf("value" to name)),
+            disabled = disabledDescription,
+        ),
         data = if (dataLabel == null || dataValue == null) emptyList() else listOf(GuiMenuEntryData(dataLabel, dataValue)),
         actions = if (enabled) listOf(GuiMenuActionIntent.AnyClick(
             actionId = actionId,
@@ -1264,6 +1269,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     enabled = currentNode?.let {
                         CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(it, positionRole, option.first)
                     } ?: true,
+                    disabledDescription = if (option.first == PositionKind.DISK) {
+                        listOf(CommandSettingAvailabilityPolicy.CONTROL_BLOCK_POSITION_DISABLED_HOVER)
+                    } else null,
                 )
             }.toMutableList()
         }
@@ -1437,15 +1445,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         MenuActionResult.Success(MenuUpdate.None)
     }
 
-    /** ブロックは自由入力や任意スロット選択を許さず、メインハンドの実物から取得します。 */
+    /** ブロックは自由入力や任意スロット選択を許さず、メインハンドから取得します。空手はAIRです。 */
     private fun setHeldBlock(context: MenuActionContext): MenuActionResult {
         val held = context.player.inventory.itemInMainHand
-        if (held.type == Material.AIR || !held.type.isBlock) {
+        val blockId = HeldBlockSettingPolicy.materialId(held.type)
+        if (blockId == null) {
             context.player.sendMessage("§cメインハンドにブロックを持ってください。")
             return MenuActionResult.Ignored
         }
         if (!updateNode(context.player, context.route) {
-                CommandSettingsModel.setParameter(it, "block", held.type.key.toString())
+                CommandSettingsModel.setParameter(it, "block", blockId)
             }) {
             return MenuActionResult.Rejected(
                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),

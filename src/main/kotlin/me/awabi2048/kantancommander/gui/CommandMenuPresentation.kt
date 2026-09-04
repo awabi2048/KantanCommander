@@ -22,6 +22,14 @@ internal object DisabledChoiceVisualPolicy {
     val material: Material = Material.RED_CONCRETE
     val textColor: NamedTextColor = NamedTextColor.GRAY
     val nameStyle: GuiNameStyle = GuiNameStyle.MUTED
+
+    /** 無効項目だけ、指定された理由ホバーを通常説明へ優先して表示します。 */
+    fun hoverText(enabled: Boolean, normal: String?, disabled: String?): String? =
+        if (enabled) normal else disabled?.takeIf(String::isNotBlank) ?: normal
+
+    /** インベントリGUIのLoreも同じ優先規則で、無効理由を通常説明へ上書きします。 */
+    fun hoverLines(enabled: Boolean, normal: List<String>, disabled: List<String>?): List<String> =
+        if (enabled) normal else disabled?.takeIf { it.isNotEmpty() } ?: normal
 }
 
 /** コマンド選択画面で、実処理と実行順序の制御を混在させないための表示分類です。 */

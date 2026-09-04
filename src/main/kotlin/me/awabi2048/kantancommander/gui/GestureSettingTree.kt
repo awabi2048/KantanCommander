@@ -17,6 +17,8 @@ data class GestureSettingTreeNode(
     /** 実行前提を満たさない選択肢は表示したまま操作だけを無効化します。 */
     val enabled: Boolean = true,
     val description: String = "",
+    /** 選択不可の場合だけ通常説明を上書きする、操作不能理由のホバーです。 */
+    val disabledHoverText: String? = null,
     val children: List<GestureSettingTreeNode> = emptyList(),
     /** 選択肢の意味。択一と複数選択可能な設定を同じ木で表現します。 */
     val selectionMode: GestureSettingSelectionMode = GestureSettingSelectionMode.EXCLUSIVE,

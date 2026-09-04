@@ -1023,8 +1023,12 @@ class GestureLowerPanel(
                 115,
                 Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
             )
-            val hoverDescription = choice.description.takeIf(String::isNotBlank)
-                ?: choiceDescription(player, choice, fieldKey)
+            val hoverDescription = DisabledChoiceVisualPolicy.hoverText(
+                enabled = choice.enabled,
+                normal = choice.description.takeIf(String::isNotBlank)
+                    ?: choiceDescription(player, choice, fieldKey),
+                disabled = choice.disabledHoverText,
+            )
             elements.add(GestureGuiElement(
                 elementId = "lower-setting-choice:${choice.id}",
                 bounds = rect(cx, cy, width, SETTING_CHOICE_HEIGHT),
@@ -2421,8 +2425,12 @@ class GestureLowerPanel(
                 90,
                 Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
             )
-            val hoverDescription = choice.description.takeIf(String::isNotBlank)
-                ?: choiceDescription(player, choice, fieldKey)
+            val hoverDescription = DisabledChoiceVisualPolicy.hoverText(
+                enabled = choice.enabled,
+                normal = choice.description.takeIf(String::isNotBlank)
+                    ?: choiceDescription(player, choice, fieldKey),
+                disabled = choice.disabledHoverText,
+            )
             elements += GestureGuiElement(
                 // 共通ハンドラがtarget:<category>を解釈するため、elementIdの接頭辞は
                 // 通常の設定カードと統一します。
@@ -2522,6 +2530,9 @@ class GestureLowerPanel(
                 label = KcI18n.text(player, label),
                 selected = current == kind,
                 enabled = CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(node, context.role, kind),
+                disabledHoverText = if (kind == PositionKind.DISK) {
+                    CommandSettingAvailabilityPolicy.CONTROL_BLOCK_POSITION_DISABLED_HOVER
+                } else null,
             )
         }
     }

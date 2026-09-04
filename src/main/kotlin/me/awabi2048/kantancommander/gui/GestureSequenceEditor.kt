@@ -1524,20 +1524,19 @@ class GestureSequenceEditor(
         return saveHeldItem(player, context, parameter, itemKey, itemData)
     }
 
-    /** ブロック設定はメインハンドの実アイテムからブロックIDだけを保存します。 */
+    /** ブロック設定はメインハンドからブロックIDを保存し、空手はminecraft:airとして扱います。 */
     private fun applyHeldBlock(
         player: Player,
         context: CommandSettingContext,
     ): Boolean {
-        val held = player.inventory.itemInMainHand
-            .takeUnless { it.type.isAir || !it.type.isBlock }
+        val blockId = HeldBlockSettingPolicy.materialId(player.inventory.itemInMainHand.type)
             ?: run {
                 player.sendMessage("§cメインハンドにブロックを持ってください。")
                 updateLower(player)
                 return false
             }
         val updated = updateSettingNode(player, context, configuredFields = setOf("block")) {
-            CommandSettingsModel.setParameter(it, "block", held.type.key.toString())
+            CommandSettingsModel.setParameter(it, "block", blockId)
         }
         if (updated) updateLower(player)
         return updated
