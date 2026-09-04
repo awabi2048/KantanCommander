@@ -15,7 +15,6 @@ internal object KantanCommandPermissions {
     const val HELP = "kankoma.command.help"
     const val PLACED = "kankoma.command.placed"
     const val RELOAD = "kankoma.command.reload"
-    const val GESTURE = "kankoma.command.gesture"
 
     fun forSubcommand(subcommand: String?): String? = when (subcommand?.lowercase()) {
         null -> ROOT
@@ -24,7 +23,6 @@ internal object KantanCommandPermissions {
         "help" -> HELP
         "placed" -> PLACED
         "reload" -> RELOAD
-        "gesture" -> GESTURE
         else -> null
     }
 }

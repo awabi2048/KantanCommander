@@ -92,7 +92,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 4,
+                    currentVersion = 5,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -112,6 +112,13 @@ class KantanCommanderPlugin : JavaPlugin() {
                             // プログラム名の既定値は作成者名から生成するため、旧来の
                             // 旧ディスク名設定を残すと利用者が古い名称へ戻せてしまいます。
                             config.set("default-disk-name", null)
+                        },
+                        4 to ConfigMigration { config ->
+                            // エディターの表示方式は固定設定ではなく、操作プレイヤーの
+                            // Java版／統合版環境から決定するため、デバッグ用の旧設定を
+                            // 移行時に削除します。残したままにすると、設定ファイル上の
+                            // 値と実際のGUI経路が一致しない状態になります。
+                            config.set("use-gesture-editor", null)
                         },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
