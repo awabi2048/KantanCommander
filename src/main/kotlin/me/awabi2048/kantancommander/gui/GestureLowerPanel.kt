@@ -1626,7 +1626,16 @@ class GestureLowerPanel(
             GestureSettingScreen.TARGET -> targetChoices(node, context, player)
         GestureSettingScreen.POSITION -> positionChoices(node, context, player).map { choice ->
             if (choice.id == "position:${PositionKind.TARGET.name}" && context.role == CommandSettingRole.DESTINATION) {
-                choice.copy(children = targetChoices(node, context.copy(role = CommandSettingRole.DESTINATION), player))
+                // 移動先のインライン選択は、実体の分類（プレイヤー／プレイヤー以外）だけを
+                // 選ぶ画面契約です。一時変数は通常の対象設定経路に残し、この選択肢へ混在させません。
+                choice.copy(
+                    children = targetChoices(
+                        node,
+                        context.copy(role = CommandSettingRole.DESTINATION),
+                        player,
+                        includeTemporary = false,
+                    ),
+                )
             } else choice
         }
         GestureSettingScreen.LOCATION -> listOf(
@@ -2201,13 +2210,20 @@ class GestureLowerPanel(
     }
 
     /** 対象種別を木の親ノードとして表示し、詳細条件を子ノードへぶら下げます。 */
-    private fun targetChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
+    private fun targetChoices(
+        node: CommandNode,
+        context: CommandSettingContext,
+        player: Player,
+        includeTemporary: Boolean = true,
+    ): List<SettingChoice> {
         val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
-        val choices = listOf(
-            TargetCategory.PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
-            TargetCategory.NON_PLAYER_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY,
-            TargetCategory.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
-        )
+        val choices = buildList {
+            add(TargetCategory.PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)
+            add(TargetCategory.NON_PLAYER_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY)
+            if (includeTemporary) {
+                add(TargetCategory.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE)
+            }
+        }
         return choices.map { (category, label) ->
             val selected = CommandSettingsModel.targetCategoryMatches(current, category) &&
                 CommandSettingsModel.isFieldConfigured(node, "target", context.role)
@@ -2226,8 +2242,8 @@ class GestureLowerPanel(
     /**
      * 移動先の「他のエンティティ」を選んだときだけ、対象分類を右下へ並べます。
      * 座標方式の選択肢と同じ親画面へ置くことで、方式を選ぶ→対象種別を選ぶ→
-     * 同じ種別を再クリックして詳細、という導線を保ちます。カードは右ペインの
-     * 選択領域を4等分し、設定タブとおよそ同じ寸法で配置します。
+     * 同じ種別を再クリックして詳細、という導線を保ちます。既存の4スロットを
+     * 前半2スロット・後半2スロットへまとめ、2枚のカードを同じ横幅で配置します。
      */
     private fun addLowerRightTargetChoiceNodes(
         choices: List<GestureSettingTreeNode>,
@@ -2237,71 +2253,71 @@ class GestureLowerPanel(
         fieldKey: String,
         suppressHighlight: Boolean = false,
     ) {
-        val span = POSITION_TARGET_CHOICE_SPAN_END_X - POSITION_TARGET_CHOICE_SPAN_START_X
-        val width = (span - POSITION_TARGET_CHOICE_GAP * 3) / 4.0
-        val pitch = width + POSITION_TARGET_CHOICE_GAP
-        choices.take(4).forEachIndexed { index, choice ->
-            val cx = POSITION_TARGET_CHOICE_SPAN_START_X + width / 2.0 + index * pitch
-            val cy = POSITION_TARGET_CHOICE_Y
-            val bgId = "position-target-choice-bg-$index"
-            addBlock(
-                visuals,
-                bgId,
-                cx,
-                cy,
-                width,
-                POSITION_TARGET_CHOICE_HEIGHT,
-                settingChoiceMaterial(choice),
-                4,
-                // 右側へ表示する対象分類ボタンもタブ以外の設定ボタンです。
-                // 選択中は完了状態にかかわらず白い外周枠、未完了警告はタブ文字へ残します。
-                outlineMaterial = if (suppressHighlight) {
-                    null
-                } else {
-                    GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)
-                },
-            )
-            addText(
-                visuals,
-                "position-target-choice-label-$index",
-                cx,
-                cy - 0.02,
-                0.0055,
-                90,
-                Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
-            )
-            val hoverDescription = DisabledChoiceVisualPolicy.hoverText(
-                enabled = choice.enabled,
-                normal = choice.description.takeIf(String::isNotBlank)
-                    ?: choiceDescription(player, choice, fieldKey),
-                disabled = choice.disabledHoverText,
-            )
-            elements += GestureGuiElement(
-                // 共通ハンドラがtarget:<category>を解釈するため、elementIdの接頭辞は
-                // 通常の設定カードと統一します。
-                elementId = "lower-setting-choice:${choice.id}",
-                bounds = rect(cx, cy, width, POSITION_TARGET_CHOICE_HEIGHT),
-                acceptedGestures = if (choice.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
-                gestureGuard = if (choice.enabled) null else { _, _ -> false },
-                targetVisualId = bgId,
-                // ホバー中はテクスチャを変えず説明文だけを示します。色付けは実際に
-                // 操作が行われた場合（選択・警告等）に限ります。
-                hoverText = hoverDescription?.let {
-                    parallelButtonHover(
-                        text = it,
-                        x = cx,
-                        y = cy,
-                        row = 0,
-                        rowCount = 1,
-                        height = POSITION_TARGET_CHOICE_HEIGHT,
-                        descriptionX = HOVER_SLOT_X,
-                        descriptionY = HOVER_SLOT_Y,
-                        replacesDescription = false,
-                        parallel = choices.size > 1,
-                    )
-                },
-            )
-        }
+        val visibleChoices = choices.take(GestureTargetChoiceLayoutPolicy.CHOICE_COUNT)
+        GestureTargetChoiceLayoutPolicy.slots(visibleChoices.size)
+            .zip(visibleChoices)
+            .forEachIndexed { index, (slot, choice) ->
+                val cx = slot.centerX
+                val cy = POSITION_TARGET_CHOICE_Y
+                val bgId = "position-target-choice-bg-$index"
+                addBlock(
+                    visuals,
+                    bgId,
+                    cx,
+                    cy,
+                    slot.width,
+                    POSITION_TARGET_CHOICE_HEIGHT,
+                    settingChoiceMaterial(choice),
+                    4,
+                    // 右側へ表示する対象分類ボタンもタブ以外の設定ボタンです。
+                    // 選択中は完了状態にかかわらず白い外周枠、未完了警告はタブ文字へ残します。
+                    outlineMaterial = if (suppressHighlight) {
+                        null
+                    } else {
+                        GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)
+                    },
+                )
+                addText(
+                    visuals,
+                    "position-target-choice-label-$index",
+                    cx,
+                    cy - 0.02,
+                    0.0055,
+                    90,
+                    Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+                )
+                val hoverDescription = DisabledChoiceVisualPolicy.hoverText(
+                    enabled = choice.enabled,
+                    normal = choice.description.takeIf(String::isNotBlank)
+                        ?: choiceDescription(player, choice, fieldKey),
+                    disabled = choice.disabledHoverText,
+                )
+                elements += GestureGuiElement(
+                    // 共通ハンドラがtarget:<category>を解釈するため、elementIdの接頭辞は
+                    // 通常の設定カードと統一します。
+                    elementId = "lower-setting-choice:${choice.id}",
+                    bounds = rect(cx, cy, slot.width, POSITION_TARGET_CHOICE_HEIGHT),
+                    acceptedGestures = if (choice.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
+                    gestureGuard = if (choice.enabled) null else { _, _ -> false },
+                    targetVisualId = bgId,
+                    // ホバー中はテクスチャを変えず説明文だけを示します。色付けは実際に
+                    // 操作が行われた場合（選択・警告等）に限ります。
+                    hoverText = hoverDescription?.let {
+                        parallelButtonHover(
+                            text = it,
+                            x = cx,
+                            y = cy,
+                            row = 0,
+                            rowCount = 1,
+                            height = POSITION_TARGET_CHOICE_HEIGHT,
+                            descriptionX = HOVER_SLOT_X,
+                            descriptionY = HOVER_SLOT_Y,
+                            replacesDescription = false,
+                            parallel = visibleChoices.size > 1,
+                        )
+                    },
+                )
+            }
     }
 
     private fun targetFilterChoices(
@@ -2932,12 +2948,8 @@ class GestureLowerPanel(
         const val HOVER_BUTTON_GAP = 0.04
         // PICKERの下段はページャー（0.28, -0.48）があるため、その上へ置きます。
         const val PICKER_HOVER_SLOT_Y = -0.38
-        // 「ほかのエンティティ」の対象分類は、右ペインの選択カード領域
-        // （SETTING_CHOICE 2列と同じスパン）を4等分し、設定タブ（0.47×0.10）と
-        // およそ同じ高さの寸法で配置します。
-        const val POSITION_TARGET_CHOICE_SPAN_START_X = -0.43
-        const val POSITION_TARGET_CHOICE_SPAN_END_X = 1.00
-        const val POSITION_TARGET_CHOICE_GAP = 0.04
+        // 「ほかのエンティティ」のカードは、既存の4スロット区分を
+        // GestureTargetChoiceLayoutPolicyで前後2スロットずつへまとめます。
         const val POSITION_TARGET_CHOICE_HEIGHT = 0.15
         const val POSITION_TARGET_CHOICE_Y = -0.25
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
