@@ -1,5 +1,6 @@
 package me.awabi2048.kantancommander.data
 
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -158,5 +159,57 @@ class WorldVariableStoreTest {
         val reloaded = WorldVariableStore(directory)
         assertEquals(setOf("valid"), reloaded.list(world).keys)
         assertEquals(setOf("valid"), reloaded.definitions(world).keys)
+    }
+
+    @Test
+    fun `string values over the shared length limit are rejected before cache mutation`() {
+        val world = UUID.randomUUID()
+        val store = WorldVariableStore(directory)
+        val overLimit = "a".repeat(CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH + 1)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            store.set(world, "long", WorldVariableValue(VariableType.STRING, stringValue = overLimit))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            store.define(world, "long", WorldVariableValue(VariableType.STRING, stringValue = overLimit))
+        }
+        assertNull(store.get(world, "long"))
+
+        // 上限ちょうどの値は受理されます。
+        val atLimit = "a".repeat(CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH)
+        store.set(world, "at_limit", WorldVariableValue(VariableType.STRING, stringValue = atLimit))
+        assertEquals(atLimit, store.get(world, "at_limit")?.stringValue)
+    }
+
+    @Test
+    fun `over length string data is discarded while loading`() {
+        val world = UUID.randomUUID()
+        val overLimit = "b".repeat(CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH + 1)
+        val atLimit = "b".repeat(CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH)
+        directory.resolve("$world.json").writeText(
+            """
+            {
+              "definitions": {
+                "too_long": {"type":"STRING","stringValue":"$overLimit"},
+                "at_limit": {"type":"STRING","stringValue":"$atLimit"}
+              },
+              "values": {
+                "too_long": {"type":"STRING","stringValue":"$overLimit"},
+                "at_limit": {"type":"STRING","stringValue":"$atLimit"}
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val store = WorldVariableStore(directory)
+
+        // 上限超過の保存値は編集Dialogの入力上限を超えるため、正規化で無効ペアとして
+        // 破棄します。上限ちょうどの値は保持されます。
+        assertNull(store.get(world, "too_long"))
+        assertEquals(atLimit, store.get(world, "at_limit")?.stringValue)
+
+        val reloaded = WorldVariableStore(directory)
+        assertNull(reloaded.get(world, "too_long"))
+        assertEquals(atLimit, reloaded.get(world, "at_limit")?.stringValue)
     }
 }

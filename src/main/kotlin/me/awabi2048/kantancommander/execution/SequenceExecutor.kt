@@ -1361,15 +1361,21 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         true
     }.getOrDefault(false)
 
-    private fun parseAssignedValue(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue {        return when (type) {
+    private fun parseAssignedValue(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue {
+        return when (type) {
             VariableType.NUMBER -> WorldVariableValue(
                 VariableType.NUMBER,
                 numberValue = resolveNumber(raw, session) ?: error("number must be finite"),
             )
-            VariableType.STRING -> WorldVariableValue(
-                VariableType.STRING,
-                stringValue = resolveText(raw, session) ?: error("string variable is unavailable"),
-            )
+            // STRING代入もGUI入力と同じ共通上限へ揃えます。超過代入はGUIで入力できない
+            // 値と同じ扱いとして失敗(原因表示)にするため、保存層の不変条件を崩しません。
+            VariableType.STRING -> {
+                val text = resolveText(raw, session) ?: error("string variable is unavailable")
+                require(text.length <= CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH) {
+                    "world variable string exceeds ${CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH} characters"
+                }
+                WorldVariableValue(VariableType.STRING, stringValue = text)
+            }
         }
     }
 

@@ -443,9 +443,11 @@ internal object CommandDialogSpecs {
         )
         VariableType.STRING -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
-            WORLD_VARIABLE_STRING_MAX_LENGTH,
+            CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH,
             validate = { raw ->
-                if (raw.length > WORLD_VARIABLE_STRING_MAX_LENGTH || VariableTemplate.hasMalformedReference(raw)) {
+                if (raw.length > CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH ||
+                    VariableTemplate.hasMalformedReference(raw)
+                ) {
                     worldVariableValueInvalid(VariableType.STRING)
                 } else null
             },
@@ -1028,7 +1030,6 @@ internal object CommandDialogSpecs {
 
     private const val MAX_EFFECT_SECONDS = 86_400
     private const val MULTI_VALUE_MAX_LENGTH = 64
-    private const val WORLD_VARIABLE_STRING_MAX_LENGTH = 256
     private val NAMESPACED_ID_FIELDS = setOf("entity", "entityType", "sound", "effect")
 
     /** 数値欄でも単一のワールド変数・一時変数を実行時に数値化できるようにします。 */

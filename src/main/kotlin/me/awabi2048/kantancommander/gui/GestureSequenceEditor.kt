@@ -381,7 +381,16 @@ class GestureSequenceEditor(
         if (!canViewSharedActor(ownerId, actorId)) return false
         if (actorId != ownerId && !isSharedOperationRoot(ownerId)) return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
-        val editorAnchor = state.anchor ?: return false
+        // 追従モード(クリップ未使用)では画面がオーナーとともに移動するため、
+        // 距離判定の基準は配置ブロック中心へ固定します。クリップ固定中は
+        // 固定アンカー(実際の画面位置)を基準にします。これにより、追従中でも
+        // オーナー自身を含む操作者がブロック近傍から操作を再開できます。
+        val editorAnchor = state.anchor ?: Location(
+            Bukkit.getWorld(placement.world),
+            placement.x + 0.5,
+            placement.y + 0.5,
+            placement.z + 0.5,
+        )
         // 距離は操作の認可だけへ適用します。これにより、遠ざかったプレイヤーは
         // 画面を見失わず、戻って位置を合わせれば同じ画面上で操作を再開できます。
         return actor.world.name == placement.world &&
@@ -2730,6 +2739,14 @@ class GestureSequenceEditor(
                             "ワールド内変数の${operation}後の一覧更新に失敗しました: script=${state.scriptId}",
                             failure,
                         )
+                        // 保存は成功しているため入力エラー・保存失敗ではなく、
+                        // 一覧更新だけが失敗した別事象として利用者へ通知します。
+                        player.sendMessage(
+                            KcI18n.text(
+                                player,
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_LIST_REFRESH_FAILED,
+                            ),
+                        )
                         false
                     }
                 if (!updated) {
@@ -3103,7 +3120,9 @@ class GestureSequenceEditor(
         if (!result.scanComplete) {
             // 使用箇所を確認できない状態で削除すると、破損していた配置から
             // 参照切れを作るため、確認画面を残して再スキャンを待ちます。
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+            // これは保存失敗ではなく「検査未完了」の別事象なので、専用の文言を
+            // 使って、利用者が再スキャンを待つべき操作であることを示します。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SCAN_INCOMPLETE))
             return
         }
         if (result.usages.isNotEmpty()) {
@@ -4251,11 +4270,18 @@ class GestureSequenceEditor(
             }
             context.elementId == "nav-clip" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 // 共有画面の第三者には、所有者の表示モードを変更する権限を渡しません。
-                // pinToCurrentPositionは実行時poseを保持したまま追従だけを止めるため、
-                // クリック直後の表示と当たり判定の位置がずれません。
-                if (context.actorId != ownerId || state.anchor != null) return
-                if (!api.pinToCurrentPosition(ownerId)) return
-                state.anchor = player.eyeLocation.clone()
+                // クリップはトグル操作です。追従中はpinToCurrentPositionでその場に固定し、
+                // 固定中はunpinToFollowでプレイヤー追従へ戻します。どちらも実行時poseを
+                // 保持したまま追従の停止/再開だけを切り替えるため、クリック直後の表示と
+                // 当たり判定の位置がずれません。
+                if (context.actorId != ownerId) return
+                if (state.anchor != null) {
+                    if (!api.unpinToFollow(ownerId)) return
+                    state.anchor = null
+                } else {
+                    if (!api.pinToCurrentPosition(ownerId)) return
+                    state.anchor = player.eyeLocation.clone()
+                }
                 updateUpper(player)
             }
             context.elementId.startsWith("nav-") && context.elementId != "nav-close" &&
@@ -5131,9 +5157,10 @@ class GestureSequenceEditor(
     }
 
     /**
-     * 追従画面を現在の表示位置へ固定するクリップ操作です。
-     * 共通サービスが保持する実行時poseをそのまま凍結するため、ボタンの再描画で
-     * 固定位置を再計算せず、クリックした瞬間の画面と入力判定を一致させます。
+     * 追従画面と現在の表示位置をトグルで切り替えるクリップ操作です。
+     * 追従中は共通サービスが保持する実行時poseを凍結して固定し、固定中は
+     * 解除してプレイヤー追従へ戻します。固定位置を再計算せず、クリックした
+     * 瞬間の画面と入力判定を一致させます。
      */
     private fun addClipButton(
         player: Player,
@@ -5151,7 +5178,10 @@ class GestureSequenceEditor(
             width = size,
             height = size,
             blockData = Bukkit.createBlockData(
-                if (following) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                // クリップはトグル操作です。追従中(クリップで固定できる状態)と
+                // 固定中(クリップで解除できる状態)の両方が押せるため、無効表現は
+                // 使わず、状態を素材の色で示します。
+                if (following) Material.CYAN_CONCRETE else Material.LIGHT_BLUE_CONCRETE,
             ),
             layer = 4,
         ))
@@ -5167,7 +5197,9 @@ class GestureSequenceEditor(
             elementId = "nav-clip",
             bounds = navBounds(x, y, size),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
-            gestureGuard = { actor, _ -> following && actor.uniqueId == sessionOwnerId },
+            // トグル自体は所有者だけが行えます。固定中も所有者は押せるため、
+            // 追従状態に依存せず所有者判定だけで受け付けます。
+            gestureGuard = { actor, _ -> actor.uniqueId == sessionOwnerId },
             targetVisualId = "nav-clip-glyph",
             hoverText = navigationHover(
                 player,
