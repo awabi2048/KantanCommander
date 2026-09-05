@@ -7,11 +7,7 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-<<<<<<< HEAD
     <version>26.905.2</version>
-=======
-    <version>26.905.1</version>
->>>>>>> f90a409 (fix: ワールド内変数の保存と一覧更新を分離)
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>

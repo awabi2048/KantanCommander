@@ -1818,8 +1818,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /** 上限超過を通常の実行例外と区別する内部制御例外です。 */
     private class ParticleQuotaRejected : RuntimeException()
 
-    /** ノード処理結果。参照先が無い場合だけ、失敗と区別して後続へ進めます。 */
-    private enum class NodeExecutionOutcome { SUCCESS, SKIPPED, FAILED }
     private data class ExecutionSession(
         val rootId: UUID,
         val origin: Location,

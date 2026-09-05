@@ -63,7 +63,6 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.toggleControlBlockState
-import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -295,7 +294,7 @@ class GestureSequenceEditor(
     } else {
         GestureGuiAccess.OWNER_ONLY
     }
-    /** MWM-Chanponのワールド単位ツール権限を入力受付時点で再確認します。 */
+    /** Kantan Commander自身の配置操作権限を入力受付時点で再確認します。 */
     private val screenAccessPolicy = state.placement?.let {
         GestureGuiAccessPolicy(::canOperateSharedActor)
     }
@@ -332,14 +331,13 @@ class GestureSequenceEditor(
         val placement = state.placement ?: return actorId == ownerId
         val owner = Bukkit.getPlayer(ownerId) ?: return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
-        // ツール権限はMWM-Chanponが現在ワールドへ一時付与するノードです。
-        // 建築権限は要求しません。今回の要件では、既存ブロックを編集する
-        // 「共有GUI表示」と、配置物を設置・破壊する「管理操作」を分離します。
-        // 表示は同じワールドにいてツール権限を持つ間は維持し、距離によって画面全体が
-        // 消えないようにします。
+        // 共有GUIの表示も配置物を操作できるプレイヤーに限定します。
+        // PlacementAccessPolicy側の追加権限・管理者例外・MyWorld建築権限の分岐を
+        // ここでも再利用し、表示だけ権限判定が緩くなる入口を作らないようにします。
+        // 距離判定は操作時だけへ分離し、遠ざかったプレイヤーの画面全体を消しません。
         return actor.world.uid == owner.world.uid &&
             actor.world.name == placement.world &&
-            actor.hasPermission(PlacementAccessPolicy.EXTENDED_COMMAND_BLOCK_PERMISSION)
+            plugin.placementAccess.canManage(actor, placement.world)
     }
 
     /**
