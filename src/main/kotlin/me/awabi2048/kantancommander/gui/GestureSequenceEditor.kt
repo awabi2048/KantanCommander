@@ -373,7 +373,7 @@ class GestureSequenceEditor(
     }
 
     private fun canOperateSharedActor(ownerId: UUID, actorId: UUID): Boolean {
-        // テスト中の中断導線は距離・追従アンカーの状態に依存させません。オーナーが
+        // テスト中の中断導線は追従アンカーの状態に依存させません。オーナーが
         // 離れても「テスト実行」「閉じる」だけは受け付け、ほかの操作者は下の
         // Actionハンドラで明示的に拒否します。
         if (state.testExecution?.ownerId == actorId) return true
@@ -381,20 +381,12 @@ class GestureSequenceEditor(
         if (!canViewSharedActor(ownerId, actorId)) return false
         if (actorId != ownerId && !isSharedOperationRoot(ownerId)) return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
-        // 追従モード(クリップ未使用)では画面がオーナーとともに移動するため、
-        // 距離判定の基準は配置ブロック中心へ固定します。クリップ固定中は
-        // 固定アンカー(実際の画面位置)を基準にします。これにより、追従中でも
-        // オーナー自身を含む操作者がブロック近傍から操作を再開できます。
-        val editorAnchor = state.anchor ?: Location(
-            Bukkit.getWorld(placement.world),
-            placement.x + 0.5,
-            placement.y + 0.5,
-            placement.z + 0.5,
-        )
-        // 距離は操作の認可だけへ適用します。これにより、遠ざかったプレイヤーは
-        // 画面を見失わず、戻って位置を合わせれば同じ画面上で操作を再開できます。
-        return actor.world.name == placement.world &&
-            GestureEditorReachPolicy.isWithinInteractionRange(actor, editorAnchor)
+        // 距離判定はCC-System側の到達検査へ一任します。CC-Systemはクリックを
+        // 試みた画面上の点までの距離(eye→hit)をinteraction_rangeで検査するため、
+        // ここで配置ブロック起点の重複検査を行うと、追従画面がブロックから
+        // 離れた位置にある場合に正当な操作まで拒否してしまいます。
+        // 当たり点がない経路(Dialog確定等)では距離を検査しません。
+        return actor.world.name == placement.world
     }
 
     internal fun canOperateSharedActor(player: Player): Boolean =
