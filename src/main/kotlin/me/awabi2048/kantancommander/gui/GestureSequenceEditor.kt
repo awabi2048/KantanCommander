@@ -521,6 +521,8 @@ class GestureSequenceEditor(
                 secondaryInputEnabled = false,
                 // 画面外を含む左右クリックを外部ブロック／エンティティへ漏らしません。
                 suppressWorldClicks = true,
+                // エディター全体の高さを0.5ブロック下げます。
+                verticalOffset = EDITOR_VERTICAL_OFFSET,
             ),
         )
         gestureSessionId = snapshot.sessionId
@@ -5368,6 +5370,11 @@ class GestureSequenceEditor(
 
     private companion object {
         const val DIALOG_OWNER = "kantan-commander"
+        /**
+         * エディター画面全体へ適用するY方向の補正です(ブロック単位)。
+         * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。
+         */
+        const val EDITOR_VERTICAL_OFFSET: Double = -0.5
         /** CC-SystemのOPENING完了待ちを吸収する上限（13tickのアニメーションより長くします）。 */
         const val MAX_RENDER_RETRY_TICKS = 20
     }
