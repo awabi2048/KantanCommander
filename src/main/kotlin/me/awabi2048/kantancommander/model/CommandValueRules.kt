@@ -22,6 +22,14 @@ object CommandValueRules {
     private val EQUIPMENT_SLOTS = setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")
 
     /**
+     * ワールド内変数のSTRING値に許す最大文字数です。
+     * 編集Dialogの入力上限・保存層の検証・実行時のVARIABLE代入が同じ値を共有し、
+     * Dialogの初期値上限(Paperの入力画面生成)を超える保存値が存在しない不変条件を
+     * 読み込み時の正規化と合わせて維持します。
+     */
+    const val WORLD_VARIABLE_STRING_MAX_LENGTH: Int = 256
+
+    /**
      * Paper Registryはサーバー起動前のAPI単体テスト環境では初期化できません。
      * 実サーバーでこの値がtrueのときだけ実在確認を行い、APIだけの環境では
      * 実行時に同じく行われるNamespacedKey構文確認までをテスト可能な境界とします。

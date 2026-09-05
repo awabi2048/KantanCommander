@@ -302,7 +302,12 @@ class WorldVariableStore(
         val type = runCatching { value.type }.getOrNull() ?: return false
         return when (type) {
             VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
-            VariableType.STRING -> value.stringValue != null && value.numberValue == null
+            // STRINGの長さ上限はCommandValueRulesの共通上限と一致させます。超過値は
+            // 保存(set/define)で拒否され、読み込み時の正規化でも無効ペアとして破棄される
+            // ため、編集Dialogの入力上限を超える保存値が存在しない不変条件を維持します。
+            VariableType.STRING ->
+                value.stringValue != null && value.numberValue == null &&
+                    value.stringValue.length <= CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH
         }
     }
 
