@@ -523,6 +523,8 @@ class GestureSequenceEditor(
                 suppressWorldClicks = true,
                 // エディター全体の高さを0.5ブロック下げます。
                 verticalOffset = EDITOR_VERTICAL_OFFSET,
+                // 画面の上下傾きを半分にします。
+                tiltScale = EDITOR_TILT_SCALE,
             ),
         )
         gestureSessionId = snapshot.sessionId
@@ -5375,6 +5377,11 @@ class GestureSequenceEditor(
          * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。
          */
         const val EDITOR_VERTICAL_OFFSET: Double = -0.5
+        /**
+         * エディター画面の上下傾き倍率です。1.0で従来配置、0.5で半減します。
+         * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。
+         */
+        const val EDITOR_TILT_SCALE: Double = 0.5
         /** CC-SystemのOPENING完了待ちを吸収する上限（13tickのアニメーションより長くします）。 */
         const val MAX_RENDER_RETRY_TICKS = 20
     }
