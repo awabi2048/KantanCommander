@@ -101,7 +101,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 5,
+                    currentVersion = 6,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -128,10 +128,13 @@ class KantanCommanderPlugin : JavaPlugin() {
                             // 移行時に削除します。残したままにすると、設定ファイル上の
                             // 値と実際のGUI経路が一致しない状態になります。
                             config.set("use-gesture-editor", null)
+                        },
+                        5 to ConfigMigration { config ->
+                            // Particleの追加上限は既存のmigration 4が実行済みの
+                            // 設定(バージョン5)には適用されないため、独立した世代として
+                            // 導入します。これにより、旧ビルドで既にバージョン5へ
+                            // 移行済みの環境でも既定値が補完されます。
                             config.set("execution.max-particles-per-world-per-second", 600)
-                            // Particleの追加上限も同じ設定世代で導入します。旧設定に
-                            // このキーがない場合だけ既定値を補い、BE/JEの表示方式移行と
-                            // 実行上限の追加を一つの原子的な設定移行として完了させます。
                         },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->

@@ -13,4 +13,4 @@ limits:
 timer:
   minimum-seconds: 1
   maximum-seconds: 86400
-config_version: 5
+config_version: 6
