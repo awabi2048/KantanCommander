@@ -14,6 +14,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.NumericExpression
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -212,6 +213,42 @@ internal object CommandDialogSpecs {
         ),
     )
 
+    /** パーティクルの散布範囲・速度・個数を1つの設定項目で編集します。 */
+    fun particleParametersBody(player: Player): List<Component> = listOf(
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_PARAMETERS_BODY),
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_PARAMETERS_CONSTRAINT),
+    )
+
+    fun particleParametersInputs(
+        player: Player,
+        deltaX: String,
+        deltaY: String,
+        deltaZ: String,
+        speed: String,
+        count: String,
+    ): List<MenuDialogInput.Text> = listOf(
+        input(player, ParticleSettings.PARAM_DELTA_X, deltaX, particleSpread, KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX)),
+        input(player, ParticleSettings.PARAM_DELTA_Y, deltaY, particleSpread, KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY)),
+        input(player, ParticleSettings.PARAM_DELTA_Z, deltaZ, particleSpread, KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)),
+        input(player, ParticleSettings.PARAM_SPEED, speed, particleSpeed, KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SPEED)),
+        input(player, ParticleSettings.PARAM_COUNT, count, positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT), KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT)),
+    )
+
+    /** Particleの追加データは種類ごとに型が変わるため、現在のnodeから仕様を解決します。 */
+    fun particleData(node: CommandNode): Spec = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DATA,
+        512,
+        validate = { raw ->
+            val particle = ParticleSettings.particle(node)
+            if (particle == null || ParticleSettings.parseData(particle, raw).isFailure) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DATA_INVALID
+            } else null
+        },
+        required = ParticleSettings.particle(node)?.let(ParticleSettings::requiresData) ?: true,
+        format = InputFormat.ANY_STRING,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DATA_BODY,
+    )
+
     private fun formatOptionalNumber(value: Double?): String = value?.let {
         if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
     }.orEmpty()
@@ -219,6 +256,18 @@ internal object CommandDialogSpecs {
     fun finiteDouble(raw: String): Double? = CommandValueRules.parseFiniteDouble(raw)
 
     fun finiteFloat(raw: String): Float? = raw.trim().toFloatOrNull()?.takeIf(Float::isFinite)
+
+    private val particleSpread = decimalRange(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX,
+        -Double.MAX_VALUE..Double.MAX_VALUE,
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+    )
+
+    private val particleSpeed = decimalRange(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SPEED,
+        0.0..Double.MAX_VALUE,
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+    )
 
     /** Inventory/Gestureの両方で、保存前に同じ入力正規化を行います。 */
     fun normalize(fieldKey: String, raw: String): String = raw.trim().let {
@@ -503,6 +552,29 @@ internal object CommandDialogSpecs {
         node: CommandNode,
         fieldKey: String,
     ): Spec? {
+        if (node.type == CommandType.PARTICLE) {
+            return when (fieldKey) {
+                ParticleSettings.PARAM_PARTICLE -> Spec(
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
+                    64,
+                    validate = { raw ->
+                        if (runCatching { org.bukkit.Particle.valueOf(raw.trim()) }.isFailure) {
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                        } else null
+                    },
+                    required = true,
+                    format = InputFormat.ANY_STRING,
+                )
+                ParticleSettings.PARAM_DATA -> particleData(node)
+                ParticleSettings.PARAM_DELTA_X,
+                ParticleSettings.PARAM_DELTA_Y,
+                ParticleSettings.PARAM_DELTA_Z,
+                -> particleSpread
+                ParticleSettings.PARAM_SPEED -> particleSpeed
+                ParticleSettings.PARAM_COUNT -> positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT)
+                else -> field(fieldKey)
+            }
+        }
         if (node.type == CommandType.FOR_START && fieldKey == "count") {
             return positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REPEAT_COUNT)
         }
@@ -883,7 +955,7 @@ internal object CommandDialogSpecs {
         }
 
     /** 一覧から選択できる入力項目だけを候補提示の対象にします。 */
-    fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect")
+    fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect", ParticleSettings.PARAM_PARTICLE)
 
     /**
      * 入力中の文字列に近い登録IDを最大12件返します。
@@ -918,6 +990,7 @@ internal object CommandDialogSpecs {
         "entity", "entityType" -> CommandValueRules.isEntityTypeId(raw)
         "sound" -> CommandValueRules.isSoundId(raw)
         "effect" -> CommandValueRules.isEffectId(raw)
+        ParticleSettings.PARAM_PARTICLE -> runCatching { org.bukkit.Particle.valueOf(raw.trim()) }.isSuccess
         else -> false
     }
 
@@ -928,6 +1001,7 @@ internal object CommandDialogSpecs {
             "entity", "entityType" -> Registry.ENTITY_TYPE.keyStream().map { it.toString() }.toList()
             "sound" -> Registry.SOUNDS.keyStream().map { it.toString() }.toList()
             "effect" -> Registry.EFFECT.keyStream().map { it.toString() }.toList()
+            ParticleSettings.PARAM_PARTICLE -> org.bukkit.Particle.entries.map { it.name }
             else -> emptyList()
         }.distinct().sorted()
     }.getOrElse { emptyList() }

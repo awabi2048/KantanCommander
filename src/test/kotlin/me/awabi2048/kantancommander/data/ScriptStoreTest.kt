@@ -1,8 +1,13 @@
 package me.awabi2048.kantancommander.data
 
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.hasDiskContent
+import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -16,7 +21,10 @@ import java.util.UUID
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.logging.Handler
+import java.util.logging.Level
 import java.util.logging.Logger
+import java.util.logging.LogRecord
 
 @Suppress("DEPRECATION")
 class ScriptStoreTest {
@@ -69,6 +77,39 @@ class ScriptStoreTest {
             },
         )
         assertEquals("compare-and-set", requireNotNull(store.load(script.id)).name)
+    }
+
+    @Test
+    fun `normal mutations are blocked atomically and bypass mutations notify after success`() {
+        var locked = false
+        val bypassed = mutableListOf<Pair<UUID, ScriptMutationOperation>>()
+        val store = ScriptStore(
+            temp.resolve("test-lock"),
+            Logger.getAnonymousLogger(),
+            mutationGuard = { id, _, operation ->
+                if (locked) throw ScriptMutationLockedException(id, operation)
+            },
+            bypassedMutationNotifier = { id, operation -> bypassed += id to operation },
+        )
+        val script = store.create(UUID.randomUUID(), "locked")
+        val edited = requireNotNull(store.load(script.id)).apply { name = "edited" }
+
+        locked = true
+        assertThrows(ScriptMutationLockedException::class.java) { store.save(edited) }
+        assertEquals("locked", requireNotNull(store.load(script.id)).name)
+
+        store.saveBypassingExecutionLock(edited)
+        assertEquals("edited", requireNotNull(store.load(script.id)).name)
+        store.deleteBypassingExecutionLock(script.id)
+
+        assertEquals(
+            listOf(
+                script.id to ScriptMutationOperation.SAVE,
+                script.id to ScriptMutationOperation.DELETE,
+            ),
+            bypassed,
+        )
+        assertNull(store.load(script.id))
     }
 
     @Test
@@ -167,22 +208,118 @@ class ScriptStoreTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val migrated = requireNotNull(store.load(scriptId))
 
-        assertEquals(8, migrated.formatVersion)
+        assertEquals(9, migrated.formatVersion)
         assertEquals(3, migrated.timer.intervalSeconds)
         assertEquals("0.05", migrated.graph.nodes[nodeId]?.params?.get("seconds"))
         val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 8"))
+        assertTrue(rewritten.contains("\"formatVersion\": 9"))
         assertTrue(rewritten.contains("\"intervalSeconds\": 3"))
         assertTrue(!rewritten.contains("intervalUnits"))
         assertTrue(!rewritten.contains("\"ticks\""))
     }
 
     @Test
-    fun `legacy format is ignored`() {
+    fun `unsupported legacy format is quarantined`() {
         val dir = temp.resolve("structured").also(File::mkdirs)
         dir.resolve("${UUID.randomUUID()}.json").writeText("""{"formatVersion":1}""")
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         assertTrue(store.listAll().isEmpty())
+    }
+
+    @Test
+    fun `unsupported format is quarantined and does not warn repeatedly`() {
+        val dir = temp.resolve("incompatible")
+        val scriptId = UUID.randomUUID()
+        val source = """{"formatVersion":8}"""
+        val sourceFile = dir.resolve("$scriptId.json")
+        dir.mkdirs()
+        sourceFile.writeText(source, Charsets.UTF_8)
+        val (logger, handler) = recordingLogger()
+
+        val store = ScriptStore(dir, logger)
+        repeat(2) { assertTrue(store.listAll().isEmpty()) }
+
+        assertFalse(sourceFile.exists())
+        val quarantined = requireNotNull(dir.resolve("incompatible").listFiles()).single()
+        assertTrue(quarantined.name.startsWith("$scriptId-v8-"))
+        assertEquals(source, quarantined.readText(Charsets.UTF_8))
+        assertEquals(1, handler.warningCount())
+    }
+
+    @Test
+    fun `unknown target kind is quarantined before deep copy`() {
+        val dir = temp.resolve("unknown-target-kind")
+        val scriptId = UUID.randomUUID()
+        val source = validScriptJson(scriptId).apply {
+            val node = getAsJsonObject("graph")
+                .getAsJsonObject("nodes")
+                .entrySet()
+                .single()
+                .value
+                .asJsonObject
+            node.getAsJsonObject("targetSpec").addProperty("kind", "INHERITED_TARGET")
+        }
+        dir.mkdirs()
+        val sourceFile = dir.resolve("$scriptId.json")
+        sourceFile.writeText(GsonBuilder().setPrettyPrinting().create().toJson(source), Charsets.UTF_8)
+        val (logger, handler) = recordingLogger()
+
+        val store = ScriptStore(dir, logger)
+        assertTrue(store.listAll().isEmpty())
+        assertNull(store.load(scriptId))
+        assertFalse(sourceFile.exists())
+        assertEquals(1, handler.warningCount())
+        assertEquals(1, requireNotNull(dir.resolve("corrupt").listFiles()).size)
+    }
+
+    @Test
+    fun `missing target kind is quarantined before Gson can create a nullable model`() {
+        val dir = temp.resolve("missing-target-kind")
+        val scriptId = UUID.randomUUID()
+        val source = validScriptJson(scriptId).apply {
+            val node = getAsJsonObject("graph")
+                .getAsJsonObject("nodes")
+                .entrySet()
+                .single()
+                .value
+                .asJsonObject
+            node.getAsJsonObject("targetSpec").remove("kind")
+        }
+        dir.mkdirs()
+        val sourceFile = dir.resolve("$scriptId.json")
+        sourceFile.writeText(GsonBuilder().setPrettyPrinting().create().toJson(source), Charsets.UTF_8)
+        val (logger, handler) = recordingLogger()
+
+        val store = ScriptStore(dir, logger)
+        assertTrue(store.listAll().isEmpty())
+        assertFalse(sourceFile.exists())
+        assertEquals(1, handler.warningCount())
+        assertEquals(1, requireNotNull(dir.resolve("corrupt").listFiles()).size)
+    }
+
+    @Test
+    fun `failed quarantine is negatively cached until the source file changes`() {
+        val dir = temp.resolve("failed-quarantine")
+        val scriptId = UUID.randomUUID()
+        dir.mkdirs()
+        val sourceFile = dir.resolve("$scriptId.json")
+        sourceFile.writeText("""{"formatVersion":8}""", Charsets.UTF_8)
+        // 隔離先を通常ファイルにして、Files.moveが失敗する状態を作ります。
+        dir.resolve("incompatible").writeText("not a directory", Charsets.UTF_8)
+        val (logger, handler) = recordingLogger()
+
+        val store = ScriptStore(dir, logger)
+        val firstWarningCount = handler.warningCount()
+        assertTrue(sourceFile.exists())
+        repeat(3) { assertTrue(store.listAll().isEmpty()) }
+
+        assertEquals(1, firstWarningCount)
+        assertEquals(firstWarningCount, handler.warningCount())
+
+        // 更新されたファイルは負のキャッシュを無効化し、修復を再確認します。
+        sourceFile.writeText("""{"formatVersion":8,"changed":true}""", Charsets.UTF_8)
+        assertTrue(store.listAll().isEmpty())
+        assertEquals(firstWarningCount + 1, handler.warningCount())
     }
 
     @Test
@@ -331,5 +468,47 @@ class ScriptStoreTest {
         // 再生成したStoreでも関係と正本を復元できます。
         val reopened = ScriptStore(dir, Logger.getAnonymousLogger())
         assertEquals(listOf(script.id), reopened.listHistory(otherEditor).map { it.id })
+    }
+
+    private fun validScriptJson(scriptId: UUID) = JsonParser.parseString(
+        GsonBuilder().create().toJson(
+            DiskScript(
+                id = scriptId,
+                name = "valid",
+                owner = UUID.randomUUID(),
+                graph = CommandGraph.empty().also { graph ->
+                    val node = CommandType.DISPLAY_TEXT.newNode().apply {
+                        targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+                    }
+                    graph.entryNodeId = node.id
+                    graph.nodes[node.id] = node
+                },
+            ),
+        ),
+    ).asJsonObject
+
+    private fun recordingLogger(): Pair<Logger, RecordingLogHandler> {
+        val logger = Logger.getLogger("ScriptStoreTest-${UUID.randomUUID()}")
+        val handler = RecordingLogHandler()
+        logger.useParentHandlers = false
+        logger.level = Level.ALL
+        logger.addHandler(handler)
+        return logger to handler
+    }
+}
+
+private class RecordingLogHandler : Handler() {
+    private val records = mutableListOf<LogRecord>()
+
+    override fun publish(record: LogRecord) {
+        synchronized(records) { records += record }
+    }
+
+    override fun flush() = Unit
+
+    override fun close() = Unit
+
+    fun warningCount(): Int = synchronized(records) {
+        records.count { it.level.intValue() >= Level.WARNING.intValue() }
     }
 }

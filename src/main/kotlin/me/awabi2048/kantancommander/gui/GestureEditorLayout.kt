@@ -66,6 +66,8 @@ object GestureEditorLayout {
         val w: Double,
         val h: Double,
         val kind: MapCellKind = MapCellKind.PATH,
+        /** テスト実行時の通過状態。通常表示ではnullです。 */
+        val glowColor: Int? = null,
     )
 
     fun horizontalPath(y: Double, xFrom: Double, xTo: Double): PathSegment {
@@ -162,6 +164,27 @@ object GestureEditorLayout {
     const val CLOSE_X: Double = ZOOM_X
     const val CLOSE_Y: Double = 0.40
     const val CLOSE_SIZE: Double = NAV_SIZE
+
+    /** 閉じるボタンの左隣に置く、追従画面のクリップボタンです。 */
+    const val CLIP_X: Double = CLOSE_X - NAV_PITCH
+    const val CLIP_Y: Double = CLOSE_Y
+    const val CLIP_SIZE: Double = NAV_SIZE
+
+    /**
+     * ナビゲーション操作案内を表示する共有領域です。
+     * 添付モックアップの黄色枠に合わせ、十字キーの左端からズームキーの右端までを
+     * 1つの説明欄として使います。個別ボタンの上へ文言を置かないことで、長い日本語も
+     * ボタン列へ重ならず、ホバー対象を切り替えても視線の移動を抑えます。
+     */
+    val NAV_HOVER_MIN_X: Double
+        get() = NAV_CENTER_X - NAV_PITCH - NAV_SIZE / 2.0
+    val NAV_HOVER_MAX_X: Double
+        get() = ZOOM_X + ZOOM_SIZE / 2.0
+    val NAV_HOVER_X: Double
+        get() = (NAV_HOVER_MIN_X + NAV_HOVER_MAX_X) / 2.0
+    const val NAV_HOVER_Y: Double = 0.02
+    const val NAV_HOVER_SIZE: Double = 0.0055
+    const val NAV_HOVER_LINE_WIDTH: Int = 220
 
     /** ズーム倍率に応じた論理表示セル数です。座標を拡大縮小するだけにせず、表示範囲も再計算します。 */
     fun viewportColumns(zoomScale: Double): Int =

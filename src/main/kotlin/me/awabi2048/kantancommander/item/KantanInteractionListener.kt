@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.item
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.gui.EditorGuiMode
+import me.awabi2048.kantancommander.gui.EditorGuiModeResolver
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
@@ -18,9 +20,42 @@ import org.bukkit.event.block.Action
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockPlaceEvent
 import org.bukkit.event.player.PlayerInteractEvent
+import io.papermc.paper.event.player.PlayerPickBlockEvent
 import org.bukkit.inventory.EquipmentSlot
 
 class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Listener {
+    /**
+     * クリエイティブのホイールクリックはPaperのPickBlockイベントで差し替えます。
+     * バニラの素材だけを返すと制御ブロックのプログラムが失われるため、配置台帳から
+     * 最新スクリプトを読み、完全なスナップショットを同梱したアイテムを返します。
+     */
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    fun onPickControlBlock(event: PlayerPickBlockEvent) {
+        val placement = plugin.placements.find(event.block.location) ?: return
+        val script = plugin.scripts.load(placement.scriptId) ?: return
+        val item = runCatching { KantanItemService.createBlock(script, event.player) }
+            .getOrElse { error ->
+                plugin.logger.log(
+                    java.util.logging.Level.WARNING,
+                    "制御ブロックのプログラム同梱アイテム生成に失敗: location=${event.block.location}, script=${script.id}",
+                    error,
+                )
+                return
+            }
+        // Paperの既定PickBlockは元ブロックの素材だけを返すため、イベントを止めて
+        // 同じ取得先スロットへカスタムアイテムを配置します。
+        event.isCancelled = true
+        if (event.targetSlot >= 0) {
+            event.player.inventory.setItem(event.targetSlot, item)
+        } else {
+            // 通常のクリエイティブ経路では発生しませんが、異常な取得先でもアイテムを
+            // 消失させないよう、空きスロットへフォールバックします。
+            event.player.inventory.addItem(item).values.forEach { overflow ->
+                event.player.world.dropItemNaturally(event.player.location, overflow)
+            }
+        }
+    }
+
     /**
      * EASのSessionListener（通常優先度）より先に、Kantanブロック操作の右クリックを
      * 判定します。EASはPlayerInteractEventがキャンセル済みでもSessionを開始し得るため、
@@ -74,16 +109,20 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
 
         if (clickedPlacement != null && event.action == Action.RIGHT_CLICK_BLOCK) {
+            // Gesture GUIはJE専用、BEは同じ編集内容をインベントリGUIで表示します。
+            // ここで一度だけ解決した方式を、入口ポリシーと共有画面の権限判定へ渡し、
+            // 入口ごとに別の環境判定を行わないようにします。
+            val editorGuiMode = EditorGuiModeResolver.resolve(player)
             val placementInteraction = KantanPlacementInteractionPolicy.resolve(
                 itemKind = itemKind,
                 sneaking = player.isSneaking,
-                useGestureEditor = plugin.config.getBoolean("use-gesture-editor", false),
+                editorGuiMode = editorGuiMode,
             )
             // かんたんコマンダー制御ブロックを手に持った通常右クリックは、従来どおり
             // バニラのブロック配置を優先します。スニーク時は同じアイテムを持っていても
-            // 明示的な追従GestureGUI操作になるため、この分岐へ進みます。
+            // 環境に対応したエディターを開くため、この分岐へ進みます。
             if (placementInteraction == KantanPlacementInteraction.VANILLA_PLACE) return
-            // GUIを開く経路はイベントをキャンセルするため、バニラが送る腕振りが
+            // GUIを開く経路はイベントと使用結果をキャンセルするため、バニラが送る腕振りが
             // 発生しません。実際に編集／ディスク挿入を受け付ける右クリックだけ、
             // 使用した手に対応するスイングを明示的に送って操作の成立を見せます。
             if (event.hand == EquipmentSlot.OFF_HAND) {
@@ -91,13 +130,16 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             } else {
                 player.swingMainHand()
             }
+            event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
+            event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
             event.isCancelled = true
             val canManagePlacement = plugin.placementAccess.canManage(player, clickedPlacement.world)
             // 既存のGesture画面を操作するだけの第三者には、設置・破壊・
             // ディスク書き込みを許可しません。共有GUIへの参加経路だけを
             // 建築権限から分離します。
             val canOperateExistingGesture =
-                itemKind != KantanItemKind.DISK &&
+                editorGuiMode == EditorGuiMode.GESTURE &&
+                    itemKind != KantanItemKind.DISK &&
                     plugin.gestureEditor.canOperateExisting(player, clickedPlacement)
             if (!canManagePlacement && !canOperateExistingGesture) {
                 player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
@@ -112,9 +154,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 KantanPlacementInteraction.WRITE_CONFIRM -> {
                     val diskScriptId = diskId ?: return
                     plugin.editorMenu.openWriteConfirm(player, clickedPlacement, diskScriptId)
-                }
-                KantanPlacementInteraction.FIXED_GESTURE -> {
-                    plugin.gestureEditor.open(player, clickedPlacement)
                 }
                 KantanPlacementInteraction.INVENTORY_EDITOR -> {
                     plugin.editorMenu.open(player, clickedPlacement)
@@ -153,11 +192,26 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             plugin.logger.info("かんたんコマンダー制御ブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
             return
         }
+        // 同梱プログラムの有無を一度だけ確定し、復元失敗時の拒否判定と配置処理で
+        // 判定基準がずれないようにします。
+        val hasEmbeddedProgram = KantanItemService.hasEmbeddedProgram(event.itemInHand)
+        val embeddedProgram = if (hasEmbeddedProgram) {
+            KantanItemService.embeddedProgram(event.itemInHand).also { program ->
+                if (program == null) {
+                    event.isCancelled = true
+                    plugin.logger.warning(
+                        "制御ブロックアイテムの埋め込みプログラムを復元できないため設置を拒否: " +
+                            "player=${player.name}, location=${event.block.location}",
+                    )
+                }
+            }
+        } else null
+        if (hasEmbeddedProgram && embeddedProgram == null) return
         plugin.logger.info("かんたんコマンダー制御ブロックの設置を検出: player=${player.name}, location=${event.block.location}, material=${event.block.type}")
         // バニラの配置イベントが配置位置を保証済み（置換可能性・プレイヤー重なりもバニラが検証済み）のため、
         // 自前の再判定は行わず、既存配置物の重複と保護判定だけを追加確認する。
         // 失敗時は元イベントをキャンセルし、バニラの巻き戻しで配置位置を元へ戻す。
-        if (!placeBlock(player, event.block.location, event.hand)) {
+        if (!placeBlock(player, event.block.location, event.hand, embeddedProgram)) {
             event.isCancelled = true
         }
     }
@@ -174,6 +228,9 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
         event.isCancelled = true
+        // テストの実ワールド作用と配置物の撤去を同時に走らせないため、保存・表示の
+        // 終了より先に実行セッションを安全停止します。削除経路では結果画面を出しません。
+        plugin.testExecution.cancel(placement.key, showResult = false, reason = "placement_removed")
         // 編集中の表示Entity・入力クレームを先に解放し、破壊後に古い画面が残らないようにします。
         plugin.gestureEditor.closeForPlacement(placement)
         outputDiskAndRemove(event.player, block, placement)
@@ -187,6 +244,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         player: Player,
         location: Location,
         hand: EquipmentSlot,
+        embeddedProgram: me.awabi2048.kantancommander.model.DiskScript? = null,
     ): Boolean {
         val block = location.block
         // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにする。
@@ -206,12 +264,14 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return false
         }
 
-        // 配置直後の初期名は設定値ではなく作成者を明示します。ライブラリ／履歴から
-        // 複製した後も、元の作成者とプログラム名を識別できるようにするためです。
-        val placedScript = plugin.scripts.createPlacement(
-            player.uniqueId,
-            "${player.name}のプログラム",
-        )
+        // 同梱データは参照UUIDではなく内容のスナップショットです。配置時に新しい
+        // 正本へ複製することで、元アイテムや元配置の後続編集と独立させます。
+        val placedScript = if (embeddedProgram != null) {
+            plugin.scripts.copyForPlacement(embeddedProgram)
+        } else {
+            // 通常の空アイテムから置いた場合だけ、配置者を初期名へ使います。
+            plugin.scripts.createPlacement(player.uniqueId, "${player.name}のプログラム")
+        }
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)

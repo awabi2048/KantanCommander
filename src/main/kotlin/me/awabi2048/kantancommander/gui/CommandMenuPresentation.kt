@@ -4,7 +4,6 @@ import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.supportsContextOverride
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Material
 
@@ -48,7 +47,7 @@ internal enum class CommandCategory(
 }
 
 /**
- * コマンド型が増えた際に、分類・個別コンテキスト対応・説明が暗黙の既定値へ流れないよう、
+ * コマンド型が増えた際に、分類・説明が暗黙の既定値へ流れないよう、
  * 全型の表示契約を網羅的なwhenで管理します。
  */
 internal object CommandPresentationPolicy {
@@ -59,6 +58,7 @@ internal object CommandPresentationPolicy {
         CommandType.DISPLAY_TEXT,
         CommandType.SUMMON_ENTITY,
         CommandType.PLAY_SOUND,
+        CommandType.PARTICLE,
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
         CommandType.BLOCK_OPERATION,
@@ -67,7 +67,6 @@ internal object CommandPresentationPolicy {
 
         CommandType.WAIT,
         CommandType.CONDITION,
-        CommandType.CONTEXT,
         CommandType.DISK_CALL,
         CommandType.VARIABLE,
         CommandType.TEMP_SET,
@@ -80,7 +79,6 @@ internal object CommandPresentationPolicy {
 
     }
 
-    fun supportsContextOverride(type: CommandType): Boolean = type.supportsContextOverride()
 }
 
 /**

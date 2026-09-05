@@ -7,7 +7,6 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
-import me.awabi2048.kantancommander.model.ContextSource
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -15,12 +14,12 @@ import org.junit.jupiter.api.Test
 
 class ExecutionSemanticsTest {
     @Test
-    fun `partial node context overrides only configured fields`() {
+    fun `internal execution context merge preserves unspecified fields`() {
         val inherited = ExecutionContextSpec(
-            executor = TargetSpec(TargetKind.INHERITED_TARGET),
+            executor = TargetSpec(TargetKind.NEAREST_ENTITY),
             target = TargetSpec(TargetKind.NEAREST_PLAYER),
             position = PositionSpec(PositionKind.DISK),
-            facing = FacingSpec(FacingKind.INHERITED),
+            facing = FacingSpec(FacingKind.CAPTURED, yaw = 0f, pitch = 0f),
         )
         val override = ExecutionContextSpec(
             facing = FacingSpec(FacingKind.ROTATION, yaw = 90f, pitch = 10f),
@@ -34,18 +33,15 @@ class ExecutionSemanticsTest {
     }
 
     @Test
-    fun `previous execute context is selected only when requested and node override stays strongest`() {
+    fun `internal execution context merge lets the newer state override fields`() {
         val base = ExecutionContextSpec(position = PositionSpec(PositionKind.DISK))
         val previous = ExecutionContextSpec(
             position = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0),
             target = TargetSpec(TargetKind.NEAREST_PLAYER),
         )
-        val override = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
-
-        val inherited = requireNotNull(ExecutionSemantics.effectiveContext(base, previous, ContextSource.PREVIOUS, override))
-        assertEquals(previous.position, inherited.position)
-        assertEquals(override.target, inherited.target)
-        assertEquals(base, ExecutionSemantics.effectiveContext(base, previous, ContextSource.BASE, null))
+        val merged = requireNotNull(ExecutionSemantics.mergeContexts(base, previous))
+        assertEquals(previous.position, merged.position)
+        assertEquals(previous.target, merged.target)
     }
 
     @Test

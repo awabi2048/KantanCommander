@@ -123,4 +123,40 @@ class WorldVariableStoreTest {
         assertEquals(VariableType.NUMBER, store.definitions(world)["integer_value"]?.type)
         assertEquals(VariableType.STRING, store.definitions(world)["text_value"]?.type)
     }
+
+    @Test
+    fun `definition and current value mismatches are discarded as one invalid pair`() {
+        val world = UUID.randomUUID()
+        directory.resolve("$world.json").writeText(
+            """
+            {
+              "definitions": {
+                "definition_only": {"type":"NUMBER","numberValue":1},
+                "type_mismatch": {"type":"NUMBER","numberValue":2},
+                "valid": {"type":"STRING","stringValue":"definition"}
+              },
+              "values": {
+                "value_only": {"type":"STRING","stringValue":"orphan"},
+                "type_mismatch": {"type":"STRING","stringValue":"wrong"},
+                "valid": {"type":"STRING","stringValue":"current"}
+              }
+            }
+            """.trimIndent(),
+        )
+
+        val store = WorldVariableStore(directory)
+
+        assertEquals(setOf("valid"), store.list(world).keys)
+        assertEquals(setOf("valid"), store.definitions(world).keys)
+        assertEquals("current", store.get(world, "valid")?.stringValue)
+        assertTrue(store.get(world, "definition_only") == null)
+        assertTrue(store.get(world, "value_only") == null)
+        assertTrue(store.get(world, "type_mismatch") == null)
+
+        // 読み込み時の正規化結果は次のStoreでも同じ組として再利用できる形で
+        // 保存され、起動のたびに不整合を再生成しません。
+        val reloaded = WorldVariableStore(directory)
+        assertEquals(setOf("valid"), reloaded.list(world).keys)
+        assertEquals(setOf("valid"), reloaded.definitions(world).keys)
+    }
 }

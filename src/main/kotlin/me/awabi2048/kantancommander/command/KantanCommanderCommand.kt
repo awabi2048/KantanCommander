@@ -24,7 +24,6 @@ class KantanCommanderCommand(
             "history" -> openHistory(sender)
             "placed" -> listPlaced(sender, args.getOrNull(1)?.toIntOrNull() ?: 1)
             "reload" -> reload(sender)
-            "gesture" -> configureGesture(sender, args.getOrNull(1)?.lowercase())
             "help" -> help(sender)
             else -> help(sender)
         }
@@ -97,22 +96,6 @@ class KantanCommanderCommand(
         sender.sendMessage(KcI18n.text(sender as? Player, key))
     }
 
-    private fun configureGesture(sender: CommandSender, operation: String?) {
-        when (operation) {
-            "on" -> {
-                plugin.config.set("use-gesture-editor", true)
-                plugin.saveConfig()
-                sender.sendMessage("ジェスチャーエディターを使用します。")
-            }
-            "off" -> {
-                plugin.config.set("use-gesture-editor", false)
-                plugin.saveConfig()
-                sender.sendMessage("従来のエディターを使用します。")
-            }
-            else -> sender.sendMessage("/kankoma gesture <on|off>")
-        }
-    }
-
     private fun help(sender: CommandSender) {
         if (!requirePermission(sender, KantanCommandPermissions.HELP)) return
         val player = sender as? Player
@@ -155,17 +138,9 @@ class KantanCommanderCommand(
                 if (sender.hasPermission(KantanCommandPermissions.LIBRARY)) add("library")
                 if (sender.hasPermission(KantanCommandPermissions.PLACED)) add("placed")
                 if (sender.hasPermission(KantanCommandPermissions.RELOAD)) add("reload")
-                if (sender.hasPermission(KantanCommandPermissions.GESTURE)) add("gesture")
                 if (sender.hasPermission(KantanCommandPermissions.HELP)) add("help")
             }.filter { it.startsWith(args[0], true) }
-            2 -> if (
-                args[0].equals("gesture", true) &&
-                sender.hasPermission(KantanCommandPermissions.GESTURE)
-            ) {
-                listOf("on", "off").filter { it.startsWith(args[1], true) }
-            } else {
-                emptyList()
-            }
+            2 -> emptyList()
             else -> emptyList()
         }
     }

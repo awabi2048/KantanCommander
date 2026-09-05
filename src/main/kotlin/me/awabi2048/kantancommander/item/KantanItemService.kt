@@ -21,7 +21,8 @@ import java.util.UUID
 
 /**
  * Kantan Commanderのアイテム種別。
- * かんたんコマンダー制御ブロック（設置用・常に未設定）とプログラムディスク（内容出力用・常に書き込み済み）の2種に分離する。
+ * かんたんコマンダー制御ブロック（空またはプログラム同梱の設置用）と、
+ * プログラムディスク（内容出力用・常に書き込み済み）の2種に分離する。
  */
 enum class KantanItemKind { NONE, BLOCK, DISK }
 
@@ -32,6 +33,7 @@ object KantanItemService {
     const val MAX_GRANT_AMOUNT = 1
     private val customItemIdKey = NamespacedKey("kantancommander", "custom_item_id")
     private val diskIdKey = NamespacedKey("kantancommander", "disk_id")
+    private val blockProgramKey = NamespacedKey("kantancommander", "block_program")
 
     /**
      * かんたんコマンダー制御ブロックはバニラのコマンドブロックに相当する設置用アイテム。
@@ -45,7 +47,13 @@ object KantanItemService {
      * 未設定のかんたんコマンダー制御ブロックを生成する。設置時に新しいスクリプトが作られる。
      * 通常のブロックと同じ体験にするため、Loreや毒じゃがいも用のカスタムコンポーネントは付与しない。
      */
-    fun createBlock(player: Player): ItemStack {
+    fun createBlock(player: Player): ItemStack = createBlock(null, player)
+
+    /**
+     * プログラムを同梱した制御ブロックアイテムを生成します。
+     * 表示名は通常の設定項目名に固定し、同梱内容の識別情報だけをLoreへ載せます。
+     */
+    fun createBlock(script: DiskScript?, player: Player): ItemStack {
         val item = ItemStack(blockMaterial, 1)
         item.editMeta { meta ->
             meta.displayName(Component.text(
@@ -54,7 +62,18 @@ object KantanItemService {
             ).decoration(TextDecoration.ITALIC, false))
             meta.setItemModel(NamespacedKey("minecraft", "test_block"))
             meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, BLOCK_ITEM_ID)
+            script?.let {
+                // 同梱プログラムはアイテム単位の内容なので、別の同梱アイテムと
+                // スタックされて内容を混同しないよう常に単体アイテムへ固定します。
+                meta.setMaxStackSize(1)
+                meta.persistentDataContainer.set(
+                    blockProgramKey,
+                    PersistentDataType.STRING,
+                    ControlBlockProgramCodec.encode(it),
+                )
+            }
         }
+        script?.let { updateLore(item, it, player) }
         return item
     }
 
@@ -94,6 +113,20 @@ object KantanItemService {
         val meta = item?.itemMeta ?: return null
         val raw = meta.persistentDataContainer.get(diskIdKey, PersistentDataType.STRING) ?: return null
         return runCatching { UUID.fromString(raw) }.getOrNull()
+    }
+
+    /** 制御ブロックアイテムにプログラムの埋め込みデータが存在するかを返します。 */
+    fun hasEmbeddedProgram(item: ItemStack?): Boolean {
+        if (kind(item) != KantanItemKind.BLOCK) return false
+        return item?.itemMeta?.persistentDataContainer?.has(blockProgramKey, PersistentDataType.STRING) == true
+    }
+
+    /** アイテム自身へ保存されたプログラムの独立データを復元します。 */
+    fun embeddedProgram(item: ItemStack?): DiskScript? {
+        if (!hasEmbeddedProgram(item)) return null
+        val raw = item?.itemMeta?.persistentDataContainer?.get(blockProgramKey, PersistentDataType.STRING)
+            ?: return null
+        return ControlBlockProgramCodec.decode(raw)
     }
 
     private fun applyCustomItemComponents(item: ItemStack) {

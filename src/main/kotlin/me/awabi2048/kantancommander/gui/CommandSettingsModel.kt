@@ -10,16 +10,16 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
-import me.awabi2048.kantancommander.model.ContextSource
+import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
-import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -28,9 +28,6 @@ import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.effectiveContextSource
-import me.awabi2048.kantancommander.model.hasContextOverride
-import me.awabi2048.kantancommander.model.supportsContextOverride
 import java.util.UUID
 
 /**
@@ -45,15 +42,12 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     DESTINATION("destination", "destination"),
     DESTINATION_FACING("destination_facing", "destinationFacing"),
     SECONDARY_TARGET("secondary_target", "other"),
-    CONTEXT_EXECUTOR("context_executor", "executor"),
-    CONTEXT_TARGET("context_target", "target"),
-    CONTEXT_POSITION("context_position", "position"),
     CONDITION_POSITION("condition_position", "condition"),
-    CONTEXT_FACING("context_facing", "facing"),
     BLOCK_POSITION("block_position", "position"),
     BLOCK_FROM("block_from", "from"),
     BLOCK_TO("block_to", "to"),
     SOUND_POSITION("sound_position", "soundPosition"),
+    PARTICLE_POSITION("particle_position", "position"),
     SUMMON_POSITION("summon_position", "summonPosition"),
     /** TEMP_SET ENTITYは通常コマンドと同じ対象選択木から1体を解決します。 */
     TEMPORARY_ENTITY("temporary_entity", "entity"),
@@ -71,7 +65,8 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
 
 /** UIで統一表示する対象の大分類です。実行モデルのTargetKindとは分離します。 */
 enum class TargetCategory {
-    INHERITED,
+    /** 対象設定がまだ存在しない状態です。暗黙の対象へ解決する意味は持ちません。 */
+    UNSET,
     PLAYER,
     NON_PLAYER_ENTITY,
     TEMPORARY,
@@ -91,7 +86,6 @@ data class CommandSettingContext(
                 ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                 ?: return null
             val role = CommandSettingRole.fromRoute(route.payload["role"])
-                ?: if (route.id == "facing_settings") CommandSettingRole.CONTEXT_FACING else null
             return CommandSettingContext(session.scriptId, nodeId, role)
         }
     }
@@ -118,8 +112,19 @@ enum class CommandSettingEditor {
     CONDITION_INVERSION,
     CAMERA_SHAKE_TYPE,
     SOUND_SCOPE,
-    CONTEXT,
     BLOCK_OPERATION,
+}
+
+/**
+ * 実行時に値を解決する元です。
+ *
+ * ITEM／BLOCK／SOUND／EFFECTは、画面上で「直接値を設定する」か「一時変数を
+ * 参照する」かを選べます。TEMP_SET自身の値入力は別の責務なので、この型は
+ * 通常コマンドの値フィールドだけに適用します。
+ */
+enum class CommandValueSource {
+    LITERAL,
+    TEMPORARY,
 }
 
 data class CommandSettingDescriptor(
@@ -133,6 +138,123 @@ data class CommandSettingDescriptor(
  * インベントリGUIのルートとジェスチャーGUIの選択画面が同じ役割を受け取ります。
  */
 object CommandSettingsModel {
+    /** 通常コマンドの複合値を、保存フィールドと一時参照フィールドへ対応付けます。 */
+    private data class TemporaryValueBinding(
+        val referenceKey: String,
+        val literalKeys: Set<String>,
+    )
+
+    /**
+     * GUIで設定元を選べる通常コマンドの値だけを列挙します。
+     *
+     * CONDITIONのitem/blockは同名の保存欄を使いますが、BLOCK_STATEは実行側が
+     * blockTempRefを解決せず、条件詳細も独立した値入力画面です。そのため、ここへ
+     * 含めるのは実行処理・バニラ出力・既存UIが同じ意味を共有する4つの通常値です。
+     */
+    private fun temporaryValueBinding(node: CommandNode, fieldKey: String): TemporaryValueBinding? {
+        if (node.type == CommandType.TEMP_SET) return null
+        return when (fieldKey) {
+            "item" -> when (node.type) {
+                CommandType.GIVE_ITEM -> TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
+                CommandType.ENTITY_ACTION ->
+                    if (node.string("action", "ride") == "equip") {
+                        TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
+                    } else null
+                else -> null
+            }
+            "block" -> if (node.type == CommandType.BLOCK_OPERATION) {
+                TemporaryValueBinding("blockTempRef", setOf("block"))
+            } else null
+            "sound" -> if (node.type == CommandType.PLAY_SOUND) {
+                TemporaryValueBinding("soundTempRef", setOf("sound", "volume", "pitch"))
+            } else null
+            "effect" -> if (node.type == CommandType.APPLY_EFFECT) {
+                TemporaryValueBinding("effectTempRef", setOf("effect", "level", "seconds"))
+            } else null
+            else -> null
+        }
+    }
+
+    /** 指定フィールドが通常値／一時変数の設定元を持つかを返します。 */
+    fun supportsTemporaryValueReference(node: CommandNode, fieldKey: String): Boolean =
+        temporaryValueBinding(node, fieldKey) != null
+
+    /** 設定元を、保存済み参照の有無と入力途中の選択マーカーから復元します。 */
+    fun temporaryValueSource(node: CommandNode, fieldKey: String): CommandValueSource? {
+        val binding = temporaryValueBinding(node, fieldKey) ?: return null
+        val reference = temporaryReference(node, binding.referenceKey)
+        return if (reference != null || node.isExplicitlyConfigured(binding.referenceKey)) {
+            CommandValueSource.TEMPORARY
+        } else {
+            CommandValueSource.LITERAL
+        }
+    }
+
+    /** 現在の一時変数参照名を返します。入力途中の空参照は未設定として扱います。 */
+    fun temporaryValueReference(node: CommandNode, fieldKey: String): String? {
+        val binding = temporaryValueBinding(node, fieldKey) ?: return null
+        return temporaryReference(node, binding.referenceKey)
+    }
+
+    /**
+     * 一時変数モードを選択します。
+     *
+     * 直接値を残したまま参照モードへ切り替えると、実行時には参照値だけが採用
+     * されるにもかかわらず、画面には古い直接値が残ります。設定元を一つにする
+     * ため、選択時点で直接値を消し、参照名の入力途中マーカーだけを保存します。
+     */
+    fun selectTemporaryValueSource(node: CommandNode, fieldKey: String) {
+        val binding = requireNotNull(temporaryValueBinding(node, fieldKey)) {
+            "一時変数参照に対応しないフィールドです: ${node.type}.$fieldKey"
+        }
+        binding.literalKeys.forEach { key ->
+            node.params.remove(key)
+            node.clearConfigured(key)
+        }
+        setTemporaryReference(node, binding.referenceKey, null)
+        node.markConfigured(binding.referenceKey)
+    }
+
+    /** 直接値モードを選択し、既存の一時変数参照と入力途中マーカーを解除します。 */
+    fun selectLiteralValueSource(node: CommandNode, fieldKey: String) {
+        val binding = requireNotNull(temporaryValueBinding(node, fieldKey)) {
+            "一時変数参照に対応しないフィールドです: ${node.type}.$fieldKey"
+        }
+        setTemporaryReference(node, binding.referenceKey, null)
+        node.clearConfigured(binding.referenceKey)
+    }
+
+    /** 一時変数名を確定し、対応する直接値を再び実行へ流さない状態にします。 */
+    fun setTemporaryValueReference(node: CommandNode, fieldKey: String, name: String) {
+        val binding = requireNotNull(temporaryValueBinding(node, fieldKey)) {
+            "一時変数参照に対応しないフィールドです: ${node.type}.$fieldKey"
+        }
+        binding.literalKeys.forEach { key ->
+            node.params.remove(key)
+            node.clearConfigured(key)
+        }
+        setTemporaryReference(node, binding.referenceKey, name.trim())
+        node.markConfigured(binding.referenceKey)
+    }
+
+    private fun temporaryReference(node: CommandNode, referenceKey: String): String? = when (referenceKey) {
+        "itemTempRef" -> node.itemTempRef
+        "blockTempRef" -> node.blockTempRef
+        "soundTempRef" -> node.soundTempRef
+        "effectTempRef" -> node.effectTempRef
+        else -> error("未定義の一時変数参照フィールドです: $referenceKey")
+    }?.takeIf(String::isNotBlank)
+
+    private fun setTemporaryReference(node: CommandNode, referenceKey: String, value: String?) {
+        when (referenceKey) {
+            "itemTempRef" -> node.itemTempRef = value
+            "blockTempRef" -> node.blockTempRef = value
+            "soundTempRef" -> node.soundTempRef = value
+            "effectTempRef" -> node.effectTempRef = value
+            else -> error("未定義の一時変数参照フィールドです: $referenceKey")
+        }
+    }
+
     private val PLAYER_KINDS = setOf(
         TargetKind.NEAREST_PLAYER,
         TargetKind.NEARBY_PLAYERS,
@@ -147,7 +269,7 @@ object CommandSettingsModel {
 
     /** 実行時の細分類を、GUIで表示する対象大分類へ写像します。 */
     fun targetCategory(kind: TargetKind?): TargetCategory = when (kind) {
-        TargetKind.INHERITED_TARGET, null -> TargetCategory.INHERITED
+        null -> TargetCategory.UNSET
         TargetKind.TEMPORARY -> TargetCategory.TEMPORARY
         in PLAYER_KINDS -> TargetCategory.PLAYER
         else -> TargetCategory.NON_PLAYER_ENTITY
@@ -155,7 +277,7 @@ object CommandSettingsModel {
 
     /** 大分類を初めて選んだときに採用する実行モデル上の既定種別です。 */
     fun defaultTargetKind(category: TargetCategory): TargetKind = when (category) {
-        TargetCategory.INHERITED -> TargetKind.INHERITED_TARGET
+        TargetCategory.UNSET -> TargetKind.NEAREST_PLAYER
         TargetCategory.PLAYER -> TargetKind.NEAREST_PLAYER
         TargetCategory.NON_PLAYER_ENTITY -> TargetKind.NEAREST_ENTITY
         TargetCategory.TEMPORARY -> TargetKind.TEMPORARY
@@ -163,7 +285,7 @@ object CommandSettingsModel {
 
     /** 大分類の詳細画面で選択できる実行モデル上の細分類を返します。 */
     fun targetKinds(category: TargetCategory): List<TargetKind> = when (category) {
-        TargetCategory.INHERITED -> emptyList()
+        TargetCategory.UNSET -> emptyList()
         TargetCategory.PLAYER -> listOf(
             TargetKind.NEAREST_PLAYER,
             TargetKind.NEARBY_PLAYERS,
@@ -181,46 +303,6 @@ object CommandSettingsModel {
     /** 既存の細分類を維持したまま大分類だけを表示するための所属判定です。 */
     fun targetCategoryMatches(kind: TargetKind?, category: TargetCategory): Boolean =
         targetCategory(kind) == category
-
-    /**
-     * 現在ノードより前の実行経路に、継承できる対象が用意されているかを返します。
-     *
-     * 実行時はCONTEXTコマンドが確定した対象（session.context.target）だけが
-     * INHERITED_TARGETの参照先になります。通常コマンドのtargetSpecは自分自身の
-     * 実行にしか使われず文脈へ入らないため、ここでもCONTEXTコマンドだけを
-     * 「対象の確立」とみなします。条件分岐は、いずれかの経路で確立されていれば
-     * 選択できるany-pathの評価とし、CONTEXTコマンドが明示的にINHERITED対象を
-     * 設定した場合は参照先が消えるため確立状態を解除します。
-     */
-    fun hasPriorTargetContext(graph: me.awabi2048.kantancommander.model.CommandGraph, nodeId: UUID): Boolean {
-        val entry = graph.entryNodeId ?: return false
-        val visited = mutableSetOf<UUID>()
-        fun visit(currentId: UUID, established: Boolean): Boolean {
-            if (currentId == nodeId) return established
-            if (!visited.add(currentId)) return false
-            val node = graph.nodes[currentId] ?: return established
-            val nextEstablished = when {
-                node.type != CommandType.CONTEXT -> established
-                else -> {
-                    val overrideTarget = node.contextOverride?.target
-                    when {
-                        overrideTarget == null -> established
-                        else -> overrideTarget.kind != TargetKind.INHERITED_TARGET
-                    }
-                }
-            }
-            return listOfNotNull(node.next, node.trueNext, node.falseNext)
-                .any { visit(it, nextEstablished) }
-        }
-        return visit(entry, established = false)
-    }
-
-    /** 対象の大分類を選択可能にする条件（継承だけは前置き設定を要求）です。 */
-    fun targetCategoryAvailable(
-        graph: me.awabi2048.kantancommander.model.CommandGraph,
-        nodeId: UUID,
-        category: TargetCategory,
-    ): Boolean = category != TargetCategory.INHERITED || hasPriorTargetContext(graph, nodeId)
 
     /**
      * 両GUIで同じ条件付きフィールド集合を表示します。
@@ -282,13 +364,41 @@ object CommandSettingsModel {
             }
             else -> fields
         }
-        // コンテキスト設定も通常フィールドへ投影し、Inventory/Gestureのどちらから開いても
-        // 同じ表示・選択・保存契約を通ります。VARIABLEはドメイン契約で対象外です。
-        return if (node.type.supportsContextOverride()) {
-            conditionalFields + contextField()
-        } else {
-            conditionalFields
-        }
+        // 実行時に参照されない設定は、保存値を変更せずに両GUIから隠します。
+        // ここで一元判定することで、表示だけ残って実行結果へ反映されない
+        // 「テレポート先の向き」「サウンド位置」の設定入口を作りません。
+        return conditionalFields.filter { isFieldVisible(node, it.key) }
+    }
+
+    /**
+     * コマンドの現在値に応じた実行依存フィールドの可視性を返します。
+     *
+     * 古い保存値を移行・消去する責務は持たせず、現在の実行意味論に不要な
+     * 入力だけをGUIから隠します。これにより、保存済みデータを無視するという
+     * 方針を保ったまま、表示と実行の入口だけを一致させられます。
+     */
+    fun isFieldVisible(node: CommandNode, fieldKey: String): Boolean = when (node.type) {
+        CommandType.TELEPORT ->
+            fieldKey != "destinationFacing" || node.destinationSpec?.kind != PositionKind.TEMPORARY
+
+        CommandType.PLAY_SOUND ->
+            when {
+                fieldKey == "soundPosition" -> node.string("soundScope", "POSITION") != "WORLD"
+                fieldKey == "soundParameters" -> temporaryValueSource(node, "sound") != CommandValueSource.TEMPORARY
+                else -> true
+            }
+
+        CommandType.APPLY_EFFECT ->
+            fieldKey !in setOf("level", "seconds") ||
+                temporaryValueSource(node, "effect") != CommandValueSource.TEMPORARY
+
+        CommandType.PARTICLE ->
+            // 詳細データを必要としないParticleでは、空欄を入力するための
+            // 不要なタブを出さず、データ型を持つParticleだけ表示します。
+            fieldKey != "particleData" || ParticleSettings.particle(node)
+                ?.let(ParticleSettings::requiresData) != false
+
+        else -> true
     }
 
     /**
@@ -322,6 +432,18 @@ object CommandSettingsModel {
                         )
                     },
                 )
+            } else if (node.type == CommandType.PARTICLE && field.key == "particleParameters") {
+                field.copy(
+                    value = { currentNode ->
+                        DisplayValue.ParticleParameters(
+                            currentNode.string(ParticleSettings.PARAM_DELTA_X, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_DELTA_Y, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_DELTA_Z, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_SPEED, "0.0"),
+                            currentNode.string(ParticleSettings.PARAM_COUNT, "1"),
+                        )
+                    },
+                )
             } else {
                 field
             }
@@ -337,10 +459,6 @@ object CommandSettingsModel {
      * 解決し、タブ単位で常に同じ警告を表示します。
      */
     fun incompleteWarningKey(node: CommandNode, fieldKey: String): LocalizationKey<String> {
-        // contextはsupportsContextOverride()で追加される共通タブです。
-        if (fieldKey == "context" && node.type.supportsContextOverride()) {
-            return KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONTEXT
-        }
         return when (node.type) {
             CommandType.TELEPORT -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
@@ -391,6 +509,12 @@ object CommandSettingsModel {
                 "soundPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
+            CommandType.PARTICLE -> when (fieldKey) {
+                "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
+                "particleParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
+                "particleData" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DATA
+                else -> undefinedWarningKey(node, fieldKey)
+            }
             CommandType.APPLY_EFFECT -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EFFECT
@@ -423,13 +547,6 @@ object CommandSettingsModel {
                 "condition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
-            CommandType.CONTEXT -> when (fieldKey) {
-                "executor" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EXECUTOR
-                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
-                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
-                "facing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_FACING
-                else -> undefinedWarningKey(node, fieldKey)
-            }
             CommandType.DISK_CALL -> when (fieldKey) {
                 "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
                 else -> undefinedWarningKey(node, fieldKey)
@@ -441,7 +558,7 @@ object CommandSettingsModel {
                 "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
-        CommandType.TEMP_SET -> when (fieldKey) {
+            CommandType.TEMP_SET -> when (fieldKey) {
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
                 "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
@@ -482,6 +599,15 @@ object CommandSettingsModel {
                 "soundPosition" -> "soundScope"
                 else -> validationFieldKey
             }
+            CommandType.PARTICLE -> when (validationFieldKey) {
+                ParticleSettings.PARAM_DELTA_X,
+                ParticleSettings.PARAM_DELTA_Y,
+                ParticleSettings.PARAM_DELTA_Z,
+                ParticleSettings.PARAM_SPEED,
+                ParticleSettings.PARAM_COUNT,
+                -> "particleParameters"
+                else -> validationFieldKey
+            }
             CommandType.CONDITION -> when (validationFieldKey) {
                 "sneaking", "variable", "operator", "value", "block", "item", "itemData" -> "condition"
                 else -> validationFieldKey
@@ -502,9 +628,6 @@ object CommandSettingsModel {
         error("未定義の設定警告キーです: type=${node.type}, field=$fieldKey")
 
     fun descriptor(node: CommandNode, fieldKey: String): CommandSettingDescriptor {
-        if (fieldKey == "context" && node.type.supportsContextOverride()) {
-            return CommandSettingDescriptor(CommandSettingEditor.CONTEXT)
-        }
         return when (node.type) {
         CommandType.TELEPORT -> when (fieldKey) {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
@@ -540,6 +663,10 @@ object CommandSettingsModel {
             "soundScope" -> CommandSettingDescriptor(CommandSettingEditor.SOUND_SCOPE)
             else -> text()
         }
+        CommandType.PARTICLE -> when (fieldKey) {
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
+            else -> text()
+        }
         CommandType.APPLY_EFFECT -> if (fieldKey == "target") {
             CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
         } else text()
@@ -552,13 +679,6 @@ object CommandSettingsModel {
             "inverted" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_INVERSION)
             "kind" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_KIND)
             "condition" -> CommandSettingDescriptor(CommandSettingEditor.CONDITION_DETAIL)
-            else -> text()
-        }
-        CommandType.CONTEXT -> when (fieldKey) {
-            "executor" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.CONTEXT_EXECUTOR)
-            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.CONTEXT_TARGET)
-            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.CONTEXT_POSITION)
-            "facing" -> CommandSettingDescriptor(CommandSettingEditor.FACING, CommandSettingRole.CONTEXT_FACING)
             else -> text()
         }
         CommandType.DISK_CALL -> text()
@@ -579,7 +699,7 @@ object CommandSettingsModel {
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
             else -> text()
         }
-            CommandType.TEMP_SET -> when (fieldKey) {
+        CommandType.TEMP_SET -> when (fieldKey) {
             "tempType" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
             "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
@@ -616,6 +736,13 @@ object CommandSettingsModel {
             changeTemporaryType(node, type)
             return
         }
+        // 通常値を直接入力した時点で、同じ値欄の一時変数参照を解除します。
+        // TEMP_SETのitem/sound等は「一時値そのもの」の入力であり、この切替を
+        // 適用すると自分自身の保存経路を壊すため、temporaryValueBinding側で除外します。
+        temporaryValueBinding(node, key)?.let { binding ->
+            setTemporaryReference(node, binding.referenceKey, null)
+            node.clearConfigured(binding.referenceKey)
+        }
         node.params[key] = value
         if (value.isBlank()) {
             node.clearConfigured(key)
@@ -631,8 +758,6 @@ object CommandSettingsModel {
 
     fun targetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationTargetSpec
-        CommandSettingRole.CONTEXT_EXECUTOR -> node.contextOverride?.executor
-        CommandSettingRole.CONTEXT_TARGET -> node.contextOverride?.target
         CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec
         CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec
         else -> node.targetSpec
@@ -668,12 +793,6 @@ object CommandSettingsModel {
     }
 
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
-        check(
-            role !in setOf(CommandSettingRole.CONTEXT_EXECUTOR, CommandSettingRole.CONTEXT_TARGET) ||
-                node.type == CommandType.CONTEXT || node.type.supportsContextOverride()
-        ) {
-            "${node.type} は実行コンテキスト上書きを持てません"
-        }
         // TEMP_SET ENTITYは対象を複数保持できないTemporaryValueへ変換するため、
         // 共通TargetSpecの詳細条件はそのまま利用しつつ、解決数だけ1体へ正規化します。
         val normalizedSpec = if (role == CommandSettingRole.TEMPORARY_ENTITY) {
@@ -684,10 +803,6 @@ object CommandSettingsModel {
                 node.destinationTargetSpec = normalizedSpec
                 node.destinationSpec = null
             }
-            CommandSettingRole.CONTEXT_EXECUTOR -> node.contextOverride =
-                (node.contextOverride ?: ExecutionContextSpec()).copy(executor = normalizedSpec)
-            CommandSettingRole.CONTEXT_TARGET -> node.contextOverride =
-                (node.contextOverride ?: ExecutionContextSpec()).copy(target = normalizedSpec)
             CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = normalizedSpec
             CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec = normalizedSpec
             else -> node.targetSpec = normalizedSpec
@@ -706,9 +821,9 @@ object CommandSettingsModel {
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
+        CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec
         CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec
-        CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
         CommandSettingRole.BLOCK_TO -> node.blockToSpec
@@ -731,8 +846,8 @@ object CommandSettingsModel {
             else -> node.destinationSpec?.kind
         }
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec?.kind
-        CommandSettingRole.CONTEXT_POSITION -> node.contextOverride?.position?.kind
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec?.kind
+        CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec?.kind
         CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec?.kind
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
@@ -742,19 +857,15 @@ object CommandSettingsModel {
     }
 
     fun setPositionSpec(node: CommandNode, role: CommandSettingRole?, spec: PositionSpec) {
-        check(role != CommandSettingRole.CONTEXT_POSITION || node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
-            "${node.type} は実行コンテキスト上書きを持てません"
-        }
         when (role) {
             CommandSettingRole.DESTINATION -> {
                 node.destinationSpec = spec
                 node.destinationTargetSpec = null
             }
             CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec = spec
+            CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec = spec
             CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec = spec
             CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec = spec
-            CommandSettingRole.CONTEXT_POSITION -> node.contextOverride =
-                (node.contextOverride ?: ExecutionContextSpec()).copy(position = spec)
             CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec = spec
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
@@ -764,6 +875,7 @@ object CommandSettingsModel {
         val configuredKey = configuredFieldKey(
             when (role) {
                 CommandSettingRole.SOUND_POSITION -> "soundPosition"
+                CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
                 CommandSettingRole.SUMMON_POSITION -> "summonPosition"
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
                 else -> "position"
@@ -779,23 +891,22 @@ object CommandSettingsModel {
         }
     }
 
-    fun facingSpec(node: CommandNode, role: CommandSettingRole? = CommandSettingRole.CONTEXT_FACING): FacingSpec? = when (role) {
+    fun facingSpec(node: CommandNode, role: CommandSettingRole? = null): FacingSpec? = when (role) {
         CommandSettingRole.DESTINATION_FACING -> node.destinationFacingSpec
         CommandSettingRole.TEMPORARY_LOCATION_FACING -> node.temporaryLocationFacingSpec
-        else -> node.contextOverride?.facing
+        else -> null
     }
 
     fun setFacingSpec(
         node: CommandNode,
         spec: FacingSpec,
-        role: CommandSettingRole? = CommandSettingRole.CONTEXT_FACING,
+        role: CommandSettingRole? = null,
     ) {
         check(
             role == CommandSettingRole.DESTINATION_FACING ||
-                role == CommandSettingRole.TEMPORARY_LOCATION_FACING ||
-                node.type == CommandType.CONTEXT || node.type.supportsContextOverride()
+                role == CommandSettingRole.TEMPORARY_LOCATION_FACING
         ) {
-            "${node.type} は実行コンテキスト上書きを持てません"
+            "${node.type} の向き設定役割が不正です: $role"
         }
         if (role == CommandSettingRole.DESTINATION_FACING) {
             node.destinationFacingSpec = spec
@@ -812,49 +923,7 @@ object CommandSettingsModel {
             } else {
                 node.clearConfigured(configuredKey)
             }
-        } else {
-            node.contextOverride = (node.contextOverride ?: ExecutionContextSpec()).copy(facing = spec)
-            val configuredKey = configuredFieldKey("facing", CommandSettingRole.CONTEXT_FACING)
-            if (isFacingSpecConfigured(spec)) {
-                node.markConfigured(configuredKey)
-            } else {
-                node.clearConfigured(configuredKey)
-            }
         }
-    }
-
-    fun contextSource(node: CommandNode): ContextSource = node.effectiveContextSource
-
-    fun toggleContextSource(node: CommandNode) {
-        check(node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
-            "${node.type} は実行コンテキスト上書きを持てません"
-        }
-        val source = if (node.effectiveContextSource == ContextSource.BASE) {
-            ContextSource.PREVIOUS
-        } else {
-            ContextSource.BASE
-        }
-        node.contextSource = source
-        // BASEは「すべて継承」の実効状態です。明示フラグだけを残すと、値がBASEへ
-        // 戻ったあとも設定済みと表示されるため、選択状態を実効値から一貫して導出します。
-        if (source == ContextSource.BASE) {
-            node.clearConfigured(configuredFieldKey("context", null))
-        } else {
-            node.markConfigured(configuredFieldKey("context", null))
-        }
-    }
-
-    /** コンテキスト設定を「すべて継承」へ戻す共通操作です。 */
-    fun clearContextOverride(node: CommandNode) {
-        check(node.type == CommandType.CONTEXT || node.type.supportsContextOverride()) {
-            "${node.type} は実行コンテキスト上書きを持てません"
-        }
-        node.contextOverride = null
-        // 上書き本体だけ消してPREVIOUSを残すと、表示は「全継承」でも実行時には
-        // 直前文脈を選び続けます。入力の意味と実行結果を一致させるため、継承元もBASEへ戻します。
-        node.contextSource = ContextSource.BASE
-        node.clearConfigured("context")
-        node.clearConfiguredPrefix("context.")
     }
 
     /**
@@ -872,15 +941,9 @@ object CommandSettingsModel {
         role: CommandSettingRole? = null,
     ): Boolean {
         // roleを省略したInventoryの一覧描画でも、コマンド型から保存先を復元します。
-        // これをしないとBLOCK_OPERATIONのpositionがコンテキスト位置として判定され、
+        // これをしないとBLOCK_OPERATIONのpositionが別の保存先として判定され、
         // InventoryとGestureで同じ値を表示していても選択状態だけがずれます。
         val effectiveRole = role ?: descriptor(node, fieldKey).role
-        // contextはcontextSource/contextOverrideの実効値からだけ判定します。履歴的な
-        // 明示フラグを先に見ると、BASEへ戻した選択が「設定済み」として残ります。
-        if (fieldKey == "context") {
-            return isContextOverrideConfigured(node.contextOverride) ||
-                node.effectiveContextSource != ContextSource.BASE
-        }
         return when (fieldKey) {
             "target" -> isTargetSpecConfigured(targetSpec(node, effectiveRole))
             "entity" -> isTargetSpecConfigured(node.temporaryEntityTargetSpec)
@@ -889,17 +952,16 @@ object CommandSettingsModel {
             "destination" -> isPositionSpecConfigured(node.destinationSpec) ||
                 isTargetSpecConfigured(node.destinationTargetSpec)
             "other" -> isTargetSpecConfigured(node.secondaryTargetSpec)
-            "executor" -> isTargetSpecConfigured(node.contextOverride?.executor)
             "position" -> when (effectiveRole) {
                 CommandSettingRole.DESTINATION -> isPositionSpecConfigured(node.destinationSpec) ||
                     isTargetSpecConfigured(node.destinationTargetSpec)
                 CommandSettingRole.CONDITION_POSITION -> isPositionSpecConfigured(node.conditionPositionSpec)
-                CommandSettingRole.CONTEXT_POSITION -> isPositionSpecConfigured(node.contextOverride?.position)
                 CommandSettingRole.BLOCK_POSITION -> isPositionSpecConfigured(node.blockPositionSpec)
                 CommandSettingRole.SOUND_POSITION -> isPositionSpecConfigured(node.soundPositionSpec)
+                CommandSettingRole.PARTICLE_POSITION -> isPositionSpecConfigured(node.particlePositionSpec)
                 CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> isPositionSpecConfigured(node.temporaryLocationPositionSpec)
-                else -> isPositionSpecConfigured(node.contextOverride?.position)
+                else -> false
             }
             "from" -> isPositionSpecConfigured(node.blockFromSpec)
             "to" -> isPositionSpecConfigured(node.blockToSpec)
@@ -909,9 +971,10 @@ object CommandSettingsModel {
             } else if (effectiveRole == CommandSettingRole.TEMPORARY_LOCATION_FACING) {
                 isFacingSpecConfigured(node.temporaryLocationFacingSpec)
             } else {
-                isFacingSpecConfigured(node.contextOverride?.facing)
+                false
             }
             "soundPosition" -> isPositionSpecConfigured(node.soundPositionSpec)
+            "particlePosition" -> isPositionSpecConfigured(node.particlePositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             // 音量とピッチは保存上は別パラメータですが、編集入口は一つです。
             // 旧データも正しく「設定済み」と表示できるよう、両方の実値を確認します。
@@ -920,7 +983,24 @@ object CommandSettingsModel {
                 value != null && value.isNotBlank() &&
                     (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
             }
-            "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+            "particleParameters" -> listOf(
+                ParticleSettings.PARAM_DELTA_X,
+                ParticleSettings.PARAM_DELTA_Y,
+                ParticleSettings.PARAM_DELTA_Z,
+                ParticleSettings.PARAM_SPEED,
+                ParticleSettings.PARAM_COUNT,
+            ).any { key ->
+                val value = node.params[key]
+                value != null && value.isNotBlank() &&
+                    (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
+            }
+            "particleData" -> {
+                val particle = ParticleSettings.particle(node)
+                if (particle != null && !ParticleSettings.requiresData(particle)) true
+                else node.params[ParticleSettings.PARAM_DATA]?.isNotBlank() == true
+            }
+            "item" -> typedValueConfigured(node, "item") || node.string("itemData").isNotBlank()
+            "block", "sound", "effect" -> typedValueConfigured(node, fieldKey)
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
             "condition" -> conditionDetailConfigured(node)
             else -> {
@@ -941,7 +1021,7 @@ object CommandSettingsModel {
         val spec = targetSpec(node, role) ?: return false
         val explicitlyConfigured = node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))
         return when (parameter) {
-            "kind" -> spec.kind != TargetKind.INHERITED_TARGET
+            "kind" -> true
             "entityType" -> !spec.entityType.isNullOrBlank()
             "distance" -> spec.minimumDistance != null || spec.maximumDistance != null
             "range", "dx", "dy", "dz" -> when (parameter) {
@@ -963,6 +1043,7 @@ object CommandSettingsModel {
 
     private fun conditionDetailConfigured(node: CommandNode): Boolean =
         isTargetSpecConfigured(node.targetSpec) || isPositionSpecConfigured(node.conditionPositionSpec) ||
+            node.selectedControlBlockStates().isNotEmpty() ||
             node.params.any { (key, value) ->
                 key in setOf("sneaking", "variable", "operator", "value", "block", "item", "itemData") &&
                     value.isNotBlank() &&
@@ -996,13 +1077,6 @@ object CommandSettingsModel {
         else -> true
     }
 
-    /** 中間Specしか持たないコンテキストを、設定済みとして親タブへ投影しません。 */
-    private fun isContextOverrideConfigured(context: ExecutionContextSpec?): Boolean =
-        isTargetSpecConfigured(context?.executor) ||
-            isTargetSpecConfigured(context?.target) ||
-            isPositionSpecConfigured(context?.position) ||
-            isFacingSpecConfigured(context?.facing)
-
     fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
         VariableOperation.entries
 
@@ -1012,7 +1086,7 @@ object CommandSettingsModel {
      * エンティティの種類へgameModeを指定しても解決しないため、GUIでは提示しません。
      */
     fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean = when (parameter) {
-        "kind" -> kind != null && kind != TargetKind.INHERITED_TARGET
+        "kind" -> kind != null
         "entityType" -> kind in ENTITY_KINDS
         "gameMode" -> kind in PLAYER_KINDS
         else -> true
@@ -1167,16 +1241,9 @@ object CommandSettingsModel {
 
     /** 構造化フィールドの明示設定キーを、保存先の役割ごとに名前空間化します。 */
     private fun configuredFieldKey(fieldKey: String, role: CommandSettingRole?): String = when (role) {
-        CommandSettingRole.CONTEXT_EXECUTOR -> if (fieldKey.startsWith("target.")) {
-            "context.executor.${fieldKey.removePrefix("target.")}"
-        } else "context.executor"
-        CommandSettingRole.CONTEXT_TARGET -> if (fieldKey.startsWith("target.")) {
-            "context.$fieldKey"
-        } else "context.target"
-        CommandSettingRole.CONTEXT_POSITION -> "context.position"
-        CommandSettingRole.CONTEXT_FACING -> "context.facing"
         CommandSettingRole.CONDITION_POSITION -> "condition.position"
         CommandSettingRole.SOUND_POSITION -> "soundPosition"
+        CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
         CommandSettingRole.SUMMON_POSITION -> "summonPosition"
         CommandSettingRole.TEMPORARY_ENTITY -> "entity"
         CommandSettingRole.TEMPORARY_LOCATION -> "location"
@@ -1191,22 +1258,17 @@ object CommandSettingsModel {
         else -> fieldKey
     }
 
-    private fun contextField() = EditorField(
-        key = "context",
-        label = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONTEXT,
-        material = CommandType.CONTEXT.icon,
-        descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_CONTEXT,
-        actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_CONTEXT,
-        value = { node ->
-            DisplayValue.Localized(
-                if (isFieldConfigured(node, "context")) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED
-                } else {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_INHERITED
-                },
-            )
-        },
-    )
+    /** ITEM／BLOCK／SOUND／EFFECTの主値に対する完了判定を共通化します。 */
+    private fun typedValueConfigured(node: CommandNode, fieldKey: String): Boolean {
+        return when (temporaryValueSource(node, fieldKey)) {
+            CommandValueSource.TEMPORARY -> temporaryValueReference(node, fieldKey) != null
+            CommandValueSource.LITERAL -> when (fieldKey) {
+                "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+                else -> node.string(fieldKey).isNotBlank()
+            }
+            null -> node.string(fieldKey).isNotBlank()
+        }
+    }
 
     private val FILTERABLE_TARGET_KINDS = PLAYER_KINDS + ENTITY_KINDS
 }

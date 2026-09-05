@@ -1,4 +1,4 @@
-﻿package me.awabi2048.kantancommander.export
+package me.awabi2048.kantancommander.export
 
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.GraphLimits
@@ -6,8 +6,6 @@ import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.CommandGraph
-import me.awabi2048.kantancommander.model.ContextSource
-import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
@@ -35,13 +33,13 @@ class VanillaDatapackExporterTest {
             graph.nodes.values.forEach { node ->
                 when (node.type) {
                     CommandType.TELEPORT -> {
-                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
                         if (node.destinationSpec == null && node.destinationTargetSpec == null) {
                             node.destinationSpec = PositionSpec(PositionKind.DISK)
                         }
                     }
                     CommandType.GIVE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
-                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+                        if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
                         if (node.type == CommandType.GIVE_ITEM && node.string("item").isBlank()) {
                             node.params["item"] = "minecraft:stone"
                         }
@@ -61,7 +59,7 @@ class VanillaDatapackExporterTest {
                                 me.awabi2048.kantancommander.model.ConditionKind.PLAYER_STATE,
                             ) && node.targetSpec == null
                         ) {
-                            node.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+                            node.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
                         }
                     }
                     else -> Unit
@@ -74,14 +72,13 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `context is emitted as execute and not as comment`() {
+    fun `condition position is emitted as execute positioned and not as a comment`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "export")
-        val context = GraphEditor.append(script.graph, CommandType.CONTEXT)
-        context.contextOverride = ExecutionContextSpec(
-            target = TargetSpec(TargetKind.NEAREST_PLAYER),
-            position = PositionSpec(PositionKind.COORDINATES, 0.0, 1.0, 0.0),
-        )
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            conditionPositionSpec = PositionSpec(PositionKind.COORDINATES, 0.0, 1.0, 0.0)
+        }
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).params["text"] = "hello"
         store.save(script)
 
@@ -89,7 +86,7 @@ class VanillaDatapackExporterTest {
         val success = assertInstanceOf(ExportResult.Success::class.java, result)
         val files = success.directory.walkTopDown().filter(File::isFile).toList()
         val text = files.joinToString("\n") { it.readText() }
-        assertTrue(text.contains("execute as @a[distance=0..,limit=1,sort=nearest] positioned 0.0 1.0 0.0 run function"))
+        assertTrue(text.contains("execute positioned 0.0 1.0 0.0"))
         assertFalse(text.contains("# context"))
     }
 
@@ -124,6 +121,94 @@ class VanillaDatapackExporterTest {
         assertTrue(body.contains("effect give"))
         assertTrue(body.contains("item replace entity"))
         assertTrue(result.warnings.any { it.contains("カメラシェイク") })
+    }
+
+    @Test
+    fun `sound command-specific position remains an execute positioned wrapper`() {
+        val store = ScriptStore(temp.resolve("sound-position"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "sound position")
+        GraphEditor.append(script.graph, CommandType.PLAY_SOUND).apply {
+            params["sound"] = "minecraft:block.note_block.harp"
+            soundPositionSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("execute positioned 1.0 2.0 3.0 run playsound minecraft:block.note_block.harp"))
+    }
+
+    @Test
+    fun `particle command uses current SNBT options and all-world viewers`() {
+        val store = ScriptStore(temp.resolve("particle-position"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "particle position")
+        GraphEditor.append(script.graph, CommandType.PARTICLE).apply {
+            params.putAll(
+                mapOf(
+                    "particle" to "DUST",
+                    "particleData" to "#ff0000 2",
+                    "particleDeltaX" to "0.25",
+                    "particleDeltaY" to "-0.5",
+                    "particleDeltaZ" to "0",
+                    "particleSpeed" to "0.5",
+                    "particleCount" to "3",
+                )
+            )
+            particlePositionSpec = PositionSpec(PositionKind.COORDINATES, 10.0, 64.0, -2.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(
+            body.contains(
+                "execute positioned 10.0 64.0 -2.0 run particle " +
+                    "minecraft:dust{color:[1,0,0],scale:2} ~ ~ ~ 0.25 -0.5 0 0.5 3 force @a"
+            ),
+            body,
+        )
+    }
+
+    @Test
+    fun `summon command-specific position remains in vanilla output`() {
+        val store = ScriptStore(temp.resolve("summon-position"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "summon position")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:pig"
+            summonPositionSpec = PositionSpec(PositionKind.COORDINATES, 4.0, 5.0, 6.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("summon minecraft:pig 4.0 5.0 6.0"))
+    }
+
+    @Test
+    fun `removed shared target position is rejected for sound and summon`() {
+        val store = ScriptStore(temp.resolve("removed-target-position"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "removed target position")
+        GraphEditor.append(script.graph, CommandType.PLAY_SOUND).apply {
+            params["sound"] = "minecraft:block.note_block.harp"
+            soundPositionSpec = PositionSpec(PositionKind.TARGET)
+        }
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:pig"
+            summonPositionSpec = PositionSpec(PositionKind.TARGET)
+        }
+
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        assertTrue(failure.errors.any { it.contains("効果音の対象位置指定") })
+        assertTrue(failure.errors.any { it.contains("召喚の対象位置指定") })
     }
 
     @Test
@@ -206,7 +291,7 @@ class VanillaDatapackExporterTest {
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params["inverted"] = "true"
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
-            .targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            .targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
         store.save(script)
 
@@ -258,13 +343,13 @@ class VanillaDatapackExporterTest {
 
         val fixedSecondary = store.create(UUID.randomUUID(), "fixed-secondary")
         GraphEditor.append(fixedSecondary.graph, CommandType.ENTITY_ACTION).apply {
-            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             secondaryTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
         }
 
         val fixedDestination = store.create(UUID.randomUUID(), "fixed-destination")
         GraphEditor.append(fixedDestination.graph, CommandType.TELEPORT).apply {
-            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             destinationTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
         }
 
@@ -280,7 +365,7 @@ class VanillaDatapackExporterTest {
     fun `standalone function names stay within vanilla limits and references resolve`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "short-function-names")
-        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         GraphEditor.append(script.graph, CommandType.VARIABLE).apply {
             params.putAll(
                 mapOf(
@@ -319,7 +404,7 @@ class VanillaDatapackExporterTest {
     fun `standalone compilation namespaces do not collide between placements`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "placement-namespaces")
-        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
         val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
 
         val first = assertInstanceOf(
@@ -370,7 +455,7 @@ class VanillaDatapackExporterTest {
             )
         }
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
-            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             params["text"] = "%{message}%"
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
@@ -393,7 +478,7 @@ class VanillaDatapackExporterTest {
             )
         }
         GraphEditor.append(script.graph, CommandType.TELEPORT).apply {
-            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             destinationSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "point")
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
@@ -406,7 +491,7 @@ class VanillaDatapackExporterTest {
             )
         }
         GraphEditor.append(script.graph, CommandType.GIVE_ITEM).apply {
-            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             itemTempRef = "stack"
             params["item"] = ""
         }
@@ -581,7 +666,7 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `temporary entity is usable as a secondary target and context executor`() {
+    fun `temporary entity is usable as a secondary target`() {
         val store = ScriptStore(temp.resolve("temporary-secondary-export"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "temporary-secondary-export")
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
@@ -598,19 +683,12 @@ class VanillaDatapackExporterTest {
             targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
             secondaryTargetSpec = TargetSpec(TargetKind.TEMPORARY, tempName = "vehicle")
         }
-        GraphEditor.append(script.graph, CommandType.CONTEXT).apply {
-            contextOverride = ExecutionContextSpec(
-                executor = TargetSpec(TargetKind.TEMPORARY, tempName = "vehicle"),
-            )
-        }
-
         val success = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
         )
         val body = success.functions.values.joinToString("\n")
         assertTrue(body.contains("ride @a"))
-        assertTrue(body.contains("execute as @e if score @s kc_tu0 = #kc_temp_"))
     }
 
     @Test
@@ -653,9 +731,9 @@ class VanillaDatapackExporterTest {
             mapOf("kind" to "VARIABLE_STATE", "variable" to "value", "operator" to "!=", "value" to "4")
         )
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT).targetSpec =
-            TargetSpec(TargetKind.INHERITED_TARGET)
+            TargetSpec(TargetKind.NEAREST_PLAYER)
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT).targetSpec =
-            TargetSpec(TargetKind.INHERITED_TARGET)
+            TargetSpec(TargetKind.NEAREST_PLAYER)
 
         val success = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
@@ -692,7 +770,7 @@ class VanillaDatapackExporterTest {
             )
         )
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
-            .targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            .targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
 
         val compilation = VanillaDatapackExporter(store, temp.resolve("exports"))
             .compileForStandalone(script, mapOf("enabled" to VariableType.STRING))
@@ -768,7 +846,7 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "dynamic-text")
         GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).apply {
-            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             params["text"] = "hello ${'$'}{message}"
         }
 
@@ -805,7 +883,7 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(text.contains("tp @s 12.5 64.0 -3.0"))
+        assertTrue(text.contains("tp @a[distance=0..,limit=1,sort=nearest] 12.5 64.0 -3.0"))
         assertTrue(text.contains("set value 1.25d"))
         assertTrue(text.contains("execute store success score"))
     }
@@ -817,7 +895,7 @@ class VanillaDatapackExporterTest {
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         start.params["count"] = "2"
         GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT).targetSpec =
-            TargetSpec(TargetKind.INHERITED_TARGET)
+            TargetSpec(TargetKind.NEAREST_PLAYER)
         store.save(script)
 
         val success = assertInstanceOf(
@@ -852,15 +930,12 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `disk call context wraps only the copied function call`() {
+    fun `disk call invokes only the copied function`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "call-context")
         val call = GraphEditor.append(script.graph, CommandType.DISK_CALL)
         val nested = CommandType.DISPLAY_TEXT.newNode()
         call.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
-        call.contextOverride = ExecutionContextSpec(
-            position = PositionSpec(PositionKind.COORDINATES, 2.0, 70.0, 3.0)
-        )
         store.save(script)
 
         val success = assertInstanceOf(
@@ -868,10 +943,7 @@ class VanillaDatapackExporterTest {
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
         val text = success.directory.walkTopDown().filter(File::isFile).joinToString("\n") { it.readText() }
-        assertTrue(
-            Regex("""positioned 2\.0 70\.0 3\.0 run function kantan:s_[0-9a-f]{24}""")
-                .containsMatchIn(text)
-        )
+        assertTrue(text.contains("function kantan:s_"))
     }
 
     @Test
@@ -994,11 +1066,11 @@ class VanillaDatapackExporterTest {
         val function = success.directory
             .resolve("data/kantan/function")
             .walkTopDown()
-            .first { it.isFile && it.readText().contains("title @s times 60 340 80") }
+            .first { it.isFile && it.readText().contains("title @a[distance=0..,limit=1,sort=nearest] times 60 340 80") }
             .readText()
 
-        assertTrue(function.contains("title @s times 60 340 80"))
-        assertTrue(function.contains("title @s title"))
+        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] times 60 340 80"))
+        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] title"))
     }
 
     @Test
@@ -1017,11 +1089,11 @@ class VanillaDatapackExporterTest {
         val function = success.directory
             .resolve("data/kantan/function")
             .walkTopDown()
-            .first { it.isFile && it.readText().contains("title @s times 40 120 60") }
+            .first { it.isFile && it.readText().contains("title @a[distance=0..,limit=1,sort=nearest] times 40 120 60") }
             .readText()
 
-        assertTrue(function.contains("title @s times 40 120 60"))
-        assertTrue(function.contains("title @s actionbar"))
+        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] times 40 120 60"))
+        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] actionbar"))
     }
 
     @Test
@@ -1046,10 +1118,10 @@ class VanillaDatapackExporterTest {
         val function = success.directory
             .resolve("data/kantan/function")
             .walkTopDown()
-            .first { it.isFile && it.readText().contains("title @s times 1 3 5") }
+            .first { it.isFile && it.readText().contains("title @a[distance=0..,limit=1,sort=nearest] times 1 3 5") }
             .readText()
 
-        assertTrue(function.contains("title @s times 1 3 5"))
+        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] times 1 3 5"))
     }
 
     @Test
@@ -1069,7 +1141,7 @@ class VanillaDatapackExporterTest {
         val loop = GraphEditor.append(script.graph, CommandType.FOR_START)
         loop.params["count"] = "10"
         GraphEditor.appendToForBody(script.graph, loop.id, CommandType.DISPLAY_TEXT).targetSpec =
-            TargetSpec(TargetKind.INHERITED_TARGET)
+            TargetSpec(TargetKind.NEAREST_PLAYER)
 
         val success = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
@@ -1133,10 +1205,9 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "teleport-multi")
         GraphEditor.append(script.graph, CommandType.TELEPORT).apply {
-            targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
-            destinationTargetSpec = null
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            destinationTargetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
             destinationSpec = PositionSpec(PositionKind.TARGET)
-            contextOverride = ExecutionContextSpec(target = TargetSpec(TargetKind.ALL_PLAYERS))
         }
 
         val success = assertInstanceOf(
@@ -1145,7 +1216,7 @@ class VanillaDatapackExporterTest {
         )
         val text = success.functions.values.joinToString("\n")
         // 移動先は複数エンティティへtpできないため、limit=1の単一セレクタへ固定される。
-        assertTrue(text.contains(Regex("""tp @s @a\[.*limit=1.*]""")))
+        assertTrue(text.contains(Regex("""tp @a\[distance=0\.\.,limit=1,sort=nearest] @a\[.*limit=1.*]""")))
     }
 
     @Test
@@ -1155,7 +1226,7 @@ class VanillaDatapackExporterTest {
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         start.params["count"] = "\${limit}"
         GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT).targetSpec =
-            TargetSpec(TargetKind.INHERITED_TARGET)
+            TargetSpec(TargetKind.NEAREST_PLAYER)
 
         val success = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
@@ -1172,27 +1243,4 @@ class VanillaDatapackExporterTest {
         )
     }
 
-    @Test
-    fun `ambiguous previous context across merged branches fails preflight`() {
-        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "ambiguous-previous")
-
-        // 条件分岐のtrue枝だけがコンテキストを設定し、合流後のPREVIOUS参照は経路ごとに内容が変わる。
-        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
-        condition.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
-        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.CONTEXT).apply {
-            contextOverride = ExecutionContextSpec(position = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0))
-        }
-        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
-        val merge = GraphEditor.appendMerge(script.graph, condition.id)
-        val follower = GraphEditor.insert(script.graph, merge.id, GraphEditor.Edge.NEXT, CommandType.DISPLAY_TEXT)
-        follower.contextSource = ContextSource.PREVIOUS
-        follower.targetSpec = TargetSpec(TargetKind.INHERITED_TARGET)
-
-        val failure = assertInstanceOf(
-            ExportResult.Failure::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
-        )
-        assertTrue(failure.errors.any { it.contains("確定しないため") })
-    }
 }

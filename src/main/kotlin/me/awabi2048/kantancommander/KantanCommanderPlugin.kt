@@ -15,11 +15,14 @@ import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
-import me.awabi2048.kantancommander.data.WorldVariableUsage
 import me.awabi2048.kantancommander.data.WorldVariableUsageFinder
 import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
+import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
+import me.awabi2048.kantancommander.execution.ParticleQuotaService
 import me.awabi2048.kantancommander.execution.SequenceExecutor
+import me.awabi2048.kantancommander.execution.TestExecutionCoordinator
+import me.awabi2048.kantancommander.execution.TestExecutionPreferences
 import me.awabi2048.kantancommander.execution.SummonedEntityTracker
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
@@ -46,7 +49,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "b9deef0c98f52a2436173aefafcf657075692698436cd78c975fe512c5a3a9d9"
+    "bda1f404f6cde22916499131a255f488ba516ba9e3822d9ffce6436a05261685"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -59,7 +62,13 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     lateinit var executor: SequenceExecutor
         private set
+    lateinit var testExecution: TestExecutionCoordinator
+        private set
+    lateinit var testExecutionPreferences: TestExecutionPreferences
+        private set
     lateinit var summonedEntities: SummonedEntityTracker
+        private set
+    lateinit var particleQuota: ParticleQuotaService
         private set
     lateinit var programListMenu: ProgramListMenu
         private set
@@ -92,7 +101,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 4,
+                    currentVersion = 5,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -113,6 +122,17 @@ class KantanCommanderPlugin : JavaPlugin() {
                             // 旧ディスク名設定を残すと利用者が古い名称へ戻せてしまいます。
                             config.set("default-disk-name", null)
                         },
+                        4 to ConfigMigration { config ->
+                            // エディターの表示方式は固定設定ではなく、操作プレイヤーの
+                            // Java版／統合版環境から決定するため、デバッグ用の旧設定を
+                            // 移行時に削除します。残したままにすると、設定ファイル上の
+                            // 値と実際のGUI経路が一致しない状態になります。
+                            config.set("use-gesture-editor", null)
+                            config.set("execution.max-particles-per-world-per-second", 600)
+                            // Particleの追加上限も同じ設定世代で導入します。旧設定に
+                            // このキーがない場合だけ既定値を補い、BE/JEの表示方式移行と
+                            // 実行上限の追加を一つの原子的な設定移行として完了させます。
+                        },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.max-nodes-per-activation") >= 1)
@@ -120,6 +140,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                         require(config.getInt("execution.max-summoned-entities-per-world") >= 1)
                         require(config.getInt("execution.max-summoned-entities-server") >=
                             config.getInt("execution.max-summoned-entities-per-world"))
+                        require(config.getInt("execution.max-particles-per-world-per-second") >= 1)
                         require(config.getInt("timer.minimum-seconds", 1) == 1)
                         require(config.getInt("timer.maximum-seconds", 86400) == 86400)
                         require(config.getInt("limits.max-nodes-per-disk") >= 1)
@@ -129,6 +150,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     },
                     reloadAction = {
                         reloadConfig()
+                        if (::testExecution.isInitialized) testExecution.abortAll()
                         if (::scripts.isInitialized) rebuildConfiguredServices()
                     }
                 )
@@ -152,7 +174,15 @@ class KantanCommanderPlugin : JavaPlugin() {
             this,
             dataFolder.resolve("summoned-entities.csv"),
         )
+        // Particleの表示寿命はサーバー側で追跡できないため、実行個数を直近1秒の
+        // ワールド別送信台帳へ加算します。limitProviderを遅延評価し、設定リロード後
+        // の上限変更を次回の送信判定から反映します。
+        particleQuota = ParticleQuotaService(limitProvider = {
+            config.getInt("execution.max-particles-per-world-per-second", 600)
+        })
         executor = SequenceExecutor(this)
+        testExecution = TestExecutionCoordinator(executor)
+        testExecutionPreferences = TestExecutionPreferences(this)
 
         programListMenu = ProgramListMenu(this)
         CCSystem.getAPI().getMenuCommandService().unregisterOwner("kantan")
@@ -194,6 +224,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     override fun onDisable() {
+        runCatching { if (::testExecution.isInitialized) testExecution.shutdown() }
         runCatching { if (::gestureEditor.isInitialized) gestureEditor.closeAll() }
         standaloneExportContributor?.let(StandaloneExportContributors::unregister)
         standaloneExportContributor = null
@@ -240,6 +271,16 @@ class KantanCommanderPlugin : JavaPlugin() {
             dataFolder.resolve("structured-disks"),
             logger,
             graphLimits,
+            mutationGuard = { scriptId, _, operation ->
+                if (::testExecution.isInitialized) {
+                    testExecution.assertMutationAllowed(scriptId, operation)
+                }
+            },
+            bypassedMutationNotifier = { scriptId, operation ->
+                if (::testExecution.isInitialized) {
+                    testExecution.notifyBypassedMutation(scriptId, operation)
+                }
+            },
         )
         exporter = VanillaDatapackExporter(
             scripts,
@@ -257,15 +298,24 @@ class KantanCommanderPlugin : JavaPlugin() {
         maximumBranchDepth = config.getInt("limits.max-branch-depth"),
     )
 
-    /** 一覧表示と削除確認が同じMyWorld単位の使用判定を使うための入口です。 */
-    internal fun findWorldVariableUsages(worldName: String, variableName: String): List<WorldVariableUsage> =
-        worldVariableUsageFinder.find(worldName, variableName)
-
-    internal fun findWorldVariableUsages(
+    /**
+     * GUIの一覧表示・削除確認が保存済みプログラムの破損へ巻き込まれないための入口です。
+     * 原因はここでログへ残し、画面層には構造化された「完全／不完全」だけを渡します。
+     */
+    internal fun findWorldVariableUsagesSafely(
         worldName: String,
         variableNames: Collection<String>,
-    ): Map<String, List<WorldVariableUsage>> =
-        worldVariableUsageFinder.findAll(worldName, variableNames)
+    ): WorldVariableUsageScanResult {
+        val result = worldVariableUsageFinder.findAllSafely(worldName, variableNames)
+        result.failure?.let { failure ->
+            logger.log(
+                java.util.logging.Level.WARNING,
+                "ワールド内変数の使用箇所を完全には確認できませんでした: world=$worldName names=$variableNames",
+                failure,
+            )
+        }
+        return result
+    }
 
     /**
      * ワールド内変数の削除境界です。使用判定と永続化呼び出しを一つの処理へ束ね、
@@ -276,7 +326,12 @@ class KantanCommanderPlugin : JavaPlugin() {
         worldName: String,
         variableName: String,
     ): WorldVariableRemovalResult {
-        val usages = findWorldVariableUsages(worldName, variableName)
+        val scan = findWorldVariableUsagesSafely(worldName, listOf(variableName))
+        if (!scan.complete) {
+            // 使用箇所が不明なときは、参照切れを作らないことを優先します。
+            return WorldVariableRemovalResult(removed = false, scanComplete = false)
+        }
+        val usages = scan.usages[variableName].orEmpty()
         if (usages.isNotEmpty()) return WorldVariableRemovalResult(removed = false, usages = usages)
         return WorldVariableRemovalResult(removed = variables.remove(worldId, variableName))
     }

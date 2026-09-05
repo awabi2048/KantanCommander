@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 8
+const val STRUCTURED_FORMAT_VERSION = 9
 const val TICKS_PER_SECOND = 20
 const val MIN_TIMER_SECONDS = 1
 const val MAX_TIMER_SECONDS = 86_400
@@ -72,26 +72,7 @@ data class CommandGraph(
     fun deepCopy(): CommandGraph {
         val copied = linkedMapOf<UUID, CommandNode>()
         nodes.forEach { (id, node) ->
-            copied[id] = node.copy(
-                params = node.params.toMutableMap(),
-                configuredFields = node.configuredFields?.toMutableSet(),
-                contextOverride = node.contextOverride?.copy(),
-                targetSpec = node.targetSpec?.copy(),
-                secondaryTargetSpec = node.secondaryTargetSpec?.copy(),
-                destinationSpec = node.destinationSpec?.copy(),
-                destinationTargetSpec = node.destinationTargetSpec?.copy(),
-                destinationFacingSpec = node.destinationFacingSpec?.copy(),
-                conditionPositionSpec = node.conditionPositionSpec?.copy(),
-                blockPositionSpec = node.blockPositionSpec?.copy(),
-                blockFromSpec = node.blockFromSpec?.copy(),
-                blockToSpec = node.blockToSpec?.copy(),
-                soundPositionSpec = node.soundPositionSpec?.copy(),
-                summonPositionSpec = node.summonPositionSpec?.copy(),
-                temporaryEntityTargetSpec = node.temporaryEntityTargetSpec?.copy(),
-                temporaryLocationPositionSpec = node.temporaryLocationPositionSpec?.copy(),
-                temporaryLocationFacingSpec = node.temporaryLocationFacingSpec?.copy(),
-                snapshot = node.snapshot?.deepCopy(),
-            )
+            copied[id] = node.deepCopy()
         }
         return CommandGraph(entryNodeId, copied)
     }
@@ -120,6 +101,8 @@ data class CommandNode(
     /** テレポート先へ適用するノード単位の向きです。 */
     var destinationFacingSpec: FacingSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
+    /** 制御ブロック状態条件で選択された判定項目です。複数選択時はAND評価します。 */
+    var controlBlockStates: MutableSet<ControlBlockStateKind>? = null,
     /** ブロック操作の単一配置位置（setblock相当）。 */
     var blockPositionSpec: PositionSpec? = null,
     /** ブロック操作の範囲始点・終点（fill相当）。 */
@@ -127,6 +110,8 @@ data class CommandNode(
     var blockToSpec: PositionSpec? = null,
     /** PLAY_SOUNDで「マイワールド内全域」以外を選んだ場合の再生位置です。 */
     var soundPositionSpec: PositionSpec? = null,
+    /** PARTICLEの散布中心です。未設定時は実行コンテキストの位置を使用します。 */
+    var particlePositionSpec: PositionSpec? = null,
     /** エンティティ召喚で指定された場合の召喚位置です。未設定時は制御ブロック位置を使用します。 */
     var summonPositionSpec: PositionSpec? = null,
     /** TEMP_SET ENTITYの参照元です。通常コマンドと同じTargetSpecで対象を解決します。 */
@@ -140,15 +125,35 @@ data class CommandNode(
     var blockTempRef: String? = null,
     var soundTempRef: String? = null,
     var effectTempRef: String? = null,
-    var contextOverride: ExecutionContextSpec? = null,
-    /** 欠損した旧JSONはBASEとし、既存のCONTEXT継承順序を変えません。 */
-    var contextSource: ContextSource? = ContextSource.BASE,
     var snapshot: CommandGraph? = null,
 ) {
     fun string(key: String, default: String = "") = params[key]?.takeIf(String::isNotBlank) ?: default
     fun int(key: String, default: Int = 0) = params[key]?.toIntOrNull() ?: default
     fun double(key: String, default: Double = 0.0) = params[key]?.toDoubleOrNull() ?: default
     fun boolean(key: String, default: Boolean = false) = params[key]?.toBooleanStrictOrNull() ?: default
+
+    /** グラフ更新とコマンド複製が同じ設定コピー規則を使うための、再帰的なノード複製です。 */
+    fun deepCopy(): CommandNode = copy(
+        params = params.toMutableMap(),
+        configuredFields = configuredFields?.toMutableSet(),
+        targetSpec = targetSpec?.copy(),
+        secondaryTargetSpec = secondaryTargetSpec?.copy(),
+        destinationSpec = destinationSpec?.copy(),
+        destinationTargetSpec = destinationTargetSpec?.copy(),
+        destinationFacingSpec = destinationFacingSpec?.copy(),
+        conditionPositionSpec = conditionPositionSpec?.copy(),
+        controlBlockStates = controlBlockStates?.toMutableSet(),
+        blockPositionSpec = blockPositionSpec?.copy(),
+        blockFromSpec = blockFromSpec?.copy(),
+        blockToSpec = blockToSpec?.copy(),
+        soundPositionSpec = soundPositionSpec?.copy(),
+        particlePositionSpec = particlePositionSpec?.copy(),
+        summonPositionSpec = summonPositionSpec?.copy(),
+        temporaryEntityTargetSpec = temporaryEntityTargetSpec?.copy(),
+        temporaryLocationPositionSpec = temporaryLocationPositionSpec?.copy(),
+        temporaryLocationFacingSpec = temporaryLocationFacingSpec?.copy(),
+        snapshot = snapshot?.deepCopy(),
+    )
 
     fun isExplicitlyConfigured(key: String): Boolean = configuredFields?.contains(key) == true
 
@@ -173,8 +178,6 @@ data class CommandNode(
     }
 }
 
-enum class ContextSource { BASE, PREVIOUS }
-
 /** ブロック操作が実行時に採用する配置方式です。保存値は明示的な小文字文字列にします。 */
 enum class BlockOperationMode(val value: String) {
     SETBLOCK("setblock"),
@@ -186,15 +189,9 @@ enum class BlockOperationMode(val value: String) {
     }
 }
 
-val CommandNode.effectiveContextSource: ContextSource
-    get() = contextSource ?: ContextSource.BASE
-
 enum class TargetKind {
     NEAREST_PLAYER, NEARBY_PLAYERS,
     ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY, TEMPORARY,
-    /** 廃止予定：暗示的継承は行いません。新規設定では使用しません。 */
-    @Deprecated("Context abolished")
-    INHERITED_TARGET,
 }
 
 enum class TargetSort { NEAREST, FURTHEST, RANDOM }
@@ -216,7 +213,7 @@ data class TargetSpec(
     val gameMode: String? = null,
     val tag: String? = null,
     val name: String? = null,
-    /** セレクターのdx/dy/dzに対応する非負の範囲です。基準は実行コンテキスト位置です。 */
+    /** セレクターのdx/dy/dzに対応する非負の範囲です。基準は実行位置です。 */
     val dx: Double? = null,
     val dy: Double? = null,
     val dz: Double? = null,
@@ -233,11 +230,7 @@ data class TargetSpec(
  */
 enum class PositionKind {
     CAPTURED, DISK, MYWORLD_SPAWN, COORDINATES, TEMPORARY,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
-    EXECUTOR,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
+    /** テレポート先など、コマンド固有の「対象エンティティ位置」です。 */
     TARGET,
 }
 data class PositionSpec(
@@ -253,14 +246,7 @@ data class PositionSpec(
 
 enum class FacingKind {
     CAPTURED, COORDINATES, MYWORLD_SPAWN, ROTATION, TEMPORARY,
-    /** 廃止予定：向き不変として扱います。 */
-    @Deprecated("Context abolished")
-    INHERITED,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
-    EXECUTOR,
-    /** 廃止予定：コンテキスト経由解決は行いません。 */
-    @Deprecated("Context abolished")
+    /** テレポート先など、コマンド固有の「対象エンティティ方向」です。 */
     TARGET,
 }
 data class FacingSpec(
@@ -274,24 +260,55 @@ data class FacingSpec(
     val tempName: String? = null,
 )
 
-data class ExecutionContextSpec(
+/**
+ * 実行エンジンがコマンドをMinecraftの実行状態へ変換するための内部状態です。
+ * GUIから保存する設定ではなく、実行元・対象・位置・向きを一つの状態として
+ * 引き回す必要がある処理だけで使用します。
+ */
+internal data class ExecutionContextSpec(
     val executor: TargetSpec? = null,
     val target: TargetSpec? = null,
     val position: PositionSpec? = null,
     val facing: FacingSpec? = null,
 ) {
-    /** 空のコンテキストは設定値ではなく、未設定と同じ意味になります。 */
+    /** 空の実行状態は、追加のexecute句が不要であることを表します。 */
     fun hasAnySetting(): Boolean = executor != null || target != null || position != null || facing != null
 }
-
-/** 実効値を持つノード単位コンテキストだけを「上書きあり」と判定します。 */
-fun CommandNode.hasContextOverride(): Boolean = contextOverride?.hasAnySetting() == true
 
 enum class ConditionKind(val key: LocalizationKey<String>) {
     TARGET_EXISTS(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS),
     PLAYER_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
     VARIABLE_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
     BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
+    CONTROL_BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
+}
+
+/** 制御ブロックの状態条件として選択できる判定項目です。 */
+enum class ControlBlockStateKind(val key: LocalizationKey<String>) {
+    REDSTONE_INPUT(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT),
+}
+
+/**
+ * 制御ブロック状態条件の集合評価を一箇所へ集約します。
+ * 将来の判定項目追加時も、複数選択の意味（すべて成立するAND）を実行器とテストで共有します。
+ */
+object ControlBlockStateConditionPolicy {
+    fun matches(selected: Set<ControlBlockStateKind>, redstoneInput: Boolean): Boolean =
+        selected.isNotEmpty() && selected.all { state ->
+            when (state) {
+                ControlBlockStateKind.REDSTONE_INPUT -> redstoneInput
+            }
+        }
+}
+
+/** Gsonで旧JSONを読み込んだ場合もnull集合を空集合として扱う共通アクセサです。 */
+fun CommandNode.selectedControlBlockStates(): Set<ControlBlockStateKind> = controlBlockStates.orEmpty()
+
+/** 制御ブロック状態条件の選択を反映し、空集合は保存上nullへ正規化します。 */
+fun CommandNode.toggleControlBlockState(state: ControlBlockStateKind) {
+    val next = controlBlockStates.orEmpty().toMutableSet()
+    if (!next.add(state)) next.remove(state)
+    controlBlockStates = next.takeIf { it.isNotEmpty() }
 }
 
 /** ワールド内変数の保存型。数値は常にdoubleで保持します。 */
@@ -310,7 +327,7 @@ data class WorldVariableValue(
 )
 
 /**
- * 一時変数（実行内寿命）の型です。context型は作りません。
+ * 一時変数（実行内寿命）の型です。実行状態そのものを保存する型は作りません。
  *
  * リテラル利用できるのは NUMBER・STRING のみで `%{name}%` 記法を使います。
  * 複合6型（LOCATION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）は型付き設定欄で定義し、
@@ -399,7 +416,16 @@ enum class CommandType(
         "entity" to "", "tags" to "", "customName" to ""
     )),
     PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
-        "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "CONTEXT"
+        "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "POSITION"
+    )),
+    PARTICLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_DESCRIPTION, Material.FIREWORK_STAR, mapOf(
+        "particle" to "FLAME",
+        "particleDeltaX" to "0.0",
+        "particleDeltaY" to "0.0",
+        "particleDeltaZ" to "0.0",
+        "particleSpeed" to "0.0",
+        "particleCount" to "1",
+        "particleData" to "",
     )),
     APPLY_EFFECT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT_DESCRIPTION, Material.POTION, mapOf(
         "effect" to "", "level" to "1", "seconds" to "30"
@@ -421,9 +447,6 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
-    )),
-    CONTEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTEXT_DESCRIPTION, Material.RECOVERY_COMPASS, mapOf(
-        "executor" to "", "target" to "", "position" to "", "facing" to ""
     )),
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
     /** ワールド内変数を定義・変更します。 */
@@ -449,41 +472,6 @@ enum class CommandType(
     CONTINUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE_DESCRIPTION, Material.ARROW, emptyMap());
 
     fun newNode() = CommandNode(type = this, params = defaults.toMutableMap())
-}
-
-/**
- * ノード自身へ実行コンテキストを上書きできるかを表すドメイン契約です。
- *
- * CONTEXTは専用コマンドとしてコンテキストを生成するため、この契約の対象外です。
- * VARIABLEも、値の読み書きと実行位置・対象の選択を一つの設定へ混在させないため、
- * ノード単位の上書きを持ちません。GUIだけで隠すと保存済みデータや実行経路に
- * 同じ機能が残るため、検証・実行・エクスポートもこの契約を参照します。
- */
-fun CommandType.supportsContextOverride(): Boolean = when (this) {
-    CommandType.TELEPORT,
-    CommandType.GIVE_ITEM,
-    CommandType.ENTITY_ACTION,
-    CommandType.DISPLAY_TEXT,
-    CommandType.SUMMON_ENTITY,
-    CommandType.PLAY_SOUND,
-    CommandType.APPLY_EFFECT,
-    CommandType.CAMERA_SHAKE,
-    CommandType.BLOCK_OPERATION,
-    CommandType.ENTITY_DELETE,
-    CommandType.CONDITION,
-    CommandType.DISK_CALL,
-    -> true
-
-    CommandType.WAIT,
-    CommandType.CONTEXT,
-    CommandType.VARIABLE,
-    CommandType.TEMP_SET,
-    CommandType.MERGE,
-    CommandType.FOR_START,
-    CommandType.FOR_END,
-    CommandType.BREAK,
-    CommandType.CONTINUE,
-    -> false
 }
 
 data class DiskPlacement(
