@@ -394,14 +394,20 @@ class GraphLayoutEngineTest {
         }
             .minOf(MapPoint::y)
         assertEquals(
-            setOf(MapPoint(startPoint.x + 1, returnY), MapPoint(startPoint.x + 3, returnY)),
-            layout.loopReturnArrowPoints,
+            setOf(
+                HorizontalArrow(MapPoint(startPoint.x + 1, returnY), HorizontalArrowDirection.RETURN),
+                HorizontalArrow(MapPoint(startPoint.x + 3, returnY), HorizontalArrowDirection.RETURN),
+            ),
+            layout.horizontalArrowPoints.filter { it.direction == HorizontalArrowDirection.RETURN }.toSet(),
         )
-        assertTrue(layout.loopReturnArrowPoints.none { it.x == startPoint.x || it.x == endPoint.x })
-        assertTrue(layout.loopReturnArrowPoints.all { layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH })
+        assertTrue(layout.horizontalArrowPoints.none { it.point.x == startPoint.x || it.point.x == endPoint.x })
+        assertTrue(
+            layout.horizontalArrowPoints.filter { it.direction == HorizontalArrowDirection.RETURN }
+                .all { layout.cells[it.point]?.kind == MapCellKind.LOOP_RETURN_PATH },
+        )
         assertEquals(
-            layout.loopReturnArrowPoints,
-            layout.projection(MapPoint(0, 0), layout.width, layout.height).loopReturnArrowPoints,
+            layout.horizontalArrowPoints,
+            layout.projection(MapPoint(0, 0), layout.width, layout.height).horizontalArrowPoints,
         )
     }
 
@@ -424,9 +430,10 @@ class GraphLayoutEngineTest {
         }
             .minOf(MapPoint::y)
         val expectedX = (startPoint.x + 1 until endPoint.x step 2).toSet()
-        assertEquals(expectedX, layout.loopReturnArrowPoints.map(MapPoint::x).toSet())
-        assertTrue(layout.loopReturnArrowPoints.none { it.x == startPoint.x || it.x == endPoint.x })
-        assertTrue(layout.loopReturnArrowPoints.all { layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH })
+        val returnArrows = layout.horizontalArrowPoints.filter { it.direction == HorizontalArrowDirection.RETURN }
+        assertEquals(expectedX, returnArrows.map { it.point.x }.toSet())
+        assertTrue(layout.horizontalArrowPoints.none { it.point.x == startPoint.x || it.point.x == endPoint.x })
+        assertTrue(returnArrows.all { layout.cells[it.point]?.kind == MapCellKind.LOOP_RETURN_PATH })
     }
 
     @Test
@@ -445,11 +452,67 @@ class GraphLayoutEngineTest {
 
         assertEquals(
             (startPoint.x + 1 until endPoint.x step 2)
-                .map { MapPoint(it, returnY) }
+                .map { HorizontalArrow(MapPoint(it, returnY), HorizontalArrowDirection.RETURN) }
                 .toSet(),
-            layout.loopReturnArrowPoints,
+            layout.horizontalArrowPoints.filter { it.direction == HorizontalArrowDirection.RETURN }.toSet(),
         )
-        assertTrue(layout.loopReturnArrowPoints.all { layout.cells[it]?.kind == MapCellKind.LOOP_RETURN_PATH })
+        assertTrue(
+            layout.horizontalArrowPoints.filter { it.direction == HorizontalArrowDirection.RETURN }
+                .all { layout.cells[it.point]?.kind == MapCellKind.LOOP_RETURN_PATH },
+        )
+    }
+
+    @Test
+    fun `linear sequence exposes forward arrows on every horizontal path`() {
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val layout = GraphLayoutEngine.layout(graph)
+
+        // ノード間の単独1セル（2,1）へ順方向の矢印を1個配置します。
+        assertEquals(
+            setOf(HorizontalArrow(MapPoint(2, 1), HorizontalArrowDirection.FORWARD)),
+            layout.horizontalArrowPoints.filter { it.direction == HorizontalArrowDirection.FORWARD }.toSet(),
+        )
+        assertTrue(
+            layout.horizontalArrowPoints.filter { it.direction == HorizontalArrowDirection.FORWARD }
+                .all { layout.cells[it.point]?.kind in setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH) },
+        )
+    }
+
+    @Test
+    fun `long horizontal runs use every other slot and skip corners`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val falseFirst = GraphEditor.append(graph, CommandType.WAIT, condition.id)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        GraphEditor.appendMerge(graph, condition.id)
+        val layout = GraphLayoutEngine.layout(graph)
+
+        // 角・縦経路セルには方向が一意でないため矢印を置きません。
+        layout.horizontalArrowPoints.forEach { arrow ->
+            val point = arrow.point
+            val up = layout.cells[MapPoint(point.x, point.y - 1)]?.kind
+            val down = layout.cells[MapPoint(point.x, point.y + 1)]?.kind
+            assertFalse(up in PATH_CELL_KINDS || down in PATH_CELL_KINDS)
+        }
+        // 横向きラン内では先頭から0, 2, 4...番目だけが矢印になります。
+        val byRow = layout.horizontalArrowPoints.groupBy { it.point.y }
+        byRow.forEach { (_, arrows) ->
+            val sortedX = arrows.map { it.point.x }.sorted()
+            sortedX.zipWithNext().forEach { (first, second) ->
+                assertTrue(second - first >= 2)
+            }
+        }
+        // 通常経路の矢印は順方向です。
+        assertTrue(
+            layout.horizontalArrowPoints
+                .filter { layout.cells[it.point]?.kind in setOf(MapCellKind.PATH, MapCellKind.BRANCH_PATH) }
+                .all { it.direction == HorizontalArrowDirection.FORWARD },
+        )
+        assertNotNull(layout.nodePoints[falseFirst.id])
     }
 
     @Test
