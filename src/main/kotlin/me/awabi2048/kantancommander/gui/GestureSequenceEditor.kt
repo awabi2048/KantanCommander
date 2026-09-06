@@ -525,7 +525,7 @@ class GestureSequenceEditor(
                 verticalOffset = EDITOR_VERTICAL_OFFSET,
                 // 画面の上下傾きを半分にします。
                 tiltScale = EDITOR_TILT_SCALE,
-                // 目位置から画面までの距離を標準の50%増しにし、視界の圧迫を抑えます。
+                // 目位置から画面までの距離を標準の25%増しにし、視界の圧迫を抑えます。
                 screenDistance = EDITOR_FOLLOW_DISTANCE,
             ),
         )
