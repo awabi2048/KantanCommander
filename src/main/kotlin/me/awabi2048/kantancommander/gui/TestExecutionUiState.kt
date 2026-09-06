@@ -111,16 +111,10 @@ class GestureTestExecutionObserver(
         pendingEdge?.let(state.passedEdges::add)
         pendingEdge = null
         state.currentNodeId = event.nodeId
-        // WAITコマンドの待機が長いときは、20tick後に待機表示へ切り替えます。
-        if (event.waitTicks > TEST_WAIT_HIGHLIGHT_DELAY_TICKS) {
-            scheduleWaitHighlight {
-                if (state.phase != GestureTestPhase.RUNNING || state.currentNodeId != event.nodeId) return@scheduleWaitHighlight
-                state.waitingNodeId = event.nodeId
-                state.snapshot.graph.nodes[event.nodeId]?.next?.let { nextId ->
-                    state.waitingEdge = edgeFor(state.snapshot, event.nodeId, nextId)
-                }
-                onChanged()
-            }
+        // WAITノードに到達した時点から機能としての待機を開始し、その間は黄色で示します。
+        // 待機完了後は成功扱いの緑に変わり、次の経路の表示へ進みます。
+        if (event.nodeType == CommandType.WAIT) {
+            state.waitingNodeId = event.nodeId
         }
         onChanged()
     }

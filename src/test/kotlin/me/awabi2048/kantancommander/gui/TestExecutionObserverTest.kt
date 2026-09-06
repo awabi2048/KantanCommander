@@ -271,7 +271,9 @@ class TestExecutionObserverTest {
     ) { _, method, _ -> FakeScheduler.defaultValue(method.returnType) } as Plugin
 
     @Test
-    fun `shows waiting branch after twenty ticks of waiting`() {
+    fun `shows waiting node yellow from arrival`() {
+        // WAIT到達時点から機能としての待機を開始し、その間は黄色で示します。
+        // 次の枝は待機中は白のままです。
         val graph = CommandGraph.empty()
         val wait = GraphEditor.append(graph, CommandType.WAIT)
         val next = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
@@ -279,21 +281,16 @@ class TestExecutionObserverTest {
         val state = testState(script)
         val fake = FakeScheduler()
         val observer = GestureTestExecutionObserver(state, {}, {}, {}, dummyPlugin(), fake.scheduler)
-        // WAIT開始直後はまだ待機表示になりません。
         observer.onNodeStarted(
-            ExecutionNodeStarted(script.id, wait.id, CommandType.WAIT, 0, 0, 1L, waitTicks = 100L),
+            ExecutionNodeStarted(script.id, wait.id, CommandType.WAIT, 0, 0, 1L),
         )
-        assertNull(state.waitingNodeId)
-        assertEquals(1, fake.scheduled.size)
-        assertEquals(TEST_WAIT_HIGHLIGHT_DELAY_TICKS, fake.scheduled.single().delay)
-        // 20tick後に待機中のノードと次の枝が示されます。
-        fake.runPending()
         assertEquals(wait.id, state.waitingNodeId)
-        assertEquals(TestExecutionEdge(wait.id, GraphEditor.Edge.NEXT), state.waitingEdge)
-        // 完了で待機表示は消えます。
+        assertNull(state.waitingEdge)
+        assertTrue(fake.scheduled.isEmpty())
+        // 完了後は成功扱いの緑に変わり、次の経路の表示へ進みます。
         observer.onNodeFinished(finished(script, wait.id, CommandType.WAIT, next.id, 1, 101L))
         assertNull(state.waitingNodeId)
-        assertNull(state.waitingEdge)
+        assertTrue(state.successfulNodeIds.contains(wait.id))
     }
 
     @Test
@@ -316,7 +313,8 @@ class TestExecutionObserverTest {
     }
 
     @Test
-    fun `skips waiting display for short waits`() {
+    fun `shows waiting node yellow even for short waits`() {
+        // 到達時即時表示のため、短時間待機でもタイマーなしで黄色になります。
         val graph = CommandGraph.empty()
         val wait = GraphEditor.append(graph, CommandType.WAIT)
         GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
@@ -325,9 +323,9 @@ class TestExecutionObserverTest {
         val fake = FakeScheduler()
         val observer = GestureTestExecutionObserver(state, {}, {}, {}, dummyPlugin(), fake.scheduler)
         observer.onNodeStarted(
-            ExecutionNodeStarted(script.id, wait.id, CommandType.WAIT, 0, 0, 1L, waitTicks = 20L),
+            ExecutionNodeStarted(script.id, wait.id, CommandType.WAIT, 0, 0, 1L),
         )
+        assertEquals(wait.id, state.waitingNodeId)
         assertTrue(fake.scheduled.isEmpty())
-        assertNull(state.waitingNodeId)
     }
 }
