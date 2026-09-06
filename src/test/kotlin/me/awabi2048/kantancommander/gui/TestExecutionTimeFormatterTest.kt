@@ -30,10 +30,10 @@ class TestExecutionTimeFormatterTest {
     }
 
     @Test
-    fun `real processing time subtracts only debug delays`() {
-        // デバッグ遅延だけを差し引き、待機コマンドの時間は含めたままにします。
-        assertEquals(80L, TestExecutionTimeFormatter.realProcessingTicks(100L, 1, 20L))
-        assertEquals(0L, TestExecutionTimeFormatter.realProcessingTicks(30L, 2, 20L))
-        assertEquals(50L, TestExecutionTimeFormatter.realProcessingTicks(50L, 0, 0L))
+    fun `real processing time subtracts only debug waits`() {
+        // デバッグ待機の合計だけを差し引き、待機コマンドの時間は含めたままにします。
+        assertEquals(80L, TestExecutionTimeFormatter.realProcessingTicks(100L, 20L))
+        assertEquals(0L, TestExecutionTimeFormatter.realProcessingTicks(30L, 40L))
+        assertEquals(50L, TestExecutionTimeFormatter.realProcessingTicks(50L, 0L))
     }
 }

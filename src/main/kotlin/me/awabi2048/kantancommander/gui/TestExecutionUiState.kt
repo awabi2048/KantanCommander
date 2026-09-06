@@ -52,8 +52,6 @@ data class GestureTestState(
     var failedNodeId: UUID? = null,
     var startedAtTick: Long = 0L,
     var elapsedTicks: Long = 0L,
-    /** 実処理時間の算出用に、開始時のデバッグ遅延tickを保持します。 */
-    var debugDelayTicks: Long = 0L,
     var result: ExecutionResult? = null,
 )
 

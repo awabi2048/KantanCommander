@@ -3042,8 +3042,7 @@ class GestureLowerPanel(
         if (showReal) {
             val realTicks = TestExecutionTimeFormatter.realProcessingTicks(
                 elapsed,
-                result?.debugDelayCount ?: 0,
-                test.debugDelayTicks,
+                result?.debugWaitTicks ?: 0L,
             )
             addTestResultRow(
                 visuals,

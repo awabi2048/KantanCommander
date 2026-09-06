@@ -903,9 +903,6 @@ class GestureSequenceEditor(
         // このスナップショットを変更せず、同じ配置を見ている全員へ状態を配布します。
         test.snapshot = current.copy(graph = current.graph.deepCopy())
         test.startedAtTick = plugin.server.currentTick.toLong()
-        // 実処理時間の算出用に、開始時のデバッグ遅延tickを保持します。
-        test.debugDelayTicks =
-            if (test.debugMode) me.awabi2048.kantancommander.execution.TestExecutionCoordinator.DEBUG_DELAY_TICKS else 0L
         test.phase = GestureTestPhase.RUNNING
         state.lowerMode = GestureLowerMode.TEST_STATUS
         if (testConfirmationChildOpen(test.ownerId)) {

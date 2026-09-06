@@ -105,8 +105,8 @@ data class ExecutionNodeFinished(
 
 /**
  * テスト実行の最終結果です。successfulNodeCountは失敗ノードを含みません。
- * waitTicksはWAITコマンドによる待機の合計、debugDelayCountはノード間の
- * デバッグ待機が発生した回数です。どちらもelapsedTicksの内数です。
+ * waitTicksはWAITコマンドによる待機の合計、debugWaitTicksはノード間の
+ * デバッグ待機（復帰後の追加待機を含む）の合計です。どちらもelapsedTicksの内数です。
  */
 data class ExecutionResult(
     val status: ExecutionFinishStatus,
@@ -116,7 +116,7 @@ data class ExecutionResult(
     val failedNodeId: UUID? = null,
     val reason: String? = null,
     val waitTicks: Long = 0L,
-    val debugDelayCount: Int = 0,
+    val debugWaitTicks: Long = 0L,
 )
 
 /** 実行中のノードイベントと終了結果を受け取る観測者です。 */
@@ -130,6 +130,11 @@ data class ExecutionOptions(
     val observer: ExecutionObserver? = null,
     val debugDelayTicks: Long = 0L,
     val suppressCreatorFailureNotification: Boolean = false,
+    /**
+     * ループ復帰後に本体開始まで追加で待機するtick数です。S→body待機の
+     * 表示期間に使い、実処理時間からは差し引きます。通常実行では0のままです。
+     */
+    val loopRestartExtraWaitTicks: Long = 0L,
 )
 
 /** 非同期テスト実行を途中終了するためのハンドルです。 */
@@ -530,10 +535,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
         reason: String?,
         loopReturn: Boolean = false,
+        followUpDelayTicks: Long = 0L,
     ) {
         if (!session.isActive) return
         val success = outcome == NodeExecutionOutcome.SUCCESS || outcome == NodeExecutionOutcome.SKIPPED
         if (depth == 0 && success) session.successfulRootNodeCount++
+        // 次までの待機です。表示駆動だけに使い、通常実行ではどちらも0のままです。
+        val debugDelay = if (depth == 0 && target != null) session.options.debugDelayTicks else 0L
+        val followUpDelay = if (depth == 0 && target != null) followUpDelayTicks else 0L
         if (depth == 0) {
             notifyNodeFinished(
                 session,
@@ -552,12 +561,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     loopReturn = loopReturn,
                     expandedParams = session.lastExpandedParams,
                     positionText = session.lastPositionText,
-                    // 次までのデバッグ遅延です。待機表示の切り替えに使います。
-                    nextWaitTicks = if (depth == 0 && target != null) {
-                        session.options.debugDelayTicks
-                    } else {
-                        0L
-                    },
+                    // 次までの待機合計です。待機表示の切り替えに使います。
+                    nextWaitTicks = debugDelay + followUpDelay,
                 ),
             )
         }
@@ -567,11 +572,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             return stop(session, script, node.id, depth, session.failureReason!!, done)
         }
         if (target == null) return runNode(script, graph, null, session, depth, done)
-        val debugDelay = session.options.debugDelayTicks
-        if (depth == 0 && debugDelay > 0L) {
-            // 実処理時間の算出用に遅延の発生回数を数えます。
-            session.debugDelayCount++
-            schedule(session, debugDelay) { runNode(script, graph, target, session, depth, done) }
+        if (debugDelay > 0L || followUpDelay > 0L) {
+            // 実処理時間の算出用にデバッグ待機の合計を数えます。
+            session.debugWaitTicks += debugDelay + followUpDelay
+            schedule(session, debugDelay + followUpDelay) { runNode(script, graph, target, session, depth, done) }
         } else {
             runNode(script, graph, target, session, depth, done)
         }
@@ -635,7 +639,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             failedNodeId = session.failedNodeId,
             reason = reason,
             waitTicks = session.waitTicks,
-            debugDelayCount = session.debugDelayCount,
+            debugWaitTicks = session.debugWaitTicks,
         )
         session.handle.complete()
         runCatching { session.options.observer?.onFinished(result) }
@@ -698,9 +702,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             frame.count = requireNotNull(ExecutionSemantics.nextLoopCount(frame.count))
             session.currentLoopCount = frame.count
             session.lastDetail = "ループを継続した"
+            // 復帰後のS→body待機の表示期間にするため、デバッグ表示がある場合だけ
+            // 追加待機します。通常実行とデバッグOFFでは現行動作のままです。
+            val restartWait = if (depth == 0 && session.options.debugDelayTicks > 0L) {
+                session.options.loopRestartExtraWaitTicks
+            } else {
+                0L
+            }
             advanceNode(
                 script, graph, node, session, depth, session.currentAttemptNumber, startNode.trueNext,
                 NodeExecutionOutcome.SUCCESS, done, reason = null, loopReturn = true,
+                followUpDelayTicks = restartWait,
             )
         } else {
             plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=count_complete iterations=${frame.count}")
@@ -1892,9 +1904,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var failureNotified: Boolean = false,
         var attemptCount: Int = 0,
         var successfulRootNodeCount: Int = 0,
-        /** WAITコマンドの待機tick合計と、デバッグ遅延の発生回数です。 */
+        /** WAITコマンドの待機tick合計と、デバッグ待機のtick合計です。 */
         var waitTicks: Long = 0L,
-        var debugDelayCount: Int = 0,
+        var debugWaitTicks: Long = 0L,
         var currentAttemptNumber: Int = 0,
         var currentRootNodeId: UUID? = null,
         var failedNodeId: UUID? = null,

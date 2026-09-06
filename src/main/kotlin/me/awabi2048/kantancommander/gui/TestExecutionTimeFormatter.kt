@@ -40,11 +40,11 @@ internal object TestExecutionTimeFormatter {
     }
 
     /**
-     * 所要時間からノード間のデバッグ待機を差し引いた実処理時間を求めます。
+     * 所要時間からデバッグ待機の合計を差し引いた実処理時間を求めます。
      * 待機コマンドの所要時間は差し引かず、実処理に含めたままにします。
      */
-    fun realProcessingTicks(elapsedTicks: Long, debugDelayCount: Int, debugDelayTicks: Long): Long =
-        (elapsedTicks - debugDelayCount.toLong() * debugDelayTicks).coerceAtLeast(0L)
+    fun realProcessingTicks(elapsedTicks: Long, debugWaitTicks: Long): Long =
+        (elapsedTicks - debugWaitTicks).coerceAtLeast(0L)
 
     private const val TICKS_PER_SECOND = 20L
 }
