@@ -65,7 +65,10 @@ enum class NodeExecutionOutcome {
     FAILED,
 }
 
-/** テスト実行へ通知する、最上位グラフのノード開始イベントです。 */
+/**
+ * テスト実行へ通知する、最上位グラフのノード開始イベントです。
+ * waitTicksはWAITコマンドの待機時間です。待機表示の切り替えに使います。
+ */
 data class ExecutionNodeStarted(
     val scriptId: UUID,
     val nodeId: UUID,
@@ -73,6 +76,7 @@ data class ExecutionNodeStarted(
     val depth: Int,
     val attemptNumber: Int,
     val tick: Long,
+    val waitTicks: Long = 0L,
 )
 
 /**
@@ -95,6 +99,8 @@ data class ExecutionNodeFinished(
     val loopReturn: Boolean = false,
     val expandedParams: Map<String, String> = emptyMap(),
     val positionText: String? = null,
+    /** 次ノードまでのデバッグ遅延です。待機表示の切り替えに使います。 */
+    val nextWaitTicks: Long = 0L,
 )
 
 /**
@@ -338,6 +344,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } else {
             0
         }
+        // WAITコマンドの待機は開始時点で確定するため、待機表示用に先に求めます。
+        // 不正な指定のときは直後に失敗するため、待機なしとして通知します。
+        val startWaitTicks = if (depth == 0 && node.type == CommandType.WAIT) {
+            resolveNumber(node.string("seconds"), session)
+                ?.takeIf(CommandValueRules::isWaitSeconds)
+                ?.let(CommandValueRules::secondsToTicks)
+                ?.takeIf { it >= 1L } ?: 0L
+        } else {
+            0L
+        }
         if (depth == 0) {
             session.currentAttemptNumber = attemptNumber
             session.currentRootNodeId = node.id
@@ -350,6 +366,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     depth = depth,
                     attemptNumber = attemptNumber,
                     tick = plugin.server.currentTick.toLong(),
+                    waitTicks = startWaitTicks,
                 ),
             )
         }
@@ -535,6 +552,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     loopReturn = loopReturn,
                     expandedParams = session.lastExpandedParams,
                     positionText = session.lastPositionText,
+                    // 次までのデバッグ遅延です。待機表示の切り替えに使います。
+                    nextWaitTicks = if (depth == 0 && target != null) {
+                        session.options.debugDelayTicks
+                    } else {
+                        0L
+                    },
                 ),
             )
         }

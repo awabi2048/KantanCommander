@@ -1087,9 +1087,9 @@ object GraphLayoutEngine {
                 putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH)
             }
             fillHorizontal(x, endX, returnY, MapCellKind.LOOP_RETURN_PATH)
-            // 矢印はbodyのノード種類や分岐形状から推測しません。水色の戻り経路そのものを
+            // 矢印はbodyのノード種類や分岐形状から推測しません。戻り経路そのものを
             // 基準に、ループ開始・終了セル（x/endX）を空けたうえで、開始直後の論理スロット
-            // から1つおきに配置します。戻り経路を先に生成することで、矢印が必ず水色経路上に
+            // から1つおきに配置します。戻り経路を先に生成することで、矢印が必ず戻り経路上に
             // 乗ることも同時に保証します（例: S « ・ « ・ « E）。
             for (arrowX in (x + 1 until endX step 2)) {
                 val arrowPoint = MapPoint(arrowX, returnY)

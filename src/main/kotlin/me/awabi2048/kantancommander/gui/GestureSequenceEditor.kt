@@ -326,6 +326,8 @@ class GestureSequenceEditor(
     private var renderRetryAttempts = 0
     /** 実行中の経過時間・現在ノードを画面へ反映する周期タスクです。 */
     private var testRefreshTask: BukkitTask? = null
+    /** テスト実行の観測者です。待機タイマーの解除に使います。 */
+    private var testObserver: GestureTestExecutionObserver? = null
 
     private fun canViewSharedActor(ownerId: UUID, actorId: UUID): Boolean {
         val placement = state.placement ?: return actorId == ownerId
@@ -844,14 +846,19 @@ class GestureSequenceEditor(
 
     /**
      * 全体を映すのに必要な最小ズームで表示し、指定ノードが端から切れない原点を求めます。
-     * 全体が収まる範囲で最も寄った倍率を選ぶため、追従が発生するのは
-     * 最小ズームでも収まらない場合に限られます。
+     * 設定中のズームが全体収納より広域の場合は何もせず、狭域の場合だけ
+     * 全体収納まで引きます。追従が発生するのは最小ズームでも収まらない場合に限られます。
      */
     private fun fitTestViewport(targetNodeId: UUID? = null) {
         val test = state.testExecution ?: return
         val layout = runCatching { GraphLayoutEngine.layout(test.snapshot.graph) }.getOrNull()
             ?.withoutEditArtifacts(test.passedEdges) ?: return
-        state.zoomLevel = GestureEditorLayout.fitZoomLevel(layout.width, layout.height)
+        val fitLevel = GestureEditorLayout.fitZoomLevel(layout.width, layout.height)
+        // 現在の倍率が必要倍率より小さい（広域）場合は、利用者の表示を維持します。
+        // 原点の中心合わせは広域のまま行うため、ここでは倍率だけを据え置きます。
+        if (GestureEditorLayout.zoomScaleFor(state.zoomLevel) >= GestureEditorLayout.zoomScaleFor(fitLevel)) {
+            state.zoomLevel = fitLevel
+        }
         val metrics = viewportMetrics(zoomScale())
         val target = targetNodeId?.let(layout.nodePoints::get)
         state.origin = if (target != null) {
@@ -920,7 +927,10 @@ class GestureSequenceEditor(
                     finishTest(result)
                 }
             },
+            plugin = plugin,
+            scheduler = plugin.server.scheduler,
         )
+        testObserver = observer
         val started = plugin.testExecution.startTest(
             scopeKey = test.scopeKey,
             script = test.snapshot,
@@ -976,6 +986,8 @@ class GestureSequenceEditor(
         state.lowerMode = GestureLowerMode.TEST_RESULT
         testRefreshTask?.cancel()
         testRefreshTask = null
+        testObserver?.cancelPendingWait()
+        testObserver = null
         // 終了音と終了通知は操作者だけへ出します。
         // 中断時は中断操作時の通知が既にあるため、ここでは何もしません。
         Bukkit.getPlayer(test.ownerId)?.takeIf(Player::isOnline)?.let { owner ->
@@ -1012,6 +1024,8 @@ class GestureSequenceEditor(
         val test = state.testExecution ?: return
         testRefreshTask?.cancel()
         testRefreshTask = null
+        testObserver?.cancelPendingWait()
+        testObserver = null
         state.testExecution = null
         state.lowerMode = test.originalLowerMode
         onTestStateChanged()
@@ -1074,6 +1088,8 @@ class GestureSequenceEditor(
         state.testExecution = null
         testRefreshTask?.cancel()
         testRefreshTask = null
+        testObserver?.cancelPendingWait()
+        testObserver = null
         updateUpper(player)
         updateLower(player)
     }
@@ -1121,9 +1137,13 @@ class GestureSequenceEditor(
                 .append(Component.text(detail, NamedTextColor.WHITE))
         }
         // 実効値は項目ごとに1行ずつ出し、実行位置は専用の見出しへ出します。
+        // 項目名はエディタ内の設定項目名へ合わせ、対応がない内部キーはそのまま出します。
+        val loggedNode = state.testExecution?.snapshot?.graph?.nodes?.get(event.nodeId)
         event.expandedParams.forEach { (key, value) ->
+            val label = TestLogParamPresentation.labelKey(event.nodeType, loggedNode, key)
+                ?.let { KcI18n.text(player, it) } ?: key
             hover.append(Component.newline())
-                .append(Component.text("  $key: ", NamedTextColor.GRAY))
+                .append(Component.text("  $label: ", NamedTextColor.GRAY))
                 .append(Component.text(value, NamedTextColor.WHITE))
         }
         event.positionText?.takeIf(String::isNotBlank)?.let { position ->
@@ -1463,14 +1483,16 @@ class GestureSequenceEditor(
                         val isSelected = !testActive && state.selectedNodeId == node.id
                         val activeTest = test?.takeIf { testActive }
                         val isFailedNode = activeTest?.failedNodeId == node.id
+                        val isWaitingNode = activeTest?.waitingNodeId == node.id
                         val isRunningNode = activeTest?.phase == GestureTestPhase.RUNNING &&
                             activeTest.currentNodeId == node.id
                         val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
-                        // 失敗=赤、実行中=空色、成功済み=黄緑です。
+                        // 失敗=赤、待機中=青緑、実行中=空色、成功済み=黄緑です。
                         val backgroundMaterial = when {
                             isFailedNode -> Material.RED_CONCRETE
+                            isWaitingNode -> Material.CYAN_CONCRETE
                             isRunningNode -> Material.LIGHT_BLUE_CONCRETE
                             isSuccessfulNode -> Material.LIME_CONCRETE
                             incomplete -> Material.ORANGE_CONCRETE
@@ -1620,7 +1642,7 @@ class GestureSequenceEditor(
                     if (!testActive && insertionPreview == null && cell.kind == MapCellKind.LOOP_RETURN_PATH) {
                         // 戻り経路は処理の流れを示す表示専用要素です。クリック操作は受け付けず、
                         // ホバー時だけ「戻って処理を繰り返します」と説明します。矢印と同じ論理セルを
-                        // 当たり判定に使うため、パン・ズーム後も水色経路上の説明がずれません。
+                        // 当たり判定に使うため、パン・ズーム後も戻り経路上の説明がずれません。
                         elements.add(GestureGuiElement(
                             // 経路要素の名前空間へ統一します。戻り経路だけ別の接頭辞にすると、
                             // 表示側のpath-判定とは一致しても、当たり判定側の縮尺・クリップ判定から
@@ -1663,20 +1685,23 @@ class GestureSequenceEditor(
             }
         }
 
-        // テスト中の経路通過マーカーです。Glow描画には使わず、黄緑コンクリートへの
-        // 張り替え判定にだけ使います。ループ戻りは実行中ノードの空色と重ならない
-        // よう、赤紫系のコンクリートへ変えています。
+        // テスト中の経路通過マーカーです。Glow描画には使わず、コンクリートへの
+        // 張り替え判定にだけ使います。ループ戻りも通常通路と同じ仕様で扱います。
+        // 待機中の次の枝は空色で示し、通過表示より優先します。
+        val waitingPathMark = Color.fromRGB(85, 255, 255).asARGB()
+        val passedPathMark = Color.fromRGB(85, 255, 85).asARGB()
         val testPathMark: ((MapPoint, MapCell) -> Int?)? = test?.takeIf { testActive }?.let { activeTest ->
-            val loopMark = Color.fromRGB(255, 85, 255).asARGB()
-            val passedMark = Color.fromRGB(85, 255, 85).asARGB()
+            val waitingEdge = activeTest.waitingEdge
             val mark: (MapPoint, MapCell) -> Int? = { _, cell ->
                 when {
-                    activeTest.loopReturnActive && cell.kind == MapCellKind.LOOP_RETURN_PATH -> loopMark
+                    waitingEdge != null && cell.insertionTarget?.let { target ->
+                        target.sourceId == waitingEdge.sourceId && target.edge == waitingEdge.edge
+                    } == true -> waitingPathMark
                     cell.insertionTarget?.let { target ->
                         target.sourceId?.let { sourceId ->
                             activeTest.passedEdges.contains(TestExecutionEdge(sourceId, target.edge))
                         }
-                    } == true -> passedMark
+                    } == true -> passedPathMark
                     else -> null
                 }
             }
@@ -1698,18 +1723,12 @@ class GestureSequenceEditor(
                 maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y / zoomScale,
             ),
         ).forEach { seg ->
-            val isLoopReturn = seg.kind == MapCellKind.LOOP_RETURN_PATH
             // テスト中はGlowではなくテクスチャ変更で示します。通過経路=黄緑、
-            // ループ戻り=赤紫（通過中は赤寄り、それ以外は紫寄り）です。
-            val pathMaterial = if (testActive) {
-                when {
-                    isLoopReturn && seg.glowColor != null -> Material.MAGENTA_CONCRETE
-                    isLoopReturn -> Material.PURPLE_CONCRETE
-                    seg.glowColor != null -> Material.LIME_CONCRETE
-                    else -> Material.WHITE_CONCRETE
-                }
+            // 待機中の次の枝=空色、それ以外は白色です。ループ戻りも通常通路と同じ仕様です。
+            val pathMaterial = if (testActive && seg.glowColor != null) {
+                if (seg.glowColor == waitingPathMark) Material.LIGHT_BLUE_CONCRETE else Material.LIME_CONCRETE
             } else {
-                if (isLoopReturn) Material.LIGHT_BLUE_CONCRETE else Material.WHITE_CONCRETE
+                Material.WHITE_CONCRETE
             }
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
@@ -1721,8 +1740,9 @@ class GestureSequenceEditor(
             ))
         }
 
-        // 戻り経路の矢印は、ループ開始・終了セルを空けた1つおきの水色経路上へ
-        // 配置します。論理座標から投影するため、ズーム・パン後も矢印とホバー用の
+        // 戻り経路の矢印は、ループ開始・終了セルを空けた1つおきの白色経路上へ
+        // 配置します。経路自体は白いため、矢印だけを空色で示します。
+        // 論理座標から投影するため、ズーム・パン後も矢印とホバー用の
         // 当たり判定が同じ戻り経路セルを参照します。
         projection.loopReturnArrowPoints.forEach { localPoint ->
             val gx = state.origin.x + localPoint.x
@@ -1731,7 +1751,7 @@ class GestureSequenceEditor(
                 visualId = "path-return-arrow-$gx-$gy",
                 x = metrics.x(localPoint.x),
                 y = metrics.y(localPoint.y) - 0.006,
-                text = Component.text("«").color(NamedTextColor.WHITE),
+                text = Component.text("«").color(NamedTextColor.AQUA),
                 size = 0.010,
                 layer = 2,
             ))
