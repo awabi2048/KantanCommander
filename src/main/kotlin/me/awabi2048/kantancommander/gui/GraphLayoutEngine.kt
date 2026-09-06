@@ -118,6 +118,54 @@ data class GraphLayout(
     /** 開始・終了セルを空け、戻り経路上へ1つおきに配置する矢印の論理座標です。 */
     val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
+    /**
+     * テスト実行表示用に編集用アーティファクトを除いた配置を返します。
+     *
+     * ADDセルと、ADDへ至るためだけに延ばされた経路（枝末端の延長や
+     * 開いた枝のスタブ）を取り除き、真のノード配置だけを残します。
+     * ノード同士をつなぐ経路（次数2以上）、分岐点、ループ戻り、実行済み経路の
+     * セルは残すため、実行中のハイライト表示は維持されます。
+     */
+    fun withoutEditArtifacts(passedEdges: Set<TestExecutionEdge>): GraphLayout {
+        if (cells.values.none { it.kind == MapCellKind.ADD }) return this
+        val remaining = cells.filterValues { it.kind != MapCellKind.ADD }.toMutableMap()
+        fun neighborsOf(point: MapPoint): List<MapPoint> =
+            ORTHOGONAL_DIRECTIONS.map { MapPoint(point.x + it.x, point.y + it.y) }
+        // 接続次数です。ADDは既に除外しているため数えません。
+        fun degree(point: MapPoint): Int =
+            neighborsOf(point).count { remaining[it]?.kind in CONNECTABLE_CELL_KINDS }
+        // 実行済み経路のセルは、ハイライト表示のため残します。
+        fun isTraversed(cell: MapCell): Boolean =
+            cell.insertionTarget?.let { target ->
+                target.sourceId?.let { sourceId ->
+                    passedEdges.contains(TestExecutionEdge(sourceId, target.edge))
+                }
+            } == true
+        // 行き止まりの編集用スタブを端から刈り込みます。次数2以上の経路は
+        // ノード同士をつないでいるため残り、次数1以下はADDへ向かう延長か
+        // 開いた枝の残骸のため取り除きます。長い延長も不動点まで繰り返します。
+        var changed = true
+        while (changed) {
+            changed = false
+            val victims = remaining.filter { (point, cell) ->
+                (cell.kind == MapCellKind.PATH || cell.kind == MapCellKind.BRANCH_PATH) &&
+                    !isTraversed(cell) && degree(point) <= 1
+            }.keys.toList()
+            if (victims.isNotEmpty()) {
+                victims.forEach(remaining::remove)
+                changed = true
+            }
+        }
+        val maxX = remaining.keys.maxOfOrNull(MapPoint::x) ?: 0
+        val maxY = remaining.keys.maxOfOrNull(MapPoint::y) ?: 0
+        return copy(
+            cells = remaining,
+            width = maxX + 2,
+            height = maxY + 2,
+            loopReturnArrowPoints = loopReturnArrowPoints.filter(remaining::containsKey).toSet(),
+        )
+    }
+
     fun viewport(origin: MapPoint, width: Int, height: Int): Map<MapPoint, MapCell> =
         cells.mapNotNull { (point, cell) ->
             val local = MapPoint(point.x - origin.x, point.y - origin.y)

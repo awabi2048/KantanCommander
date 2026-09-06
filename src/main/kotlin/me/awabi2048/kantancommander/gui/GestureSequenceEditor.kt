@@ -766,27 +766,24 @@ class GestureSequenceEditor(
     }
 
     /**
-     * テスト実行を開始できない理由です。開始できるときはnullを返します。
+     * テスト実行を開始できない短縮理由です。開始できるときはnullを返します。
      * バリア表示のホバーへ出し、押下時は何もしないため確定判定と対にします。
      */
     private fun testUnavailableReason(player: Player): String? {
         val script = plugin.scripts.load(state.scriptId)
         if (script == null || script.graph.nodes.isEmpty()) {
-            return KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_NO_COMMANDS)
+            return KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_SHORT_EMPTY)
         }
         val placement = state.placement
         if (placement != null && plugin.testExecution.isActive(placement.key)) {
-            return KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_BUSY)
+            return KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_SHORT_BUSY)
         }
         val errors = testValidationErrors()
         if (errors.isEmpty()) return null
-        // 先頭のエラーを理由とし、残りは件数へまとめて表示します。
-        val first = errors.first().rendered()
-        if (errors.size == 1) return first
-        return first + "\n" + KcI18n.text(
+        return KcI18n.text(
             player,
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_MORE_ERRORS,
-            mapOf("count" to (errors.size - 1)),
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_SHORT_ERRORS,
+            mapOf("count" to errors.size),
         )
     }
 
@@ -852,7 +849,8 @@ class GestureSequenceEditor(
      */
     private fun fitTestViewport(targetNodeId: UUID? = null) {
         val test = state.testExecution ?: return
-        val layout = runCatching { GraphLayoutEngine.layout(test.snapshot.graph) }.getOrNull() ?: return
+        val layout = runCatching { GraphLayoutEngine.layout(test.snapshot.graph) }.getOrNull()
+            ?.withoutEditArtifacts(test.passedEdges) ?: return
         state.zoomLevel = GestureEditorLayout.fitZoomLevel(layout.width, layout.height)
         val metrics = viewportMetrics(zoomScale())
         val target = targetNodeId?.let(layout.nodePoints::get)
@@ -1112,6 +1110,18 @@ class GestureSequenceEditor(
                 .append(Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_DETAIL), NamedTextColor.GRAY))
                 .append(Component.text(": ", NamedTextColor.GRAY))
                 .append(Component.text(detail, NamedTextColor.WHITE))
+        }
+        // 実効値は項目ごとに1行ずつ出し、実行位置は専用の見出しへ出します。
+        event.expandedParams.forEach { (key, value) ->
+            hover.append(Component.newline())
+                .append(Component.text("  $key: ", NamedTextColor.GRAY))
+                .append(Component.text(value, NamedTextColor.WHITE))
+        }
+        event.positionText?.takeIf(String::isNotBlank)?.let { position ->
+            hover.append(Component.newline())
+                .append(Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_POSITION), NamedTextColor.GRAY))
+                .append(Component.text(": ", NamedTextColor.GRAY))
+                .append(Component.text(position, NamedTextColor.WHITE))
         }
         event.reason?.takeIf(String::isNotBlank)?.let { reason ->
             hover.append(Component.newline())
@@ -1379,7 +1389,10 @@ class GestureSequenceEditor(
         // 動かないため、仮ノード入りレイアウトや候補マーカーは二重表示になります。
         val insertionPreview = if (testActive) null else insertionPreview(script, player)
         val renderGraph = insertionPreview?.graph ?: script.graph
-        val layout = insertionPreview?.layout ?: persistedLayout
+        // テスト中はADDとその延長経路を除いた真の配置で描画します。
+        val layout = (insertionPreview?.layout ?: persistedLayout).let { base ->
+            if (testActive) base.withoutEditArtifacts(test?.passedEdges.orEmpty()) else base
+        }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
@@ -1426,9 +1439,6 @@ class GestureSequenceEditor(
         }
 
         cells.forEach { (localPoint, cell) ->
-            // 追加ポイントは編集用ビューポートの仮想ノードのため、テスト中は
-            // 真のノード配置だけを再描画します。入力要素だけでなく見た目も出しません。
-            if (testActive && cell.kind == MapCellKind.ADD) return@forEach
             // セル検索はグリッド座標、配置は列/行インデックスで行う（origin移動してもグリッド位置は固定）
             val colIndex = localPoint.x
             val rowIndex = localPoint.y
@@ -5244,7 +5254,9 @@ class GestureSequenceEditor(
             }
             return null
         }
-        return if (testActive) persistedLayout else insertionPreview(script, player)?.layout ?: persistedLayout
+        // テスト中はADDとその延長経路を除いた真の配置で確認します。
+        if (testActive) return persistedLayout.withoutEditArtifacts(test?.passedEdges.orEmpty())
+        return insertionPreview(script, player)?.layout ?: persistedLayout
     }
 
     /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
@@ -5457,8 +5469,8 @@ class GestureSequenceEditor(
     }
 
     /**
-     * テスト実行を開始できない場合のバリア表示です。アイコンを隠さず、
-     * ホバーに理由を出して案内します。押下時は何もしません。
+     * テスト実行を開始できない場合の銅電球表示です。アイコンを隠さず、
+     * ホバーに短縮理由を出して案内します。押下時は何もしません。
      */
     private fun addTestBarrierButton(
         player: Player,
@@ -5467,31 +5479,26 @@ class GestureSequenceEditor(
         reason: String,
     ) {
         // 通常ボタンと同じ位置・寸法に置き、配置の重心を保ちます。
+        // 点灯した銅の電球で「実行待ち」を示します。
         val x = GestureEditorLayout.ZOOM_X
         val y = GestureEditorLayout.ZOOM_TOP_Y + GestureEditorLayout.ZOOM_PITCH * 2.0
         val size = GestureEditorLayout.ZOOM_SIZE
+        val bulb = Bukkit.createBlockData(Material.COPPER_BULB)
+        if (bulb is org.bukkit.block.data.Lightable) bulb.isLit = true
         visuals.add(GestureGuiVisual.Block(
             visualId = "test-execution-block",
             x = x,
             y = y,
             width = size,
             height = size,
-            blockData = Bukkit.createBlockData(Material.BARRIER),
+            blockData = bulb,
             layer = 4,
-        ))
-        visuals.add(GestureGuiVisual.Text(
-            visualId = "test-execution-glyph",
-            x = x,
-            y = y - 0.01,
-            text = Component.text("!").color(NamedTextColor.RED),
-            size = 0.010,
-            layer = 6,
         ))
         elements.add(GestureGuiElement(
             elementId = "test-execution",
             bounds = navBounds(x, y, size),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
-            targetVisualId = "test-execution-glyph",
+            targetVisualId = "test-execution-block",
             // 理由はホバーで案内済みのため、押下時は何もしません。
             gestureGuard = { _, _ -> false },
             hoverText = navigationHoverText(Component.text(reason)),

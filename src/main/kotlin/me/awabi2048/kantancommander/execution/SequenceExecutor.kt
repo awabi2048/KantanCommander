@@ -75,7 +75,11 @@ data class ExecutionNodeStarted(
     val tick: Long,
 )
 
-/** テスト実行へ通知する、最上位グラフのノード完了イベントです。 */
+/**
+ * テスト実行へ通知する、最上位グラフのノード完了イベントです。
+ * expandedParamsは実行値の展開結果、positionTextは実行位置です。
+ * ホバー表示で構造的に出すため、detailの本文とは別に保持します。
+ */
 data class ExecutionNodeFinished(
     val scriptId: UUID,
     val nodeId: UUID,
@@ -89,6 +93,8 @@ data class ExecutionNodeFinished(
     val detail: String? = null,
     val reason: String? = null,
     val loopReturn: Boolean = false,
+    val expandedParams: Map<String, String> = emptyMap(),
+    val positionText: String? = null,
 )
 
 /**
@@ -348,6 +354,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         }
         session.lastDetail = null
+        session.lastExpandedParams = emptyMap()
+        session.lastPositionText = null
         session.lastFailureReason = null
 
         val next: (UUID?, NodeExecutionOutcome) -> Unit = { target, outcome ->
@@ -525,6 +533,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     detail = session.lastDetail,
                     reason = reason,
                     loopReturn = loopReturn,
+                    expandedParams = session.lastExpandedParams,
+                    positionText = session.lastPositionText,
                 ),
             )
         }
@@ -993,7 +1003,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         if (success) {
             session.previousContext = effectiveContext
-            session.lastDetail = executionDetail(node, targets, effectiveOrigin, session)
+            val content = executionContent(node, targets, effectiveOrigin, session)
+            session.lastDetail = content.head
+            session.lastExpandedParams = content.expandedParams
+            session.lastPositionText = content.positionText
         }
         success
     }
@@ -1051,30 +1064,31 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /** 実行後のホバーへ、解決済み対象と展開後の設定値をまとめて表示します。 */
-    private fun executionDetail(
+    /** 実行内容の人向け要約です。実効値と位置はホバーの構造表示用に分けて保持します。 */
+    private data class ExecutionContent(
+        val head: String,
+        val expandedParams: Map<String, String> = emptyMap(),
+        val positionText: String? = null,
+    )
+
+    private fun executionContent(
         node: CommandNode,
         targets: List<Entity>,
         origin: Location,
         session: ExecutionSession,
-    ): String = buildString {
-        append(immediateDetail(node.type))
-        if (targets.isNotEmpty()) {
-            append("（対象: ")
-            append(targets.joinToString("、") { entity -> entity.name })
-            append('）')
-        }
-        val expandedParameters = node.params.entries
-            .filter { (_, value) -> value.isNotBlank() }
-            .map { (key, value) ->
-                val expanded = resolveText(value, session) ?: value
-                "$key=$expanded"
+    ): ExecutionContent {
+        val head = buildString {
+            append(immediateDetail(node.type))
+            if (targets.isNotEmpty()) {
+                append("（対象: ")
+                append(targets.joinToString("、") { entity -> entity.name })
+                append('）')
             }
-        if (expandedParameters.isNotEmpty()) {
-            append("\n実行値: ")
-            append(expandedParameters.joinToString(", "))
         }
-        append("\n位置: ")
-        append(formatLocation(origin))
+        val expandedParams = node.params.entries
+            .filter { (_, value) -> value.isNotBlank() }
+            .associate { (key, value) -> key to (resolveText(value, session) ?: value) }
+        return ExecutionContent(head, expandedParams, formatLocation(origin))
     }
 
     // テスト実行は常に操作者のいるMyWorldで行うため、ワールド名は表示しません。
@@ -1863,6 +1877,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var failedNodeId: UUID? = null,
         var failureReason: String? = null,
         var lastDetail: String? = null,
+        var lastExpandedParams: Map<String, String> = emptyMap(),
+        var lastPositionText: String? = null,
         var lastFailureReason: String? = null,
         var cancelled: Boolean = false,
         var finished: Boolean = false,

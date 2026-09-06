@@ -3013,22 +3013,27 @@ class GestureLowerPanel(
         )
         val elapsed = result?.elapsedTicks ?: test.elapsedTicks
         val waitTicks = result?.waitTicks ?: 0L
-        // デバッグ時は実処理時間の行を挿入するため、各行を下へずらします。
+        // 所要時間と待機時間は独立した行で出し、デバッグ時は実処理時間の行を挿入します。
         val showReal = test.debugMode
-        val durationY = if (showReal) 0.22 else 0.20
-        val realY = 0.07
-        val countY = if (showReal) -0.08 else -0.01
-        val statusY = if (showReal) -0.23 else -0.22
+        val durationY = if (showReal) 0.24 else 0.22
+        val waitY = if (showReal) 0.11 else 0.09
+        val realY = -0.02
+        val countY = if (showReal) -0.15 else -0.04
+        val statusY = if (showReal) -0.28 else -0.17
         addTestResultRow(
             visuals,
             "test-result-duration",
             durationY,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DURATION),
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DURATION_VALUE_WITH_WAIT,
-                mapOf("total" to formatTestElapsed(elapsed), "wait" to formatTestElapsed(waitTicks)),
-            ),
+            formatTestElapsed(elapsed),
+            NamedTextColor.WHITE,
+        )
+        addTestResultRow(
+            visuals,
+            "test-result-wait",
+            waitY,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_WAIT_DURATION),
+            formatTestElapsed(waitTicks),
             NamedTextColor.WHITE,
         )
         if (showReal) {
