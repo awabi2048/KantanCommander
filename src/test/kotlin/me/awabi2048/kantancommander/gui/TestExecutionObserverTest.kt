@@ -111,7 +111,7 @@ class TestExecutionObserverTest {
 
     @Test
     fun `shows loop return in light blue during long waits`() {
-        // 復帰後の待機が長いときは、20tick後に戻り経路を水色で示し、再開で白に戻します。
+        // 復帰完了直後は無変化、+20で戻り青＋FOR内白化、+40で戻り白＋S相当表示、再開で復帰します。
         val (script, startId, bodyId) = loopScript()
         val endId = requireNotNull(script.graph.nodes[startId]?.pairedNodeId)
         val state = testState(script)
@@ -122,42 +122,27 @@ class TestExecutionObserverTest {
         observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 2, 3L))
         observer.onNodeStarted(started(script, endId, CommandType.FOR_END, 2, 4L))
         observer.onNodeFinished(
-            finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true, nextWaitTicks = 40L),
+            finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true, nextWaitTicks = 60L),
         )
+        // 完了直後はEの黄緑化以外に変化がありません。
         assertNull(state.waitingLoopReturnId)
+        assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
+        assertTrue(state.successfulNodeIds.contains(startId))
+        assertTrue(state.passedEdges.contains(TestExecutionEdge(bodyId, GraphEditor.Edge.NEXT)))
+        // +20で戻り青＋FOR内白化＋S白化が行われます。
         fake.runPending()
         assertEquals(endId, state.waitingLoopReturnId)
-        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 3, 45L))
-        assertNull(state.waitingLoopReturnId)
+        assertFalse(state.passedEdges.contains(TestExecutionEdge(bodyId, GraphEditor.Edge.NEXT)))
         assertFalse(state.successfulNodeIds.contains(bodyId))
-    }
-
-    @Test
-    fun `shows start equivalent display during loop waits`() {
-        // 復帰完了でSとS→body枝を白に戻し、待機後半にS相当（実行中表示・水色枝）を出します。
-        // 再開でS→body枝だけ黄緑に戻り、S自体は白のまま残ります。
-        val (script, startId, bodyId) = loopScript()
-        val endId = requireNotNull(script.graph.nodes[startId]?.pairedNodeId)
-        val state = testState(script)
-        val fake = FakeScheduler()
-        val observer = GestureTestExecutionObserver(state, {}, {}, {}, dummyPlugin(), fake.scheduler)
-        observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
-        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 1, 2L))
-        assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
-        observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 2, 3L))
-        observer.onNodeStarted(started(script, endId, CommandType.FOR_END, 2, 4L))
-        observer.onNodeFinished(
-            finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true, nextWaitTicks = 40L),
-        )
-        // 復帰完了直後に白化しています。
         assertFalse(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         assertFalse(state.successfulNodeIds.contains(startId))
-        // 待機後半にS相当の表示が出ます。
+        // +40で戻り白＋S相当の表示へ移ります。
         fake.runPending()
+        assertNull(state.waitingLoopReturnId)
         assertEquals(startId, state.currentNodeId)
         assertEquals(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY), state.waitingEdge)
         // 再開でS→body枝だけ黄緑に戻ります。
-        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 3, 45L))
+        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 3, 65L))
         assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         assertEquals(bodyId, state.currentNodeId)
         assertFalse(state.successfulNodeIds.contains(startId))

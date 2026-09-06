@@ -91,14 +91,15 @@ class GestureTestExecutionObserver(
     override fun onNodeStarted(event: ExecutionNodeStarted) {
         if (event.depth != 0) return
         cancelPendingWait()
-        // ループ復帰後の再開では、戻り経路とループ内の通過表示を白に戻します。
-        // 開始ノード自体は集合外のため、開始→本体の枝は維持されます。
+        // ループ復帰後の再開では、白化済みの表示を確定します。+20タイマーで
+        // 既に白化されているため、ここでは残存分の掃除と再入場枝の復元だけ行います。
+        // 短待機（デバッグOFF）ではタイマーがないため、この除去が唯一の白化になります。
         state.pendingLoopRestartNodes?.let { loopNodes ->
             state.passedEdges.removeAll { it.sourceId in loopNodes }
             state.successfulNodeIds.removeAll(loopNodes)
             state.pendingLoopRestartNodes = null
         }
-        // S相当の再入場枝を黄緑に戻します。待機中は白のままでした。
+        // S相当の再入場枝を黄緑に戻します。+40まで白→水色でした。
         state.pendingRestartEdge?.let(state.passedEdges::add)
         state.pendingRestartEdge = null
         // 移動中の枝を通過確定します。開始前は白のままです。
@@ -134,30 +135,42 @@ class GestureTestExecutionObserver(
             pendingEdge?.let(state.passedEdges::add)
             pendingEdge = edgeFor(state.snapshot, event.nodeId, event.nextNodeId)
             if (event.loopReturn) {
-                // 復帰完了時点では何も消さず、次の開始で一括して白に戻します。
-                // 待機が長いとき（デバッグON）は20tick後に戻り経路とS相当を水色・実行中表示にし、
-                // 再開と同時に白へ戻します。回数表示・ログ・所要時間は変えません。
+                // 復帰完了時点ではEの黄緑化以外に何も変えず、再開用集合の保持だけ行います。
+                // 待機が長いとき（デバッグON）は20tick後に戻り経路を水色＋FOR内白化し、
+                // さらに20tick後に戻り経路を白へ戻してS相当の待機表示へ移します。
+                // 回数表示・ログ・所要時間は変えません。
                 state.pendingLoopRestartNodes = loopNodeIds(event.nodeId)
                 if (event.nextWaitTicks > TEST_WAIT_HIGHLIGHT_DELAY_TICKS) {
-                    // S相当の表示用に、SとS→body枝を白に戻して再入場枝として保持します。
-                    // Sの実行は完了していない扱いのため、成功集合から外します。
-                    val startId = state.snapshot.graph.nodes[event.nodeId]?.pairedNodeId
-                    if (startId != null) {
+                    // S相当の再入場枝を算出して保持します。白化は+20タイマーで行います。
+                    state.snapshot.graph.nodes[event.nodeId]?.pairedNodeId?.let { startId ->
                         edgeFor(state.snapshot, startId, state.snapshot.graph.nodes[startId]?.trueNext)?.let { reentry ->
-                            state.passedEdges.remove(reentry)
-                            state.successfulNodeIds.remove(startId)
                             state.pendingRestartEdge = reentry
                         }
                     }
                     scheduleWaitHighlight {
                         if (state.phase != GestureTestPhase.RUNNING) return@scheduleWaitHighlight
-                        state.waitingLoopReturnId = event.nodeId
-                        // S相当の表示です。Sを実行中表示し、枝を水色にします。
-                        state.pendingRestartEdge?.let { edge ->
-                            state.currentNodeId = edge.sourceId
-                            state.waitingEdge = edge
+                        // FOR内の経路・背景とS相当を白に戻し、戻り経路を水色にします。
+                        state.pendingLoopRestartNodes?.let { loopNodes ->
+                            state.passedEdges.removeAll { it.sourceId in loopNodes }
+                            state.successfulNodeIds.removeAll(loopNodes)
                         }
+                        state.pendingRestartEdge?.let { reentry ->
+                            state.passedEdges.remove(reentry)
+                            state.successfulNodeIds.remove(reentry.sourceId)
+                        }
+                        state.waitingLoopReturnId = event.nodeId
                         onChanged()
+                        // さらに20tick後に戻り経路を白へ戻し、S相当の待機表示へ移します。
+                        scheduleWaitHighlight {
+                            if (state.phase != GestureTestPhase.RUNNING) return@scheduleWaitHighlight
+                            state.waitingLoopReturnId = null
+                            // S相当の表示です。Sを実行中表示し、枝を水色にします。
+                            state.pendingRestartEdge?.let { edge ->
+                                state.currentNodeId = edge.sourceId
+                                state.waitingEdge = edge
+                            }
+                            onChanged()
+                        }
                     }
                 }
             }
