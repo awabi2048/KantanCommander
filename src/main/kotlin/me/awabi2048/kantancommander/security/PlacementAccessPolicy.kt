@@ -12,6 +12,19 @@ object PlacementAccessRules {
 
 class PlacementAccessPolicy(private val plugin: KantanCommanderPlugin) {
     fun canManage(player: Player, worldName: String): Boolean {
+        // TEMP-BYPASS (2026-09-06): MWM-Chanponのツール権限付与がプレイヤーへ届かない環境への
+        // 一時対策として、MyWorldの建築権限があればツール権限を問わず許可する。恒久対応の
+        // ツール権限分離がマージされたら、この先行ブロックごと削除すること。なお
+        // `/kankoma` 系の kankoma.command.* ノードは本バイパスの対象外であり、別途LuckPerms
+        // での付与が必要になる。建築権限を持たない場合の判定は従来どおり後段へ落とす。
+        if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
+            val worldData = runCatching {
+                MyWorldManagerApi.getWorldRepository()?.findByWorldName(worldName)
+            }.getOrNull()
+            val canBuild = worldData != null &&
+                runCatching { MyWorldManagerApi.canBuildInWorld(player, worldData) }.getOrElse { false }
+            if (canBuild) return true
+        }
         // MWM-Chanponのツール権限が有効な環境では、ワールドの建築権限だけで
         // かんたんコマンダー制御ブロックを操作できないようにします。判定はLuckPermsの
         // ワールド単位の一時権限を読むため、設置・編集・破壊の全入口で同じ結果になります。
