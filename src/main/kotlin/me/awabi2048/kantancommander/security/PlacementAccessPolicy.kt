@@ -23,17 +23,7 @@ class PlacementAccessPolicy(private val plugin: KantanCommanderPlugin) {
             }.getOrNull()
             val canBuild = worldData != null &&
                 runCatching { MyWorldManagerApi.canBuildInWorld(player, worldData) }.getOrElse { false }
-            if (canBuild) {
-                if (plugin.server.pluginManager.isPluginEnabled("MWMChanpon") &&
-                    !player.hasPermission(EXTENDED_COMMAND_BLOCK_PERMISSION)
-                ) {
-                    plugin.logger.info(
-                        "TEMP-BYPASS: ツール権限なし・建築権限ありのため許可: " +
-                            "player=${player.name}, world=$worldName",
-                    )
-                }
-                return true
-            }
+            if (canBuild) return true
         }
         // MWM-Chanponのツール権限が有効な環境では、ワールドの建築権限だけで
         // かんたんコマンダー制御ブロックを操作できないようにします。判定はLuckPermsの
