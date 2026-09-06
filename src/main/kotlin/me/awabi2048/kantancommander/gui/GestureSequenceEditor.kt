@@ -5378,7 +5378,7 @@ class GestureSequenceEditor(
          * エディター画面全体へ適用するY方向の補正です(ブロック単位)。
          * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。
          */
-        const val EDITOR_VERTICAL_OFFSET: Double = -0.5
+        const val EDITOR_VERTICAL_OFFSET: Double = -0.25
         /**
          * エディター画面の上下傾き倍率です。1.0で従来配置、0.5で半減します。
          * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。
@@ -5386,10 +5386,10 @@ class GestureSequenceEditor(
         const val EDITOR_TILT_SCALE: Double = 0.5
         /**
          * エディター画面までの追従距離です(ブロック単位)。
-         * 標準の画面距離 1.5 の50%増しとし、追従中の再計算にだけ適用されます。
+         * 標準の画面距離 1.5 の25%増しとし、追従中の再計算にだけ適用されます。
          * クリップ固定位置には影響しません。
          */
-        const val EDITOR_FOLLOW_DISTANCE: Double = 2.25
+        const val EDITOR_FOLLOW_DISTANCE: Double = 1.875
         /** CC-SystemのOPENING完了待ちを吸収する上限（13tickのアニメーションより長くします）。 */
         const val MAX_RENDER_RETRY_TICKS = 20
     }
