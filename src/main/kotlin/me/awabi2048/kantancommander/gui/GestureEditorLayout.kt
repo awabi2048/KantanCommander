@@ -193,6 +193,24 @@ object GestureEditorLayout {
     fun viewportRows(zoomScale: Double): Int =
         (VIEWPORT_ROWS * DEFAULT_ZOOM / zoomScale).roundToInt().coerceAtLeast(1)
 
+    /** ズーム段階に対応する表示倍率です。範囲外の段階は端へ寄せます。 */
+    fun zoomScaleFor(level: Int): Double =
+        (DEFAULT_ZOOM + level.coerceIn(MIN_ZOOM_LEVEL, MAX_ZOOM_LEVEL) * 0.25)
+            .coerceIn(0.25, DEFAULT_ZOOM)
+
+    /**
+     * 全体を映すのに必要な最小ズームを選びます。全体が収まる範囲で
+     * 最も寄った（段階値が最大の）倍率を返し、最小でも収まらない場合は
+     * 最小倍率（最大俯瞰）を返します。
+     */
+    fun fitZoomLevel(layoutWidth: Int, layoutHeight: Int): Int {
+        for (level in MAX_ZOOM_LEVEL downTo MIN_ZOOM_LEVEL) {
+            val scale = zoomScaleFor(level)
+            if (layoutWidth <= viewportColumns(scale) && layoutHeight <= viewportRows(scale)) return level
+        }
+        return MIN_ZOOM_LEVEL
+    }
+
     /** 基準グリッドを画面中央へ保つための小数セルオフセットです。 */
     fun viewportOffset(base: Int, visible: Int): Double = (base - visible) / 2.0
 

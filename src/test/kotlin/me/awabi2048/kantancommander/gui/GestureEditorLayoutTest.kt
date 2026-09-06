@@ -185,6 +185,19 @@ class GestureEditorLayoutTest {
     }
 
     @Test
+    fun `fit zoom selects the closest level containing the whole graph`() {
+        // 全体が収まる範囲で最も寄った倍率を選びます。
+        assertEquals(0, GestureEditorLayout.fitZoomLevel(10, 6))
+        assertEquals(0, GestureEditorLayout.fitZoomLevel(1, 1))
+        assertEquals(-1, GestureEditorLayout.fitZoomLevel(11, 6))
+        assertEquals(-1, GestureEditorLayout.fitZoomLevel(15, 9))
+        assertEquals(-2, GestureEditorLayout.fitZoomLevel(16, 9))
+        // 最小ズームでも収まらない場合は最小倍率へ退避します。
+        assertEquals(-2, GestureEditorLayout.fitZoomLevel(31, 1))
+        assertEquals(-2, GestureEditorLayout.fitZoomLevel(30, 19))
+    }
+
+    @Test
     fun `navigation hover region spans from the cross left edge to the zoom right edge`() {
         val crossLeft = GestureEditorLayout.NAV_CENTER_X -
             GestureEditorLayout.NAV_PITCH - GestureEditorLayout.NAV_SIZE / 2.0

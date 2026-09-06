@@ -750,11 +750,44 @@ class GestureSequenceEditor(
         )
     }
 
+    /**
+     * 実行可能なコマンド数です。制御ノードも件数に含めます。
+     * 0件のときはテスト実行ボタンを出さず、バリア表示で理由を案内します。
+     */
+    private fun executableCommandCount(): Int =
+        plugin.scripts.load(state.scriptId)?.graph?.nodes?.size ?: 0
+
     private fun canStartTest(): Boolean {
         val placement = state.placement ?: return false
         return !plugin.testExecution.isActive(placement.key) &&
             plugin.scripts.load(state.scriptId) != null &&
+            executableCommandCount() > 0 &&
             testValidationErrors().isEmpty()
+    }
+
+    /**
+     * テスト実行を開始できない理由です。開始できるときはnullを返します。
+     * バリア表示のホバーへ出し、押下時は何もしないため確定判定と対にします。
+     */
+    private fun testUnavailableReason(player: Player): String? {
+        val script = plugin.scripts.load(state.scriptId)
+        if (script == null || script.graph.nodes.isEmpty()) {
+            return KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_NO_COMMANDS)
+        }
+        val placement = state.placement
+        if (placement != null && plugin.testExecution.isActive(placement.key)) {
+            return KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_BUSY)
+        }
+        val errors = testValidationErrors()
+        if (errors.isEmpty()) return null
+        // 先頭のエラーを理由とし、残りは件数へまとめて表示します。
+        val first = errors.first().rendered()
+        if (errors.size == 1) return first
+        return first + "\n" + KcI18n.text(
+            player,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_MORE_ERRORS,
+            mapOf("count" to (errors.size - 1)),
+        )
     }
 
     /** テスト確認子画面を開きます。グラフの固定は「確定」クリック時に行います。 */
@@ -812,11 +845,15 @@ class GestureSequenceEditor(
     private fun testConfirmationChildOpen(ownerId: UUID): Boolean =
         api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.TEST_CONFIRM_SCREEN_ID) == true
 
-    /** 最小倍率でマップ全体を表示し、指定ノードが端から切れない原点を求めます。 */
+    /**
+     * 全体を映すのに必要な最小ズームで表示し、指定ノードが端から切れない原点を求めます。
+     * 全体が収まる範囲で最も寄った倍率を選ぶため、追従が発生するのは
+     * 最小ズームでも収まらない場合に限られます。
+     */
     private fun fitTestViewport(targetNodeId: UUID? = null) {
         val test = state.testExecution ?: return
         val layout = runCatching { GraphLayoutEngine.layout(test.snapshot.graph) }.getOrNull() ?: return
-        state.zoomLevel = GestureEditorLayout.MIN_ZOOM_LEVEL
+        state.zoomLevel = GestureEditorLayout.fitZoomLevel(layout.width, layout.height)
         val metrics = viewportMetrics(zoomScale())
         val target = targetNodeId?.let(layout.nodePoints::get)
         state.origin = if (target != null) {
@@ -861,12 +898,16 @@ class GestureSequenceEditor(
         // このスナップショットを変更せず、同じ配置を見ている全員へ状態を配布します。
         test.snapshot = current.copy(graph = current.graph.deepCopy())
         test.startedAtTick = plugin.server.currentTick.toLong()
+        // 実処理時間の算出用に、開始時のデバッグ遅延tickを保持します。
+        test.debugDelayTicks =
+            if (test.debugMode) me.awabi2048.kantancommander.execution.TestExecutionCoordinator.DEBUG_DELAY_TICKS else 0L
         test.phase = GestureTestPhase.RUNNING
         state.lowerMode = GestureLowerMode.TEST_STATUS
         if (testConfirmationChildOpen(test.ownerId)) {
             api.closeChild(test.ownerId, lowerPanel.TEST_CONFIRM_SCREEN_ID)
         }
         fitTestViewport()
+        playTestSound(player, TEST_SOUND_START_PITCH)
         startTestRefreshTask()
         val observer = GestureTestExecutionObserver(
             test,
@@ -935,6 +976,14 @@ class GestureSequenceEditor(
         state.lowerMode = GestureLowerMode.TEST_RESULT
         testRefreshTask?.cancel()
         testRefreshTask = null
+        // 終了音は操作者だけへ鳴らします。中断音は中断操作時に再生済みです。
+        Bukkit.getPlayer(test.ownerId)?.takeIf(Player::isOnline)?.let { owner ->
+            when (result.status) {
+                ExecutionFinishStatus.SUCCESS -> playTestSound(owner, TEST_SOUND_SUCCESS_PITCH)
+                ExecutionFinishStatus.FAILURE -> playTestSound(owner, TEST_SOUND_FAILURE_PITCH)
+                ExecutionFinishStatus.CANCELLED -> Unit
+            }
+        }
         onTestStateChanged()
     }
 
@@ -963,6 +1012,8 @@ class GestureSequenceEditor(
 
     private fun interruptTestWithoutResult(reason: String) {
         val test = state.testExecution ?: return
+        Bukkit.getPlayer(test.ownerId)?.takeIf(Player::isOnline)?.let { playTestSound(it, TEST_SOUND_INTERRUPT_PITCH) }
+        notifyTestInterrupted(test)
         plugin.testExecution.cancel(test.scopeKey, showResult = false, reason = reason)
         // Coordinatorがすでに完了させた競合状態でも、必ずローカル表示を
         // 通常画面へ戻します。通常はcancel()内の観測者が先に同じ処理を行います。
@@ -971,7 +1022,35 @@ class GestureSequenceEditor(
 
     private fun interruptTestWithResult() {
         val test = state.testExecution ?: return
+        Bukkit.getPlayer(test.ownerId)?.takeIf(Player::isOnline)?.let { playTestSound(it, TEST_SOUND_INTERRUPT_PITCH) }
+        notifyTestInterrupted(test)
         plugin.testExecution.cancel(test.scopeKey, showResult = true, reason = "manual_stop")
+    }
+
+    /** テスト実行の中断を、操作者と共有中のプレイヤーへ通知します。 */
+    private fun notifyTestInterrupted(test: GestureTestState) {
+        val ownerId = test.ownerId
+        val recipients = linkedSetOf<Player>()
+        Bukkit.getPlayer(ownerId)?.takeIf(Player::isOnline)?.let(recipients::add)
+        if (state.placement != null) {
+            plugin.server.onlinePlayers
+                .filter { it.uniqueId != ownerId && canViewSharedActor(ownerId, it.uniqueId) }
+                .forEach(recipients::add)
+        }
+        recipients.forEach { recipient ->
+            recipient.sendMessage(KcI18n.text(recipient, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_INTERRUPTED))
+        }
+    }
+
+    /** テスト実行の節目に操作者だけへ鳴らす効果音です。 */
+    private fun playTestSound(player: Player, pitch: Float) {
+        player.playSound(
+            player.location,
+            "minecraft:block.note_block.bit",
+            SoundCategory.MASTER,
+            1.0f,
+            pitch,
+        )
     }
 
     /** 結果画面の完了で、テスト開始前の編集表示へ戻します。 */
@@ -992,11 +1071,18 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
+    /**
+     * テスト実行のログを操作者へ送ります。実行番号は#1から数え始め、
+     * ホバーは項目ごとに見出しを付けて構造的に表示します。
+     * 実行位置は常に操作者のいるMyWorldのため、ワールド名は出しません。
+     */
     private fun sendTestLog(event: ExecutionNodeFinished) {
         val ownerId = state.testExecution?.ownerId ?: return
         val player = Bukkit.getPlayer(ownerId)?.takeIf(Player::isOnline) ?: return
         if (!player.isOnline) return
         val command = KcI18n.text(player, event.nodeType.key)
+        // 内部の通し番号は0始まりのため、表示時に#1始まりへ補正します。
+        val attempt = event.attemptNumber + 1
         val key = if (event.outcome == NodeExecutionOutcome.FAILED) {
             KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_LOG_FAILURE
         } else {
@@ -1005,22 +1091,54 @@ class GestureSequenceEditor(
         val text = KcI18n.text(
             player,
             key,
-            mapOf("attempt" to event.attemptNumber, "command" to command),
+            mapOf("attempt" to attempt, "command" to command),
         )
-        val detail = buildString {
-            event.detail?.takeIf(String::isNotBlank)?.let(::append)
-            event.reason?.takeIf(String::isNotBlank)?.let {
-                if (isNotEmpty()) append('\n')
-                append(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE))
-                    .append(": ")
-                    .append(it)
-            }
+        val resultWord = if (event.outcome == NodeExecutionOutcome.FAILED) {
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FAILURE)
+        } else {
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_SUCCESS)
         }
-        val component = Component.text(text).takeIf { detail.isBlank() } ?:
-            Component.text(text).hoverEvent(
-                net.kyori.adventure.text.event.HoverEvent.showText(Component.text(detail)),
-            )
+        val resultColor = if (event.outcome == NodeExecutionOutcome.FAILED) NamedTextColor.RED else NamedTextColor.GREEN
+        val hover = Component.text()
+            .append(Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_COMMAND), NamedTextColor.GRAY))
+            .append(Component.text(": ", NamedTextColor.GRAY))
+            .append(Component.text(command, NamedTextColor.WHITE))
+            .append(Component.newline())
+            .append(Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_RESULT), NamedTextColor.GRAY))
+            .append(Component.text(": ", NamedTextColor.GRAY))
+            .append(Component.text(resultWord, resultColor))
+        event.detail?.takeIf(String::isNotBlank)?.let { detail ->
+            hover.append(Component.newline())
+                .append(Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_DETAIL), NamedTextColor.GRAY))
+                .append(Component.text(": ", NamedTextColor.GRAY))
+                .append(Component.text(detail, NamedTextColor.WHITE))
+        }
+        event.reason?.takeIf(String::isNotBlank)?.let { reason ->
+            hover.append(Component.newline())
+                .append(Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE), NamedTextColor.GRAY))
+                .append(Component.text(": ", NamedTextColor.GRAY))
+                .append(Component.text(testReasonText(player, reason), NamedTextColor.WHITE))
+        }
+        val component = Component.text(text).hoverEvent(
+            net.kyori.adventure.text.event.HoverEvent.showText(hover.build()),
+        )
         player.sendMessage(component)
+    }
+
+    /** 失敗理由コードに対応する表示文です。未知の理由は原文のまま表示します。 */
+    private fun testReasonText(player: Player, reason: String): String {
+        val key = when (reason) {
+            "command_failed" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_COMMAND_FAILED
+            "node_failed" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_NODE_FAILED
+            "invalid_wait_seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_INVALID_WAIT_SECONDS
+            "command_limit" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_COMMAND_LIMIT
+            "missing_node" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_MISSING_NODE
+            "manual_stop" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_MANUAL_STOP
+            "test_start_rejected" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_TEST_START_REJECTED
+            "outside_myworld" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_OUTSIDE_MYWORLD
+            else -> null
+        } ?: return reason
+        return KcI18n.text(player, key)
     }
 
     fun openConfirmChild(player: Player) {
@@ -1308,6 +1426,9 @@ class GestureSequenceEditor(
         }
 
         cells.forEach { (localPoint, cell) ->
+            // 追加ポイントは編集用ビューポートの仮想ノードのため、テスト中は
+            // 真のノード配置だけを再描画します。入力要素だけでなく見た目も出しません。
+            if (testActive && cell.kind == MapCellKind.ADD) return@forEach
             // セル検索はグリッド座標、配置は列/行インデックスで行う（origin移動してもグリッド位置は固定）
             val colIndex = localPoint.x
             val rowIndex = localPoint.y
@@ -1320,19 +1441,22 @@ class GestureSequenceEditor(
                     val node = cell.nodeId?.let { renderGraph.nodes[it] }
                     if (node != null && node.id != insertionPreview?.insertedNodeId) {
                         val isSelected = !testActive && state.selectedNodeId == node.id
-                        val testGlowColor = when {
-                            test?.failedNodeId == node.id -> Color.fromRGB(255, 85, 85).asARGB()
-                            test?.phase == GestureTestPhase.RUNNING && test.currentNodeId == node.id ->
-                                Color.fromRGB(85, 255, 255).asARGB()
-                            test?.successfulNodeIds?.contains(node.id) == true -> Color.fromRGB(85, 255, 85).asARGB()
-                            else -> null
-                        }
-                        val glowColor = testGlowColor ?: if (isSelected) Color.YELLOW.asARGB() else null
+                        val activeTest = test?.takeIf { testActive }
+                        val isFailedNode = activeTest?.failedNodeId == node.id
+                        val isRunningNode = activeTest?.phase == GestureTestPhase.RUNNING &&
+                            activeTest.currentNodeId == node.id
+                        val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
+                        // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
+                        // 失敗=赤、実行中=空色、成功済み=黄緑です。
                         val backgroundMaterial = when {
+                            isFailedNode -> Material.RED_CONCRETE
+                            isRunningNode -> Material.LIGHT_BLUE_CONCRETE
+                            isSuccessfulNode -> Material.LIME_CONCRETE
                             incomplete -> Material.ORANGE_CONCRETE
                             else -> Material.LIGHT_GRAY_CONCRETE
                         }
+                        val glowColor = if (testActive) null else if (isSelected) Color.YELLOW.asARGB() else null
                         val statusLine = when {
                             incomplete -> Component.text(
                                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
@@ -1519,21 +1643,24 @@ class GestureSequenceEditor(
             }
         }
 
-        val testPathGlow: ((MapPoint, MapCell) -> Int?)? = test?.takeIf { testActive }?.let { activeTest ->
-            val cyanGlow = Color.fromRGB(85, 255, 255).asARGB()
-            val greenGlow = Color.fromRGB(85, 255, 85).asARGB()
-            val glow: (MapPoint, MapCell) -> Int? = { _, cell ->
+        // テスト中の経路通過マーカーです。Glow描画には使わず、黄緑コンクリートへの
+        // 張り替え判定にだけ使います。ループ戻りは実行中ノードの空色と重ならない
+        // よう、赤紫系のコンクリートへ変えています。
+        val testPathMark: ((MapPoint, MapCell) -> Int?)? = test?.takeIf { testActive }?.let { activeTest ->
+            val loopMark = Color.fromRGB(255, 85, 255).asARGB()
+            val passedMark = Color.fromRGB(85, 255, 85).asARGB()
+            val mark: (MapPoint, MapCell) -> Int? = { _, cell ->
                 when {
-                    activeTest.loopReturnActive && cell.kind == MapCellKind.LOOP_RETURN_PATH -> cyanGlow
+                    activeTest.loopReturnActive && cell.kind == MapCellKind.LOOP_RETURN_PATH -> loopMark
                     cell.insertionTarget?.let { target ->
                         target.sourceId?.let { sourceId ->
                             activeTest.passedEdges.contains(TestExecutionEdge(sourceId, target.edge))
                         }
-                    } == true -> greenGlow
+                    } == true -> passedMark
                     else -> null
                 }
             }
-            glow
+            mark
         }
         GesturePathRenderer.buildSegments(
             cells,
@@ -1541,7 +1668,7 @@ class GestureSequenceEditor(
             xCenter = metrics::x,
             yCenter = metrics::y,
             thickness = metrics.pathThickness,
-            glowColorFor = testPathGlow,
+            glowColorFor = testPathMark,
             clipBounds = GesturePathRenderer.ClipBounds(
                 // 仮想境界セルをグラフ領域の端までだけ延長します。これより外側へ
                 // 経路を出さないため、ナビゲーション列との重なりが発生しません。
@@ -1552,17 +1679,25 @@ class GestureSequenceEditor(
             ),
         ).forEach { seg ->
             val isLoopReturn = seg.kind == MapCellKind.LOOP_RETURN_PATH
+            // テスト中はGlowではなくテクスチャ変更で示します。通過経路=黄緑、
+            // ループ戻り=赤紫（通過中は赤寄り、それ以外は紫寄り）です。
+            val pathMaterial = if (testActive) {
+                when {
+                    isLoopReturn && seg.glowColor != null -> Material.MAGENTA_CONCRETE
+                    isLoopReturn -> Material.PURPLE_CONCRETE
+                    seg.glowColor != null -> Material.LIME_CONCRETE
+                    else -> Material.WHITE_CONCRETE
+                }
+            } else {
+                if (isLoopReturn) Material.LIGHT_BLUE_CONCRETE else Material.WHITE_CONCRETE
+            }
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
                 width = seg.w, height = seg.h,
-                // ノード背景は変えず、経路色のみを InventoryGUI の様式に合わせて区別します。
-                // 通常・分岐は白色、ループ戻り経路のみ空色（LIGHT_BLUE）とします。
-                blockData = Bukkit.createBlockData(
-                    if (isLoopReturn) Material.LIGHT_BLUE_CONCRETE else Material.WHITE_CONCRETE,
-                ),
+                blockData = Bukkit.createBlockData(pathMaterial),
                 layer = 1,
-                glowColor = seg.glowColor,
+                glowColor = null,
             ))
         }
 
@@ -1647,13 +1782,21 @@ class GestureSequenceEditor(
             ))
 
             addZoomControls(player, visuals, elements)
-            addClipButton(player, visuals, elements)
         }
-        if (test?.phase != GestureTestPhase.RESULT) addCloseButton(player, visuals, elements)
+        // クリップ（位置固定）と閉じるボタンはテスト中も通常通り表示します。
+        addClipButton(player, visuals, elements)
+        addCloseButton(player, visuals, elements)
         when {
             test?.phase == GestureTestPhase.RUNNING -> addTestExecutionButton(player, visuals, elements, running = true)
-            state.testExecution == null && !testActive && canStartTest() ->
-                addTestExecutionButton(player, visuals, elements, running = false)
+            state.testExecution == null && !testActive -> {
+                // 開始できない場合は非表示にせず、バリアで理由を案内します。
+                val reason = testUnavailableReason(player)
+                if (reason == null) {
+                    addTestExecutionButton(player, visuals, elements, running = false)
+                } else {
+                    addTestBarrierButton(player, visuals, elements, reason)
+                }
+            }
         }
 
         // ズームはビューポート内容とその当たり判定だけを同じ倍率で変換します。
@@ -4130,6 +4273,18 @@ class GestureSequenceEditor(
             // 確定したオーナーだけが実行でき、共有画面の第三者は離脱も含めて
             // テスト状態へ触れません。
             if (context.actorId != test.ownerId) return
+            // クリップ（位置固定）は確認・実行・結果の全段階で通常通り操作できます。
+            if (context.elementId == "nav-clip" && GestureGuiClickPolicy.isPrimaryClick(context.gesture)) {
+                if (state.anchor != null) {
+                    if (!api.unpinToFollow(ownerId)) return
+                    state.anchor = null
+                } else {
+                    if (!api.pinToCurrentPosition(ownerId)) return
+                    state.anchor = player.eyeLocation.clone()
+                }
+                updateUpper(player)
+                return
+            }
             when (test.phase) {
                 GestureTestPhase.CONFIRM -> when {
                     context.elementId == "test-confirm-debug" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -4163,9 +4318,14 @@ class GestureSequenceEditor(
                         closeImmediately(ownerId)
                     }
                 }
-                GestureTestPhase.RESULT -> {
-                    if (context.elementId == "test-result-complete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture)) {
+                GestureTestPhase.RESULT -> when {
+                    context.elementId == "test-result-complete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                         completeTest(player)
+                    }
+                    // 結果画面の閉じるボタンは、編集表示へ戻したうえで画面を閉じます。
+                    context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                        completeTest(player)
+                        closeImmediately(ownerId)
                     }
                 }
             }
@@ -4955,8 +5115,12 @@ class GestureSequenceEditor(
 
     /** ナビゲーション列の各ボタンが共有する、参照画像準拠の説明欄を生成します。 */
     private fun navigationHover(player: Player, key: LocalizationKey<String>): GestureGuiHoverText =
+        navigationHoverText(Component.text(KcI18n.text(player, key)))
+
+    /** ナビゲーション列と共通の説明欄へ、任意の文言を表示します。 */
+    private fun navigationHoverText(text: Component): GestureGuiHoverText =
         GestureGuiHoverText(
-            text = Component.text(KcI18n.text(player, key)),
+            text = text,
             x = GestureEditorLayout.NAV_HOVER_X,
             y = GestureEditorLayout.NAV_HOVER_Y,
             size = GestureEditorLayout.NAV_HOVER_SIZE,
@@ -5279,26 +5443,62 @@ class GestureSequenceEditor(
             bounds = navBounds(x, y, size),
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             targetVisualId = "test-execution-glyph",
-            hoverText = GestureGuiHoverText(
-                text = Component.text(
+            // ホバー案内は他のナビゲーションと同じ説明欄へ出します。
+            hoverText = navigationHoverText(
+                Component.text(
                     if (running) {
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RUNNING_HINT)
                     } else {
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION)
                     },
                 ),
-                x = x,
-                y = y - size,
-                size = 0.0055,
-                lineWidth = 120,
             ),
         ))
     }
 
-    private fun zoomScale(): Double =
-        (GestureEditorLayout.DEFAULT_ZOOM +
-            state.zoomLevel.coerceIn(GestureEditorLayout.MIN_ZOOM_LEVEL, GestureEditorLayout.MAX_ZOOM_LEVEL) * 0.25)
-            .coerceIn(0.25, GestureEditorLayout.DEFAULT_ZOOM)
+    /**
+     * テスト実行を開始できない場合のバリア表示です。アイコンを隠さず、
+     * ホバーに理由を出して案内します。押下時は何もしません。
+     */
+    private fun addTestBarrierButton(
+        player: Player,
+        visuals: MutableList<GestureGuiVisual>,
+        elements: MutableList<GestureGuiElement>,
+        reason: String,
+    ) {
+        // 通常ボタンと同じ位置・寸法に置き、配置の重心を保ちます。
+        val x = GestureEditorLayout.ZOOM_X
+        val y = GestureEditorLayout.ZOOM_TOP_Y + GestureEditorLayout.ZOOM_PITCH * 2.0
+        val size = GestureEditorLayout.ZOOM_SIZE
+        visuals.add(GestureGuiVisual.Block(
+            visualId = "test-execution-block",
+            x = x,
+            y = y,
+            width = size,
+            height = size,
+            blockData = Bukkit.createBlockData(Material.BARRIER),
+            layer = 4,
+        ))
+        visuals.add(GestureGuiVisual.Text(
+            visualId = "test-execution-glyph",
+            x = x,
+            y = y - 0.01,
+            text = Component.text("!").color(NamedTextColor.RED),
+            size = 0.010,
+            layer = 6,
+        ))
+        elements.add(GestureGuiElement(
+            elementId = "test-execution",
+            bounds = navBounds(x, y, size),
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            targetVisualId = "test-execution-glyph",
+            // 理由はホバーで案内済みのため、押下時は何もしません。
+            gestureGuard = { _, _ -> false },
+            hoverText = navigationHoverText(Component.text(reason)),
+        ))
+    }
+
+    private fun zoomScale(): Double = GestureEditorLayout.zoomScaleFor(state.zoomLevel)
 
     /**
      * 倍率変更時も現在見ている論理セルの中心を保ちます。
@@ -5374,6 +5574,11 @@ class GestureSequenceEditor(
 
     private companion object {
         const val DIALOG_OWNER = "kantan-commander"
+        /** テスト実行の効果音（minecraft:block.note_block.bit）の高さです。 */
+        const val TEST_SOUND_START_PITCH = 1.0f
+        const val TEST_SOUND_SUCCESS_PITCH = 1.5f
+        const val TEST_SOUND_FAILURE_PITCH = 0.5f
+        const val TEST_SOUND_INTERRUPT_PITCH = 1.25f
         /**
          * エディター画面全体へ適用するY方向の補正です(ブロック単位)。
          * 追従中の再計算にだけ適用され、クリップ固定位置には影響しません。

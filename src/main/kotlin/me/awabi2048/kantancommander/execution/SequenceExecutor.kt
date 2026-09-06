@@ -91,7 +91,11 @@ data class ExecutionNodeFinished(
     val loopReturn: Boolean = false,
 )
 
-/** テスト実行の最終結果です。successfulNodeCountは失敗ノードを含みません。 */
+/**
+ * テスト実行の最終結果です。successfulNodeCountは失敗ノードを含みません。
+ * waitTicksはWAITコマンドによる待機の合計、debugDelayCountはノード間の
+ * デバッグ待機が発生した回数です。どちらもelapsedTicksの内数です。
+ */
 data class ExecutionResult(
     val status: ExecutionFinishStatus,
     val elapsedTicks: Long,
@@ -99,6 +103,8 @@ data class ExecutionResult(
     val attemptCount: Int,
     val failedNodeId: UUID? = null,
     val reason: String? = null,
+    val waitTicks: Long = 0L,
+    val debugDelayCount: Int = 0,
 )
 
 /** 実行中のノードイベントと終了結果を受け取る観測者です。 */
@@ -397,6 +403,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         "invalid_wait_seconds",
                     )
                 session.lastDetail = "WAIT: ${waitTicks} tick待機"
+                // 待機時間は結果画面の内訳表示へ集計します。所要時間の内数です。
+                if (depth == 0) session.waitTicks += waitTicks
                 schedule(session, waitTicks) { next(node.next, NodeExecutionOutcome.SUCCESS) }
             }
             CommandType.CONDITION -> {
@@ -528,6 +536,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (target == null) return runNode(script, graph, null, session, depth, done)
         val debugDelay = session.options.debugDelayTicks
         if (depth == 0 && debugDelay > 0L) {
+            // 実処理時間の算出用に遅延の発生回数を数えます。
+            session.debugDelayCount++
             schedule(session, debugDelay) { runNode(script, graph, target, session, depth, done) }
         } else {
             runNode(script, graph, target, session, depth, done)
@@ -591,6 +601,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             attemptCount = session.attemptCount,
             failedNodeId = session.failedNodeId,
             reason = reason,
+            waitTicks = session.waitTicks,
+            debugDelayCount = session.debugDelayCount,
         )
         session.handle.complete()
         runCatching { session.options.observer?.onFinished(result) }
@@ -1065,8 +1077,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         append(formatLocation(origin))
     }
 
+    // テスト実行は常に操作者のいるMyWorldで行うため、ワールド名は表示しません。
     private fun formatLocation(location: Location): String =
-        "${location.world.name} (${location.blockX}, ${location.blockY}, ${location.blockZ})"
+        "(${location.blockX}, ${location.blockY}, ${location.blockZ})"
 
     private fun giveItem(player: Player, template: ItemStack, count: Int): Boolean {
         var remaining = count
@@ -1842,6 +1855,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var failureNotified: Boolean = false,
         var attemptCount: Int = 0,
         var successfulRootNodeCount: Int = 0,
+        /** WAITコマンドの待機tick合計と、デバッグ遅延の発生回数です。 */
+        var waitTicks: Long = 0L,
+        var debugDelayCount: Int = 0,
         var currentAttemptNumber: Int = 0,
         var currentRootNodeId: UUID? = null,
         var failedNodeId: UUID? = null,
