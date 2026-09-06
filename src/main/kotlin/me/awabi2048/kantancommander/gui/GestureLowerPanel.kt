@@ -2928,7 +2928,8 @@ class GestureLowerPanel(
             centerY,
             width,
             0.12,
-            if (enabled) Material.CYAN_TERRACOTTA else Material.GRAY_CONCRETE,
+            // OFF時は画面背景と同化しないよう、薄灰色のコンクリートで明示します。
+            if (enabled) Material.LIME_CONCRETE else Material.LIGHT_GRAY_CONCRETE,
             4,
         )
         val value = KcI18n.text(
@@ -2948,7 +2949,7 @@ class GestureLowerPanel(
         ))
     }
 
-    /** 実行中ステータス。項目と値を1つの左詰めTextDisplayへ縦2行で出します。 */
+    /** 実行中ステータス。項目と値を中央揃えの1行で出します。 */
     private fun buildTestStatus(state: GestureEditorState, player: Player): GestureGuiView {
         val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
         val visuals = mutableListOf<GestureGuiVisual>()
@@ -2961,27 +2962,30 @@ class GestureLowerPanel(
             220,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_STATUS_TITLE)),
         )
-        addTestInfoRow(
+        addTestResultRow(
             visuals,
             "test-status-elapsed",
             0.21,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
             formatTestElapsed(test.elapsedTicks),
+            NamedTextColor.WHITE,
         )
-        addTestInfoRow(
+        addTestResultRow(
             visuals,
             "test-status-count",
             0.00,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
             test.successfulNodeCount.toString(),
+            NamedTextColor.WHITE,
         )
-        addTestInfoRow(
+        addTestResultRow(
             visuals,
             "test-status-log",
             -0.21,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT),
             if (test.logOutput) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON)
             else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF),
+            NamedTextColor.WHITE,
         )
         addText(
             visuals,
@@ -3010,19 +3014,52 @@ class GestureLowerPanel(
             220,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RESULT_TITLE)),
         )
-        addTestInfoRow(
+        val elapsed = result?.elapsedTicks ?: test.elapsedTicks
+        val waitTicks = result?.waitTicks ?: 0L
+        // 所要時間と待機時間は独立した行で出し、デバッグ時は実処理時間の行を挿入します。
+        val showReal = test.debugMode
+        val durationY = if (showReal) 0.24 else 0.22
+        val waitY = if (showReal) 0.11 else 0.09
+        val realY = -0.02
+        val countY = if (showReal) -0.15 else -0.04
+        val statusY = if (showReal) -0.28 else -0.17
+        addTestResultRow(
             visuals,
             "test-result-duration",
-            0.20,
+            durationY,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DURATION),
-            formatTestElapsed(result?.elapsedTicks ?: test.elapsedTicks),
+            formatTestElapsed(elapsed),
+            NamedTextColor.WHITE,
         )
-        addTestInfoRow(
+        addTestResultRow(
+            visuals,
+            "test-result-wait",
+            waitY,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_WAIT_DURATION),
+            formatTestElapsed(waitTicks),
+            NamedTextColor.WHITE,
+        )
+        if (showReal) {
+            val realTicks = TestExecutionTimeFormatter.realProcessingTicks(
+                elapsed,
+                result?.debugWaitTicks ?: 0L,
+            )
+            addTestResultRow(
+                visuals,
+                "test-result-real",
+                realY,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REAL_DURATION),
+                formatTestElapsed(realTicks),
+                NamedTextColor.WHITE,
+            )
+        }
+        addTestResultRow(
             visuals,
             "test-result-count",
-            -0.01,
+            countY,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
             (result?.successfulNodeCount ?: test.successfulNodeCount).toString(),
+            NamedTextColor.WHITE,
         )
         val status = when (result?.status) {
             me.awabi2048.kantancommander.execution.ExecutionFinishStatus.SUCCESS ->
@@ -3031,20 +3068,28 @@ class GestureLowerPanel(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_INTERRUPTED)
             else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FAILURE)
         }
-        addTestInfoRow(
+        // 最終結果の値は状態ごとに色分けします。その他（中断等）は金色です。
+        val statusColor = when (result?.status) {
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.SUCCESS -> NamedTextColor.GREEN
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.FAILURE -> NamedTextColor.RED
+            else -> NamedTextColor.GOLD
+        }
+        addTestResultRow(
             visuals,
             "test-result-status",
-            -0.22,
+            statusY,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FINAL_RESULT),
             status,
+            statusColor,
         )
         if (result?.status == me.awabi2048.kantancommander.execution.ExecutionFinishStatus.FAILURE) {
-            addTestInfoRow(
+            addTestResultRow(
                 visuals,
                 "test-result-cause",
                 -0.40,
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE),
                 result.reason ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                NamedTextColor.WHITE,
             )
         }
         addBlock(visuals, "test-result-complete-bg", 0.0, -0.48, 0.70, 0.10, Material.CYAN_TERRACOTTA, 4)
@@ -3066,24 +3111,29 @@ class GestureLowerPanel(
         return view(GestureLowerMode.TEST_RESULT, elements, visuals)
     }
 
-    private fun addTestInfoRow(
+    /**
+     * 実行結果・実行中ステータスの項目行です。項目と値を半角スペース区切りで1行にまとめ、
+     * 中央揃えのTextDisplayへ出します。ラベルは灰色、値は指定色で分けます。
+     */
+    private fun addTestResultRow(
         visuals: MutableList<GestureGuiVisual>,
         id: String,
         centerY: Double,
         label: String,
         value: String,
+        valueColor: NamedTextColor,
     ) {
         addText(
             visuals,
             id,
-            -0.90,
+            0.0,
             centerY,
             0.005,
             230,
             Component.text(label, NamedTextColor.GRAY)
-                .append(Component.newline())
-                .append(Component.text(value, NamedTextColor.WHITE)),
-            alignment = GestureGuiTextAlignment.LEFT,
+                .append(Component.text(" ", NamedTextColor.GRAY))
+                .append(Component.text(value, valueColor)),
+            alignment = GestureGuiTextAlignment.CENTER,
         )
     }
 

@@ -75,7 +75,11 @@ data class ExecutionNodeStarted(
     val tick: Long,
 )
 
-/** テスト実行へ通知する、最上位グラフのノード完了イベントです。 */
+/**
+ * テスト実行へ通知する、最上位グラフのノード完了イベントです。
+ * expandedParamsは実行値の展開結果、positionTextは実行位置です。
+ * ホバー表示で構造的に出すため、detailの本文とは別に保持します。
+ */
 data class ExecutionNodeFinished(
     val scriptId: UUID,
     val nodeId: UUID,
@@ -89,9 +93,17 @@ data class ExecutionNodeFinished(
     val detail: String? = null,
     val reason: String? = null,
     val loopReturn: Boolean = false,
+    val expandedParams: Map<String, String> = emptyMap(),
+    val positionText: String? = null,
+    /** 次ノードまでのデバッグ遅延です。待機表示の切り替えに使います。 */
+    val nextWaitTicks: Long = 0L,
 )
 
-/** テスト実行の最終結果です。successfulNodeCountは失敗ノードを含みません。 */
+/**
+ * テスト実行の最終結果です。successfulNodeCountは失敗ノードを含みません。
+ * waitTicksはWAITコマンドによる待機の合計、debugWaitTicksはノード間の
+ * デバッグ待機（復帰後の追加待機を含む）の合計です。どちらもelapsedTicksの内数です。
+ */
 data class ExecutionResult(
     val status: ExecutionFinishStatus,
     val elapsedTicks: Long,
@@ -99,6 +111,8 @@ data class ExecutionResult(
     val attemptCount: Int,
     val failedNodeId: UUID? = null,
     val reason: String? = null,
+    val waitTicks: Long = 0L,
+    val debugWaitTicks: Long = 0L,
 )
 
 /** 実行中のノードイベントと終了結果を受け取る観測者です。 */
@@ -112,6 +126,11 @@ data class ExecutionOptions(
     val observer: ExecutionObserver? = null,
     val debugDelayTicks: Long = 0L,
     val suppressCreatorFailureNotification: Boolean = false,
+    /**
+     * ループ復帰後に本体開始まで追加で待機するtick数です。S→body待機の
+     * 表示期間に使い、実処理時間からは差し引きます。通常実行では0のままです。
+     */
+    val loopRestartExtraWaitTicks: Long = 0L,
 )
 
 /** 非同期テスト実行を途中終了するためのハンドルです。 */
@@ -342,6 +361,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         }
         session.lastDetail = null
+        session.lastExpandedParams = emptyMap()
+        session.lastPositionText = null
         session.lastFailureReason = null
 
         val next: (UUID?, NodeExecutionOutcome) -> Unit = { target, outcome ->
@@ -397,6 +418,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         "invalid_wait_seconds",
                     )
                 session.lastDetail = "WAIT: ${waitTicks} tick待機"
+                // 待機時間は結果画面の内訳表示へ集計します。所要時間の内数です。
+                if (depth == 0) session.waitTicks += waitTicks
                 schedule(session, waitTicks) { next(node.next, NodeExecutionOutcome.SUCCESS) }
             }
             CommandType.CONDITION -> {
@@ -497,10 +520,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         done: (Boolean) -> Unit,
         reason: String?,
         loopReturn: Boolean = false,
+        followUpDelayTicks: Long = 0L,
     ) {
         if (!session.isActive) return
         val success = outcome == NodeExecutionOutcome.SUCCESS || outcome == NodeExecutionOutcome.SKIPPED
         if (depth == 0 && success) session.successfulRootNodeCount++
+        // 次までの待機です。表示駆動だけに使い、通常実行ではどちらも0のままです。
+        val debugDelay = if (depth == 0 && target != null) session.options.debugDelayTicks else 0L
+        val followUpDelay = if (depth == 0 && target != null) followUpDelayTicks else 0L
         if (depth == 0) {
             notifyNodeFinished(
                 session,
@@ -517,6 +544,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     detail = session.lastDetail,
                     reason = reason,
                     loopReturn = loopReturn,
+                    expandedParams = session.lastExpandedParams,
+                    positionText = session.lastPositionText,
+                    // 次までの待機合計です。待機表示の切り替えに使います。
+                    nextWaitTicks = debugDelay + followUpDelay,
                 ),
             )
         }
@@ -526,9 +557,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             return stop(session, script, node.id, depth, session.failureReason!!, done)
         }
         if (target == null) return runNode(script, graph, null, session, depth, done)
-        val debugDelay = session.options.debugDelayTicks
-        if (depth == 0 && debugDelay > 0L) {
-            schedule(session, debugDelay) { runNode(script, graph, target, session, depth, done) }
+        if (debugDelay > 0L || followUpDelay > 0L) {
+            // 実処理時間の算出用にデバッグ待機の合計を数えます。
+            session.debugWaitTicks += debugDelay + followUpDelay
+            schedule(session, debugDelay + followUpDelay) { runNode(script, graph, target, session, depth, done) }
         } else {
             runNode(script, graph, target, session, depth, done)
         }
@@ -591,6 +623,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             attemptCount = session.attemptCount,
             failedNodeId = session.failedNodeId,
             reason = reason,
+            waitTicks = session.waitTicks,
+            debugWaitTicks = session.debugWaitTicks,
         )
         session.handle.complete()
         runCatching { session.options.observer?.onFinished(result) }
@@ -653,9 +687,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             frame.count = requireNotNull(ExecutionSemantics.nextLoopCount(frame.count))
             session.currentLoopCount = frame.count
             session.lastDetail = "ループを継続した"
+            // 復帰後のS→body待機の表示期間にするため、デバッグ表示がある場合だけ
+            // 追加待機します。通常実行とデバッグOFFでは現行動作のままです。
+            val restartWait = if (depth == 0 && session.options.debugDelayTicks > 0L) {
+                session.options.loopRestartExtraWaitTicks
+            } else {
+                0L
+            }
             advanceNode(
                 script, graph, node, session, depth, session.currentAttemptNumber, startNode.trueNext,
                 NodeExecutionOutcome.SUCCESS, done, reason = null, loopReturn = true,
+                followUpDelayTicks = restartWait,
             )
         } else {
             plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=count_complete iterations=${frame.count}")
@@ -981,7 +1023,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         if (success) {
             session.previousContext = effectiveContext
-            session.lastDetail = executionDetail(node, targets, effectiveOrigin, session)
+            val content = executionContent(node, targets, effectiveOrigin, session)
+            session.lastDetail = content.head
+            session.lastExpandedParams = content.expandedParams
+            session.lastPositionText = content.positionText
         }
         success
     }
@@ -1039,34 +1084,36 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /** 実行後のホバーへ、解決済み対象と展開後の設定値をまとめて表示します。 */
-    private fun executionDetail(
+    /** 実行内容の人向け要約です。実効値と位置はホバーの構造表示用に分けて保持します。 */
+    private data class ExecutionContent(
+        val head: String,
+        val expandedParams: Map<String, String> = emptyMap(),
+        val positionText: String? = null,
+    )
+
+    private fun executionContent(
         node: CommandNode,
         targets: List<Entity>,
         origin: Location,
         session: ExecutionSession,
-    ): String = buildString {
-        append(immediateDetail(node.type))
-        if (targets.isNotEmpty()) {
-            append("（対象: ")
-            append(targets.joinToString("、") { entity -> entity.name })
-            append('）')
-        }
-        val expandedParameters = node.params.entries
-            .filter { (_, value) -> value.isNotBlank() }
-            .map { (key, value) ->
-                val expanded = resolveText(value, session) ?: value
-                "$key=$expanded"
+    ): ExecutionContent {
+        val head = buildString {
+            append(immediateDetail(node.type))
+            if (targets.isNotEmpty()) {
+                append("（対象: ")
+                append(targets.joinToString("、") { entity -> entity.name })
+                append('）')
             }
-        if (expandedParameters.isNotEmpty()) {
-            append("\n実行値: ")
-            append(expandedParameters.joinToString(", "))
         }
-        append("\n位置: ")
-        append(formatLocation(origin))
+        val expandedParams = node.params.entries
+            .filter { (_, value) -> value.isNotBlank() }
+            .associate { (key, value) -> key to (resolveText(value, session) ?: value) }
+        return ExecutionContent(head, expandedParams, formatLocation(origin))
     }
 
+    // テスト実行は常に操作者のいるMyWorldで行うため、ワールド名は表示しません。
     private fun formatLocation(location: Location): String =
-        "${location.world.name} (${location.blockX}, ${location.blockY}, ${location.blockZ})"
+        "(${location.blockX}, ${location.blockY}, ${location.blockZ})"
 
     private fun giveItem(player: Player, template: ItemStack, count: Int): Boolean {
         var remaining = count
@@ -1842,11 +1889,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var failureNotified: Boolean = false,
         var attemptCount: Int = 0,
         var successfulRootNodeCount: Int = 0,
+        /** WAITコマンドの待機tick合計と、デバッグ待機のtick合計です。 */
+        var waitTicks: Long = 0L,
+        var debugWaitTicks: Long = 0L,
         var currentAttemptNumber: Int = 0,
         var currentRootNodeId: UUID? = null,
         var failedNodeId: UUID? = null,
         var failureReason: String? = null,
         var lastDetail: String? = null,
+        var lastExpandedParams: Map<String, String> = emptyMap(),
+        var lastPositionText: String? = null,
         var lastFailureReason: String? = null,
         var cancelled: Boolean = false,
         var finished: Boolean = false,

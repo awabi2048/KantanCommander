@@ -42,6 +42,11 @@ data class MapCell(
     val kind: MapCellKind,
     val nodeId: UUID? = null,
     val insertionTarget: InsertionTarget? = null,
+    /**
+     * ループ戻り経路が属するFOR_ENDのIDです。通過表示のためだけに保持し、
+     * 挿入判定には使わないため、既存の配置・入力挙動へ影響しません。
+     */
+    val loopReturnId: UUID? = null,
 )
 
 /**
@@ -118,6 +123,54 @@ data class GraphLayout(
     /** 開始・終了セルを空け、戻り経路上へ1つおきに配置する矢印の論理座標です。 */
     val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
 ) {
+    /**
+     * テスト実行表示用に編集用アーティファクトを除いた配置を返します。
+     *
+     * ADDセルと、ADDへ至るためだけに延ばされた経路（枝末端の延長や
+     * 開いた枝のスタブ）を取り除き、真のノード配置だけを残します。
+     * ノード同士をつなぐ経路（次数2以上）、分岐点、ループ戻り、実行済み経路の
+     * セルは残すため、実行中のハイライト表示は維持されます。
+     */
+    fun withoutEditArtifacts(passedEdges: Set<TestExecutionEdge>): GraphLayout {
+        if (cells.values.none { it.kind == MapCellKind.ADD }) return this
+        val remaining = cells.filterValues { it.kind != MapCellKind.ADD }.toMutableMap()
+        fun neighborsOf(point: MapPoint): List<MapPoint> =
+            ORTHOGONAL_DIRECTIONS.map { MapPoint(point.x + it.x, point.y + it.y) }
+        // 接続次数です。ADDは既に除外しているため数えません。
+        fun degree(point: MapPoint): Int =
+            neighborsOf(point).count { remaining[it]?.kind in CONNECTABLE_CELL_KINDS }
+        // 実行済み経路のセルは、ハイライト表示のため残します。
+        fun isTraversed(cell: MapCell): Boolean =
+            cell.insertionTarget?.let { target ->
+                target.sourceId?.let { sourceId ->
+                    passedEdges.contains(TestExecutionEdge(sourceId, target.edge))
+                }
+            } == true
+        // 行き止まりの編集用スタブを端から刈り込みます。次数2以上の経路は
+        // ノード同士をつないでいるため残り、次数1以下はADDへ向かう延長か
+        // 開いた枝の残骸のため取り除きます。長い延長も不動点まで繰り返します。
+        var changed = true
+        while (changed) {
+            changed = false
+            val victims = remaining.filter { (point, cell) ->
+                (cell.kind == MapCellKind.PATH || cell.kind == MapCellKind.BRANCH_PATH) &&
+                    !isTraversed(cell) && degree(point) <= 1
+            }.keys.toList()
+            if (victims.isNotEmpty()) {
+                victims.forEach(remaining::remove)
+                changed = true
+            }
+        }
+        val maxX = remaining.keys.maxOfOrNull(MapPoint::x) ?: 0
+        val maxY = remaining.keys.maxOfOrNull(MapPoint::y) ?: 0
+        return copy(
+            cells = remaining,
+            width = maxX + 2,
+            height = maxY + 2,
+            loopReturnArrowPoints = loopReturnArrowPoints.filter(remaining::containsKey).toSet(),
+        )
+    }
+
     fun viewport(origin: MapPoint, width: Int, height: Int): Map<MapPoint, MapCell> =
         cells.mapNotNull { (point, cell) ->
             val local = MapPoint(point.x - origin.x, point.y - origin.y)
@@ -1035,13 +1088,13 @@ object GraphLayoutEngine {
             putNode(endX, y, end)
 
             for (verticalY in y + 1..returnY) {
-                putPath(endX, verticalY, MapCellKind.LOOP_RETURN_PATH)
-                putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH)
+                putPath(endX, verticalY, MapCellKind.LOOP_RETURN_PATH, loopReturnId = endId)
+                putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH, loopReturnId = endId)
             }
-            fillHorizontal(x, endX, returnY, MapCellKind.LOOP_RETURN_PATH)
-            // 矢印はbodyのノード種類や分岐形状から推測しません。水色の戻り経路そのものを
+            fillHorizontal(x, endX, returnY, MapCellKind.LOOP_RETURN_PATH, loopReturnId = endId)
+            // 矢印はbodyのノード種類や分岐形状から推測しません。戻り経路そのものを
             // 基準に、ループ開始・終了セル（x/endX）を空けたうえで、開始直後の論理スロット
-            // から1つおきに配置します。戻り経路を先に生成することで、矢印が必ず水色経路上に
+            // から1つおきに配置します。戻り経路を先に生成することで、矢印が必ず戻り経路上に
             // 乗ることも同時に保証します（例: S « ・ « ・ « E）。
             for (arrowX in (x + 1 until endX step 2)) {
                 val arrowPoint = MapPoint(arrowX, returnY)
@@ -1098,12 +1151,13 @@ object GraphLayoutEngine {
             y: Int,
             kind: MapCellKind,
             target: InsertionTarget? = null,
+            loopReturnId: UUID? = null,
         ) {
             if (from > to) return
             // 長さ調整で同じ論理エッジを複数セルへ描く場合は、from..to の全セルを
             // 同じ挿入判定領域として扱います。
             for (pathX in from..to) {
-                putTargetedPath(pathX, y, kind, target)
+                putTargetedPath(pathX, y, kind, target, loopReturnId)
             }
         }
 
@@ -1164,6 +1218,7 @@ object GraphLayoutEngine {
             mergeConditionId: UUID? = null,
             weakInsertionTarget: Boolean = false,
             continuationId: UUID? = null,
+            loopReturnId: UUID? = null,
         ) {
             val point = MapPoint(x, y)
             val existing = cells[point]
@@ -1182,7 +1237,13 @@ object GraphLayoutEngine {
             val resolvedKind = mergePathKind(existing?.kind, kind)
             val resolvedTarget = mergeInsertionTarget(point, existing?.insertionTarget, incomingTarget)
             ensureCapacity(point)
-            cells[point] = MapCell(point, resolvedKind, insertionTarget = resolvedTarget)
+            cells[point] = MapCell(
+                point,
+                resolvedKind,
+                insertionTarget = resolvedTarget,
+                // 戻り経路の帰属は挿入判定に使わないため、既存値を優先して保持します。
+                loopReturnId = existing?.loopReturnId ?: loopReturnId,
+            )
         }
 
         /** 挿入先の全属性を保ったまま、表示経路へ同じ判定を付与します。 */
@@ -1191,6 +1252,7 @@ object GraphLayoutEngine {
             y: Int,
             kind: MapCellKind = MapCellKind.PATH,
             target: InsertionTarget?,
+            loopReturnId: UUID? = null,
         ) {
             val normalizedTarget = normalizeInsertionTarget(target)
             putPath(
@@ -1202,6 +1264,7 @@ object GraphLayoutEngine {
                 mergeConditionId = normalizedTarget?.mergeConditionId,
                 weakInsertionTarget = normalizedTarget?.weak == true,
                 continuationId = normalizedTarget?.continuationId,
+                loopReturnId = loopReturnId,
             )
         }
 

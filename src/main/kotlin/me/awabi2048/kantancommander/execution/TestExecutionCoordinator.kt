@@ -86,6 +86,8 @@ class TestExecutionCoordinator(
             // テスト失敗を通常実行の作成者通知へ二重送信しません。結果画面と、
             // 指定されたチャットログだけがテスト結果の通知先です。
             suppressCreatorFailureNotification = true,
+            // 復帰後のS→body待機の表示期間です。デバッグOFFでは実行器側で無視されます。
+            loopRestartExtraWaitTicks = LOOP_RESTART_EXTRA_WAIT_TICKS,
         )
         val handle = executor.executeTest(script, origin, options) { result ->
             val shouldNotify = synchronized(this) {
@@ -178,6 +180,9 @@ class TestExecutionCoordinator(
         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_NORMAL_BUSY)
 
     companion object {
-        const val DEBUG_DELAY_TICKS: Long = 20L
+        /** デバッグモードのノード間待機です。白20・水色20の表示切替に対応します。 */
+        const val DEBUG_DELAY_TICKS: Long = 40L
+        /** ループ復帰後に本体開始まで追加で待機するtick数です。S→body待機の表示期間です。 */
+        const val LOOP_RESTART_EXTRA_WAIT_TICKS: Long = 20L
     }
 }

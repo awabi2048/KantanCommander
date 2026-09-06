@@ -28,4 +28,12 @@ class TestExecutionTimeFormatterTest {
     fun `does not render negative elapsed ticks`() {
         assertEquals("00:00.00 (0 tick)", TestExecutionTimeFormatter.formatTicks(-1L))
     }
+
+    @Test
+    fun `real processing time subtracts only debug waits`() {
+        // デバッグ待機の合計だけを差し引き、待機コマンドの時間は含めたままにします。
+        assertEquals(80L, TestExecutionTimeFormatter.realProcessingTicks(100L, 20L))
+        assertEquals(0L, TestExecutionTimeFormatter.realProcessingTicks(30L, 40L))
+        assertEquals(50L, TestExecutionTimeFormatter.realProcessingTicks(50L, 0L))
+    }
 }
