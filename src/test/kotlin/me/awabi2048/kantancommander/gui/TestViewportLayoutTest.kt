@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.model.CommandGraph
+import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
@@ -61,6 +63,19 @@ class TestViewportLayoutTest {
         )
         assertFalse(pruned.cells.values.any { it.kind == MapCellKind.ADD })
         assertTrue(MapPoint(3, 0) in pruned.cells)
+    }
+
+    @Test
+    fun `loop return cells carry their FOR_END id`() {
+        // 戻り経路の通過表示は、この帰属で通常経路と同じく扱います。
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+        val endId = requireNotNull(start.pairedNodeId)
+        val layout = GraphLayoutEngine.layout(graph)
+        val returns = layout.cells.values.filter { it.kind == MapCellKind.LOOP_RETURN_PATH }
+        assertTrue(returns.isNotEmpty())
+        assertTrue(returns.all { it.loopReturnId == endId })
     }
 
     @Test

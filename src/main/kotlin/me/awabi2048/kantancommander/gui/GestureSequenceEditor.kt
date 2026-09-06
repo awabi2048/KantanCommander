@@ -1692,11 +1692,13 @@ class GestureSequenceEditor(
         val passedPathMark = Color.fromRGB(85, 255, 85).asARGB()
         val testPathMark: ((MapPoint, MapCell) -> Int?)? = test?.takeIf { testActive }?.let { activeTest ->
             val waitingEdge = activeTest.waitingEdge
+            val passedLoops = activeTest.passedLoopReturns
             val mark: (MapPoint, MapCell) -> Int? = { _, cell ->
                 when {
                     waitingEdge != null && cell.insertionTarget?.let { target ->
                         target.sourceId == waitingEdge.sourceId && target.edge == waitingEdge.edge
                     } == true -> waitingPathMark
+                    cell.loopReturnId?.let { passedLoops.contains(it) } == true -> passedPathMark
                     cell.insertionTarget?.let { target ->
                         target.sourceId?.let { sourceId ->
                             activeTest.passedEdges.contains(TestExecutionEdge(sourceId, target.edge))

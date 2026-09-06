@@ -39,6 +39,8 @@ data class GestureTestState(
     var successfulNodeIds: MutableSet<UUID> = linkedSetOf(),
     var successfulNodeCount: Int = 0,
     var passedEdges: MutableSet<TestExecutionEdge> = linkedSetOf(),
+    /** 通過したループ戻り経路のFOR_END集合です。通常経路と同じく黄緑で示します。 */
+    var passedLoopReturns: MutableSet<UUID> = linkedSetOf(),
     /** 待機表示中の次の枝です。待機が5tickを超えるときだけ設定されます。 */
     var waitingEdge: TestExecutionEdge? = null,
     /** 待機表示中のWAITノードです。青緑で示します。 */
@@ -68,6 +70,11 @@ class GestureTestExecutionObserver(
     private val scheduler: org.bukkit.scheduler.BukkitScheduler? = null,
 ) : ExecutionObserver {
     private var pendingWaitTask: org.bukkit.scheduler.BukkitTask? = null
+    /**
+     * 移動中の枝です。完了時点では白のままにし、次のノードの開始で
+     * 通過確定（黄緑）します。白→水色→緑の順に切り替えるためです。
+     */
+    private var pendingEdge: TestExecutionEdge? = null
 
     /** 終了・中断・破棄時に残っている待機タイマーを解除します。 */
     fun cancelPendingWait() {
@@ -80,6 +87,9 @@ class GestureTestExecutionObserver(
     override fun onNodeStarted(event: ExecutionNodeStarted) {
         if (event.depth != 0) return
         cancelPendingWait()
+        // 移動中の枝を通過確定します。開始前は白のままです。
+        pendingEdge?.let(state.passedEdges::add)
+        pendingEdge = null
         state.currentNodeId = event.nodeId
         // WAITコマンドの待機が長いときは、5tick後に待機表示へ切り替えます。
         if (event.waitTicks > TEST_WAIT_HIGHLIGHT_DELAY_TICKS) {
@@ -105,14 +115,20 @@ class GestureTestExecutionObserver(
             state.currentNodeId = null
             state.successfulNodeCount = event.successfulNodeCount
             state.successfulNodeIds += event.nodeId
-            edgeFor(state.snapshot, event.nodeId, event.nextNodeId)?.let(state.passedEdges::add)
+            // 直前までの移動を通過確定し、今回の移動を移動中として保持します。
+            // 完了直後に黄緑へ変えると、待機表示の前に緑→水色→緑とちらつきます。
+            pendingEdge?.let(state.passedEdges::add)
+            pendingEdge = edgeFor(state.snapshot, event.nodeId, event.nextNodeId)
             if (event.loopReturn) {
                 // ループ内の過去経路だけを今回の反復の表示から外し、外側の
                 // 既通過経路は残します。全経路を消すと、ループ後に戻った時点で
                 // ループより前の成功経路まで未通過に見えてしまいます。
                 // 開始ノード自身は除外します。以後の反復は開始ノードを経由せず
                 // 本体へ直接戻るため、含めると開始→本体の枝が復元されません。
-                state.passedEdges.removeAll { it.sourceId in loopNodeIds(event.nodeId) }
+                val loopNodes = loopNodeIds(event.nodeId)
+                state.passedEdges.removeAll { it.sourceId in loopNodes }
+                state.passedLoopReturns.removeAll { it in loopNodes }
+                state.passedLoopReturns += event.nodeId
             }
             // 次までの待機が長いときは、5tick後に次の枝を待機表示へ切り替えます。
             if (event.nextWaitTicks > TEST_WAIT_HIGHLIGHT_DELAY_TICKS) {

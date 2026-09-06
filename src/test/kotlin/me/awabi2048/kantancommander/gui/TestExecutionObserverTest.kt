@@ -63,6 +63,26 @@ class TestExecutionObserverTest {
         nextWaitTicks = nextWaitTicks,
     )
 
+    private fun started(
+        script: DiskScript,
+        nodeId: UUID,
+        type: CommandType,
+        attempt: Int,
+        tick: Long,
+    ) = ExecutionNodeStarted(script.id, nodeId, type, 0, attempt, tick)
+
+    @Test
+    fun `commits passed edges on next start for white blue green order`() {
+        // 完了直後は白のままにし、次の開始で通過確定（黄緑）します。
+        val (script, startId, bodyId) = loopScript()
+        val state = testState(script)
+        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
+        assertFalse(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
+        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 1, 2L))
+        assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
+    }
+
     @Test
     fun `keeps loop start edge after looping back`() {
         // FOR復帰時に開始→本体の枝が消えると、二度と復元されません。
@@ -71,13 +91,30 @@ class TestExecutionObserverTest {
         val state = testState(script)
         val observer = GestureTestExecutionObserver(state, {}, {}, {})
         observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
-        observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 2, 2L))
+        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 1, 2L))
+        observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 2, 3L))
+        observer.onNodeStarted(started(script, endId, CommandType.FOR_END, 2, 4L))
         assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         // 本体から開始位置へ戻ります。終了ノードの次は本体先頭です。
-        observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, bodyId, 3, 3L, loopReturn = true))
+        observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true))
         // 開始→本体の枝は残り、本体内の枝は今回の反復表示から外れます。
         assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         assertFalse(state.passedEdges.contains(TestExecutionEdge(bodyId, GraphEditor.Edge.NEXT)))
+    }
+
+    @Test
+    fun `highlights traversed loop return paths`() {
+        // 通過したループ戻り経路は通常経路と同じく黄緑で示します。
+        val (script, startId, bodyId) = loopScript()
+        val endId = requireNotNull(script.graph.nodes[startId]?.pairedNodeId)
+        val state = testState(script)
+        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
+        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 1, 2L))
+        observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 2, 3L))
+        observer.onNodeStarted(started(script, endId, CommandType.FOR_END, 2, 4L))
+        observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true))
+        assertTrue(state.passedLoopReturns.contains(endId))
     }
 
     /** runTaskLaterだけを記録する試験用スケジューラです。 */
