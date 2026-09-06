@@ -178,6 +178,7 @@ class TestExecutionCoordinator(
         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_NORMAL_BUSY)
 
     companion object {
-        const val DEBUG_DELAY_TICKS: Long = 20L
+        /** デバッグモードのノード間待機です。白20・水色20の表示切替に対応します。 */
+        const val DEBUG_DELAY_TICKS: Long = 40L
     }
 }
