@@ -39,9 +39,11 @@ data class GestureTestState(
     var successfulNodeIds: MutableSet<UUID> = linkedSetOf(),
     var successfulNodeCount: Int = 0,
     var passedEdges: MutableSet<TestExecutionEdge> = linkedSetOf(),
-    /** 通過したループ戻り経路のFOR_END集合です。通常経路と同じく黄緑で示します。 */
-    var passedLoopReturns: MutableSet<UUID> = linkedSetOf(),
-    /** 待機表示中の次の枝です。待機が5tickを超えるときだけ設定されます。 */
+    /** 次の開始で白に戻すループ内ノード集合です。復帰完了時に保持します。 */
+    var pendingLoopRestartNodes: Set<UUID>? = null,
+    /** 待機表示中のループ戻り経路のFOR_ENDです。水色で示します。 */
+    var waitingLoopReturnId: UUID? = null,
+    /** 待機表示中の次の枝です。待機が10tickを超えるときだけ設定されます。 */
     var waitingEdge: TestExecutionEdge? = null,
     /** 待機表示中のWAITノードです。青緑で示します。 */
     var waitingNodeId: UUID? = null,
@@ -54,10 +56,11 @@ data class GestureTestState(
 )
 
 /**
- * 待機枝の表示が切り替わるまでの遅延です。待機自体がこのtick数以下の場合は
- * 待機表示を出さず、次の実行へ直接進みます。
+ * 白から水色への切り替わりまでの遅延です。待機自体がこのtick数以下の場合は
+ * 待機表示を出さず、次の実行へ直接進みます。水色から緑は次実行時に切り替わるため、
+ * 20tick待機では白10・水色10の均等表示になります。
  */
-internal const val TEST_WAIT_HIGHLIGHT_DELAY_TICKS: Long = 5L
+internal const val TEST_WAIT_HIGHLIGHT_DELAY_TICKS: Long = 10L
 
 /** 実行イベントを共有エディター状態へ投影し、同じ配置を見ている全員へ表示します。 */
 class GestureTestExecutionObserver(
@@ -82,16 +85,24 @@ class GestureTestExecutionObserver(
         pendingWaitTask = null
         state.waitingEdge = null
         state.waitingNodeId = null
+        state.waitingLoopReturnId = null
     }
 
     override fun onNodeStarted(event: ExecutionNodeStarted) {
         if (event.depth != 0) return
         cancelPendingWait()
+        // ループ復帰後の再開では、戻り経路とループ内の通過表示を白に戻します。
+        // 開始ノード自体は集合外のため、開始→本体の枝は維持されます。
+        state.pendingLoopRestartNodes?.let { loopNodes ->
+            state.passedEdges.removeAll { it.sourceId in loopNodes }
+            state.successfulNodeIds.removeAll(loopNodes)
+            state.pendingLoopRestartNodes = null
+        }
         // 移動中の枝を通過確定します。開始前は白のままです。
         pendingEdge?.let(state.passedEdges::add)
         pendingEdge = null
         state.currentNodeId = event.nodeId
-        // WAITコマンドの待機が長いときは、5tick後に待機表示へ切り替えます。
+        // WAITコマンドの待機が長いときは、10tick後に待機表示へ切り替えます。
         if (event.waitTicks > TEST_WAIT_HIGHLIGHT_DELAY_TICKS) {
             scheduleWaitHighlight {
                 if (state.phase != GestureTestPhase.RUNNING || state.currentNodeId != event.nodeId) return@scheduleWaitHighlight
@@ -120,17 +131,19 @@ class GestureTestExecutionObserver(
             pendingEdge?.let(state.passedEdges::add)
             pendingEdge = edgeFor(state.snapshot, event.nodeId, event.nextNodeId)
             if (event.loopReturn) {
-                // ループ内の過去経路だけを今回の反復の表示から外し、外側の
-                // 既通過経路は残します。全経路を消すと、ループ後に戻った時点で
-                // ループより前の成功経路まで未通過に見えてしまいます。
-                // 開始ノード自身は除外します。以後の反復は開始ノードを経由せず
-                // 本体へ直接戻るため、含めると開始→本体の枝が復元されません。
-                val loopNodes = loopNodeIds(event.nodeId)
-                state.passedEdges.removeAll { it.sourceId in loopNodes }
-                state.passedLoopReturns.removeAll { it in loopNodes }
-                state.passedLoopReturns += event.nodeId
+                // 復帰完了時点では何も消さず、次の開始で一括して白に戻します。
+                // 待機が長いとき（デバッグON）は10tick後に戻り経路を水色で示し、
+                // 再開と同時に白へ戻します。回数表示は累計のまま変えません。
+                state.pendingLoopRestartNodes = loopNodeIds(event.nodeId)
+                if (event.nextWaitTicks > TEST_WAIT_HIGHLIGHT_DELAY_TICKS) {
+                    scheduleWaitHighlight {
+                        if (state.phase != GestureTestPhase.RUNNING) return@scheduleWaitHighlight
+                        state.waitingLoopReturnId = event.nodeId
+                        onChanged()
+                    }
+                }
             }
-            // 次までの待機が長いときは、5tick後に次の枝を待機表示へ切り替えます。
+            // 次までの待機が長いときは、10tick後に次の枝を待機表示へ切り替えます。
             if (event.nextWaitTicks > TEST_WAIT_HIGHLIGHT_DELAY_TICKS) {
                 val edge = edgeFor(state.snapshot, event.nodeId, event.nextNodeId)
                 if (edge != null) {
@@ -151,6 +164,7 @@ class GestureTestExecutionObserver(
 
     override fun onFinished(result: ExecutionResult) {
         cancelPendingWait()
+        state.pendingLoopRestartNodes = null
         onResult(result)
     }
 

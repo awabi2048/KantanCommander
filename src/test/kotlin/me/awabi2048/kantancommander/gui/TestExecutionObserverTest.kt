@@ -84,7 +84,8 @@ class TestExecutionObserverTest {
     }
 
     @Test
-    fun `keeps loop start edge after looping back`() {
+    fun `defers loop reset until next start after looping back`() {
+        // 復帰完了直後はまだ消えず、再開時に戻り経路とループ内が白に戻ります。
         // FOR復帰時に開始→本体の枝が消えると、二度と復元されません。
         val (script, startId, bodyId) = loopScript()
         val endId = requireNotNull(script.graph.nodes[startId]?.pairedNodeId)
@@ -97,24 +98,38 @@ class TestExecutionObserverTest {
         assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         // 本体から開始位置へ戻ります。終了ノードの次は本体先頭です。
         observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true))
-        // 開始→本体の枝は残り、本体内の枝は今回の反復表示から外れます。
+        // 完了直後はまだ残っています。
+        assertTrue(state.passedEdges.contains(TestExecutionEdge(bodyId, GraphEditor.Edge.NEXT)))
+        assertTrue(state.successfulNodeIds.contains(bodyId))
+        // 再開でループ内だけが白に戻り、開始→本体の枝は残ります。
+        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 3, 6L))
         assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         assertFalse(state.passedEdges.contains(TestExecutionEdge(bodyId, GraphEditor.Edge.NEXT)))
+        assertFalse(state.successfulNodeIds.contains(bodyId))
+        assertTrue(state.successfulNodeIds.contains(startId))
     }
 
     @Test
-    fun `highlights traversed loop return paths`() {
-        // 通過したループ戻り経路は通常経路と同じく黄緑で示します。
+    fun `shows loop return in light blue during long waits`() {
+        // 復帰後の待機が長いときは、10tick後に戻り経路を水色で示し、再開で白に戻します。
         val (script, startId, bodyId) = loopScript()
         val endId = requireNotNull(script.graph.nodes[startId]?.pairedNodeId)
         val state = testState(script)
-        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        val fake = FakeScheduler()
+        val observer = GestureTestExecutionObserver(state, {}, {}, {}, dummyPlugin(), fake.scheduler)
         observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
         observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 1, 2L))
         observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 2, 3L))
         observer.onNodeStarted(started(script, endId, CommandType.FOR_END, 2, 4L))
-        observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true))
-        assertTrue(state.passedLoopReturns.contains(endId))
+        observer.onNodeFinished(
+            finished(script, endId, CommandType.FOR_END, bodyId, 3, 5L, loopReturn = true, nextWaitTicks = 20L),
+        )
+        assertNull(state.waitingLoopReturnId)
+        fake.runPending()
+        assertEquals(endId, state.waitingLoopReturnId)
+        observer.onNodeStarted(started(script, bodyId, CommandType.WAIT, 3, 25L))
+        assertNull(state.waitingLoopReturnId)
+        assertFalse(state.successfulNodeIds.contains(bodyId))
     }
 
     /** runTaskLaterだけを記録する試験用スケジューラです。 */
@@ -176,7 +191,7 @@ class TestExecutionObserverTest {
     ) { _, method, _ -> FakeScheduler.defaultValue(method.returnType) } as Plugin
 
     @Test
-    fun `shows waiting branch after five ticks of waiting`() {
+    fun `shows waiting branch after ten ticks of waiting`() {
         val graph = CommandGraph.empty()
         val wait = GraphEditor.append(graph, CommandType.WAIT)
         val next = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
@@ -191,7 +206,7 @@ class TestExecutionObserverTest {
         assertNull(state.waitingNodeId)
         assertEquals(1, fake.scheduled.size)
         assertEquals(TEST_WAIT_HIGHLIGHT_DELAY_TICKS, fake.scheduled.single().delay)
-        // 5tick後に待機中のノードと次の枝が示されます。
+        // 10tick後に待機中のノードと次の枝が示されます。
         fake.runPending()
         assertEquals(wait.id, state.waitingNodeId)
         assertEquals(TestExecutionEdge(wait.id, GraphEditor.Edge.NEXT), state.waitingEdge)
@@ -230,7 +245,7 @@ class TestExecutionObserverTest {
         val fake = FakeScheduler()
         val observer = GestureTestExecutionObserver(state, {}, {}, {}, dummyPlugin(), fake.scheduler)
         observer.onNodeStarted(
-            ExecutionNodeStarted(script.id, wait.id, CommandType.WAIT, 0, 0, 1L, waitTicks = 5L),
+            ExecutionNodeStarted(script.id, wait.id, CommandType.WAIT, 0, 0, 1L, waitTicks = 10L),
         )
         assertTrue(fake.scheduled.isEmpty())
         assertNull(state.waitingNodeId)
