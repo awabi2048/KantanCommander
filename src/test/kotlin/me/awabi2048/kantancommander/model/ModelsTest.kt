@@ -7,8 +7,14 @@ import org.junit.jupiter.api.Test
 class ModelsTest {
     @Test
     fun `timer interval is normalized to supported range`() {
-        assertEquals(20L, TimerSetting(true, 0).intervalTicks)
-        assertEquals(1_728_000L, TimerSetting(true, 100_000).intervalTicks)
+        assertEquals(20L, TimerSetting(true, 0.0).intervalTicks)
+        assertEquals(1_728_000L, TimerSetting(true, 100_000.0).intervalTicks)
+    }
+
+    @Test
+    fun `timer accepts fractional seconds without a lower bound`() {
+        assertEquals(10L, TimerSetting(true, 0.5).intervalTicks)
+        assertEquals(2L, TimerSetting(true, 0.1).intervalTicks)
     }
 
     @Test

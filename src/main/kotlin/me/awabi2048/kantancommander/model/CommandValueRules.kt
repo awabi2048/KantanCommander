@@ -113,6 +113,13 @@ object CommandValueRules {
     fun isWaitSeconds(seconds: Double): Boolean =
         seconds.isFinite() && seconds > 0.0 && seconds <= MAX_COMMAND_TIME_SECONDS && isTickAlignedSeconds(seconds)
 
+    /**
+     * プログラムタイマーで許可する秒数です。下限は設けず、0より大きい
+     * tick境界の値を許可します。上限はWAITと共通の秒数上限を用います。
+     */
+    fun isTimerSeconds(seconds: Double): Boolean =
+        seconds.isFinite() && seconds > 0.0 && seconds <= MAX_TIMER_SECONDS.toDouble() && isTickAlignedSeconds(seconds)
+
     private fun registered(raw: String, lookup: (NamespacedKey) -> Boolean): Boolean {
         val key = NamespacedKey.fromString(raw) ?: return false
         if (!paperRegistryAvailable) return true

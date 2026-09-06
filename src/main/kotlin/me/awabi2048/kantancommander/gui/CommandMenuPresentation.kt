@@ -79,6 +79,20 @@ internal object CommandPresentationPolicy {
 
     }
 
+    /**
+     * 簡易GUI（統合版専用インベントリ）で扱うコマンド種別です。
+     *
+     * 実行カテゴリにWAITを加えた固定集合とし、制御構造（条件・変数・合流・
+     * 繰り返し等）はフルGUI（ジェスチャーGUI）でのみ編集します。内部の
+     * 構造化データはフル形式のまま保持し、ここでは表示・編集の入口だけを
+     * 制限します。
+     */
+    val SIMPLE_TYPES: List<CommandType> =
+        CommandType.entries.filter { category(it) == CommandCategory.EXECUTION || it == CommandType.WAIT }
+
+    /** 簡易GUIで設定変更できるノードかを返します。制御系は表示のみです。 */
+    fun isSimpleEditable(type: CommandType): Boolean = type in SIMPLE_TYPES
+
 }
 
 /**

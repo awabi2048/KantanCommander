@@ -49,7 +49,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "cf835eb7f4fd4a1af78513da6aa61ad7678651341bbf721fe96651fda36d3e3f"
+    "a9ef9f3b12b2ab964b1e1008d8429ce7004cce4d8e72e702b983f8cfeb746ddc"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -101,7 +101,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 6,
+                    currentVersion = 7,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -136,6 +136,11 @@ class KantanCommanderPlugin : JavaPlugin() {
                             // 移行済みの環境でも既定値が補完されます。
                             config.set("execution.max-particles-per-world-per-second", 600)
                         },
+                        6 to ConfigMigration { config ->
+                            // タイマー間隔に下限を設けないため、旧来の最小秒数設定を
+                            // 削除します。上限はそのまま維持します。
+                            config.set("timer.minimum-seconds", null)
+                        },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.max-nodes-per-activation") >= 1)
@@ -144,7 +149,6 @@ class KantanCommanderPlugin : JavaPlugin() {
                         require(config.getInt("execution.max-summoned-entities-server") >=
                             config.getInt("execution.max-summoned-entities-per-world"))
                         require(config.getInt("execution.max-particles-per-world-per-second") >= 1)
-                        require(config.getInt("timer.minimum-seconds", 1) == 1)
                         require(config.getInt("timer.maximum-seconds", 86400) == 86400)
                         require(config.getInt("limits.max-nodes-per-disk") >= 1)
                         require(config.getInt("limits.max-map-width") >= 9)

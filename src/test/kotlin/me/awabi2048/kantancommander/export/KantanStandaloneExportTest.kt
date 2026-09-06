@@ -25,7 +25,7 @@ class KantanStandaloneExportTest {
             name = "timer",
             owner = UUID.randomUUID(),
             activation = ActivationMode.ALWAYS_ACTIVE,
-            timer = TimerSetting(true, 3),
+            timer = TimerSetting(true, 3.0),
             graph = CommandGraph.empty(),
         )
         val program = PreparedProgram(

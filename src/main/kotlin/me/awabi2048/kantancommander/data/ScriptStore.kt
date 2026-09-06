@@ -427,6 +427,7 @@ class ScriptStore(
             ?: error("formatVersionがありません、または整数ではありません")
         val migrated = when (sourceVersion) {
             STRUCTURED_FORMAT_VERSION -> source
+            STRUCTURED_PREVIOUS_FORMAT_VERSION -> migrateStructuredV9ToV10(source)
             LEGACY_COMMAND_FORMAT_VERSION -> migrateCommandFormat(source)
             LEGACY_TICK_FORMAT_VERSION -> migrateCommandFormat(migrateLegacyTickFormat(source))
             else -> {
@@ -462,10 +463,10 @@ class ScriptStore(
             )
         }
         if (sourceVersion != STRUCTURED_FORMAT_VERSION) {
-            // 旧形式を読み込んだ時点でv9の正本へ書き戻し、次回以降に
+            // 旧形式を読み込んだ時点で現行形式の正本へ書き戻し、次回以降に
             // 旧tick値や廃止コマンドを二重解釈しないようにします。
             atomicWrite(file, gson.toJson(migrated))
-            logger.info("構造化プログラムディスクをv9形式へ移行しました: ${file.absolutePath}")
+            logger.info("構造化プログラムディスクをv${STRUCTURED_FORMAT_VERSION}形式へ移行しました: ${file.absolutePath}")
         }
         script
     } catch (error: Exception) {
@@ -497,7 +498,17 @@ class ScriptStore(
         return migrated
     }
 
-    /** v7のコマンド・型モデルをv9へ意味変換します。 */
+    /**
+     * v9の整数秒タイマーをv10の小数秒へ移行します。JSON数値の整数は
+     * Doubleへそのまま復元できるため、形式番号の付け替えだけを行います。
+     */
+    private fun migrateStructuredV9ToV10(source: JsonObject): JsonObject {
+        val migrated = source.deepCopy()
+        migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        return migrated
+    }
+
+    /** v7のコマンド・型モデルを現行形式へ意味変換します。 */
     private fun migrateCommandFormat(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
@@ -788,6 +799,7 @@ class ScriptStore(
     private companion object {
         private const val LEGACY_TICK_FORMAT_VERSION = 6
         private const val LEGACY_COMMAND_FORMAT_VERSION = 7
+        private const val STRUCTURED_PREVIOUS_FORMAT_VERSION = 9
         /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
         private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
 

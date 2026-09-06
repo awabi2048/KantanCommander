@@ -222,15 +222,22 @@ class CommandDialogSpecsTest {
 
     @Test
     fun `timer and multi-value dialogs share strict finite input boundaries`() {
-        assertEquals(6, CommandDialogSpecs.timerSeconds.maxLength)
+        assertEquals(16, CommandDialogSpecs.timerSeconds.maxLength)
         assertNull(CommandDialogSpecs.timerSeconds.validate("1"))
+        assertNull(CommandDialogSpecs.timerSeconds.validate("0.5"))
+        assertNull(CommandDialogSpecs.timerSeconds.validate("0.05"))
+        assertNull(CommandDialogSpecs.timerSeconds.validate("+1"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,
-            CommandDialogSpecs.timerSeconds.validate("+1"),
+            CommandDialogSpecs.timerSeconds.validate("0"),
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,
-            CommandDialogSpecs.timerSeconds.validate("86401"),
+            CommandDialogSpecs.timerSeconds.validate("86400.05"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID,
+            CommandDialogSpecs.timerSeconds.validate("0.01"),
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID,
@@ -248,6 +255,11 @@ class CommandDialogSpecsTest {
         assertNull(displayTiming.validate("86400"))
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_INVALID, displayTiming.validate("86400.05"))
         assertEquals(CommandDialogSpecs.InputFormat.TIME, CommandDialogSpecs.timerSeconds.format)
+        assertEquals("3", CommandDialogSpecs.formatSeconds(3.0))
+        assertEquals("0.5", CommandDialogSpecs.formatSeconds(0.5))
+        assertEquals(0.5, CommandDialogSpecs.parseTimerSeconds("0.5"))
+        assertNull(CommandDialogSpecs.parseTimerSeconds("0.01"))
+        assertNull(CommandDialogSpecs.parseTimerSeconds("0"))
         assertEquals(1.5, CommandDialogSpecs.finiteDouble("1.5"))
         assertNull(CommandDialogSpecs.finiteDouble("NaN"))
         assertNull(CommandDialogSpecs.finiteFloat("Infinity"))

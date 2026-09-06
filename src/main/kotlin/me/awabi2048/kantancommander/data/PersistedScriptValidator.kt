@@ -32,7 +32,7 @@ object PersistedScriptValidator {
         requireEnum(root, "activation", path, enumNames<ActivationMode>(), errors)
         requireObject(root, "timer", path, errors)?.let { timer ->
             requireBoolean(timer, "enabled", "$path/timer", errors)
-            requireInteger(timer, "intervalSeconds", "$path/timer", errors)
+            requireFiniteNumber(timer, "intervalSeconds", "$path/timer", errors)
         }
         requireObject(root, "graph", path, errors)?.let {
             validateGraph(it, "$path/graph", errors)
@@ -277,6 +277,20 @@ object PersistedScriptValidator {
         }
         if (!raw.isJsonPrimitive || !raw.asJsonPrimitive.isNumber || raw.asString.toLongOrNull() == null) {
             errors += "$path/$field: 整数ではありません"
+        }
+    }
+
+    /** タイマー秒数など、整数・小数を問わない必須の有限数値を受け付けます。 */
+    private fun requireFiniteNumber(parent: JsonObject, field: String, path: String, errors: MutableList<String>) {
+        val raw = parent[field]
+        if (raw == null || raw.isJsonNull) {
+            errors += "$path/$field: 必須数値がありません"
+            return
+        }
+        if (!raw.isJsonPrimitive || !raw.asJsonPrimitive.isNumber ||
+            raw.asString.toDoubleOrNull()?.isFinite() != true
+        ) {
+            errors += "$path/$field: 有限な数値ではありません"
         }
     }
 

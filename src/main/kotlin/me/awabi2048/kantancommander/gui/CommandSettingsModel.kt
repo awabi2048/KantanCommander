@@ -16,7 +16,6 @@ import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
-import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -1182,14 +1181,15 @@ object CommandSettingsModel {
      * プログラム全体設定であるタイマーも、両GUIが同じ保存境界を通ります。
      *
      * タイマー値だけを各画面で更新すると、間隔変更時の再登録や無効化時の
-     * ALWAYS_ACTIVE解除が片方から抜けます。ノード設定と同じく、読み込み・検証・
+     * 実行方式解除が片方から抜けます。ノード設定と同じく、読み込み・検証・
      * 保存・実行時登録更新・表示更新を一つの操作として扱います。
+     * 間隔は小数秒（tick境界）で受け付け、下限は設けません。
      */
     fun updateTimer(
         plugin: KantanCommanderPlugin,
         scriptId: UUID,
         enabled: Boolean,
-        intervalSeconds: Int? = null,
+        intervalSeconds: Double? = null,
         editorId: UUID? = null,
         expectedRevision: Long? = null,
     ): Boolean {
@@ -1202,26 +1202,13 @@ object CommandSettingsModel {
         ) { script ->
             if (enabled) {
                 val seconds = requireNotNull(intervalSeconds) { "タイマー有効化には間隔が必要です" }
-                require(seconds in MIN_TIMER_SECONDS..MAX_TIMER_SECONDS) {
-                    "タイマー間隔は${MIN_TIMER_SECONDS}から${MAX_TIMER_SECONDS}秒で指定してください"
+                require(CommandValueRules.isTimerSeconds(seconds)) {
+                    "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください"
                 }
                 script.timer.intervalSeconds = seconds
             }
             script.timer.enabled = enabled
             if (!enabled) script.activation = ActivationMode.NEEDS_REDSTONE
-        }
-    }
-
-    /** タイマー有効時の実行方式切替も、プログラム共通の保存境界へ通します。 */
-    fun toggleActivation(
-        plugin: KantanCommanderPlugin,
-        scriptId: UUID,
-        editorId: UUID? = null,
-        expectedRevision: Long? = null,
-    ): Boolean {
-        return updateScript(plugin, scriptId, editorId, expectedRevision = expectedRevision) { script ->
-            check(script.timer.enabled) { "タイマーが無効なため実行方式を変更できません" }
-            script.activation = script.activation.toggled(timerEnabled = true)
         }
     }
 

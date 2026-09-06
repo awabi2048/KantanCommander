@@ -15,7 +15,6 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
-import me.awabi2048.kantancommander.model.MIN_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.PositionKind
@@ -60,10 +59,10 @@ object ExecutableScriptValidator {
         if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
             errors += ScriptValidationError("root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません")
         }
-        if (script.timer.enabled && script.timer.intervalSeconds !in MIN_TIMER_SECONDS..MAX_TIMER_SECONDS) {
+        if (script.timer.enabled && !CommandValueRules.isTimerSeconds(script.timer.intervalSeconds)) {
             errors += ScriptValidationError(
                 "root", null, setOf("timer"),
-                "タイマー間隔は${MIN_TIMER_SECONDS}から${MAX_TIMER_SECONDS}秒で指定してください",
+                "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
             )
         }
         validateGraph(

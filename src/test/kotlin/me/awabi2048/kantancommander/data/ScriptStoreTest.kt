@@ -208,14 +208,48 @@ class ScriptStoreTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val migrated = requireNotNull(store.load(scriptId))
 
-        assertEquals(9, migrated.formatVersion)
-        assertEquals(3, migrated.timer.intervalSeconds)
+        assertEquals(10, migrated.formatVersion)
+        assertEquals(3.0, migrated.timer.intervalSeconds)
         assertEquals("0.05", migrated.graph.nodes[nodeId]?.params?.get("seconds"))
         val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 9"))
-        assertTrue(rewritten.contains("\"intervalSeconds\": 3"))
+        assertTrue(rewritten.contains("\"formatVersion\": 10"))
+        assertTrue(rewritten.contains("\"intervalSeconds\": 3.0"))
         assertTrue(!rewritten.contains("intervalUnits"))
         assertTrue(!rewritten.contains("\"ticks\""))
+    }
+
+    @Test
+    fun `v9 integer timer seconds migrate to v10 decimal form`() {
+        val dir = temp.resolve("v9-timer").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val owner = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 9,
+              "id": "$scriptId",
+              "name": "v9",
+              "owner": "$owner",
+              "createdAt": 0,
+              "listed": false,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": true, "intervalSeconds": 5},
+              "graph": {"nodes": {}},
+              "revision": 0,
+              "contentModified": false
+            }
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val migrated = requireNotNull(store.load(scriptId))
+
+        assertEquals(10, migrated.formatVersion)
+        assertEquals(5.0, migrated.timer.intervalSeconds)
+        assertEquals(100L, migrated.timer.intervalTicks)
+        val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
+        assertTrue(rewritten.contains("\"formatVersion\": 10"))
     }
 
     @Test
@@ -428,7 +462,7 @@ class ScriptStoreTest {
         val timed = store.createPlacement(UUID.randomUUID(), "default")
         val timedEdit = requireNotNull(store.load(timed.id)).apply {
             timer.enabled = true
-            timer.intervalSeconds = 5
+            timer.intervalSeconds = 5.0
         }
         store.save(timedEdit)
         assertTrue(requireNotNull(store.load(timed.id)).hasDiskContent())

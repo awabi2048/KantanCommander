@@ -122,30 +122,52 @@ internal object CommandDialogSpecs {
             maxLength = spec.maxLength,
         )
 
-    /** プログラムタイマーの入力契約を両GUIで共有します。 */
+    /**
+     * プログラムタイマーの入力契約を両GUIで共有します。
+     * 小数秒（tick境界）を受け付け、下限は設けません。
+     */
     val timerSeconds = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTERVAL,
-        6,
+        16,
         validate = { raw ->
-            val value = CommandValueRules.parsePositiveInt(raw)
-            if (value == null || value !in 1..MAX_TIMER_SECONDS) {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID
-            } else null
+            val value = CommandValueRules.parseFiniteDouble(raw)
+            when {
+                value == null || value <= 0.0 || value > MAX_TIMER_SECONDS.toDouble() -> {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_INVALID
+                }
+                !CommandValueRules.isTickAlignedSeconds(raw) -> {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID
+                }
+                else -> null
+            }
         },
         required = true,
         format = InputFormat.TIME,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT,
     )
+
+    /** 検証済みのタイマー入力文字列を、保存用の秒数へ変換します。 */
+    fun parseTimerSeconds(raw: String): Double? =
+        raw.trim().toDoubleOrNull()?.takeIf(CommandValueRules::isTimerSeconds)
+
+    /**
+     * タイマー秒数を表示・初期値用に整形します。整数値は小数点を落とし、
+     * 小数は末尾の0を落としてtick境界のまま表記します。
+     */
+    fun formatSeconds(seconds: Double): String = runCatching {
+        java.math.BigDecimal.valueOf(seconds).stripTrailingZeros().toPlainString()
+    }.getOrDefault(seconds.toString())
 
     /** タイマー入力の方法だけを表示します。現在の秒数は入力欄に表示します。 */
     fun timerBody(player: Player): List<Component> = listOf(
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_BODY),
     )
 
-    fun timerInput(player: Player, seconds: Int): MenuDialogInput.Text =
+    fun timerInput(player: Player, seconds: Double): MenuDialogInput.Text =
         input(
             player,
             id = "seconds",
-            initial = seconds.toString(),
+            initial = formatSeconds(seconds),
             spec = timerSeconds,
             label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTERVAL),
         )

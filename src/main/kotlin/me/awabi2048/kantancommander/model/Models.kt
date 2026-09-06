@@ -6,10 +6,10 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 9
+const val STRUCTURED_FORMAT_VERSION = 10
 const val TICKS_PER_SECOND = 20
-const val MIN_TIMER_SECONDS = 1
 const val MAX_TIMER_SECONDS = 86_400
+const val DEFAULT_TIMER_SECONDS = 1.0
 const val MAX_BLOCK_OPERATION_VOLUME = 32_768L
 
 data class DiskScript(
@@ -46,19 +46,27 @@ fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotE
 
 data class TimerSetting(
     var enabled: Boolean = false,
-    var intervalSeconds: Int = MIN_TIMER_SECONDS,
+    var intervalSeconds: Double = DEFAULT_TIMER_SECONDS,
 ) {
-    fun normalized() = copy(intervalSeconds = intervalSeconds.coerceIn(MIN_TIMER_SECONDS, MAX_TIMER_SECONDS))
+    /**
+     * 保存・実行へ渡す秒数をモデル内で許す範囲へ寄せます。下限は設けないため、
+     * 非有限・0以下は既定値へ、上限超過は上限へ丸めます。tick境界の整合性は
+     * 保存・実行前検証（CommandValueRules.isTimerSeconds）が担保します。
+     */
+    fun normalized() = copy(
+        intervalSeconds = intervalSeconds
+            .takeIf { it.isFinite() && it > 0.0 }
+            ?.coerceAtMost(MAX_TIMER_SECONDS.toDouble())
+            ?: DEFAULT_TIMER_SECONDS,
+    )
     /** Minecraftの内部スケジューラへ渡すtick値は、このモデル境界でだけ算出します。 */
-    val intervalTicks: Long get() = intervalSeconds.coerceIn(MIN_TIMER_SECONDS, MAX_TIMER_SECONDS) * TICKS_PER_SECOND.toLong()
+    val intervalTicks: Long get() =
+        CommandValueRules.secondsToTicks(normalized().intervalSeconds) ?: 1L
 }
 
-enum class ActivationMode(val key: LocalizationKey<String>) {
-    NEEDS_REDSTONE(KcKeys.KANTAN_COMMANDER_CLEAN_ACTIVATION_NEEDS_REDSTONE),
-    ALWAYS_ACTIVE(KcKeys.KANTAN_COMMANDER_CLEAN_ACTIVATION_ALWAYS_ACTIVE);
-
-    fun toggled(timerEnabled: Boolean): ActivationMode =
-        if (!timerEnabled) NEEDS_REDSTONE else if (this == NEEDS_REDSTONE) ALWAYS_ACTIVE else NEEDS_REDSTONE
+enum class ActivationMode {
+    NEEDS_REDSTONE,
+    ALWAYS_ACTIVE,
 }
 
 data class CommandGraph(

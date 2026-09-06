@@ -87,7 +87,19 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ENTRY_DESCRIPTION),
                 data = listOf(
                     GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size),
-                    GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_TRIGGER), KcI18n.text(player, script.activation.key)),
+                    // 起動条件は設定項目として廃止したため、一覧ではタイマーの状態だけを示します。
+                    GuiMenuEntryData(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
+                        if (script.timer.enabled) {
+                            KcI18n.text(
+                                player,
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS,
+                                mapOf("value" to CommandDialogSpecs.formatSeconds(script.timer.intervalSeconds)),
+                            )
+                        } else {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED)
+                        },
+                    ),
                 ),
                 role = GuiElementRole.CONTENT,
                 actions = listOf(

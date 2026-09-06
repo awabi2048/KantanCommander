@@ -2669,7 +2669,7 @@ class GestureSequenceEditor(
             if (validationError != null) {
                 return@showInputDialog KcI18n.text(player, validationError)
             }
-            val seconds = requireNotNull(CommandValueRules.parsePositiveInt(rawSeconds))
+            val seconds = requireNotNull(CommandDialogSpecs.parseTimerSeconds(rawSeconds))
             val updated = runCatching {
                 CommandSettingsModel.updateTimer(
                     plugin,

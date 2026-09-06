@@ -243,12 +243,15 @@ class ExecutableScriptValidatorTest {
             name = "timer",
             owner = UUID.randomUUID(),
             activation = ActivationMode.ALWAYS_ACTIVE,
-            timer = TimerSetting(enabled = false, intervalSeconds = 0),
+            timer = TimerSetting(enabled = false, intervalSeconds = 0.0),
         )
         assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("タイマーオフ") })
 
         script.timer.enabled = true
         assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("タイマー間隔") })
+
+        script.timer.intervalSeconds = 0.5
+        assertTrue(ExecutableScriptValidator.validate(script).none { it.fieldKeys == setOf("timer") })
     }
 
     @Test

@@ -12,16 +12,15 @@ import com.awabi2048.ccsystem.api.gui.GuiMenuEntryData
 import com.awabi2048.ccsystem.api.gui.GuiMenuDisplaySpec
 import com.awabi2048.ccsystem.api.gui.GuiNameSpec
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
-import com.awabi2048.ccsystem.api.gui.GuiValueTone
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
 import com.awabi2048.ccsystem.api.gui.MenuActionContext
 import com.awabi2048.ccsystem.api.gui.MenuActionHandler
 import com.awabi2048.ccsystem.api.gui.MenuActionResult
 import com.awabi2048.ccsystem.api.gui.MenuElement
-import com.awabi2048.ccsystem.api.gui.MenuGesture
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
+import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandGraph
@@ -68,31 +67,6 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             ),
                         )
                     },
-                    "activation" to handler { context ->
-                        val script = scriptId(context.route)?.let(plugin.scripts::load)
-                            ?: return@handler MenuActionResult.Ignored
-                        if (!script.timer.enabled) return@handler MenuActionResult.Ignored
-                        val updated = runCatching {
-                            CommandSettingsModel.toggleActivation(
-                                plugin,
-                                script.id,
-                                context.player.uniqueId,
-                            )
-                        }.getOrElse { failure ->
-                            plugin.logger.log(
-                                java.util.logging.Level.WARNING,
-                                "実行方式の変更を保存できませんでした: script=${script.id}",
-                                failure,
-                            )
-                            return@handler MenuActionResult.Rejected(Component.text("設定を保存できませんでした。"))
-                        }
-                        if (!updated) return@handler MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Refresh)
-                    },
-                    "timer" to handler { context ->
-                        val id = scriptId(context.route) ?: return@handler MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Navigate(CommandEditMenu.timerRoute(context.route)))
-                    },
                     "center" to handler { context ->
                         if (scriptId(context.route)?.let(plugin.scripts::load) == null) {
                             return@handler MenuActionResult.Ignored
@@ -106,12 +80,17 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         val nodeId = context.payload["nodeId"]?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                             ?: return@handler MenuActionResult.Ignored
                         val node = script.graph.nodes[nodeId] ?: return@handler MenuActionResult.Ignored
-                        val target = if (context.click.isRightClick) {
-                            CommandEditMenu.deleteRoute(context.route, node.id)
-                        } else {
-                            CommandEditMenu.settingsRoute(context.route, node.id)
+                        // 簡易GUIは左クリックのみで操作します。制御系コマンドは
+                        // 表示のみとし、設定変更はフルGUI（ジェスチャーGUI）へ案内します。
+                        // 内部データはフル形式のまま保持するため、削除もしません。
+                        if (!CommandPresentationPolicy.isSimpleEditable(node.type)) {
+                            return@handler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_LOCKED_MESSAGE),
+                            )
                         }
-                        MenuActionResult.Success(MenuUpdate.Navigate(target))
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(CommandEditMenu.settingsRoute(context.route, node.id)),
+                        )
                     },
                     "output" to handler { context ->
                         val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
@@ -172,11 +151,15 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             return MenuActionResult.Rejected(GraphLayoutFailureFeedback.renderMessage(context.player))
         }
         val origin = origin(context.route)
-        val delta = ViewportNavigation.delta(
-            context.click.isLeftClick,
-            context.click.isRightClick,
-            context.click.isShiftClick,
-        ) ?: return MenuActionResult.Ignored
+        // 簡易GUIは左クリックのみのため、移動方向はボタンごとの方向指定で受けます。
+        // 右クリック・シフトクリックによる方向指定は行いません。
+        val delta = when (context.payload["direction"]) {
+            "left" -> MapPoint(-1, 0)
+            "right" -> MapPoint(1, 0)
+            "up" -> MapPoint(0, -1)
+            "down" -> MapPoint(0, 1)
+            else -> return MenuActionResult.Ignored
+        }
         if (!layout.canMove(origin, delta.x, delta.y, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
             return MenuActionResult.Ignored
         }
@@ -218,65 +201,21 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             val node = cell.nodeId?.let(script.graph.nodes::get)
             elements += if (node != null) commandElement(player, slot, node) else pathElement(player, slot, cell)
         }
-        val activationActions = if (script.timer.enabled) {
-            listOf(
-                GuiMenuActionIntent.AnyClick(
-                    actionId = "activation",
-                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_ACTION),
-                ),
-            )
-        } else emptyList()
-        elements += KcGui.menuEntry(
-            player = player,
-            slot = 36,
-            material = if (script.activation == me.awabi2048.kantancommander.model.ActivationMode.NEEDS_REDSTONE) {
-                Material.LEVER
-            } else Material.REDSTONE_TORCH,
-            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION),
-            style = GuiNameStyle.PRIMARY,
-            role = if (activationActions.isEmpty()) GuiElementRole.CONTENT else GuiElementRole.ACTION,
-            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_DESCRIPTION),
-            data = listOf(
-                GuiMenuEntryData(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_MODE_LABEL),
-                    KcI18n.text(player, script.activation.key),
-                    GuiValueTone.DEFAULT,
-                ),
-            ),
-            warnings = if (script.timer.enabled) emptyList() else {
-                KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ACTIVATION_TIMER_REQUIRED)
-            },
-            actions = activationActions,
-        )
-        elements += KcGui.menuEntry(
-            player = player,
-            slot = 37,
-            material = Material.CLOCK,
-            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
-            style = GuiNameStyle.PRIMARY,
-            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER_DESCRIPTION),
-            data = buildList {
-                add(
-                    GuiMenuEntryData(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_STATE_LABEL),
-                        KcI18n.text(player, if (script.timer.enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED),
-                        if (script.timer.enabled) GuiValueTone.SUCCESS else GuiValueTone.MUTED,
-                    ),
-                )
-                if (script.timer.enabled) {
-                    add(
-                        GuiMenuEntryData(
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_LABEL),
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS, mapOf("value" to script.timer.intervalSeconds)),
-                            GuiValueTone.DEFAULT,
-                        ),
-                    )
-                }
-            },
-            actions = listOf(
-                GuiMenuActionIntent.AnyClick("timer", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER_ACTION)),
-            ),
-        )
+        // 簡易GUIではプログラム共通設定（起動条件・タイマー）を扱いません。
+        // 移動は左クリックのみのため、方向ごとに専用ボタンを置きます。
+        // 実行不能な方向のボタンは位置を維持したまま装飾表示にします。
+        elements += navigateButton(player, 36, "left", Material.RECOVERY_COMPASS,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT,
+            layout.canMove(origin, -1, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT))
+        elements += navigateButton(player, 37, "right", Material.RECOVERY_COMPASS,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT,
+            layout.canMove(origin, 1, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT))
+        elements += navigateButton(player, 41, "up", Material.RECOVERY_COMPASS,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP,
+            layout.canMove(origin, 0, -1, VIEWPORT_WIDTH, VIEWPORT_HEIGHT))
+        elements += navigateButton(player, 43, "down", Material.RECOVERY_COMPASS,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN,
+            layout.canMove(origin, 0, 1, VIEWPORT_WIDTH, VIEWPORT_HEIGHT))
         elements += KcGui.menuEntry(
             player = player,
             slot = 38,
@@ -354,60 +293,75 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 GuiMenuActionIntent.AnyClick("save_library", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SAVE_ACTION)),
             ),
         )
-        elements += KcGui.menuEntry(
-            player = player,
-            slot = 44,
-            material = Material.RECOVERY_COMPASS,
-            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NAVIGATE),
-            style = GuiNameStyle.PRIMARY,
-            description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NAVIGATE_DESCRIPTION),
-            // 実行不能な方向の操作行は表示しない（移動不能時は無言・無音・状態不変、仕様14）。
-            actions = buildList {
-                if (layout.canMove(origin, -1, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
-                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT)))
-                }
-                if (layout.canMove(origin, 1, 0, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
-                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.PLAIN_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT)))
-                }
-                if (layout.canMove(origin, 0, -1, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
-                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_LEFT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP)))
-                }
-                if (layout.canMove(origin, 0, 1, VIEWPORT_WIDTH, VIEWPORT_HEIGHT)) {
-                    add(GuiMenuActionIntent.GestureAction("navigate", MenuGesture.SHIFT_RIGHT, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN)))
-                }
-            },
-        )
         return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)), elements)
     }
 
-    private fun commandElement(player: Player, slot: Int, node: CommandNode) = KcGui.menuEntry(
-        player = player,
-        slot = slot,
-        material = node.type.icon,
-        name = KcI18n.text(player, node.type.key),
-        role = GuiElementRole.ACTION,
-        description = KcI18n.list(player, node.type.descriptionKey),
-        data = listOf(
-            GuiMenuEntryData(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SETTINGS_SUMMARY_LABEL),
-                commandSummary(player, node),
+    /**
+     * 簡易GUIの移動ボタンです。左クリックのみで方向が確定するため、
+     * 方向ごとに独立したAnyClick項目として生成します。
+     */
+    private fun navigateButton(
+        player: Player,
+        slot: Int,
+        direction: String,
+        material: Material,
+        labelKey: LocalizationKey<String>,
+        enabled: Boolean,
+    ): MenuElement {
+        if (!enabled) {
+            return MenuElement(
+                slot,
+                KcGui.elements.decoration(Material.WHITE_STAINED_GLASS_PANE),
+                GuiElementRole.DECORATION,
+            )
+        }
+        return KcGui.menuEntry(
+            player = player,
+            slot = slot,
+            material = material,
+            name = KcI18n.text(player, labelKey),
+            style = GuiNameStyle.PRIMARY,
+            actions = listOf(
+                GuiMenuActionIntent.AnyClick(
+                    actionId = "navigate",
+                    label = KcI18n.text(player, labelKey),
+                    payload = mapOf("direction" to direction),
+                ),
             ),
-        ),
-        actions = listOf(
-            GuiMenuActionIntent.GestureAction(
-                "command",
-                MenuGesture.PLAIN_LEFT,
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_EDIT_ACTION),
-                mapOf("nodeId" to node.id.toString()),
+        )
+    }
+
+    private fun commandElement(player: Player, slot: Int, node: CommandNode): MenuElement {
+        // 簡易GUIは左クリックのみのため、編集・削除の区別はジェスチャーで行いません。
+        // 削除は設定画面内の削除項目へ集約し、制御系コマンドは表示のみとします。
+        val editable = CommandPresentationPolicy.isSimpleEditable(node.type)
+        return KcGui.menuEntry(
+            player = player,
+            slot = slot,
+            material = node.type.icon,
+            name = KcI18n.text(player, node.type.key),
+            role = GuiElementRole.ACTION,
+            description = KcI18n.list(player, node.type.descriptionKey) +
+                if (editable) emptyList() else KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_LOCKED_DESCRIPTION),
+            data = listOf(
+                GuiMenuEntryData(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SETTINGS_SUMMARY_LABEL),
+                    commandSummary(player, node),
+                ),
             ),
-            GuiMenuActionIntent.GestureAction(
-                "command",
-                MenuGesture.PLAIN_RIGHT,
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DELETE_ACTION),
-                mapOf("nodeId" to node.id.toString()),
+            actions = listOf(
+                GuiMenuActionIntent.AnyClick(
+                    "command",
+                    KcI18n.text(
+                        player,
+                        if (editable) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_EDIT_ACTION
+                        else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_LOCKED_ACTION,
+                    ),
+                    mapOf("nodeId" to node.id.toString()),
+                ),
             ),
-        ),
-    )
+        )
+    }
 
     private fun commandSummary(player: Player, node: CommandNode): String = when (node.type) {
         CommandType.TELEPORT -> {
@@ -722,15 +676,5 @@ internal object OverviewAxis {
             distance++
         }
         return selected.sorted()
-    }
-}
-
-object ViewportNavigation {
-    fun delta(left: Boolean, right: Boolean, shift: Boolean): MapPoint? = when {
-        shift && left && !right -> MapPoint(0, -1)
-        shift && right && !left -> MapPoint(0, 1)
-        !shift && left && !right -> MapPoint(-1, 0)
-        !shift && right && !left -> MapPoint(1, 0)
-        else -> null
     }
 }

@@ -565,7 +565,7 @@ class GestureLowerPanel(
                     KcI18n.text(
                         player,
                         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS,
-                        mapOf("value" to script.timer.intervalSeconds),
+                        mapOf("value" to CommandDialogSpecs.formatSeconds(script.timer.intervalSeconds)),
                     )
             } else {
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED)
