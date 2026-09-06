@@ -1489,10 +1489,10 @@ class GestureSequenceEditor(
                         val incomplete = node.id in incompleteNodeIds
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
                         // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
-                        // 失敗=赤、待機中=青緑、実行中・ループ実行中=空色、成功済み=黄緑です。
+                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
                         val backgroundMaterial = when {
                             isFailedNode -> Material.RED_SHULKER_BOX
-                            isWaitingNode -> Material.CYAN_SHULKER_BOX
+                            isWaitingNode -> Material.YELLOW_SHULKER_BOX
                             isRunningNode -> Material.LIGHT_BLUE_SHULKER_BOX
                             isLoopActiveStart -> Material.LIGHT_BLUE_SHULKER_BOX
                             isSuccessfulNode -> Material.LIME_SHULKER_BOX

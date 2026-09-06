@@ -186,13 +186,15 @@ class TestExecutionObserverTest {
         assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         assertTrue(state.successfulNodeIds.contains(startId))
         assertTrue(state.passedEdges.contains(TestExecutionEdge(bodyId, GraphEditor.Edge.NEXT)))
-        // +20で戻り青＋FOR内白化＋S白化が行われます。
+        assertTrue(state.successfulNodeIds.contains(endId))
+        // +20で戻り青＋FOR内白化＋S白化＋END灰色化が行われます。
         fake.runPending()
         assertEquals(endId, state.waitingLoopReturnId)
         assertFalse(state.passedEdges.contains(TestExecutionEdge(bodyId, GraphEditor.Edge.NEXT)))
         assertFalse(state.successfulNodeIds.contains(bodyId))
         assertFalse(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         assertFalse(state.successfulNodeIds.contains(startId))
+        assertFalse(state.successfulNodeIds.contains(endId))
         // +40で戻り白＋S相当の表示へ移ります。
         fake.runPending()
         assertNull(state.waitingLoopReturnId)
@@ -203,6 +205,11 @@ class TestExecutionObserverTest {
         assertTrue(state.passedEdges.contains(TestExecutionEdge(startId, GraphEditor.Edge.FOR_BODY)))
         assertEquals(bodyId, state.currentNodeId)
         assertFalse(state.successfulNodeIds.contains(startId))
+        // 次周回のEND完了で黄緑に戻ります。
+        observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 4, 66L))
+        observer.onNodeStarted(started(script, endId, CommandType.FOR_END, 4, 67L))
+        observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, bodyId, 5, 68L, loopReturn = true))
+        assertTrue(state.successfulNodeIds.contains(endId))
     }
 
     /** runTaskLaterだけを記録する試験用スケジューラです。 */

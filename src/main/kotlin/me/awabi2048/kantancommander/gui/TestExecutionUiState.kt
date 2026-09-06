@@ -52,7 +52,7 @@ data class GestureTestState(
     var waitingLoopReturnId: UUID? = null,
     /** 待機表示中の次の枝です。待機が20tickを超えるときだけ設定されます。 */
     var waitingEdge: TestExecutionEdge? = null,
-    /** 待機表示中のWAITノードです。青緑で示します。 */
+    /** 待機表示中のWAITノードです。黄色で示します。 */
     var waitingNodeId: UUID? = null,
     var failedNodeId: UUID? = null,
     var startedAtTick: Long = 0L,
@@ -179,6 +179,8 @@ class GestureTestExecutionObserver(
                             state.passedEdges.remove(reentry)
                             state.successfulNodeIds.remove(reentry.sourceId)
                         }
+                        // 戻り経路が水色の間、ENDも灰色に戻します。次回の完了で黄緑に戻ります。
+                        state.successfulNodeIds.remove(event.nodeId)
                         state.waitingLoopReturnId = event.nodeId
                         onChanged()
                         // さらに20tick後に戻り経路を白へ戻し、S相当の待機表示へ移します。
