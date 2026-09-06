@@ -49,13 +49,14 @@ class TestExecutionObserverTest {
         tick: Long,
         loopReturn: Boolean = false,
         nextWaitTicks: Long = 0L,
+        outcome: NodeExecutionOutcome = NodeExecutionOutcome.SUCCESS,
     ) = ExecutionNodeFinished(
         scriptId = script.id,
         nodeId = nodeId,
         nodeType = type,
         depth = 0,
         attemptNumber = 0,
-        outcome = NodeExecutionOutcome.SUCCESS,
+        outcome = outcome,
         successfulNodeCount = count,
         nextNodeId = nextId,
         tick = tick,
@@ -70,6 +71,62 @@ class TestExecutionObserverTest {
         attempt: Int,
         tick: Long,
     ) = ExecutionNodeStarted(script.id, nodeId, type, 0, attempt, tick)
+
+    @Test
+    fun `tracks active loop from start to normal exit`() {
+        // START完了で実行中扱いになり、終了ノードの通常完了で閉じます。
+        val (script, startId, bodyId) = loopScript()
+        val endId = requireNotNull(script.graph.nodes[startId]?.pairedNodeId)
+        val state = testState(script)
+        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        assertTrue(state.activeLoopStarts.isEmpty())
+        observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
+        assertEquals(listOf(startId), state.activeLoopStarts.toList())
+        // 復帰では閉じません。
+        observer.onNodeFinished(finished(script, bodyId, CommandType.WAIT, endId, 2, 2L))
+        observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, bodyId, 3, 3L, loopReturn = true))
+        assertEquals(listOf(startId), state.activeLoopStarts.toList())
+        // 回数完了の退出で閉じます。次はループ外（null終端）へ進みます。
+        observer.onNodeFinished(finished(script, endId, CommandType.FOR_END, null, 4, 4L))
+        assertTrue(state.activeLoopStarts.isEmpty())
+    }
+
+    @Test
+    fun `pops innermost loop on successful break`() {
+        val (script, startId, bodyId) = loopScript()
+        val state = testState(script)
+        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
+        val breakId = UUID.randomUUID()
+        observer.onNodeFinished(finished(script, breakId, CommandType.BREAK, null, 2, 2L))
+        assertTrue(state.activeLoopStarts.isEmpty())
+    }
+
+    @Test
+    fun `keeps active loop on failed break`() {
+        // 枠がないBREAKの失敗では、無関係な実行中ループを閉じません。
+        val (script, startId, bodyId) = loopScript()
+        val state = testState(script)
+        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        observer.onNodeFinished(finished(script, startId, CommandType.FOR_START, bodyId, 1, 1L))
+        val breakId = UUID.randomUUID()
+        observer.onNodeFinished(
+            finished(script, breakId, CommandType.BREAK, null, 1, 2L, outcome = NodeExecutionOutcome.FAILED),
+        )
+        assertEquals(listOf(startId), state.activeLoopStarts.toList())
+    }
+
+    @Test
+    fun `excludes loop end from whitening set`() {
+        // 終了ノードの緑表示を白化から守るため、集合に含めません。
+        val (script, startId, _) = loopScript()
+        val endId = requireNotNull(script.graph.nodes[startId]?.pairedNodeId)
+        val state = testState(script)
+        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        val ids = observer.loopNodeIds(endId)
+        assertFalse(ids.contains(endId))
+        assertFalse(ids.contains(startId))
+    }
 
     @Test
     fun `commits passed edges on next start for white blue green order`() {

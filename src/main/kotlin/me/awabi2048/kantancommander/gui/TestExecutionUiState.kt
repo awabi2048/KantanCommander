@@ -41,6 +41,11 @@ data class GestureTestState(
     var passedEdges: MutableSet<TestExecutionEdge> = linkedSetOf(),
     /** 次の開始で白に戻すループ内ノード集合です。復帰完了時に保持します。 */
     var pendingLoopRestartNodes: Set<UUID>? = null,
+    /**
+     * 実行中のFORループの開始ノードの重ねです。STARTはFOR全体を表現するため、
+     * 全体が完了するまで水色で示します。入れ子は内側から積みます。
+     */
+    var activeLoopStarts: ArrayDeque<UUID> = ArrayDeque(),
     /** 再開時に黄緑へ戻すS→body再入場枝です。復帰完了時に保持します。 */
     var pendingRestartEdge: TestExecutionEdge? = null,
     /** 待機表示中のループ戻り経路のFOR_ENDです。水色で示します。 */
@@ -130,6 +135,22 @@ class GestureTestExecutionObserver(
             state.currentNodeId = null
             state.successfulNodeCount = event.successfulNodeCount
             state.successfulNodeIds += event.nodeId
+            // FOR開始の完了でループ実行を開始し、終了で閉じます。STARTはFOR全体を
+            // 表現するため、全体が完了するまで水色で示します。BREAK成功時は
+            // 最も内側のループが抜けるため、末尾を取り除きます。
+            when (event.nodeType) {
+                CommandType.FOR_START ->
+                    state.activeLoopStarts.addLast(event.nodeId)
+                CommandType.FOR_END ->
+                    if (!event.loopReturn) {
+                        state.snapshot.graph.nodes[event.nodeId]?.pairedNodeId?.let { startId ->
+                            state.activeLoopStarts.remove(startId)
+                        }
+                    }
+                CommandType.BREAK ->
+                    state.activeLoopStarts.pollLast()
+                else -> Unit
+            }
             // 直前までの移動を通過確定し、今回の移動を移動中として保持します。
             // 完了直後に黄緑へ変えると、待機表示の前に緑→水色→緑とちらつきます。
             pendingEdge?.let(state.passedEdges::add)
@@ -211,6 +232,7 @@ class GestureTestExecutionObserver(
      * 対応FOR_STARTからFOR_ENDまでの、現在ループ内部の最上位ノード集合です。
      * 開始ノード自身は含みません。以後の反復は開始ノードを経由しないため、
      * 含めると開始→本体の枝の通過表示が復元されなくなります。
+     * 終了ノード自身も含みません。末端到達の緑表示を白化から守るためです。
      */
     internal fun loopNodeIds(endNodeId: UUID): Set<UUID> {
         val end = state.snapshot.graph.nodes[endNodeId] ?: return setOf(endNodeId)
@@ -240,7 +262,7 @@ class GestureTestExecutionObserver(
                 else -> node.next?.let(queue::addLast)
             }
         }
-        return visited - startId
+        return visited - startId - endNodeId
     }
 
     private fun edgeFor(script: DiskScript, nodeId: UUID, nextNodeId: UUID?): TestExecutionEdge? {
