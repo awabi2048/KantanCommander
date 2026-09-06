@@ -2949,7 +2949,7 @@ class GestureLowerPanel(
         ))
     }
 
-    /** 実行中ステータス。項目と値を1つの左詰めTextDisplayへ縦2行で出します。 */
+    /** 実行中ステータス。項目と値を中央揃えの1行で出します。 */
     private fun buildTestStatus(state: GestureEditorState, player: Player): GestureGuiView {
         val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
         val visuals = mutableListOf<GestureGuiVisual>()
@@ -2962,27 +2962,30 @@ class GestureLowerPanel(
             220,
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_STATUS_TITLE)),
         )
-        addTestInfoRow(
+        addTestResultRow(
             visuals,
             "test-status-elapsed",
             0.21,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
             formatTestElapsed(test.elapsedTicks),
+            NamedTextColor.WHITE,
         )
-        addTestInfoRow(
+        addTestResultRow(
             visuals,
             "test-status-count",
             0.00,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
             test.successfulNodeCount.toString(),
+            NamedTextColor.WHITE,
         )
-        addTestInfoRow(
+        addTestResultRow(
             visuals,
             "test-status-log",
             -0.21,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT),
             if (test.logOutput) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON)
             else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF),
+            NamedTextColor.WHITE,
         )
         addText(
             visuals,
@@ -3109,29 +3112,8 @@ class GestureLowerPanel(
         return view(GestureLowerMode.TEST_RESULT, elements, visuals)
     }
 
-    private fun addTestInfoRow(
-        visuals: MutableList<GestureGuiVisual>,
-        id: String,
-        centerY: Double,
-        label: String,
-        value: String,
-    ) {
-        addText(
-            visuals,
-            id,
-            -0.90,
-            centerY,
-            0.005,
-            230,
-            Component.text(label, NamedTextColor.GRAY)
-                .append(Component.newline())
-                .append(Component.text(value, NamedTextColor.WHITE)),
-            alignment = GestureGuiTextAlignment.LEFT,
-        )
-    }
-
     /**
-     * 実行結果の項目行です。項目と値を半角スペース区切りで1行にまとめ、
+     * 実行結果・実行中ステータスの項目行です。項目と値を半角スペース区切りで1行にまとめ、
      * 中央揃えのTextDisplayへ出します。ラベルは灰色、値は指定色で分けます。
      */
     private fun addTestResultRow(

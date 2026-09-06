@@ -906,6 +906,8 @@ class GestureSequenceEditor(
         }
         fitTestViewport()
         playTestSound(player, TEST_SOUND_START_PITCH)
+        // 開始を操作者へ通知します。
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_STARTED))
         startTestRefreshTask()
         val observer = GestureTestExecutionObserver(
             test,
@@ -974,11 +976,18 @@ class GestureSequenceEditor(
         state.lowerMode = GestureLowerMode.TEST_RESULT
         testRefreshTask?.cancel()
         testRefreshTask = null
-        // 終了音は操作者だけへ鳴らします。中断音は中断操作時に再生済みです。
+        // 終了音と終了通知は操作者だけへ出します。
+        // 中断時は中断操作時の通知が既にあるため、ここでは何もしません。
         Bukkit.getPlayer(test.ownerId)?.takeIf(Player::isOnline)?.let { owner ->
             when (result.status) {
-                ExecutionFinishStatus.SUCCESS -> playTestSound(owner, TEST_SOUND_SUCCESS_PITCH)
-                ExecutionFinishStatus.FAILURE -> playTestSound(owner, TEST_SOUND_FAILURE_PITCH)
+                ExecutionFinishStatus.SUCCESS -> {
+                    playTestSound(owner, TEST_SOUND_SUCCESS_PITCH)
+                    owner.sendMessage(KcI18n.text(owner, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_FINISHED_SUCCESS))
+                }
+                ExecutionFinishStatus.FAILURE -> {
+                    playTestSound(owner, TEST_SOUND_FAILURE_PITCH)
+                    owner.sendMessage(KcI18n.text(owner, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_FINISHED_FAILURE))
+                }
                 ExecutionFinishStatus.CANCELLED -> Unit
             }
         }
@@ -1390,8 +1399,9 @@ class GestureSequenceEditor(
         val insertionPreview = if (testActive) null else insertionPreview(script, player)
         val renderGraph = insertionPreview?.graph ?: script.graph
         // テスト中はADDとその延長経路を除いた真の配置で描画します。
+        // testActiveが真のときtestは非nullであることが確定しています。
         val layout = (insertionPreview?.layout ?: persistedLayout).let { base ->
-            if (testActive) base.withoutEditArtifacts(test?.passedEdges.orEmpty()) else base
+            if (testActive) base.withoutEditArtifacts(test.passedEdges) else base
         }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
@@ -5255,7 +5265,8 @@ class GestureSequenceEditor(
             return null
         }
         // テスト中はADDとその延長経路を除いた真の配置で確認します。
-        if (testActive) return persistedLayout.withoutEditArtifacts(test?.passedEdges.orEmpty())
+        // testActiveが真のときtestは非nullであることが確定しています。
+        if (testActive) return persistedLayout.withoutEditArtifacts(test.passedEdges)
         return insertionPreview(script, player)?.layout ?: persistedLayout
     }
 
