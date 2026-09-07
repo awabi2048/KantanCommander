@@ -8,6 +8,7 @@ import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
 import org.bukkit.event.inventory.InventoryOpenEvent
 import org.bukkit.event.player.PlayerChangedWorldEvent
+import org.bukkit.event.player.PlayerGameModeChangeEvent
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerRespawnEvent
 import org.bukkit.inventory.ItemStack
@@ -22,18 +23,43 @@ import org.bukkit.inventory.ItemStack
  * 境界（所持品・防具・オフハンド）で正規化します。
  */
 class ControlBlockInventorySync(private val plugin: KantanCommanderPlugin) : Listener {
+    companion object {
+        /** 権限適用の非同期完了を待つ遅延再評価の遅延tick数です。 */
+        const val FOLLOWUP_DELAY_TICKS = 10L
+    }
+
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    fun onJoin(event: PlayerJoinEvent) = normalizeSafely(event.player)
+    fun onJoin(event: PlayerJoinEvent) {
+        normalizeSafely(event.player)
+        normalizeLater(event.player)
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onRespawn(event: PlayerRespawnEvent) = normalizeSafely(event.player)
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    fun onWorldChange(event: PlayerChangedWorldEvent) = normalizeSafely(event.player)
+    fun onWorldChange(event: PlayerChangedWorldEvent) {
+        normalizeSafely(event.player)
+        normalizeLater(event.player)
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onGameModeChange(event: PlayerGameModeChangeEvent) = normalizeSafely(event.player)
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onInventoryOpen(event: InventoryOpenEvent) {
         (event.player as? Player)?.let(::normalizeSafely)
+    }
+
+    /**
+     * Chanpon側の権限適用が非同期で完了する場合に備え、最終状態でもう一度
+     * 正規化します。対象がオフラインになった場合は何もしません。
+     */
+    private fun normalizeLater(player: Player) {
+        val playerId = player.uniqueId
+        plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            plugin.server.getPlayer(playerId)?.let(::normalizeSafely)
+        }, FOLLOWUP_DELAY_TICKS)
     }
 
     fun normalize(player: Player) {
