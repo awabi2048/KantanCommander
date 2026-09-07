@@ -3458,7 +3458,9 @@ class GestureSequenceEditor(
             ParticleSettings.PARAM_COUNT,
         )
         val specs = parameterKeys.associateWith { key -> requireNotNull(CommandDialogSpecs.field(node, key)) }
-        val values = parameterKeys.associateWith { key -> node.string(key) }
+        // Inventory GUIと同じく既定値で補完します。未設定時に空欄で開くと必須検証に
+        // 必ず失敗し、両GUIで同じ値を表示しているのに編集結果が変わります。
+        val values = parameterKeys.associateWith { key -> node.string(key, node.type.defaults[key].orEmpty()) }
         showInputDialog(
             player = player,
             body = CommandDialogSpecs.particleParametersBody(player),

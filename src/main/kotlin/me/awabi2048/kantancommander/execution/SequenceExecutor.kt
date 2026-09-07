@@ -1055,8 +1055,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val origin = node.particlePositionSpec
             ?.let { resolvePosition(it, session, context) ?: return false }
             ?: effectiveOrigin
-        val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
-            .getOrNull() ?: return false
+        val data = if (ParticleSettings.requiresData(particle)) {
+            ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
+                .getOrNull() ?: return false
+        } else {
+            // 詳細データを必要としない種類は保存値を無視し、旧保存の残存値で
+            // 実行を止めません。検証側も同じく対象外にしています。
+            ParticleSettings.ParticleDataSpec.None
+        }
         val bukkitData = data.toBukkitData(origin)
         if (ParticleSettings.requiresData(particle) && bukkitData == null) return false
 

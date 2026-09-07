@@ -307,7 +307,9 @@ object ExecutableScriptValidator {
         val particle = ParticleSettings.particle(node)
         if (particle == null) {
             errors += nodeError(node, path, setOf(ParticleSettings.PARAM_PARTICLE), "パーティクルの種類が不正です")
-        } else {
+        } else if (ParticleSettings.requiresData(particle)) {
+            // 詳細データを必要とする種類だけ検証します。不要な種類の残存値は
+            // 表示・実行へ漏らさないため、旧保存データの救済として対象外にします。
             val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
             if (data.isFailure) {
                 errors += nodeError(node, path, setOf(ParticleSettings.PARAM_DATA), "パーティクルの詳細データが不正です")
