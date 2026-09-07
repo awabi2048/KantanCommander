@@ -24,6 +24,8 @@ import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.execution.TestExecutionCoordinator
 import me.awabi2048.kantancommander.execution.TestExecutionPreferences
 import me.awabi2048.kantancommander.execution.SummonedEntityTracker
+import me.awabi2048.kantancommander.feedback.FeedbackCleanupListener
+import me.awabi2048.kantancommander.feedback.PlayerFeedbackService
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
@@ -49,7 +51,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "815557cef7c9d773e13fa28145209a24d4c04e17595198a26dd8c8ea8d4dd9fa"
+    "046e4db096d8ef50a8e70571862a4f549530b5bb3b5a70159f51541821753402"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -81,6 +83,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var itemSelection: ItemSelectionListener
         private set
     lateinit var placementAccess: PlacementAccessPolicy
+        private set
+    lateinit var feedback: PlayerFeedbackService
         private set
     lateinit var exporter: VanillaDatapackExporter
         private set
@@ -216,6 +220,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         commandEditMenu = CommandEditMenu(this)
         gestureEditor = GestureEditorFacade(this)
         placementAccess = PlacementAccessPolicy(this)
+        feedback = PlayerFeedbackService()
         triggerListener = RedstoneTriggerListener(this)
 
         getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this, itemGrantService))
@@ -253,6 +258,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(summonedEntities, this)
+        pm.registerEvents(FeedbackCleanupListener(this), this)
     }
 
     internal fun resetActivationTiming(scriptId: java.util.UUID) {

@@ -1,29 +1,38 @@
 package me.awabi2048.kantancommander.security
 
-import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
 
 class PlacementAccessRulesTest {
     @Test
-    fun `admin or MyWorld build permission grants management`() {
-        assertTrue(PlacementAccessRules.canManage(admin = true, canBuildInWorld = false))
-        assertTrue(PlacementAccessRules.canManage(admin = false, canBuildInWorld = true))
+    fun `admin bypasses every restriction`() {
+        assertEquals(
+            PlacementDecision.ALLOW,
+            PlacementAccessRules.decide(admin = true, inMyWorld = false, toolEnabled = false),
+        )
     }
 
     @Test
-    fun `ordinary player without MyWorld build permission cannot manage`() {
-        assertFalse(PlacementAccessRules.canManage(admin = false, canBuildInWorld = false))
+    fun `outside MyWorld denies before tool permission`() {
+        assertEquals(
+            PlacementDecision.OUTSIDE_MY_WORLD,
+            PlacementAccessRules.decide(admin = false, inMyWorld = false, toolEnabled = true),
+        )
     }
 
     @Test
-    fun `disabled extended command block tool denies even an admin`() {
-        assertFalse(
-            PlacementAccessRules.canManage(
-                admin = true,
-                canBuildInWorld = true,
-                extendedCommandBlockEnabled = false,
-            ),
+    fun `missing tool permission denies inside MyWorld`() {
+        assertEquals(
+            PlacementDecision.NO_TOOL_PERMISSION,
+            PlacementAccessRules.decide(admin = false, inMyWorld = true, toolEnabled = false),
+        )
+    }
+
+    @Test
+    fun `granted tool permission allows inside MyWorld`() {
+        assertEquals(
+            PlacementDecision.ALLOW,
+            PlacementAccessRules.decide(admin = false, inMyWorld = true, toolEnabled = true),
         )
     }
 }
