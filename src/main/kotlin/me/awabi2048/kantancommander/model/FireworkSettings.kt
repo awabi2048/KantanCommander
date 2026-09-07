@@ -91,20 +91,6 @@ object FireworkSettings {
         CommandValueRules.material(raw, allowAir = false) == Material.FIREWORK_ROCKET
 
     /**
-     * 試射の発射地点（エディターの存在するブロックの中央）を返します。
-     *
-     * プレイヤー座標の小数部に依存せず、試射のたびに同一地点から打ち上げます。
-     * Yもブロック中央とし、打ち上げ高さの起点を確定させます。
-     */
-    fun editorBlockCenter(playerLocation: org.bukkit.Location): org.bukkit.Location =
-        org.bukkit.Location(
-            playerLocation.world,
-            playerLocation.blockX + 0.5,
-            playerLocation.blockY + 0.5,
-            playerLocation.blockZ + 0.5,
-        )
-
-    /**
      * 出力・実行で共有する花火効果の型付き表現です。
      *
      * BukkitのFireworkEffectから抽出し、バニラSNBT（Fireworks.Explosions）へ
