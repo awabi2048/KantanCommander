@@ -250,7 +250,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             callback = callback,
         )
         handle.bind { reason -> cancelSession(session, reason) }
-        plugin.logger.info("[KantanCommander] start disk=${script.id} world=${origin.world.name} location=${origin.blockX},${origin.blockY},${origin.blockZ}")
         runGraph(script, script.graph, session, 0) { success ->
             finishSession(
                 session,
@@ -339,7 +338,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         }
         session.executed++
-        plugin.logger.info("[KantanCommander] execute root=${session.rootId} disk=${script.id} node=${node.id} type=${node.type} count=${session.executed}/${session.budget}")
         val attemptNumber = if (depth == 0) {
             session.attemptCount++
         } else {
@@ -432,7 +430,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
                 session.previousContext = effectiveContext
                 session.lastDetail = "分岐: ${if (result) "TRUE" else "FALSE"} に進んだ"
-                plugin.logger.info("[KantanCommander] condition disk=${script.id} node=${node.id} result=$result")
                 next(if (result) node.trueNext else node.falseNext, NodeExecutionOutcome.SUCCESS)
             }
             CommandType.DISK_CALL -> {
@@ -631,11 +628,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] finish observer failed", failure) }
         runCatching { session.callback(result) }
             .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] execution callback failed", failure) }
-        plugin.logger.info(
-            "[KantanCommander] finish disk=${session.rootId} status=$status " +
-                "successful=${session.successfulRootNodeCount} attempts=${session.attemptCount} " +
-                "executed=${session.executed}/${session.budget} elapsedTicks=$elapsed",
-        )
     }
 
     private fun beginFor(
@@ -700,7 +692,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 followUpDelayTicks = restartWait,
             )
         } else {
-            plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=count_complete iterations=${frame.count}")
             session.loops.remove(frame)
             session.currentLoopCount = session.loops.lastOrNull()?.count
             session.lastDetail = "ループを終了した"
@@ -724,7 +715,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 script, graph, node, session, depth, session.currentAttemptNumber, null,
                 NodeExecutionOutcome.FAILED, done, "break_outside_for",
             )
-        plugin.logger.info("[KantanCommander] for-finish root=${session.rootId} disk=${script.id} node=${frame.startId} reason=break iterations=${frame.count}")
         session.context = frame.startContext
         session.currentLoopCount = session.loops.lastOrNull()?.count
         session.lastDetail = "ループを中断した"

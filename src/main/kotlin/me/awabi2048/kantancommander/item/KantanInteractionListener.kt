@@ -214,7 +214,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val player = event.player
         if (!plugin.placementAccess.requireManage(player, event.block.world.name)) {
             event.isCancelled = true
-            plugin.logger.info("かんたんコマンダー制御ブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
             return
         }
         // 同梱プログラムの有無を一度だけ確定し、復元失敗時の拒否判定と配置処理で
@@ -232,7 +231,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             }
         } else null
         if (hasEmbeddedProgram && embeddedProgram == null) return
-        plugin.logger.info("かんたんコマンダー制御ブロックの設置を検出: player=${player.name}, location=${event.block.location}, material=${event.block.type}")
         // バニラの配置イベントが配置位置を保証済み（置換可能性・プレイヤー重なりもバニラが検証済み）のため、
         // 自前の再判定は行わず、既存配置物の重複と保護判定だけを追加確認する。
         // 失敗時は元イベントをキャンセルし、バニラの巻き戻しで配置位置を元へ戻す。
@@ -270,11 +268,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         embeddedProgram: me.awabi2048.kantancommander.model.DiskScript? = null,
     ): Boolean {
         val block = location.block
-        // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにする。
-        // 原因の追跡用に、失敗の理由を常時サーバーログへ記録する。
+        // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにし、
+        // 定型のサーバーログも残さない。異常系（保存失敗等）はWARNINGで記録する。
         // バニラが配置位置を保証済みのため置換可能性は再判定せず、Kantan独自の重複チェックだけ行う。
         if (plugin.placements.find(block.location) != null) {
-            plugin.logger.info("既存の配置物があるため設置せず: location=${block.location}, material=${block.type}")
             return false
         }
 
@@ -283,7 +280,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             block.location.clone().add(1.0, 1.0, 1.0).toVector(),
         )
         if (player.boundingBox.overlaps(targetBox)) {
-            plugin.logger.info("プレイヤーと重なる位置のため設置せず: player=${player.name}, location=${block.location}")
             return false
         }
 
@@ -298,10 +294,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {
             plugin.scripts.delete(placedScript.id)
-            plugin.logger.info(
-                "ブロック状態が設置不可のため設置せず: location=${block.location}, " +
-                    "target=${block.type}, material=$material",
-            )
             return false
         }
         // バニラの一時設置（infested_stone）を実体のガラスへ置き換える。
@@ -342,7 +334,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         // 後続リスナー（保護プラグイン等）が元イベントをキャンセルして巻き戻した場合に備え、
         // 次のtickで実体が残っているかを確認し、残っていなければ配置を撤去する。
         scheduleGhostCheck(placement, block.location)
-        plugin.logger.info("かんたんコマンダー制御ブロックを設置: placement=${placement.key}, script=${placedScript.id}")
         return true
     }
 
@@ -352,9 +343,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             val world = plugin.server.getWorld(placement.world) ?: return@Runnable
             val block = world.getBlockAt(placement.x, placement.y, placement.z)
             if (PlacedBlockMaterials.isPlacedBlock(block.type)) return@Runnable
-            plugin.logger.info(
-                "設置直後に配置ブロックが消失したため配置を撤去: placement=${placement.key}, material=${block.type}",
-            )
             // 配置が外部要因で消えた場合も、編集中のEntity・入力claim・Dialogを
             // 先に閉じて、削除済みスクリプトへ遅延入力が届かないようにします。
             plugin.gestureEditor.closeForPlacement(placement)
@@ -392,10 +380,11 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         var outputScript: me.awabi2048.kantancommander.model.DiskScript? = null
         var outputItem: org.bukkit.inventory.ItemStack? = null
         // ノードがなくても、名前またはタイマーを明示編集したスクリプトは出力します。
+        // 内容がない場合のスキップは定型のため記録しません。
         if (source?.hasDiskContent() == true) {
             val copiedScript = runCatching { plugin.scripts.copyForItem(source) }.getOrElse { error ->
                 plugin.logger.log(
-                    java.util.logging.Level.INFO,
+                    java.util.logging.Level.WARNING,
                     "破壊時のスクリプト複製に失敗したため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}",
                     error,
                 )
@@ -406,7 +395,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 outputItem = runCatching { KantanItemService.createDisk(copiedScript, player) }.getOrElse { error ->
                     runCatching { plugin.scripts.delete(copiedScript.id) }
                     plugin.logger.log(
-                        java.util.logging.Level.INFO,
+                        java.util.logging.Level.WARNING,
                         "破壊時のプログラムディスク生成に失敗: location=${block.location}, script=${copiedScript.id}",
                         error,
                     )
@@ -414,10 +403,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                     null
                 }
             }
-        } else if (source == null) {
-            plugin.logger.info("参照スクリプトが消失しているため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}")
-        } else {
-            plugin.logger.info("内容が空のためディスクを出力せず破壊: location=${block.location}, script=${placement.scriptId}")
         }
         // 配置台帳を先に保存します。表示体やブロックを先に消すと、保存失敗時に
         // ワールド上だけ消えた「幽霊配置」になり、再起動後の復元対象と一致しません。
@@ -454,8 +439,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         outputItem?.let { item ->
             player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
-            plugin.logger.info("破壊時のディスク出力完了: location=${block.location}, script=${outputScript?.id}")
         }
-        plugin.logger.info("かんたんコマンダー制御ブロックの破壊処理完了: placement=${placement.key}")
     }
 }
