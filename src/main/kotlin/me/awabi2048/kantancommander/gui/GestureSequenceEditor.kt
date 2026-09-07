@@ -1550,25 +1550,20 @@ class GestureSequenceEditor(
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
-                        // 折りたたみ中のFOR開始は、背景の左右の外縁へ空色の縁取りを付けます。
+                        // 折りたたみ中のFOR開始は、背景の右の外縁へ空色の縁取りを付けます。
                         // 太さはアイコン幅の20%、高さはアイコンと同じで、背景の外側に
                         // 配置します。隣接ノードは2セル周期のため縁取りは届きません。
                         if (isCollapsedForStart) {
                             val frameThickness = metrics.iconSize * 0.20
                             val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
-                            listOf(
-                                Triple("left", cx - frameOffset, cy),
-                                Triple("right", cx + frameOffset, cy),
-                            ).forEach { (name, x, y) ->
-                                visuals.add(GestureGuiVisual.Block(
-                                    visualId = "node-collapsed-frame-$name-${node.id}",
-                                    x = x, y = y,
-                                    width = frameThickness,
-                                    height = metrics.iconSize,
-                                    blockData = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
-                                    layer = GestureEditorLayout.ICON_LAYER,
-                                ))
-                            }
+                            visuals.add(GestureGuiVisual.Block(
+                                visualId = "node-collapsed-frame-right-${node.id}",
+                                x = cx + frameOffset, y = cy,
+                                width = frameThickness,
+                                height = metrics.iconSize,
+                                blockData = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
+                                layer = GestureEditorLayout.ICON_LAYER,
+                            ))
                         }
                         // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
                         // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
