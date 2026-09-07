@@ -120,8 +120,15 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 plugin.placementAccess.notifyDenied(player, decision)
                 return
             }
-            event.item?.let {
-                if (KantanItemService.normalizeControlBlockView(it, locked = false)) {
+            val held = event.item
+            if (held != null) {
+                val converted = KantanItemService.normalizeControlBlockView(held, locked = false)
+                if (converted != null && !converted.isSimilar(held)) {
+                    if (event.hand == EquipmentSlot.OFF_HAND) {
+                        player.inventory.setItemInOffHand(converted)
+                    } else {
+                        player.inventory.setItemInMainHand(converted)
+                    }
                     player.updateInventory()
                 }
             }
@@ -241,7 +248,6 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         val placement = plugin.placements.find(block.location) ?: return
         if (!plugin.placementAccess.requireManage(event.player, placement.world)) {
             event.isCancelled = true
-            plugin.logger.info("かんたんコマンダー制御ブロックの破壊を権限不足で拒否: player=${event.player.name}, location=${block.location}")
             return
         }
         event.isCancelled = true

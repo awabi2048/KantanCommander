@@ -41,13 +41,27 @@ class ControlBlockInventorySync(private val plugin: KantanCommanderPlugin) : Lis
             plugin.placementAccess.decide(player, player.world.name) != PlacementDecision.ALLOW
         var changed = false
         val inventory = player.inventory
-        // 所持品・防具は実体の参照を直接正規化します。
-        (inventory.storageContents + inventory.armorContents).filterNotNull().forEach { stack ->
-            if (normalizeStack(player, stack, locked)) changed = true
+        // 所持品は表示変換で実体が替わるため、位置指定で書き戻します。
+        val storage = inventory.storageContents
+        storage.forEachIndexed { index, stack ->
+            if (stack != null && normalizeSlot(player, { inventory.setItem(index, it) }, stack, locked)) {
+                changed = true
+            }
+        }
+        // 防具は配列をまとめて書き戻します。
+        val armor = inventory.armorContents
+        var armorChanged = false
+        armor.forEachIndexed { index, stack ->
+            if (stack != null && normalizeSlot(player, { armor[index] = it }, stack, locked)) {
+                armorChanged = true
+            }
+        }
+        if (armorChanged) {
+            inventory.armorContents = armor
+            changed = true
         }
         val offHand = inventory.itemInOffHand
-        if (normalizeStack(player, offHand, locked)) {
-            inventory.setItemInOffHand(offHand)
+        if (normalizeSlot(player, inventory::setItemInOffHand, offHand, locked)) {
             changed = true
         }
         if (changed) player.updateInventory()
@@ -57,18 +71,27 @@ class ControlBlockInventorySync(private val plugin: KantanCommanderPlugin) : Lis
      * 1スロットを正規化します。複数stackは単体へ分割し、溢れは足元へ落とします。
      * いずれも消失・複製を起こさない経路だけを使います。
      */
-    private fun normalizeStack(player: Player, stack: ItemStack, locked: Boolean): Boolean {
+    private fun normalizeSlot(
+        player: Player,
+        writeBack: (ItemStack) -> Unit,
+        stack: ItemStack,
+        locked: Boolean,
+    ): Boolean {
         if (KantanItemService.kind(stack) != KantanItemKind.BLOCK) return false
         var changed = false
-        if (KantanItemService.isLockedView(stack) != locked) {
-            KantanItemService.normalizeControlBlockView(stack, locked)
+        val converted = KantanItemService.normalizeControlBlockView(stack, locked) ?: return false
+        if (!converted.isSimilar(stack)) {
+            // withTypeの複製は新規実体のため、元のスロットへ書き戻します。
+            // PDC・lore・同梱内容は正規化で維持されます。
+            writeBack(converted)
             changed = true
         }
-        if (stack.amount > 1) {
-            val extra = stack.amount - 1
-            stack.amount = 1
+        val target = if (changed) converted else stack
+        if (target.amount > 1) {
+            val extra = target.amount - 1
+            target.amount = 1
             repeat(extra) {
-                val single = stack.clone().apply { amount = 1 }
+                val single = target.clone().apply { amount = 1 }
                 player.inventory.addItem(single).values.forEach { overflow ->
                     player.world.dropItemNaturally(player.location, overflow)
                 }

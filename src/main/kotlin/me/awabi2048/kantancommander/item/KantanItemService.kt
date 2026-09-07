@@ -137,16 +137,21 @@ object KantanItemService {
         if (locked) lockedBlockMaterial else authorizedBlockMaterial
 
     /**
-     * 制御ブロックの表示素材を権限状態へ寄せます。PDC・名称・lore・同梱内容は
-     * 維持し、最大stack数も1へ正規化します。素材切替で成分が既定へ戻るため、
-     * 無機能アイテムの成分も共有パックで掛け直します。制御ブロック以外ではfalseを返します。
+     * 制御ブロックの表示素材を権限状態へ寄せたアイテムを返します。PDC・名称・
+     * lore・同梱内容・個数は維持し、最大stack数も1へ正規化します。素材切替で
+     * 成分が既定へ戻るため、無機能アイテムの成分も共有パックで掛け直します。
+     * 素材の書換は非推奨の破壊的setterを避け、コピーを返すwithTypeを使います。
+     * 制御ブロック以外ではnullを返します。
      */
-    fun normalizeControlBlockView(item: ItemStack, locked: Boolean): Boolean {
-        if (kind(item) != KantanItemKind.BLOCK) return false
-        item.type = blockViewMaterial(locked)
-        item.editMeta { meta -> meta.setMaxStackSize(1) }
-        PoisonousPotatoComponentPack.applyNonConsumable(item)
-        return true
+    fun normalizeControlBlockView(item: ItemStack, locked: Boolean): ItemStack? {
+        if (kind(item) != KantanItemKind.BLOCK) return null
+        val amount = item.amount.coerceAtLeast(1)
+        val converted = if (item.type == blockViewMaterial(locked)) item
+        else item.withType(blockViewMaterial(locked))
+        converted.amount = amount
+        converted.editMeta { meta -> meta.setMaxStackSize(1) }
+        PoisonousPotatoComponentPack.applyNonConsumable(converted)
+        return converted
     }
 
     fun isKantanItem(item: ItemStack?): Boolean = kind(item) != KantanItemKind.NONE

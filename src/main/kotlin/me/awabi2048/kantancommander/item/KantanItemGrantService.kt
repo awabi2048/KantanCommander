@@ -31,8 +31,10 @@ class KantanItemGrantService(private val plugin: KantanCommanderPlugin) {
                 val locked = plugin.placementAccess.decide(target, target.world.name) !=
                     PlacementDecision.ALLOW
                 repeat(amount) {
-                    val item = KantanItemService.createBlock(target)
-                    KantanItemService.normalizeControlBlockView(item, locked)
+                    val item = KantanItemService.normalizeControlBlockView(
+                        KantanItemService.createBlock(target),
+                        locked,
+                    ) ?: KantanItemService.createBlock(target)
                     target.inventory.addItem(item).values.forEach { overflow ->
                         dropped += overflow.amount
                         target.world.dropItemNaturally(target.location, overflow)
