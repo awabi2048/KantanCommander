@@ -171,10 +171,11 @@ class KantanStandaloneExportContributor(
     private companion object {
         val TEMPLATE_REFERENCE = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}")
         val DIRECT_VARIABLE_FIELDS = setOf("variable")
-        val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId")
+        val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
         val NON_TEXT_FIELDS = setOf(
             "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
-            "tagOperation", "soundScope", "shakeType", "overwrite", "inverted",
+            "tagOperation", "soundScope", "soundOperation", "soundCategory", "particleDisplayMode",
+            "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
         )
     }
 }

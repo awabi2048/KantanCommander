@@ -241,11 +241,12 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.visibleFields(teleport).any { it.key == "destinationFacing" })
 
         val sound = CommandType.PLAY_SOUND.newNode()
-        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
-        sound.params["soundScope"] = "WORLD"
-        assertFalse(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
-        sound.params["soundScope"] = "POSITION"
-        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundTargetPosition" })
+        sound.params["soundOperation"] = "STOP"
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundTargetPosition" })
+        assertFalse(CommandSettingsModel.visibleFields(sound).any { it.key == "soundScope" })
+        sound.params["soundOperation"] = "PLAY"
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundScope" })
     }
 
     @Test
@@ -295,8 +296,8 @@ class CommandSettingsModelTest {
             CommandSettingsModel.incompleteWarningKey(giveItem, "target").id,
         )
         assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.sound_parameters",
-            CommandSettingsModel.incompleteWarningKey(sound, "soundParameters").id,
+            "kantan_commander_clean.gui.gesture.warning.sound_setting",
+            CommandSettingsModel.incompleteWarningKey(sound, "soundSetting").id,
         )
         assertEquals(
             "kantan_commander_clean.gui.gesture.warning.destination_facing",
@@ -315,8 +316,12 @@ class CommandSettingsModelTest {
             CommandSettingsModel.incompleteWarningKey(sound, "soundScope").id,
         )
         assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.sound_position",
-            CommandSettingsModel.incompleteWarningKey(sound, "soundPosition").id,
+            "kantan_commander_clean.gui.gesture.warning.sound_target_position",
+            CommandSettingsModel.incompleteWarningKey(sound, "soundTargetPosition").id,
+        )
+        assertEquals(
+            "kantan_commander_clean.gui.gesture.warning.operation",
+            CommandSettingsModel.incompleteWarningKey(sound, "soundOperation").id,
         )
     }
 
@@ -331,9 +336,11 @@ class CommandSettingsModelTest {
         assertEquals("staySeconds", CommandSettingsModel.visibleAttentionFieldKey(display, "fadeOutSeconds"))
         assertEquals("text", CommandSettingsModel.visibleAttentionFieldKey(display, "subtitle"))
         assertEquals(null, CommandSettingsModel.visibleAttentionFieldKey(tellraw, "fadeInSeconds"))
-        assertEquals("soundParameters", CommandSettingsModel.visibleAttentionFieldKey(sound, "volume"))
-        assertEquals("soundParameters", CommandSettingsModel.visibleAttentionFieldKey(sound, "pitch"))
-        assertEquals("soundScope", CommandSettingsModel.visibleAttentionFieldKey(sound, "soundPosition"))
+        assertEquals("soundSetting", CommandSettingsModel.visibleAttentionFieldKey(sound, "volume"))
+        assertEquals("soundSetting", CommandSettingsModel.visibleAttentionFieldKey(sound, "pitch"))
+        assertEquals("soundSetting", CommandSettingsModel.visibleAttentionFieldKey(sound, "sound"))
+        assertEquals("soundTargetPosition", CommandSettingsModel.visibleAttentionFieldKey(sound, "soundPosition"))
+        assertEquals("soundTargetPosition", CommandSettingsModel.visibleAttentionFieldKey(sound, "target"))
     }
 
     @Test
@@ -425,11 +432,11 @@ class CommandSettingsModelTest {
         val node = CommandType.PLAY_SOUND.newNode()
         val fields = CommandSettingsModel.visibleFields(node)
 
-        assertEquals(listOf("sound", "soundParameters", "soundScope", "soundPosition"), fields.map { it.key })
+        assertEquals(listOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope"), fields.map { it.key })
         assertFalse(fields.any { it.key == "volume" || it.key == "pitch" })
 
         node.params["volume"] = "0.5"
-        assertTrue(CommandSettingsModel.isFieldConfigured(node, "soundParameters"))
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "soundSetting"))
     }
 
     @Test
@@ -512,12 +519,14 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `temporary sound and effect sources hide direct-only parameters`() {
+    fun `temporary sound and effect sources keep the bundled setting tab`() {
         val sound = CommandType.PLAY_SOUND.newNode().apply { soundTempRef = "soundValue" }
         val effect = CommandType.APPLY_EFFECT.newNode().apply { effectTempRef = "effectValue" }
 
-        assertFalse(CommandSettingsModel.visibleFields(sound).any { it.key == "soundParameters" })
-        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
+        // 束ね設定タブは設定元切替の入口として残り、直接値のダイアログだけが
+        // 一時変数参照へ委譲されます。
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundSetting" })
+        assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundTargetPosition" })
         assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "level" })
         assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "seconds" })
     }
@@ -577,14 +586,17 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `particle detail tab follows the selected kind`() {
+    fun `particle detail input follows the selected kind inside the particle tab`() {
         val node = CommandType.PARTICLE.newNode()
+        // 詳細データ欄は独立タブを持たず、「パーティクル」タブのダイアログに統合します。
         assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
+        assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "particle" })
 
         CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_PARTICLE, "DUST")
 
-        assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
-        assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particleData" })
+        assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "particle"))
+        assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particle" })
     }
 
 }

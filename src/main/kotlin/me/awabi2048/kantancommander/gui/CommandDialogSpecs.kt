@@ -14,7 +14,13 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.NumericExpression
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.FireworkSettings
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -256,7 +262,380 @@ internal object CommandDialogSpecs {
         input(player, ParticleSettings.PARAM_COUNT, count, positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT), KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT)),
     )
 
-    /** Particleの追加データは種類ごとに型が変わるため、現在のnodeから仕様を解決します。 */
+    /**
+     * 両GUIで共有するダイアログ入力欄の中立表現です。
+     *
+     * Gesture Dialog（MenuDialogInput.Text）とInventory Form（FormTextField）は
+     * 欄ごとの表示型が異なりますが、id・ラベル・初期値・検証仕様は同一です。
+     * 入力欄の定義はここへ集約し、各画面は表示型への変換だけを担当します。
+     */
+    data class FieldInput(
+        val id: String,
+        val labelKey: LocalizationKey<String>,
+        val initial: String,
+        val spec: Spec,
+    ) {
+        fun toMenuInput(player: Player): MenuDialogInput.Text =
+            MenuDialogInput.Text(
+                id = id,
+                label = Component.text(KcI18n.text(player, labelKey)),
+                initial = initial,
+                maxLength = spec.maxLength,
+            )
+    }
+
+    /** 停止対象のカテゴリは空欄（全カテゴリ）またはSoundCategory名を受け付けます。 */
+    val stopSoundCategory = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE,
+        32,
+        validate = { raw ->
+            if (raw.isBlank() || SoundSettings.isCategoryValue(raw)) {
+                null
+            } else {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STOP_SOUND_CATEGORY_INVALID
+            }
+        },
+        required = false,
+        format = InputFormat.ANY_STRING,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STOP_SOUND_BODY,
+    )
+
+    /** 停止対象の効果音IDは空欄（全音）またはサウンドIDを受け付けます。 */
+    val stopSoundId = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND,
+        64,
+        validate = { raw ->
+            if (raw.isBlank() || CommandValueRules.isSoundId(raw)) {
+                null
+            } else {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            }
+        },
+        required = false,
+        format = InputFormat.RESOURCE_ID,
+    )
+
+    /**
+     * 効果音設定の束ね入力を操作ごとに生成します。
+     *
+     * 再生はID・音量・ピッチ、停止はID（任意）・カテゴリ（任意）です。入力欄の
+     * idはparamsキーと一致させ、保存側でそのままsetParametersへ渡せるようにします。
+     */
+    fun soundSettingInputs(node: CommandNode): List<FieldInput> =
+        when (SoundSettings.operation(node)) {
+            SoundOperation.PLAY -> listOf(
+                FieldInput(
+                    SoundSettings.PARAM_SOUND,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND,
+                    node.string(SoundSettings.PARAM_SOUND, "minecraft:block.note_block.harp"),
+                    requireNotNull(field("sound")),
+                ),
+                FieldInput(
+                    SoundSettings.PARAM_VOLUME,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME,
+                    node.string(SoundSettings.PARAM_VOLUME, "1.0"),
+                    requireNotNull(field("volume")),
+                ),
+                FieldInput(
+                    SoundSettings.PARAM_PITCH,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH,
+                    node.string(SoundSettings.PARAM_PITCH, "1.0"),
+                    requireNotNull(field("pitch")),
+                ),
+            )
+            SoundOperation.STOP -> listOf(
+                FieldInput(
+                    SoundSettings.PARAM_SOUND,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND,
+                    node.string(SoundSettings.PARAM_SOUND),
+                    stopSoundId,
+                ),
+                FieldInput(
+                    SoundSettings.PARAM_CATEGORY,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE,
+                    node.string(SoundSettings.PARAM_CATEGORY),
+                    stopSoundCategory,
+                ),
+            )
+        }
+
+    /** 効果音設定の入力方法と制約だけを表示します。値は入力欄に表示します。 */
+    fun soundSettingBody(node: CommandNode, player: Player): List<Component> =
+        when (SoundSettings.operation(node)) {
+            SoundOperation.PLAY -> soundParametersBody(player)
+            SoundOperation.STOP -> listOf(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STOP_SOUND_BODY),
+            )
+        }
+
+    /**
+     * パーティクル種類と詳細データの束ね入力を生成します。
+     *
+     * VIBRATION／TRAILは終点XYZを1群として束ね、4項目以内に収めます。それ以外の
+     * 種類は従来の単一詳細文字列のまま扱います。入力欄idは保存キー（particle／
+     * particleData）または合成キー（vib*／trail*）であり、保存側で単一詳細文字列
+     * へ合成してからsetParameterへ渡します。
+     */
+    fun particleInputs(node: CommandNode): List<FieldInput> {
+        val particle = ParticleSettings.particle(node)
+        val idInput = FieldInput(
+            ParticleSettings.PARAM_PARTICLE,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
+            particle?.name ?: "FLAME",
+            requireNotNull(field(node, ParticleSettings.PARAM_PARTICLE)),
+        )
+        if (particle == null || !ParticleSettings.requiresData(particle)) return listOf(idInput)
+        return listOf(idInput) + particleDetailInputs(node, particle)
+    }
+
+    private fun particleDetailInputs(
+        node: CommandNode,
+        particle: org.bukkit.Particle,
+    ): List<FieldInput> {
+        val raw = node.string(ParticleSettings.PARAM_DATA)
+        return when (particle.dataType) {
+            org.bukkit.Vibration::class.java -> {
+                val parts = vibrationParts(raw)
+                listOf(
+                    FieldInput("vibX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX, parts[0], coordinateSpec("x")),
+                    FieldInput("vibY", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY, parts[1], coordinateSpec("y")),
+                    FieldInput("vibZ", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ, parts[2], coordinateSpec("z")),
+                    FieldInput(
+                        "vibT",
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TICKS,
+                        parts[3],
+                        integerRange(
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TICKS,
+                            0..Int.MAX_VALUE,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
+                        ),
+                    ),
+                )
+            }
+            org.bukkit.Particle.Trail::class.java -> {
+                val parts = trailParts(raw)
+                listOf(
+                    FieldInput("trailX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX, parts[0], coordinateSpec("x")),
+                    FieldInput("trailY", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY, parts[1], coordinateSpec("y")),
+                    FieldInput("trailZ", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ, parts[2], coordinateSpec("z")),
+                    FieldInput(
+                        "trailColor",
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_COLOR,
+                        parts[3],
+                        Spec(
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_COLOR,
+                            32,
+                            validate = { value ->
+                                if (runCatching {
+                                        ParticleSettings.parseData(
+                                            particle,
+                                            "${parts[0]} ${parts[1]} ${parts[2]} $value ${parts[4]}",
+                                        ).getOrThrow()
+                                    }.isFailure
+                                ) {
+                                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DATA_INVALID
+                                } else null
+                            },
+                            required = true,
+                            format = InputFormat.ANY_STRING,
+                        ),
+                    ),
+                    FieldInput(
+                        "trailT",
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TICKS,
+                        parts[4],
+                        integerRange(
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TICKS,
+                            0..Int.MAX_VALUE,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
+                        ),
+                    ),
+                )
+            }
+            else -> listOf(
+                FieldInput(
+                    ParticleSettings.PARAM_DATA,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DATA,
+                    raw,
+                    particleData(node),
+                ),
+            )
+        }
+    }
+
+    /** 詳細文字列をVIBRATIONの4群（終点XYZ＋到達tick）へ分解します。 */
+    fun vibrationParts(raw: String): List<String> {
+        val tokens = raw.trim().split(Regex("[,\\s]+")).filter(String::isNotBlank)
+        return listOf(
+            tokens.getOrElse(0) { "" },
+            tokens.getOrElse(1) { "" },
+            tokens.getOrElse(2) { "" },
+            tokens.getOrElse(3) { "" },
+        )
+    }
+
+    /** 詳細文字列をTRAILの5群（終点XYZ＋色＋表示tick）へ分解します。 */
+    fun trailParts(raw: String): List<String> {
+        val tokens = raw.trim().split(Regex("[,\\s]+")).filter(String::isNotBlank)
+        if (tokens.size < 5) return listOf("", "", "", "", "")
+        // 色は「#RRGGBB」1トークンまたは「R G B [A]」の可変長です。先頭3・末尾1を
+        // 固定し、残りを色として復元します。
+        val duration = tokens.last()
+        val head = tokens.dropLast(1)
+        if (head.size < 4) return listOf("", "", "", "", duration)
+        val color = head.drop(3).joinToString(" ")
+        return listOf(head[0], head[1], head[2], color, duration)
+    }
+
+    /** 分解したVIBRATION入力を単一詳細文字列へ合成します。 */
+    fun composeVibrationData(values: Map<String, String>): String =
+        listOf(values["vibX"], values["vibY"], values["vibZ"], values["vibT"])
+            .joinToString(" ") { it?.trim().orEmpty() }.trim()
+
+    /** 分解したTRAIL入力を単一詳細文字列へ合成します。 */
+    fun composeTrailData(values: Map<String, String>): String =
+        listOf(values["trailX"], values["trailY"], values["trailZ"], values["trailColor"], values["trailT"])
+            .joinToString(" ") { it?.trim().orEmpty() }.trim()
+
+    /**
+     * 図形数値の入力欄定義です。GUI表示型に依存しないため、両GUIで共有します。
+     *
+     * 終端位置（LINE／BOX）は位置選択画面で編集するため、ここには含めません。
+     */
+    data class GeometryNumberField(
+        val key: String,
+        val labelKey: LocalizationKey<String>,
+        val range: ClosedFloatingPointRange<Double>,
+    )
+
+    /** 現形状が必要とする数値欄の一覧を返します。 */
+    fun geometryNumberFields(shape: ParticleShape): List<GeometryNumberField> {
+        fun number(
+            key: String,
+            labelKey: LocalizationKey<String>,
+            range: ClosedFloatingPointRange<Double>,
+        ) = GeometryNumberField(key, labelKey, range)
+        val radius = {
+            number(
+                ParticleGeometry.PARAM_RADIUS,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_RADIUS,
+                0.0..ParticleGeometry.MAX_RADIUS,
+            )
+        }
+        val axis = listOf(
+            number(
+                ParticleGeometry.PARAM_AXIS_YAW,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_AXIS_YAW,
+                -180.0..180.0,
+            ),
+            number(
+                ParticleGeometry.PARAM_AXIS_PITCH,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_AXIS_PITCH,
+                -90.0..90.0,
+            ),
+            number(
+                ParticleGeometry.PARAM_ROTATION,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_ROTATION,
+                ParticleGeometry.MIN_ANGLE..ParticleGeometry.MAX_ANGLE,
+            ),
+        )
+        val step = {
+            number(
+                ParticleGeometry.PARAM_STEP,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_STEP,
+                ParticleGeometry.MIN_STEP..ParticleGeometry.MAX_STEP,
+            )
+        }
+        val shapeFields = when (shape) {
+            ParticleShape.LINE -> emptyList()
+            ParticleShape.CIRCLE -> listOf(radius()) + axis
+            ParticleShape.ARC -> listOf(
+                radius(),
+                number(
+                    ParticleGeometry.PARAM_START_ANGLE,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_START_ANGLE,
+                    ParticleGeometry.MIN_ANGLE..ParticleGeometry.MAX_ANGLE,
+                ),
+                number(
+                    ParticleGeometry.PARAM_END_ANGLE,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_END_ANGLE,
+                    ParticleGeometry.MIN_ANGLE..ParticleGeometry.MAX_ANGLE,
+                ),
+            ) + axis
+            ParticleShape.BOX -> emptyList()
+            ParticleShape.SPHERE -> listOf(radius()) + axis
+            ParticleShape.HELIX -> listOf(
+                radius(),
+                number(
+                    ParticleGeometry.PARAM_HEIGHT,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_HEIGHT,
+                    0.0..ParticleGeometry.MAX_HEIGHT,
+                ),
+                number(
+                    ParticleGeometry.PARAM_TURNS,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TURNS,
+                    ParticleGeometry.MIN_TURNS..ParticleGeometry.MAX_TURNS,
+                ),
+            ) + axis
+            ParticleShape.POINT_SCATTER -> emptyList()
+        }
+        return shapeFields + step()
+    }
+
+    /**
+     * 図形数値の束ね入力を現形状ごとに生成します。
+     *
+     * 入力欄idはparamsキーと一致させ、保存側でそのままsetParametersへ渡せる
+     * ようにします。
+     */
+    fun geometryInputs(node: CommandNode): List<FieldInput> {
+        val shape = ParticleGeometry.shape(node)
+        return geometryNumberFields(shape).map { field ->
+            FieldInput(
+                field.key,
+                field.labelKey,
+                node.string(field.key, node.type.defaults[field.key].orEmpty()),
+                decimalRange(
+                    field.labelKey,
+                    field.range,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID,
+                ),
+            )
+        }
+    }
+
+    /** 図形数値の入力方法と制約だけを表示します。値は入力欄に表示します。 */
+    fun geometryBody(player: Player): List<Component> = listOf(
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBERS_BODY),
+    )
+
+    /** 密度の入力仕様です。合意範囲（0超過・2.0以下）を受け付けます。 */
+    val particleDensity = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DENSITY,
+        16,
+        validate = { raw ->
+            if (!isNumericTemplate(raw) && !ParticleGeometry.isDensityValue(raw)) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DENSITY_INVALID
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DENSITY_BODY,
+    )
+
+    /** 打ち上げ高さの入力仕様です。0〜320ブロックを受け付けます。 */
+    val burstHeight = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BURST_HEIGHT,
+        16,
+        validate = { raw ->
+            if (!isNumericTemplate(raw) && !FireworkSettings.isBurstHeight(raw)) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_BURST_HEIGHT_INVALID
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_BURST_HEIGHT_BODY,
+    )
     fun particleData(node: CommandNode): Spec = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DATA,
         512,
@@ -601,6 +980,12 @@ internal object CommandDialogSpecs {
         }
         if (node.type == CommandType.FOR_START && fieldKey == "count") {
             return positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REPEAT_COUNT)
+        }
+        if (node.type == CommandType.FIREWORK_LAUNCH && fieldKey == "burstHeight") {
+            return burstHeight
+        }
+        if (node.type == CommandType.PARTICLE && fieldKey == "particleDensity") {
+            return particleDensity
         }
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "value" && node.type == CommandType.VARIABLE) {

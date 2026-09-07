@@ -59,6 +59,7 @@ internal object CommandPresentationPolicy {
         CommandType.SUMMON_ENTITY,
         CommandType.PLAY_SOUND,
         CommandType.PARTICLE,
+        CommandType.FIREWORK_LAUNCH,
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
         CommandType.BLOCK_OPERATION,

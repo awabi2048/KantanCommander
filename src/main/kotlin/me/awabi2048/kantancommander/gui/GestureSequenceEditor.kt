@@ -55,6 +55,12 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.FireworkSettings
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
@@ -120,6 +126,10 @@ data class GestureEditorState(
     /** ブロック上書き確認が保持する対象と、クリック時点のブロックID */
     var pendingBlockContext: CommandSettingContext? = null,
     var pendingBlockId: String? = null,
+    /** 花火上書き確認が保持する対象と完全なItemStackデータ */
+    var pendingFireworkContext: CommandSettingContext? = null,
+    var pendingFireworkKey: String? = null,
+    var pendingFireworkData: String? = null,
     /** PICKERで選択中の挿入先（addポイントクリック時に保持） */
     var pendingInsertion: InsertionTarget? = null,
     /** PICKERへ遷移した追加ポイントの選択状態。既存ノード選択とは独立して表示します。 */
@@ -205,6 +215,7 @@ enum class GestureConfirmKind {
     DELETE,
     ITEM_OVERWRITE,
     BLOCK_OVERWRITE,
+    FIREWORK_OVERWRITE,
 }
 
 /**
@@ -231,6 +242,10 @@ enum class GestureSettingScreen {
     CONDITION_INVERSION,
     CAMERA_SHAKE_TYPE,
     SOUND_SCOPE,
+    SOUND_OPERATION,
+    SOUND_TARGET_POSITION,
+    PARTICLE_DISPLAY,
+    PARTICLE_GEOMETRY,
     BLOCK_OPERATION,
 }
 
@@ -367,6 +382,9 @@ class GestureSequenceEditor(
             state.pendingItemData != null ||
             state.pendingBlockContext != null ||
             state.pendingBlockId != null ||
+            state.pendingFireworkContext != null ||
+            state.pendingFireworkKey != null ||
+            state.pendingFireworkData != null ||
             state.settingContext != null ||
             state.settingFieldKey != null ||
             state.settingTreePath != null ||
@@ -1989,6 +2007,9 @@ class GestureSequenceEditor(
         state.pendingItemData = null
         state.pendingBlockContext = null
         state.pendingBlockId = null
+        state.pendingFireworkContext = null
+        state.pendingFireworkKey = null
+        state.pendingFireworkData = null
     }
 
     /** 設定木の現在フレームを既存表示状態へ投影します。 */
@@ -2180,6 +2201,56 @@ class GestureSequenceEditor(
             showParticleParametersSettingDialog(player, context, node)
             return
         }
+        if (fieldKey == "soundSetting" && node.type == CommandType.PLAY_SOUND) {
+            showSoundSettingDialog(player, context, node)
+            return
+        }
+        if (fieldKey == "particle" && node.type == CommandType.PARTICLE) {
+            showParticleDialog(player, context, node)
+            return
+        }
+        if (fieldKey == "particleDensity" && node.type == CommandType.PARTICLE) {
+            beginSettingInput(
+                player,
+                requireNotNull(CommandDialogSpecs.field(node, "particleDensity")),
+                node.string("particleDensity", "0.5"),
+            ) { raw ->
+                val value = CommandDialogSpecs.normalize("particleDensity", raw)
+                val spec = requireNotNull(CommandDialogSpecs.field(node, "particleDensity"))
+                val validationError = spec.validateInput(value)
+                if (validationError != null) {
+                    KcI18n.text(player, validationError)
+                } else if (!updateSettingNode(player, context, configuredFields = setOf("particleDensity")) {
+                        CommandSettingsModel.setParameter(it, "particleDensity", value)
+                    }) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                } else null
+            }
+            return
+        }
+        if (fieldKey == "burstHeight" && node.type == CommandType.FIREWORK_LAUNCH) {
+            beginSettingInput(
+                player,
+                requireNotNull(CommandDialogSpecs.field(node, "burstHeight")),
+                node.string("burstHeight", "20.0"),
+            ) { raw ->
+                val value = CommandDialogSpecs.normalize("burstHeight", raw)
+                val spec = requireNotNull(CommandDialogSpecs.field(node, "burstHeight"))
+                val validationError = spec.validateInput(value)
+                if (validationError != null) {
+                    KcI18n.text(player, validationError)
+                } else if (!updateSettingNode(player, context, configuredFields = setOf("burstHeight")) {
+                        CommandSettingsModel.setParameter(it, "burstHeight", value)
+                    }) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                } else null
+            }
+            return
+        }
+        if (fieldKey == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
+            applyHeldFirework(player, context)
+            return
+        }
         val screen = gestureSettingScreenFor(descriptor.editor)
         if (screen == null) {
             // 構造化モデルで専用画面を持たない項目は、チャットを横取りせず
@@ -2223,9 +2294,10 @@ class GestureSequenceEditor(
     /**
      * ITEM／BLOCK／SOUND／EFFECTの設定元を選択します。
      *
-     * 一時変数は、他の構造化設定と同じく方式選択と参照名入力を別操作にします。
-     * 直接値を選んだ場合は、選択直後に既存のメインハンド設定またはDialog入力へ
-     * 引き継ぎ、設定元の選択だけで未完成の値を完了扱いにしないようにします。
+     * 一時変数・直接値のどちらも、選択操作は設定元の切替だけを行い、値の入力へ
+     * 引き継ぎません。直接値の入力は `lower-edit` の2クリック目から開きます。
+     * 選択だけでDialogや手持ち保存へ進むと、設定元の確認と値入力が分離できず、
+     * 誤った設定元で値を確定する操作を防げないためです。
      */
     private fun selectTypedValueSource(
         player: Player,
@@ -2247,6 +2319,7 @@ class GestureSequenceEditor(
                 if (!updateSettingNode(player, context, configuredFields = emptySet()) {
                         CommandSettingsModel.selectTemporaryValueSource(it, fieldKey)
                     }) return
+                updateLower(player)
                 return
             }
             beginSettingInput(
@@ -2266,7 +2339,7 @@ class GestureSequenceEditor(
         if (!updateSettingNode(player, context, configuredFields = emptySet()) {
                 CommandSettingsModel.selectLiteralValueSource(it, fieldKey)
             }) return
-        beginSelectedFieldEdit(player, fieldKey)
+        updateLower(player)
     }
 
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
@@ -2425,6 +2498,107 @@ class GestureSequenceEditor(
         return true
     }
 
+    /**
+     * 設定中の花火をその場で打ち上げます。
+     *
+     * 本実行と同じ検証済み方式（初速固定・ワンショット起爆判定）を使い、
+     * 保存は行わず使い捨てで発射します。召喚体台帳へは登録しません。
+     */
+    private fun launchFireworkPreview(player: Player, node: CommandNode): Boolean {
+        val data = node.string(FireworkSettings.PARAM_DATA)
+        val stack = data.takeIf(String::isNotBlank)?.let { ItemStackCodec.decode(it) }
+            ?: node.string(FireworkSettings.PARAM_ITEM).takeIf(String::isNotBlank)?.let { raw ->
+                Material.matchMaterial(raw)?.let { ItemStack(it) }
+            } ?: return false
+        if (stack.type != Material.FIREWORK_ROCKET) return false
+        val height = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
+            .toDoubleOrNull()?.takeIf(Double::isFinite) ?: FireworkSettings.HEIGHT_DEFAULT
+        // 試射はGesture GUIの存在する座標（クリップ固定のanchor）から打ち上げ、
+        // 発射者を自機に固定して接触起爆を避けます。anchorがない場合は
+        // 制御ブロックの1ブロック上、配置もなければ操作者位置へ落とします。
+        val placement = state.placement
+        val launchAt = FireworkSettings.previewSite(
+            state.anchor,
+            placement?.let(FireworkSettings::placementAbove),
+            player.location,
+        )
+        if (height <= 0.0) {
+            val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
+            instant.setItem(stack)
+            instant.setShotAtAngle(false)
+            instant.detonate()
+            return true
+        }
+        val rocket = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
+        rocket.setItem(stack)
+        rocket.setShotAtAngle(false)
+        rocket.shooter = player
+        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
+        rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
+        val target = launchAt.clone().add(0.0, height, 0.0)
+        plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            detonatePreviewAtTarget(rocket, target)
+        }, FireworkSettings.detonationTicks(height).toLong().coerceAtLeast(1L))
+        return true
+    }
+
+    /** 試射のワンショット起爆判定です。本実行と同一条件で目標高度へ補正起爆します。 */
+    private fun detonatePreviewAtTarget(rocket: org.bukkit.entity.Firework, target: Location, retriesLeft: Int = 5) {
+        val world = target.world
+        if (!rocket.isValid || rocket.isDetonated || world == null ||
+            !world.isChunkLoaded(target.blockX shr 4, target.blockZ shr 4)
+        ) {
+            if (retriesLeft > 0) {
+                plugin.server.scheduler.runTaskLater(plugin, Runnable {
+                    detonatePreviewAtTarget(rocket, target, retriesLeft - 1)
+                }, 20L)
+            } else {
+                runCatching { rocket.remove() }
+            }
+            return
+        }
+        rocket.teleport(target)
+        rocket.detonate()
+    }
+
+    /** メインハンドの花火ロケットを設定値へ保存します。 */
+    private fun applyHeldFirework(player: Player, context: CommandSettingContext): Boolean {
+        val held = player.inventory.itemInMainHand
+        if (held.type != Material.FIREWORK_ROCKET) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_HELD_FIREWORK_REQUIRED))
+            updateLower(player)
+            return false
+        }
+        val itemKey = held.type.key.toString()
+        val itemData = ItemStackCodec.encode(held)
+        val node = plugin.scripts.load(context.scriptId)?.graph?.nodes?.get(context.nodeId) ?: return false
+        if (node.string(FireworkSettings.PARAM_ITEM).isNotBlank() ||
+            node.string(FireworkSettings.PARAM_DATA).isNotBlank()
+        ) {
+            openFireworkOverwriteConfirm(player, context, itemKey, itemData)
+            return false
+        }
+        return saveHeldFirework(player, context, itemKey, itemData)
+    }
+
+    private fun saveHeldFirework(
+        player: Player,
+        context: CommandSettingContext,
+        itemKey: String,
+        itemData: String,
+    ): Boolean {
+        val updated = updateSettingNode(player, context, configuredFields = setOf("fireworkContents")) { node ->
+            CommandSettingsModel.setParameter(node, FireworkSettings.PARAM_ITEM, itemKey)
+            CommandSettingsModel.setParameter(node, FireworkSettings.PARAM_DATA, itemData)
+        }
+        if (updated) {
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_SET, mapOf("item" to itemKey)),
+            )
+        }
+        return updated
+    }
+
     private fun applyConfiguredEffect(player: Player, node: CommandNode): Boolean {
         val effect = configuredEffect(node) ?: return false
         player.addPotionEffect(PotionEffect(effect.type, effect.durationTicks, effect.amplifier))
@@ -2534,6 +2708,100 @@ class GestureSequenceEditor(
             state.lowerMode = if (parentId == lowerPanel.SETTING_CHILD_SCREEN_ID) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
             updateLower(player)
         }
+    }
+
+    private fun openFireworkOverwriteConfirm(
+        player: Player,
+        context: CommandSettingContext,
+        itemKey: String,
+        itemData: String,
+    ) {
+        val ownerId = ownerIdFor(player)
+        if (api.snapshot(ownerId)?.childScreenIds?.contains(lowerPanel.CONFIRM_SCREEN_ID) == true) return
+        val settingChildWasOpen = settingChildOpen(ownerId)
+        val parentId = if (settingChildWasOpen) lowerPanel.SETTING_CHILD_SCREEN_ID else lowerPanel.LOWER_SCREEN_ID
+        val owner = ownerPlayerFor(player)
+        val attention = attentionState()
+        val parentView = if (settingChildWasOpen) {
+            lowerPanel.buildSettingChild(state, owner, attention, suppressHighlight = true)
+        } else {
+            lowerPanel.build(state, owner, attention, suppressHighlight = true)
+        }
+        // 文言はアイテム上書き確認と共有し、花火もアイテムの一種として扱います。
+        state.confirmKind = GestureConfirmKind.FIREWORK_OVERWRITE
+        state.confirmNodeId = null
+        clearPendingOverwriteState()
+        state.pendingFireworkContext = context
+        state.pendingFireworkKey = itemKey
+        state.pendingFireworkData = itemData
+        state.lowerMode = GestureLowerMode.CONFIRM
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                parentView,
+                lowerPanel.build(state, owner, attention),
+                GestureGuiChildOptions(
+                    parentScreenId = parentId,
+                    overlayMaterial = Material.RED_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "花火上書き確認子画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.confirmKind = GestureConfirmKind.DELETE
+            clearPendingOverwriteState()
+            state.lowerMode = if (parentId == lowerPanel.SETTING_CHILD_SCREEN_ID) GestureLowerMode.SETTING_CHOICES else GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    private fun confirmFireworkOverwrite(player: Player) {
+        val context = state.pendingFireworkContext ?: return
+        val itemKey = state.pendingFireworkKey ?: return
+        val itemData = state.pendingFireworkData ?: return
+        val saved = runCatching {
+            CommandSettingsModel.updateNode(
+                plugin,
+                context,
+                configuredFields = setOf("fireworkContents"),
+                editorId = player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+                change = { node ->
+                    CommandSettingsModel.setParameter(node, FireworkSettings.PARAM_ITEM, itemKey)
+                    CommandSettingsModel.setParameter(node, FireworkSettings.PARAM_DATA, itemData)
+                },
+            ) != null
+        }.onFailure { failure ->
+            reportGraphOperationFailure(
+                player,
+                "花火上書きの保存に失敗しました: script=${context.scriptId} node=${context.nodeId}",
+                failure,
+            )
+        }.getOrDefault(false)
+        if (!saved) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_ITEM_SAVE_RETRY))
+            return
+        }
+        clearPendingOverwriteState()
+        state.confirmKind = GestureConfirmKind.DELETE
+        val ownerId = ownerIdFor(player)
+        api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_ITEM_OVERWRITTEN, mapOf("item" to itemKey)))
+        state.lowerMode = if (settingChildOpen(ownerId) && state.settingContext != null) {
+            GestureLowerMode.SETTING_CHOICES
+        } else {
+            clearSettingState()
+            GestureLowerMode.SETTINGS
+        }
+        updateUpper(player)
+        updateLower(player)
     }
 
     private fun confirmItemOverwrite(player: Player) {
@@ -3491,6 +3759,173 @@ class GestureSequenceEditor(
     }
 
     /**
+     * 効果音設定の束ね値（ID・音量・ピッチ／ID・カテゴリ）を一括検証して保存します。
+     *
+     * Inventory GUIのshowSoundSettingFormと同じ入力欄・検証を使い、操作ごとの
+     * 入力欄集合もCommandDialogSpecsへ一元化します。サウンド欄だけは候補表示に
+     * 対応し、クエリにはサウンド欄の現在値だけを使います。
+     */
+    private fun showSoundSettingDialog(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+        soundOverride: String? = null,
+        soundCandidates: List<String> = emptyList(),
+    ) {
+        val inputs = CommandDialogSpecs.soundSettingInputs(node)
+        // 候補選択の開き直しで引き継いだ入力途中値は、ここで消費します。
+        // 確定せずに閉じた場合も残さないため、次回の新規表示は保存値から始まります。
+        val pending = pendingSoundDialogValues.remove(player.uniqueId).orEmpty()
+        val candidateButtons = soundCandidates.take(12).map { candidate ->
+            MenuDialogButton(
+                Component.text(candidate),
+                MenuDialogHandler { target, response ->
+                    if (target.uniqueId != player.uniqueId ||
+                        !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                    ) {
+                        if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                        return@MenuDialogHandler MenuActionResult.Ignored
+                    }
+                    // 候補の確定はサウンド欄だけを置き換え、他の欄は入力途中の
+                    // 値を維持して同じダイアログへ戻します。即時保存はしません。
+                    val current = nodeStringMap(response, inputs.map { it.id })
+                    pendingSoundDialogValues[player.uniqueId] = current
+                    showSoundSettingDialog(player, context, node, soundOverride = candidate, soundCandidates = emptyList())
+                    MenuActionResult.Success(MenuUpdate.None)
+                },
+            )
+        }
+        val candidateFooterActions = listOf(MenuDialogButton(
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
+            MenuDialogHandler { target, response ->
+                val ownerId = ownerIdFor(player)
+                if (target.uniqueId != player.uniqueId || !canOperateSharedActor(ownerId, target.uniqueId)) {
+                    if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                    return@MenuDialogHandler MenuActionResult.Ignored
+                }
+                // 候補判定はサウンド欄の内容だけを見ます。音量・カテゴリ欄は
+                // クエリに含めず、入力途中の値も破棄しません。
+                val query = response.textValue(SoundSettings.PARAM_SOUND).trim()
+                pendingSoundDialogValues[player.uniqueId] =
+                    nodeStringMap(response, inputs.map { it.id })
+                showSoundSettingDialog(
+                    player,
+                    context,
+                    node,
+                    soundCandidates = CommandDialogSpecs.suggestions("sound", query),
+                )
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+        ))
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.soundSettingBody(node, player),
+            inputs = inputs.map {
+                if (it.id == SoundSettings.PARAM_SOUND && soundOverride != null) {
+                    it.copy(initial = soundOverride).toMenuInput(player)
+                } else {
+                    it.copy(initial = pending[it.id] ?: it.initial).toMenuInput(player)
+                }
+            },
+            additionalActions = candidateButtons,
+            footerActions = candidateFooterActions,
+            multiActionWithoutExit = true,
+            columns = 3,
+        ) { response ->
+            pendingSoundDialogValues.remove(player.uniqueId)
+            val rawValues = inputs.associate { it.id to CommandDialogSpecs.normalize(it.id, response.textValue(it.id)) }
+            val validationError = inputs
+                .mapNotNull { it.spec.validateInput(rawValues.getValue(it.id)) }
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            if (!updateSettingNode(player, context, configuredFields = setOf("soundSetting")) { command ->
+                    CommandSettingsModel.setParameters(command, rawValues)
+                }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            null
+        }
+    }
+
+    /** 候補選択で開き直す間に、入力途中の値を保持する一時領域です。 */
+    private val pendingSoundDialogValues = mutableMapOf<UUID, Map<String, String>>()
+
+    private fun nodeStringMap(response: MenuDialogResponse, ids: List<String>): Map<String, String> =
+        ids.associateWith { response.textValue(it) }
+
+    /**
+     * パーティクル種類と詳細データを一括検証して保存します。
+     *
+     * VIBRATION／TRAILは終点XYZを1群として束ねた入力欄から単一詳細文字列へ
+     * 合成します。保存形式は従来の1文字列のまま変えません。
+     */
+    private fun showParticleDialog(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+    ) {
+        val inputs = CommandDialogSpecs.particleInputs(node)
+        val particle = ParticleSettings.particle(node)
+        showInputDialog(
+            player = player,
+            body = if (particle != null && ParticleSettings.requiresData(particle)) {
+                listOf(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DATA_BODY))
+            } else {
+                emptyList()
+            },
+            inputs = inputs.map { it.toMenuInput(player) },
+        ) { response ->
+            val rawValues = inputs.associate { it.id to CommandDialogSpecs.normalize(it.id, response.textValue(it.id)) }
+            val validationError = inputs
+                .mapNotNull { it.spec.validateInput(rawValues.getValue(it.id)) }
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            val composed = mutableMapOf<String, String>()
+            composed[ParticleSettings.PARAM_PARTICLE] = rawValues.getValue(ParticleSettings.PARAM_PARTICLE)
+            when {
+                rawValues.containsKey("vibX") -> composed[ParticleSettings.PARAM_DATA] =
+                    CommandDialogSpecs.composeVibrationData(rawValues)
+                rawValues.containsKey("trailX") -> composed[ParticleSettings.PARAM_DATA] =
+                    CommandDialogSpecs.composeTrailData(rawValues)
+                rawValues.containsKey(ParticleSettings.PARAM_DATA) -> composed[ParticleSettings.PARAM_DATA] =
+                    rawValues.getValue(ParticleSettings.PARAM_DATA)
+            }
+            if (!updateSettingNode(player, context, configuredFields = setOf("particle", "particleData")) { command ->
+                    CommandSettingsModel.setParameters(command, composed)
+                }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            null
+        }
+    }
+
+    /** 図形数値を現形状ごとに一括検証して保存します。 */
+    private fun showGeometryNumbersDialog(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+    ) {
+        val inputs = CommandDialogSpecs.geometryInputs(node)
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.geometryBody(player),
+            inputs = inputs.map { it.toMenuInput(player) },
+        ) { response ->
+            val rawValues = inputs.associate { it.id to CommandDialogSpecs.normalize(it.id, response.textValue(it.id)) }
+            val validationError = inputs
+                .mapNotNull { it.spec.validateInput(rawValues.getValue(it.id)) }
+                .firstOrNull()
+            if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
+            if (!updateSettingNode(player, context, configuredFields = setOf("geometrySettings")) { command ->
+                    CommandSettingsModel.setParameters(command, rawValues)
+                }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            null
+        }
+    }
+
+    /**
      * 複数値の設定は入力欄を分割します（座標X/Y/Z、yaw/pitchなど）。
      * 連結文字列を1欄で受けると、どの値が不正かをユーザーが特定できず、
      * 入力画面の再表示時にも入力値の対応が崩れるため、入力IDと値を一対一にします。
@@ -4293,6 +4728,115 @@ class GestureSequenceEditor(
                         CommandSettingsModel.setParameter(it, "soundScope", value)
                     }) showSettingScreen()
             }
+            GestureSettingScreen.SOUND_OPERATION -> {
+                if (group != "soundOperation" || value !in setOf("PLAY", "STOP")) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, SoundSettings.PARAM_OPERATION, value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.SOUND_TARGET_POSITION -> when (encoded) {
+                "sound-target" -> {
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                    rememberSettingNode(encoded)
+                    when (settingSelectionAction(wasSelected, hasChildren)) {
+                        GestureSettingSelectionAction.ENTER_CHILD -> {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext.copy(role = CommandSettingRole.NODE_TARGET),
+                                    fieldKey,
+                                    GestureSettingScreen.TARGET,
+                                ),
+                                encoded,
+                            )
+                        }
+                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
+                    }
+                }
+                "sound-position" -> {
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                    rememberSettingNode(encoded)
+                    when (settingSelectionAction(wasSelected, hasChildren)) {
+                        GestureSettingSelectionAction.ENTER_CHILD -> {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext.copy(role = CommandSettingRole.SOUND_POSITION),
+                                    fieldKey,
+                                    GestureSettingScreen.POSITION,
+                                ),
+                                encoded,
+                            )
+                        }
+                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
+                    }
+                }
+            }
+            GestureSettingScreen.PARTICLE_DISPLAY -> when {
+                group == "display" && value in setOf("POINT", "GEOMETRY") -> {
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_DISPLAY_MODE, value)
+                        }) showSettingScreen()
+                }
+                encoded == "particle-target" -> {
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                    rememberSettingNode(encoded)
+                    when (settingSelectionAction(wasSelected, hasChildren)) {
+                        GestureSettingSelectionAction.ENTER_CHILD -> {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext.copy(role = CommandSettingRole.NODE_TARGET),
+                                    fieldKey,
+                                    GestureSettingScreen.TARGET,
+                                ),
+                                encoded,
+                            )
+                        }
+                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
+                    }
+                }
+            }
+            GestureSettingScreen.PARTICLE_GEOMETRY -> when {
+                group == "shape" -> {
+                    val shape = runCatching { ParticleShape.valueOf(value) }.getOrNull()
+                        ?.takeIf { it != ParticleShape.POINT_SCATTER } ?: return
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_SHAPE, shape.name)
+                        }) showSettingScreen()
+                }
+                encoded == "wireframe:toggle" -> {
+                    if (updateSettingNode(player, settingContext) {
+                            val current = it.params[ParticleGeometry.PARAM_WIREFRAME]?.toBooleanStrictOrNull() ?: true
+                            CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_WIREFRAME, (!current).toString())
+                        }) showSettingScreen()
+                }
+                encoded == "geometry-numbers" -> {
+                    showGeometryNumbersDialog(player, settingContext, node)
+                }
+                encoded == "geometry-end" -> {
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                    rememberSettingNode(encoded)
+                    when (settingSelectionAction(wasSelected, hasChildren)) {
+                        GestureSettingSelectionAction.ENTER_CHILD -> {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext.copy(role = CommandSettingRole.PARTICLE_END),
+                                    fieldKey,
+                                    GestureSettingScreen.POSITION,
+                                ),
+                                encoded,
+                            )
+                        }
+                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
+                    }
+                }
+            }
             GestureSettingScreen.VARIABLE_TYPE -> {
                 if (group != "type") return
                 if (node.type == CommandType.TEMP_SET) {
@@ -4774,6 +5318,11 @@ class GestureSequenceEditor(
                 if (!isDirectTypedValuePreview(node, "effect")) return
                 applyConfiguredEffect(player, node)
             }
+            context.elementId == "lower-firework-preview" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+                launchFireworkPreview(player, node)
+            }
             context.elementId.startsWith("lower-cat:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.pickerCategory = context.elementId.removePrefix("lower-cat:").toIntOrNull() ?: return
                 state.pickerPage = 0
@@ -4979,6 +5528,10 @@ class GestureSequenceEditor(
                 }
                 if (state.confirmKind == GestureConfirmKind.BLOCK_OVERWRITE) {
                     confirmBlockOverwrite(player)
+                    return
+                }
+                if (state.confirmKind == GestureConfirmKind.FIREWORK_OVERWRITE) {
+                    confirmFireworkOverwrite(player)
                     return
                 }
                 val nodeId = state.confirmNodeId ?: return

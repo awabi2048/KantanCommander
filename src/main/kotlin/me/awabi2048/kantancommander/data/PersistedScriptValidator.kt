@@ -90,6 +90,9 @@ object PersistedScriptValidator {
             "blockFromSpec",
             "blockToSpec",
             "soundPositionSpec",
+            "particlePositionSpec",
+            "particleEndPositionSpec",
+            "fireworkPositionSpec",
             "summonPositionSpec",
             "temporaryLocationPositionSpec",
         ).forEach { field ->

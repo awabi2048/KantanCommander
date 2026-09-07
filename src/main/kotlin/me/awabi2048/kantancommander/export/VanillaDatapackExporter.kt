@@ -27,6 +27,11 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.FireworkSettings
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.TICKS_PER_SECOND
 import me.awabi2048.kantancommander.item.ItemStackCodec
@@ -154,6 +159,27 @@ class VanillaDatapackExporter(
                             errors += "${script.id}/${node.id}: ItemStackの詳細データは完全バニラ出力に未対応です"
                         }
                     }
+                    if (ParticleGeometry.displayMode(node) == ParticleDisplayMode.GEOMETRY) {
+                        errors += "${script.id}/${node.id}: 図形表示は完全バニラ出力に未対応です"
+                    }
+                }
+                CommandType.FIREWORK_LAUNCH -> {
+                    val item = node.string(FireworkSettings.PARAM_ITEM)
+                    val data = node.string(FireworkSettings.PARAM_DATA)
+                    if (item.isBlank() && data.isBlank()) {
+                        errors += "${script.id}/${node.id}: 花火の中身が未設定です"
+                    } else if (item.isNotBlank() &&
+                        (!item.startsWith("minecraft:") || !FireworkSettings.isFireworkMaterial(item))
+                    ) {
+                        errors += "${script.id}/${node.id}: 完全バニラ出力できない花火アイテムです: $item"
+                    }
+                    if (data.isNotBlank() && ItemStackCodec.decode(data) == null) {
+                        errors += "${script.id}/${node.id}: 保存された花火ItemStackを復元できません"
+                    }
+                    val heightRaw = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
+                    if (heightRaw.toDoubleOrNull()?.isFinite() != true) {
+                        errors += "${script.id}/${node.id}: 打ち上げ高さは出力時に確定数値である必要があります"
+                    }
                 }
                 CommandType.BLOCK_OPERATION -> {
                     val block = CommandValueRules.placementMaterial(node.string("block"))
@@ -244,12 +270,19 @@ class VanillaDatapackExporter(
             validatePosition(script, node, node.conditionPositionSpec, errors)
             validatePosition(script, node, node.soundPositionSpec, errors)
             validatePosition(script, node, node.particlePositionSpec, errors)
+            validatePosition(script, node, node.particleEndPositionSpec, errors)
+            validatePosition(script, node, node.fireworkPositionSpec, errors)
             validatePosition(script, node, node.summonPositionSpec, errors)
             if (node.soundPositionSpec?.kind == PositionKind.TARGET) {
                 errors += "${script.id}/${node.id}: 効果音の対象位置指定は完全バニラ出力に未対応です"
             }
-            if (node.particlePositionSpec?.kind == PositionKind.TARGET) {
+            if (node.particlePositionSpec?.kind == PositionKind.TARGET ||
+                node.particleEndPositionSpec?.kind == PositionKind.TARGET
+            ) {
                 errors += "${script.id}/${node.id}: パーティクルの対象位置指定は完全バニラ出力に未対応です"
+            }
+            if (node.fireworkPositionSpec?.kind == PositionKind.TARGET) {
+                errors += "${script.id}/${node.id}: 花火の対象位置指定は完全バニラ出力に未対応です"
             }
             if (node.summonPositionSpec?.kind == PositionKind.TARGET) {
                 errors += "${script.id}/${node.id}: 召喚の対象位置指定は完全バニラ出力に未対応です"
@@ -656,6 +689,7 @@ class VanillaDatapackExporter(
     }
 
     private fun soundCommand(node: CommandNode): String {
+        if (SoundSettings.operation(node) == SoundOperation.STOP) return stopSoundCommand(node)
         val soundName = node.soundTempRef?.takeIf(String::isNotBlank)
             ?.let { temporaryMarker(it, "sound") }
             ?: node.string("sound")
@@ -665,11 +699,12 @@ class VanillaDatapackExporter(
         val pitch = node.soundTempRef?.takeIf(String::isNotBlank)
             ?.let { temporaryMarker(it, "pitch") }
             ?: node.string("pitch", "1.0")
-        val sound = "playsound $soundName master @a ~ ~ ~ $volume $pitch"
+        val receivers = soundReceiverSelector(node)
+        val sound = "playsound $soundName master $receivers ~ ~ ~ $volume $pitch"
         if (node.string("soundScope", "POSITION") == "WORLD") {
             // 全域指定は各プレイヤー位置を音源位置にするという計画書の定義に合わせ、
             // プレイヤーごとに一度ずつ実行します。
-            return "execute as @a at @s run playsound $soundName master @s ~ ~ ~ $volume $pitch"
+            return "execute as $receivers at @s run playsound $soundName master @s ~ ~ ~ $volume $pitch"
         }
         val position = node.soundPositionSpec ?: return sound
         return when (position.kind) {
@@ -690,11 +725,57 @@ class VanillaDatapackExporter(
     }
 
     /**
+     * 停止操作をvanillaの/stopsoundへ変換します。
+     *
+     * 構文は `stopsound <targets> [<source>] [<sound>]` であり、未指定のsource／
+     * soundは省略します（全対象の意味）。BukkitのSoundCategory名はバニラの
+     * source名へ写像します。
+     */
+    private fun stopSoundCommand(node: CommandNode): String {
+        val soundName = node.soundTempRef?.takeIf(String::isNotBlank)
+            ?.let { temporaryMarker(it, "sound") }
+            ?: node.string("sound").takeIf(String::isNotBlank)
+        val source = SoundSettings.category(node.string("soundCategory"))?.let(::vanillaSoundSource)
+        val receivers = soundReceiverSelector(node)
+        return listOfNotNull(
+            "stopsound",
+            receivers,
+            source,
+            soundName,
+        ).joinToString(" ")
+    }
+
+    /** 対象プレイヤー指定があればselector、なければ従来の@aを返します。 */
+    private fun soundReceiverSelector(node: CommandNode): String {
+        val spec = node.targetSpec ?: return "@a"
+        return if (spec.kind == TargetKind.TEMPORARY) "@s" else selector(spec)
+    }
+
+    private fun vanillaSoundSource(category: org.bukkit.SoundCategory): String = when (category) {
+        org.bukkit.SoundCategory.MASTER -> "master"
+        org.bukkit.SoundCategory.MUSIC -> "music"
+        org.bukkit.SoundCategory.RECORDS -> "record"
+        org.bukkit.SoundCategory.WEATHER -> "weather"
+        org.bukkit.SoundCategory.BLOCKS -> "block"
+        org.bukkit.SoundCategory.HOSTILE -> "hostile"
+        org.bukkit.SoundCategory.NEUTRAL -> "neutral"
+        org.bukkit.SoundCategory.PLAYERS -> "player"
+        org.bukkit.SoundCategory.AMBIENT -> "ambient"
+        org.bukkit.SoundCategory.VOICE -> "voice"
+        org.bukkit.SoundCategory.UI -> "ui"
+    }
+
+    /**
      * PARTICLEをvanillaの/particleへ変換します。対象selectorに@aを明示し、
      * execute positionedで表示中心だけを移動することで、同じワールドの全プレイヤーを
      * 表示対象にします。force指定による512ブロックのvanilla距離制限は仕様として許容します。
+     *
+     * 図形表示はvanillaに同等概念がないため出力できません。事前検証で拒否します。
      */
     private fun particleCommand(node: CommandNode): String {
+        if (ParticleGeometry.displayMode(node) == ParticleDisplayMode.GEOMETRY) {
+            error("particle geometry is not supported in vanilla export")
+        }
         val particle = ParticleSettings.particle(node) ?: error("particle type is missing")
         val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
             .getOrElse { error("particle data is invalid") }
@@ -702,13 +783,16 @@ class VanillaDatapackExporter(
         // `/particle dust r g b scale ...`形式を出力すると、現行pack_formatの
         // データパックではコマンド解析に失敗するため、変換はParticleSettingsへ集約します。
         val dataArgument = data.vanillaArgument(particle)
+        val receivers = node.targetSpec
+            ?.let { if (it.kind == TargetKind.TEMPORARY) "@s" else selector(it) }
+            ?: "@a"
         val command = "particle ${particle.key}$dataArgument " +
             "~ ~ ~ " +
             "${node.string(ParticleSettings.PARAM_DELTA_X, "0.0")} " +
             "${node.string(ParticleSettings.PARAM_DELTA_Y, "0.0")} " +
             "${node.string(ParticleSettings.PARAM_DELTA_Z, "0.0")} " +
             "${node.string(ParticleSettings.PARAM_SPEED, "0.0")} " +
-            "${node.string(ParticleSettings.PARAM_COUNT, "1")} force @a"
+            "${node.string(ParticleSettings.PARAM_COUNT, "1")} force $receivers"
         val position = node.particlePositionSpec ?: return command
         return when (position.kind) {
             PositionKind.CAPTURED, PositionKind.COORDINATES ->
@@ -1074,6 +1158,7 @@ class VanillaDatapackExporter(
         CommandType.SUMMON_ENTITY -> summonCommand(node)
         CommandType.PLAY_SOUND -> soundCommand(node)
         CommandType.PARTICLE -> particleCommand(node)
+        CommandType.FIREWORK_LAUNCH -> fireworkCommand(node)
         CommandType.APPLY_EFFECT ->
             "effect give ${effectiveTarget(node)} " +
                 (node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "effect") } ?: node.string("effect")) +
@@ -1121,6 +1206,57 @@ class VanillaDatapackExporter(
                     ),
                 )
                 PositionKind.MYWORLD_SPAWN -> error("unsupported summon position")
+            }
+        }
+    }
+
+    /** FIREWORK_LAUNCHをsummon firework_rocketへ変換します。 */
+    private fun fireworkCommand(node: CommandNode): String {
+        val data = node.string(FireworkSettings.PARAM_DATA).takeIf(String::isNotBlank)
+        val item = node.string(FireworkSettings.PARAM_ITEM).takeIf(String::isNotBlank)
+        if (item == null && data == null) error("firework item is missing")
+        if (item != null && !FireworkSettings.isFireworkMaterial(item)) error("firework item is not a rocket")
+        // 中身なしの素ロケットは効果なしで打ち上げます。ItemStackの実体化は
+        // 詳細効果の読み取りが必要な場合だけ行い、サーバー外の出力検証でも
+        // 素ロケットを扱えるようにします。
+        val effects = if (data != null) {
+            val stack = ItemStackCodec.decode(data) ?: error("firework item data is invalid")
+            if (stack.type != org.bukkit.Material.FIREWORK_ROCKET) error("firework item is not a rocket")
+            (stack.itemMeta as? org.bukkit.inventory.meta.FireworkMeta)
+                ?.effects?.map { effect ->
+                    FireworkSettings.FireworkEffectData(
+                        shape = FireworkSettings.vanillaShape(effect.type.name),
+                        colors = effect.colors.map { it.asRGB() },
+                        fadeColors = effect.fadeColors.map { it.asRGB() },
+                        trail = effect.hasTrail(),
+                        flicker = effect.hasFlicker(),
+                    )
+                }.orEmpty()
+        } else {
+            emptyList()
+        }
+        val heightRaw = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
+        val height = heightRaw.toDoubleOrNull()?.takeIf(Double::isFinite)
+            ?: error("firework height must be a static number for export")
+        val power = FireworkSettings.heightToPower(height)
+        val nbt = " ${FireworkSettings.fireworkSnbt(power, effects)}"
+        val summon = { coordinates: String -> "summon minecraft:firework_rocket $coordinates$nbt" }
+        return when (val position = node.fireworkPositionSpec) {
+            null -> summon("~ ~ ~")
+            else -> when (position.kind) {
+                PositionKind.CAPTURED, PositionKind.COORDINATES -> summon(
+                    "${position.x ?: error("firework x is missing")} " +
+                        "${position.y ?: error("firework y is missing")} " +
+                        "${position.z ?: error("firework z is missing")}",
+                )
+                PositionKind.DISK -> summon("~ ~ ~")
+                PositionKind.TARGET -> error("firework target position is not supported")
+                PositionKind.TEMPORARY -> summon(
+                    temporaryPositionCoordinates(
+                        position.tempName ?: error("temporary firework position name is missing"),
+                    ),
+                )
+                PositionKind.MYWORLD_SPAWN -> error("unsupported firework position")
             }
         }
     }
@@ -1624,6 +1760,8 @@ class VanillaDatapackExporter(
                     node.blockToSpec,
                     node.soundPositionSpec,
                     node.particlePositionSpec,
+                    node.particleEndPositionSpec,
+                    node.fireworkPositionSpec,
                     node.summonPositionSpec,
                 ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
                 listOfNotNull(
@@ -1905,6 +2043,8 @@ class VanillaDatapackExporter(
                 .append(":conditionPosition=").append(node.conditionPositionSpec)
                 .append(":soundPosition=").append(node.soundPositionSpec)
                 .append(":particlePosition=").append(node.particlePositionSpec)
+                .append(":particleEndPosition=").append(node.particleEndPositionSpec)
+                .append(":fireworkPosition=").append(node.fireworkPositionSpec)
             node.snapshot?.let {
                 append(":snapshot={").append(graphFingerprint(it)).append('}')
             }

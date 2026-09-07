@@ -30,6 +30,12 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.FireworkSettings
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -39,6 +45,7 @@ import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
+import org.bukkit.Location
 import org.bukkit.Sound
 import org.bukkit.entity.Player
 import java.util.UUID
@@ -292,6 +299,53 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
+                        if (field == "soundOperation" && node.type == CommandType.PLAY_SOUND) {
+                            if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(
+                                    it,
+                                    "soundOperation",
+                                    if (SoundSettings.operation(it) == SoundOperation.PLAY) {
+                                        SoundOperation.STOP.name
+                                    } else {
+                                        SoundOperation.PLAY.name
+                                    },
+                                )
+                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        if (field == "soundTargetPosition" && node.type == CommandType.PLAY_SOUND) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, SOUND_TARGET_POSITION_ID))
+                            )
+                        }
+                        if (field == "soundSetting" && node.type == CommandType.PLAY_SOUND) {
+                            showSoundSettingForm(context.player, context.route, node)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        if (field == "particleDisplay" && node.type == CommandType.PARTICLE) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, PARTICLE_DISPLAY_ID))
+                            )
+                        }
+                        if (field == "particle" && node.type == CommandType.PARTICLE) {
+                            showParticleForm(context.player, context.route, node)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        if (field == "geometrySettings" && node.type == CommandType.PARTICLE) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, GEOMETRY_SETTINGS_ID))
+                            )
+                        }
+                        if (field == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, FIREWORK_CONTENTS_ID))
+                            )
+                        }
+                        if (field == "fireworkPosition" && node.type == CommandType.FIREWORK_LAUNCH) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(genericPositionRoute(context.route, "firework_position"))
+                            )
+                        }
                         if (field == "shakeType" && node.type == CommandType.CAMERA_SHAKE) {
                             if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(
@@ -309,7 +363,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (field in setOf(
                                 "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
                                  "entity", "tags", "tag", "sound",
-                                "soundParameters", "particle", "particleData", "effect", "level", "intensity", "volume", "pitch",
+                                "soundParameters", "particle", "particleData", "particleDensity", "burstHeight",
+                                "effect", "level", "intensity", "volume", "pitch",
                                 "x", "y", "z", "entityId", "item",
                             )) {
                             showFieldForm(context.player, context.route, field, node)
@@ -401,6 +456,137 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                SOUND_TARGET_POSITION_ID,
+                renderer = { renderSoundTargetPosition(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "target" to MenuActionHandler { context ->
+                        MenuActionResult.Success(MenuUpdate.Navigate(targetRoute(context.route, "node_target")))
+                    },
+                    "position" to MenuActionHandler { context ->
+                        MenuActionResult.Success(MenuUpdate.Navigate(genericPositionRoute(context.route, "sound_position")))
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                GENERIC_POSITION_ID,
+                renderer = { renderGenericPosition(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "disk" to MenuActionHandler { context ->
+                        val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) { node ->
+                                CommandSettingsModel.setPositionSpec(node, role, PositionSpec(PositionKind.DISK))
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                    "coordinates" to MenuActionHandler { context ->
+                        val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        openCoordinatePositionForm(context.player, context.route, role)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                PARTICLE_DISPLAY_ID,
+                renderer = { renderParticleDisplay(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "target" to MenuActionHandler { context ->
+                        MenuActionResult.Success(MenuUpdate.Navigate(targetRoute(context.route, "node_target")))
+                    },
+                    "mode" to MenuActionHandler { context ->
+                        val mode = context.payload["mode"]
+                            ?.let { runCatching { ParticleDisplayMode.valueOf(it) }.getOrNull() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_DISPLAY_MODE, mode.name)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                GEOMETRY_SETTINGS_ID,
+                renderer = { renderGeometrySettings(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "shape" to MenuActionHandler { context ->
+                        MenuActionResult.Success(MenuUpdate.Navigate(choiceRoute(context.route, PARTICLE_SHAPE_ID)))
+                    },
+                    "numbers" to MenuActionHandler { context ->
+                        val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        showGeometryForm(context.player, context.route, node)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    "end" to MenuActionHandler { context ->
+                        MenuActionResult.Success(MenuUpdate.Navigate(genericPositionRoute(context.route, "particle_end")))
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                PARTICLE_SHAPE_ID,
+                renderer = { renderParticleShapes(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val shape = context.payload["shape"]
+                            ?.let { runCatching { ParticleShape.valueOf(it) }.getOrNull() }
+                            ?.takeIf { it != ParticleShape.POINT_SCATTER }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_SHAPE, shape.name)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                FIREWORK_CONTENTS_ID,
+                renderer = { renderFireworkContents(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "held" to MenuActionHandler { context ->
+                        setHeldFirework(context.player, context.route)
+                    },
+                    "launch" to MenuActionHandler { context ->
+                        launchFireworkPreview(context.player, context.route)
                     },
                 ),
             )
@@ -548,6 +734,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val slots = CommandSettingsSlotPolicy.slots(node.type, fields.map(EditorField::key))
         val menuSize = CommandSettingsSlotPolicy.size(node.type, fields.size)
         val elements = fields.mapIndexed { index, field ->
+            val display = field.value(node)
+            // 複数の意味値を持つ表示はLoreのデータ行へ分けます。単一行の結合は
+            // 行ピッチを崩すため、意味ごとの行をそのままデータ行へ写します。
+            val data = display.rows(player)?.map { row ->
+                GuiMenuEntryData(row.label, row.value)
+            } ?: listOf(GuiMenuEntryData(
+                KcI18n.text(player, field.label),
+                display.render(player),
+            ))
             KcGui.menuEntry(
                 player = player,
                 slot = slots[index],
@@ -555,10 +750,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 name = KcI18n.text(player, field.label),
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(player, field.descriptionKey),
-                data = listOf(GuiMenuEntryData(
-                    KcI18n.text(player, field.label),
-                    field.value(node).render(player),
-                )),
+                data = data,
                 actions = listOf(GuiMenuActionIntent.AnyClick(
                     actionId = "field",
                     label = KcI18n.text(player, field.actionKey),
@@ -1067,6 +1259,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "sound" -> "minecraft:block.note_block.harp"
             "particle" -> ParticleSettings.particle(node)?.name ?: "FLAME"
             "particleData" -> ""
+            "particleDensity" -> "0.5"
+            "burstHeight" -> "20.0"
             "volume", "pitch" -> "1.0"
             "effect" -> "minecraft:speed"
             "level" -> "1"
@@ -1168,6 +1362,444 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
+        )
+    }
+
+    /** 効果音設定の束ね値（ID・音量・ピッチ／ID・カテゴリ）を一つの画面で編集します。 */
+    private fun showSoundSettingForm(player: Player, route: MenuRoute, node: CommandNode) {
+        val inputs = CommandDialogSpecs.soundSettingInputs(node)
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "sound-setting",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = inputs.map { input ->
+                FormTextField(
+                    input.id,
+                    KcI18n.text(player, input.labelKey),
+                    input.initial,
+                    spec = input.spec,
+                )
+            },
+            save = { values ->
+                updateNode(player, route, configuredFields = setOf("soundSetting")) { command ->
+                    CommandSettingsModel.setParameters(command, values)
+                }
+            },
+        )
+    }
+
+    /**
+     * パーティクル種類と詳細データを一つの画面で編集します。
+     *
+     * VIBRATION／TRAILは終点XYZを1群として束ねた入力欄から単一詳細文字列へ
+     * 合成して保存します。保存形式は従来の1文字列のまま変えません。
+     */
+    private fun showParticleForm(player: Player, route: MenuRoute, node: CommandNode) {
+        val inputs = CommandDialogSpecs.particleInputs(node)
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "particle",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = inputs.map { input ->
+                FormTextField(
+                    input.id,
+                    KcI18n.text(player, input.labelKey),
+                    input.initial,
+                    spec = input.spec,
+                )
+            },
+            save = { values ->
+                updateNode(player, route, configuredFields = setOf("particle", "particleData")) { command ->
+                    val composed = mutableMapOf<String, String>()
+                    composed[ParticleSettings.PARAM_PARTICLE] =
+                        values.getValue(ParticleSettings.PARAM_PARTICLE)
+                    when {
+                        values.containsKey("vibX") -> composed[ParticleSettings.PARAM_DATA] =
+                            CommandDialogSpecs.composeVibrationData(values)
+                        values.containsKey("trailX") -> composed[ParticleSettings.PARAM_DATA] =
+                            CommandDialogSpecs.composeTrailData(values)
+                        values.containsKey(ParticleSettings.PARAM_DATA) -> composed[ParticleSettings.PARAM_DATA] =
+                            values.getValue(ParticleSettings.PARAM_DATA)
+                    }
+                    CommandSettingsModel.setParameters(command, composed)
+                }
+            },
+        )
+    }
+
+    /** 図形数値を現形状ごとに一つの画面で編集します。 */
+    private fun showGeometryForm(player: Player, route: MenuRoute, node: CommandNode) {
+        val inputs = CommandDialogSpecs.geometryInputs(node)
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "geometry-numbers",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = inputs.map { input ->
+                FormTextField(
+                    input.id,
+                    KcI18n.text(player, input.labelKey),
+                    input.initial,
+                    spec = input.spec,
+                )
+            },
+            save = { values ->
+                updateNode(player, route, configuredFields = setOf("geometrySettings")) { command ->
+                    CommandSettingsModel.setParameters(command, values)
+                }
+            },
+        )
+    }
+
+    /** 汎用位置（制御ブロック位置または座標入力）を座標フォームで指定します。 */
+    private fun openCoordinatePositionForm(player: Player, route: MenuRoute, role: CommandSettingRole) {
+        val current = node(route)?.let { CommandSettingsModel.positionSpec(it, role) }
+        val location = player.location
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "coordinate-position-${role.routeValue}",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = listOf("x", "y", "z").map { axis ->
+                FormTextField(
+                    axis,
+                    axis.uppercase(),
+                    when (axis) {
+                        "x" -> current?.x ?: location.x
+                        "y" -> current?.y ?: location.y
+                        else -> current?.z ?: location.z
+                    }.toString(),
+                    spec = CommandDialogSpecs.coordinateSpec(axis),
+                )
+            },
+            save = { values ->
+                val x = CommandDialogSpecs.finiteDouble(values.getValue("x"))
+                val y = CommandDialogSpecs.finiteDouble(values.getValue("y"))
+                val z = CommandDialogSpecs.finiteDouble(values.getValue("z"))
+                if (x == null || y == null || z == null) {
+                    false
+                } else {
+                    updateNode(player, route) { command ->
+                        CommandSettingsModel.setPositionSpec(
+                            command,
+                            role,
+                            PositionSpec(PositionKind.COORDINATES, x, y, z),
+                        )
+                    }
+                }
+            },
+        )
+    }
+
+    /**
+     * 花火の中身をメインハンドの実物から保存します。
+     *
+     * GIVE_ITEMの付与アイテムと同型の item＋itemData 対であり、FIREWORK_ROCKET
+     * 以外は受け付けません。上書き時は確認画面を挟みます。
+     */
+    private fun setHeldFirework(player: Player, route: MenuRoute): MenuActionResult {
+        val held = player.inventory.itemInMainHand
+        if (held.type != Material.FIREWORK_ROCKET) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_HELD_FIREWORK_REQUIRED))
+            return MenuActionResult.Ignored
+        }
+        val itemKey = held.type.key.toString()
+        val itemData = me.awabi2048.kantancommander.item.ItemStackCodec.encode(held)
+        val currentNode = node(route) ?: return MenuActionResult.Ignored
+        if (currentNode.string(FireworkSettings.PARAM_ITEM).isNotBlank() ||
+            currentNode.string(FireworkSettings.PARAM_DATA).isNotBlank()
+        ) {
+            showConfirmForm(
+                player = player,
+                route = route,
+                formId = "firework-overwrite",
+                title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE),
+                content = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN),
+                confirmLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                cancelLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                onConfirm = {
+                    updateNode(
+                        player,
+                        route,
+                        configuredFields = setOf("fireworkContents"),
+                    ) { command ->
+                        CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_ITEM, itemKey)
+                        CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_DATA, itemData)
+                    }
+                },
+            )
+            return MenuActionResult.Success(MenuUpdate.None)
+        }
+        if (!updateNode(player, route, configuredFields = setOf("fireworkContents")) { command ->
+                CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_ITEM, itemKey)
+                CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_DATA, itemData)
+            }
+        ) {
+            return MenuActionResult.Rejected(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+        }
+        return MenuActionResult.Success(MenuUpdate.Refresh)
+    }
+
+    /**
+     * 設定中の花火をその場で打ち上げます。
+     *
+     * 本実行と同じ検証済み方式（初速固定・ワンショット起爆判定）を使い、
+     * 保存は行わず使い捨てで発射します。召喚体台帳へは登録しません。
+     */
+    private fun launchFireworkPreview(player: Player, route: MenuRoute): MenuActionResult {
+        val node = node(route) ?: return MenuActionResult.Ignored
+        val data = node.string(FireworkSettings.PARAM_DATA)
+        val stack = data.takeIf(String::isNotBlank)?.let {
+            me.awabi2048.kantancommander.item.ItemStackCodec.decode(it)
+        } ?: node.string(FireworkSettings.PARAM_ITEM).takeIf(String::isNotBlank)?.let { raw ->
+            org.bukkit.Material.matchMaterial(raw)?.let { org.bukkit.inventory.ItemStack(it) }
+        } ?: return MenuActionResult.Ignored
+        if (stack.type != Material.FIREWORK_ROCKET) return MenuActionResult.Ignored
+        val height = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
+            .toDoubleOrNull()?.takeIf(Double::isFinite) ?: FireworkSettings.HEIGHT_DEFAULT
+        // 試射は操作者（Gesture GUIエディターの操作者）の位置から打ち上げ、
+        // 発射者を自機に固定して接触起爆を避けます。
+        val launchAt = player.location.clone()
+        if (height <= 0.0) {
+            val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
+            instant.setItem(stack)
+            instant.setShotAtAngle(false)
+            instant.detonate()
+            return MenuActionResult.Success(MenuUpdate.None)
+        }
+        val rocket = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
+        rocket.setItem(stack)
+        rocket.setShotAtAngle(false)
+        rocket.shooter = player
+        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
+        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
+        rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
+        val target = launchAt.clone().add(0.0, height, 0.0)
+        plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            detonatePreviewAtTarget(rocket, target)
+        }, FireworkSettings.detonationTicks(height).toLong().coerceAtLeast(1L))
+        return MenuActionResult.Success(MenuUpdate.None)
+    }
+
+    /** 試射のワンショット起爆判定です。本実行と同一条件で目標高度へ補正起爆します。 */
+    private fun detonatePreviewAtTarget(rocket: org.bukkit.entity.Firework, target: Location, retriesLeft: Int = 5) {
+        val world = target.world
+        if (!rocket.isValid || rocket.isDetonated || world == null ||
+            !world.isChunkLoaded(target.blockX shr 4, target.blockZ shr 4)
+        ) {
+            if (retriesLeft > 0) {
+                plugin.server.scheduler.runTaskLater(plugin, Runnable {
+                    detonatePreviewAtTarget(rocket, target, retriesLeft - 1)
+                }, 20L)
+            } else {
+                runCatching { rocket.remove() }
+            }
+            return
+        }
+        rocket.teleport(target)
+        rocket.detonate()
+    }
+
+    private fun renderSoundTargetPosition(player: Player, route: MenuRoute): InventoryMenuView {
+        val node = node(route)
+        val operation = node?.let(SoundSettings::operation) ?: SoundOperation.PLAY
+        val buttons = buildList {
+            add(Triple("target", Material.PLAYER_HEAD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET))
+            if (operation == SoundOperation.PLAY) {
+                add(Triple("position", Material.COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_POSITION))
+            }
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(buttons.size)
+        val elements = buttons.mapIndexed { index, button ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                button.second,
+                KcI18n.text(player, button.third),
+                button.first,
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_TARGET_POSITION)),
+            elements,
+        )
+    }
+
+    private fun renderGenericPosition(player: Player, route: MenuRoute): InventoryMenuView {
+        val layout = ChoiceMenuLayoutPolicy.layout(2)
+        val elements = listOf(
+            choiceElement(
+                player,
+                layout.itemSlots[0],
+                Material.COMMAND_BLOCK,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION),
+                "disk",
+            ),
+            choiceElement(
+                player,
+                layout.itemSlots[1],
+                Material.COMPASS,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES),
+                "coordinates",
+            ),
+        ).toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION)),
+            elements,
+        )
+    }
+
+    private fun renderParticleDisplay(player: Player, route: MenuRoute): InventoryMenuView {
+        val node = node(route)
+        val mode = node?.let(ParticleGeometry::displayMode) ?: ParticleDisplayMode.POINT
+        val layout = ChoiceMenuLayoutPolicy.layout(3)
+        val elements = listOf(
+            choiceElement(
+                player,
+                layout.itemSlots[0],
+                Material.PLAYER_HEAD,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                "target",
+            ),
+            choiceElement(
+                player,
+                layout.itemSlots[1],
+                Material.SNOWBALL,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT),
+                "mode",
+                payload = mapOf("mode" to ParticleDisplayMode.POINT.name),
+                dataValue = if (mode == ParticleDisplayMode.POINT) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
+                } else null,
+            ),
+            choiceElement(
+                player,
+                layout.itemSlots[2],
+                Material.FILLED_MAP,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY),
+                "mode",
+                payload = mapOf("mode" to ParticleDisplayMode.GEOMETRY.name),
+                dataValue = if (mode == ParticleDisplayMode.GEOMETRY) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
+                } else null,
+            ),
+        ).toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY)),
+            elements,
+        )
+    }
+
+    private fun renderGeometrySettings(player: Player, route: MenuRoute): InventoryMenuView {
+        val node = node(route)
+        val shape = node?.let(ParticleGeometry::shape) ?: ParticleShape.POINT_SCATTER
+        val showEnd = shape == ParticleShape.LINE || shape == ParticleShape.BOX
+        val buttons = buildList {
+            add("shape")
+            add("numbers")
+            if (showEnd) add("end")
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(buttons.size)
+        val elements = buttons.mapIndexed { index, button ->
+            when (button) {
+                "shape" -> choiceElement(
+                    player,
+                    layout.itemSlots[index],
+                    Material.FILLED_MAP,
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS),
+                    "shape",
+                    dataValue = KcI18n.text(player, geometryShapeKey(shape)),
+                )
+                "numbers" -> choiceElement(
+                    player,
+                    layout.itemSlots[index],
+                    Material.PAPER,
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS),
+                    "numbers",
+                )
+                else -> choiceElement(
+                    player,
+                    layout.itemSlots[index],
+                    Material.COMPASS,
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION),
+                    "end",
+                )
+            }
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS)),
+            elements,
+        )
+    }
+
+    private fun renderParticleShapes(player: Player, route: MenuRoute): InventoryMenuView {
+        val node = node(route)
+        val current = node?.let(ParticleGeometry::shape) ?: ParticleShape.POINT_SCATTER
+        val options = listOf(
+            Triple(ParticleShape.LINE, Material.STICK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_LINE),
+            Triple(ParticleShape.CIRCLE, Material.COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_CIRCLE),
+            Triple(ParticleShape.ARC, Material.BOW, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_ARC),
+            Triple(ParticleShape.BOX, Material.CHEST, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_BOX),
+            Triple(ParticleShape.SPHERE, Material.ENDER_PEARL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_SPHERE),
+            Triple(ParticleShape.HELIX, Material.BLAZE_ROD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_HELIX),
+        )
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                KcI18n.text(player, option.third),
+                "select",
+                payload = mapOf("shape" to option.first.name),
+                dataValue = if (current == option.first) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
+                } else null,
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS)),
+            elements,
+        )
+    }
+
+    private fun renderFireworkContents(player: Player, route: MenuRoute): InventoryMenuView {
+        val layout = ChoiceMenuLayoutPolicy.layout(2)
+        val elements = listOf(
+            choiceElement(
+                player,
+                layout.itemSlots[0],
+                Material.CHEST,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND),
+                "held",
+            ),
+            choiceElement(
+                player,
+                layout.itemSlots[1],
+                Material.FIREWORK_ROCKET,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FIREWORK_PREVIEW),
+                "launch",
+            ),
+        ).toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FIREWORK_CONTENTS)),
+            elements,
         )
     }
 
@@ -1275,6 +1907,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val DELETE_ID = "delete_command"
         private const val TARGET_ID = "target_settings"
         private const val POSITION_ID = "position_settings"
+        private const val SOUND_TARGET_POSITION_ID = "sound_target_position"
+        private const val GENERIC_POSITION_ID = "generic_position"
+        private const val PARTICLE_DISPLAY_ID = "particle_display"
+        private const val GEOMETRY_SETTINGS_ID = "geometry_settings"
+        private const val PARTICLE_SHAPE_ID = "particle_shape"
+        private const val FIREWORK_CONTENTS_ID = "firework_contents"
         private const val SCRIPT_ID = "scriptId"
         private const val NODE_ID = "nodeId"
         private const val SOURCE_ID = "sourceId"
@@ -1321,6 +1959,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private fun positionRoute(route: MenuRoute, role: String) =
             route.copy(id = POSITION_ID, payload = route.payload + (ROLE to role))
 
+        private fun genericPositionRoute(route: MenuRoute, role: String) =
+            route.copy(id = GENERIC_POSITION_ID, payload = route.payload + (ROLE to role))
+
         private fun choiceRoute(route: MenuRoute, id: String) = route.copy(id = id)
 
         private fun scriptId(route: MenuRoute) = EditorSession.from(route)?.scriptId
@@ -1346,7 +1987,7 @@ sealed interface DisplayValue {
         val staySeconds: String,
         val fadeOutSeconds: String,
     ) : DisplayValue {
-        fun rows(player: Player): List<TimingRow> = listOf(
+        override fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
                 fadeInSeconds,
@@ -1372,7 +2013,7 @@ sealed interface DisplayValue {
     ) : DisplayValue {
         // 5値を5行へ分けると行ピッチが半減して縦に重なるため、3軸は範囲1行へ
         // まとめます。表示時間タブと同一形状になり、既存の複数行配置に収まります。
-        fun rows(player: Player): List<TimingRow> = listOf(
+        override fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_SPREAD),
                 listOf(deltaX, deltaY, deltaZ).joinToString(" / "),
@@ -1388,11 +2029,108 @@ sealed interface DisplayValue {
         val facing: DisplayValue?,
     ) : DisplayValue
 
+    /** 効果音の操作・対象・位置を、一つの設定欄で現在値として表示します。 */
+    data class SoundTargetPosition(
+        val targetKind: TargetKind?,
+        val positionKind: PositionKind?,
+        val operation: SoundOperation,
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> = buildList {
+            add(TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                targetKind?.let { displayTarget(it).render(player) }
+                    ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+            ))
+            if (operation == SoundOperation.PLAY) {
+                add(TimingRow(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_POSITION),
+                    positionKind?.let { displayPosition(it).render(player) }
+                        ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                ))
+            }
+        }
+    }
+
+    /** 効果音設定の束ね値を、操作ごとに意味付きで表示します。 */
+    data class SoundSetting(
+        val operation: SoundOperation,
+        val sound: String,
+        val volume: String,
+        val pitch: String,
+        val category: String,
+        val tempRef: String?,
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> {
+            tempRef?.let {
+                return listOf(TimingRow(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND),
+                    it,
+                ))
+            }
+            return when (operation) {
+                SoundOperation.PLAY -> listOf(
+                    TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND), sound.ifBlank {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+                    }),
+                    TimingRow(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_PARAMETERS),
+                        "$volume / $pitch",
+                    ),
+                )
+                SoundOperation.STOP -> listOf(
+                    TimingRow(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND),
+                        sound.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL) },
+                    ),
+                    TimingRow(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE),
+                        category.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL) },
+                    ),
+                )
+            }
+        }
+    }
+
+    /** パーティクルの対象と表示方式を、一つの設定欄で現在値として表示します。 */
+    data class ParticleDisplay(
+        val targetKind: TargetKind?,
+        val mode: ParticleDisplayMode,
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> = listOf(
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
+                targetKind?.let { displayTarget(it).render(player) }
+                    ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+            ),
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY),
+                KcI18n.text(
+                    player,
+                    if (mode == ParticleDisplayMode.GEOMETRY) {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY
+                    } else {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT
+                    },
+                ),
+            ),
+        )
+    }
+
+    /** 図形設定の形状と主要寸法を、一つの設定欄で現在値として表示します。 */
+    data class GeometrySettings(
+        val shape: ParticleShape,
+        val summary: String,
+    ) : DisplayValue
+
     fun render(player: Player): String = when (this) {
         is Literal -> value
         is Localized -> KcI18n.text(player, key)
         is Timing -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is ParticleParameters -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
+        is SoundTargetPosition -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
+        is SoundSetting -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
+        is ParticleDisplay -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
+        is GeometrySettings -> "${KcI18n.text(player, geometryShapeKey(shape))} $summary".trim()
         is Location -> buildList {
             position?.let {
                 add("${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION)}=${it.render(player)}")
@@ -1401,6 +2139,21 @@ sealed interface DisplayValue {
                 add("${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING)}=${it.render(player)}")
             }
         }.joinToString(" / ").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+    }
+
+    /**
+     * 意味ごとの行へ分けて表示できる値を返します。
+     *
+     * Inventory GUIは行ごとをLoreのデータ行へ分け、Gesture GUIは複数行
+     * レイアウトへ通します。単一行で十分な値はnullを返します。
+     */
+    fun rows(player: Player): List<TimingRow>? = when (this) {
+        is Timing -> rows(player)
+        is ParticleParameters -> rows(player)
+        is SoundTargetPosition -> rows(player)
+        is SoundSetting -> rows(player)
+        is ParticleDisplay -> rows(player)
+        else -> null
     }
 }
 
@@ -1565,33 +2318,67 @@ object EditorMenuLayout {
             ) { it.summonPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
         )
         CommandType.PLAY_SOUND -> listOf(
-            field("sound", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND, Material.NOTE_BLOCK) {
-                displayTypedValue(it, "sound")
+            field(
+                "soundOperation",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_OPERATION,
+                Material.COMPARATOR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displaySoundOperation(SoundSettings.operation(it)) },
+            field(
+                "soundTargetPosition",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_TARGET_POSITION,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_POSITION,
+            ) {
+                DisplayValue.SoundTargetPosition(
+                    targetKind = it.targetSpec?.kind,
+                    positionKind = it.soundPositionSpec?.kind,
+                    operation = SoundSettings.operation(it),
+                )
             },
             field(
-                "soundParameters",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_PARAMETERS,
-                Material.JUKEBOX,
+                "soundSetting",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SETTING,
+                Material.NOTE_BLOCK,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_PARAMETERS,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_PARAMETERS,
-            ) { displaySoundParameters(it.string("volume", "1.0"), it.string("pitch", "1.0")) },
+            ) {
+                DisplayValue.SoundSetting(
+                    operation = SoundSettings.operation(it),
+                    sound = it.string("sound"),
+                    volume = it.string("volume", "1.0"),
+                    pitch = it.string("pitch", "1.0"),
+                    category = it.string("soundCategory"),
+                    tempRef = it.soundTempRef?.takeIf(String::isNotBlank),
+                )
+            },
             field("soundScope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE, Material.GLOBE_BANNER_PATTERN,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_SCOPE,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_SCOPE,
             ) { displaySoundScope(it.string("soundScope", "POSITION")) },
-            field("soundPosition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_POSITION, Material.COMPASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_POSITION,
-            ) { it.soundPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
         )
         CommandType.PARTICLE -> listOf(
+            field(
+                "particleDisplay",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY,
+                Material.ENDER_EYE,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) {
+                DisplayValue.ParticleDisplay(
+                    targetKind = it.targetSpec?.kind,
+                    mode = ParticleGeometry.displayMode(it),
+                )
+            },
             field(
                 ParticleSettings.PARAM_PARTICLE,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
                 Material.FIREWORK_STAR,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE,
-            ),
+            ) { displayParticle(it) },
             field(
                 "position",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
@@ -1615,11 +2402,41 @@ object EditorMenuLayout {
                 )
             },
             field(
-                ParticleSettings.PARAM_DATA,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DATA,
-                Material.PAPER,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE_DATA,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE_DATA,
+                "geometrySettings",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS,
+                Material.FILLED_MAP,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE_PARAMETERS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE_PARAMETERS,
+            ) { displayGeometrySettings(it) },
+            field(
+                "particleDensity",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DENSITY,
+                Material.SUGAR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE_PARAMETERS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE_PARAMETERS,
+            ),
+        )
+        CommandType.FIREWORK_LAUNCH -> listOf(
+            field(
+                "fireworkPosition",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FIREWORK_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SUMMON_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SUMMON_POSITION,
+            ) { it.fireworkPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "fireworkContents",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FIREWORK_CONTENTS,
+                Material.FIREWORK_ROCKET,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_GIVE_ITEM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_GIVE_ITEM,
+            ) { displayFireworkContents(it) },
+            field(
+                "burstHeight",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BURST_HEIGHT,
+                Material.ARROW,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
             ),
         )
         CommandType.APPLY_EFFECT -> listOf(
@@ -1912,6 +2729,55 @@ private fun displayTargetRange(dx: Double?, dy: Double?, dz: Double?): String? {
 /** 音量とピッチは保存時の2値を、設定画面では一つの項目として表示します。 */
 private fun displaySoundParameters(volume: String, pitch: String): DisplayValue =
     displayLiteral("$volume / $pitch")
+
+private fun displaySoundOperation(operation: SoundOperation): DisplayValue = DisplayValue.Localized(
+    when (operation) {
+        SoundOperation.PLAY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SOUND_PLAY
+        SoundOperation.STOP -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SOUND_STOP
+    },
+)
+
+private fun geometryShapeKey(shape: ParticleShape): LocalizationKey<String> = when (shape) {
+    ParticleShape.POINT_SCATTER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT
+    ParticleShape.LINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_LINE
+    ParticleShape.CIRCLE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_CIRCLE
+    ParticleShape.ARC -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_ARC
+    ParticleShape.BOX -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_BOX
+    ParticleShape.SPHERE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_SPHERE
+    ParticleShape.HELIX -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_HELIX
+}
+
+/** パーティクル種類と詳細データを、一つの設定欄で現在値として表示します。 */
+private fun displayParticle(node: CommandNode): DisplayValue {
+    val particle = ParticleSettings.particle(node)?.name ?: node.string(ParticleSettings.PARAM_PARTICLE)
+    val data = node.string(ParticleSettings.PARAM_DATA).takeIf(String::isNotBlank)
+    return displayLiteral(if (data == null) particle else "$particle + $data")
+}
+
+/** 図形設定の形状と主要寸法を、一つの設定欄で現在値として表示します。 */
+private fun displayGeometrySettings(node: CommandNode): DisplayValue {
+    val shape = ParticleGeometry.shape(node)
+    if (shape == ParticleShape.POINT_SCATTER) return displayUnset()
+    fun param(key: String): String = node.string(key, node.type.defaults[key].orEmpty())
+    val summary = when (shape) {
+        ParticleShape.LINE -> ""
+        ParticleShape.CIRCLE -> "r=${param(ParticleGeometry.PARAM_RADIUS)}"
+        ParticleShape.ARC -> "r=${param(ParticleGeometry.PARAM_RADIUS)} ${param(ParticleGeometry.PARAM_START_ANGLE)}-${param(ParticleGeometry.PARAM_END_ANGLE)}"
+        ParticleShape.BOX -> ""
+        ParticleShape.SPHERE -> "r=${param(ParticleGeometry.PARAM_RADIUS)}"
+        ParticleShape.HELIX -> "r=${param(ParticleGeometry.PARAM_RADIUS)} h=${param(ParticleGeometry.PARAM_HEIGHT)} x${param(ParticleGeometry.PARAM_TURNS)}"
+        ParticleShape.POINT_SCATTER -> ""
+    }
+    return DisplayValue.GeometrySettings(shape, summary)
+}
+
+/** 花火の中身を、素材IDと設定済み状態で表示します。 */
+private fun displayFireworkContents(node: CommandNode): DisplayValue {
+    val item = node.string(FireworkSettings.PARAM_ITEM)
+    val data = node.string(FireworkSettings.PARAM_DATA)
+    if (item.isBlank() && data.isBlank()) return displayUnset()
+    return displayLiteral(item.ifBlank { "minecraft:firework_rocket" })
+}
 
 private fun displayTemporaryLocation(node: CommandNode): DisplayValue = DisplayValue.Location(
     position = node.temporaryLocationPositionSpec?.kind?.let(::displayPosition),

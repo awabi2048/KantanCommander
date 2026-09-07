@@ -137,6 +137,13 @@ data class CommandNode(
     var soundPositionSpec: PositionSpec? = null,
     /** PARTICLEの散布中心です。未設定時は実行コンテキストの位置を使用します。 */
     var particlePositionSpec: PositionSpec? = null,
+    /**
+     * PARTICLEの図形表示で使う第二位置です。LINEの終点・BOXの対角点など、
+     * 始点（particlePositionSpec）と対になる場合だけ設定します。
+     */
+    var particleEndPositionSpec: PositionSpec? = null,
+    /** FIREWORK_LAUNCHの打ち上げ位置です。未設定時は実行コンテキストの位置を使用します。 */
+    var fireworkPositionSpec: PositionSpec? = null,
     /** エンティティ召喚で指定された場合の召喚位置です。未設定時は制御ブロック位置を使用します。 */
     var summonPositionSpec: PositionSpec? = null,
     /** TEMP_SET ENTITYの参照元です。通常コマンドと同じTargetSpecで対象を解決します。 */
@@ -173,6 +180,8 @@ data class CommandNode(
         blockToSpec = blockToSpec?.copy(),
         soundPositionSpec = soundPositionSpec?.copy(),
         particlePositionSpec = particlePositionSpec?.copy(),
+        particleEndPositionSpec = particleEndPositionSpec?.copy(),
+        fireworkPositionSpec = fireworkPositionSpec?.copy(),
         summonPositionSpec = summonPositionSpec?.copy(),
         temporaryEntityTargetSpec = temporaryEntityTargetSpec?.copy(),
         temporaryLocationPositionSpec = temporaryLocationPositionSpec?.copy(),
@@ -441,7 +450,8 @@ enum class CommandType(
         "entity" to "", "tags" to "", "customName" to ""
     )),
     PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
-        "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "POSITION"
+        "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "POSITION",
+        "soundOperation" to SoundOperation.PLAY.name, "soundCategory" to ""
     )),
     PARTICLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_DESCRIPTION, Material.FIREWORK_STAR, mapOf(
         "particle" to "FLAME",
@@ -451,6 +461,22 @@ enum class CommandType(
         "particleSpeed" to "0.0",
         "particleCount" to "1",
         "particleData" to "",
+        "particleDisplayMode" to ParticleDisplayMode.POINT.name,
+        "particleShape" to ParticleShape.POINT_SCATTER.name,
+        "particleDensity" to "0.5",
+        "geometryRadius" to "3.0",
+        "geometryHeight" to "3.0",
+        "geometryTurns" to "2.0",
+        "geometryStartAngle" to "0.0",
+        "geometryEndAngle" to "360.0",
+        "geometryRotation" to "0.0",
+        "geometryAxisYaw" to "0.0",
+        "geometryAxisPitch" to "-90.0",
+        "geometryStep" to "0.5",
+        "geometryWireframe" to "true",
+    )),
+    FIREWORK_LAUNCH(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FIREWORK_LAUNCH, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FIREWORK_LAUNCH_DESCRIPTION, Material.FIREWORK_ROCKET, mapOf(
+        "fireworkItem" to "", "fireworkData" to "", "burstHeight" to "20.0"
     )),
     APPLY_EFFECT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_APPLY_EFFECT_DESCRIPTION, Material.POTION, mapOf(
         "effect" to "", "level" to "1", "seconds" to "30"

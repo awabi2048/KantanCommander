@@ -15,10 +15,16 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
+import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.NumericExpression
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
@@ -216,6 +222,8 @@ object ExecutableScriptValidator {
             node.blockToSpec,
             node.soundPositionSpec,
             node.particlePositionSpec,
+            node.particleEndPositionSpec,
+            node.fireworkPositionSpec,
             node.summonPositionSpec,
         ).forEach { validatePosition(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationPositionSpec?.let {
@@ -254,17 +262,9 @@ object ExecutableScriptValidator {
                 }
                 validateTemplate(node.string("customName"), node, path, "customName", errors, variableDefinitions, temporaries = temporaryDefinitions)
             }
-            CommandType.PLAY_SOUND -> {
-                if (node.soundTempRef.isNullOrBlank() && !CommandValueRules.isSoundId(node.string("sound"))) {
-                    errors += nodeError(node, path, setOf("sound"), "サウンドIDが不正です")
-                }
-                validateRange(node, path, "volume", 0.0..34.0, "音量は0.0〜34.0の範囲です", errors, variableDefinitions, temporaryDefinitions)
-                validateRange(node, path, "pitch", 0.5..2.0, "ピッチは0.5〜2.0の範囲です", errors, variableDefinitions, temporaryDefinitions)
-                if (node.string("soundScope", "POSITION") !in setOf("POSITION", "WORLD")) {
-                    errors += nodeError(node, path, setOf("soundPosition"), "サウンドの再生位置が不正です")
-                }
-            }
+            CommandType.PLAY_SOUND -> validateSound(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.PARTICLE -> validateParticle(node, path, errors, variableDefinitions, temporaryDefinitions)
+            CommandType.FIREWORK_LAUNCH -> validateFirework(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.APPLY_EFFECT -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
                 if (node.effectTempRef.isNullOrBlank() && !CommandValueRules.isEffectId(node.string("effect"))) {
@@ -296,7 +296,78 @@ object ExecutableScriptValidator {
         }
     }
 
-    /** PARTICLEの共通入力を、vanilla /particleと同じ有限値・正の個数で検証します。 */
+    /**
+     * 効果音コマンドを操作種別ごとに検証します。
+     *
+     * PLAYは従来の sound／volume／pitch／soundScope 検証を維持し、STOPは
+     * sound（空＝全音）／soundCategory（空＝全カテゴリ）の任意指定だけを検証
+     * します。対象プレイヤー（targetSpec）は共通の対象検証へ委ね、未設定時は
+     * 実行起点ワールドの全員へ届けます。エラーは統合後のタブキーで報告します。
+     */
+    private fun validateSound(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        val operationRaw = node.params[SoundSettings.PARAM_OPERATION]
+        if (!operationRaw.isNullOrBlank() && SoundOperation.parse(operationRaw).name != operationRaw.trim().uppercase()) {
+            errors += nodeError(node, path, setOf("soundOperation"), "効果音の操作が不正です")
+            return
+        }
+        when (SoundSettings.operation(node)) {
+            SoundOperation.PLAY -> {
+                if (node.soundTempRef.isNullOrBlank() && !CommandValueRules.isSoundId(node.string("sound"))) {
+                    errors += nodeError(node, path, setOf("soundSetting"), "サウンドIDが不正です")
+                }
+                validateSettingRange(node, path, "volume", 0.0..34.0, "音量は0.0〜34.0の範囲です", "soundSetting", errors, variableDefinitions, temporaryDefinitions)
+                validateSettingRange(node, path, "pitch", 0.5..2.0, "ピッチは0.5〜2.0の範囲です", "soundSetting", errors, variableDefinitions, temporaryDefinitions)
+                if (node.string("soundScope", "POSITION") !in setOf("POSITION", "WORLD")) {
+                    errors += nodeError(node, path, setOf("soundScope"), "サウンドの再生範囲が不正です")
+                }
+            }
+            SoundOperation.STOP -> {
+                // 一時変数参照時は実行時に参照先の効果音IDへ解決するため、
+                // リテラル欄の検証を抑止します。
+                if (node.soundTempRef.isNullOrBlank()) {
+                    val sound = node.string("sound")
+                    if (sound.isNotBlank() && !CommandValueRules.isSoundId(sound)) {
+                        errors += nodeError(node, path, setOf("soundSetting"), "停止対象のサウンドIDが不正です")
+                    }
+                    if (!SoundSettings.isCategoryValue(node.string("soundCategory"))) {
+                        errors += nodeError(node, path, setOf("soundSetting"), "停止対象のカテゴリが不正です")
+                    }
+                }
+            }
+        }
+    }
+
+    /** 文字列パラメータの範囲検証を、表示タブキーへ投影して報告します。 */
+    private fun validateSettingRange(
+        node: CommandNode,
+        path: String,
+        field: String,
+        range: ClosedFloatingPointRange<Double>,
+        message: String,
+        reportField: String,
+        errors: MutableList<ScriptValidationError>,
+        definitions: Map<String, WorldVariableValue>?,
+        temporaries: Map<String, TemporaryVariableType>? = null,
+    ) {
+        validateNumberInput(node.string(field), definitions, node, path, setOf(reportField), errors, temporaries)
+        val value = resolvedDouble(node.string(field), definitions, temporaries)
+        if (value != null && value !in range) errors += nodeError(node, path, setOf(reportField), message)
+    }
+
+    /**
+     * PARTICLEを表示方式ごとに検証します。
+     *
+     * 点表示（POINT）は従来の散布検証を維持し、図形表示（GEOMETRY）は形状・
+     * 密度・形状数値を検証します。粒子種類と詳細データの検証は両方式で共通です。
+     * 幾何量が確定できる場合は見積点数の上限も確認し、quota超過の常時拒否を
+     * 保存時に抑止します。
+     */
     private fun validateParticle(
         node: CommandNode,
         path: String,
@@ -304,6 +375,20 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, WorldVariableValue>?,
         temporaryDefinitions: Map<String, TemporaryVariableType>?,
     ) {
+        val displayRaw = node.params[ParticleGeometry.PARAM_DISPLAY_MODE]
+        if (!displayRaw.isNullOrBlank() &&
+            ParticleDisplayMode.parse(displayRaw).name != displayRaw.trim().uppercase()
+        ) {
+            errors += nodeError(node, path, setOf("particleDisplay"), "パーティクルの表示方式が不正です")
+            return
+        }
+        val shapeRaw = node.params[ParticleGeometry.PARAM_SHAPE]
+        if (!shapeRaw.isNullOrBlank() &&
+            ParticleShape.parse(shapeRaw).name != shapeRaw.trim().uppercase()
+        ) {
+            errors += nodeError(node, path, setOf("geometrySettings"), "パーティクルの形状が不正です")
+            return
+        }
         val particle = ParticleSettings.particle(node)
         if (particle == null) {
             errors += nodeError(node, path, setOf(ParticleSettings.PARAM_PARTICLE), "パーティクルの種類が不正です")
@@ -315,6 +400,20 @@ object ExecutableScriptValidator {
                 errors += nodeError(node, path, setOf(ParticleSettings.PARAM_DATA), "パーティクルの詳細データが不正です")
             }
         }
+        when (ParticleGeometry.displayMode(node)) {
+            ParticleDisplayMode.POINT -> validatePointScatter(node, path, errors, variableDefinitions, temporaryDefinitions)
+            ParticleDisplayMode.GEOMETRY -> validateGeometry(node, path, errors, variableDefinitions, temporaryDefinitions)
+        }
+    }
+
+    /** 従来の単点散布（delta／speed／count）を検証します。 */
+    private fun validatePointScatter(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
         val parameterField = setOf("particleParameters")
         validateParticleRange(node, path, ParticleSettings.PARAM_DELTA_X, "X方向の散布範囲", errors, variableDefinitions, temporaryDefinitions, parameterField)
         validateParticleRange(node, path, ParticleSettings.PARAM_DELTA_Y, "Y方向の散布範囲", errors, variableDefinitions, temporaryDefinitions, parameterField)
@@ -339,6 +438,212 @@ object ExecutableScriptValidator {
             errors,
             temporaryDefinitions,
         )
+    }
+
+    /** 図形表示の形状・密度・形状数値を検証します。 */
+    private fun validateGeometry(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        val shape = ParticleGeometry.shape(node)
+        if (shape == ParticleShape.POINT_SCATTER) {
+            errors += nodeError(node, path, setOf("geometrySettings"), "図形表示では形状を選択してください")
+            return
+        }
+        validateGeometryNumber(node, path, ParticleGeometry.PARAM_DENSITY, "密度", errors, variableDefinitions, temporaryDefinitions, setOf("particleDensity")) {
+            ParticleGeometry.isDensityValue(it)
+        }
+        val report = setOf("geometrySettings")
+        when (shape) {
+            ParticleShape.LINE -> {
+                if (node.particleEndPositionSpec == null) {
+                    errors += nodeError(node, path, report, "線の終点が未設定です")
+                }
+            }
+            ParticleShape.CIRCLE -> {
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_RADIUS, "半径", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, 0.0, ParticleGeometry.MAX_RADIUS, exclusiveMin = true)
+                }
+                validateAxis(node, path, errors, variableDefinitions, temporaryDefinitions, report)
+            }
+            ParticleShape.ARC -> {
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_RADIUS, "半径", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, 0.0, ParticleGeometry.MAX_RADIUS, exclusiveMin = true)
+                }
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_START_ANGLE, "開始角", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, ParticleGeometry.MIN_ANGLE, ParticleGeometry.MAX_ANGLE)
+                }
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_END_ANGLE, "終了角", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, ParticleGeometry.MIN_ANGLE, ParticleGeometry.MAX_ANGLE)
+                }
+                validateAxis(node, path, errors, variableDefinitions, temporaryDefinitions, report)
+            }
+            ParticleShape.BOX -> {
+                if (node.particleEndPositionSpec == null) {
+                    errors += nodeError(node, path, report, "箱の対角点が未設定です")
+                }
+                validateGeometryBoolean(node, path, ParticleGeometry.PARAM_WIREFRAME, "ワイヤーフレーム", errors, report)
+            }
+            ParticleShape.SPHERE -> {
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_RADIUS, "半径", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, 0.0, ParticleGeometry.MAX_RADIUS, exclusiveMin = true)
+                }
+                validateAxis(node, path, errors, variableDefinitions, temporaryDefinitions, report)
+            }
+            ParticleShape.HELIX -> {
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_RADIUS, "半径", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, 0.0, ParticleGeometry.MAX_RADIUS, exclusiveMin = true)
+                }
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_HEIGHT, "高さ", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, 0.0, ParticleGeometry.MAX_HEIGHT, exclusiveMin = true)
+                }
+                validateGeometryNumber(node, path, ParticleGeometry.PARAM_TURNS, "巻き数", errors, variableDefinitions, temporaryDefinitions, report) {
+                    finiteIn(it, ParticleGeometry.MIN_TURNS, ParticleGeometry.MAX_TURNS)
+                }
+                validateAxis(node, path, errors, variableDefinitions, temporaryDefinitions, report)
+            }
+            ParticleShape.POINT_SCATTER -> Unit
+        }
+        validateGeometryNumber(node, path, ParticleGeometry.PARAM_STEP, "間隔", errors, variableDefinitions, temporaryDefinitions, report) {
+            finiteIn(it, ParticleGeometry.MIN_STEP, ParticleGeometry.MAX_STEP)
+        }
+        validatePointEstimate(node, path, shape, errors, variableDefinitions, temporaryDefinitions, report)
+    }
+
+    /** 法線・軸（yaw／pitch）を検証します。 */
+    private fun validateAxis(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+        report: Set<String>,
+    ) {
+        validateGeometryNumber(node, path, ParticleGeometry.PARAM_AXIS_YAW, "軸の向き", errors, variableDefinitions, temporaryDefinitions, report) {
+            finiteIn(it, -180.0, 180.0)
+        }
+        validateGeometryNumber(node, path, ParticleGeometry.PARAM_AXIS_PITCH, "軸の傾き", errors, variableDefinitions, temporaryDefinitions, report) {
+            finiteIn(it, -90.0, 90.0)
+        }
+        validateGeometryNumber(node, path, ParticleGeometry.PARAM_ROTATION, "回転", errors, variableDefinitions, temporaryDefinitions, report) {
+            finiteIn(it, ParticleGeometry.MIN_ANGLE, ParticleGeometry.MAX_ANGLE)
+        }
+    }
+
+    /** 図形数値をテンプレート委譲つきで検証します。 */
+    private fun validateGeometryNumber(
+        node: CommandNode,
+        path: String,
+        field: String,
+        label: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+        report: Set<String>,
+        accepts: (String) -> Boolean,
+    ) {
+        val raw = node.string(field)
+        validateNumberInput(raw, variableDefinitions, node, path, report, errors, temporaryDefinitions)
+        if (!deferNumericValidation(raw, variableDefinitions, temporaryDefinitions) && !accepts(raw)) {
+            errors += nodeError(node, path, report, "${label}の値が不正です")
+        }
+    }
+
+    private fun validateGeometryBoolean(
+        node: CommandNode,
+        path: String,
+        field: String,
+        label: String,
+        errors: MutableList<ScriptValidationError>,
+        report: Set<String>,
+    ) {
+        if (node.params[field]?.toBooleanStrictOrNull() == null) {
+            errors += nodeError(node, path, report, "${label}の設定が不正です")
+        }
+    }
+
+    private fun finiteIn(raw: String, min: Double, max: Double, exclusiveMin: Boolean = false): Boolean {
+        val value = raw.toDoubleOrNull() ?: return false
+        if (!value.isFinite()) return false
+        return if (exclusiveMin) value > min && value <= max else value in min..max
+    }
+
+    /**
+     * 確定値から見積点数を求め、上限超過を保存時に抑止します。
+     *
+     * 位置・テンプレートが未確定の場合は実行時のquota判定へ委ねます。
+     */
+    private fun validatePointEstimate(
+        node: CommandNode,
+        path: String,
+        shape: ParticleShape,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+        report: Set<String>,
+    ) {
+        val densityRaw = node.string(ParticleGeometry.PARAM_DENSITY, "0.5")
+        if (deferNumericValidation(densityRaw, variableDefinitions, temporaryDefinitions)) return
+        val density = densityRaw.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return
+        // 終端距離が必要な形状だけ両端の確定座標を求め、それ以外は距離不要です。
+        val endDistance = when (shape) {
+            ParticleShape.LINE, ParticleShape.BOX -> literalEndDistance(node) ?: return
+            else -> 0.0
+        }
+        val estimate = ParticleGeometry.estimatePoints(shape, node.params, density, endDistance) ?: return
+        if (estimate > ParticleGeometry.MAX_POINTS) {
+            errors += nodeError(node, path, report, "図形が大きすぎます（見積${estimate}点・上限${ParticleGeometry.MAX_POINTS}点）")
+        }
+    }
+
+    /** 両端が確定座標の場合だけ終端距離を返します。未確定時はnullです。 */
+    private fun literalEndDistance(node: CommandNode): Double? {
+        val start = node.particlePositionSpec ?: return null
+        val end = node.particleEndPositionSpec ?: return null
+        val sx = start.x ?: return null
+        val sy = start.y ?: return null
+        val sz = start.z ?: return null
+        val ex = end.x ?: return null
+        val ey = end.y ?: return null
+        val ez = end.z ?: return null
+        if (!listOf(sx, sy, sz, ex, ey, ez).all(Double::isFinite)) return null
+        val dx = ex - sx
+        val dy = ey - sy
+        val dz = ez - sz
+        return kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+    }
+
+    /**
+     * 花火打ち上げを検証します。
+     *
+     * 中身（item＋itemData）は素材の正当性だけを確認し、Base64の復元可否は
+     * 実行時に判定します。GIVE_ITEMの装備検証と同じく、保存時のRegistry解決に
+     * 依存しない境界とします。打ち上げ位置は共通の位置検証へ委ねます。
+     */
+    private fun validateFirework(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
+        val item = node.string(FireworkSettings.PARAM_ITEM)
+        val data = node.string(FireworkSettings.PARAM_DATA)
+        if (item.isBlank() && data.isBlank()) {
+            errors += nodeError(node, path, setOf("fireworkContents"), "花火の中身が未設定です")
+        } else if (item.isNotBlank() && !FireworkSettings.isFireworkMaterial(item)) {
+            errors += nodeError(node, path, setOf("fireworkContents"), "花火のロケットではありません")
+        }
+        val heightRaw = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
+        validateNumberInput(heightRaw, variableDefinitions, node, path, setOf("burstHeight"), errors, temporaryDefinitions)
+        if (!deferNumericValidation(heightRaw, variableDefinitions, temporaryDefinitions) &&
+            !FireworkSettings.isBurstHeight(heightRaw)
+        ) {
+            errors += nodeError(node, path, setOf("burstHeight"), "打ち上げ高さは0〜320ブロックの範囲です")
+        }
     }
 
     private fun validateParticleRange(

@@ -53,7 +53,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "fb45ded251cbcc8e1d944764790c2b8c4b6a74ddba85efc6979fd99553b580fb"
+    "7b6d89e356537f51fde370b640f7a1acf1ca86f9ffb96972a57dd55e29385883"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -264,6 +264,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(summonedEntities, this)
         pm.registerEvents(FeedbackCleanupListener(this), this)
+        pm.registerEvents(me.awabi2048.kantancommander.gui.GestureHeldRefreshListener(this), this)
         pm.registerEvents(controlBlockSync, this)
         if (!LuckPermsRecalculateAdapter.register(this, logger) { playerUuid ->
                 server.scheduler.runTask(this, Runnable {

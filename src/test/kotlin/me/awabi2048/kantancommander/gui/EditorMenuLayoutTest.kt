@@ -121,10 +121,12 @@ class EditorMenuLayoutTest {
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE, soundScope.label)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_SCOPE, soundScope.descriptionKey)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_SCOPE, soundScope.actionKey)
-        val soundPosition = soundFields.single { it.key == "soundPosition" }
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_POSITION, soundPosition.label)
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_POSITION, soundPosition.descriptionKey)
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_POSITION, soundPosition.actionKey)
+        val soundTargetPosition = soundFields.single { it.key == "soundTargetPosition" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_TARGET_POSITION, soundTargetPosition.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_POSITION, soundTargetPosition.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_POSITION, soundTargetPosition.actionKey)
+        val soundSetting = soundFields.single { it.key == "soundSetting" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SETTING, soundSetting.label)
     }
 
     @Test
@@ -145,11 +147,11 @@ class EditorMenuLayoutTest {
         assertFalse(entityFields.any { it.key == "itemData" })
 
         val soundFields = EditorMenuLayout.fields(CommandType.PLAY_SOUND)
-        assertTrue(soundFields.any { it.key == "soundParameters" })
+        assertTrue(soundFields.any { it.key == "soundSetting" })
         assertFalse(soundFields.any { it.key == "volume" || it.key == "pitch" })
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_PARAMETERS,
-            soundFields.single { it.key == "soundParameters" }.descriptionKey,
+            soundFields.single { it.key == "soundSetting" }.descriptionKey,
         )
     }
 
