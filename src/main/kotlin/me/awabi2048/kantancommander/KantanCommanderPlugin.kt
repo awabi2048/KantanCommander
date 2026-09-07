@@ -34,11 +34,13 @@ import me.awabi2048.kantancommander.gui.GestureEditorFacade
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
 import me.awabi2048.kantancommander.item.KantanInteractionListener
+import me.awabi2048.kantancommander.item.ControlBlockInventorySync
 import me.awabi2048.kantancommander.item.KantanItemGrantProvider
 import me.awabi2048.kantancommander.item.KantanItemGrantService
 import me.awabi2048.kantancommander.placement.PlacementProtectionListener
 import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
+import me.awabi2048.kantancommander.security.LuckPermsRecalculateAdapter
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.block.Block
 import org.bukkit.plugin.java.JavaPlugin
@@ -85,6 +87,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var placementAccess: PlacementAccessPolicy
         private set
     lateinit var feedback: PlayerFeedbackService
+        private set
+    lateinit var controlBlockSync: ControlBlockInventorySync
         private set
     lateinit var exporter: VanillaDatapackExporter
         private set
@@ -221,6 +225,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         gestureEditor = GestureEditorFacade(this)
         placementAccess = PlacementAccessPolicy(this)
         feedback = PlayerFeedbackService()
+        controlBlockSync = ControlBlockInventorySync(this)
         triggerListener = RedstoneTriggerListener(this)
 
         getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this, itemGrantService))
@@ -259,6 +264,15 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(summonedEntities, this)
         pm.registerEvents(FeedbackCleanupListener(this), this)
+        pm.registerEvents(controlBlockSync, this)
+        if (!LuckPermsRecalculateAdapter.register(this, logger) { playerUuid ->
+                server.scheduler.runTask(this, Runnable {
+                    server.getPlayer(playerUuid)?.let { controlBlockSync.normalize(it) }
+                })
+            }
+        ) {
+            logger.fine("LuckPerms再計算イベントは未接続のため、所持品同期は再評価点で追従します")
+        }
     }
 
     internal fun resetActivationTiming(scriptId: java.util.UUID) {

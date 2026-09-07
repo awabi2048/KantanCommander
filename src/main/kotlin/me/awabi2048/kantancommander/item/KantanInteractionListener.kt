@@ -7,6 +7,7 @@ import me.awabi2048.kantancommander.gui.EditorGuiModeResolver
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
+import me.awabi2048.kantancommander.security.PlacementDecision
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Bukkit
 import org.bukkit.Location
@@ -133,7 +134,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
             event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
             event.isCancelled = true
-            val canManagePlacement = plugin.placementAccess.canManage(player, clickedPlacement.world)
+            val decision = plugin.placementAccess.decide(player, clickedPlacement.world)
             // 既存のGesture画面を操作するだけの第三者には、設置・破壊・
             // ディスク書き込みを許可しません。共有GUIへの参加経路だけを
             // 建築権限から分離します。
@@ -141,11 +142,11 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 editorGuiMode == EditorGuiMode.GESTURE &&
                     itemKind != KantanItemKind.DISK &&
                     plugin.gestureEditor.canOperateExisting(player, clickedPlacement)
-            if (!canManagePlacement && !canOperateExistingGesture) {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
+            if (decision != PlacementDecision.ALLOW && !canOperateExistingGesture) {
+                plugin.placementAccess.notifyDenied(player, decision)
                 return
             }
-            if (canOperateExistingGesture && !canManagePlacement) return
+            if (canOperateExistingGesture && decision != PlacementDecision.ALLOW) return
             when (placementInteraction) {
                 KantanPlacementInteraction.FOLLOWING_GESTURE -> {
                     plugin.gestureEditor.openFollowingPlayer(player, clickedPlacement)
@@ -186,9 +187,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     fun onBlockPlace(event: BlockPlaceEvent) {
         if (KantanItemService.kind(event.itemInHand) != KantanItemKind.BLOCK) return
         val player = event.player
-        if (!plugin.placementAccess.canManage(player, player.world.name)) {
+        if (!plugin.placementAccess.requireManage(player, event.block.world.name)) {
             event.isCancelled = true
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
             plugin.logger.info("かんたんコマンダー制御ブロックの設置を権限不足で拒否: player=${player.name}, world=${player.world.name}")
             return
         }
@@ -221,9 +221,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
     fun onBlockBreak(event: BlockBreakEvent) {
         val block = event.block
         val placement = plugin.placements.find(block.location) ?: return
-        if (!plugin.placementAccess.canManage(event.player, placement.world)) {
+        if (!plugin.placementAccess.requireManage(event.player, placement.world)) {
             event.isCancelled = true
-            event.player.sendMessage(KcI18n.text(event.player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
             plugin.logger.info("かんたんコマンダー制御ブロックの破壊を権限不足で拒否: player=${event.player.name}, location=${block.location}")
             return
         }

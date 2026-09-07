@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.item
 import com.awabi2048.ccsystem.api.item.ItemGrantResult
 import java.util.logging.Level
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.security.PlacementDecision
 import org.bukkit.command.CommandSender
 import org.bukkit.entity.Player
 
@@ -25,8 +26,14 @@ class KantanItemGrantService(private val plugin: KantanCommanderPlugin) {
         } else {
             runCatching {
                 var dropped = 0
+                // 付与直後から権限状態に合った表示にし、 locked表示への切替を
+                // 次の再評価点まで遅延させません。
+                val locked = plugin.placementAccess.decide(target, target.world.name) !=
+                    PlacementDecision.ALLOW
                 repeat(amount) {
-                    target.inventory.addItem(KantanItemService.createBlock(target)).values.forEach { overflow ->
+                    val item = KantanItemService.createBlock(target)
+                    KantanItemService.normalizeControlBlockView(item, locked)
+                    target.inventory.addItem(item).values.forEach { overflow ->
                         dropped += overflow.amount
                         target.world.dropItemNaturally(target.location, overflow)
                     }

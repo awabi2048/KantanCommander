@@ -125,6 +125,13 @@ object KantanItemService {
     fun isLockedView(itemId: String?, material: Material): Boolean =
         itemId == BLOCK_ITEM_ID && material == lockedBlockMaterial
 
+    /** アイテムが権限制限表示の制御ブロックかどうかを返します。 */
+    fun isLockedView(item: ItemStack?): Boolean {
+        if (item == null) return false
+        val itemId = item.itemMeta?.persistentDataContainer?.get(customItemIdKey, PersistentDataType.STRING)
+        return isLockedView(itemId, item.type)
+    }
+
     /** 権限状態に応じた制御ブロックの表示素材を返します。 */
     fun blockViewMaterial(locked: Boolean): Material =
         if (locked) lockedBlockMaterial else authorizedBlockMaterial
