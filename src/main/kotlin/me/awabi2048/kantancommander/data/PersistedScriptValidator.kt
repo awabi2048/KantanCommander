@@ -40,6 +40,7 @@ object PersistedScriptValidator {
         optionalBoolean(root, "listed", path, errors)
         optionalInteger(root, "revision", path, errors)
         optionalBoolean(root, "contentModified", path, errors)
+        optionalUuidArray(root, "collapsedForStartIds", path, errors)
         return errors
     }
 
@@ -265,6 +266,23 @@ object PersistedScriptValidator {
         raw.asJsonArray.forEachIndexed { index, value ->
             if (!value.isJsonPrimitive || !value.asJsonPrimitive.isString) {
                 errors += "$path/$field/$index: 文字列ではありません"
+            }
+        }
+    }
+
+    /** 折りたたみfor開始IDなど、任意のUUID配列を受け付けます。欠落・nullは旧形式として許容します。 */
+    private fun optionalUuidArray(parent: JsonObject, field: String, path: String, errors: MutableList<String>) {
+        val raw = parent[field] ?: return
+        if (raw.isJsonNull) return
+        if (!raw.isJsonArray) {
+            errors += "$path/$field: 配列ではありません"
+            return
+        }
+        raw.asJsonArray.forEachIndexed { index, value ->
+            if (!value.isJsonPrimitive || !value.asJsonPrimitive.isString ||
+                runCatching { UUID.fromString(value.asString) }.isFailure
+            ) {
+                errors += "$path/$field/$index: UUIDではありません"
             }
         }
     }

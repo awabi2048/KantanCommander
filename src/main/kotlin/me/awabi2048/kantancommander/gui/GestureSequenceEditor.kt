@@ -89,6 +89,14 @@ data class GestureEditorState(
     var scriptId: UUID,
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
+    /**
+     * 折りたたみ前の配置寸法（セル単位）です。
+     *
+     * 折りたたみで配置が縮んでも原点を引き戻さないよう、展開時の寸法を覚えて
+     * 原点の正規化基準に使います。セッション内保持で、永続化しません。
+     */
+    var lastExpandedLayoutWidth: Int = 0,
+    var lastExpandedLayoutHeight: Int = 0,
     /** ビューポート表示倍率。初期値は最大倍率、縮小25%まで25%刻みで許可します。 */
     var zoomLevel: Int = GestureEditorLayout.INITIAL_ZOOM_LEVEL,
     var selectedNodeId: UUID? = null,
@@ -1401,7 +1409,11 @@ class GestureSequenceEditor(
         val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return emptyView()
         if (!testActive) observedRevision = script.revision
-        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }
+        // 折りたたみ表示はテスト実行中は無視し、全展開で実行ノードの可視性を優先します。
+        val collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script)
+        val persistedLayout = runCatching {
+            GraphLayoutEngine.layout(script.graph, collapsedForStarts = collapsedForStarts)
+        }
             .getOrElse { failure ->
                 reportLayoutFailure(
                     player,
@@ -1422,14 +1434,16 @@ class GestureSequenceEditor(
         }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
+        // 折りたたみで配置が縮んでも、展開時の寸法を覚えておき原点を引き戻しません。
+        // 端付近のFORを折りたたんでもSTARTが同じ位置に留まります。引き戻し後の
+        // 空き領域へ戻る移動は、実寸法を見るcanMove側で拒否されます。
+        if (!testActive && collapsedForStarts.isEmpty()) {
+            state.lastExpandedLayoutWidth = persistedLayout.width
+            state.lastExpandedLayoutHeight = persistedLayout.height
+        }
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
         // 描画・入力判定で共有する原点を毎回正規化します。
-        state.origin = GestureEditorLayout.clampOrigin(
-            state.origin,
-            layout,
-            metrics.columns,
-            metrics.rows,
-        )
+        state.origin = clampOriginWithRemembered(state.origin, metrics.columns, metrics.rows, layout)
         // アイコン・経路・経路の入力判定は必ず同じ投影を共有します。
         // 経路だけを画面外へ拡張すると、アイコンが消えた後も帯だけ残るため、
         // 画面外へ続く接続は projection の境界情報だけで表現します。
@@ -1487,6 +1501,11 @@ class GestureSequenceEditor(
                         val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
                         val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
+                        // 折りたたみ中のFOR開始はブロック全体の代理として青緑の縁取りで示します。
+                        // 背景色は変えないため、未設定警告やテスト色と両立します。
+                        // テスト実行中は折りたたみを無視するため、縁取りは出しません。
+                        val isCollapsedForStart = !testActive &&
+                            node.type == CommandType.FOR_START && node.id in collapsedForStarts
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
                         // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
                         // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
@@ -1531,9 +1550,31 @@ class GestureSequenceEditor(
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
+                        // 折りたたみ中のFOR開始は、背景の右の外縁へ空色の縁取りを付けます。
+                        // 太さはアイコン幅の20%、高さはアイコンと同じで、背景の外側に
+                        // 配置します。隣接ノードは2セル周期のため縁取りは届きません。
+                        if (isCollapsedForStart) {
+                            val frameThickness = metrics.iconSize * 0.20
+                            val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
+                            visuals.add(GestureGuiVisual.Block(
+                                visualId = "node-collapsed-frame-right-${node.id}",
+                                x = cx + frameOffset, y = cy,
+                                width = frameThickness,
+                                height = metrics.iconSize,
+                                blockData = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
+                                layer = GestureEditorLayout.ICON_LAYER,
+                            ))
+                        }
                         // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
                         // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
                         // 旧選択の解除と新ノードの選択を1クリックで完了させます。
+                        // 入れ替えボタン表示中はホバー文言をボタンのさらに上へ退避させ、
+                        // ボタン・ホバーをノード上側に積み上げます。条件分岐／合流は
+                        // 交換対象外のため、ボタン表示の対象外のままにします。
+                        val showReorder = !testActive && insertionPreview == null && isSelected &&
+                            node.type != CommandType.CONDITION && node.type != CommandType.MERGE
+                        val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
+                        val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
                         if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
                             bounds = iconBounds(cx, cy, metrics.iconSize),
@@ -1542,19 +1583,13 @@ class GestureSequenceEditor(
                             hoverText = GestureGuiHoverText(
                                 text = hoverText,
                                 x = cx,
-                                y = cy + metrics.iconSize * 0.9,
+                                y = if (showReorder) reorderY + reorderSize / 2.0 + 0.03
+                                else cy + metrics.iconSize * 0.9,
                                 size = 0.006,
                                 lineWidth = 180,
                             ),
                         ))
-                        if (!testActive && insertionPreview == null && isSelected && node.type !in setOf(
-                                CommandType.CONDITION,
-                                CommandType.MERGE,
-                                CommandType.FOR_START,
-                                CommandType.FOR_END,
-                            )) {
-                            val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
-                            val reorderY = cy - metrics.iconSize / 2.0 - reorderSize / 2.0 - 0.008
+                        if (showReorder) {
                             val reorderOffset = reorderSize * 0.78
                             listOf(
                                 GraphEditor.ReorderDirection.LEFT to "←",
@@ -4424,6 +4459,20 @@ class GestureSequenceEditor(
                     if (settingChildOpen(ownerId)) {
                         api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                     }
+                    // 選択済みノードへの再クリックは、種類別の変形動作です。
+                    // FOR開始は折りたたみのトグル、条件分岐はTRUE/FALSE鎖の入替を行い、
+                    // 下部の設定表示は維持します。新規選択は従来どおり設定表示へ遷移します。
+                    val clicked = script.graph.nodes.getValue(nodeId)
+                    if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
+                        if (clicked.type == CommandType.FOR_START && clicked.pairedNodeId != null) {
+                            toggleForCollapsed(player, nodeId)
+                            return
+                        }
+                        if (clicked.type == CommandType.CONDITION) {
+                            swapConditionBranches(player, nodeId)
+                            return
+                        }
+                    }
                     state.selectedNodeId = nodeId
                     state.selectedAddPoint = null
                     state.selectedInsertionCandidatePoint = null
@@ -4493,17 +4542,13 @@ class GestureSequenceEditor(
                 }
                 val layout = currentViewportLayout(player) ?: return
                 val metrics = viewportMetrics(zoomScale())
-                val nextOrigin = GestureEditorLayout.clampOrigin(
-                    MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
-                    layout,
-                    metrics.columns,
-                    metrics.rows,
-                )
-                if (nextOrigin == state.origin) {
+                // 1歩移動の可否だけで決め、実寸法クランプで丸めないことで、
+                // 範囲外にいる間の不連続な端への飛びを防ぎます。
+                if (!canNavigate(layout, metrics.columns, metrics.rows, delta)) {
                     // 移動不能時は状態・更新・効果音のいずれも発生させません。
                     return
                 }
-                state.origin = nextOrigin
+                state.origin = MapPoint(state.origin.x + delta.x, state.origin.y + delta.y)
                 updateUpper(player)
             }
             context.elementId == "back-to-start" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -4541,7 +4586,10 @@ class GestureSequenceEditor(
                 }
                 val gx = context.elementId.removePrefix("add:").substringBefore(":").toIntOrNull() ?: return
                 val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
-                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+                // 追加ボタンは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
+                val layout = runCatching {
+                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
                         "ジェスチャーGUIの追加位置確認でレイアウトを生成できません: script=${script.id}",
@@ -4575,7 +4623,10 @@ class GestureSequenceEditor(
                 }
                 val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
                 if (point.size != 2) return
-                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+                // 経路セルは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
+                val layout = runCatching {
+                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
                         "ジェスチャーGUIの挿入位置確認でレイアウトを生成できません: script=${script.id}",
@@ -4740,7 +4791,10 @@ class GestureSequenceEditor(
                 // そのまま適用しません。現在のレイアウト上でも同じセルが同じ
                 // 挿入先を示すことを確認し、連続経路の装飾セルへの誤挿入を防ぎます。
                 state.selectedInsertionCandidatePoint?.let { point ->
-                    val currentTarget = runCatching { GraphLayoutEngine.layout(script.graph) }
+                    // 候補セルは折りたたみ配置の座標で選ばれるため、再確認も同じ配置で行います。
+                    val currentTarget = runCatching {
+                        GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                    }
                         .getOrElse { failure ->
                             reportLayoutFailure(
                                 player,
@@ -4993,6 +5047,85 @@ class GestureSequenceEditor(
         }
     }
 
+    /**
+     * 選択済みFOR開始の再クリックで折りたたみ表示を切り替えます。
+     *
+     * グラフ構造は変えず、表示状態だけを正本へ保存します。下部の設定表示は
+     * 維持し、上部ビューポートだけを更新します。
+     */
+    private fun toggleForCollapsed(player: Player, nodeId: UUID) {
+        // 効果音のために切替前の状態を保持します。保存成功後の正本で判定し直しません。
+        val wasCollapsed = plugin.scripts.load(state.scriptId)
+            ?.collapsedForStartIds?.contains(nodeId) == true
+        val saved = runCatching {
+            CommandSettingsModel.updateScript(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { current ->
+                // 現存する対応ペア付きFOR_STARTだけを残し、残骸IDは同時に剪定します。
+                val previous = current.collapsedForStartIds.orEmpty()
+                val collapsed = previous
+                    .filter { it != nodeId && current.graph.nodes[it]?.type == CommandType.FOR_START }
+                    .toMutableSet()
+                if (nodeId !in previous &&
+                    current.graph.nodes[nodeId]?.type == CommandType.FOR_START
+                ) {
+                    collapsed.add(nodeId)
+                }
+                current.collapsedForStartIds = collapsed.takeIf { it.isNotEmpty() }
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "FOR折りたたみを保存できませんでした: script=${state.scriptId} node=$nodeId",
+                failure,
+            )
+            return
+        }
+        if (!saved) return
+        state.selectedNodeId = nodeId
+        // 折りたたみ時は閉じる音、解除時は開く音で切替を伝えます。
+        player.playSound(
+            player.location,
+            if (wasCollapsed) Sound.BLOCK_BARREL_OPEN else Sound.BLOCK_BARREL_CLOSE,
+            1.0f,
+            1.0f,
+        )
+        updateUpper(player)
+    }
+
+    /**
+     * 選択済み条件分岐の再クリックでTRUE/FALSE鎖を入れ替えます。
+     *
+     * 表示だけの反転ではなく構造化データの操作として保存します。合流・後続・
+     * 反転フラグは不変で、両枝の接続先だけが交換されます。
+     */
+    private fun swapConditionBranches(player: Player, nodeId: UUID) {
+        val swapped = runCatching {
+            CommandSettingsModel.updateGraph(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { candidateGraph ->
+                if (GraphEditor.swapBranches(candidateGraph, nodeId)) true else null
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "条件分岐の枝入れ替えを保存できませんでした: script=${state.scriptId} node=$nodeId",
+                failure,
+            )
+            return
+        }
+        if (swapped != true) return
+        state.selectedNodeId = nodeId
+        updateUpper(player)
+        updateLower(player)
+    }
+
     private fun emptyView(): GestureGuiView {
         return GestureGuiView(
             GestureGuiScreenDefinition(
@@ -5195,7 +5328,8 @@ class GestureSequenceEditor(
             val nx = cx + quad.second * p
             val ny = cy + quad.third * p
             val delta = MapPoint(quad.second, -quad.third)
-            val enabled = layout.canMove(state.origin, delta.x, delta.y, viewportWidth, viewportHeight)
+            // 表示と入力可否は同じ方向限定規則で判定し、グレーアウトと実可否を一致させます。
+            val enabled = canNavigate(layout, viewportWidth, viewportHeight, delta)
             val hoverKey = when (quad.first) {
                 "nav-up" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP
                 "nav-down" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN
@@ -5239,8 +5373,45 @@ class GestureSequenceEditor(
     private fun canMoveCurrentViewport(delta: MapPoint): Boolean {
         val layout = currentViewportLayout() ?: return false
         val metrics = viewportMetrics(zoomScale())
-        return layout.canMove(state.origin, delta.x, delta.y, metrics.columns, metrics.rows)
+        return canNavigate(layout, metrics.columns, metrics.rows, delta)
     }
+
+    /**
+     * 折りたたみ後の範囲外に原点がある間も、実配置へ戻る方向の移動を許可します。
+     *
+     * 記憶寸法（展開時）と現配置の広い方を上限の基準にし、方向限定は共通規則へ
+     * 委ねます。範囲内へ戻った後は実配置の通常規則と等価になります。
+     */
+    private fun canNavigate(layout: GraphLayout, viewportWidth: Int, viewportHeight: Int, delta: MapPoint): Boolean =
+        GestureEditorLayout.canMoveWithRememberedRange(
+            state.origin,
+            delta,
+            viewportWidth,
+            viewportHeight,
+            layout.width,
+            layout.height,
+            maxOf(layout.width, state.lastExpandedLayoutWidth),
+            maxOf(layout.height, state.lastExpandedLayoutHeight),
+        )
+
+    /**
+     * 描画・ナビ・ズームで共有する原点正規化です。
+     *
+     * 折りたたみで配置が縮んでも展開時の記憶寸法を基準にするため、範囲外へ
+     * 残った原点が端へ不連続に飛びません。
+     */
+    private fun clampOriginWithRemembered(
+        origin: MapPoint,
+        viewportWidth: Int,
+        viewportHeight: Int,
+        layout: GraphLayout,
+    ): MapPoint = GestureEditorLayout.clampOrigin(
+        origin,
+        maxOf(layout.width, state.lastExpandedLayoutWidth),
+        maxOf(layout.height, state.lastExpandedLayoutHeight),
+        viewportWidth,
+        viewportHeight,
+    )
 
     /**
      * 上部ビューポートへ適用する挿入プレビューです。
@@ -5251,6 +5422,15 @@ class GestureSequenceEditor(
      * 動かないためプレビューを適用しません。描画とナビゲーションの両方がこの
      * 共通判定を使うことで、表示と入力判定の基準が分岐しません。
      */
+    /**
+     * 永続化された折りたたみ集合のうち、現存する対応ペア付きFOR_STARTだけを有効とします。
+     * 残骸IDは描画へ影響させません。
+     */
+    private fun effectiveCollapsedForStarts(script: DiskScript): Set<UUID> =
+        script.collapsedForStartIds.orEmpty().filter { id ->
+            script.graph.nodes[id]?.type == CommandType.FOR_START
+        }.toSet()
+
     private fun insertionPreview(script: DiskScript, player: Player? = null): InsertionPreview? {
         val target = state.pendingInsertion ?: return null
         // 追加起点（ADDセル選択中）ではADDセルの選択glowがそのまま候補位置を示します。
@@ -5258,6 +5438,7 @@ class GestureSequenceEditor(
         return GraphLayoutEngine.previewInsertion(
             script.graph,
             target,
+            collapsedForStarts = effectiveCollapsedForStarts(script),
             onLayoutFailure = { failure ->
                 player?.let {
                     reportLayoutFailure(
@@ -5275,7 +5456,14 @@ class GestureSequenceEditor(
         val test = state.testExecution
         val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return null
-        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+        // 入力判定も描画と同じ折りたたみ配置で確認します。展開配置で確認すると、
+        // 表示上の無効（グレーアウト）と実可否がずれて空きへ戻れてしまいます。
+        val persistedLayout = runCatching {
+            GraphLayoutEngine.layout(
+                script.graph,
+                collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script),
+            )
+        }.getOrElse { failure ->
             player?.let {
                 reportLayoutFailure(
                     it,
@@ -5549,14 +5737,14 @@ class GestureSequenceEditor(
             state.zoomLevel = oldZoomLevel
             return
         }
-        state.origin = GestureEditorLayout.clampOrigin(
+        state.origin = clampOriginWithRemembered(
             MapPoint(
                 (centerX - (newMetrics.columns - 1) / 2.0).roundToInt(),
                 (centerY - (newMetrics.rows - 1) / 2.0).roundToInt(),
             ),
-            layout,
             newMetrics.columns,
             newMetrics.rows,
+            layout,
         )
     }
 

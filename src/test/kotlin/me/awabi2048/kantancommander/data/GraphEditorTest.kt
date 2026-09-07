@@ -507,6 +507,133 @@ class GraphEditorTest {
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 
+    @Test
+    fun `swapBranches exchanges true and false chains while keeping the merge`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueNode = GraphEditor.append(graph, CommandType.WAIT)
+        val falseNode = GraphEditor.append(graph, CommandType.DISPLAY_TEXT, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val after = GraphEditor.append(graph, CommandType.GIVE_ITEM)
+
+        assertTrue(GraphEditor.swapBranches(graph, condition.id))
+        assertEquals(falseNode.id, condition.trueNext)
+        assertEquals(trueNode.id, condition.falseNext)
+        assertEquals(condition.id, merge.pairedNodeId)
+        assertEquals(merge.id, condition.pairedNodeId)
+        assertEquals(after.id, merge.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+
+        // 2回で元に戻ります。
+        assertTrue(GraphEditor.swapBranches(graph, condition.id))
+        assertEquals(trueNode.id, condition.trueNext)
+        assertEquals(falseNode.id, condition.falseNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `swapBranches refuses non-condition nodes`() {
+        val graph = CommandGraph.empty()
+        val node = GraphEditor.append(graph, CommandType.WAIT)
+
+        assertFalse(GraphEditor.swapBranches(graph, node.id))
+        assertFalse(GraphEditor.swapBranches(graph, UUID.randomUUID()))
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `for block moves left over a preceding node as a whole`() {
+        val graph = CommandGraph.empty()
+        val before = GraphEditor.append(graph, CommandType.WAIT)
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        GraphEditor.appendToForBody(graph, start.id, CommandType.DISPLAY_TEXT)
+        val after = GraphEditor.append(graph, CommandType.GIVE_ITEM)
+
+        assertTrue(GraphEditor.canSwapAdjacent(graph, start.id, GraphEditor.ReorderDirection.LEFT))
+        assertTrue(GraphEditor.swapAdjacent(graph, start.id, GraphEditor.ReorderDirection.LEFT))
+        assertEquals(start.id, graph.entryNodeId)
+        assertEquals(before.id, end.next)
+        assertEquals(after.id, before.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `node after a for block moves before the block`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        GraphEditor.appendToForBody(graph, start.id, CommandType.DISPLAY_TEXT)
+        val after = GraphEditor.append(graph, CommandType.GIVE_ITEM)
+
+        assertTrue(GraphEditor.canSwapAdjacent(graph, after.id, GraphEditor.ReorderDirection.LEFT))
+        assertTrue(GraphEditor.swapAdjacent(graph, after.id, GraphEditor.ReorderDirection.LEFT))
+        assertEquals(after.id, graph.entryNodeId)
+        assertEquals(start.id, after.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `for block moves right over a following node as a whole`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val after = GraphEditor.append(graph, CommandType.GIVE_ITEM)
+
+        assertTrue(GraphEditor.canSwapAdjacent(graph, end.id, GraphEditor.ReorderDirection.RIGHT))
+        assertTrue(GraphEditor.swapAdjacent(graph, end.id, GraphEditor.ReorderDirection.RIGHT))
+        assertEquals(after.id, graph.entryNodeId)
+        assertEquals(start.id, after.next)
+        assertEquals(end.id, start.trueNext)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `node before a for block moves after the block`() {
+        val graph = CommandGraph.empty()
+        val before = GraphEditor.append(graph, CommandType.WAIT)
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+
+        assertTrue(GraphEditor.canSwapAdjacent(graph, before.id, GraphEditor.ReorderDirection.RIGHT))
+        assertTrue(GraphEditor.swapAdjacent(graph, before.id, GraphEditor.ReorderDirection.RIGHT))
+        assertEquals(start.id, graph.entryNodeId)
+        assertEquals(before.id, requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `for boundary crossings into the body are refused`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val body = GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+
+        // for開始の右は本体への格納、for終了の左は本体からの取り出しになるため拒否します。
+        assertFalse(GraphEditor.canSwapAdjacent(graph, start.id, GraphEditor.ReorderDirection.RIGHT))
+        assertFalse(GraphEditor.swapAdjacent(graph, start.id, GraphEditor.ReorderDirection.RIGHT))
+        assertFalse(GraphEditor.canSwapAdjacent(graph, end.id, GraphEditor.ReorderDirection.LEFT))
+        assertFalse(GraphEditor.swapAdjacent(graph, end.id, GraphEditor.ReorderDirection.LEFT))
+        // 本体先頭の左もfor開始との入れ替えになるため拒否します。
+        assertFalse(GraphEditor.canSwapAdjacent(graph, body.id, GraphEditor.ReorderDirection.LEFT))
+        assertFalse(GraphEditor.swapAdjacent(graph, body.id, GraphEditor.ReorderDirection.LEFT))
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `condition and merge remain out of swap scope`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+
+        assertFalse(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT))
+        assertFalse(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.RIGHT))
+        assertFalse(GraphEditor.canSwapAdjacent(graph, merge.id, GraphEditor.ReorderDirection.LEFT))
+        assertFalse(GraphEditor.canSwapAdjacent(graph, merge.id, GraphEditor.ReorderDirection.RIGHT))
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
     /** 構造化設定とDISK_CALLのsnapshotを含む、複製対象の全設定を一つのテストデータへ集約します。 */
     private fun configuredNode(type: CommandType): CommandNode {
         val nested = CommandType.WAIT.newNode()

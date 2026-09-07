@@ -1186,4 +1186,59 @@ class GraphLayoutEngineTest {
             preview.layout.cells[MapPoint(insertedPoint.x + 2, insertedPoint.y)]?.kind,
         )
     }
+
+    @Test
+    fun `collapsed for renders only the start as a single unit`() {
+        val graph = CommandGraph.empty()
+        val before = GraphEditor.append(graph, CommandType.WAIT)
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val body = GraphEditor.appendToForBody(graph, start.id, CommandType.DISPLAY_TEXT)
+        val after = GraphEditor.append(graph, CommandType.GIVE_ITEM)
+
+        val expanded = GraphLayoutEngine.layout(graph)
+        assertTrue(body.id in expanded.nodePoints)
+        assertTrue(end.id in expanded.nodePoints)
+
+        val collapsed = GraphLayoutEngine.layout(graph, collapsedForStarts = setOf(start.id))
+        // 折りたたみ前後で開始の論理座標は変わらず、後続だけが前へ詰まります。
+        assertEquals(expanded.nodePoints[start.id], collapsed.nodePoints[start.id])
+        // 開始だけが描かれ、本体・終了は畳まれます。
+        assertTrue(start.id in collapsed.nodePoints)
+        assertFalse(body.id in collapsed.nodePoints)
+        assertFalse(end.id in collapsed.nodePoints)
+        // 開始の次セルが後続ノードへつながり、全体幅が縮みます。
+        val startPoint = requireNotNull(collapsed.nodePoints[start.id])
+        val afterPoint = requireNotNull(collapsed.nodePoints[after.id])
+        assertEquals(startPoint.y, afterPoint.y)
+        assertTrue(collapsed.width < expanded.width)
+        assertTrue(afterPoint.x < requireNotNull(expanded.nodePoints[after.id]).x)
+        // ブロック後の挿入先は対応終了のNEXTとして維持されます。
+        assertEquals(
+            InsertionTarget(end.id, GraphEditor.Edge.NEXT),
+            collapsed.cells[MapPoint(startPoint.x + 1, startPoint.y)]?.insertionTarget,
+        )
+        assertEquals(
+            requireNotNull(collapsed.nodePoints[before.id]).y,
+            startPoint.y,
+        )
+    }
+
+    @Test
+    fun `collapsed for at the sequence end keeps a tail add after the block`() {
+        val graph = CommandGraph.empty()
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+
+        val collapsed = GraphLayoutEngine.layout(graph, collapsedForStarts = setOf(start.id))
+        val startPoint = requireNotNull(collapsed.nodePoints[start.id])
+        // 末尾追加点はブロック後への追加として対応終了を指します。
+        val tailAdd = collapsed.cells[MapPoint(startPoint.x + 2, startPoint.y)]
+        assertEquals(MapCellKind.ADD, tailAdd?.kind)
+        assertEquals(
+            InsertionTarget(end.id, GraphEditor.Edge.NEXT),
+            tailAdd?.insertionTarget,
+        )
+    }
 }
