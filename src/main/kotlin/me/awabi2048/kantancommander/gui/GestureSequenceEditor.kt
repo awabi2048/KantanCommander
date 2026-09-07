@@ -4466,12 +4466,6 @@ class GestureSequenceEditor(
                     updateUpper(player)
                 }
             }
-            context.elementId == "nav-zoom-reset" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                if (state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL) {
-                    setZoomLevel(player, GestureEditorLayout.INITIAL_ZOOM_LEVEL)
-                    updateUpper(player)
-                }
-            }
             context.elementId == "nav-clip" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 // 共有画面の第三者には、所有者の表示モードを変更する権限を渡しません。
                 // クリップはトグル操作です。追従中はpinToCurrentPositionでその場に固定し、
@@ -4513,11 +4507,11 @@ class GestureSequenceEditor(
                 updateUpper(player)
             }
             context.elementId == "back-to-start" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                // 最も先頭にある追加ポイントをビューに含めるよう原点を調整
+                // 最も進んだ枝の追加ポイントをビューに含めるよう原点を調整
                 // 挿入候補表示中は、後続ノードを右へ移動させた仮想レイアウトを使います。
                 // 永続グラフだけで原点を決めると、候補アイコンと表示範囲の基準が分岐します。
                 val layout = currentViewportLayout(player) ?: return
-                val firstAdd = GestureEditorLayout.findFirstAddPoint(layout.cells)
+                val firstAdd = GestureEditorLayout.findMostAdvancedAddPoint(layout.cells)
                 if (firstAdd != null) {
                     // 枝が最も進んだ追加ポイントが範囲外なら、右端／下端に
                     // 入る位置まで原点を移動します。単純にポイント座標を原点へ
@@ -5235,7 +5229,8 @@ class GestureSequenceEditor(
                 // ナビゲーションでは効果音・Actionを発生させません。
                 gestureGuard = { _, _ -> canMoveCurrentViewport(delta) },
                 targetVisualId = "${quad.first}-glyph",
-                hoverText = navigationHover(player, hoverKey),
+                // 操作できない方向には案内も出さず、押せる方向だけを説明します。
+                hoverText = if (enabled) navigationHover(player, hoverKey) else null,
             ))
         }
     }
@@ -5298,9 +5293,13 @@ class GestureSequenceEditor(
 
     /** ナビゲーション右側の縦積みズーム操作。ボタンはナビと同じ正方形寸法です。 */
     private fun addZoomControls(player: Player, visuals: MutableList<GestureGuiVisual>, elements: MutableList<GestureGuiElement>) {
-        listOf("nav-zoom-in" to "＋", "nav-zoom-out" to "−").forEachIndexed { index, (id, glyph) ->
+        listOf(
+            "nav-zoom-in" to "＋",
+            "nav-zoom-out" to "−",
+        ).forEachIndexed { index, (id, glyph) ->
             val x = GestureEditorLayout.ZOOM_X
-            val y = GestureEditorLayout.ZOOM_TOP_Y + index * GestureEditorLayout.ZOOM_PITCH
+            // 拡大を下段・縮小を上段に置き、段位置はレイアウト側の定義へ集約します。
+            val y = GestureEditorLayout.ZOOM_IN_Y + index * GestureEditorLayout.ZOOM_PITCH
             val enabled = if (id == "nav-zoom-in") {
                 state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
             } else {
@@ -5339,32 +5338,10 @@ class GestureSequenceEditor(
                     }
                 },
                 targetVisualId = "$id-glyph",
-                hoverText = navigationHover(player, hoverKey),
+                // 上限／下限に達したボタンには案内も出さず、押せる側だけを説明します。
+                hoverText = if (enabled) navigationHover(player, hoverKey) else null,
             ))
         }
-        val resetY = GestureEditorLayout.ZOOM_TOP_Y - GestureEditorLayout.ZOOM_PITCH
-        val resetEnabled = state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL
-        visuals.add(GestureGuiVisual.Block(
-            visualId = "nav-zoom-reset-block", x = GestureEditorLayout.ZOOM_X, y = resetY,
-            width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
-            blockData = Bukkit.createBlockData(
-                if (resetEnabled) Material.BROWN_CONCRETE else DisabledGuiVisualPolicy.material,
-            ), layer = 4,
-        ))
-        visuals.add(GestureGuiVisual.Text(
-            visualId = "nav-zoom-reset-glyph", x = GestureEditorLayout.ZOOM_X, y = resetY - 0.01,
-            text = net.kyori.adventure.text.Component.text("↺").color(
-                if (resetEnabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
-            ), size = 0.009, layer = 6,
-        ))
-        elements.add(GestureGuiElement(
-            elementId = "nav-zoom-reset",
-            bounds = navBounds(GestureEditorLayout.ZOOM_X, resetY, GestureEditorLayout.ZOOM_SIZE),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            gestureGuard = { _, _ -> state.zoomLevel != GestureEditorLayout.INITIAL_ZOOM_LEVEL },
-            targetVisualId = "nav-zoom-reset-glyph",
-            hoverText = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_RESET),
-        ))
     }
 
     /**
@@ -5412,14 +5389,19 @@ class GestureSequenceEditor(
             // 追従状態に依存せず所有者判定だけで受け付けます。
             gestureGuard = { actor, _ -> actor.uniqueId == sessionOwnerId },
             targetVisualId = "nav-clip-glyph",
-            hoverText = navigationHover(
-                player,
-                if (following) {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP
-                } else {
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP_FIXED
-                },
-            ),
+            // 押せない第三者には案内も出さず、所有者だけに操作を説明します。
+            hoverText = if (player.uniqueId == sessionOwnerId) {
+                navigationHover(
+                    player,
+                    if (following) {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP
+                    } else {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP_FIXED
+                    },
+                )
+            } else {
+                null
+            },
         ))
     }
 
@@ -5454,7 +5436,7 @@ class GestureSequenceEditor(
         ))
     }
 
-    /** 通常時はズームアウトの上、実行中はズームリセットの位置へ置くテストボタンです。 */
+    /** 通常時はズーム列の最上段、実行中はズーム列を隠して最下段へ置くテストボタンです。 */
     private fun addTestExecutionButton(
         player: Player,
         visuals: MutableList<GestureGuiVisual>,
@@ -5463,9 +5445,9 @@ class GestureSequenceEditor(
     ) {
         val x = GestureEditorLayout.ZOOM_X
         val y = if (running) {
-            GestureEditorLayout.ZOOM_TOP_Y - GestureEditorLayout.ZOOM_PITCH
+            GestureEditorLayout.TEST_RUNNING_Y
         } else {
-            GestureEditorLayout.ZOOM_TOP_Y + GestureEditorLayout.ZOOM_PITCH * 2.0
+            GestureEditorLayout.TEST_BUTTON_Y
         }
         val size = GestureEditorLayout.ZOOM_SIZE
         val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
@@ -5518,7 +5500,7 @@ class GestureSequenceEditor(
         // 通常ボタンと同じ位置・寸法に置き、配置の重心を保ちます。
         // 点灯した銅の電球で「実行待ち」を示します。
         val x = GestureEditorLayout.ZOOM_X
-        val y = GestureEditorLayout.ZOOM_TOP_Y + GestureEditorLayout.ZOOM_PITCH * 2.0
+        val y = GestureEditorLayout.TEST_BUTTON_Y
         val size = GestureEditorLayout.ZOOM_SIZE
         val bulb = Bukkit.createBlockData(Material.COPPER_BULB)
         if (bulb is org.bukkit.block.data.Lightable) bulb.isLit = true

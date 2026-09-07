@@ -101,11 +101,11 @@ object GestureEditorLayout {
     /**
      * 枝が最も進んだ位置にあるadd-pointのグリッド座標を返します。
      *
-     * 「先頭へ戻る」はエントリー側の最小座標ではなく、分岐を含むグラフで
+     * 「先頭へ移動」はエントリー側の最小座標ではなく、分岐を含むグラフで
      * 最も先まで進んだ枝末端を基準にします。同じ列なら画面下側の枝を優先し、
      * ネストした分岐でも最後に到達する追加位置を安定して選びます。
      */
-    fun findFirstAddPoint(cells: Map<MapPoint, MapCell>): MapPoint? =
+    fun findMostAdvancedAddPoint(cells: Map<MapPoint, MapCell>): MapPoint? =
         cells.filter { it.value.kind == MapCellKind.ADD }
             .maxWithOrNull(compareBy({ it.key.x }, { it.key.y }))?.key
 
@@ -159,6 +159,22 @@ object GestureEditorLayout {
     const val ZOOM_TOP_Y: Double = -0.265
     const val ZOOM_SIZE: Double = NAV_SIZE
     const val ZOOM_PITCH: Double = NAV_SIZE + 0.015
+
+    /**
+     * ズーム列の段位置です。下から拡大・縮小・テスト実行の3段構成とし、
+     * 廃止した表示倍率リセット分の1段だけ全体を下へ詰めます。
+     * ZOOM_TOP_Yは縮小ボタンの高さを示し、拡大は1段下、テスト実行は1段上です。
+     */
+    val ZOOM_IN_Y: Double = ZOOM_TOP_Y - ZOOM_PITCH
+    val ZOOM_OUT_Y: Double = ZOOM_TOP_Y
+    val TEST_BUTTON_Y: Double = ZOOM_TOP_Y + ZOOM_PITCH
+
+    /**
+     * 実行中のテストボタン位置です。実行中はズーム列を隠すため、
+     * 拡大ボタンと同じ高さに置いても重なりません。実行開始で位置が
+     * 変わることで、状態変化を視線でも判別できます。
+     */
+    val TEST_RUNNING_Y: Double = ZOOM_TOP_Y - ZOOM_PITCH
 
     /** 画面右上の閉じるボタン（ズーム／ナビゲーションと同じ正方形寸法）。 */
     const val CLOSE_X: Double = ZOOM_X
