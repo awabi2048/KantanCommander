@@ -1633,6 +1633,26 @@ class GestureSequenceEditor(
                             (node.type != CommandType.CONDITION || isCollapsedCondition) &&
                             node.type != CommandType.MERGE &&
                             node.id !in foldedRowIds
+                        // TEMP-DIAG: 折畳みIF矢印グレーアウトの原因特定用。原因確定後に除去します。
+                        if (isCollapsedCondition && isSelected) {
+                            plugin.logger.warning(
+                                "TEMP-DIAG folded-if arrows: script=${script.id} node=${node.id} " +
+                                    "fors=$collapsedForStarts conds=$collapsedConditionIds " +
+                                    "left=" + GraphEditor.canSwapAdjacent(
+                                        script.graph,
+                                        node.id,
+                                        GraphEditor.ReorderDirection.LEFT,
+                                        collapsedForStarts,
+                                        collapsedConditionIds,
+                                    ) + " right=" + GraphEditor.canSwapAdjacent(
+                                        script.graph,
+                                        node.id,
+                                        GraphEditor.ReorderDirection.RIGHT,
+                                        collapsedForStarts,
+                                        collapsedConditionIds,
+                                    ),
+                            )
+                        }
                         val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
                         val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
                         if (!testActive) elements.add(GestureGuiElement(

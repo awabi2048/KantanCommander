@@ -888,6 +888,51 @@ class GraphEditorTest {
     }
 
     @Test
+    fun `real script folded unmerged if with a normal predecessor is movable`() {
+        // programs/92289d89 と同一形状：FIREWORK→空FOR→ENTITY_ACTION→未合流条件。
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.FIREWORK_LAUNCH)
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val before = GraphEditor.append(graph, CommandType.ENTITY_ACTION)
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val branch = GraphEditor.append(graph, CommandType.TELEPORT)
+        assertEquals(before.id, end.next)
+        assertEquals(condition.id, before.next)
+        assertEquals(branch.id, condition.trueNext)
+        val collapsedFors = setOf(start.id)
+        val collapsedConds = setOf(condition.id)
+
+        assertTrue(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, collapsedFors, collapsedConds))
+        assertTrue(GraphEditor.swapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, collapsedFors, collapsedConds))
+        // 前任は上側枝末尾へ格納され、群全体が一体で残ります。
+        assertEquals(condition.id, end.next)
+        assertEquals(before.id, branch.next)
+        assertNull(before.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `real script folded unmerged if after a for end stays put`() {
+        // programs/7e7f81f8 と同一形状：TELEPORT→空FOR→ENTITY_ACTION→未合流条件のうち、
+        // 条件直前がFOR_ENDの場合に相当する最小形状です。
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.TELEPORT)
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.TELEPORT)
+        val folded = setOf(condition.id)
+        assertEquals(condition.id, end.next)
+
+        assertFalse(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), folded))
+        assertFalse(GraphEditor.swapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), folded))
+        assertFalse(GraphEditor.canSwapAdjacent(graph, end.id, GraphEditor.ReorderDirection.RIGHT))
+        assertFalse(GraphEditor.swapAdjacent(graph, end.id, GraphEditor.ReorderDirection.RIGHT))
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
     fun `folded unmerged if after a for end stays put`() {
         val graph = CommandGraph.empty()
         GraphEditor.append(graph, CommandType.WAIT)
