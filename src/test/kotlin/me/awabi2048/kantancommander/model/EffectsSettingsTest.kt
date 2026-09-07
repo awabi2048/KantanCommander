@@ -81,4 +81,17 @@ class EffectsSettingsTest {
         assertFalse(FireworkSettings.isFireworkMaterial("minecraft:stone"))
         assertFalse(FireworkSettings.isFireworkMaterial(""))
     }
+
+    @Test
+    fun `preview site snaps to the editor block center`() {
+        val center = FireworkSettings.editorBlockCenter(org.bukkit.Location(null, 10.3, 64.0, -3.7))
+        assertEquals(10.5, center.x)
+        assertEquals(64.5, center.y)
+        assertEquals(-3.5, center.z, 0.000001)
+
+        val negative = FireworkSettings.editorBlockCenter(org.bukkit.Location(null, -1.2, 0.0, -1.2))
+        assertEquals(-1.5, negative.x, 0.000001)
+        assertEquals(0.5, negative.y, 0.000001)
+        assertEquals(-1.5, negative.z, 0.000001)
+    }
 }

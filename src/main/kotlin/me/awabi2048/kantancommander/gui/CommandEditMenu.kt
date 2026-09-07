@@ -1561,7 +1561,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         if (stack.type != Material.FIREWORK_ROCKET) return MenuActionResult.Ignored
         val height = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
             .toDoubleOrNull()?.takeIf(Double::isFinite) ?: FireworkSettings.HEIGHT_DEFAULT
-        val launchAt = player.location.clone()
+        // 試射はエディターの存在するブロック中央から打ち上げ、発射者を自機に
+        // 固定して接触起爆を避けます。
+        val launchAt = FireworkSettings.editorBlockCenter(player.location)
         if (height <= 0.0) {
             val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
             instant.setItem(stack)
@@ -1572,6 +1574,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val rocket = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
         rocket.setItem(stack)
         rocket.setShotAtAngle(false)
+        rocket.shooter = player
+        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
         rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
         rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
         val target = launchAt.clone().add(0.0, height, 0.0)

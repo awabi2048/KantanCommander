@@ -1245,9 +1245,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             session,
         )?.takeIf(Double::isFinite) ?: return false
         val stack = resolveFireworkStack(node) ?: return false
-        val launchAt = node.fireworkPositionSpec
+        val launchBase = node.fireworkPositionSpec
             ?.let { resolvePosition(it, session, context) ?: return false }
             ?: effectiveOrigin
+        // 制御ブロック位置（未設定を含む）は固体内部のため、そのまま召喚すると
+        // 初tickで接触起爆します。装置上端を発射口として1ブロック上げます。
+        // 明示座標は利用者指定のままバニラ通りに扱います。
+        val launchAt = launchBase.clone().apply {
+            val kind = node.fireworkPositionSpec?.kind
+            if (kind == null || kind == PositionKind.DISK) add(0.0, 1.0, 0.0)
+        }
         // 高さ0は演出なしの即時破裂です。
         if (height <= 0.0) {
             val instant = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)

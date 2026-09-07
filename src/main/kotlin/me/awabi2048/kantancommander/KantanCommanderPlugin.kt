@@ -264,6 +264,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(summonedEntities, this)
         pm.registerEvents(FeedbackCleanupListener(this), this)
+        pm.registerEvents(me.awabi2048.kantancommander.gui.GestureHeldRefreshListener(this), this)
         pm.registerEvents(controlBlockSync, this)
         if (!LuckPermsRecalculateAdapter.register(this, logger) { playerUuid ->
                 server.scheduler.runTask(this, Runnable {

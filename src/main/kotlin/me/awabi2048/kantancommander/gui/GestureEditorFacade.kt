@@ -64,6 +64,17 @@ class GestureEditorFacade(
             .forEach { it.refreshFromStore() }
     }
 
+    /**
+     * 手持ち変化を編集中の下部表示へ反映します。
+     *
+     * メインハンド由来の入口は描画時の所持で有効色を決めるため、所持変化で
+     * 作り直さないと設定可能なのに灰色のまま残ります。開いていない
+     * プレイヤーには何もしません。
+     */
+    internal fun refreshLowerIfOpen(player: Player) {
+        sessions[player.uniqueId]?.updateLower(player)
+    }
+
     fun open(player: Player, scriptId: UUID) {
         val state = GestureEditorState(
             scriptId = scriptId,
