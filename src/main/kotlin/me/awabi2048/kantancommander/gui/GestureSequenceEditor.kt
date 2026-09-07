@@ -1550,25 +1550,12 @@ class GestureSequenceEditor(
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
-                        // 折りたたみ中のFOR開始は、背景の外縁へ空色の縁取りを付けます。
-                        // 太さはアイコン幅の20%で、背景の外側に配置します。隣接ノードは
-                        // 2セル周期のため縁取りが届かず、四隅は横バーを優先して重なりを避けます。
+                        // 折りたたみ中のFOR開始は、背景の左右の外縁へ空色の縁取りを付けます。
+                        // 太さはアイコン幅の20%、高さはアイコンと同じで、背景の外側に
+                        // 配置します。隣接ノードは2セル周期のため縁取りは届きません。
                         if (isCollapsedForStart) {
                             val frameThickness = metrics.iconSize * 0.20
                             val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
-                            listOf(
-                                Triple("top", cx, cy + frameOffset),
-                                Triple("bottom", cx, cy - frameOffset),
-                            ).forEach { (name, x, y) ->
-                                visuals.add(GestureGuiVisual.Block(
-                                    visualId = "node-collapsed-frame-$name-${node.id}",
-                                    x = x, y = y,
-                                    width = metrics.iconSize + frameThickness * 2.0,
-                                    height = frameThickness,
-                                    blockData = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
-                                    layer = GestureEditorLayout.ICON_LAYER,
-                                ))
-                            }
                             listOf(
                                 Triple("left", cx - frameOffset, cy),
                                 Triple("right", cx + frameOffset, cy),
