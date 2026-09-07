@@ -91,6 +91,34 @@ object FireworkSettings {
         CommandValueRules.material(raw, allowAir = false) == Material.FIREWORK_ROCKET
 
     /**
+     * 試射の発射地点を解決します。
+     *
+     * 試射は追従中に発生しないため、つねにクリップ固定のanchor座標を使います。
+     * anchorがない場合は制御ブロックの1ブロック上（`placementAbove`）、
+     * それもなければ最終代替（操作者位置）へ落とします。
+     */
+    fun previewSite(
+        anchor: org.bukkit.Location?,
+        placementAbove: org.bukkit.Location?,
+        fallback: org.bukkit.Location,
+    ): org.bukkit.Location = anchor?.clone() ?: placementAbove?.clone() ?: fallback.clone()
+
+    /**
+     * 制御ブロックの1ブロック上の座標を求めます。
+     *
+     * ワールドが解決できない場合はnullを返し、呼び出し側で最終代替へ落とします。
+     */
+    fun placementAbove(placement: DiskPlacement): org.bukkit.Location? {
+        val world = org.bukkit.Bukkit.getWorld(placement.world) ?: return null
+        return org.bukkit.Location(
+            world,
+            placement.x + 0.5,
+            (placement.y + 1).toDouble(),
+            placement.z + 0.5,
+        )
+    }
+
+    /**
      * 出力・実行で共有する花火効果の型付き表現です。
      *
      * BukkitのFireworkEffectから抽出し、バニラSNBT（Fireworks.Explosions）へ

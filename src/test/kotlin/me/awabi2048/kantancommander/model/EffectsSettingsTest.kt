@@ -81,4 +81,24 @@ class EffectsSettingsTest {
         assertFalse(FireworkSettings.isFireworkMaterial("minecraft:stone"))
         assertFalse(FireworkSettings.isFireworkMaterial(""))
     }
+
+    @Test
+    fun `preview site prefers anchor over placement over fallback`() {
+        val anchor = org.bukkit.Location(null, 1.0, 2.0, 3.0)
+        val fallback = org.bukkit.Location(null, 9.0, 9.0, 9.0)
+
+        val fromAnchor = FireworkSettings.previewSite(anchor, null, fallback)
+        assertEquals(1.0, fromAnchor.x)
+        assertEquals(2.0, fromAnchor.y)
+        assertEquals(3.0, fromAnchor.z)
+
+        val above = org.bukkit.Location(null, 10.5, 65.0, -19.5)
+        val fromPlacement = FireworkSettings.previewSite(null, above, fallback)
+        assertEquals(10.5, fromPlacement.x)
+        assertEquals(65.0, fromPlacement.y)
+        assertEquals(-19.5, fromPlacement.z)
+
+        val fromFallback = FireworkSettings.previewSite(null, null, fallback)
+        assertEquals(9.0, fromFallback.x)
+    }
 }

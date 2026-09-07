@@ -2513,9 +2513,15 @@ class GestureSequenceEditor(
         if (stack.type != Material.FIREWORK_ROCKET) return false
         val height = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
             .toDoubleOrNull()?.takeIf(Double::isFinite) ?: FireworkSettings.HEIGHT_DEFAULT
-        // 試射は操作者（Gesture GUIエディターの操作者）の位置から打ち上げ、
-        // 発射者を自機に固定して接触起爆を避けます。
-        val launchAt = player.location.clone()
+        // 試射はGesture GUIの存在する座標（クリップ固定のanchor）から打ち上げ、
+        // 発射者を自機に固定して接触起爆を避けます。anchorがない場合は
+        // 制御ブロックの1ブロック上、配置もなければ操作者位置へ落とします。
+        val placement = state.placement
+        val launchAt = FireworkSettings.previewSite(
+            state.anchor,
+            placement?.let(FireworkSettings::placementAbove),
+            player.location,
+        )
         if (height <= 0.0) {
             val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
             instant.setItem(stack)
