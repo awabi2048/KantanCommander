@@ -748,6 +748,31 @@ object CommandSettingsModel {
         } else {
             node.markConfigured(key)
         }
+        if (node.type == CommandType.PARTICLE && key == ParticleSettings.PARAM_PARTICLE) {
+            normalizeParticleData(node)
+        }
+    }
+
+    /**
+     * PARTICLEの種類変更を、旧種類の詳細データを引きずらない単一操作にします。
+     *
+     * 詳細データの型は種類ごとに変わります。データ不要な種類へ変えた後に旧値を
+     * 残すと、非表示タブへの検証エラーと実行時の無表示スキップを起こします。
+     * データを必要とする種類同士でも、旧値が新種類で解釈できなければ同じく
+     * 表示・実行へ漏らさないため、両GUI共通の保存境界であるここで除去します。
+     */
+    private fun normalizeParticleData(node: CommandNode) {
+        val particle = ParticleSettings.particle(node) ?: return
+        if (!ParticleSettings.requiresData(particle)) {
+            node.params.remove(ParticleSettings.PARAM_DATA)
+            node.clearConfigured(ParticleSettings.PARAM_DATA)
+            return
+        }
+        val raw = node.params[ParticleSettings.PARAM_DATA]
+        if (!raw.isNullOrBlank() && ParticleSettings.parseData(particle, raw).isFailure) {
+            node.params.remove(ParticleSettings.PARAM_DATA)
+            node.clearConfigured(ParticleSettings.PARAM_DATA)
+        }
     }
 
     /** 複数の文字列パラメータを同じ明示設定契約で保存します。 */
@@ -995,7 +1020,9 @@ object CommandSettingsModel {
             }
             "particleData" -> {
                 val particle = ParticleSettings.particle(node)
-                if (particle != null && !ParticleSettings.requiresData(particle)) true
+                // 詳細データを必要としない種類は入力欄自体を出さないため、残存値が
+                // あっても「設定済み」にしません。除去は種類変更時の正規化が担います。
+                if (particle == null || !ParticleSettings.requiresData(particle)) false
                 else node.params[ParticleSettings.PARAM_DATA]?.isNotBlank() == true
             }
             "item" -> typedValueConfigured(node, "item") || node.string("itemData").isNotBlank()

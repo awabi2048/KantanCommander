@@ -495,8 +495,7 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `summon tags are validated as one string rather than a comma-separated list`() {
-        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
+    fun `summon tags are validated as one string rather than a comma-separated list`() {        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY)
         summon.params["entity"] = "minecraft:pig"
         summon.params["tags"] = "first_tag,second_tag"
@@ -508,6 +507,60 @@ class ExecutableScriptValidatorTest {
         summon.params["tags"] = "first_tag"
         assertFalse(
             ExecutableScriptValidator.validate(script).any { it.nodeId == summon.id && it.fieldKeys == setOf("tags") },
+        )
+    }
+
+    @Test
+    fun `fresh particle node passes preflight`() {
+        val script = DiskScript(name = "fresh-particle", owner = UUID.randomUUID())
+        val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none { it.nodeId == particle.id },
+            "既定のFLAME散布設定は検証を通る",
+        )
+    }
+
+    @Test
+    fun `stale detail data on dataless particle is ignored`() {
+        val script = DiskScript(name = "stale-particle-data", owner = UUID.randomUUID())
+        val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
+        particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_DATA] = "#ff0000 2"
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none {
+                it.nodeId == particle.id &&
+                    it.fieldKeys == setOf(me.awabi2048.kantancommander.model.ParticleSettings.PARAM_DATA)
+            },
+            "旧保存に残った詳細値は表示・実行へ漏らさないため検証対象外にする",
+        )
+    }
+
+    @Test
+    fun `invalid detail data on data particle fails on the detail tab`() {
+        val script = DiskScript(name = "broken-particle-data", owner = UUID.randomUUID())
+        val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
+        particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_PARTICLE] = "DUST"
+        particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_DATA] = "not-a-color"
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == particle.id &&
+                    it.fieldKeys == setOf(me.awabi2048.kantancommander.model.ParticleSettings.PARAM_DATA)
+            },
+        )
+    }
+
+    @Test
+    fun `particle count error maps to the parameters tab`() {
+        val script = DiskScript(name = "broken-particle-count", owner = UUID.randomUUID())
+        val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
+        particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_COUNT] = "0"
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == particle.id && it.fieldKeys == setOf("particleParameters")
+            },
         )
     }
 }

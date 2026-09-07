@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
@@ -519,6 +520,71 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundPosition" })
         assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "level" })
         assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "seconds" })
+    }
+
+    @Test
+    fun `particle parameters keep explicit defaults as configured`() {
+        val node = CommandType.PARTICLE.newNode()
+        CommandSettingsModel.setParameters(
+            node,
+            mapOf(
+                ParticleSettings.PARAM_DELTA_X to "0.0",
+                ParticleSettings.PARAM_DELTA_Y to "0.0",
+                ParticleSettings.PARAM_DELTA_Z to "0.0",
+                ParticleSettings.PARAM_SPEED to "0.0",
+                ParticleSettings.PARAM_COUNT to "1",
+            ),
+        )
+        node.markConfigured("particleParameters")
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "particleParameters"))
+        val rendered = CommandSettingsModel.gestureVisibleFields(node)
+            .first { it.key == "particleParameters" }.value(node)
+        assertEquals(DisplayValue.ParticleParameters("0.0", "0.0", "0.0", "0.0", "1"), rendered)
+    }
+
+    @Test
+    fun `particle kind change drops stale detail data`() {
+        val node = CommandType.PARTICLE.newNode()
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_PARTICLE, "DUST")
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_DATA, "#ff0000 2")
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "particleData"))
+
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_PARTICLE, "FLAME")
+
+        assertTrue(node.params[ParticleSettings.PARAM_DATA].isNullOrBlank())
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "particleData"))
+    }
+
+    @Test
+    fun `particle kind change drops incompatible detail data`() {
+        val node = CommandType.PARTICLE.newNode()
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_PARTICLE, "DUST")
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_DATA, "#ff0000 2")
+
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_PARTICLE, "BLOCK")
+
+        assertTrue(node.params[ParticleSettings.PARAM_DATA].isNullOrBlank())
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "particleData"))
+    }
+
+    @Test
+    fun `dataless particle never reports detail data as configured`() {
+        val node = CommandType.PARTICLE.newNode()
+        node.params[ParticleSettings.PARAM_DATA] = "#ff0000 2"
+
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "particleData"))
+    }
+
+    @Test
+    fun `particle detail tab follows the selected kind`() {
+        val node = CommandType.PARTICLE.newNode()
+        assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
+
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_PARTICLE, "DUST")
+
+        assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
+        assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particleData" })
     }
 
 }

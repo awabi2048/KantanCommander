@@ -496,8 +496,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
     /** 空のかんたんコマンダー制御ブロックのスクリプトを、プログラムディスクの内容で上書きする。 */
     private fun overwritePlacement(player: Player, placement: DiskPlacement, diskScriptId: UUID): Boolean {
-        if (!plugin.placementAccess.canManage(player, placement.world)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
+        if (!plugin.placementAccess.requireManage(player, placement.world)) {
             return false
         }
         val diskScript = plugin.scripts.load(diskScriptId) ?: return false
@@ -544,8 +543,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val source = plugin.scripts.load(placement.scriptId) ?: return false
         // ノードがなくても、名前またはタイマーを明示編集したスクリプトは出力対象です。
         if (!source.hasDiskContent()) return false
-        if (!plugin.placementAccess.canManage(player, placement.world)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_NO_PLACEMENT_ACCESS))
+        if (!plugin.placementAccess.requireManage(player, placement.world)) {
             return false
         }
         val world = plugin.server.getWorld(placement.world) ?: return false

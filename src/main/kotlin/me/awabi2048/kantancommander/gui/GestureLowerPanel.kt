@@ -180,16 +180,29 @@ class GestureLowerPanel(
             ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
         val displayLabel = KcI18n.text(player, field.label)
         val displayValue = field.value(node)
-        val timingRows = (displayValue as? DisplayValue.Timing)?.rows(player)
-        val timingLayout = timingRows?.let {
+        // 複数の意味値を持つ表示は1行へ連結せず、意味ごとの行へ分けて配置します。
+        // Timingの3行もParticleParametersの5行も同じ複数行レイアウトへ通し、
+        // コマンド型ごとの分岐を描画側へ増やしません。
+        val compositeRows = when (displayValue) {
+            is DisplayValue.Timing -> displayValue.rows(player)
+            is DisplayValue.ParticleParameters -> displayValue.rows(player)
+            else -> null
+        }
+        val compositeLayout = compositeRows?.let {
             GestureSettingValueLayout.calculate(
                 rowCount = it.size,
-                valueAnchorY = SETTING_VALUE_ANCHOR_Y,
-                detailAnchorY = SETTING_DETAIL_ANCHOR_Y,
+                valueAnchorY = SETTING_VALUE_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
+                detailAnchorY = SETTING_DETAIL_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
                 rowGapRatio = TIMING_ROW_GAP_RATIO,
-                minimumDetailY = SETTING_INPUT_CENTER_Y + SETTING_INPUT_HEIGHT / 2.0 +
-                    SETTING_DETAIL_INPUT_GAP,
+                minimumDetailY = SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT +
+                    SETTING_INPUT_HEIGHT / 2.0 + SETTING_DETAIL_INPUT_GAP,
             )
+        }
+        // 複数値行の画面では編集枠も同じ量だけ下へ移動させ、詳細行との間隔を保ちます。
+        val inputCenterY = if (compositeRows != null) {
+            SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT
+        } else {
+            SETTING_INPUT_CENTER_Y
         }
         val value = displayValue.render(player)
         val settingScreen = gestureSettingScreenFor(descriptor.editor)
@@ -216,10 +229,10 @@ class GestureLowerPanel(
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
             warning = attentionWarning(player, node, field.key, attentionFields),
-            detailY = timingLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
+            detailY = compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
         )
-        if (timingRows != null && timingLayout != null) {
-            addTimingValueRows(visuals, timingRows, timingLayout)
+        if (compositeRows != null && compositeLayout != null) {
+            addCompositeValueRows(visuals, compositeRows, compositeLayout)
         } else {
             addValueRow(visuals, "lower-setting", SETTING_VALUE_ANCHOR_Y, displayLabel, value)
         }
@@ -313,7 +326,7 @@ class GestureLowerPanel(
                 visuals,
                 "lower-edit-bg",
                 0.28,
-                SETTING_INPUT_CENTER_Y,
+                inputCenterY,
                 1.2,
                 SETTING_INPUT_HEIGHT,
                 if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
@@ -323,7 +336,7 @@ class GestureLowerPanel(
                 visuals,
                 "lower-edit",
                 0.28,
-                SETTING_INPUT_CENTER_Y,
+                inputCenterY,
                 0.0055,
                 180,
                 Component.text(KcI18n.text(player, editVisualText), editTextColor),
@@ -333,7 +346,7 @@ class GestureLowerPanel(
                 // すべての入力画面への導線を既存のlower-edit枠へ集約します。
                 // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
                 // 開ける二重導線にはしません。
-                bounds = rect(0.28, SETTING_INPUT_CENTER_Y, 1.2, SETTING_INPUT_HEIGHT),
+                bounds = rect(0.28, inputCenterY, 1.2, SETTING_INPUT_HEIGHT),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
                 // 空集合を焼き付けず、クリック時点のガードで判定します。ブロック設定は
                 // 空手もAIRとして有効なので、保存契約と同じポリシーをここでも使います。
@@ -1476,19 +1489,19 @@ class GestureLowerPanel(
         addText(visuals, "$id-value", valueX, y, 0.0060, 170, Component.text(value))
     }
 
-    /** 表示時間の意味を1行ずつ分離し、共通の値行レイアウトで配置します。 */
-    private fun addTimingValueRows(
+    /** 複数の意味値を1行ずつ分離し、共通の値行レイアウトで配置します。 */
+    private fun addCompositeValueRows(
         visuals: MutableList<GestureGuiVisual>,
         rows: List<DisplayValue.TimingRow>,
         layout: GestureSettingValueRowsLayout,
     ) {
         check(rows.size == layout.rowCentersY.size) {
-            "表示時間の値行とレイアウトの行数が一致しません: ${rows.size} != ${layout.rowCentersY.size}"
+            "複合表示の値行とレイアウトの行数が一致しません: ${rows.size} != ${layout.rowCentersY.size}"
         }
         rows.forEachIndexed { index, row ->
             addValueRow(
                 visuals,
-                id = "lower-setting-timing-$index",
+                id = "lower-setting-composite-$index",
                 y = layout.rowCentersY[index],
                 label = row.label,
                 value = row.value,
@@ -3526,6 +3539,10 @@ class GestureLowerPanel(
         const val SETTING_DETAIL_ANCHOR_Y = 0.17
         // 既存タブと同じ比率指定で、行高の30%を行間として確保します。
         const val TIMING_ROW_GAP_RATIO = 0.30
+        // 複数値行の画面では、先頭行が常設説明文へ接するため値行ブロックと
+        // 編集枠をまとめて下へ移動させます。単行表示の画面配置は変えず、
+        // 移動後も詳細行と編集枠上端の間隔規則は維持します。
+        const val SETTING_COMPOSITE_SHIFT = 0.03
         const val SETTING_INPUT_CENTER_Y = 0.02
         const val SETTING_INPUT_HEIGHT = 0.16
         // 既存の入力欄（幅1.20）を、外周余白と中央間隔を保ったまま2分割します。
@@ -3592,7 +3609,7 @@ class GestureLowerPanel(
         const val POSITION_TARGET_CHOICE_Y = -0.25
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
-            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleData",
+            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
             "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name",
             "condition", "variable", "value", "block", "sneaking",
         )

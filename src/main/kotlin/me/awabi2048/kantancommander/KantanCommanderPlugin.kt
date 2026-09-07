@@ -24,6 +24,8 @@ import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.execution.TestExecutionCoordinator
 import me.awabi2048.kantancommander.execution.TestExecutionPreferences
 import me.awabi2048.kantancommander.execution.SummonedEntityTracker
+import me.awabi2048.kantancommander.feedback.FeedbackCleanupListener
+import me.awabi2048.kantancommander.feedback.PlayerFeedbackService
 import me.awabi2048.kantancommander.export.VanillaDatapackExporter
 import me.awabi2048.kantancommander.export.KantanStandaloneExportContributor
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributors
@@ -32,11 +34,13 @@ import me.awabi2048.kantancommander.gui.GestureEditorFacade
 import me.awabi2048.kantancommander.gui.ProgramListMenu
 import me.awabi2048.kantancommander.gui.SequenceEditorMenu
 import me.awabi2048.kantancommander.item.KantanInteractionListener
+import me.awabi2048.kantancommander.item.ControlBlockInventorySync
 import me.awabi2048.kantancommander.item.KantanItemGrantProvider
 import me.awabi2048.kantancommander.item.KantanItemGrantService
 import me.awabi2048.kantancommander.placement.PlacementProtectionListener
 import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
+import me.awabi2048.kantancommander.security.LuckPermsRecalculateAdapter
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.block.Block
 import org.bukkit.plugin.java.JavaPlugin
@@ -49,7 +53,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "a88eec219c64d69433db16f8baf4b3e23c2b96267d19823fe8189365b9a7a82c"
+    "046e4db096d8ef50a8e70571862a4f549530b5bb3b5a70159f51541821753402"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -81,6 +85,10 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var itemSelection: ItemSelectionListener
         private set
     lateinit var placementAccess: PlacementAccessPolicy
+        private set
+    lateinit var feedback: PlayerFeedbackService
+        private set
+    lateinit var controlBlockSync: ControlBlockInventorySync
         private set
     lateinit var exporter: VanillaDatapackExporter
         private set
@@ -216,6 +224,8 @@ class KantanCommanderPlugin : JavaPlugin() {
         commandEditMenu = CommandEditMenu(this)
         gestureEditor = GestureEditorFacade(this)
         placementAccess = PlacementAccessPolicy(this)
+        feedback = PlayerFeedbackService()
+        controlBlockSync = ControlBlockInventorySync(this)
         triggerListener = RedstoneTriggerListener(this)
 
         getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this, itemGrantService))
@@ -253,6 +263,16 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(summonedEntities, this)
+        pm.registerEvents(FeedbackCleanupListener(this), this)
+        pm.registerEvents(controlBlockSync, this)
+        if (!LuckPermsRecalculateAdapter.register(this, logger) { playerUuid ->
+                server.scheduler.runTask(this, Runnable {
+                    server.getPlayer(playerUuid)?.let { controlBlockSync.normalize(it) }
+                })
+            }
+        ) {
+            logger.fine("LuckPerms再計算イベントは未接続のため、所持品同期は再評価点で追従します")
+        }
     }
 
     internal fun resetActivationTiming(scriptId: java.util.UUID) {
