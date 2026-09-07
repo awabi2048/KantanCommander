@@ -68,21 +68,21 @@ class GestureEditorLayoutTest {
     }
 
     @Test
-    fun `first add point picks the most advanced branch endpoint`() {
+    fun `most advanced add point picks the furthest branch endpoint`() {
         val cells = mapOf(
             MapPoint(4, 2) to MapCell(MapPoint(4, 2), MapCellKind.ADD),
             MapPoint(10, 1) to MapCell(MapPoint(10, 1), MapCellKind.ADD),
             MapPoint(-1, 1) to MapCell(MapPoint(-1, 1), MapCellKind.ADD),
         )
-        assertEquals(MapPoint(10, 1), GestureEditorLayout.findFirstAddPoint(cells))
+        assertEquals(MapPoint(10, 1), GestureEditorLayout.findMostAdvancedAddPoint(cells))
     }
 
     @Test
-    fun `first add point is null when absent`() {
+    fun `most advanced add point is null when absent`() {
         val cells = mapOf(
             MapPoint(1, 1) to MapCell(MapPoint(1, 1), MapCellKind.NODE),
         )
-        assertNull(GestureEditorLayout.findFirstAddPoint(cells))
+        assertNull(GestureEditorLayout.findMostAdvancedAddPoint(cells))
     }
 
     @Test
@@ -195,6 +195,24 @@ class GestureEditorLayoutTest {
         // 最小ズームでも収まらない場合は最小倍率へ退避します。
         assertEquals(-2, GestureEditorLayout.fitZoomLevel(31, 1))
         assertEquals(-2, GestureEditorLayout.fitZoomLevel(30, 19))
+    }
+
+    @Test
+    fun `zoom rail packs zoom in, zoom out, and test execution downward without reset`() {
+        // 下から拡大・縮小・テスト実行の順に1ピッチずつ積みます。
+        assertEquals(
+            GestureEditorLayout.ZOOM_TOP_Y - GestureEditorLayout.ZOOM_PITCH,
+            GestureEditorLayout.ZOOM_IN_Y,
+            1.0e-9,
+        )
+        assertEquals(GestureEditorLayout.ZOOM_TOP_Y, GestureEditorLayout.ZOOM_OUT_Y, 1.0e-9)
+        assertEquals(
+            GestureEditorLayout.ZOOM_TOP_Y + GestureEditorLayout.ZOOM_PITCH,
+            GestureEditorLayout.TEST_BUTTON_Y,
+            1.0e-9,
+        )
+        // 実行中はズーム列を隠すため、最下段をテストボタンが使っても重なりません。
+        assertEquals(GestureEditorLayout.ZOOM_IN_Y, GestureEditorLayout.TEST_RUNNING_Y, 1.0e-9)
     }
 
     @Test
