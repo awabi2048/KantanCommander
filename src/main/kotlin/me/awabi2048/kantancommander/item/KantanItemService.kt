@@ -4,9 +4,7 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 import com.awabi2048.ccsystem.CCSystem
 import com.awabi2048.ccsystem.api.gui.GuiLoreLine
 import com.awabi2048.ccsystem.api.gui.GuiLoreSpec
-import io.papermc.paper.datacomponent.DataComponentTypes
-import io.papermc.paper.datacomponent.item.ItemAttributeModifiers
-import io.papermc.paper.datacomponent.item.Tool
+import jp.awabi2048.cccontent.items.PoisonousPotatoComponentPack
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -76,6 +74,8 @@ object KantanItemService {
                 )
             }
         }
+        // 無機能アイテムの成分はCC-Contentの共有パックへ寄せ、自前の分岐を持ちません。
+        PoisonousPotatoComponentPack.applyNonConsumable(item)
         script?.let { updateLore(item, it, player) }
         return item
     }
@@ -93,7 +93,7 @@ object KantanItemService {
             meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, DISK_ITEM_ID)
             meta.persistentDataContainer.set(diskIdKey, PersistentDataType.STRING, script.id.toString())
         }
-        applyCustomItemComponents(item)
+        PoisonousPotatoComponentPack.applyNonConsumable(item)
         updateLore(item, script, player)
         return item
     }
@@ -138,12 +138,14 @@ object KantanItemService {
 
     /**
      * 制御ブロックの表示素材を権限状態へ寄せます。PDC・名称・lore・同梱内容は
-     * 維持し、最大stack数も1へ正規化します。制御ブロック以外ではfalseを返します。
+     * 維持し、最大stack数も1へ正規化します。素材切替で成分が既定へ戻るため、
+     * 無機能アイテムの成分も共有パックで掛け直します。制御ブロック以外ではfalseを返します。
      */
     fun normalizeControlBlockView(item: ItemStack, locked: Boolean): Boolean {
         if (kind(item) != KantanItemKind.BLOCK) return false
         item.type = blockViewMaterial(locked)
         item.editMeta { meta -> meta.setMaxStackSize(1) }
+        PoisonousPotatoComponentPack.applyNonConsumable(item)
         return true
     }
 
@@ -169,15 +171,6 @@ object KantanItemService {
         val raw = item?.itemMeta?.persistentDataContainer?.get(blockProgramKey, PersistentDataType.STRING)
             ?: return null
         return ControlBlockProgramCodec.decode(raw)
-    }
-
-    private fun applyCustomItemComponents(item: ItemStack) {
-        item.setData(DataComponentTypes.TOOL, Tool.tool().build())
-        item.setData(DataComponentTypes.ATTRIBUTE_MODIFIERS, ItemAttributeModifiers.itemAttributes().build())
-
-        // システム全体のカスタムアイテム慣習に合わせ、見た目用の毒じゃがいもを食べ物として扱わせない。
-        item.unsetData(DataComponentTypes.FOOD)
-        item.unsetData(DataComponentTypes.CONSUMABLE)
     }
 
     private fun updateLore(item: ItemStack, script: DiskScript, player: Player) {

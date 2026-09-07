@@ -7,7 +7,7 @@
 
     <groupId>me.awabi2048</groupId>
     <artifactId>KantanCommander</artifactId>
-    <version>26.907.16</version>
+    <version>26.907.17</version>
     <packaging>jar</packaging>
 
     <name>KantanCommander</name>
@@ -64,6 +64,12 @@
             <groupId>me.awabi2048</groupId>
             <artifactId>MWM-Chanpon</artifactId>
             <version>26.905.2</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>jp.awabi2048</groupId>
+            <artifactId>CC-Content</artifactId>
+            <version>26.907.1</version>
             <scope>provided</scope>
         </dependency>
         <dependency>

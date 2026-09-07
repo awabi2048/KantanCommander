@@ -109,6 +109,17 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
 
+        if (itemKind == KantanItemKind.BLOCK && event.action == Action.RIGHT_CLICK_BLOCK &&
+            event.clickedBlock?.type == Material.COMPOSTER
+        ) {
+            // 制御ブロックは無機能アイテムのため、堆肥樽への投入も受け付けません。
+            // 素材が毒じゃがいもでも食べ物・堆肥として消費されないようにします。
+            event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
+            event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
+            event.isCancelled = true
+            return
+        }
+
         if (clickedPlacement != null && event.action == Action.RIGHT_CLICK_BLOCK) {
             // Gesture GUIはJE専用、BEは同じ編集内容をインベントリGUIで表示します。
             // ここで一度だけ解決した方式を、入口ポリシーと共有画面の権限判定へ渡し、
