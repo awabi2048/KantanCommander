@@ -1443,13 +1443,7 @@ class GestureSequenceEditor(
         }
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
         // 描画・入力判定で共有する原点を毎回正規化します。
-        state.origin = GestureEditorLayout.clampOrigin(
-            state.origin,
-            maxOf(layout.width, state.lastExpandedLayoutWidth),
-            maxOf(layout.height, state.lastExpandedLayoutHeight),
-            metrics.columns,
-            metrics.rows,
-        )
+        state.origin = clampOriginWithRemembered(state.origin, metrics.columns, metrics.rows, layout)
         // アイコン・経路・経路の入力判定は必ず同じ投影を共有します。
         // 経路だけを画面外へ拡張すると、アイコンが消えた後も帯だけ残るため、
         // 画面外へ続く接続は projection の境界情報だけで表現します。
@@ -1507,14 +1501,14 @@ class GestureSequenceEditor(
                         val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
                         val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
-                        // 折りたたみ中のFOR開始はブロック全体の代理として黒背景で示します。
-                        // テスト実行中は折りたたみを無視するため、テスト色が優先されます。
+                        // 折りたたみ中のFOR開始はブロック全体の代理として青緑の縁取りで示します。
+                        // 背景色は変えないため、未設定警告やテスト色と両立します。
+                        // テスト実行中は折りたたみを無視するため、縁取りは出しません。
                         val isCollapsedForStart = !testActive &&
                             node.type == CommandType.FOR_START && node.id in collapsedForStarts
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
                         // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
-                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑、
-                        // 未設定警告=橙、折りたたみ=黒です。警告は折りたたみより優先します。
+                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
                         val backgroundMaterial = when {
                             isFailedNode -> Material.RED_SHULKER_BOX
                             isWaitingNode -> Material.YELLOW_SHULKER_BOX
@@ -1522,7 +1516,6 @@ class GestureSequenceEditor(
                             isLoopActiveStart -> Material.LIGHT_BLUE_SHULKER_BOX
                             isSuccessfulNode -> Material.LIME_SHULKER_BOX
                             incomplete -> Material.ORANGE_SHULKER_BOX
-                            isCollapsedForStart -> Material.BLACK_SHULKER_BOX
                             else -> Material.LIGHT_GRAY_SHULKER_BOX
                         }
                         val glowColor = if (testActive) null else if (isSelected) Color.YELLOW.asARGB() else null
@@ -1557,6 +1550,40 @@ class GestureSequenceEditor(
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
+                        // 折りたたみ中のFOR開始は、背景の外周へ青緑の縁取りを付けます。
+                        // 太さはアイコン幅の10%で、背景と同一範囲に内側配置するため
+                        // 隣接セルへはみ出さず、四隅の二重描画も避けます。
+                        if (isCollapsedForStart) {
+                            val frameThickness = metrics.iconSize * 0.10
+                            val frameHalf = metrics.iconSize / 2.0 - frameThickness / 2.0
+                            val frameInner = metrics.iconSize - frameThickness * 2.0
+                            listOf(
+                                Triple("top", cx, cy + frameHalf),
+                                Triple("bottom", cx, cy - frameHalf),
+                            ).forEach { (name, x, y) ->
+                                visuals.add(GestureGuiVisual.Block(
+                                    visualId = "node-collapsed-frame-$name-${node.id}",
+                                    x = x, y = y,
+                                    width = metrics.iconSize,
+                                    height = frameThickness,
+                                    blockData = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                                    layer = GestureEditorLayout.ICON_LAYER,
+                                ))
+                            }
+                            listOf(
+                                Triple("left", cx - frameHalf, cy),
+                                Triple("right", cx + frameHalf, cy),
+                            ).forEach { (name, x, y) ->
+                                visuals.add(GestureGuiVisual.Block(
+                                    visualId = "node-collapsed-frame-$name-${node.id}",
+                                    x = x, y = y,
+                                    width = frameThickness,
+                                    height = frameInner,
+                                    blockData = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                                    layer = GestureEditorLayout.ICON_LAYER,
+                                ))
+                            }
+                        }
                         // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
                         // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
                         // 旧選択の解除と新ノードの選択を1クリックで完了させます。
@@ -4534,17 +4561,13 @@ class GestureSequenceEditor(
                 }
                 val layout = currentViewportLayout(player) ?: return
                 val metrics = viewportMetrics(zoomScale())
-                val nextOrigin = GestureEditorLayout.clampOrigin(
-                    MapPoint(state.origin.x + delta.x, state.origin.y + delta.y),
-                    layout,
-                    metrics.columns,
-                    metrics.rows,
-                )
-                if (nextOrigin == state.origin) {
+                // 1歩移動の可否だけで決め、実寸法クランプで丸めないことで、
+                // 範囲外にいる間の不連続な端への飛びを防ぎます。
+                if (!canNavigate(layout, metrics.columns, metrics.rows, delta)) {
                     // 移動不能時は状態・更新・効果音のいずれも発生させません。
                     return
                 }
-                state.origin = nextOrigin
+                state.origin = MapPoint(state.origin.x + delta.x, state.origin.y + delta.y)
                 updateUpper(player)
             }
             context.elementId == "back-to-start" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -5050,6 +5073,9 @@ class GestureSequenceEditor(
      * 維持し、上部ビューポートだけを更新します。
      */
     private fun toggleForCollapsed(player: Player, nodeId: UUID) {
+        // 効果音のために切替前の状態を保持します。保存成功後の正本で判定し直しません。
+        val wasCollapsed = plugin.scripts.load(state.scriptId)
+            ?.collapsedForStartIds?.contains(nodeId) == true
         val saved = runCatching {
             CommandSettingsModel.updateScript(
                 plugin,
@@ -5079,6 +5105,13 @@ class GestureSequenceEditor(
         }
         if (!saved) return
         state.selectedNodeId = nodeId
+        // 折りたたみ時は閉じる音、解除時は開く音で切替を伝えます。
+        player.playSound(
+            player.location,
+            if (wasCollapsed) Sound.BLOCK_SHULKER_BOX_OPEN else Sound.BLOCK_SHULKER_BOX_CLOSE,
+            1.0f,
+            1.0f,
+        )
         updateUpper(player)
     }
 
@@ -5379,6 +5412,25 @@ class GestureSequenceEditor(
             maxOf(layout.width, state.lastExpandedLayoutWidth),
             maxOf(layout.height, state.lastExpandedLayoutHeight),
         )
+
+    /**
+     * 描画・ナビ・ズームで共有する原点正規化です。
+     *
+     * 折りたたみで配置が縮んでも展開時の記憶寸法を基準にするため、範囲外へ
+     * 残った原点が端へ不連続に飛びません。
+     */
+    private fun clampOriginWithRemembered(
+        origin: MapPoint,
+        viewportWidth: Int,
+        viewportHeight: Int,
+        layout: GraphLayout,
+    ): MapPoint = GestureEditorLayout.clampOrigin(
+        origin,
+        maxOf(layout.width, state.lastExpandedLayoutWidth),
+        maxOf(layout.height, state.lastExpandedLayoutHeight),
+        viewportWidth,
+        viewportHeight,
+    )
 
     /**
      * 上部ビューポートへ適用する挿入プレビューです。
@@ -5704,14 +5756,14 @@ class GestureSequenceEditor(
             state.zoomLevel = oldZoomLevel
             return
         }
-        state.origin = GestureEditorLayout.clampOrigin(
+        state.origin = clampOriginWithRemembered(
             MapPoint(
                 (centerX - (newMetrics.columns - 1) / 2.0).roundToInt(),
                 (centerY - (newMetrics.rows - 1) / 2.0).roundToInt(),
             ),
-            layout,
             newMetrics.columns,
             newMetrics.rows,
+            layout,
         )
     }
 

@@ -183,6 +183,21 @@ class GestureEditorLayoutTest {
     }
 
     @Test
+    fun `remembered range move matches layout move inside the map`() {
+        // 折りたたみなし（記憶＝実配置）では従来のcanMoveと等価になることを総当たりで確認します。
+        val layout = GraphLayout(width = 20, height = 8, cells = emptyMap(), nodePoints = emptyMap())
+        val deltas = listOf(MapPoint(1, 0), MapPoint(-1, 0), MapPoint(0, 1), MapPoint(0, -1))
+        for (x in 0..10) for (y in 0..4) for (delta in deltas) {
+            val origin = MapPoint(x, y)
+            assertEquals(
+                layout.canMove(origin, delta.x, delta.y, 10, 4),
+                GestureEditorLayout.canMoveWithRememberedRange(origin, delta, 10, 4, 20, 8, 20, 8),
+                "origin=$origin delta=$delta",
+            )
+        }
+    }
+
+    @Test
     fun `reveal origin includes the most advanced add point`() {
         val layout = GraphLayout(width = 20, height = 8, cells = emptyMap(), nodePoints = emptyMap())
         assertEquals(
