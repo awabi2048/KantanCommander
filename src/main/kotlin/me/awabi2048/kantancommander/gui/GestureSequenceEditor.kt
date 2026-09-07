@@ -63,6 +63,7 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.toggleControlBlockState
+import me.awabi2048.kantancommander.security.PlacementDecision
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
@@ -342,12 +343,12 @@ class GestureSequenceEditor(
         val owner = Bukkit.getPlayer(ownerId) ?: return false
         val actor = Bukkit.getPlayer(actorId) ?: return false
         // 共有GUIの表示も配置物を操作できるプレイヤーに限定します。
-        // PlacementAccessPolicy側の追加権限・管理者例外・MyWorld建築権限の分岐を
-        // ここでも再利用し、表示だけ権限判定が緩くなる入口を作らないようにします。
+        // 理由付き判定の許可部分だけを再利用し、表示だけ判定が緩くなる入口を
+        // 作らないようにします。拒否理由の通知は操作時の入口で行います。
         // 距離判定は操作時だけへ分離し、遠ざかったプレイヤーの画面全体を消しません。
         return actor.world.uid == owner.world.uid &&
             actor.world.name == placement.world &&
-            plugin.placementAccess.canManage(actor, placement.world)
+            plugin.placementAccess.decide(actor, placement.world) == PlacementDecision.ALLOW
     }
 
     /**
