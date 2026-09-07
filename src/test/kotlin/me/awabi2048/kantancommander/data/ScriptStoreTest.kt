@@ -4,6 +4,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.collapsedForStarts
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TargetKind
@@ -44,6 +45,33 @@ class ScriptStoreTest {
         copy.graph.nodes[node.id]?.params?.set("text", "changed")
         assertEquals("", loaded.graph.nodes[node.id]?.string("text"))
         assertNotEquals(script.id, copy.id)
+    }
+
+    @Test
+    fun `collapsed for starts round trip and do not mark disk content`() {
+        val store = ScriptStore(temp.resolve("collapsed"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "test")
+        val collapsed = UUID.randomUUID()
+        script.collapsedForStartIds = mutableSetOf(collapsed)
+        store.save(script)
+
+        val loaded = requireNotNull(store.load(script.id))
+        assertEquals(setOf(collapsed), loaded.collapsedForStarts())
+        // 最小化表示は実行内容ではないため、ディスク内容ありとは判定しません。
+        assertFalse(loaded.hasDiskContent())
+
+        val copy = store.copyForPlacement(loaded)
+        assertEquals(setOf(collapsed), copy.collapsedForStarts())
+        copy.collapsedForStarts().clear()
+        assertEquals(setOf(collapsed), loaded.collapsedForStarts())
+    }
+
+    @Test
+    fun `missing collapsed set loads as empty`() {
+        val store = ScriptStore(temp.resolve("collapsed-missing"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "test")
+        val loaded = requireNotNull(store.load(script.id))
+        assertTrue(loaded.collapsedForStarts().isEmpty())
     }
 
     @Test
