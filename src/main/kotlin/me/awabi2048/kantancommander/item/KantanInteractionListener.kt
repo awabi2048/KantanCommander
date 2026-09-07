@@ -109,15 +109,22 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             return
         }
 
-        if (itemKind == KantanItemKind.BLOCK && event.action == Action.RIGHT_CLICK_BLOCK &&
-            event.clickedBlock?.type == Material.COMPOSTER
+        if (itemKind == KantanItemKind.BLOCK && KantanItemService.isLockedView(item) &&
+            (event.action == Action.RIGHT_CLICK_BLOCK || event.action == Action.RIGHT_CLICK_AIR)
         ) {
-            // 制御ブロックは無機能アイテムのため、堆肥樽への投入も受け付けません。
-            // 素材が毒じゃがいもでも食べ物・堆肥として消費されないようにします。
-            event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY)
-            event.setUseItemInHand(org.bukkit.event.Event.Result.DENY)
-            event.isCancelled = true
-            return
+            // 権限制限表示のまま右クリックしてもBlockPlaceEventが発生しないため、
+            // ここで権限を再評価して拒否理由を通知します。連打は通知側で抑止します。
+            // 許可済みなのに表示だけ古い場合は手持ちを即時正規化します。
+            val decision = plugin.placementAccess.decide(player, player.world.name)
+            if (decision != PlacementDecision.ALLOW) {
+                plugin.placementAccess.notifyDenied(player, decision)
+                return
+            }
+            event.item?.let {
+                if (KantanItemService.normalizeControlBlockView(it, locked = false)) {
+                    player.updateInventory()
+                }
+            }
         }
 
         if (clickedPlacement != null && event.action == Action.RIGHT_CLICK_BLOCK) {
