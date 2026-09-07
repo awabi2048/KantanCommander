@@ -92,7 +92,7 @@ class ScriptStore(
             listed = false,
             revision = 0L,
             graph = source.graph.deepCopy(),
-            // グラフ複製はノードIDを維持するため、最小化集合も独立複製して引き継ぎます。
+            // グラフ複製はノードIDを維持するため、折りたたみ集合も独立複製して引き継ぎます。
             collapsedForStartIds = source.collapsedForStartIds?.toMutableSet(),
         ).also(::save)
 
@@ -390,7 +390,7 @@ class ScriptStore(
     private fun DiskScript.deepCopy(): DiskScript = copy(
         // TimerSettingは可変データなので、グラフだけをコピーするとload()後の
         // タイマー編集が保存済みキャッシュへ直接波及し、差分追跡をすり抜けます。
-        // 最小化集合も同じく可変のため複製し、独立性を保ちます。
+        // 折りたたみ集合も同じく可変のため複製し、独立性を保ちます。
         timer = timer.copy(),
         graph = graph.deepCopy(),
         collapsedForStartIds = collapsedForStartIds?.toMutableSet(),
@@ -398,7 +398,7 @@ class ScriptStore(
 
     /**
      * 識別子・所有者・一覧公開状態・作成時刻を除いた利用者編集部分を比較します。
-     * 最小化表示は実行内容ではないため比較対象外とし、トグルだけで
+     * 折りたたみ表示は実行内容ではないため比較対象外とし、トグルだけで
      * ディスク内容ありとは判定しません。
      */
     private fun sameEditableContent(left: DiskScript, right: DiskScript): Boolean =

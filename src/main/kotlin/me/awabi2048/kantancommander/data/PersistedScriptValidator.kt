@@ -270,7 +270,7 @@ object PersistedScriptValidator {
         }
     }
 
-    /** 最小化for開始IDなど、任意のUUID配列を受け付けます。欠落・nullは旧形式として許容します。 */
+    /** 折りたたみfor開始IDなど、任意のUUID配列を受け付けます。欠落・nullは旧形式として許容します。 */
     private fun optionalUuidArray(parent: JsonObject, field: String, path: String, errors: MutableList<String>) {
         val raw = parent[field] ?: return
         if (raw.isJsonNull) return

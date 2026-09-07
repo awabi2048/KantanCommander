@@ -57,7 +57,7 @@ class ScriptStoreTest {
 
         val loaded = requireNotNull(store.load(script.id))
         assertEquals(setOf(collapsed), loaded.collapsedForStarts())
-        // 最小化表示は実行内容ではないため、ディスク内容ありとは判定しません。
+        // 折りたたみ表示は実行内容ではないため、ディスク内容ありとは判定しません。
         assertFalse(loaded.hasDiskContent())
 
         val copy = store.copyForPlacement(loaded)

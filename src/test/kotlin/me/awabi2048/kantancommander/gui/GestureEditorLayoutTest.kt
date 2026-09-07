@@ -95,6 +95,24 @@ class GestureEditorLayoutTest {
     }
 
     @Test
+    fun `clamp origin with remembered size keeps origin after collapse`() {
+        // 折りたたみで幅20→14へ縮んでも、展開時寸法を基準にすれば
+        // 端付近の原点は引き戻されず、STARTが同じ位置に留まる。
+        assertEquals(
+            MapPoint(10, 0),
+            GestureEditorLayout.clampOrigin(MapPoint(10, 0), 20, 5, 10, 6),
+        )
+        assertEquals(
+            MapPoint(4, 0),
+            GestureEditorLayout.clampOrigin(MapPoint(10, 0), 14, 5, 10, 6),
+        )
+        assertEquals(
+            MapPoint(0, 0),
+            GestureEditorLayout.clampOrigin(MapPoint(-5, -1), 20, 5, 10, 6),
+        )
+    }
+
+    @Test
     fun `reveal origin includes the most advanced add point`() {
         val layout = GraphLayout(width = 20, height = 8, cells = emptyMap(), nodePoints = emptyMap())
         assertEquals(

@@ -89,6 +89,14 @@ data class GestureEditorState(
     var scriptId: UUID,
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
+    /**
+     * 折りたたみ前の配置寸法（セル単位）です。
+     *
+     * 折りたたみで配置が縮んでも原点を引き戻さないよう、展開時の寸法を覚えて
+     * 原点の正規化基準に使います。セッション内保持で、永続化しません。
+     */
+    var lastExpandedLayoutWidth: Int = 0,
+    var lastExpandedLayoutHeight: Int = 0,
     /** ビューポート表示倍率。初期値は最大倍率、縮小25%まで25%刻みで許可します。 */
     var zoomLevel: Int = GestureEditorLayout.INITIAL_ZOOM_LEVEL,
     var selectedNodeId: UUID? = null,
@@ -1401,7 +1409,7 @@ class GestureSequenceEditor(
         val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return emptyView()
         if (!testActive) observedRevision = script.revision
-        // 最小化表示はテスト実行中は無視し、全展開で実行ノードの可視性を優先します。
+        // 折りたたみ表示はテスト実行中は無視し、全展開で実行ノードの可視性を優先します。
         val collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script)
         val persistedLayout = runCatching {
             GraphLayoutEngine.layout(script.graph, collapsedForStarts = collapsedForStarts)
@@ -1426,11 +1434,19 @@ class GestureSequenceEditor(
         }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
+        // 折りたたみで配置が縮んでも、展開時の寸法を覚えておき原点を引き戻しません。
+        // 端付近のFORを折りたたんでもSTARTが同じ位置に留まります。引き戻し後の
+        // 空き領域へ戻る移動は、実寸法を見るcanMove側で拒否されます。
+        if (!testActive && collapsedForStarts.isEmpty()) {
+            state.lastExpandedLayoutWidth = persistedLayout.width
+            state.lastExpandedLayoutHeight = persistedLayout.height
+        }
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
         // 描画・入力判定で共有する原点を毎回正規化します。
         state.origin = GestureEditorLayout.clampOrigin(
             state.origin,
-            layout,
+            maxOf(layout.width, state.lastExpandedLayoutWidth),
+            maxOf(layout.height, state.lastExpandedLayoutHeight),
             metrics.columns,
             metrics.rows,
         )
@@ -4430,7 +4446,7 @@ class GestureSequenceEditor(
                         api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                     }
                     // 選択済みノードへの再クリックは、種類別の変形動作です。
-                    // FOR開始は最小化のトグル、条件分岐はTRUE/FALSE鎖の入替を行い、
+                    // FOR開始は折りたたみのトグル、条件分岐はTRUE/FALSE鎖の入替を行い、
                     // 下部の設定表示は維持します。新規選択は従来どおり設定表示へ遷移します。
                     val clicked = script.graph.nodes.getValue(nodeId)
                     if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
@@ -5013,7 +5029,7 @@ class GestureSequenceEditor(
     }
 
     /**
-     * 選択済みFOR開始の再クリックで最小化表示を切り替えます。
+     * 選択済みFOR開始の再クリックで折りたたみ表示を切り替えます。
      *
      * グラフ構造は変えず、表示状態だけを正本へ保存します。下部の設定表示は
      * 維持し、上部ビューポートだけを更新します。
@@ -5041,7 +5057,7 @@ class GestureSequenceEditor(
         }.getOrElse { failure ->
             reportGraphOperationFailure(
                 player,
-                "FOR最小化を保存できませんでした: script=${state.scriptId} node=$nodeId",
+                "FOR折りたたみを保存できませんでした: script=${state.scriptId} node=$nodeId",
                 failure,
             )
             return
@@ -5340,7 +5356,7 @@ class GestureSequenceEditor(
      * 共通判定を使うことで、表示と入力判定の基準が分岐しません。
      */
     /**
-     * 永続化された最小化集合のうち、現存する対応ペア付きFOR_STARTだけを有効とします。
+     * 永続化された折りたたみ集合のうち、現存する対応ペア付きFOR_STARTだけを有効とします。
      * 残骸IDは描画へ影響させません。
      */
     private fun effectiveCollapsedForStarts(script: DiskScript): Set<UUID> =

@@ -137,8 +137,25 @@ object GestureEditorLayout {
     }
 
     fun clampOrigin(origin: MapPoint, layout: GraphLayout, viewportCols: Int, viewportRows: Int): MapPoint {
-        val maxX = (layout.width - viewportCols).coerceAtLeast(0)
-        val maxY = (layout.height - viewportRows).coerceAtLeast(0)
+        return clampOrigin(origin, layout.width, layout.height, viewportCols, viewportRows)
+    }
+
+    /**
+     * 配置寸法を直接指定してビューポート原点の範囲をclampします。
+     *
+     * FOR折りたたみで配置が縮んでも、縮小前の寸法を渡すことで原点を引き戻さず、
+     * 折りたたんだSTARTが同じ位置に留まります。引き戻し後の空き領域へ
+     * 戻る移動は、実寸法を見るcanMove側で拒否されます。
+     */
+    fun clampOrigin(
+        origin: MapPoint,
+        layoutWidth: Int,
+        layoutHeight: Int,
+        viewportCols: Int,
+        viewportRows: Int,
+    ): MapPoint {
+        val maxX = (layoutWidth - viewportCols).coerceAtLeast(0)
+        val maxY = (layoutHeight - viewportRows).coerceAtLeast(0)
         return MapPoint(origin.x.coerceIn(0, maxX), origin.y.coerceIn(0, maxY))
     }
 

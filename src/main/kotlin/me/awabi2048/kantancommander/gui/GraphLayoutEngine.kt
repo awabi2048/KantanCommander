@@ -548,7 +548,7 @@ object GraphLayoutEngine {
                         ?.let(graph.nodes::get)
                         ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == node.id }
                     if (collapsedEnd != null) {
-                        // 最小化表示：開始だけを通常1単位として描き、本体・終了・
+                        // 折りたたみ表示：開始だけを通常1単位として描き、本体・終了・
                         // 戻り経路を畳みます。後続への接続と末尾追加点は対応終了の
                         // NEXTとして扱い、ブロック後への挿入が通常どおり動作します。
                         putNode(cursorX, y, node)

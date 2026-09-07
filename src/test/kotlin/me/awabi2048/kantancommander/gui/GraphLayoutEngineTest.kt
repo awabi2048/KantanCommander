@@ -1201,6 +1201,8 @@ class GraphLayoutEngineTest {
         assertTrue(end.id in expanded.nodePoints)
 
         val collapsed = GraphLayoutEngine.layout(graph, collapsedForStarts = setOf(start.id))
+        // 折りたたみ前後で開始の論理座標は変わらず、後続だけが前へ詰まります。
+        assertEquals(expanded.nodePoints[start.id], collapsed.nodePoints[start.id])
         // 開始だけが描かれ、本体・終了は畳まれます。
         assertTrue(start.id in collapsed.nodePoints)
         assertFalse(body.id in collapsed.nodePoints)
@@ -1210,6 +1212,7 @@ class GraphLayoutEngineTest {
         val afterPoint = requireNotNull(collapsed.nodePoints[after.id])
         assertEquals(startPoint.y, afterPoint.y)
         assertTrue(collapsed.width < expanded.width)
+        assertTrue(afterPoint.x < requireNotNull(expanded.nodePoints[after.id]).x)
         // ブロック後の挿入先は対応終了のNEXTとして維持されます。
         assertEquals(
             InsertionTarget(end.id, GraphEditor.Edge.NEXT),

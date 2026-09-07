@@ -33,7 +33,7 @@ data class DiskScript(
      */
     var revision: Long = 0L,
     /**
-     * ジェスチャーGUIで最小化表示するfor開始ノードのID集合です。
+     * ジェスチャーGUIで折りたたみ表示するfor開始ノードのID集合です。
      *
      * グラフ構造には影響しない表示状態ですが、編集画面の見た目を保つため
      * プログラムごとに永続化します。旧JSONには存在しないためnullableにし、
@@ -53,7 +53,7 @@ data class DiskScript(
 fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotEmpty()
 
 /**
- * 最小化表示するfor開始ノードのID集合です。
+ * 折りたたみ表示するfor開始ノードのID集合です。
  *
  * 旧JSONには存在しないため欠落時は空集合を割り当てます。描画時は現存する
  * 対応ペア付きFOR_STARTとの積だけを有効とし、残骸IDは無視します。
