@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -109,6 +110,75 @@ class GestureEditorLayoutTest {
         assertEquals(
             MapPoint(0, 0),
             GestureEditorLayout.clampOrigin(MapPoint(-5, -1), 20, 5, 10, 6),
+        )
+    }
+
+    @Test
+    fun `remembered range move matches normal rules inside the map`() {
+        // 折りたたみなし（記憶＝実配置）では通常規則と等価です。幅20・10列で原点xは0..10。
+        assertTrue(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(3, 0), MapPoint(1, 0), 10, 6, 20, 8, 20, 8,
+            ),
+        )
+        assertFalse(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(10, 0), MapPoint(1, 0), 10, 6, 20, 8, 20, 8,
+            ),
+        )
+        assertFalse(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(3, 0), MapPoint(0, 0), 10, 6, 20, 8, 20, 8,
+            ),
+        )
+    }
+
+    @Test
+    fun `outside remembered range only allows returning moves`() {
+        // 実配置幅14（上限4）・記憶幅20（上限10）・10列で原点(10, 0)に残った場合。
+        // 復帰方向だけを許可し、空きへ遠ざかる逆行は拒否します。
+        assertTrue(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(10, 0), MapPoint(-1, 0), 10, 6, 14, 8, 20, 8,
+            ),
+        )
+        assertFalse(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(10, 0), MapPoint(1, 0), 10, 6, 14, 8, 20, 8,
+            ),
+        )
+        // 範囲内（上限ちょうど）からは外へ出られません。
+        assertFalse(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(4, 0), MapPoint(1, 0), 10, 6, 14, 8, 20, 8,
+            ),
+        )
+        assertTrue(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(4, 0), MapPoint(-1, 0), 10, 6, 14, 8, 20, 8,
+            ),
+        )
+        // xが範囲外でもy方向の範囲内移動は可能です（軸独立）。
+        assertTrue(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(10, 0), MapPoint(0, 1), 10, 6, 14, 8, 20, 8,
+            ),
+        )
+        assertFalse(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(10, 0), MapPoint(0, -1), 10, 6, 14, 8, 20, 8,
+            ),
+        )
+        // 記憶を越えた一時的逸脱（ズーム変化直後など）からも内向きには動けます。
+        assertTrue(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(12, 0), MapPoint(-1, 0), 10, 6, 14, 8, 20, 8,
+            ),
+        )
+        assertFalse(
+            GestureEditorLayout.canMoveWithRememberedRange(
+                MapPoint(12, 0), MapPoint(1, 0), 10, 6, 14, 8, 20, 8,
+            ),
         )
     }
 

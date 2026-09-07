@@ -141,6 +141,45 @@ object GestureEditorLayout {
     }
 
     /**
+     * 折りたたみ後の範囲外に原点がある間のナビ移動可否です。
+     *
+     * contentW/Hは実配置、rememberedW/Hは縮小前の記憶寸法です。範囲内では通常規則
+     * （実配置内に収まる移動だけ可）と等価になり、範囲外では実配置へ近づく方向だけを
+     * 許可し、空きへ遠ざかる逆行は拒否します。マップ範囲内に戻った後は通常規則へ戻る
+     * ため、広げた範囲の移動許可は戻るまでの間に限定されます。
+     */
+    fun canMoveWithRememberedRange(
+        origin: MapPoint,
+        delta: MapPoint,
+        viewportCols: Int,
+        viewportRows: Int,
+        contentWidth: Int,
+        contentHeight: Int,
+        rememberedWidth: Int,
+        rememberedHeight: Int,
+    ): Boolean {
+        val next = MapPoint(origin.x + delta.x, origin.y + delta.y)
+        if (next == origin) return false
+        val contentMaxX = (contentWidth - viewportCols).coerceAtLeast(0)
+        val contentMaxY = (contentHeight - viewportRows).coerceAtLeast(0)
+        val rememberedMaxX = (rememberedWidth - viewportCols).coerceAtLeast(0)
+        val rememberedMaxY = (rememberedHeight - viewportRows).coerceAtLeast(0)
+        return axisAllows(origin.x, next.x, contentMaxX, rememberedMaxX) &&
+            axisAllows(origin.y, next.y, contentMaxY, rememberedMaxY)
+    }
+
+    private fun axisAllows(current: Int, next: Int, contentMax: Int, rememberedMax: Int): Boolean {
+        // 他軸だけが動く場合はこの軸の変化がないため常に許します。全体の無移動は呼び出し側で拒否します。
+        if (next == current) return true
+        if (next < 0) return false
+        if (current <= rememberedMax && next > rememberedMax) return false
+        if (current > rememberedMax && next >= current) return false
+        if (current <= contentMax && next > contentMax) return false
+        if (current > contentMax && next >= current) return false
+        return true
+    }
+
+    /**
      * 配置寸法を直接指定してビューポート原点の範囲をclampします。
      *
      * FOR折りたたみで配置が縮んでも、縮小前の寸法を渡すことで原点を引き戻さず、

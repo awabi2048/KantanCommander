@@ -5299,7 +5299,8 @@ class GestureSequenceEditor(
             val nx = cx + quad.second * p
             val ny = cy + quad.third * p
             val delta = MapPoint(quad.second, -quad.third)
-            val enabled = layout.canMove(state.origin, delta.x, delta.y, viewportWidth, viewportHeight)
+            // 表示と入力可否は同じ方向限定規則で判定し、グレーアウトと実可否を一致させます。
+            val enabled = canNavigate(layout, viewportWidth, viewportHeight, delta)
             val hoverKey = when (quad.first) {
                 "nav-up" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP
                 "nav-down" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN
@@ -5343,8 +5344,26 @@ class GestureSequenceEditor(
     private fun canMoveCurrentViewport(delta: MapPoint): Boolean {
         val layout = currentViewportLayout() ?: return false
         val metrics = viewportMetrics(zoomScale())
-        return layout.canMove(state.origin, delta.x, delta.y, metrics.columns, metrics.rows)
+        return canNavigate(layout, metrics.columns, metrics.rows, delta)
     }
+
+    /**
+     * 折りたたみ後の範囲外に原点がある間も、実配置へ戻る方向の移動を許可します。
+     *
+     * 記憶寸法（展開時）と現配置の広い方を上限の基準にし、方向限定は共通規則へ
+     * 委ねます。範囲内へ戻った後は実配置の通常規則と等価になります。
+     */
+    private fun canNavigate(layout: GraphLayout, viewportWidth: Int, viewportHeight: Int, delta: MapPoint): Boolean =
+        GestureEditorLayout.canMoveWithRememberedRange(
+            state.origin,
+            delta,
+            viewportWidth,
+            viewportHeight,
+            layout.width,
+            layout.height,
+            maxOf(layout.width, state.lastExpandedLayoutWidth),
+            maxOf(layout.height, state.lastExpandedLayoutHeight),
+        )
 
     /**
      * 上部ビューポートへ適用する挿入プレビューです。
