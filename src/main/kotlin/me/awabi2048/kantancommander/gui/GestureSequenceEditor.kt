@@ -1637,23 +1637,21 @@ class GestureSequenceEditor(
                         val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
                         if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
-                            bounds = iconBounds(cx, cy, metrics.iconSize),
+                            // 折畳み縁にもノードと同じクリック・ホバー判定を設けます。
+                            // 要素IDの重複は構造エラーになるため別要素にせず、
+                            // ノード要素の領域を縁まで拡張します。
+                            bounds = if (collapsedFrameMaterial != null) {
+                                GestureGuiBounds(
+                                    cx - metrics.iconSize / 2.0,
+                                    cy - metrics.iconSize / 2.0,
+                                    cx + metrics.iconSize / 2.0 + frameThickness,
+                                    cy + metrics.iconSize / 2.0,
+                                )
+                            } else {
+                                iconBounds(cx, cy, metrics.iconSize)
+                            },
                             acceptedGestures = GestureGuiClickPolicy.CLICK,
                             targetVisualId = "node-icon-${node.id}",
-                            hoverText = GestureGuiHoverText(
-                                text = hoverText,
-                                x = cx,
-                                y = if (showReorder) reorderY + reorderSize / 2.0 + 0.03
-                                else cy + metrics.iconSize * 0.9,
-                                size = 0.006,
-                                lineWidth = 180,
-                            ),
-                        ))
-                        if (!testActive && collapsedFrameMaterial != null) elements.add(GestureGuiElement(
-                            elementId = "node:${node.id}",
-                            bounds = rect(cx + frameOffset, cy, frameThickness, metrics.iconSize),
-                            acceptedGestures = GestureGuiClickPolicy.CLICK,
-                            targetVisualId = "node-collapsed-frame-right-${node.id}",
                             hoverText = GestureGuiHoverText(
                                 text = hoverText,
                                 x = cx,
