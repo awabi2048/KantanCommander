@@ -191,12 +191,18 @@ class GestureLowerPanel(
         val compositeLayout = compositeRows?.let {
             GestureSettingValueLayout.calculate(
                 rowCount = it.size,
-                valueAnchorY = SETTING_VALUE_ANCHOR_Y,
-                detailAnchorY = SETTING_DETAIL_ANCHOR_Y,
+                valueAnchorY = SETTING_VALUE_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
+                detailAnchorY = SETTING_DETAIL_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
                 rowGapRatio = TIMING_ROW_GAP_RATIO,
-                minimumDetailY = SETTING_INPUT_CENTER_Y + SETTING_INPUT_HEIGHT / 2.0 +
-                    SETTING_DETAIL_INPUT_GAP,
+                minimumDetailY = SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT +
+                    SETTING_INPUT_HEIGHT / 2.0 + SETTING_DETAIL_INPUT_GAP,
             )
+        }
+        // 複数値行の画面では編集枠も同じ量だけ下へ移動させ、詳細行との間隔を保ちます。
+        val inputCenterY = if (compositeRows != null) {
+            SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT
+        } else {
+            SETTING_INPUT_CENTER_Y
         }
         val value = displayValue.render(player)
         val settingScreen = gestureSettingScreenFor(descriptor.editor)
@@ -215,9 +221,6 @@ class GestureLowerPanel(
             }
         }.orEmpty()
         val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
-        // 複数値行の画面では先頭行が常設説明文へ接するため、説明文だけ上へ退避
-        // させます。表示時間タブと粒子表示設定タブで共通の呼び出しに寄せ、
-        // コマンド型ごとの個別調整を増やしません。
         addDescriptionRows(
             visuals,
             player,
@@ -226,7 +229,6 @@ class GestureLowerPanel(
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
             warning = attentionWarning(player, node, field.key, attentionFields),
-            hoverY = if (compositeRows != null) SETTING_COMPOSITE_DESCRIPTION_Y else ACTION_DESCRIPTION_Y,
             detailY = compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
         )
         if (compositeRows != null && compositeLayout != null) {
@@ -324,7 +326,7 @@ class GestureLowerPanel(
                 visuals,
                 "lower-edit-bg",
                 0.28,
-                SETTING_INPUT_CENTER_Y,
+                inputCenterY,
                 1.2,
                 SETTING_INPUT_HEIGHT,
                 if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
@@ -334,7 +336,7 @@ class GestureLowerPanel(
                 visuals,
                 "lower-edit",
                 0.28,
-                SETTING_INPUT_CENTER_Y,
+                inputCenterY,
                 0.0055,
                 180,
                 Component.text(KcI18n.text(player, editVisualText), editTextColor),
@@ -344,7 +346,7 @@ class GestureLowerPanel(
                 // すべての入力画面への導線を既存のlower-edit枠へ集約します。
                 // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
                 // 開ける二重導線にはしません。
-                bounds = rect(0.28, SETTING_INPUT_CENTER_Y, 1.2, SETTING_INPUT_HEIGHT),
+                bounds = rect(0.28, inputCenterY, 1.2, SETTING_INPUT_HEIGHT),
                 // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
                 // 空集合を焼き付けず、クリック時点のガードで判定します。ブロック設定は
                 // 空手もAIRとして有効なので、保存契約と同じポリシーをここでも使います。
@@ -1515,8 +1517,7 @@ class GestureLowerPanel(
      * ジェスチャーGUIから外しました。候補や操作面のホバー説明は、この灰色
      * スロットをreplacesVisualIdで置き換えて同じ位置・寸法へ表示します。
      * 2行目は要確認の状態名、無ければ「詳細を持つ候補の再クリック」案内です。
-     * 複数の現在値行を表示する画面では、呼び出し側が値行数に応じたdetailYと、
-     * 先頭行との干渉を避けるhoverYを渡します。
+     * 複数の現在値行を表示する画面では、呼び出し側が値行数に応じたdetailYを渡します。
      */
     private fun addDescriptionRows(
         visuals: MutableList<GestureGuiVisual>,
@@ -3538,10 +3539,10 @@ class GestureLowerPanel(
         const val SETTING_DETAIL_ANCHOR_Y = 0.17
         // 既存タブと同じ比率指定で、行高の30%を行間として確保します。
         const val TIMING_ROW_GAP_RATIO = 0.30
-        // 複数値行の先頭行（0.315付近）が常設説明文（0.36）と接するため、
-        // 複合表示の画面だけ説明文を上へ退避させます。1〜2行の説明文でも
-        // 先頭値行と干渉せず、左タブ列とも横方向に分離しています。
-        const val SETTING_COMPOSITE_DESCRIPTION_Y = 0.40
+        // 複数値行の画面では、先頭行が常設説明文へ接するため値行ブロックと
+        // 編集枠をまとめて下へ移動させます。単行表示の画面配置は変えず、
+        // 移動後も詳細行と編集枠上端の間隔規則は維持します。
+        const val SETTING_COMPOSITE_SHIFT = 0.03
         const val SETTING_INPUT_CENTER_Y = 0.02
         const val SETTING_INPUT_HEIGHT = 0.16
         // 既存の入力欄（幅1.20）を、外周余白と中央間隔を保ったまま2分割します。
