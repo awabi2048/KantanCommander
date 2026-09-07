@@ -1430,8 +1430,13 @@ class GestureSequenceEditor(
         if (!testActive) observedRevision = script.revision
         // 折りたたみ表示はテスト実行中は無視し、全展開で実行ノードの可視性を優先します。
         val collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script)
+        val collapsedConditionIds = if (testActive) emptySet() else effectiveCollapsedConditions(script)
         val persistedLayout = runCatching {
-            GraphLayoutEngine.layout(script.graph, collapsedForStarts = collapsedForStarts)
+            GraphLayoutEngine.layout(
+                script.graph,
+                collapsedForStarts = collapsedForStarts,
+                collapsedConditionIds = collapsedConditionIds,
+            )
         }
             .getOrElse { failure ->
                 reportLayoutFailure(
@@ -1454,9 +1459,9 @@ class GestureSequenceEditor(
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
         // 折りたたみで配置が縮んでも、展開時の寸法を覚えておき原点を引き戻しません。
-        // 端付近のFORを折りたたんでもSTARTが同じ位置に留まります。引き戻し後の
+        // 端付近のFOR・IFを折りたたんでも開始・条件が同じ位置に留まります。引き戻し後の
         // 空き領域へ戻る移動は、実寸法を見るcanMove側で拒否されます。
-        if (!testActive && collapsedForStarts.isEmpty()) {
+        if (!testActive && collapsedForStarts.isEmpty() && collapsedConditionIds.isEmpty()) {
             state.lastExpandedLayoutWidth = persistedLayout.width
             state.lastExpandedLayoutHeight = persistedLayout.height
         }
@@ -1520,11 +1525,13 @@ class GestureSequenceEditor(
                         val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
                         val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
-                        // 折りたたみ中のFOR開始はブロック全体の代理として青緑の縁取りで示します。
+                        // 折りたたみ中のFOR開始・条件分岐は構造全体の代理として縁取りで示します。
                         // 背景色は変えないため、未設定警告やテスト色と両立します。
                         // テスト実行中は折りたたみを無視するため、縁取りは出しません。
                         val isCollapsedForStart = !testActive &&
                             node.type == CommandType.FOR_START && node.id in collapsedForStarts
+                        val isCollapsedCondition = !testActive &&
+                            node.type == CommandType.CONDITION && node.id in collapsedConditionIds
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
                         // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
                         // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
@@ -1545,9 +1552,16 @@ class GestureSequenceEditor(
                             )
                             else -> null
                         }
-                        val hoverText = Component.text(KcI18n.text(player, node.type.key)).let { firstLine ->
-                            statusLine?.let { firstLine.append(Component.newline()).append(it) } ?: firstLine
-                        }
+                        val hoverText = foldGuidanceText(player, node, isCollapsedForStart, isCollapsedCondition)
+                            .let { guidance ->
+                                val firstLine = if (guidance != null) {
+                                    Component.text(guidance).append(Component.newline())
+                                        .append(Component.text(KcI18n.text(player, node.type.key)))
+                                } else {
+                                    Component.text(KcI18n.text(player, node.type.key))
+                                }
+                                statusLine?.let { firstLine.append(Component.newline()).append(it) } ?: firstLine
+                            }
                         // アイコン単体を浮かせず、追加ポイントと同じマス背景で視認性と接続先を示します。
                         visuals.add(GestureGuiVisual.Block(
                             visualId = "node-bg-${node.id}",
@@ -1560,19 +1574,27 @@ class GestureSequenceEditor(
                             glowColor = glowColor,
                         ))
                         // マスの90% (ICON_W=0.198) に合わせます。追加ポイントの背景・記号も同じ寸法です。
+                        // 折りたたみ中の構造はアイコンにエンチャントグリントを付け、折畳み状態を
+                        // 補助表現します（システム横断UI設計の状態表現規則）。背景・縁取りは変えません。
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
-                            item = org.bukkit.inventory.ItemStack(node.type.icon),
+                            item = foldedIconStack(node, isCollapsedForStart || isCollapsedCondition),
                             scale = metrics.iconScale,
                             // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
-                        // 折りたたみ中のFOR開始は、背景の右の外縁へ空色の縁取りを付けます。
+                        // 折りたたみ中のFOR開始・条件分岐は、背景の右の外縁へ縁取りを付けます。
                         // 太さはアイコン幅の20%、高さはアイコンと同じで、背景の外側に
                         // 配置します。隣接ノードは2セル周期のため縁取りは届きません。
-                        if (isCollapsedForStart) {
+                        // FORは空色、IFは黄色で種別を区別します。
+                        val collapsedFrameMaterial = when {
+                            isCollapsedForStart -> Material.LIGHT_BLUE_CONCRETE
+                            isCollapsedCondition -> Material.YELLOW_CONCRETE
+                            else -> null
+                        }
+                        if (collapsedFrameMaterial != null) {
                             val frameThickness = metrics.iconSize * 0.20
                             val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
                             visuals.add(GestureGuiVisual.Block(
@@ -1580,7 +1602,7 @@ class GestureSequenceEditor(
                                 x = cx + frameOffset, y = cy,
                                 width = frameThickness,
                                 height = metrics.iconSize,
-                                blockData = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
+                                blockData = Bukkit.createBlockData(collapsedFrameMaterial),
                                 layer = GestureEditorLayout.ICON_LAYER,
                             ))
                         }
@@ -1588,10 +1610,11 @@ class GestureSequenceEditor(
                         // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
                         // 旧選択の解除と新ノードの選択を1クリックで完了させます。
                         // 入れ替えボタン表示中はホバー文言をボタンのさらに上へ退避させ、
-                        // ボタン・ホバーをノード上側に積み上げます。条件分岐／合流は
-                        // 交換対象外のため、ボタン表示の対象外のままにします。
+                        // ボタン・ホバーをノード上側に積み上げます。条件分岐は折りたたみ
+                        // 状態（原子ブロック移動）でのみ対象とし、合流は対象外のままにします。
                         val showReorder = !testActive && insertionPreview == null && isSelected &&
-                            node.type != CommandType.CONDITION && node.type != CommandType.MERGE
+                            (node.type != CommandType.CONDITION || isCollapsedCondition) &&
+                            node.type != CommandType.MERGE
                         val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
                         val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
                         if (!testActive) elements.add(GestureGuiElement(
@@ -1614,7 +1637,14 @@ class GestureSequenceEditor(
                                 GraphEditor.ReorderDirection.LEFT to "←",
                                 GraphEditor.ReorderDirection.RIGHT to "→",
                             ).forEach { (direction, glyph) ->
-                                val enabled = GraphEditor.canSwapAdjacent(script.graph, node.id, direction)
+                                // 入替可否は描画時と同じ折りたたみ集合で判定し、表示と実可否を一致させます。
+                                val enabled = GraphEditor.canSwapAdjacent(
+                                    script.graph,
+                                    node.id,
+                                    direction,
+                                    collapsedForStarts,
+                                    collapsedConditionIds,
+                                )
                                 val x = cx + if (direction == GraphEditor.ReorderDirection.LEFT) -reorderOffset else reorderOffset
                                 val directionName = direction.name.lowercase()
                                 visuals.add(GestureGuiVisual.Block(
@@ -1646,8 +1676,18 @@ class GestureSequenceEditor(
                                     // 最新グラフを再取得し、表示更新なしでも誤操作を防ぎます。
                                     acceptedGestures = GestureGuiClickPolicy.CLICK,
                                     gestureGuard = { _, _ ->
-                                        plugin.scripts.load(state.scriptId)?.graph?.let { currentGraph ->
-                                            GraphEditor.canSwapAdjacent(currentGraph, node.id, direction)
+                                        val guardScript = plugin.scripts.load(state.scriptId)
+                                        val guardGraph = guardScript?.graph
+                                        val guardFor = guardScript?.let(::effectiveCollapsedForStarts).orEmpty()
+                                        val guardIf = guardScript?.let(::effectiveCollapsedConditions).orEmpty()
+                                        guardGraph?.let { currentGraph ->
+                                            GraphEditor.canSwapAdjacent(
+                                                currentGraph,
+                                                node.id,
+                                                direction,
+                                                guardFor,
+                                                guardIf,
+                                            )
                                         } == true
                                     },
                                     targetVisualId = "node-reorder-$directionName-glyph-${node.id}",
@@ -4974,6 +5014,10 @@ class GestureSequenceEditor(
                 val direction = runCatching {
                     GraphEditor.ReorderDirection.valueOf(directionName.uppercase())
                 }.getOrNull() ?: return
+                // 入替操作は描画時と同じ折りたたみ集合で適用し、表示と実可否を一致させます。
+                val reorderScript = plugin.scripts.load(state.scriptId) ?: return
+                val reorderCollapsedForStarts = effectiveCollapsedForStarts(reorderScript)
+                val reorderCollapsedConditionIds = effectiveCollapsedConditions(reorderScript)
                 val reordered = runCatching {
                     CommandSettingsModel.updateGraph(
                         plugin,
@@ -4981,7 +5025,14 @@ class GestureSequenceEditor(
                         player.uniqueId,
                         expectedRevision = expectedMutationRevision(player),
                     ) { candidateGraph ->
-                        if (GraphEditor.swapAdjacent(candidateGraph, nodeId, direction)) true else null
+                        if (GraphEditor.swapAdjacent(
+                                candidateGraph,
+                                nodeId,
+                                direction,
+                                reorderCollapsedForStarts,
+                                reorderCollapsedConditionIds,
+                            )
+                        ) true else null
                     }
                 }.getOrElse { failure ->
                     reportGraphOperationFailure(
@@ -5007,7 +5058,8 @@ class GestureSequenceEditor(
                         api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                     }
                     // 選択済みノードへの再クリックは、種類別の変形動作です。
-                    // FOR開始は折りたたみのトグル、条件分岐はTRUE/FALSE鎖の入替を行い、
+                    // FOR開始の再クリックは折りたたみのトグル、条件分岐の素の再クリックは
+                    // TRUE/FALSE鎖の入替、条件分岐のShift+再クリックは折りたたみのトグルを行い、
                     // 下部の設定表示は維持します。新規選択は従来どおり設定表示へ遷移します。
                     val clicked = script.graph.nodes.getValue(nodeId)
                     if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
@@ -5016,6 +5068,10 @@ class GestureSequenceEditor(
                             return
                         }
                         if (clicked.type == CommandType.CONDITION) {
+                            if (context.gesture == GestureGuiGesture.SHIFT_PRIMARY) {
+                                toggleConditionCollapsed(player, nodeId)
+                                return
+                            }
                             swapConditionBranches(player, nodeId)
                             return
                         }
@@ -5135,7 +5191,7 @@ class GestureSequenceEditor(
                 val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
                 // 追加ボタンは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
                 val layout = runCatching {
-                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script), collapsedConditionIds = effectiveCollapsedConditions(script))
                 }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
@@ -5172,7 +5228,7 @@ class GestureSequenceEditor(
                 if (point.size != 2) return
                 // 経路セルは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
                 val layout = runCatching {
-                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script), collapsedConditionIds = effectiveCollapsedConditions(script))
                 }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
@@ -5345,7 +5401,7 @@ class GestureSequenceEditor(
                 state.selectedInsertionCandidatePoint?.let { point ->
                     // 候補セルは折りたたみ配置の座標で選ばれるため、再確認も同じ配置で行います。
                     val currentTarget = runCatching {
-                        GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                        GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script), collapsedConditionIds = effectiveCollapsedConditions(script))
                     }
                         .getOrElse { failure ->
                             reportLayoutFailure(
@@ -5650,6 +5706,102 @@ class GestureSequenceEditor(
             1.0f,
         )
         updateUpper(player)
+    }
+
+    /**
+     * 選択済み条件分岐のShift+再クリックで折りたたみ表示を切り替えます。
+     *
+     * グラフ構造は変えず、表示状態だけを正本へ保存します。下部の設定表示は
+     * 維持し、上部ビューポートだけを更新します。素の再クリックは枝入替のため、
+     * Shift付きだけを折りたたみに割り当てます。
+     */
+    private fun toggleConditionCollapsed(player: Player, nodeId: UUID) {
+        // 効果音のために切替前の状態を保持します。保存成功後の正本で判定し直しません。
+        val wasCollapsed = plugin.scripts.load(state.scriptId)
+            ?.collapsedConditionIds?.contains(nodeId) == true
+        val saved = runCatching {
+            CommandSettingsModel.updateScript(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { current ->
+                // 現存する条件分岐だけを残し、残骸IDは同時に剪定します。
+                val previous = current.collapsedConditionIds.orEmpty()
+                val collapsed = previous
+                    .filter { it != nodeId && current.graph.nodes[it]?.type == CommandType.CONDITION }
+                    .toMutableSet()
+                if (nodeId !in previous &&
+                    current.graph.nodes[nodeId]?.type == CommandType.CONDITION
+                ) {
+                    collapsed.add(nodeId)
+                }
+                current.collapsedConditionIds = collapsed.takeIf { it.isNotEmpty() }
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "IF折りたたみを保存できませんでした: script=${state.scriptId} node=$nodeId",
+                failure,
+            )
+            return
+        }
+        if (!saved) return
+        state.selectedNodeId = nodeId
+        // 折りたたみ時は閉じる音、解除時は開く音で切替を伝えます。
+        player.playSound(
+            player.location,
+            if (wasCollapsed) Sound.BLOCK_BARREL_OPEN else Sound.BLOCK_BARREL_CLOSE,
+            1.0f,
+            1.0f,
+        )
+        updateUpper(player)
+    }
+
+    /**
+     * ノードホバーの1行目に表示する折りたたみ操作案内を返します。
+     *
+     * 1行目は案内、2行目がノード名となるよう、呼び出し側で名前へ改行接続します。
+     * 対象外ノードではnullを返し、従来どおり名前だけを表示します。
+     */
+    private fun foldGuidanceText(
+        player: Player,
+        node: CommandNode,
+        isCollapsedForStart: Boolean,
+        isCollapsedCondition: Boolean,
+    ): String? {
+        if (node.type == CommandType.FOR_START && (isCollapsedForStart || node.pairedNodeId != null)) {
+            return KcI18n.text(
+                player,
+                if (isCollapsedForStart) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_FOR
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_FOR,
+            )
+        }
+        if (node.type == CommandType.CONDITION) {
+            return KcI18n.text(
+                player,
+                if (isCollapsedCondition) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_IF
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_IF,
+            )
+        }
+        return null
+    }
+
+    /**
+     * ノードアイコンの表示用アイテムを返します。
+     *
+     * 折りたたみ中の構造はエンチャントグリントを付け、折畳み状態を補助表現します
+     * （システム横断UI設計の状態表現規則）。Block表示ではグリントを使えないため、
+     * アイコン（Item表示）にだけ付け、背景・縁取りは変えません。
+     */
+    private fun foldedIconStack(node: CommandNode, folded: Boolean): org.bukkit.inventory.ItemStack {
+        val stack = org.bukkit.inventory.ItemStack(node.type.icon)
+        if (!folded) return stack
+        val meta = stack.itemMeta ?: return stack
+        // グリント上書きで発光だけを付け、偽のエンチャントや説明文は付与しません。
+        runCatching { meta.setEnchantmentGlintOverride(true) }
+        stack.itemMeta = meta
+        return stack
     }
 
     /**
@@ -5987,6 +6139,15 @@ class GestureSequenceEditor(
             script.graph.nodes[id]?.type == CommandType.FOR_START
         }.toSet()
 
+    /**
+     * 永続化された折りたたみ集合のうち、現存する条件分岐だけを有効とします。
+     * 残骸IDは描画へ影響させません。
+     */
+    private fun effectiveCollapsedConditions(script: DiskScript): Set<UUID> =
+        script.collapsedConditionIds.orEmpty().filter { id ->
+            script.graph.nodes[id]?.type == CommandType.CONDITION
+        }.toSet()
+
     private fun insertionPreview(script: DiskScript, player: Player? = null): InsertionPreview? {
         val target = state.pendingInsertion ?: return null
         // 追加起点（ADDセル選択中）ではADDセルの選択glowがそのまま候補位置を示します。
@@ -5995,6 +6156,7 @@ class GestureSequenceEditor(
             script.graph,
             target,
             collapsedForStarts = effectiveCollapsedForStarts(script),
+            collapsedConditionIds = effectiveCollapsedConditions(script),
             onLayoutFailure = { failure ->
                 player?.let {
                     reportLayoutFailure(
@@ -6018,6 +6180,7 @@ class GestureSequenceEditor(
             GraphLayoutEngine.layout(
                 script.graph,
                 collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script),
+                collapsedConditionIds = if (testActive) emptySet() else effectiveCollapsedConditions(script),
             )
         }.getOrElse { failure ->
             player?.let {
