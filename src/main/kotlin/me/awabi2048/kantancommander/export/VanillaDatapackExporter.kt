@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.export
 
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
+import me.awabi2048.kantancommander.data.FoldedGraphs
 import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -54,7 +55,7 @@ class VanillaDatapackExporter(
         worldVariableTypes: Map<String, VariableType> = emptyMap(),
         entryFunctionName: String = root.id.toString(),
     ): StandaloneCompilation {
-        val exportRoot = root.copy(graph = root.graph.deepCopy())
+        val exportRoot = root.copy(graph = FoldedGraphs.expand(root.graph.deepCopy()))
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
         val variableDefinitions = worldVariableTypes.mapValues { (_, type) ->
@@ -1173,7 +1174,9 @@ class VanillaDatapackExporter(
         // 複数命令のLOCATION/ENTITY定義が1命令として扱われるため、防御的に無出力とします。
         CommandType.TEMP_SET -> null
         CommandType.WAIT, CommandType.CONDITION, CommandType.MERGE,
-        CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> null
+        CommandType.FOR_START, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE,
+        // 折り畳みノードは出力前に展開されるため、ここには到達しません。
+        CommandType.FOLDED_FOR, CommandType.FOLDED_IF -> null
     }
 
     /** SUMMON_ENTITYのコマンド固有位置を、summonの座標またはexecute atへ変換します。 */

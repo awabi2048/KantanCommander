@@ -271,22 +271,17 @@ object GraphLayoutEngine {
      * [maxCells] は外部JSONや設定変更で異常に大きくなったグラフを、描画前に
      * 有限時間・有限メモリで拒否するための安全弁です。通常のGUI呼び出しは
      * 無制限の既定値を使い、ScriptStoreだけが設定上限に応じた値を渡します。
-     * [collapsedForStarts] に含まれるfor開始は、本体・終了・戻り経路を畳んで
-     * 開始1セルとして描きます。グラフ構造自体は変えません。
-     * [collapsedConditionIds] に含まれる条件分岐は、枝・合流を畳んで条件1セル
-     * として描きます。合流がある場合は合流の後続へ接続し、合流がない場合は
-     * 両枝の終端までを畳んで条件ノードの直後に末尾追加点を置きます。
+     * 折り畳みノード（FOLDED_FOR／FOLDED_IF）は中身を内部グラフへ持つため、
+     * 外側では通常ノードと同じく1セルとして描きます。展開中の構造はすべて描画し、
+     * グラフ構造自体は変えません。
      */
     fun layout(
         graph: CommandGraph,
         maxCells: Long = Long.MAX_VALUE,
-        collapsedForStarts: Set<UUID> = emptySet(),
-        collapsedConditionIds: Set<UUID> = emptySet(),
-        foldedAppendedRows: Map<UUID, List<UUID>> = emptyMap(),
     ): GraphLayout {
         require(maxCells > 0L) { "layout cell limit must be positive" }
         return try {
-            val builder = Builder(graph, maxCells, collapsedForStarts, collapsedConditionIds, foldedAppendedRows)
+            val builder = Builder(graph, maxCells)
             builder.renderRoot()
             val cells = builder.cells.toMap()
             val maxX = cells.keys.maxOfOrNull(MapPoint::x) ?: 0
@@ -318,12 +313,11 @@ object GraphLayoutEngine {
         graph: CommandGraph,
         target: InsertionTarget,
         placeholderType: CommandType = CommandType.WAIT,
-        collapsedForStarts: Set<UUID> = emptySet(),
-        collapsedConditionIds: Set<UUID> = emptySet(),
-        foldedAppendedRows: Map<UUID, List<UUID>> = emptyMap(),
         onLayoutFailure: ((GraphLayoutException) -> Unit)? = null,
     ): InsertionPreview? {
         if (placeholderType == CommandType.MERGE || placeholderType == CommandType.FOR_END) return null
+        // 折り畳みノードは折り畳み操作だけで生成し、挿入候補に出しません。
+        if (placeholderType == CommandType.FOLDED_FOR || placeholderType == CommandType.FOLDED_IF) return null
         val candidate = graph.deepCopy()
         val inserted = runCatching {
             GraphEditor.insert(
@@ -335,12 +329,7 @@ object GraphLayoutEngine {
             )
         }.getOrNull() ?: return null
         val previewLayout = try {
-            layout(
-                candidate,
-                collapsedForStarts = collapsedForStarts,
-                collapsedConditionIds = collapsedConditionIds,
-                foldedAppendedRows = foldedAppendedRows,
-            )
+            layout(candidate)
         } catch (failure: GraphLayoutException) {
             onLayoutFailure?.invoke(failure)
             return null
@@ -419,9 +408,6 @@ object GraphLayoutEngine {
     private class Builder(
         private val graph: CommandGraph,
         private val maxCells: Long,
-        private val collapsedForStarts: Set<UUID> = emptySet(),
-        private val collapsedConditionIds: Set<UUID> = emptySet(),
-        private val foldedAppendedRows: Map<UUID, List<UUID>> = emptyMap(),
     ) {
         val cells = linkedMapOf<MapPoint, MapCell>()
         val nodePoints = linkedMapOf<UUID, MapPoint>()
@@ -477,55 +463,6 @@ object GraphLayoutEngine {
                     )
                 }
                 val node = graph.nodes[currentId] ?: break
-                if (node.type == CommandType.CONDITION && node.id in collapsedConditionIds) {
-                    // 折りたたみ条件は枝・合流を畳んで条件1セルとして描きます。
-                    // 両枝の継続先が分かれる曖昧な形状では折りたたまず、
-                    // 通常の条件描画へ委ねます。
-                    val folded = renderFoldedCondition(node, cursorX, y, stop, context)
-                    if (folded != null) {
-                        // 末端行・末尾追加点は描画済みのため、次列から続行・復帰します。
-                        cursorX = folded.nextX
-                        maximumY = maxOf(maximumY, y)
-                        val resume = folded.resumeId
-                        if (resume != null && resume != stop && context.boundaryFor(resume) == null) {
-                            // 後続が現在のスコープに属する場合は接続を描いて続行します。
-                            // 未合流条件の継続経路は挿入候補にせず、接続専用とします
-                            // （条件にNEXT実行経路はないため）。
-                            if (folded.insertionTarget != null) {
-                                putTargetedPath(cursorX - 1, y, target = folded.insertionTarget)
-                            } else {
-                                putPath(cursorX - 1, y)
-                            }
-                            currentId = resume
-                            continue
-                        }
-                        if (resume != null) {
-                            // 停止境界・外側境界へ抜ける場合は接続だけ描いて終端情報を返します。
-                            if (folded.insertionTarget != null) {
-                                putTargetedPath(cursorX - 1, y, target = folded.insertionTarget)
-                            } else {
-                                putPath(cursorX - 1, y)
-                            }
-                            val boundary = SegmentExit.Boundary(resume)
-                            return Segment(
-                                cursorX,
-                                maximumY,
-                                folded.tail,
-                                hasOpenEnd,
-                                end = boundary,
-                                mainEnd = boundary,
-                            )
-                        }
-                        return Segment(
-                            cursorX,
-                            maximumY,
-                            folded.tail,
-                            hasOpenEnd,
-                            end = folded.end,
-                            mainEnd = folded.end,
-                        )
-                    }
-                }
                 if (node.type == CommandType.CONDITION && node.pairedNodeId != null) {
                     val branch = renderCondition(node, cursorX, y, context)
                     cursorX = branch.nextX
@@ -606,45 +543,6 @@ object GraphLayoutEngine {
                     )
                 }
                 if (node.type == CommandType.FOR_START && node.pairedNodeId != null) {
-                    val collapsedEnd = node.pairedNodeId
-                        ?.takeIf { node.id in collapsedForStarts }
-                        ?.let(graph.nodes::get)
-                        ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == node.id }
-                    if (collapsedEnd != null) {
-                        // 折りたたみ表示：開始だけを通常1単位として描き、本体・終了・
-                        // 戻り経路を畳みます。後続への接続と末尾追加点は対応終了の
-                        // NEXTとして扱い、ブロック後への挿入が通常どおり動作します。
-                        putNode(cursorX, y, node)
-                        maximumY = maxOf(maximumY, y)
-                        val collapsedNext = collapsedEnd.next
-                        if (collapsedNext == null || collapsedNext == stop ||
-                            context.boundaryFor(collapsedNext) != null
-                        ) {
-                            if (collapsedNext != null && collapsedNext != stop) {
-                                putTargetedPath(
-                                    cursorX + 1,
-                                    y,
-                                    target = InsertionTarget(collapsedEnd.id, GraphEditor.Edge.NEXT),
-                                )
-                            }
-                            val collapsedExit = SegmentExit.Node(collapsedEnd.id, collapsedNext)
-                            return Segment(
-                                cursorX + 2,
-                                maximumY,
-                                collapsedEnd.id,
-                                end = collapsedExit,
-                                mainEnd = collapsedExit,
-                            )
-                        }
-                        putTargetedPath(
-                            cursorX + 1,
-                            y,
-                            target = InsertionTarget(collapsedEnd.id, GraphEditor.Edge.NEXT),
-                        )
-                        cursorX += 2
-                        currentId = collapsedNext
-                        continue
-                    }
                     val loop = renderFor(node, cursorX, y, context)
                     cursorX = loop.nextX
                     maximumY = maxOf(maximumY, loop.maxY)
@@ -717,178 +615,6 @@ object GraphLayoutEngine {
             return Segment(cursorX, maximumY, null, hasOpenEnd, end = SegmentExit.Open)
         }
 
-        /**
-         * 折りたたみ条件の描画結果です。条件セル・末端行・末尾追加点は配置済みです。
-         *
-         * @param nextX 畳んだ範囲の直後の次列です。
-         * @param resumeId 畳んだ範囲の直後に接続する後続。終端の場合はnullです。
-         * @param tail 末尾追加点を置く基準ノードです。末尾追加点を描画済みの場合はnullです。
-         * @param end 終端時の終端情報です。継続時は呼び出し側が組み立てます。
-         * @param insertionTarget 継続経路へ付与する挿入先。未合流条件の継続は
-         * 接続専用のためnullです（条件にNEXT実行経路はありません）。
-         */
-        private data class FoldedCondition(
-            val nextX: Int,
-            val resumeId: UUID?,
-            val tail: UUID?,
-            val end: SegmentExit,
-            val insertionTarget: InsertionTarget?,
-        )
-
-        /** 折りたたみ条件の枝走査結果です。 */
-        private sealed interface FoldExit {
-            data object Terminal : FoldExit
-            data class Continue(val resumeId: UUID) : FoldExit
-            data object Divergent : FoldExit
-        }
-
-        /**
-         * 折りたたみ条件を条件1セルとして描きます。
-         *
-         * 合流がある場合は合流の後続へ接続し、ブロック後への挿入は合流NEXTとして
-         * 扱います。合流がない場合は枝状態によらず条件・末端行・末尾追加点だけを
-         * 描き、固定ノードとして振る舞わせます。末端行は折畳み中の追加分だけを
-         * 示し、末尾追加点は上側（TRUE）枝への挿入先を持ちます。両枝の継続先が
-         * 分かれる曖昧な形状ではnullを返し、呼び出し側は通常の条件描画へ委ねます。
-         * グラフ構造自体は変えません。
-         */
-        private fun renderFoldedCondition(
-            condition: CommandNode,
-            x: Int,
-            y: Int,
-            stop: UUID?,
-            context: RenderContext,
-        ): FoldedCondition? {
-            putNode(x, y, condition)
-            val mergeId = condition.pairedNodeId?.let(graph.nodes::get)
-                ?.takeIf { it.type == CommandType.MERGE && it.pairedNodeId == condition.id }?.id
-            if (mergeId != null && context.boundaryFor(mergeId) == null) {
-                val merge = graph.nodes.getValue(mergeId)
-                return FoldedCondition(
-                    nextX = x + 2,
-                    resumeId = merge.next,
-                    tail = mergeId,
-                    end = SegmentExit.Node(mergeId, merge.next),
-                    insertionTarget = InsertionTarget(mergeId, GraphEditor.Edge.NEXT),
-                )
-            }
-            // 合流がない（または合流が外側の所有である）場合は、両枝の到達先を
-            // 調べて終端または一意な継続先に畳みます。
-            val trueExit = branchFoldExit(condition.trueNext, stop, context)
-            if (trueExit is FoldExit.Divergent) return null
-            val falseExit = branchFoldExit(condition.falseNext, stop, context)
-            if (falseExit is FoldExit.Divergent) return null
-            val resume = when {
-                trueExit is FoldExit.Continue && falseExit is FoldExit.Continue ->
-                    if (trueExit.resumeId == falseExit.resumeId) trueExit.resumeId else return null
-                trueExit is FoldExit.Continue -> trueExit.resumeId
-                falseExit is FoldExit.Continue -> falseExit.resumeId
-                else -> null
-            }
-            if (resume != null) {
-                return FoldedCondition(
-                    nextX = x + 2,
-                    resumeId = resume,
-                    tail = condition.id,
-                    end = SegmentExit.Node(condition.id, null),
-                    insertionTarget = null,
-                )
-            }
-            // 終端時は条件・末端行・末尾追加点を描き、あたかも閉じているかのように並べます。
-            // 末端行は折畳み中の追加分だけであり、既存枝ノードは隠蔽したままです。
-            // 末尾追加点は移動操作と共用の上側枝解決値を持ち、表示と実操作を一致させます。
-            val rowIds = foldedAppendedRows[condition.id].orEmpty()
-                .filter { it in graph.nodes }
-            val resolvedTail = GraphEditor.foldedTrueTail(graph, condition.id) ?: return null
-            val addTarget = InsertionTarget(resolvedTail.first, resolvedTail.second, condition.id)
-            var penX = x + 2
-            for (rowId in rowIds) {
-                val rowNode = graph.nodes[rowId] ?: continue
-                putPath(penX - 1, y)
-                putNode(penX, y, rowNode)
-                penX += 2
-            }
-            putTargetedPath(penX - 1, y, target = addTarget)
-            putAdd(
-                penX,
-                y,
-                addTarget.sourceId,
-                addTarget.edge,
-                // 折畳み行への追加であることを示し、確定時に行へ追記できるようにします。
-                // 枝末端追加点と同じく分岐帰属を表すだけで、挿入操作自体は変えません。
-                mergeConditionId = condition.id,
-                continuationId = addTarget.continuationId,
-            )
-            val lastShown = rowIds.lastOrNull() ?: condition.id
-            return FoldedCondition(
-                nextX = penX + 2,
-                resumeId = null,
-                tail = null,
-                end = SegmentExit.Node(lastShown, null),
-                insertionTarget = null,
-            )
-        }
-
-        /**
-         * 折りたたみ範囲内の枝をたどり、範囲外への継続または終端を調べます。
-         *
-         * 描画は行わず到達先だけを返すため、入れ子の条件・forも再帰的に畳めます。
-         * 継続先が複数に分かれる場合は [FoldExit.Divergent] を返します。
-         */
-        private fun branchFoldExit(start: UUID?, stop: UUID?, context: RenderContext): FoldExit {
-            var current = start ?: return FoldExit.Terminal
-            val visited = mutableSetOf<UUID>()
-            while (visited.add(current)) {
-                if (current == stop || context.boundaryFor(current) != null) {
-                    return FoldExit.Continue(current)
-                }
-                val node = graph.nodes[current] ?: return FoldExit.Terminal
-                when (node.type) {
-                    // 外側の所有でない合流へ到達した枝は、そこで範囲外へ抜けます。
-                    CommandType.MERGE -> return FoldExit.Continue(current)
-                    CommandType.CONDITION -> {
-                        val mergeId = node.pairedNodeId?.let(graph.nodes::get)
-                            ?.takeIf { it.type == CommandType.MERGE && it.pairedNodeId == node.id }?.id
-                        if (mergeId != null && context.boundaryFor(mergeId) == null) {
-                            // 入れ子の合流済み条件は一体として畳み、合流の後続へ進みます。
-                            val next = graph.nodes.getValue(mergeId).next ?: return FoldExit.Terminal
-                            current = next
-                            continue
-                        }
-                        val trueExit = branchFoldExit(node.trueNext, stop, context)
-                        if (trueExit is FoldExit.Divergent) return trueExit
-                        val falseExit = branchFoldExit(node.falseNext, stop, context)
-                        if (falseExit is FoldExit.Divergent) return falseExit
-                        return when {
-                            trueExit is FoldExit.Continue && falseExit is FoldExit.Continue ->
-                                if (trueExit.resumeId == falseExit.resumeId) trueExit
-                                else FoldExit.Divergent
-                            trueExit is FoldExit.Continue -> trueExit
-                            falseExit is FoldExit.Continue -> falseExit
-                            else -> FoldExit.Terminal
-                        }
-                    }
-                    CommandType.FOR_START -> {
-                        val endId = node.pairedNodeId?.let(graph.nodes::get)
-                            ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == node.id }?.id
-                            ?: return FoldExit.Terminal
-                        // 入れ子のforは本体ごと畳み、対応終了の後続へ進みます。
-                        val bodyExit = branchFoldExit(node.trueNext, endId, context)
-                        if (bodyExit is FoldExit.Divergent) return bodyExit
-                        if (bodyExit is FoldExit.Continue && bodyExit.resumeId == endId) {
-                            val next = graph.nodes.getValue(endId).next ?: return FoldExit.Terminal
-                            current = next
-                            continue
-                        }
-                        return bodyExit
-                    }
-                    else -> {
-                        current = node.next ?: return FoldExit.Terminal
-                    }
-                }
-            }
-            return FoldExit.Terminal
-        }
 
         private fun renderCondition(
             condition: CommandNode,

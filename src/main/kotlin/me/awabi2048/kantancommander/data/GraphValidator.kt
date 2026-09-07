@@ -8,13 +8,75 @@ import java.util.UUID
 object GraphValidator {
     fun validate(graph: CommandGraph, limits: GraphLimits = GraphLimits()): List<String> {
         val errors = mutableListOf<String>()
-        if (graph.nodes.size > limits.maximumNodeCount) {
+        // 上限判定は内部グラフも含めた総ノード数で行います。
+        if (FoldedGraphs.totalNodeCount(graph) > limits.maximumNodeCount) {
             errors += "ノード数が上限 ${limits.maximumNodeCount} を超えています"
         }
+        // 折り畳みノードの中身は外側に通常形状で1個だけ残るため、構造検証は
+        // メモリ上で展開した一時グラフに対して既存ロジックを適用します。
+        // 保存内容は折り畳んだまま維持されます。
+        val expanded = if (graph.nodes.values.any(FoldedGraphs::isFolded)) {
+            graph.nodes.values.filter(FoldedGraphs::isFolded).forEach { validateFoldedWrapper(graph, it, errors) }
+            FoldedGraphs.expand(graph, limits.maximumBranchDepth)
+        } else {
+            graph
+        }
+        validateExpanded(expanded, limits, errors)
+        return errors.distinct()
+    }
+
+    /**
+     * 折り畳みノード外側の接続形状を検証します。
+     *
+     * 外側は通常形状（単一next・ペアなし・枝なし）でなければならず、中身の
+     * 先頭は対応する種別で同じIDを保つ必要があります。中身の構造自体は
+     * 展開後グラフの検証で確認します。
+     */
+    private fun validateFoldedWrapper(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
+        val inner = node.foldedGraph
+        if (inner == null) {
+            errors += "${node.type} ${node.id} の内部グラフがありません"
+            return
+        }
+        if (node.trueNext != null || node.falseNext != null || node.pairedNodeId != null) {
+            errors += "${node.type} ${node.id} の外側接続が通常形状ではありません"
+        }
+        val head = inner.nodes[node.id]
+        if (head == null) {
+            errors += "${node.type} ${node.id} の内部先頭が存在しません"
+            return
+        }
+        when (node.type) {
+            CommandType.FOLDED_FOR -> {
+                if (head.type != CommandType.FOR_START) {
+                    errors += "${node.type} ${node.id} の内部先頭がFOR開始ではありません"
+                } else if (head.pairedNodeId?.let(inner.nodes::get)
+                        ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == head.id } == null
+                ) {
+                    errors += "${node.type} ${node.id} の内部FOR対応が不正です"
+                }
+            }
+            CommandType.FOLDED_IF -> {
+                if (head.type != CommandType.CONDITION) {
+                    errors += "${node.type} ${node.id} の内部先頭が条件分岐ではありません"
+                } else if (head.pairedNodeId?.let(inner.nodes::get)
+                        ?.takeIf { it.type == CommandType.MERGE && it.pairedNodeId == head.id } == null
+                ) {
+                    errors += "${node.type} ${node.id} の内部合流対応が不正です"
+                }
+            }
+            else -> errors += "${node.type} ${node.id} は折り畳みノードではありません"
+        }
+        if (inner.entryNodeId != node.id) {
+            errors += "${node.type} ${node.id} の内部入口が外側IDと一致しません"
+        }
+    }
+
+    private fun validateExpanded(graph: CommandGraph, limits: GraphLimits, errors: MutableList<String>) {
         val entry = graph.entryNodeId
         if (entry == null) {
             if (graph.nodes.isNotEmpty()) errors += "開始ノードがありません"
-            return errors
+            return
         }
         if (entry !in graph.nodes) errors += "開始ノードが存在しません"
 
@@ -64,7 +126,6 @@ object GraphValidator {
             validateStructuredControl(graph, entry, errors)
             (graph.nodes.keys - visited).forEach { errors += "到達不能ノードがあります: $it" }
         }
-        return errors.distinct()
     }
 
     private fun validateStructuredControl(

@@ -12,11 +12,12 @@ object GraphEditor {
     enum class Edge { ENTRY, NEXT, TRUE, FALSE, FOR_BODY }
 
     /**
-     * 単独ノードとして複製できない構造ノードです。
+     * 単独ノードとして複製できない展開中の構造ノードです。
      *
      * CONDITION／FOR_STARTだけを除外すると、それらの対応ノードであるMERGE／FOR_END
      * が通常ノードとして複製され、分岐・ループの対応関係を壊します。構造の入口と
      * 境界を同じ集合で扱い、画面表示と保存処理の判定を一つに揃えます。
+     * 折り畳みノード（FOLDED_FOR／FOLDED_IF）は通常形状のため含みません。
      */
     private val STRUCTURAL_TYPES = setOf(
         CommandType.CONDITION,
@@ -29,9 +30,11 @@ object GraphEditor {
      * ビューポート上の左右入れ替え操作で使う方向です。
      *
      * グラフは表示座標を保存しないため、左右のボタンは座標だけを動かすのではなく、
-     * 同一の直列経路にある実行単位の順序を入れ替えます。移動単位は通常ノードと
-     * 折畳み単位（折りたたんだFORブロック・折りたたんだ合流済みIF）に限り、
-     * 展開中の構造は移動単位にしません。枝の並べ替えは [swapBranches] を使います。
+     * 同一の直列経路にある隣接2ノードの順序を入れ替えます。移動できるのは通常
+     * ノードと折り畳みノード（FOLDED_FOR／FOLDED_IF）だけで、展開中の構造ノード
+     * （条件分岐／合流・FOR開始／終了）は移動単位にしないためボタンを表示しません。
+     * FOR境界を跨ぐ格納・取り出し・IF吸収は行いません。構造を変える場合は
+     * 折り畳み／展開・削除・挿入で行います。枝の並べ替えは [swapBranches] を使います。
      */
     enum class ReorderDirection { LEFT, RIGHT }
 
@@ -52,43 +55,30 @@ object GraphEditor {
     }
 
     /**
-     * 同一直列経路にある隣接した実行単位を入れ替えます。
+     * 同一直列経路にある隣接した2ノードを入れ替えます。
      *
-     * 展開中のFOR境界を跨ぐ移動は、外側ノードの本体への格納（前任は先頭へ・
-     * 後継は末尾へ）と、本体端ノードの外への取り出しとして扱います。隣接する
-     * 合流済みIF全体（`COND〜MERGE`）は一体として本体の近い側へ格納します。
-     * 同一ペアの `START⇄END` 直接入替と、展開中のFOR同士の組み合わせ移動は
-     * 構造を壊すため拒否します。FOR同士の入替・入れ子化は折りたたみ状態で行います。
-     *
-     * 折りたたんだFORブロック・合流済みIF単位は原子ブロックとして前後の単位と
-     * 順序を入れ替えます。通常実行ノードとbreak/continueは、分岐の枝であっても
-     * 同じ枝内の隣接ノードとして入れ替えられます。展開中の構造（条件分岐／合流・
-     * 展開FORの開始／終了）は移動単位にしないため、単体交換の対象外です。
+     * 通常ノードと折り畳みノード（FOLDED_FOR／FOLDED_IF）だけが対象で、どちらも
+     * 単一nextの通常形状のため、前任・後継との3者付け替えで順序を変えます。
+     * 展開中の構造ノード（条件分岐／合流・FOR開始／終了）は対象外です。
+     * FOR境界を跨ぐ移動（本体への格納・本体からの取り出し）は行いません。
      * 適用後に検証し、不正になる場合はグラフを変更せず拒否します。
-     *
-     * @param collapsedForStarts ブロック全体として扱うFOR開始ID集合（UIの折りたたみ状態）
-     * @param collapsedConditionIds 折りたたみ条件ID集合（UIの折りたたみ状態。
-     * 合流済みは原子ブロック、未合流は前任格納の対象になる）
      */
     fun swapAdjacent(
         graph: CommandGraph,
         nodeId: UUID,
         direction: ReorderDirection,
-        collapsedForStarts: Set<UUID> = emptySet(),
-        collapsedConditionIds: Set<UUID> = emptySet(),
     ): Boolean {
         val node = graph.nodes[nodeId] ?: return false
-        if (node.type == CommandType.MERGE) return false
-        if (node.type == CommandType.CONDITION && node.id !in collapsedConditionIds) return false
+        if (!isLinearReorderable(node)) return false
 
         val backup = graph.deepCopy()
         val applied = when (direction) {
-            ReorderDirection.LEFT -> moveLeft(graph, node, collapsedForStarts, collapsedConditionIds)
-            ReorderDirection.RIGHT -> moveRight(graph, node, collapsedForStarts, collapsedConditionIds)
+            ReorderDirection.LEFT -> swapWithPrevious(graph, node)
+            ReorderDirection.RIGHT -> swapWithNext(graph, node)
         }
         if (!applied) return false
-        // 線形交換は構造を保存しますが、ブロック移動はbreak/continueの所属などを
-        // 変える場合があるため、検証に通らない交換は元に戻して拒否します。
+        // 隣接交換は構造を保存しますが、break/continueの所属などを変える場合に
+        // 備え、検証に通らない交換は元に戻して拒否します。
         if (GraphValidator.validate(graph).isNotEmpty()) {
             graph.entryNodeId = backup.entryNodeId
             graph.nodes.clear()
@@ -103,19 +93,55 @@ object GraphEditor {
         graph: CommandGraph,
         nodeId: UUID,
         direction: ReorderDirection,
-        collapsedForStarts: Set<UUID> = emptySet(),
-        collapsedConditionIds: Set<UUID> = emptySet(),
     ): Boolean {
         val node = graph.nodes[nodeId] ?: return false
-        if (node.type == CommandType.MERGE) return false
-        if (node.type == CommandType.CONDITION && node.id !in collapsedConditionIds) return false
+        if (!isLinearReorderable(node)) return false
         return trialBlockMove(graph) { candidate ->
             val cNode = candidate.nodes[node.id] ?: return@trialBlockMove false
             when (direction) {
-                ReorderDirection.LEFT -> moveLeft(candidate, cNode, collapsedForStarts, collapsedConditionIds)
-                ReorderDirection.RIGHT -> moveRight(candidate, cNode, collapsedForStarts, collapsedConditionIds)
+                ReorderDirection.LEFT -> swapWithPrevious(candidate, cNode)
+                ReorderDirection.RIGHT -> swapWithNext(candidate, cNode)
             }
         }
+    }
+
+    /**
+     * 指定ノードを直前の通常ノードと入れ替えます。
+     *
+     * 前任は単一の実行入力で結ばれた通常ノードに限ります。前任が展開中の構造
+     * ノードの場合は拒否し、FOR境界の外への取り出しにはなりません。
+     */
+    private fun swapWithPrevious(graph: CommandGraph, node: CommandNode): Boolean {
+        val incoming = incomingExecutionLink(graph, node.id) ?: return false
+        val previousId = incoming.sourceId ?: return false
+        val previous = graph.nodes[previousId] ?: return false
+        if (!isLinearReorderable(previous)) return false
+        if (previous.next != node.id) return false
+        val previousIncoming = incomingExecutionLink(graph, previous.id) ?: return false
+        val after = node.next
+        // previousへ入っていた実行エッジをnodeへ向け直します。移動単位自身への
+        // 入力ではなく、前任への入力を使う点に注意します（同一にすると循環します）。
+        setExecutionLink(graph, previousIncoming, node.id)
+        node.next = previous.id
+        previous.next = after
+        return true
+    }
+
+    /**
+     * 指定ノードを直後の通常ノードと入れ替えます。
+     *
+     * 後継は単一nextで結ばれた通常ノードに限ります。後継が展開中の構造ノード
+     * の場合は拒否し、FOR境界の中への格納にはなりません。
+     */
+    private fun swapWithNext(graph: CommandGraph, node: CommandNode): Boolean {
+        val nextId = node.next ?: return false
+        val next = graph.nodes[nextId] ?: return false
+        if (!isLinearReorderable(next)) return false
+        val incoming = incomingExecutionLink(graph, node.id) ?: return false
+        setExecutionLink(graph, incoming, next.id)
+        node.next = next.next
+        next.next = node.id
+        return true
     }
 
     /** 構造を分解せず、設定ノード単位で複製できる種類かを判定します。 */
@@ -243,6 +269,9 @@ object GraphEditor {
         continuationId: UUID? = null,
     ): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) { "$type はこの経路へ挿入できません" }
+        require(type != CommandType.FOLDED_FOR && type != CommandType.FOLDED_IF) {
+            "$type は折り畳み操作だけで生成します"
+        }
         // 条件分岐にNEXT実行経路は存在しないため、NEXT指定は無効です。書き込むと
         // 到達不能ノードを生成し保存時検証で失敗するため、ここで即時失敗させます。
         val source = sourceId?.let(graph.nodes::get)
@@ -276,7 +305,7 @@ object GraphEditor {
      * リンクは複製しません。通常ノードのNEXTだけを「元ノード -> 複製 -> 元の後続」へ
      * 付け替えることで、主経路・条件枝・for本体のどの直列経路でも同じ意味で動作します。
      * snapshotはDISK_CALLの実行内容なので、参照共有による後編集の巻き込みを防ぐため
-     * グラフ全体を独立コピーします。
+     * グラフ全体を独立コピーします。折り畳みノードの内部グラフも同じく独立コピーします。
      *
      * 構造ノードおよびノード上限到達時はnullを返し、表示側と同じ境界で拒否します。
      */
@@ -298,9 +327,52 @@ object GraphEditor {
             falseNext = null,
             pairedNodeId = null,
         )
+        // 折り畳みノードの複製は内部IDを付け替えます。内部先頭は外側IDと同一に
+        // 保つ不変条件があるため、そのまま複写すると先頭IDが食い違って検証に
+        // 通りません。入れ子の折り畳みも含めて再帰的に付け替えます。
+        clone.foldedGraph?.let { inner ->
+            remapFoldedTree(clone.id, inner, graph.nodes.keys.toMutableSet())
+        }
         graph.nodes[clone.id] = clone
         source.next = clone.id
         return clone
+    }
+
+    /**
+     * 複製した折り畳み内部グラフのIDを付け替えます。
+     *
+     * 内部先頭は外側ノードと同一IDに保つため [wrapperId] へ、その他の内部ノードは
+     * 外側と衝突しない新規IDへ付け替えます。実行・ペア参照も同じ対応で書き換え、
+     * 単位外への参照（正規化済みのNULL終端など）はそのまま残します。
+     * 入れ子の折り畳みは内部先頭の新IDを引き継いで再帰的に付け替えます。
+     */
+    private fun remapFoldedTree(wrapperId: UUID, inner: CommandGraph, taken: MutableSet<UUID>) {
+        fun freshId(): UUID {
+            var candidate = UUID.randomUUID()
+            while (!taken.add(candidate)) candidate = UUID.randomUUID()
+            return candidate
+        }
+        taken += wrapperId
+        val mapping = mutableMapOf<UUID, UUID>()
+        inner.nodes.keys.forEach { oldId ->
+            mapping[oldId] = if (oldId == inner.entryNodeId) wrapperId else freshId()
+        }
+        val renamed = LinkedHashMap<UUID, CommandNode>()
+        inner.nodes.forEach { (oldId, node) ->
+            val newId = requireNotNull(mapping[oldId])
+            val renamedNode = node.deepCopy().copy(id = newId)
+            renamedNode.next = renamedNode.next?.let { mapping[it] ?: it }
+            renamedNode.trueNext = renamedNode.trueNext?.let { mapping[it] ?: it }
+            renamedNode.falseNext = renamedNode.falseNext?.let { mapping[it] ?: it }
+            renamedNode.pairedNodeId = renamedNode.pairedNodeId?.let { mapping[it] ?: it }
+            renamedNode.foldedGraph?.let { nested ->
+                remapFoldedTree(newId, nested, taken)
+            }
+            renamed[newId] = renamedNode
+        }
+        inner.nodes.clear()
+        inner.nodes.putAll(renamed)
+        inner.entryNodeId = mapping[inner.entryNodeId] ?: inner.entryNodeId
     }
 
     fun delete(graph: CommandGraph, nodeId: UUID): Boolean {
@@ -309,6 +381,9 @@ object GraphEditor {
             CommandType.CONDITION -> deleteCondition(graph, node)
             CommandType.MERGE -> deleteMerge(graph, node)
             CommandType.FOR_START, CommandType.FOR_END -> deleteFor(graph, node)
+            // 折り畳みノードの削除は中身ごと削除します。内部グラフは外側と一体の
+            // 内容であり、単独で残すことはありません。
+            CommandType.FOLDED_FOR, CommandType.FOLDED_IF -> deleteSimple(graph, node)
             else -> deleteSimple(graph, node)
         }
     }
@@ -316,6 +391,9 @@ object GraphEditor {
     private fun createBundle(graph: CommandGraph, type: CommandType): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) {
             "$type は単独追加できません"
+        }
+        require(type != CommandType.FOLDED_FOR && type != CommandType.FOLDED_IF) {
+            "$type は折り畳み操作だけで生成します"
         }
         val node = type.newNode()
         graph.nodes[node.id] = node
@@ -418,611 +496,299 @@ object GraphEditor {
     }
 
     /**
-     * 指定ノードを直列経路上で一つ前へ移動します。
+     * FOR開始を折り畳めるかを判定します。
      *
-     * 移動主体と前任者の種類で操作を切り替えます。展開FORの開始・通常ノードが
-     * FOR境界を跨ぐ場合は格納・取り出し・IF全体吸収を行い、原子ブロック
-     * （折りたたみFOR・折りたたみ合流済みIF・通常ノード）同士は順序を入れ替えます。
-     * 折畳み未合流条件の左移動は、前任を上側枝末尾へ格納します（末尾＋と同位置）。
+     * 対応するFOR_ENDと正しく結ばれている場合だけ折り畳めます。既に折り畳み
+     * ノードである場合やペアの壊れた残骸は対象外です。
      */
-    private fun moveLeft(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-        collapsedConditionIds: Set<UUID>,
-    ): Boolean {
-        if (node.type == CommandType.CONDITION) {
-            // 折りたたんだ合流済みIFは原子ブロックとして移動します。
-            if (isFoldedMergedIf(graph, node, collapsedConditionIds)) {
-                return moveUnitLeft(graph, node, collapsedForStarts, collapsedConditionIds)
-            }
-            // 折畳み未合流条件の左移動：前任が通常ノードなら上側枝末尾へ格納します。
-            // 末端で後継を持てない未合流折畳みに残された唯一の正当な移動です。
-            if (node.id !in collapsedConditionIds) return false
-            val incoming = incomingExecutionLink(graph, node.id) ?: return false
-            if (incoming.edge != Edge.NEXT) return false
-            val previous = incoming.sourceId?.let(graph.nodes::get) ?: return false
-            if (!isLinearReorderable(previous)) return false
-            return movePredecessorIntoFoldedTrueTail(graph, previous, node)
-        }
-        // 折りたたんだFOR開始は原子ブロックとして移動します。
-        if (isCollapsedForStart(graph, node, collapsedForStarts)) {
-            return moveUnitLeft(graph, node, collapsedForStarts, collapsedConditionIds)
-        }
-        // 折りたたんだFOR終了の左移動は表示しないため拒否します（左移動は開始側が担います）。
-        if (node.type == CommandType.FOR_END && isCollapsedForEnd(graph, node, collapsedForStarts)) return false
-        if (node.type == CommandType.FOR_START) {
-            // 展開FOR開始の左移動：前任が通常ノードなら本体先頭へ格納し、
-            // 直前の合流済みIF全体なら一体として本体先頭へ格納します。
-            val incoming = incomingExecutionLink(graph, node.id) ?: return false
-            if (incoming.edge != Edge.NEXT) return false
-            val previous = incoming.sourceId?.let(graph.nodes::get) ?: return false
-            if (isLinearReorderable(previous)) return moveOuterIntoHead(graph, previous, node)
-            val merge = previous.takeIf { it.type == CommandType.MERGE } ?: return false
-            val condition = mergedConditionOf(graph, merge) ?: return false
-            if (merge.next != node.id) return false
-            return absorbIfIntoHead(graph, condition, merge, node)
-        }
-        if (node.type == CommandType.FOR_END) {
-            // 展開FOR終了の左移動：本体末尾の取り出しです。本体が空の場合は
-            // STARTとの直接入替になるため拒否します。
-            val incoming = incomingExecutionLink(graph, node.id) ?: return false
-            if (incoming.edge != Edge.NEXT) return false
-            val tail = incoming.sourceId?.let(graph.nodes::get) ?: return false
-            if (!isLinearReorderable(tail)) return false
-            return takeBodyTailOut(graph, tail)
-        }
-        if (!isLinearReorderable(node)) return false
-        val incoming = incomingExecutionLink(graph, node.id) ?: return false
-        when (incoming.edge) {
-            Edge.NEXT -> Unit
-            // 本体先頭はSTARTからTRUE枝で入るため、左移動は外への取り出しです。
-            Edge.TRUE -> return takeBodyHeadOut(graph, node, collapsedForStarts)
-            else -> return false
-        }
-        val previous = incoming.sourceId?.let(graph.nodes::get) ?: return false
-        if (isLinearReorderable(previous)) {
-            val after = node.next
-            val previousIncoming = incomingExecutionLink(graph, previous.id)
-            // previousがグラフ入口なら、入口IDだけを差し替えます。そうでなければ
-            // previousへ入っていた同じ実行エッジをnodeへ向け直します。
-            setExecutionLink(graph, previousIncoming, node.id)
-            node.next = previous.id
-            previous.next = after
-            return true
-        }
-        // 前任が原子ブロックの末尾なら、その前へ回ります。展開FORの終了なら
-        // 本体末尾への格納、折りたたみ単位なら順序入替です。
-        if (previous.type == CommandType.FOR_END) {
-            val start = forStartOf(graph, previous) ?: return false
-            return if (start.id in collapsedForStarts) {
-                jumpBeforeUnit(graph, node, MoveUnit(start.id, previous.id))
-            } else {
-                moveOuterIntoTail(graph, node, previous)
-            }
-        }
-        if (previous.type == CommandType.MERGE) {
-            val condition = mergedConditionOf(graph, previous) ?: return false
-            if (!isFoldedMergedIf(graph, condition, collapsedConditionIds)) return false
-            return jumpBeforeUnit(graph, node, MoveUnit(condition.id, previous.id))
-        }
-        return false
+    fun canFoldForStart(graph: CommandGraph, nodeId: UUID): Boolean {
+        val start = graph.nodes[nodeId]?.takeIf { it.type == CommandType.FOR_START } ?: return false
+        return forEndOf(graph, start) != null
     }
 
     /**
-     * 指定ノードを直列経路上で一つ後ろへ移動します。
+     * FOR開始〜終了の全体を折り畳みノード（FOLDED_FOR）へ再構成します。
      *
-     * 左移動と対称に、展開FOR境界の跨ぎは格納・取り出し・IF全体吸収、
-     * 原子ブロック同士は順序入替です。展開FOR開始の右移動は本体先頭の
-     * 取り出しであり、本体が空の場合は終了との直接入替になるため拒否します。
+     * 外側には開始と同じIDの折り畳みノード1個が通常形状（単一next）で残り、
+     * 中身全体は内部グラフへ退避します。IDを引き継ぐため外側の入力エッジや
+     * 入口の付け替えは不要です。適用後に検証し、不正になる場合は変更せず拒否します。
      */
-    private fun moveRight(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-        collapsedConditionIds: Set<UUID>,
-    ): Boolean {
-        if (node.type == CommandType.CONDITION || isCollapsedForStart(graph, node, collapsedForStarts)) {
-            return moveUnitRight(graph, node, collapsedForStarts, collapsedConditionIds)
-        }
-        // 折りたたんだFOR終了の右移動は、開始側と同じブロック移動です。
-        if (node.type == CommandType.FOR_END && isCollapsedForEnd(graph, node, collapsedForStarts)) {
-            return moveUnitRight(graph, node, collapsedForStarts, collapsedConditionIds)
-        }
-        if (node.type == CommandType.FOR_START) {
-            val end = forEndOf(graph, node) ?: return false
-            val head = node.trueNext?.let(graph.nodes::get) ?: return false
-            // 本体が空の場合は終了との直接入替になるため拒否します。
-            if (head.id == end.id) return false
-            if (!isLinearReorderable(head)) return false
-            return takeBodyHeadOut(graph, head, collapsedForStarts)
-        }
-        if (node.type == CommandType.FOR_END) {
-            // 展開FOR終了の右移動：後継が通常ノードなら本体末尾へ格納し、
-            // 直後の合流済みIF全体なら一体として本体末尾へ格納します。
-            val successor = node.next?.let(graph.nodes::get) ?: return false
-            if (isLinearReorderable(successor)) return moveOuterIntoTail(graph, successor, node)
-            if (successor.type != CommandType.CONDITION || node.next != successor.id) return false
-            val merge = mergedPairOf(graph, successor) ?: return false
-            return absorbIfIntoTail(graph, successor, merge, node)
-        }
-        if (!isLinearReorderable(node)) return false
-        val nextId = node.next ?: return false
-        val next = graph.nodes[nextId] ?: return false
-        if (isLinearReorderable(next)) {
-            val incoming = incomingExecutionLink(graph, node.id) ?: return false
-            setExecutionLink(graph, incoming, next.id)
-            node.next = next.next
-            next.next = node.id
-            return true
-        }
-        // 後継が原子ブロックの先頭なら、その後ろへ回ります。展開FORの開始なら
-        // 本体先頭への格納、折りたたみ単位なら順序入替です。
-        if (next.type == CommandType.FOR_START) {
-            val end = forEndOf(graph, next) ?: return false
-            return if (next.id in collapsedForStarts) {
-                jumpAfterUnit(graph, node, MoveUnit(next.id, end.id))
-            } else {
-                moveOuterIntoHead(graph, node, next)
-            }
-        }
-        // 後継が本体の終了なら、自身が本体末尾のため外への取り出しです。
-        if (next.type == CommandType.FOR_END) {
-            val start = forStartOf(graph, next) ?: return false
-            if (start.id in collapsedForStarts) return false
-            return takeBodyTailOut(graph, node)
-        }
-        if (next.type == CommandType.MERGE) {
-            val condition = mergedConditionOf(graph, next) ?: return false
-            if (!isFoldedMergedIf(graph, condition, collapsedConditionIds)) return false
-            return jumpAfterUnit(graph, node, MoveUnit(condition.id, next.id))
-        }
-        // 後継が折畳み条件なら、合流済みは単位の後ろへ回り、未合流は上側枝末尾へ
-        // 格納します（末尾＋と同位置。前任側の右移動と条件側の左移動は同じ結果）。
-        if (next.type == CommandType.CONDITION && next.id in collapsedConditionIds) {
-            val merge = mergedPairOf(graph, next)
-            if (merge != null) return jumpAfterUnit(graph, node, MoveUnit(next.id, merge.id))
-            return movePredecessorIntoFoldedTrueTail(graph, node, next)
-        }
-        return false
-    }
-
-    /**
-     * 順序入替の対象となる原子単位です。
-     *
-     * 先頭ノードへ入る実行エッジと、末尾ノードのNEXTだけを付け替えることで
-     * 単位全体を移動します。通常ノードは先頭＝末尾、折りたたみFORは開始〜終了、
-     * 折りたたみ合流済みIFは条件〜合流です。未合流の折りたたみIFは出口が
-     * 定まらないため単位にしません。
-     */
-    private data class MoveUnit(val headId: UUID, val tailId: UUID)
-
-    /**
-     * 原子ブロック（折りたたみFOR開始・折りたたみ合流済み条件）を一つ前へ移動します。
-     *
-     * 前任が通常ノードまたは別の原子単位（折りたたみ・展開を問わないFORブロック、
-     * 折りたたみ合流済みIF）なら順序を入れ替えます。未合流の条件・合流・展開FORの
-     * 境界ノードが前任の場合は拒否します。
-     */
-    private fun moveUnitLeft(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-        collapsedConditionIds: Set<UUID>,
-    ): Boolean {
-        val unit = leadingUnitOf(graph, node, collapsedForStarts, collapsedConditionIds) ?: return false
-        val incoming = incomingExecutionLink(graph, unit.headId) ?: return false
-        if (incoming.edge != Edge.NEXT && incoming.edge != Edge.ENTRY) return false
-        val previousId = incoming.sourceId ?: return false
-        val previous = graph.nodes[previousId] ?: return false
-        val previousUnit = trailingUnitEndingAt(graph, previous, collapsedForStarts, collapsedConditionIds)
-            ?: return false
-        // 単位の入口へ入っていた実行エッジを後続単位へ向け直します。移動単位自身への
-        // 入力ではなく、前任単位への入力を使う点に注意します（同一にすると循環します）。
-        val previousIncoming = incomingExecutionLink(graph, previousUnit.headId) ?: return false
-        return swapUnits(graph, previousIncoming, previousUnit, unit)
-    }
-
-    /**
-     * 原子ブロックを一つ後ろへ移動します。
-     *
-     * 後継が通常ノードまたは別の原子単位なら順序を入れ替えます。後継が未合流の
-     * 条件・合流・展開FORの境界ノードの場合は拒否します。
-     */
-    private fun moveUnitRight(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-        collapsedConditionIds: Set<UUID>,
-    ): Boolean {
-        val unit = leadingUnitOf(graph, node, collapsedForStarts, collapsedConditionIds) ?: return false
-        val exitTarget = graph.nodes[unit.tailId]?.next ?: return false
-        val next = graph.nodes[exitTarget] ?: return false
-        val nextUnit = leadingUnitStartingAt(graph, next, collapsedForStarts, collapsedConditionIds)
-            ?: return false
-        return swapUnits(graph, incomingExecutionLink(graph, unit.headId), unit, nextUnit)
-    }
-
-    /**
-     * 移動主体ノードが属する原子単位を返します。
-     *
-     * 折りたたみFORの開始・終了、折りたたみ合流済みIFの条件・合流は単位全体を
-     * 返します。通常ノードは単独単位です。それ以外は移動対象外のためnullです。
-     */
-    private fun leadingUnitOf(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-        collapsedConditionIds: Set<UUID>,
-    ): MoveUnit? {
-        if (isLinearReorderable(node)) return MoveUnit(node.id, node.id)
-        if (node.type == CommandType.FOR_START) {
-            val end = forEndOf(graph, node) ?: return null
-            if (node.id !in collapsedForStarts) return null
-            return MoveUnit(node.id, end.id)
-        }
-        if (node.type == CommandType.FOR_END) {
-            val start = forStartOf(graph, node) ?: return null
-            if (start.id !in collapsedForStarts) return null
-            return MoveUnit(start.id, node.id)
-        }
-        if (node.type == CommandType.CONDITION) {
-            if (!isFoldedMergedIf(graph, node, collapsedConditionIds)) return null
-            val merge = mergedPairOf(graph, node) ?: return null
-            return MoveUnit(node.id, merge.id)
-        }
-        if (node.type == CommandType.MERGE) {
-            val condition = mergedConditionOf(graph, node) ?: return null
-            if (!isFoldedMergedIf(graph, condition, collapsedConditionIds)) return null
-            return MoveUnit(condition.id, node.id)
-        }
-        return null
-    }
-
-    /**
-     * 指定ノードを末尾とする原子単位を返します。
-     *
-     * 前任者側の解決に使い、通常ノード・FOR終了（折りたたみ状態を問わない）・
-     * 折りたたみ合流済みIFの合流を受け付けます。未合流の折りたたみIFは出口が
-     * 定まらないため単位にしません。
-     */
-    private fun trailingUnitEndingAt(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-        collapsedConditionIds: Set<UUID>,
-    ): MoveUnit? {
-        if (isLinearReorderable(node)) return MoveUnit(node.id, node.id)
-        if (node.type == CommandType.FOR_END) {
-            val start = forStartOf(graph, node) ?: return null
-            return MoveUnit(start.id, node.id)
-        }
-        if (node.type == CommandType.MERGE) {
-            val condition = mergedConditionOf(graph, node) ?: return null
-            if (!isFoldedMergedIf(graph, condition, collapsedConditionIds)) return null
-            return MoveUnit(condition.id, node.id)
-        }
-        return null
-    }
-
-    /**
-     * 指定ノードを先頭とする原子単位を返します。
-     *
-     * 後継者側の解決に使い、通常ノード・FOR開始（折りたたみ状態を問わない）・
-     * 折りたたみ合流済みIFの条件を受け付けます。
-     */
-    private fun leadingUnitStartingAt(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-        collapsedConditionIds: Set<UUID>,
-    ): MoveUnit? {
-        if (isLinearReorderable(node)) return MoveUnit(node.id, node.id)
-        if (node.type == CommandType.FOR_START) {
-            val end = forEndOf(graph, node) ?: return null
-            return MoveUnit(node.id, end.id)
-        }
-        if (node.type == CommandType.CONDITION) {
-            if (!isFoldedMergedIf(graph, node, collapsedConditionIds)) return null
-            val merge = mergedPairOf(graph, node) ?: return null
-            return MoveUnit(node.id, merge.id)
-        }
-        return null
-    }
-
-    /**
-     * 隣接した2単位 `[X, first, second, Z]` を `[X, second, first, Z]` へ組み替えます。
-     *
-     * 単位内部の接続には触れず、先頭への入力・末尾のNEXTだけを付け替えるため、
-     * 単位の種類（通常・折りたたみFOR・折りたたみIF・展開FOR障害物）を問いません。
-     */
-    private fun swapUnits(
-        graph: CommandGraph,
-        firstIncoming: ExecutionLink?,
-        first: MoveUnit,
-        second: MoveUnit,
-    ): Boolean {
-        if (firstIncoming == null) return false
-        val firstTail = graph.nodes[first.tailId] ?: return false
-        val secondTail = graph.nodes[second.tailId] ?: return false
-        if (firstTail.next != second.headId) return false
-        val after = secondTail.next
-        setExecutionLink(graph, firstIncoming, second.headId)
-        secondTail.next = first.headId
-        firstTail.next = after
-        return true
-    }
-
-    /**
-     * `[X, node, unit, Z]` を `[X, unit, node, Z]` へ組み替えます。
-     * 通常ノードが原子ブロック全体の前へ回る左移動です。
-     */
-    private fun jumpBeforeUnit(graph: CommandGraph, node: CommandNode, unit: MoveUnit): Boolean {
-        val unitHead = graph.nodes[unit.headId] ?: return false
-        val unitTail = graph.nodes[unit.tailId] ?: return false
-        if (unitTail.next != node.id) return false
-        val unitIncoming = incomingExecutionLink(graph, unit.headId) ?: return false
-        if (unitIncoming.edge != Edge.NEXT && unitIncoming.edge != Edge.ENTRY) return false
-        val after = node.next
-        setExecutionLink(graph, unitIncoming, node.id)
-        node.next = unit.headId
-        unitTail.next = after
-        return unitHead.id != node.id
-    }
-
-    /**
-     * `[X, node, unit, Z]` を `[X, unit, node, Z]` へ組み替えます。
-     * 通常ノードが原子ブロック全体の後ろへ回る右移動です。
-     */
-    private fun jumpAfterUnit(graph: CommandGraph, node: CommandNode, unit: MoveUnit): Boolean {
-        val unitTail = graph.nodes[unit.tailId] ?: return false
-        if (node.next != unit.headId) return false
-        val nodeIncoming = incomingExecutionLink(graph, node.id) ?: return false
-        if (nodeIncoming.edge != Edge.NEXT && nodeIncoming.edge != Edge.ENTRY) return false
-        val after = unitTail.next
-        setExecutionLink(graph, nodeIncoming, unit.headId)
-        unitTail.next = node.id
-        node.next = after
-        return true
-    }
-
-    /**
-     * 折畳み未合流条件の上側（TRUE）枝末尾を返します。
-     *
-     * TRUE空なら条件自身のTRUE枝、占有ならTRUE鎖末尾の（ノード・付替エッジ）です。
-     * 鎖内は上側優先で辿り、`(条件 × NEXT)` の無効指定を決して返しません。
-     * 配置層の末尾追加点と、前任ノードの枝格納移動で同じ解決を使うことで、
-     * 表示と実操作を一致させます。合流済み・継続の有無を問わず構造的に
-     * 定まる位置を返し、辿れない場合はnullを返します。
-     */
-    fun foldedTrueTail(graph: CommandGraph, conditionId: UUID): Pair<UUID, Edge>? {
-        val condition = graph.nodes[conditionId]
-            ?.takeIf { it.type == CommandType.CONDITION } ?: return null
-        if (condition.pairedNodeId != null) return null
-        val head = condition.trueNext ?: return condition.id to Edge.TRUE
-        var previousId = condition.id
-        var previousEdge = Edge.TRUE
-        var current = head
-        val visited = mutableSetOf<UUID>()
-        while (visited.add(current)) {
-            val node = graph.nodes[current] ?: return null
-            when (node.type) {
-                // 鎖内の条件は上側優先で辿ります。空枝があればそこへ付けます。
-                CommandType.CONDITION -> {
-                    val upper = node.trueNext ?: return node.id to Edge.TRUE
-                    previousId = node.id
-                    previousEdge = Edge.TRUE
-                    current = upper
-                }
-                CommandType.FOR_START -> {
-                    val endId = node.pairedNodeId?.let(graph.nodes::get)
-                        ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == node.id }?.id
-                        ?: return null
-                    val endNext = graph.nodes.getValue(endId).next
-                    if (endNext == null) return endId to Edge.NEXT
-                    previousId = endId
-                    previousEdge = Edge.NEXT
-                    current = endNext
-                }
-                // 合流・終了の手前へ付けることで、単一親規則を保ったまま挿入します。
-                CommandType.MERGE, CommandType.FOR_END -> return previousId to previousEdge
-                else -> {
-                    val next = node.next ?: return node.id to Edge.NEXT
-                    previousId = node.id
-                    previousEdge = Edge.NEXT
-                    current = next
-                }
-            }
-        }
-        return null
-    }
-
-    /**
-     * `[X, outer, C{TRUE..tail}]` を `[X, C{TRUE..tail, outer}]` へ組み替えます。
-     *
-     * 折畳み未合流条件の直前ノードを上側枝末尾へ格納します（末尾＋と同じ位置）。
-     * 末端で後継を持てない未合流折畳みに残された唯一の正当な移動であり、
-     * 前任側の右移動と条件側の左移動は同じ結果になります。行表示への追記は
-     * UI層で行います。
-     */
-    private fun movePredecessorIntoFoldedTrueTail(
-        graph: CommandGraph,
-        outer: CommandNode,
-        condition: CommandNode,
-    ): Boolean {
-        if (condition.type != CommandType.CONDITION || condition.pairedNodeId != null) return false
-        if (!isLinearReorderable(outer) || outer.next != condition.id) return false
-        val outerIncoming = incomingExecutionLink(graph, outer.id) ?: return false
-        if (outerIncoming.edge != Edge.NEXT && outerIncoming.edge != Edge.ENTRY) return false
-        val (tailId, tailEdge) = foldedTrueTail(graph, condition.id) ?: return false
-        val tail = graph.nodes[tailId] ?: return false
-        val oldTarget = when (tailEdge) {
-            Edge.NEXT -> tail.next
-            Edge.TRUE -> tail.trueNext
-            Edge.FALSE -> tail.falseNext
-            Edge.FOR_BODY, Edge.ENTRY -> return false
-        }
-        setExecutionLink(graph, outerIncoming, condition.id)
-        setEdge(graph, tailId, tailEdge, outer.id)
-        outer.next = oldTarget
-        return true
-    }
-
-    /**
-     * `[X, outer, START..END, S]` を `[X, START, outer, ..END, S]` へ組み替えます。
-     *
-     * FOR外の通常ノードを本体先頭へ格納します。本体が空の場合も同じ配線で
-     * `[X, START, outer, END, S]` になります。
-     */
-    private fun moveOuterIntoHead(graph: CommandGraph, outer: CommandNode, start: CommandNode): Boolean {
+    fun foldForStart(graph: CommandGraph, nodeId: UUID): Boolean {
+        val start = graph.nodes[nodeId]?.takeIf { it.type == CommandType.FOR_START } ?: return false
         val end = forEndOf(graph, start) ?: return false
-        if (outer.next != start.id) return false
-        val head = start.trueNext?.let(graph.nodes::get) ?: return false
-        if (head.id != end.id && head.id !in graph.nodes) return false
-        val outerIncoming = incomingExecutionLink(graph, outer.id) ?: return false
-        if (outerIncoming.edge != Edge.NEXT && outerIncoming.edge != Edge.ENTRY) return false
-        setExecutionLink(graph, outerIncoming, start.id)
-        outer.next = head.id
-        start.trueNext = outer.id
-        return true
-    }
-
-    /**
-     * `[X, START..tail, END, outer, S]` を `[X, START..tail, outer, END, S]` へ組み替えます。
-     *
-     * FOR外の通常ノードを本体末尾へ格納します。本体が空の場合は開始のTRUE枝を
-     * 付け替えて `[X, START, outer, END, S]` になります。
-     */
-    private fun moveOuterIntoTail(graph: CommandGraph, outer: CommandNode, end: CommandNode): Boolean {
-        val start = forStartOf(graph, end) ?: return false
-        if (outer.id != end.next) return false
-        val after = outer.next
-        val tailIncoming = incomingExecutionLink(graph, end.id) ?: return false
-        if (tailIncoming.edge == Edge.NEXT) {
-            val tail = tailIncoming.sourceId?.let(graph.nodes::get) ?: return false
-            tail.next = outer.id
-        } else if (tailIncoming.edge == Edge.TRUE && tailIncoming.sourceId == start.id) {
-            start.trueNext = outer.id
-        } else {
+        // 本体は開始のTRUE枝から終了までです。入れ子の構造も含めて収集します。
+        val unitIds = collectUnitIds(graph, listOfNotNull(start.trueNext), end.id) ?: return false
+        if (!isDetachableUnit(graph, unitIds, headId = start.id, exitId = end.id)) return false
+        val backup = graph.deepCopy()
+        val continuation = end.next
+        // 内部には先頭（開始ノード自体）も元のIDのまま含め、外側スロットだけを
+        // 折り畳みノードで置換します。入口・入力エッジの付け替えは不要です。
+        val fullUnit = unitIds + start.id
+        val innerNodes = LinkedHashMap<UUID, CommandNode>()
+        fullUnit.forEach { id ->
+            innerNodes[id] = graph.nodes[id]?.deepCopy() ?: return false
+        }
+        val inner = CommandGraph(entryNodeId = start.id, nodes = innerNodes)
+        // 内部出口の後続は外側継続先（単位外ID）を指すため、内部単独では
+        // 終端として扱います。外側の後続は折り畳みノードのnextが正であり、
+        // 展開時に現在の外側接続で上書きします。
+        inner.nodes[end.id]?.next = null
+        fullUnit.filterNot { it == start.id }.forEach(graph.nodes::remove)
+        graph.nodes[start.id] = start.deepCopy().copy(
+            type = CommandType.FOLDED_FOR,
+            next = continuation,
+            trueNext = null,
+            falseNext = null,
+            pairedNodeId = null,
+            foldedGraph = inner,
+        )
+        if (GraphValidator.validate(graph).isNotEmpty()) {
+            graph.entryNodeId = backup.entryNodeId
+            graph.nodes.clear()
+            graph.nodes.putAll(backup.nodes)
             return false
         }
-        outer.next = end.id
-        end.next = after
         return true
     }
 
     /**
-     * `[X, START, head, ..END, S]` を `[X, head, START, ..END, S]` へ組み替えます。
+     * 条件分岐を折り畳めるかを判定します。
      *
-     * 本体先頭を外へ取り出します。開始自体の右移動と本体先頭の左移動は
-     * 同じ組み替えです。折りたたみ中の開始には適用しません。
+     * 対応するMERGEと正しく結ばれた閉じた分岐だけが対象です。未合流の分岐は
+     * 出口が定まらないため折り畳めません。
      */
-    private fun takeBodyHeadOut(
-        graph: CommandGraph,
-        head: CommandNode,
-        collapsedForStarts: Set<UUID>,
-    ): Boolean {
-        val headIncoming = incomingExecutionLink(graph, head.id) ?: return false
-        if (headIncoming.edge != Edge.TRUE) return false
-        val start = headIncoming.sourceId?.let(graph.nodes::get) ?: return false
-        if (start.type != CommandType.FOR_START || start.id in collapsedForStarts) return false
-        if (forEndOf(graph, start) == null) return false
-        val rest = head.next
-        val startIncoming = incomingExecutionLink(graph, start.id) ?: return false
-        if (startIncoming.edge != Edge.NEXT && startIncoming.edge != Edge.ENTRY) return false
-        setExecutionLink(graph, startIncoming, head.id)
-        head.next = start.id
-        start.trueNext = rest
+    fun canFoldCondition(graph: CommandGraph, nodeId: UUID): Boolean {
+        val condition = graph.nodes[nodeId]?.takeIf { it.type == CommandType.CONDITION } ?: return false
+        return mergedPairOf(graph, condition) != null
+    }
+
+    /**
+     * 条件分岐〜合流の全体を折り畳みノード（FOLDED_IF）へ再構成します。
+     *
+     * 外側には条件と同じIDの折り畳みノード1個が通常形状（単一next）で残り、
+     * 両枝・合流は内部グラフへ退避します。両枝の NULL 終端（早期終了）は
+     * そのまま内部に保持します。適用後に検証し、不正になる場合は変更せず拒否します。
+     */
+    fun foldCondition(graph: CommandGraph, nodeId: UUID): Boolean {
+        val condition = graph.nodes[nodeId]?.takeIf { it.type == CommandType.CONDITION } ?: return false
+        val merge = mergedPairOf(graph, condition) ?: return false
+        // 両枝を合流まで辿り、入れ子の構造も含めて収集します。
+        val unitIds = collectUnitIds(graph, listOfNotNull(condition.trueNext, condition.falseNext), merge.id)
+            ?: return false
+        if (!isDetachableUnit(graph, unitIds, headId = condition.id, exitId = merge.id)) return false
+        val backup = graph.deepCopy()
+        val continuation = merge.next
+        // 内部には先頭（条件ノード自体）も元のIDのまま含め、外側スロットだけを
+        // 折り畳みノードで置換します。入口・入力エッジの付け替えは不要です。
+        val fullUnit = unitIds + condition.id
+        val innerNodes = LinkedHashMap<UUID, CommandNode>()
+        fullUnit.forEach { id ->
+            innerNodes[id] = graph.nodes[id]?.deepCopy() ?: return false
+        }
+        val inner = CommandGraph(entryNodeId = condition.id, nodes = innerNodes)
+        // 内部出口の後続は外側継続先（単位外ID）を指すため、内部単独では
+        // 終端として扱います。外側の後続は折り畳みノードのnextが正であり、
+        // 展開時に現在の外側接続で上書きします。
+        inner.nodes[merge.id]?.next = null
+        fullUnit.filterNot { it == condition.id }.forEach(graph.nodes::remove)
+        graph.nodes[condition.id] = condition.deepCopy().copy(
+            type = CommandType.FOLDED_IF,
+            next = continuation,
+            trueNext = null,
+            falseNext = null,
+            pairedNodeId = null,
+            foldedGraph = inner,
+        )
+        if (GraphValidator.validate(graph).isNotEmpty()) {
+            graph.entryNodeId = backup.entryNodeId
+            graph.nodes.clear()
+            graph.nodes.putAll(backup.nodes)
+            return false
+        }
         return true
     }
 
     /**
-     * `[X, START..prev, tail, END, S]` を `[X, START..prev, END, tail, S]` へ組み替えます。
+     * 折り畳みノードを展開できるかを判定します。
      *
-     * 本体末尾を外へ取り出します。本体末尾の右移動と終了の左移動は同じ組み替えです。
-     * 本体長1の場合は開始のTRUE枝を終了へ戻します。
+     * 内部グラフを持ち、先頭が対応する種別（FOLDED_FORならFOR_START、
+     * FOLDED_IFならCONDITION）である場合だけ展開できます。
      */
-    private fun takeBodyTailOut(graph: CommandGraph, tail: CommandNode): Boolean {
-        if (!isLinearReorderable(tail)) return false
-        val end = tail.next?.let(graph.nodes::get) ?: return false
-        if (end.type != CommandType.FOR_END) return false
-        val start = forStartOf(graph, end) ?: return false
-        val after = end.next
-        val tailIncoming = incomingExecutionLink(graph, tail.id) ?: return false
-        when {
-            tailIncoming.edge == Edge.NEXT -> {
-                val previous = tailIncoming.sourceId?.let(graph.nodes::get) ?: return false
-                previous.next = end.id
+    fun canUnfold(graph: CommandGraph, nodeId: UUID): Boolean {
+        val wrapper = graph.nodes[nodeId]?.takeIf { FoldedGraphs.isFolded(it) } ?: return false
+        val inner = wrapper.foldedGraph ?: return false
+        val head = inner.nodes[wrapper.id] ?: return false
+        return when (wrapper.type) {
+            CommandType.FOLDED_FOR -> head.type == CommandType.FOR_START &&
+                head.pairedNodeId?.let(inner.nodes::get)
+                    ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == head.id } != null
+            CommandType.FOLDED_IF -> head.type == CommandType.CONDITION &&
+                head.pairedNodeId?.let(inner.nodes::get)
+                    ?.takeIf { it.type == CommandType.MERGE && it.pairedNodeId == head.id } != null
+            else -> false
+        }
+    }
+
+    /**
+     * 折り畳みノードを展開し、内部構造を元の位置へ復元します。
+     *
+     * 内部IDは折り畳み時に元のIDのまま退避しているため、入力エッジや入口の
+     * 付け替えは不要です。折り畳み中の外側設定（回数・条件内容）は正とし、
+     * 内部先頭へ上書きしてから復元します。外側の後続が変わっていても、
+     * 現在の外側接続を正として内部出口へ反映します。
+     */
+    fun unfold(graph: CommandGraph, nodeId: UUID): Boolean {
+        val wrapper = graph.nodes[nodeId]?.takeIf { FoldedGraphs.isFolded(it) } ?: return false
+        val inner = wrapper.foldedGraph?.deepCopy() ?: return false
+        val head = inner.nodes[wrapper.id] ?: return false
+        val exit = when (wrapper.type) {
+            CommandType.FOLDED_FOR -> {
+                if (head.type != CommandType.FOR_START) return false
+                head.pairedNodeId?.let(inner.nodes::get)
+                    ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == head.id }
+                    ?: return false
             }
-            tailIncoming.edge == Edge.TRUE && tailIncoming.sourceId == start.id ->
-                start.trueNext = end.id
+            CommandType.FOLDED_IF -> {
+                if (head.type != CommandType.CONDITION) return false
+                head.pairedNodeId?.let(inner.nodes::get)
+                    ?.takeIf { it.type == CommandType.MERGE && it.pairedNodeId == head.id }
+                    ?: return false
+            }
             else -> return false
         }
-        end.next = tail.id
-        tail.next = after
-        return true
-    }
-
-    /**
-     * `[X, COND..MERGE, START..END, S]` を `[X, START, COND..MERGE, ..END, S]` へ組み替えます。
-     *
-     * 開始直前の合流済みIF全体を一体として本体先頭へ格納します。分岐・合流の
-     * 対応関係には触れず、IF単位の入口と出口だけを付け替えます。
-     */
-    private fun absorbIfIntoHead(
-        graph: CommandGraph,
-        condition: CommandNode,
-        merge: CommandNode,
-        start: CommandNode,
-    ): Boolean {
-        if (merge.next != start.id) return false
-        val head = start.trueNext ?: return false
-        val conditionIncoming = incomingExecutionLink(graph, condition.id) ?: return false
-        if (conditionIncoming.edge != Edge.NEXT && conditionIncoming.edge != Edge.ENTRY) return false
-        setExecutionLink(graph, conditionIncoming, start.id)
-        start.trueNext = condition.id
-        merge.next = head
-        return true
-    }
-
-    /**
-     * `[X, START..tail, END, COND..MERGE, S]` を `[X, START..tail, COND..MERGE, END, S]` へ組み替えます。
-     *
-     * 終了直後の合流済みIF全体を一体として本体末尾へ格納します。本体が空の
-     * 場合も開始のTRUE枝を付け替えて同じ形状になります。
-     */
-    private fun absorbIfIntoTail(
-        graph: CommandGraph,
-        condition: CommandNode,
-        merge: CommandNode,
-        end: CommandNode,
-    ): Boolean {
-        val start = forStartOf(graph, end) ?: return false
-        if (end.next != condition.id) return false
-        val after = merge.next
-        val tailIncoming = incomingExecutionLink(graph, end.id) ?: return false
-        if (tailIncoming.edge == Edge.NEXT) {
-            val tail = tailIncoming.sourceId?.let(graph.nodes::get) ?: return false
-            tail.next = condition.id
-        } else if (tailIncoming.edge == Edge.TRUE && tailIncoming.sourceId == start.id) {
-            start.trueNext = condition.id
-        } else {
+        // 内部IDと外側IDの衝突（折り畳みノード自身を除く）は構造破損とします。
+        if (inner.nodes.keys.any { it != wrapper.id && it in graph.nodes }) return false
+        val backup = graph.deepCopy()
+        // 折り畳み中の外側設定を正として内部先頭へ反映します。
+        copyHeadSettings(wrapper, head)
+        exit.next = wrapper.next
+        graph.nodes.remove(wrapper.id)
+        inner.nodes.forEach { (id, node) -> graph.nodes[id] = node }
+        if (GraphValidator.validate(graph).isNotEmpty()) {
+            graph.entryNodeId = backup.entryNodeId
+            graph.nodes.clear()
+            graph.nodes.putAll(backup.nodes)
             return false
         }
-        merge.next = end.id
-        end.next = after
         return true
+    }
+
+    /**
+     * 折り畳み単位に含めるノードID群を収集します。
+     *
+     * 開始鎖から実行エッジを辿り、出口IDへ到達する範囲を集めます。NULL 終端の
+     * 枝はその枝で確定し、出口へ到達しない枝があっても収集自体は行います。
+     * 辿れない参照・循環がある場合はnullを返します。
+     */
+    private fun collectUnitIds(graph: CommandGraph, starts: List<UUID>, exitId: UUID): LinkedHashSet<UUID>? {
+        val collected = linkedSetOf<UUID>()
+        val visited = mutableSetOf<UUID>()
+        fun visit(id: UUID): Boolean {
+            if (id == exitId) {
+                collected += id
+                return true
+            }
+            if (!visited.add(id)) return true
+            val node = graph.nodes[id] ?: return false
+            collected += id
+            node.outgoingIds().forEach { next ->
+                if (!visit(next)) return false
+            }
+            return true
+        }
+        starts.forEach { if (!visit(it)) return null }
+        collected += exitId
+        // 先頭自体は外側IDを引き継ぐため、呼び出し側で含めて扱います。
+        return collected
+    }
+
+    /**
+     * 単位を外側から切り離せるかを判定します。
+     *
+     * 単位内のノード（先頭を除く）へ単位外から実行入力がなく、単位内の実行参照が
+     * 単位内・出口・NULL終端に収まる場合だけ切り離せます。出口の後続（外側継続先）
+     * は切り離し対象外です。
+     */
+    private fun isDetachableUnit(
+        graph: CommandGraph,
+        unitIds: Set<UUID>,
+        headId: UUID,
+        exitId: UUID,
+    ): Boolean {
+        if (headId in unitIds) return false
+        val fullUnit = unitIds + headId
+        // 先頭への入力は一意でなければなりません（入口または単一実行エッジ）。
+        if (incomingExecutionLink(graph, headId) == null) return false
+        graph.nodes.values.forEach { source ->
+            if (source.id in fullUnit) {
+                // 単位内の参照は単位内・NULL終端に収まる必要があります。
+                // 出口の後続だけが外側継続先として許されます。
+                if (source.id == exitId) return@forEach
+                source.outgoingIds().forEach { target ->
+                    if (target !in fullUnit) return false
+                }
+                // ペア参照が単位外を指す構造は切り離しません。
+                val pair = source.pairedNodeId
+                if (pair != null && pair !in fullUnit) return false
+            } else {
+                // 単位外からの実行入力は、先頭への一意な入力だけが許されます。
+                // 一意性は先の incomingExecutionLink で保証済みのため、ここでは
+                // 先頭への参照を許し、単位内部（本体・枝・出口）への参照だけ拒否します。
+                unitIds.forEach { innerId ->
+                    if (source.next == innerId || source.trueNext == innerId || source.falseNext == innerId) {
+                        return false
+                    }
+                }
+                val pair = source.pairedNodeId
+                if (pair != null && pair in fullUnit) return false
+            }
+        }
+        // 出口（FOR_END／MERGE）は外側継続先を持つため、単位内の他ノードから
+        // 参照されても切り離せます。先頭のペアが出口であることを確認します。
+        val head = graph.nodes[headId] ?: return false
+        if (head.pairedNodeId != exitId) return false
+        return true
+    }
+
+    /**
+     * 折り畳み中の外側設定を内部先頭へ反映します。
+     *
+     * 折り畳み中の設定編集は外側ノードに対して行うため、展開時は外側を正として
+     * 内部先頭の設定（表示設定・実行設定の両方）を上書きします。接続情報と
+     * 内部グラフ自体には触れません。
+     */
+    private fun copyHeadSettings(wrapper: CommandNode, head: CommandNode) {
+        head.params.clear()
+        head.params.putAll(wrapper.params)
+        head.configuredFields = wrapper.configuredFields?.toMutableSet()
+        head.targetSpec = wrapper.targetSpec?.copy()
+        head.secondaryTargetSpec = wrapper.secondaryTargetSpec?.copy()
+        head.destinationSpec = wrapper.destinationSpec?.copy()
+        head.destinationTargetSpec = wrapper.destinationTargetSpec?.copy()
+        head.destinationFacingSpec = wrapper.destinationFacingSpec?.copy()
+        head.conditionPositionSpec = wrapper.conditionPositionSpec?.copy()
+        head.controlBlockStates = wrapper.controlBlockStates?.toMutableSet()
+        head.blockPositionSpec = wrapper.blockPositionSpec?.copy()
+        head.blockFromSpec = wrapper.blockFromSpec?.copy()
+        head.blockToSpec = wrapper.blockToSpec?.copy()
+        head.soundPositionSpec = wrapper.soundPositionSpec?.copy()
+        head.particlePositionSpec = wrapper.particlePositionSpec?.copy()
+        head.particleEndPositionSpec = wrapper.particleEndPositionSpec?.copy()
+        head.fireworkPositionSpec = wrapper.fireworkPositionSpec?.copy()
+        head.summonPositionSpec = wrapper.summonPositionSpec?.copy()
+        head.temporaryEntityTargetSpec = wrapper.temporaryEntityTargetSpec?.copy()
+        head.temporaryLocationPositionSpec = wrapper.temporaryLocationPositionSpec?.copy()
+        head.temporaryLocationFacingSpec = wrapper.temporaryLocationFacingSpec?.copy()
+        head.itemTempRef = wrapper.itemTempRef
+        head.blockTempRef = wrapper.blockTempRef
+        head.soundTempRef = wrapper.soundTempRef
+        head.effectTempRef = wrapper.effectTempRef
     }
 
     private fun pairedForEnd(graph: CommandGraph, start: CommandNode): CommandNode? =
         start.takeIf { it.type == CommandType.FOR_START }
             ?.pairedNodeId?.let(graph.nodes::get)
             ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == start.id }
-
-    private fun pairedForStart(graph: CommandGraph, end: CommandNode): CommandNode? =
-        end.takeIf { it.type == CommandType.FOR_END }
-            ?.pairedNodeId?.let(graph.nodes::get)
-            ?.takeIf { it.type == CommandType.FOR_START && it.pairedNodeId == end.id }
 
     /** 移動候補を複製上で試し、検証に通る場合だけ有効とします。 */
     private fun trialBlockMove(graph: CommandGraph, move: (CommandGraph) -> Boolean): Boolean {
@@ -1031,58 +797,15 @@ object GraphEditor {
         return GraphValidator.validate(candidate).isEmpty()
     }
 
-    /** 対応関係が正しいFOR終了を返します。ペアの壊れた残骸は移動対象外です。 */
+    /** 対応関係が正しいFOR終了を返します。ペアの壊れた残骸は折り畳み対象外です。 */
     private fun forEndOf(graph: CommandGraph, start: CommandNode): CommandNode? =
         pairedForEnd(graph, start)
-
-    /** 対応関係が正しいFOR開始を返します。ペアの壊れた残骸は移動対象外です。 */
-    private fun forStartOf(graph: CommandGraph, end: CommandNode): CommandNode? =
-        pairedForStart(graph, end)
-
-    /** 折りたたみ対象として有効なFOR開始かを判定します。 */
-    private fun isCollapsedForStart(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-    ): Boolean = node.type == CommandType.FOR_START &&
-        node.id in collapsedForStarts &&
-        forEndOf(graph, node) != null
-
-    /** 折りたたみ対象のFORに対応する終了かを判定します。 */
-    private fun isCollapsedForEnd(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedForStarts: Set<UUID>,
-    ): Boolean {
-        val start = forStartOf(graph, node) ?: return false
-        return start.id in collapsedForStarts
-    }
 
     /** 条件に対応する合流が正しく結ばれている場合に返します。 */
     private fun mergedPairOf(graph: CommandGraph, condition: CommandNode): CommandNode? =
         condition.takeIf { it.type == CommandType.CONDITION }
             ?.pairedNodeId?.let(graph.nodes::get)
             ?.takeIf { it.type == CommandType.MERGE && it.pairedNodeId == condition.id }
-
-    /** 合流に対応する条件が正しく結ばれている場合に返します。 */
-    private fun mergedConditionOf(graph: CommandGraph, merge: CommandNode): CommandNode? =
-        merge.takeIf { it.type == CommandType.MERGE }
-            ?.pairedNodeId?.let(graph.nodes::get)
-            ?.takeIf { it.type == CommandType.CONDITION && it.pairedNodeId == merge.id }
-
-    /**
-     * 折りたたみ表示する合流済み条件かを判定します。
-     *
-     * 未合流の条件は出口が定まらないため、折りたたみ集合に含まれていても
-     * 移動単位にはしません（表示の折りたたみ自体は行います）。
-     */
-    private fun isFoldedMergedIf(
-        graph: CommandGraph,
-        node: CommandNode,
-        collapsedConditionIds: Set<UUID>,
-    ): Boolean = node.type == CommandType.CONDITION &&
-        node.id in collapsedConditionIds &&
-        mergedPairOf(graph, node) != null
 
     private fun isLinearReorderable(node: CommandNode): Boolean = node.type !in STRUCTURAL_TYPES
 

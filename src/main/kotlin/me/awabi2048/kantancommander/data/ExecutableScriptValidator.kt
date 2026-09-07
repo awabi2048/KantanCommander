@@ -95,22 +95,33 @@ object ExecutableScriptValidator {
             return
         }
         GraphValidator.validate(graph, limits).forEach { errors += ScriptValidationError(path, null, emptySet(), it) }
+        // 折り畳みノードの中身は外側に通常形状で1個だけ残るため、項目検証と
+        // データフロー解析はメモリ上で展開した一時グラフに対して行います。
+        // 保存内容は折り畳んだまま維持されます。
+        val effective = if (graph.nodes.values.any(FoldedGraphs::isFolded)) {
+            FoldedGraphs.expand(graph, limits.maximumBranchDepth)
+        } else {
+            graph
+        }
         // 一時変数はグラフ全体の宣言ではなく、実行時点で到達が保証される定義だけを
         // 参照可能とします。分岐合流では全経路の共通部分を使い、DISK_CALLの
         // スナップショットは別グラフとして解析することで、実行時セッションの寿命と
         // 静的検証の結果を一致させます。
-        val temporaryAvailability = analyzeTemporaryAvailability(graph)
-        graph.nodes.values.forEach { node ->
+        val temporaryAvailability = analyzeTemporaryAvailability(effective)
+        effective.nodes.values.forEach { node ->
             validateNode(
                 node,
                 "$path/${node.id}",
                 errors,
                 variableDefinitions,
-                isInsideForBody(graph, node.id),
+                isInsideForBody(effective, node.id),
                 temporaryAvailability[node.id] ?: emptyMap(),
             )
             node.snapshot?.let {
                 validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits, variableDefinitions)
+            }
+            node.foldedGraph?.let {
+                validateGraph(it, "$path/${node.id}/folded", errors, visited, limits, variableDefinitions)
             }
         }
         visited.remove(graph)
@@ -292,6 +303,10 @@ object ExecutableScriptValidator {
             CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
             CommandType.TEMP_SET -> validateTemporary(node, path, errors, temporaryDefinitions)
             CommandType.FOR_START -> validateFor(node, path, errors, variableDefinitions, temporaryDefinitions)
+            // 折り畳みノードの外側は先頭設定を写しているため、展開前の検査でも
+            // 同じ項目検証を適用します。中身の構造検証は展開後グラフで行います。
+            CommandType.FOLDED_FOR -> validateFor(node, path, errors, variableDefinitions, temporaryDefinitions)
+            CommandType.FOLDED_IF -> validateCondition(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> Unit
         }
     }

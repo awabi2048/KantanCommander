@@ -241,6 +241,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         // 通常実行とテスト実行は同じセッション実装を使います。テストだけが
         // observer/debugDelayTicksを持ち、actor=nullで暗黙の実行者を作りません。
+        // 折り畳みノードは保存形のまま実行できるよう、実行用の一時グラフへ展開します。
+        // 永続化内容は折り畳んだまま維持されます。
+        val executionGraph = me.awabi2048.kantancommander.data.FoldedGraphs.expand(script.graph)
+        val executionScript = script.copy(graph = executionGraph)
         val session = ExecutionSession(
             rootId = script.id,
             origin = origin.clone(),
@@ -256,7 +260,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             callback = callback,
         )
         handle.bind { reason -> cancelSession(session, reason) }
-        runGraph(script, script.graph, session, 0) { success ->
+        runGraph(executionScript, executionGraph, session, 0) { success ->
             finishSession(
                 session,
                 if (success) ExecutionFinishStatus.SUCCESS else ExecutionFinishStatus.FAILURE,

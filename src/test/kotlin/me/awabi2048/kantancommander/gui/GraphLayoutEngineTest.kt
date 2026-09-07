@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.data.FoldedGraphs
 import me.awabi2048.kantancommander.data.GraphValidator
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
@@ -1188,7 +1189,7 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `collapsed for renders only the start as a single unit`() {
+    fun `folded for renders only the wrapper as a single unit`() {
         val graph = CommandGraph.empty()
         val before = GraphEditor.append(graph, CommandType.WAIT)
         val start = GraphEditor.append(graph, CommandType.FOR_START)
@@ -1200,50 +1201,41 @@ class GraphLayoutEngineTest {
         assertTrue(body.id in expanded.nodePoints)
         assertTrue(end.id in expanded.nodePoints)
 
-        val collapsed = GraphLayoutEngine.layout(graph, collapsedForStarts = setOf(start.id))
-        // 折りたたみ前後で開始の論理座標は変わらず、後続だけが前へ詰まります。
-        assertEquals(expanded.nodePoints[start.id], collapsed.nodePoints[start.id])
-        // 開始だけが描かれ、本体・終了は畳まれます。
-        assertTrue(start.id in collapsed.nodePoints)
-        assertFalse(body.id in collapsed.nodePoints)
-        assertFalse(end.id in collapsed.nodePoints)
-        // 開始の次セルが後続ノードへつながり、全体幅が縮みます。
-        val startPoint = requireNotNull(collapsed.nodePoints[start.id])
-        val afterPoint = requireNotNull(collapsed.nodePoints[after.id])
+        assertTrue(GraphEditor.foldForStart(graph, start.id))
+        val folded = GraphLayoutEngine.layout(graph)
+        // 折り畳み前後で開始の論理座標は変わらず、後続だけが前へ詰まる。
+        assertEquals(expanded.nodePoints[start.id], folded.nodePoints[start.id])
+        // 折り畳みノードだけが描かれ、本体・終了は内部へ隠蔽される。
+        assertTrue(start.id in folded.nodePoints)
+        assertFalse(body.id in folded.nodePoints)
+        assertFalse(end.id in folded.nodePoints)
+        val startPoint = requireNotNull(folded.nodePoints[start.id])
+        val afterPoint = requireNotNull(folded.nodePoints[after.id])
         assertEquals(startPoint.y, afterPoint.y)
-        assertTrue(collapsed.width < expanded.width)
+        assertTrue(folded.width < expanded.width)
         assertTrue(afterPoint.x < requireNotNull(expanded.nodePoints[after.id]).x)
-        // ブロック後の挿入先は対応終了のNEXTとして維持されます。
         assertEquals(
-            InsertionTarget(end.id, GraphEditor.Edge.NEXT),
-            collapsed.cells[MapPoint(startPoint.x + 1, startPoint.y)]?.insertionTarget,
-        )
-        assertEquals(
-            requireNotNull(collapsed.nodePoints[before.id]).y,
+            requireNotNull(folded.nodePoints[before.id]).y,
             startPoint.y,
         )
     }
 
     @Test
-    fun `collapsed for at the sequence end keeps a tail add after the block`() {
+    fun `folded for at the sequence end keeps a tail add after the block`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)
-        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
         GraphEditor.appendToForBody(graph, start.id, CommandType.WAIT)
+        assertTrue(GraphEditor.foldForStart(graph, start.id))
 
-        val collapsed = GraphLayoutEngine.layout(graph, collapsedForStarts = setOf(start.id))
-        val startPoint = requireNotNull(collapsed.nodePoints[start.id])
-        // 末尾追加点はブロック後への追加として対応終了を指します。
-        val tailAdd = collapsed.cells[MapPoint(startPoint.x + 2, startPoint.y)]
+        val folded = GraphLayoutEngine.layout(graph)
+        val startPoint = requireNotNull(folded.nodePoints[start.id])
+        // 末尾追加点はブロック後への追加として残る。
+        val tailAdd = folded.cells[MapPoint(startPoint.x + 2, startPoint.y)]
         assertEquals(MapCellKind.ADD, tailAdd?.kind)
-        assertEquals(
-            InsertionTarget(end.id, GraphEditor.Edge.NEXT),
-            tailAdd?.insertionTarget,
-        )
     }
 
     @Test
-    fun `folded merged if renders only the condition as a single unit`() {
+    fun `folded merged if renders only the wrapper as a single unit`() {
         val graph = CommandGraph.empty()
         val before = GraphEditor.append(graph, CommandType.WAIT)
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
@@ -1257,25 +1249,20 @@ class GraphLayoutEngineTest {
         assertTrue(falseNode.id in expanded.nodePoints)
         assertTrue(merge.id in expanded.nodePoints)
 
-        val folded = GraphLayoutEngine.layout(graph, collapsedConditionIds = setOf(condition.id))
-        // 折りたたみ前後で条件の論理座標は変わらず、後続だけが前へ詰まります。
+        assertTrue(GraphEditor.foldCondition(graph, condition.id))
+        val folded = GraphLayoutEngine.layout(graph)
+        // 折り畳み前後で条件の論理座標は変わらず、後続だけが前へ詰まる。
         assertEquals(expanded.nodePoints[condition.id], folded.nodePoints[condition.id])
-        // 条件だけが描かれ、枝・合流は畳まれます。
+        // 折り畳みノードだけが描かれ、枝・合流は内部へ隠蔽される。
         assertTrue(condition.id in folded.nodePoints)
         assertFalse(trueNode.id in folded.nodePoints)
         assertFalse(falseNode.id in folded.nodePoints)
         assertFalse(merge.id in folded.nodePoints)
-        // 条件の次セルが後続ノードへつながり、全体幅が縮みます。
         val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
         val afterPoint = requireNotNull(folded.nodePoints[after.id])
         assertEquals(conditionPoint.y, afterPoint.y)
         assertTrue(folded.width < expanded.width)
         assertTrue(afterPoint.x < requireNotNull(expanded.nodePoints[after.id]).x)
-        // ブロック後の挿入先は対応合流のNEXTとして維持されます。
-        assertEquals(
-            InsertionTarget(merge.id, GraphEditor.Edge.NEXT),
-            folded.cells[MapPoint(conditionPoint.x + 1, conditionPoint.y)]?.insertionTarget,
-        )
         assertEquals(
             requireNotNull(folded.nodePoints[before.id]).y,
             conditionPoint.y,
@@ -1287,113 +1274,37 @@ class GraphLayoutEngineTest {
         val graph = CommandGraph.empty()
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.WAIT)
-        val merge = GraphEditor.appendMerge(graph, condition.id)
+        GraphEditor.appendMerge(graph, condition.id)
+        assertTrue(GraphEditor.foldCondition(graph, condition.id))
 
-        val folded = GraphLayoutEngine.layout(graph, collapsedConditionIds = setOf(condition.id))
+        val folded = GraphLayoutEngine.layout(graph)
         val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
-        // 末尾追加点はブロック後への追加として対応合流を指します。
+        // 末尾追加点はブロック後への追加として残る。
         val tailAdd = folded.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y)]
         assertEquals(MapCellKind.ADD, tailAdd?.kind)
-        assertEquals(
-            InsertionTarget(merge.id, GraphEditor.Edge.NEXT),
-            tailAdd?.insertionTarget,
-        )
     }
 
     @Test
-    fun `folded unmerged terminal never targets condition next`() {
-        val graph = CommandGraph.empty()
-        GraphEditor.append(graph, CommandType.WAIT)
-        val condition = GraphEditor.append(graph, CommandType.CONDITION)
-        val trueNode = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
-        GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
-
-        val folded = GraphLayoutEngine.layout(graph, collapsedConditionIds = setOf(condition.id))
-        // 枝状態によらず条件と末尾追加点だけが描かれ、既存枝は隠蔽されます。
-        assertTrue(condition.id in folded.nodePoints)
-        assertFalse(trueNode.id in folded.nodePoints)
-        val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
-        val tailAdd = folded.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y)]
-        assertEquals(MapCellKind.ADD, tailAdd?.kind)
-        // 末尾追加点は上側（TRUE）鎖末尾を指し、(条件 × NEXT) の無効指定になりません。
-        assertEquals(
-            InsertionTarget(trueNode.id, GraphEditor.Edge.NEXT, condition.id),
-            tailAdd?.insertionTarget,
-        )
-    }
-
-    @Test
-    fun `folded unmerged terminal shows the appended row`() {
-        val graph = CommandGraph.empty()
-        GraphEditor.append(graph, CommandType.WAIT)
-        val condition = GraphEditor.append(graph, CommandType.CONDITION)
-        val trueNode = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
-        val falseNode = GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
-        // 折畳み中の追加分としてTRUE鎖末尾へ新ノードを置きます。
-        val appended = GraphEditor.append(graph, CommandType.WAIT)
-        assertEquals(appended.id, trueNode.next)
-
-        val rows = mapOf(condition.id to listOf(appended.id))
-        val folded = GraphLayoutEngine.layout(
-            graph,
-            collapsedConditionIds = setOf(condition.id),
-            foldedAppendedRows = rows,
-        )
-        // 条件・行・末尾追加点が並び、既存枝は隠蔽されたままです。
-        val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
-        val appendedPoint = requireNotNull(folded.nodePoints[appended.id])
-        assertEquals(conditionPoint.y, appendedPoint.y)
-        assertEquals(conditionPoint.x + 2, appendedPoint.x)
-        assertFalse(trueNode.id in folded.nodePoints)
-        assertFalse(falseNode.id in folded.nodePoints)
-        val tailAdd = folded.cells[MapPoint(appendedPoint.x + 2, appendedPoint.y)]
-        assertEquals(MapCellKind.ADD, tailAdd?.kind)
-        assertEquals(
-            InsertionTarget(appended.id, GraphEditor.Edge.NEXT, condition.id),
-            tailAdd?.insertionTarget,
-        )
-    }
-
-    @Test
-    fun `folded unmerged with empty true branch targets the condition true edge`() {
-        val graph = CommandGraph.empty()
-        GraphEditor.append(graph, CommandType.WAIT)
-        val condition = GraphEditor.append(graph, CommandType.CONDITION)
-        // TRUE枝を空のまま、FALSE枝だけにノードを置きます。
-        val falseNode = GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
-        assertEquals(null, condition.trueNext)
-
-        val folded = GraphLayoutEngine.layout(graph, collapsedConditionIds = setOf(condition.id))
-        assertTrue(condition.id in folded.nodePoints)
-        assertFalse(falseNode.id in folded.nodePoints)
-        val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
-        val tailAdd = folded.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y)]
-        assertEquals(MapCellKind.ADD, tailAdd?.kind)
-        assertEquals(
-            InsertionTarget(condition.id, GraphEditor.Edge.TRUE, condition.id),
-            tailAdd?.insertionTarget,
-        )
-        assertTrue(GraphValidator.validate(graph).isEmpty())
-    }
-
-    @Test
-    fun `folded unmerged if with a continuing branch resumes after the block`() {
+    fun `unfolded expansion restores every hidden node for validation`() {
         val graph = CommandGraph.empty()
         val start = GraphEditor.append(graph, CommandType.FOR_START)
-        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
-        val inner = GraphEditor.appendToForBody(graph, start.id, CommandType.CONDITION)
-        // TRUE枝だけに通常ノードを挿入し、FOR_ENDへ継続させます。FALSE枝は終端のままです。
-        val branchNode = GraphEditor.insert(graph, inner.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
-        val after = GraphEditor.append(graph, CommandType.GIVE_ITEM)
-        assertEquals(end.id, branchNode.next)
+        val body = GraphEditor.appendToForBody(graph, start.id, CommandType.DISPLAY_TEXT)
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueNode = GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
+        val merge = GraphEditor.appendMerge(graph, condition.id)
+        val originalIds = graph.nodes.keys.toSet()
+        val before = FoldedGraphs.totalNodeCount(graph)
+        assertTrue(GraphEditor.foldForStart(graph, start.id))
+        assertTrue(GraphEditor.foldCondition(graph, condition.id))
 
-        val folded = GraphLayoutEngine.layout(graph, collapsedConditionIds = setOf(inner.id))
-        // 内側条件だけが描かれ、枝ノードは畳まれます。継続先の終了・後続は描かれます。
-        assertTrue(start.id in folded.nodePoints)
-        assertTrue(inner.id in folded.nodePoints)
-        assertFalse(branchNode.id in folded.nodePoints)
-        assertTrue(end.id in folded.nodePoints)
-        assertTrue(after.id in folded.nodePoints)
+        // 外側だけでは本体・枝が見えないが、総数には含まれる。
+        assertTrue(graph.nodes.size < originalIds.size)
+        assertTrue(FoldedGraphs.totalNodeCount(graph) >= before)
+        // 展開すれば全IDが復元し、検証に通る。
+        val expanded = FoldedGraphs.expand(graph)
+        assertEquals(originalIds, expanded.nodes.keys)
+        assertTrue(GraphValidator.validate(expanded).isEmpty())
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 }

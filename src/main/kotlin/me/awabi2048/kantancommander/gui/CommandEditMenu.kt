@@ -2560,6 +2560,10 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_REPEAT_COUNT,
             ),
         )
+        // 折り畳みノードの設定欄は折り畳み前の種別と共用します。編集は外側へ行い、
+        // 展開時に内部先頭へ反映します。
+        CommandType.FOLDED_FOR -> fields(CommandType.FOR_START, node)
+        CommandType.FOLDED_IF -> fields(CommandType.CONDITION, node)
         }
         return fields
     }

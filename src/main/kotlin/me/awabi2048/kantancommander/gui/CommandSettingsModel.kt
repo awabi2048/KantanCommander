@@ -602,6 +602,9 @@ object CommandSettingsModel {
                 "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_REPEAT_COUNT
                 else -> undefinedWarningKey(node, fieldKey)
             }
+            // 折り畳みノードの警告文言は折り畳み前の種別と共用します。
+            CommandType.FOLDED_FOR -> incompleteWarningKey(node.copy(type = CommandType.FOR_START), fieldKey)
+            CommandType.FOLDED_IF -> incompleteWarningKey(node.copy(type = CommandType.CONDITION), fieldKey)
             CommandType.MERGE,
             CommandType.FOR_END,
             CommandType.BREAK,
@@ -651,6 +654,12 @@ object CommandSettingsModel {
                 "sneaking", "variable", "operator", "value", "block", "item", "itemData" -> "condition"
                 else -> validationFieldKey
             }
+            // 折り畳みノードの注意タブ対応付けは折り畳み前の種別と共用します。
+            CommandType.FOLDED_IF -> visibleAttentionFieldKey(
+                node.copy(type = CommandType.CONDITION),
+                validationFieldKey,
+            )
+            CommandType.FOLDED_FOR -> validationFieldKey
             CommandType.TEMP_SET -> when (validationFieldKey) {
                 // 旧形式のx/y/z/yaw/pitchをLOCATIONの親タブへ投影し、
                 // 新形式のENTITYも対象選択欄へ投影します。
@@ -753,6 +762,9 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.FOR_START -> text()
+        // 折り畳みノードの設定編集子は折り畳み前の種別と共用します。
+        CommandType.FOLDED_FOR -> descriptor(node.copy(type = CommandType.FOR_START), fieldKey)
+        CommandType.FOLDED_IF -> descriptor(node.copy(type = CommandType.CONDITION), fieldKey)
         CommandType.MERGE,
         CommandType.FOR_END,
         CommandType.BREAK,
