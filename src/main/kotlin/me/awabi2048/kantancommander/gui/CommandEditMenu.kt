@@ -1370,10 +1370,13 @@ sealed interface DisplayValue {
         val speed: String,
         val count: String,
     ) : DisplayValue {
+        // 5値を5行へ分けると行ピッチが半減して縦に重なるため、3軸は範囲1行へ
+        // まとめます。表示時間タブと同一形状になり、既存の複数行配置に収まります。
         fun rows(player: Player): List<TimingRow> = listOf(
-            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX), deltaX),
-            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY), deltaY),
-            TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ), deltaZ),
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE),
+                listOf(deltaX, deltaY, deltaZ).joinToString(" / "),
+            ),
             TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SPEED), speed),
             TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT), count),
         )
