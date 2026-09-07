@@ -1,7 +1,7 @@
 package me.awabi2048.kantancommander.model
 
 import org.bukkit.Material
-import kotlin.math.ceil
+import kotlin.math.roundToInt
 
 /**
  * FIREWORK_LAUNCHの保存キーと打ち上げ高さ→推進力の変換を一元化します。
@@ -20,15 +20,6 @@ object FireworkSettings {
     const val HEIGHT_MAX = 320.0
     const val HEIGHT_DEFAULT = 20.0
 
-    /**
-     * ロケットの上昇速度（ブロック／tick）の仮定値です。
-     *
-     * バニラの推進力ごとの到達高度から逆算した概算であり、厳密な高度一致では
-     * なく「指定高度付近での起爆」を保証するための変換定数です。実機検証で
-     * ずれる場合はこの1か所を調整します。
-     */
-    const val ASCENT_BLOCKS_PER_TICK = 0.5
-
     fun burstHeight(node: CommandNode): Double? =
         node.params[PARAM_HEIGHT]?.toDoubleOrNull()?.takeIf(Double::isFinite)
 
@@ -38,7 +29,12 @@ object FireworkSettings {
         return value.isFinite() && value in HEIGHT_MIN..HEIGHT_MAX
     }
 
-    /** 指定高度からflight power（1〜3）を逆算します。高さ0は即時破裂扱いです。 */
+    /**
+     * 指定高度からflight power（1〜3）を逆算します。
+     *
+     * バニラ出力の近似専用です。実行時は寿命バックストップと到達判定で起爆
+     * するため、powerは見た目（尾の長さ）にしか影響しません。
+     */
     fun heightToPower(height: Double): Int = when {
         height <= 0.0 -> 1
         height <= 20.0 -> 1
@@ -46,9 +42,49 @@ object FireworkSettings {
         else -> 3
     }
 
-    /** 指定高度から起爆までのtick数を逆算します。高さ0は1tick（即時相当）です。 */
-    fun heightToTicks(height: Double): Int =
-        if (height <= 0.0) 1 else ceil(height / ASCENT_BLOCKS_PER_TICK).toInt().coerceAtLeast(1)
+    /**
+     * バニラの上昇運動定数です（`FireworkRocketEntity` の逆コンパイル確認値）。
+     *
+     * 自由飛行（`shotAtAngle=false`）では毎tick `v_xz *= 1.15`、`v_y += 0.04`
+     * であり、Y方向の減速・重力はありません。初速を厳密な `(0, 0.05, 0)` で
+     * 上書きすれば、`0 × 1.15 = 0` のためXZは恒久的に0を維持します。
+     * 起爆は `life > lifetime` のtickであり、移動回数は `lifetime + 1` です。
+     */
+    const val INITIAL_UPWARD_VELOCITY = 0.05
+    const val UPWARD_ACCELERATION = 0.04
+
+    /**
+     * 寿命バックストップの余裕tickです。
+     *
+     * 起爆はワンショットタスクの到達判定が担い、寿命起爆は保険です。到達判定が
+     * 誤差で遅れてもこの余裕内で吸収し、漏れたロケットの無限飛行を防ぎます。
+     */
+    const val LIFETIME_MARGIN = 100
+
+    /**
+     * 指定高度に到達する移動回数を返します。
+     *
+     * 高度式 `y = 0.02M² + 0.03M` の逆変換を四捨五入し、tick量子化の誤差を
+     * 半tick移動分（低高度で0.2以下・320で約1.3ブロック）に収めます。
+     */
+    fun heightToMoves(height: Double): Int {
+        if (height <= 0.0) return 0
+        val moves = (-0.03 + kotlin.math.sqrt(0.0009 + 0.08 * height)) / 0.04
+        return moves.roundToInt().coerceAtLeast(1)
+    }
+
+    /** 移動回数から到達高度を求めます（検証・テスト用）。 */
+    fun movesToHeight(moves: Int): Double = 0.02 * moves * moves + 0.03 * moves
+
+    /**
+     * 起爆タスクの発火tick（`setTicksToDetonate` 相当の移動回数−1）を返します。
+     *
+     * 発火時点で正確な目標座標へテレポート補正して即時起爆するため、高度は厳密です。
+     */
+    fun detonationTicks(height: Double): Int = (heightToMoves(height) - 1).coerceAtLeast(0)
+
+    /** 寿命バックストップ（到達不能時の保険）を返します。 */
+    fun backstopLifetime(height: Double): Int = heightToMoves(height) - 1 + LIFETIME_MARGIN
 
     /** 花火アイテムとして有効な素材かを返します。 */
     fun isFireworkMaterial(raw: String): Boolean =

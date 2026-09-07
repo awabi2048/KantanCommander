@@ -2294,9 +2294,10 @@ class GestureSequenceEditor(
     /**
      * ITEM／BLOCK／SOUND／EFFECTの設定元を選択します。
      *
-     * 一時変数は、他の構造化設定と同じく方式選択と参照名入力を別操作にします。
-     * 直接値を選んだ場合は、選択直後に既存のメインハンド設定またはDialog入力へ
-     * 引き継ぎ、設定元の選択だけで未完成の値を完了扱いにしないようにします。
+     * 一時変数・直接値のどちらも、選択操作は設定元の切替だけを行い、値の入力へ
+     * 引き継ぎません。直接値の入力は `lower-edit` の2クリック目から開きます。
+     * 選択だけでDialogや手持ち保存へ進むと、設定元の確認と値入力が分離できず、
+     * 誤った設定元で値を確定する操作を防げないためです。
      */
     private fun selectTypedValueSource(
         player: Player,
@@ -2318,6 +2319,7 @@ class GestureSequenceEditor(
                 if (!updateSettingNode(player, context, configuredFields = emptySet()) {
                         CommandSettingsModel.selectTemporaryValueSource(it, fieldKey)
                     }) return
+                updateLower(player)
                 return
             }
             beginSettingInput(
@@ -2337,7 +2339,7 @@ class GestureSequenceEditor(
         if (!updateSettingNode(player, context, configuredFields = emptySet()) {
                 CommandSettingsModel.selectLiteralValueSource(it, fieldKey)
             }) return
-        beginSelectedFieldEdit(player, fieldKey)
+        updateLower(player)
     }
 
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
@@ -2499,8 +2501,8 @@ class GestureSequenceEditor(
     /**
      * 設定中の花火をその場で打ち上げます。
      *
-     * 保存は行わず、プレイヤー位置から使い捨てで発射します。召喚体台帳へは
-     * 登録しないため、連発の試射で上限を消費しません。
+     * 本実行と同じ検証済み方式（初速固定・ワンショット起爆判定）を使い、
+     * 保存は行わず使い捨てで発射します。召喚体台帳へは登録しません。
      */
     private fun launchFireworkPreview(player: Player, node: CommandNode): Boolean {
         val data = node.string(FireworkSettings.PARAM_DATA)
@@ -2509,20 +2511,45 @@ class GestureSequenceEditor(
                 Material.matchMaterial(raw)?.let { ItemStack(it) }
             } ?: return false
         if (stack.type != Material.FIREWORK_ROCKET) return false
-        val meta = stack.itemMeta as? org.bukkit.inventory.meta.FireworkMeta ?: return false
         val height = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
             .toDoubleOrNull()?.takeIf(Double::isFinite) ?: FireworkSettings.HEIGHT_DEFAULT
-        meta.power = FireworkSettings.heightToPower(height)
-        stack.itemMeta = meta
-        val rocket = player.world.spawn(player.location.clone(), org.bukkit.entity.Firework::class.java)
+        val launchAt = player.location.clone()
+        if (height <= 0.0) {
+            val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
+            instant.setItem(stack)
+            instant.setShotAtAngle(false)
+            instant.detonate()
+            return true
+        }
+        val rocket = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
         rocket.setItem(stack)
         rocket.setShotAtAngle(false)
-        if (height <= 0.0) {
-            rocket.detonate()
-        } else {
-            rocket.ticksToDetonate = FireworkSettings.heightToTicks(height)
-        }
+        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
+        rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
+        val target = launchAt.clone().add(0.0, height, 0.0)
+        plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            detonatePreviewAtTarget(rocket, target)
+        }, FireworkSettings.detonationTicks(height).toLong().coerceAtLeast(1L))
         return true
+    }
+
+    /** 試射のワンショット起爆判定です。本実行と同一条件で目標高度へ補正起爆します。 */
+    private fun detonatePreviewAtTarget(rocket: org.bukkit.entity.Firework, target: Location, retriesLeft: Int = 5) {
+        val world = target.world
+        if (!rocket.isValid || rocket.isDetonated || world == null ||
+            !world.isChunkLoaded(target.blockX shr 4, target.blockZ shr 4)
+        ) {
+            if (retriesLeft > 0) {
+                plugin.server.scheduler.runTaskLater(plugin, Runnable {
+                    detonatePreviewAtTarget(rocket, target, retriesLeft - 1)
+                }, 20L)
+            } else {
+                runCatching { rocket.remove() }
+            }
+            return
+        }
+        rocket.teleport(target)
+        rocket.detonate()
     }
 
     /** メインハンドの花火ロケットを設定値へ保存します。 */
@@ -3726,19 +3753,77 @@ class GestureSequenceEditor(
      * 効果音設定の束ね値（ID・音量・ピッチ／ID・カテゴリ）を一括検証して保存します。
      *
      * Inventory GUIのshowSoundSettingFormと同じ入力欄・検証を使い、操作ごとの
-     * 入力欄集合もCommandDialogSpecsへ一元化します。
+     * 入力欄集合もCommandDialogSpecsへ一元化します。サウンド欄だけは候補表示に
+     * 対応し、クエリにはサウンド欄の現在値だけを使います。
      */
     private fun showSoundSettingDialog(
         player: Player,
         context: CommandSettingContext,
         node: CommandNode,
+        soundOverride: String? = null,
+        soundCandidates: List<String> = emptyList(),
     ) {
         val inputs = CommandDialogSpecs.soundSettingInputs(node)
+        // 候補選択の開き直しで引き継いだ入力途中値は、ここで消費します。
+        // 確定せずに閉じた場合も残さないため、次回の新規表示は保存値から始まります。
+        val pending = pendingSoundDialogValues.remove(player.uniqueId).orEmpty()
+        val candidateButtons = soundCandidates.take(12).map { candidate ->
+            MenuDialogButton(
+                Component.text(candidate),
+                MenuDialogHandler { target, response ->
+                    if (target.uniqueId != player.uniqueId ||
+                        !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                    ) {
+                        if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                        return@MenuDialogHandler MenuActionResult.Ignored
+                    }
+                    // 候補の確定はサウンド欄だけを置き換え、他の欄は入力途中の
+                    // 値を維持して同じダイアログへ戻します。即時保存はしません。
+                    val current = nodeStringMap(response, inputs.map { it.id })
+                    pendingSoundDialogValues[player.uniqueId] = current
+                    showSoundSettingDialog(player, context, node, soundOverride = candidate, soundCandidates = emptyList())
+                    MenuActionResult.Success(MenuUpdate.None)
+                },
+            )
+        }
+        val candidateFooterActions = listOf(MenuDialogButton(
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
+            MenuDialogHandler { target, response ->
+                val ownerId = ownerIdFor(player)
+                if (target.uniqueId != player.uniqueId || !canOperateSharedActor(ownerId, target.uniqueId)) {
+                    if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                    return@MenuDialogHandler MenuActionResult.Ignored
+                }
+                // 候補判定はサウンド欄の内容だけを見ます。音量・カテゴリ欄は
+                // クエリに含めず、入力途中の値も破棄しません。
+                val query = response.textValue(SoundSettings.PARAM_SOUND).trim()
+                pendingSoundDialogValues[player.uniqueId] =
+                    nodeStringMap(response, inputs.map { it.id })
+                showSoundSettingDialog(
+                    player,
+                    context,
+                    node,
+                    soundCandidates = CommandDialogSpecs.suggestions("sound", query),
+                )
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+        ))
         showInputDialog(
             player = player,
             body = CommandDialogSpecs.soundSettingBody(node, player),
-            inputs = inputs.map { it.toMenuInput(player) },
+            inputs = inputs.map {
+                if (it.id == SoundSettings.PARAM_SOUND && soundOverride != null) {
+                    it.copy(initial = soundOverride).toMenuInput(player)
+                } else {
+                    it.copy(initial = pending[it.id] ?: it.initial).toMenuInput(player)
+                }
+            },
+            additionalActions = candidateButtons,
+            footerActions = candidateFooterActions,
+            multiActionWithoutExit = true,
+            columns = 3,
         ) { response ->
+            pendingSoundDialogValues.remove(player.uniqueId)
             val rawValues = inputs.associate { it.id to CommandDialogSpecs.normalize(it.id, response.textValue(it.id)) }
             val validationError = inputs
                 .mapNotNull { it.spec.validateInput(rawValues.getValue(it.id)) }
@@ -3752,6 +3837,12 @@ class GestureSequenceEditor(
             null
         }
     }
+
+    /** 候補選択で開き直す間に、入力途中の値を保持する一時領域です。 */
+    private val pendingSoundDialogValues = mutableMapOf<UUID, Map<String, String>>()
+
+    private fun nodeStringMap(response: MenuDialogResponse, ids: List<String>): Map<String, String> =
+        ids.associateWith { response.textValue(it) }
 
     /**
      * パーティクル種類と詳細データを一括検証して保存します。

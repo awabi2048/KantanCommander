@@ -45,6 +45,7 @@ import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
+import org.bukkit.Location
 import org.bukkit.Sound
 import org.bukkit.entity.Player
 import java.util.UUID
@@ -733,6 +734,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val slots = CommandSettingsSlotPolicy.slots(node.type, fields.map(EditorField::key))
         val menuSize = CommandSettingsSlotPolicy.size(node.type, fields.size)
         val elements = fields.mapIndexed { index, field ->
+            val display = field.value(node)
+            // 複数の意味値を持つ表示はLoreのデータ行へ分けます。単一行の結合は
+            // 行ピッチを崩すため、意味ごとの行をそのままデータ行へ写します。
+            val data = display.rows(player)?.map { row ->
+                GuiMenuEntryData(row.label, row.value)
+            } ?: listOf(GuiMenuEntryData(
+                KcI18n.text(player, field.label),
+                display.render(player),
+            ))
             KcGui.menuEntry(
                 player = player,
                 slot = slots[index],
@@ -740,10 +750,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 name = KcI18n.text(player, field.label),
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(player, field.descriptionKey),
-                data = listOf(GuiMenuEntryData(
-                    KcI18n.text(player, field.label),
-                    field.value(node).render(player),
-                )),
+                data = data,
                 actions = listOf(GuiMenuActionIntent.AnyClick(
                     actionId = "field",
                     label = KcI18n.text(player, field.actionKey),
@@ -1540,8 +1547,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     /**
      * 設定中の花火をその場で打ち上げます。
      *
-     * 保存は行わず、プレイヤー位置から使い捨てで発射します。召喚体台帳へは
-     * 登録しないため、連発の試射で上限を消費しません。
+     * 本実行と同じ検証済み方式（初速固定・ワンショット起爆判定）を使い、
+     * 保存は行わず使い捨てで発射します。召喚体台帳へは登録しません。
      */
     private fun launchFireworkPreview(player: Player, route: MenuRoute): MenuActionResult {
         val node = node(route) ?: return MenuActionResult.Ignored
@@ -1552,20 +1559,45 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             org.bukkit.Material.matchMaterial(raw)?.let { org.bukkit.inventory.ItemStack(it) }
         } ?: return MenuActionResult.Ignored
         if (stack.type != Material.FIREWORK_ROCKET) return MenuActionResult.Ignored
-        val meta = stack.itemMeta as? org.bukkit.inventory.meta.FireworkMeta ?: return MenuActionResult.Ignored
         val height = node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString())
             .toDoubleOrNull()?.takeIf(Double::isFinite) ?: FireworkSettings.HEIGHT_DEFAULT
-        meta.power = FireworkSettings.heightToPower(height)
-        stack.itemMeta = meta
-        val rocket = player.world.spawn(player.location.clone(), org.bukkit.entity.Firework::class.java)
+        val launchAt = player.location.clone()
+        if (height <= 0.0) {
+            val instant = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
+            instant.setItem(stack)
+            instant.setShotAtAngle(false)
+            instant.detonate()
+            return MenuActionResult.Success(MenuUpdate.None)
+        }
+        val rocket = player.world.spawn(launchAt, org.bukkit.entity.Firework::class.java)
         rocket.setItem(stack)
         rocket.setShotAtAngle(false)
-        if (height <= 0.0) {
-            rocket.detonate()
-        } else {
-            rocket.ticksToDetonate = FireworkSettings.heightToTicks(height)
-        }
+        rocket.velocity = org.bukkit.util.Vector(0.0, FireworkSettings.INITIAL_UPWARD_VELOCITY, 0.0)
+        rocket.ticksToDetonate = FireworkSettings.backstopLifetime(height)
+        val target = launchAt.clone().add(0.0, height, 0.0)
+        plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            detonatePreviewAtTarget(rocket, target)
+        }, FireworkSettings.detonationTicks(height).toLong().coerceAtLeast(1L))
         return MenuActionResult.Success(MenuUpdate.None)
+    }
+
+    /** 試射のワンショット起爆判定です。本実行と同一条件で目標高度へ補正起爆します。 */
+    private fun detonatePreviewAtTarget(rocket: org.bukkit.entity.Firework, target: Location, retriesLeft: Int = 5) {
+        val world = target.world
+        if (!rocket.isValid || rocket.isDetonated || world == null ||
+            !world.isChunkLoaded(target.blockX shr 4, target.blockZ shr 4)
+        ) {
+            if (retriesLeft > 0) {
+                plugin.server.scheduler.runTaskLater(plugin, Runnable {
+                    detonatePreviewAtTarget(rocket, target, retriesLeft - 1)
+                }, 20L)
+            } else {
+                runCatching { rocket.remove() }
+            }
+            return
+        }
+        rocket.teleport(target)
+        rocket.detonate()
     }
 
     private fun renderSoundTargetPosition(player: Player, route: MenuRoute): InventoryMenuView {
@@ -1951,7 +1983,7 @@ sealed interface DisplayValue {
         val staySeconds: String,
         val fadeOutSeconds: String,
     ) : DisplayValue {
-        fun rows(player: Player): List<TimingRow> = listOf(
+        override fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
                 fadeInSeconds,
@@ -1977,7 +2009,7 @@ sealed interface DisplayValue {
     ) : DisplayValue {
         // 5値を5行へ分けると行ピッチが半減して縦に重なるため、3軸は範囲1行へ
         // まとめます。表示時間タブと同一形状になり、既存の複数行配置に収まります。
-        fun rows(player: Player): List<TimingRow> = listOf(
+        override fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_SPREAD),
                 listOf(deltaX, deltaY, deltaZ).joinToString(" / "),
@@ -1999,7 +2031,7 @@ sealed interface DisplayValue {
         val positionKind: PositionKind?,
         val operation: SoundOperation,
     ) : DisplayValue {
-        fun rows(player: Player): List<TimingRow> = buildList {
+        override fun rows(player: Player): List<TimingRow> = buildList {
             add(TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 targetKind?.let { displayTarget(it).render(player) }
@@ -2024,7 +2056,7 @@ sealed interface DisplayValue {
         val category: String,
         val tempRef: String?,
     ) : DisplayValue {
-        fun rows(player: Player): List<TimingRow> {
+        override fun rows(player: Player): List<TimingRow> {
             tempRef?.let {
                 return listOf(TimingRow(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND),
@@ -2060,7 +2092,7 @@ sealed interface DisplayValue {
         val targetKind: TargetKind?,
         val mode: ParticleDisplayMode,
     ) : DisplayValue {
-        fun rows(player: Player): List<TimingRow> = listOf(
+        override fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 targetKind?.let { displayTarget(it).render(player) }
@@ -2103,6 +2135,21 @@ sealed interface DisplayValue {
                 add("${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING)}=${it.render(player)}")
             }
         }.joinToString(" / ").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+    }
+
+    /**
+     * 意味ごとの行へ分けて表示できる値を返します。
+     *
+     * Inventory GUIは行ごとをLoreのデータ行へ分け、Gesture GUIは複数行
+     * レイアウトへ通します。単一行で十分な値はnullを返します。
+     */
+    fun rows(player: Player): List<TimingRow>? = when (this) {
+        is Timing -> rows(player)
+        is ParticleParameters -> rows(player)
+        is SoundTargetPosition -> rows(player)
+        is SoundSetting -> rows(player)
+        is ParticleDisplay -> rows(player)
+        else -> null
     }
 }
 

@@ -85,4 +85,30 @@ class EffectsDialogSpecsTest {
         assertNull(CommandDialogSpecs.burstHeight.validateInput("20.0"))
         assertTrue(CommandDialogSpecs.burstHeight.validateInput("321") != null)
     }
+
+    @Test
+    fun `new specs report specific invalid keys`() {
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DENSITY_INVALID,
+            CommandDialogSpecs.particleDensity.validateInput("0"),
+        )
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_DIALOG_BURST_HEIGHT_INVALID,
+            CommandDialogSpecs.burstHeight.validateInput("321"),
+        )
+        assertEquals(
+            com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys
+                .KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STOP_SOUND_CATEGORY_INVALID,
+            CommandDialogSpecs.stopSoundCategory.validateInput("unknown"),
+        )
+    }
+
+    @Test
+    fun `sound field supports suggestions for the candidate flow`() {
+        assertTrue(CommandDialogSpecs.supportsSuggestions("sound"))
+        // 単体環境ではRegistryが使えないため空欄になるが、契約は維持する。
+        assertTrue(CommandDialogSpecs.suggestions("sound", "note").size <= 12)
+    }
 }

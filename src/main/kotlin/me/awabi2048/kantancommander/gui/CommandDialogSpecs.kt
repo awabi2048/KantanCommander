@@ -292,11 +292,12 @@ internal object CommandDialogSpecs {
             if (raw.isBlank() || SoundSettings.isCategoryValue(raw)) {
                 null
             } else {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STOP_SOUND_CATEGORY_INVALID
             }
         },
         required = false,
         format = InputFormat.ANY_STRING,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STOP_SOUND_BODY,
     )
 
     /** 停止対象の効果音IDは空欄（全音）またはサウンドIDを受け付けます。 */
@@ -363,7 +364,7 @@ internal object CommandDialogSpecs {
         when (SoundSettings.operation(node)) {
             SoundOperation.PLAY -> soundParametersBody(player)
             SoundOperation.STOP -> listOf(
-                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SOUND_BODY),
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STOP_SOUND_BODY),
             )
         }
 
@@ -406,7 +407,7 @@ internal object CommandDialogSpecs {
                         integerRange(
                             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TICKS,
                             0..Int.MAX_VALUE,
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
                         ),
                     ),
                 )
@@ -432,7 +433,7 @@ internal object CommandDialogSpecs {
                                         ).getOrThrow()
                                     }.isFailure
                                 ) {
-                                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DATA_INVALID
                                 } else null
                             },
                             required = true,
@@ -446,7 +447,7 @@ internal object CommandDialogSpecs {
                         integerRange(
                             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TICKS,
                             0..Int.MAX_VALUE,
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTEGER_INVALID,
                         ),
                     ),
                 )
@@ -597,7 +598,7 @@ internal object CommandDialogSpecs {
                 decimalRange(
                     field.labelKey,
                     field.range,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID,
                 ),
             )
         }
@@ -605,7 +606,7 @@ internal object CommandDialogSpecs {
 
     /** 図形数値の入力方法と制約だけを表示します。値は入力欄に表示します。 */
     fun geometryBody(player: Player): List<Component> = listOf(
-        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_PARAMETERS_BODY),
+        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBERS_BODY),
     )
 
     /** 密度の入力仕様です。合意範囲（0超過・2.0以下）を受け付けます。 */
@@ -614,11 +615,12 @@ internal object CommandDialogSpecs {
         16,
         validate = { raw ->
             if (!isNumericTemplate(raw) && !ParticleGeometry.isDensityValue(raw)) {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DENSITY_INVALID
             } else null
         },
         required = true,
         format = InputFormat.NUMBER,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DENSITY_BODY,
     )
 
     /** 打ち上げ高さの入力仕様です。0〜320ブロックを受け付けます。 */
@@ -627,11 +629,12 @@ internal object CommandDialogSpecs {
         16,
         validate = { raw ->
             if (!isNumericTemplate(raw) && !FireworkSettings.isBurstHeight(raw)) {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_BURST_HEIGHT_INVALID
             } else null
         },
         required = true,
         format = InputFormat.NUMBER,
+        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_BURST_HEIGHT_BODY,
     )
     fun particleData(node: CommandNode): Spec = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DATA,

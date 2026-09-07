@@ -140,4 +140,22 @@ class EffectsSettingsModelTest {
         CommandSettingsModel.setPositionSpec(firework, CommandSettingRole.FIREWORK_POSITION, PositionSpec(PositionKind.DISK))
         assertEquals(PositionKind.DISK, firework.fireworkPositionSpec?.kind)
     }
+
+    @Test
+    fun `bundled fields expose typed display values`() {
+        val sound = CommandType.PLAY_SOUND.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+            params["sound"] = "minecraft:block.note_block.harp"
+        }
+        val soundFields = EditorMenuLayout.fields(CommandType.PLAY_SOUND).associate { it.key to it.value(sound) }
+        val targetPosition = soundFields["soundTargetPosition"] as DisplayValue.SoundTargetPosition
+        assertEquals(TargetKind.ALL_PLAYERS, targetPosition.targetKind)
+        val setting = soundFields["soundSetting"] as DisplayValue.SoundSetting
+        assertEquals("minecraft:block.note_block.harp", setting.sound)
+
+        val particle = CommandType.PARTICLE.newNode()
+        val particleFields = EditorMenuLayout.fields(CommandType.PARTICLE).associate { it.key to it.value(particle) }
+        val display = particleFields["particleDisplay"] as DisplayValue.ParticleDisplay
+        assertEquals(me.awabi2048.kantancommander.model.ParticleDisplayMode.POINT, display.mode)
+    }
 }

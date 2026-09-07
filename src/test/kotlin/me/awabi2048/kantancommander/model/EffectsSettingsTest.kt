@@ -31,15 +31,25 @@ class EffectsSettingsTest {
     }
 
     @Test
-    fun `height converts to power tiers and detonation ticks`() {
-        assertEquals(1, FireworkSettings.heightToPower(0.0))
-        assertEquals(1, FireworkSettings.heightToPower(20.0))
-        assertEquals(2, FireworkSettings.heightToPower(21.0))
-        assertEquals(2, FireworkSettings.heightToPower(60.0))
-        assertEquals(3, FireworkSettings.heightToPower(61.0))
-        assertEquals(1, FireworkSettings.heightToTicks(0.0))
-        assertEquals(40, FireworkSettings.heightToTicks(20.0))
-        assertEquals(640, FireworkSettings.heightToTicks(320.0))
+    fun `height converts to vanilla detonation ticks`() {
+        // y = 0.02M^2 + 0.03M の逆変換を四捨五入し、移動回数-1を起爆tickにします。
+        assertEquals(30, FireworkSettings.detonationTicks(20.0))
+        assertEquals(53, FireworkSettings.detonationTicks(60.0))
+        assertEquals(69, FireworkSettings.detonationTicks(100.0))
+        assertEquals(125, FireworkSettings.detonationTicks(320.0))
+        assertEquals(0, FireworkSettings.detonationTicks(0.0))
+        // バックストップは到達不能時の保険として余裕を持たせます。
+        assertEquals(130, FireworkSettings.backstopLifetime(20.0))
+    }
+
+    @Test
+    fun `height formula roundtrips within half-tick travel`() {
+        listOf(1.0, 20.0, 60.0, 100.0, 320.0).forEach { height ->
+            val moves = FireworkSettings.heightToMoves(height)
+            val reached = FireworkSettings.movesToHeight(moves)
+            // 量子化誤差は半tick移動分に収まります。
+            assertTrue(kotlin.math.abs(reached - height) < 2.6, "height=$height reached=$reached")
+        }
     }
 
     @Test

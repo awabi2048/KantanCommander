@@ -191,6 +191,9 @@ class GestureLowerPanel(
         val compositeRows = when (displayValue) {
             is DisplayValue.Timing -> displayValue.rows(player)
             is DisplayValue.ParticleParameters -> displayValue.rows(player)
+            is DisplayValue.SoundTargetPosition -> displayValue.rows(player)
+            is DisplayValue.SoundSetting -> displayValue.rows(player)
+            is DisplayValue.ParticleDisplay -> displayValue.rows(player)
             else -> null
         }
         val compositeLayout = compositeRows?.let {
@@ -457,7 +460,7 @@ class GestureLowerPanel(
                 },
                 targetVisualId = "lower-firework-preview-bg",
                 hoverText = singleLineHover(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FIREWORK_PREVIEW),
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIREWORK_PREVIEW_HOVER),
                     x = HOVER_SLOT_X,
                     y = HOVER_SLOT_Y,
                 ),
