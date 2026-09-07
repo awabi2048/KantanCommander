@@ -8,7 +8,7 @@ class PlacementAccessRulesTest {
     fun `admin bypasses every restriction`() {
         assertEquals(
             PlacementDecision.ALLOW,
-            PlacementAccessRules.decide(admin = true, inMyWorld = false, toolEnabled = false),
+            PlacementAccessRules.decide(admin = true, inMyWorld = false, toolEnabled = false, creative = false),
         )
     }
 
@@ -16,7 +16,7 @@ class PlacementAccessRulesTest {
     fun `outside MyWorld denies before tool permission`() {
         assertEquals(
             PlacementDecision.OUTSIDE_MY_WORLD,
-            PlacementAccessRules.decide(admin = false, inMyWorld = false, toolEnabled = true),
+            PlacementAccessRules.decide(admin = false, inMyWorld = false, toolEnabled = true, creative = true),
         )
     }
 
@@ -24,15 +24,23 @@ class PlacementAccessRulesTest {
     fun `missing tool permission denies inside MyWorld`() {
         assertEquals(
             PlacementDecision.NO_TOOL_PERMISSION,
-            PlacementAccessRules.decide(admin = false, inMyWorld = true, toolEnabled = false),
+            PlacementAccessRules.decide(admin = false, inMyWorld = true, toolEnabled = false, creative = true),
         )
     }
 
     @Test
-    fun `granted tool permission allows inside MyWorld`() {
+    fun `non-creative denies after tool permission`() {
+        assertEquals(
+            PlacementDecision.NOT_CREATIVE,
+            PlacementAccessRules.decide(admin = false, inMyWorld = true, toolEnabled = true, creative = false),
+        )
+    }
+
+    @Test
+    fun `granted tool permission allows creative inside MyWorld`() {
         assertEquals(
             PlacementDecision.ALLOW,
-            PlacementAccessRules.decide(admin = false, inMyWorld = true, toolEnabled = true),
+            PlacementAccessRules.decide(admin = false, inMyWorld = true, toolEnabled = true, creative = true),
         )
     }
 }

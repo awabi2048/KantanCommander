@@ -5,6 +5,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.command.KantanCommandPermissions
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
+import org.bukkit.GameMode
 import org.bukkit.entity.Player
 
 /**
@@ -12,7 +13,7 @@ import org.bukkit.entity.Player
  *
  * 拒否理由ごとに利用者への通知を分けるため、真偽値ではなく列挙で返します。
  * 各コマンド・ツール固有の権限分離は将来拡張とし、ここでは制御ブロック操作の
- * 共通フロー（admin → 世界内外 → ツール権限）だけを扱います。
+ * 共通フロー（admin → 世界内外 → ツール権限 → クリエイティブ）だけを扱います。
  */
 enum class PlacementDecision {
     ALLOW,
@@ -20,13 +21,16 @@ enum class PlacementDecision {
     OUTSIDE_MY_WORLD,
     /** このマイワールドで使用する権限がありません。 */
     NO_TOOL_PERMISSION,
+    /** クリエイティブモード以外では使用できません。 */
+    NOT_CREATIVE,
 }
 
 object PlacementAccessRules {
-    fun decide(admin: Boolean, inMyWorld: Boolean, toolEnabled: Boolean): PlacementDecision = when {
+    fun decide(admin: Boolean, inMyWorld: Boolean, toolEnabled: Boolean, creative: Boolean): PlacementDecision = when {
         admin -> PlacementDecision.ALLOW
         !inMyWorld -> PlacementDecision.OUTSIDE_MY_WORLD
         !toolEnabled -> PlacementDecision.NO_TOOL_PERMISSION
+        !creative -> PlacementDecision.NOT_CREATIVE
         else -> PlacementDecision.ALLOW
     }
 }
@@ -49,12 +53,9 @@ class PlacementAccessPolicy(private val plugin: KantanCommanderPlugin) {
         val toolEnabled = !plugin.server.pluginManager.isPluginEnabled("MWMChanpon") ||
             player.hasPermission(EXTENDED_COMMAND_BLOCK_PERMISSION)
         if (!toolEnabled) return PlacementDecision.NO_TOOL_PERMISSION
+        if (player.gameMode != GameMode.CREATIVE) return PlacementDecision.NOT_CREATIVE
         return PlacementDecision.ALLOW
     }
-
-    /** 段階移行中の橋渡しです。呼出側がdecideへ移行したら削除します。 */
-    fun canManage(player: Player, worldName: String): Boolean =
-        decide(player, worldName) == PlacementDecision.ALLOW
 
     /**
      * 判定して拒否理由を赤字ActionBarで通知します。設置・破壊・編集・開放の
@@ -73,6 +74,8 @@ class PlacementAccessPolicy(private val plugin: KantanCommanderPlugin) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENT_OUTSIDE_MYWORLD
             PlacementDecision.NO_TOOL_PERMISSION ->
                 KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENT_NO_TOOL_PERMISSION
+            PlacementDecision.NOT_CREATIVE ->
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_PLACEMENT_NOT_CREATIVE
             PlacementDecision.ALLOW -> return
         }
         plugin.feedback.sendActionBar(player, KcI18n.text(player, key))
