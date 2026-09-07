@@ -41,6 +41,7 @@ object PersistedScriptValidator {
         optionalInteger(root, "revision", path, errors)
         optionalBoolean(root, "contentModified", path, errors)
         optionalUuidArray(root, "collapsedForStartIds", path, errors)
+        optionalUuidArray(root, "collapsedConditionIds", path, errors)
         return errors
     }
 

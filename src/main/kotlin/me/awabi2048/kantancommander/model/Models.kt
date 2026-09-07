@@ -41,6 +41,15 @@ data class DiskScript(
      */
     var collapsedForStartIds: MutableSet<UUID>? = null,
     /**
+     * ジェスチャーGUIで折りたたみ表示する条件分岐ノードのID集合です。
+     *
+     * グラフ構造には影響しない表示状態ですが、編集画面の見た目を保つため
+     * プログラムごとに永続化します。旧JSONには存在しないためnullableにし、
+     * 読み込み直後は空集合として扱います。実行内容・出力可否の判定には使いません。
+     * Shift+左クリックの再クリックで切り替えます（素の再クリックは枝入替）。
+     */
+    var collapsedConditionIds: MutableSet<UUID>? = null,
+    /**
      * ノードを持たないスクリプトでも、プログラム名またはタイマーを明示的に
      * 編集したことを保持します。配置からのディスク出力可否は値の非空判定では
      * なく、この編集状態とグラフの両方を共通判定するため、初期配置の既定名を
@@ -60,6 +69,15 @@ fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotE
  */
 fun DiskScript.collapsedForStarts(): MutableSet<UUID> =
     collapsedForStartIds ?: linkedSetOf<UUID>().also { collapsedForStartIds = it }
+
+/**
+ * 折りたたみ表示する条件分岐ノードのID集合です。
+ *
+ * 旧JSONには存在しないため欠落時は空集合を割り当てます。描画時は現存する
+ * CONDITIONとの積だけを有効とし、残骸IDは無視します。
+ */
+fun DiskScript.collapsedConditions(): MutableSet<UUID> =
+    collapsedConditionIds ?: linkedSetOf<UUID>().also { collapsedConditionIds = it }
 
 data class TimerSetting(
     var enabled: Boolean = false,

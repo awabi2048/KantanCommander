@@ -5,6 +5,7 @@ import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.collapsedForStarts
+import me.awabi2048.kantancommander.model.collapsedConditions
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TargetKind
@@ -72,6 +73,25 @@ class ScriptStoreTest {
         val script = store.create(UUID.randomUUID(), "test")
         val loaded = requireNotNull(store.load(script.id))
         assertTrue(loaded.collapsedForStarts().isEmpty())
+        assertTrue(loaded.collapsedConditions().isEmpty())
+    }
+
+    @Test
+    fun `collapsed conditions round trip independently`() {
+        val store = ScriptStore(temp.resolve("collapsed-conditions"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "test")
+        val collapsed = UUID.randomUUID()
+        script.collapsedConditionIds = mutableSetOf(collapsed)
+        store.save(script)
+
+        val loaded = requireNotNull(store.load(script.id))
+        assertEquals(setOf(collapsed), loaded.collapsedConditions())
+        assertFalse(loaded.hasDiskContent())
+
+        val copy = store.copyForPlacement(loaded)
+        assertEquals(setOf(collapsed), copy.collapsedConditions())
+        copy.collapsedConditions().clear()
+        assertEquals(setOf(collapsed), loaded.collapsedConditions())
     }
 
     @Test

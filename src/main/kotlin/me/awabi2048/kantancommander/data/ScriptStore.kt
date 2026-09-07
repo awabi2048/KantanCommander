@@ -94,6 +94,7 @@ class ScriptStore(
             graph = source.graph.deepCopy(),
             // グラフ複製はノードIDを維持するため、折りたたみ集合も独立複製して引き継ぎます。
             collapsedForStartIds = source.collapsedForStartIds?.toMutableSet(),
+            collapsedConditionIds = source.collapsedConditionIds?.toMutableSet(),
         ).also(::save)
 
     fun copyForItem(source: DiskScript): DiskScript =
@@ -104,6 +105,7 @@ class ScriptStore(
             revision = 0L,
             graph = source.graph.deepCopy(),
             collapsedForStartIds = source.collapsedForStartIds?.toMutableSet(),
+            collapsedConditionIds = source.collapsedConditionIds?.toMutableSet(),
         ).also(::save)
 
     fun copyToLibrary(source: DiskScript, owner: UUID, name: String = source.name): DiskScript =
@@ -116,6 +118,7 @@ class ScriptStore(
             revision = 0L,
             graph = source.graph.deepCopy(),
             collapsedForStartIds = source.collapsedForStartIds?.toMutableSet(),
+            collapsedConditionIds = source.collapsedConditionIds?.toMutableSet(),
         ).also {
             save(it)
             addToLibrary(owner, it.id)
@@ -394,6 +397,7 @@ class ScriptStore(
         timer = timer.copy(),
         graph = graph.deepCopy(),
         collapsedForStartIds = collapsedForStartIds?.toMutableSet(),
+        collapsedConditionIds = collapsedConditionIds?.toMutableSet(),
     )
 
     /**
