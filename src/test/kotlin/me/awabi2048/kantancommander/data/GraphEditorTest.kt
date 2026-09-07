@@ -844,18 +844,88 @@ class GraphEditorTest {
     }
 
     @Test
-    fun `folded unmerged if has no reorder arrows`() {
+    fun `folded unmerged if stores the predecessor into the true tail`() {
+        val graph = CommandGraph.empty()
+        val before = GraphEditor.append(graph, CommandType.WAIT)
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val body = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        assertEquals(body.id, condition.trueNext)
+        val folded = setOf(condition.id)
+
+        // 前任側の右移動と条件側の左移動は、同じ格納結果になります。
+        assertTrue(GraphEditor.canSwapAdjacent(graph, before.id, GraphEditor.ReorderDirection.RIGHT, emptySet(), folded))
+        assertTrue(GraphEditor.swapAdjacent(graph, before.id, GraphEditor.ReorderDirection.RIGHT, emptySet(), folded))
+        assertEquals(condition.id, graph.entryNodeId)
+        assertEquals(before.id, body.next)
+        assertNull(before.next)
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+
+        val mirrored = CommandGraph.empty()
+        val mBefore = GraphEditor.append(mirrored, CommandType.WAIT)
+        val mCondition = GraphEditor.append(mirrored, CommandType.CONDITION)
+        val mBody = GraphEditor.append(mirrored, CommandType.DISPLAY_TEXT)
+        val mFolded = setOf(mCondition.id)
+
+        assertTrue(GraphEditor.canSwapAdjacent(mirrored, mCondition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), mFolded))
+        assertTrue(GraphEditor.swapAdjacent(mirrored, mCondition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), mFolded))
+        assertEquals(mCondition.id, mirrored.entryNodeId)
+        assertEquals(mBefore.id, mBody.next)
+        assertTrue(GraphValidator.validate(mirrored).isEmpty())
+    }
+
+    @Test
+    fun `folded unmerged if has no right move`() {
         val graph = CommandGraph.empty()
         GraphEditor.append(graph, CommandType.WAIT)
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
         val folded = setOf(condition.id)
 
-        // 未合流の折りたたみIFは出口が定まらないため、移動単位にしません。
-        assertFalse(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), folded))
-        assertFalse(GraphEditor.swapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), folded))
+        // 末端で後継を持てないため、右移動は拒否されます。
         assertFalse(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.RIGHT, emptySet(), folded))
         assertFalse(GraphEditor.swapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.RIGHT, emptySet(), folded))
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `folded unmerged if after a for end stays put`() {
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.WAIT)
+        val start = GraphEditor.append(graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId).let(graph.nodes::get)!!
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val folded = setOf(condition.id)
+        assertEquals(condition.id, end.next)
+
+        // 前任が構造ノード・後継なしのため、どちらの向きも正当に拒否されます。
+        // いずれの組み替えもFOR_ENDを孤立させるため、有効な移動は存在しません。
+        assertFalse(GraphEditor.canSwapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), folded))
+        assertFalse(GraphEditor.swapAdjacent(graph, condition.id, GraphEditor.ReorderDirection.LEFT, emptySet(), folded))
+        assertFalse(GraphEditor.canSwapAdjacent(graph, end.id, GraphEditor.ReorderDirection.RIGHT))
+        assertFalse(GraphEditor.swapAdjacent(graph, end.id, GraphEditor.ReorderDirection.RIGHT))
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
+    @Test
+    fun `folded true tail resolutions never target condition next`() {
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.WAIT)
+        val empty = GraphEditor.append(graph, CommandType.CONDITION)
+        // TRUE空なら条件自身のTRUE枝を返します。
+        assertEquals(
+            empty.id to GraphEditor.Edge.TRUE,
+            GraphEditor.foldedTrueTail(graph, empty.id),
+        )
+        val occupied = GraphEditor.insert(graph, empty.id, GraphEditor.Edge.TRUE, CommandType.CONDITION)
+        // TRUE鎖末尾が条件なら、そのTRUE枝を返します。
+        assertEquals(
+            occupied.id to GraphEditor.Edge.TRUE,
+            GraphEditor.foldedTrueTail(graph, empty.id),
+        )
+        // 合流済み条件には適用しません。
+        GraphEditor.appendMerge(graph, occupied.id)
+        assertEquals(null, GraphEditor.foldedTrueTail(graph, occupied.id))
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 

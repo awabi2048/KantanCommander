@@ -5073,6 +5073,11 @@ class GestureSequenceEditor(
                     return
                 }
                 if (reordered != true) return
+                // 折畳み未合流条件への格納移動では、移動ノードを末端行へ追記します。
+                detectFoldedEnter(reorderScript, nodeId, direction)?.let { (conditionId, movedId) ->
+                    state.foldedAppendedRows.getOrPut(conditionId) { mutableListOf() }
+                        .also { row -> if (movedId !in row) row.add(movedId) }
+                }
                 // 入れ替え後も同じノードを選択し続け、設定パネルの対象を失わせません。
                 state.selectedNodeId = nodeId
                 updateUpper(player)
@@ -5791,6 +5796,46 @@ class GestureSequenceEditor(
             1.0f,
         )
         updateUpper(player)
+    }
+
+    /**
+     * 折畳み未合流条件への格納移動を検出します。
+     *
+     * 前任ノードの右移動・条件側の左移動は同じ組み替え（上側枝末尾への格納）のため、
+     * いずれの矢印からも（条件ID・移動ノードID）を返します。該当しない場合はnullです。
+     * 保存成功後に末端行へ追記するために使います。
+     */
+    private fun detectFoldedEnter(
+        script: DiskScript,
+        nodeId: UUID,
+        direction: GraphEditor.ReorderDirection,
+    ): Pair<UUID, UUID>? {
+        val collapsed = effectiveCollapsedConditions(script)
+        val mover = script.graph.nodes[nodeId] ?: return null
+        if (direction == GraphEditor.ReorderDirection.RIGHT &&
+            mover.type != CommandType.CONDITION && mover.type != CommandType.MERGE &&
+            mover.type != CommandType.FOR_START && mover.type != CommandType.FOR_END
+        ) {
+            val next = mover.next?.let(script.graph.nodes::get) ?: return null
+            if (next.type == CommandType.CONDITION && next.id in collapsed && next.pairedNodeId == null) {
+                return next.id to mover.id
+            }
+            return null
+        }
+        if (direction == GraphEditor.ReorderDirection.LEFT && mover.type == CommandType.CONDITION &&
+            mover.id in collapsed && mover.pairedNodeId == null
+        ) {
+            val previous = script.graph.nodes.values
+                .filter { it.next == mover.id }
+                .map { it.id }
+                .singleOrNull()
+                ?.let(script.graph.nodes::get) ?: return null
+            if (previous.type == CommandType.CONDITION || previous.type == CommandType.MERGE ||
+                previous.type == CommandType.FOR_START || previous.type == CommandType.FOR_END
+            ) return null
+            return mover.id to previous.id
+        }
+        return null
     }
 
     /**

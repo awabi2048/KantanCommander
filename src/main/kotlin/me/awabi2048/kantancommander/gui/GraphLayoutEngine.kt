@@ -796,9 +796,11 @@ object GraphLayoutEngine {
             }
             // 終端時は条件・末端行・末尾追加点を描き、あたかも閉じているかのように並べます。
             // 末端行は折畳み中の追加分だけであり、既存枝ノードは隠蔽したままです。
+            // 末尾追加点は移動操作と共用の上側枝解決値を持ち、表示と実操作を一致させます。
             val rowIds = foldedAppendedRows[condition.id].orEmpty()
                 .filter { it in graph.nodes }
-            val addTarget = foldedRowAddTarget(condition)
+            val resolvedTail = GraphEditor.foldedTrueTail(graph, condition.id) ?: return null
+            val addTarget = InsertionTarget(resolvedTail.first, resolvedTail.second, condition.id)
             var penX = x + 2
             for (rowId in rowIds) {
                 val rowNode = graph.nodes[rowId] ?: continue
@@ -825,48 +827,6 @@ object GraphLayoutEngine {
                 end = SegmentExit.Node(lastShown, null),
                 insertionTarget = null,
             )
-        }
-
-        /**
-         * 折畳み未合流条件の末尾追加点が指す挿入先を返します。
-         *
-         * 上側（TRUE）枝へ追加するため、TRUE空なら条件自身のTRUE枝、占有なら
-         * TRUE鎖末尾を返します。鎖内は上側優先で辿り、`(条件 × NEXT)` の無効指定を
-         * 決して返しません。配置層と確定処理で同じ解決を使うことで、表示と実挿入を
-         * 一致させます。
-         */
-        private fun foldedRowAddTarget(condition: CommandNode): InsertionTarget {
-            val head = condition.trueNext ?: return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
-            var current = head
-            val visited = mutableSetOf<UUID>()
-            while (visited.add(current)) {
-                val node = graph.nodes[current]
-                    ?: return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
-                when (node.type) {
-                    // 鎖内の条件は上側優先で辿ります。空枝があればそこへ追加します。
-                    CommandType.CONDITION -> {
-                        val upper = node.trueNext
-                        if (upper == null) {
-                            return InsertionTarget(node.id, GraphEditor.Edge.TRUE)
-                        }
-                        // FALSE枝へは潜らず、行表示と一致するTRUE鎖末尾へ進みます。
-                        current = upper
-                    }
-                    CommandType.FOR_START -> {
-                        val endId = node.pairedNodeId?.let(graph.nodes::get)
-                            ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == node.id }?.id
-                            ?: return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
-                        val endNext = graph.nodes.getValue(endId).next
-                        if (endNext == null) return InsertionTarget(endId, GraphEditor.Edge.NEXT)
-                        current = endNext
-                    }
-                    else -> {
-                        val next = node.next ?: return InsertionTarget(node.id, GraphEditor.Edge.NEXT)
-                        current = next
-                    }
-                }
-            }
-            return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
         }
 
         /**
