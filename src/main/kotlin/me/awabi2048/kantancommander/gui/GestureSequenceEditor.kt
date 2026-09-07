@@ -1507,9 +1507,14 @@ class GestureSequenceEditor(
                         val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
                         val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
+                        // 折りたたみ中のFOR開始はブロック全体の代理として黒背景で示します。
+                        // テスト実行中は折りたたみを無視するため、テスト色が優先されます。
+                        val isCollapsedForStart = !testActive &&
+                            node.type == CommandType.FOR_START && node.id in collapsedForStarts
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
                         // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
-                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
+                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑、
+                        // 未設定警告=橙、折りたたみ=黒です。警告は折りたたみより優先します。
                         val backgroundMaterial = when {
                             isFailedNode -> Material.RED_SHULKER_BOX
                             isWaitingNode -> Material.YELLOW_SHULKER_BOX
@@ -1517,6 +1522,7 @@ class GestureSequenceEditor(
                             isLoopActiveStart -> Material.LIGHT_BLUE_SHULKER_BOX
                             isSuccessfulNode -> Material.LIME_SHULKER_BOX
                             incomplete -> Material.ORANGE_SHULKER_BOX
+                            isCollapsedForStart -> Material.BLACK_SHULKER_BOX
                             else -> Material.LIGHT_GRAY_SHULKER_BOX
                         }
                         val glowColor = if (testActive) null else if (isSelected) Color.YELLOW.asARGB() else null
@@ -4576,7 +4582,10 @@ class GestureSequenceEditor(
                 }
                 val gx = context.elementId.removePrefix("add:").substringBefore(":").toIntOrNull() ?: return
                 val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
-                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+                // 追加ボタンは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
+                val layout = runCatching {
+                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
                         "ジェスチャーGUIの追加位置確認でレイアウトを生成できません: script=${script.id}",
@@ -4610,7 +4619,10 @@ class GestureSequenceEditor(
                 }
                 val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
                 if (point.size != 2) return
-                val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+                // 経路セルは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
+                val layout = runCatching {
+                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
                         "ジェスチャーGUIの挿入位置確認でレイアウトを生成できません: script=${script.id}",
@@ -4775,7 +4787,10 @@ class GestureSequenceEditor(
                 // そのまま適用しません。現在のレイアウト上でも同じセルが同じ
                 // 挿入先を示すことを確認し、連続経路の装飾セルへの誤挿入を防ぎます。
                 state.selectedInsertionCandidatePoint?.let { point ->
-                    val currentTarget = runCatching { GraphLayoutEngine.layout(script.graph) }
+                    // 候補セルは折りたたみ配置の座標で選ばれるため、再確認も同じ配置で行います。
+                    val currentTarget = runCatching {
+                        GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                    }
                         .getOrElse { failure ->
                             reportLayoutFailure(
                                 player,
@@ -5408,7 +5423,14 @@ class GestureSequenceEditor(
         val test = state.testExecution
         val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return null
-        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
+        // 入力判定も描画と同じ折りたたみ配置で確認します。展開配置で確認すると、
+        // 表示上の無効（グレーアウト）と実可否がずれて空きへ戻れてしまいます。
+        val persistedLayout = runCatching {
+            GraphLayoutEngine.layout(
+                script.graph,
+                collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script),
+            )
+        }.getOrElse { failure ->
             player?.let {
                 reportLayoutFailure(
                     it,
