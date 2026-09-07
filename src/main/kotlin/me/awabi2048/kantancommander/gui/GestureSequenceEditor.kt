@@ -5026,8 +5026,16 @@ class GestureSequenceEditor(
                 player.uniqueId,
                 expectedRevision = expectedMutationRevision(player),
             ) { current ->
-                val collapsed = current.collapsedForStartIds?.toMutableSet() ?: mutableSetOf()
-                if (!collapsed.add(nodeId)) collapsed.remove(nodeId)
+                // 現存する対応ペア付きFOR_STARTだけを残し、残骸IDは同時に剪定します。
+                val previous = current.collapsedForStartIds.orEmpty()
+                val collapsed = previous
+                    .filter { it != nodeId && current.graph.nodes[it]?.type == CommandType.FOR_START }
+                    .toMutableSet()
+                if (nodeId !in previous &&
+                    current.graph.nodes[nodeId]?.type == CommandType.FOR_START
+                ) {
+                    collapsed.add(nodeId)
+                }
                 current.collapsedForStartIds = collapsed.takeIf { it.isNotEmpty() }
             }
         }.getOrElse { failure ->
