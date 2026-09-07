@@ -181,6 +181,10 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.CONDITION_INVERSION -> GestureSettingScreen.CONDITION_INVERSION
     CommandSettingEditor.CAMERA_SHAKE_TYPE -> GestureSettingScreen.CAMERA_SHAKE_TYPE
     CommandSettingEditor.SOUND_SCOPE -> GestureSettingScreen.SOUND_SCOPE
+    CommandSettingEditor.SOUND_OPERATION -> GestureSettingScreen.SOUND_OPERATION
+    CommandSettingEditor.SOUND_TARGET_POSITION -> GestureSettingScreen.SOUND_TARGET_POSITION
+    CommandSettingEditor.PARTICLE_DISPLAY -> GestureSettingScreen.PARTICLE_DISPLAY
+    CommandSettingEditor.PARTICLE_GEOMETRY -> GestureSettingScreen.PARTICLE_GEOMETRY
     CommandSettingEditor.BLOCK_OPERATION -> GestureSettingScreen.BLOCK_OPERATION
     CommandSettingEditor.TEXT -> null
 }

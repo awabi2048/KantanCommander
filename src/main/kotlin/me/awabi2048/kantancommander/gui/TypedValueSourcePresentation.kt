@@ -21,7 +21,7 @@ internal fun typedValueSourceLabelKey(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_TEMPORARY
     field == "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_ITEM_MAINHAND
     field == "block" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_BLOCK_MAINHAND
-    field == "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_SOUND_DIALOG
+    field == "sound" || field == "soundSetting" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_SOUND_DIALOG
     field == "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_EFFECT_DIALOG
     else -> error("設定元の表示に未対応のフィールドです: $field")
 }

@@ -32,6 +32,12 @@ import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.DisplayTextTiming
+import me.awabi2048.kantancommander.model.FireworkSettings
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import com.awabi2048.ccsystem.CCSystem
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
@@ -947,27 +953,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
                 true
             }
-            CommandType.PLAY_SOUND -> {
-                val refTemp = node.soundTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.SOUND }
-                val sound = refTemp?.sound ?: node.string("sound")
-                if (NamespacedKey.fromString(sound) == null) return false
-                val volume = (refTemp?.volume ?: resolveNumber(node.string("volume", "1.0"), session))
-                    ?.toFloat() ?: return false
-                val pitch = (refTemp?.pitch ?: resolveNumber(node.string("pitch", "1.0"), session))
-                    ?.toFloat() ?: return false
-                if (node.string("soundScope", "POSITION") == "WORLD") {
-                    // 全域指定は各プレイヤー位置を音源位置にするため、現行の
-                    // 「起動ワールドの全プレイヤーへ確実に届ける」挙動を維持します。
-                    effectiveOrigin.world.players.forEach { it.playSound(it.location, sound, SoundCategory.MASTER, volume, pitch) }
-                } else {
-                    val source = node.soundPositionSpec?.let { resolvePosition(it, session, effectiveContext) } ?: effectiveOrigin
-                    effectiveOrigin.world.players.forEach { it.playSound(source, sound, SoundCategory.MASTER, volume, pitch) }
-                }
-                true
-            }
-            CommandType.PARTICLE -> executeParticle(node, session, effectiveContext, effectiveOrigin)
+            CommandType.PLAY_SOUND -> executeSound(node, session, effectiveContext, effectiveOrigin, targets)
+            CommandType.PARTICLE -> executeParticle(node, session, effectiveContext, effectiveOrigin, targets)
+            CommandType.FIREWORK_LAUNCH -> executeFirework(node, session, effectiveContext, effectiveOrigin)
             CommandType.APPLY_EFFECT -> {
                 val refTemp = node.effectTempRef?.takeIf(String::isNotBlank)
                     ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
@@ -1022,29 +1010,101 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * Particleの送信は対象指定を持たず、中心位置のワールドにいる全プレイヤーへ
-     * 1回のパケット送信で届けます。個数の上限判定はパケット送信前に行い、拒否時に
-     * 部分表示が発生しないようにします。
+     * 効果音の再生・停止を実行します。
+     *
+     * 受信者は対象プレイヤー（targetSpec）があれば解決結果、なければ従来どおり
+     * 起動ワールドの全プレイヤーです。エンティティ対象は再生できないため除外
+     * します。停止対象の音が存在しない場合は正常no-opとし、失敗にしません。
+     */
+    private fun executeSound(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        effectiveOrigin: Location,
+        targets: List<Entity>,
+    ): Boolean {
+        val receivers = soundReceivers(node, effectiveOrigin, targets)
+        when (SoundSettings.operation(node)) {
+            SoundOperation.PLAY -> {
+                val refTemp = node.soundTempRef?.takeIf(String::isNotBlank)
+                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+                    ?.takeIf { it.type == TemporaryVariableType.SOUND }
+                val sound = refTemp?.sound ?: node.string("sound")
+                if (NamespacedKey.fromString(sound) == null) return false
+                val volume = (refTemp?.volume ?: resolveNumber(node.string("volume", "1.0"), session))
+                    ?.toFloat() ?: return false
+                val pitch = (refTemp?.pitch ?: resolveNumber(node.string("pitch", "1.0"), session))
+                    ?.toFloat() ?: return false
+                if (node.string("soundScope", "POSITION") == "WORLD") {
+                    // 全域指定は各プレイヤー位置を音源位置にするため、現行の
+                    // 「起動ワールドの全プレイヤーへ確実に届ける」挙動を維持します。
+                    receivers.forEach { it.playSound(it.location, sound, SoundCategory.MASTER, volume, pitch) }
+                } else {
+                    val source = node.soundPositionSpec?.let { resolvePosition(it, session, context) } ?: effectiveOrigin
+                    receivers.forEach { it.playSound(source, sound, SoundCategory.MASTER, volume, pitch) }
+                }
+                return true
+            }
+            SoundOperation.STOP -> {
+                val refTemp = node.soundTempRef?.takeIf(String::isNotBlank)
+                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+                    ?.takeIf { it.type == TemporaryVariableType.SOUND }
+                val sound = (refTemp?.sound ?: node.string("sound")).takeIf(String::isNotBlank)
+                if (sound != null && NamespacedKey.fromString(sound) == null) return false
+                val category = SoundSettings.category(node.string("soundCategory"))
+                receivers.forEach { player ->
+                    when {
+                        sound != null && category != null -> player.stopSound(sound, category)
+                        sound != null -> stopSoundAllCategories(player, sound)
+                        category != null -> player.stopSound(category)
+                        else -> stopAllSounds(player)
+                    }
+                }
+                return true
+            }
+        }
+    }
+
+    /** 対象プレイヤー指定があれば解決結果、なければ起動ワールド全員を返します。 */
+    private fun soundReceivers(
+        node: CommandNode,
+        effectiveOrigin: Location,
+        targets: List<Entity>,
+    ): List<Player> {
+        if (node.targetSpec == null) return effectiveOrigin.world.players
+        return targets.filterIsInstance<Player>()
+    }
+
+    /** Paper APIに単音全停止のoverloadはないため、全カテゴリへ順に停止要求を送ります。 */
+    private fun stopSoundAllCategories(player: Player, sound: String) {
+        SoundCategory.entries.forEach { category ->
+            runCatching { player.stopSound(sound, category) }
+        }
+    }
+
+    private fun stopAllSounds(player: Player) {
+        SoundCategory.entries.forEach { category ->
+            runCatching { player.stopSound(category) }
+        }
+    }
+
+    /**
+     * Particleの送信は、対象プレイヤー指定がなければ表示中心と同じワールドの
+     * 全プレイヤーへ1回のパケット送信で届けます。個数の上限判定はパケット送信
+     * 前に行い、拒否時に部分表示が発生しないようにします。
      */
     private fun executeParticle(
         node: CommandNode,
         session: ExecutionSession,
         context: ExecutionContextSpec?,
         effectiveOrigin: Location,
+        targets: List<Entity>,
     ): Boolean {
         val particle = ParticleSettings.particle(node) ?: return false
-        val deltaX = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_X, "0.0"), session)
-            ?.takeIf(Double::isFinite) ?: return false
-        val deltaY = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Y, "0.0"), session)
-            ?.takeIf(Double::isFinite) ?: return false
-        val deltaZ = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Z, "0.0"), session)
-            ?.takeIf(Double::isFinite) ?: return false
-        val speed = resolveNumber(node.string(ParticleSettings.PARAM_SPEED, "0.0"), session)
-            ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
-        val count = resolvePositiveInt(node.string(ParticleSettings.PARAM_COUNT, "1"), session) ?: return false
         val origin = node.particlePositionSpec
             ?.let { resolvePosition(it, session, context) ?: return false }
             ?: effectiveOrigin
+        val receivers = if (node.targetSpec == null) origin.world.players else targets.filterIsInstance<Player>()
         val data = if (ParticleSettings.requiresData(particle)) {
             ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
                 .getOrNull() ?: return false
@@ -1056,27 +1116,166 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val bukkitData = data.toBukkitData(origin)
         if (ParticleSettings.requiresData(particle) && bukkitData == null) return false
 
-        if (!plugin.particleQuota.tryAcquire(origin.world.uid, count)) {
+        return when (ParticleGeometry.displayMode(node)) {
+            ParticleDisplayMode.POINT -> {
+                val deltaX = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_X, "0.0"), session)
+                    ?.takeIf(Double::isFinite) ?: return false
+                val deltaY = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Y, "0.0"), session)
+                    ?.takeIf(Double::isFinite) ?: return false
+                val deltaZ = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Z, "0.0"), session)
+                    ?.takeIf(Double::isFinite) ?: return false
+                val speed = resolveNumber(node.string(ParticleSettings.PARAM_SPEED, "0.0"), session)
+                    ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
+                val count = resolvePositiveInt(node.string(ParticleSettings.PARAM_COUNT, "1"), session) ?: return false
+                if (!plugin.particleQuota.tryAcquire(origin.world.uid, count)) {
+                    throw ParticleQuotaRejected()
+                }
+                // receiverへ明示対象を渡すことで、「実行位置周囲」ではなく
+                // 「表示中心と同じワールドの全員または指定対象」という仕様を残します。
+                origin.world.spawnParticle(
+                    particle,
+                    receivers,
+                    null,
+                    origin.x,
+                    origin.y,
+                    origin.z,
+                    count,
+                    deltaX,
+                    deltaY,
+                    deltaZ,
+                    speed,
+                    bukkitData,
+                    true,
+                )
+                true
+            }
+            ParticleDisplayMode.GEOMETRY -> executeGeometryParticle(node, session, context, origin, receivers, particle, bukkitData)
+        }
+    }
+
+    /**
+     * 図形表示を実行します。
+     *
+     * 生成点列を事前に見積もり、合計点でquotaを1回予約してから送信します。
+     * 拒否時は部分表示を残さずスキップ扱い（ParticleQuotaRejected）とします。
+     */
+    private fun executeGeometryParticle(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        origin: Location,
+        receivers: List<Player>,
+        particle: org.bukkit.Particle,
+        bukkitData: Any?,
+    ): Boolean {
+        val shape = ParticleGeometry.shape(node)
+        if (shape == ParticleShape.POINT_SCATTER) return false
+        resolveNumber(node.string(ParticleGeometry.PARAM_DENSITY, ParticleGeometry.DENSITY_DEFAULT.toString()), session)
+            ?.takeIf(Double::isFinite) ?: return false
+        val resolved = resolveGeometry(node, session, context, origin) ?: return false
+        val points = ParticleGeometry.generate(shape, resolved).take(ParticleGeometry.MAX_POINTS)
+        if (points.isEmpty()) return false
+        if (!plugin.particleQuota.tryAcquire(origin.world.uid, points.size)) {
             throw ParticleQuotaRejected()
         }
-        // world.playersを明示的にreceiverへ渡すことで、「実行位置周囲の対象」ではなく
-        // 「表示中心と同じワールドの全プレイヤー」という仕様をAPI呼び出しにも残します。
-        origin.world.spawnParticle(
-            particle,
-            origin.world.players,
-            null,
-            origin.x,
-            origin.y,
-            origin.z,
-            count,
-            deltaX,
-            deltaY,
-            deltaZ,
-            speed,
-            bukkitData,
-            true,
-        )
+        points.forEach { (ox, oy, oz) ->
+            origin.world.spawnParticle(
+                particle,
+                receivers,
+                null,
+                origin.x + ox,
+                origin.y + oy,
+                origin.z + oz,
+                1,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                bukkitData,
+                true,
+            )
+        }
         return true
+    }
+
+    /** 図形パラメータを実行時値へ解決します。テンプレート値は数値解決へ委ねます。 */
+    private fun resolveGeometry(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        origin: Location,
+    ): ParticleGeometry.ResolvedGeometry? {
+        fun number(key: String, default: Double): Double? =
+            resolveNumber(node.string(key, default.toString()), session)?.takeIf(Double::isFinite)
+        val endOffset = node.particleEndPositionSpec
+            ?.let { resolvePosition(it, session, context) ?: return null }
+            ?.let { Triple(it.x - origin.x, it.y - origin.y, it.z - origin.z) }
+        return ParticleGeometry.ResolvedGeometry(
+            radius = number(ParticleGeometry.PARAM_RADIUS, 3.0) ?: return null,
+            height = number(ParticleGeometry.PARAM_HEIGHT, 3.0) ?: return null,
+            turns = number(ParticleGeometry.PARAM_TURNS, 2.0) ?: return null,
+            startAngle = number(ParticleGeometry.PARAM_START_ANGLE, 0.0) ?: return null,
+            endAngle = number(ParticleGeometry.PARAM_END_ANGLE, 360.0) ?: return null,
+            rotation = number(ParticleGeometry.PARAM_ROTATION, 0.0) ?: return null,
+            axisYaw = number(ParticleGeometry.PARAM_AXIS_YAW, 0.0) ?: return null,
+            axisPitch = number(ParticleGeometry.PARAM_AXIS_PITCH, -90.0) ?: return null,
+            step = number(ParticleGeometry.PARAM_STEP, 0.5) ?: return null,
+            wireframe = node.params[ParticleGeometry.PARAM_WIREFRAME]?.toBooleanStrictOrNull() ?: true,
+            endOffset = endOffset,
+        )
+    }
+
+    /**
+     * 設定済み花火を打ち上げます。
+     *
+     * 中身は手持ち取り込みの item＋itemData 対から復元し、打ち上げ高さから
+     * flight powerと起爆tickを逆算して上書きします。召喚体台帳へ登録し、
+     * 上限超過時は生成せず失敗として扱います（SUMMON_ENTITYと同一契約）。
+     */
+    private fun executeFirework(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        effectiveOrigin: Location,
+    ): Boolean {
+        if (!plugin.summonedEntities.canSummon(effectiveOrigin.world.uid)) return false
+        val height = resolveNumber(
+            node.string(FireworkSettings.PARAM_HEIGHT, FireworkSettings.HEIGHT_DEFAULT.toString()),
+            session,
+        )?.takeIf(Double::isFinite) ?: return false
+        val stack = resolveFireworkStack(node) ?: return false
+        val meta = stack.itemMeta as? org.bukkit.inventory.meta.FireworkMeta ?: return false
+        meta.power = FireworkSettings.heightToPower(height)
+        stack.itemMeta = meta
+        val launchAt = node.fireworkPositionSpec
+            ?.let { resolvePosition(it, session, context) ?: return false }
+            ?: effectiveOrigin
+        val rocket = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)
+        rocket.setItem(stack)
+        rocket.setShotAtAngle(false)
+        if (height <= 0.0) {
+            rocket.detonate()
+        } else {
+            rocket.ticksToDetonate = FireworkSettings.heightToTicks(height)
+        }
+        try {
+            plugin.summonedEntities.register(rocket, session.rootId)
+        } catch (failure: Throwable) {
+            rocket.remove()
+            throw failure
+        }
+        return true
+    }
+
+    /** 花火アイテムを保存値から復元します。 */
+    private fun resolveFireworkStack(node: CommandNode): ItemStack? {
+        val data = node.string(FireworkSettings.PARAM_DATA)
+        val decoded = data.takeIf(String::isNotBlank)?.let { ItemStackCodec.decode(it) }
+        val stack = decoded ?: node.string(FireworkSettings.PARAM_ITEM).takeIf(String::isNotBlank)?.let { raw ->
+            CommandValueRules.material(raw, allowAir = false)?.let { ItemStack(it) }
+        } ?: return null
+        if (stack.type != org.bukkit.Material.FIREWORK_ROCKET) return null
+        return stack.clone()
     }
 
     /** 実行後のホバーへ、解決済み対象と展開後の設定値をまとめて表示します。 */

@@ -19,6 +19,11 @@ import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -47,7 +52,9 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     BLOCK_TO("block_to", "to"),
     SOUND_POSITION("sound_position", "soundPosition"),
     PARTICLE_POSITION("particle_position", "position"),
+    PARTICLE_END("particle_end", "particleEnd"),
     SUMMON_POSITION("summon_position", "summonPosition"),
+    FIREWORK_POSITION("firework_position", "fireworkPosition"),
     /** TEMP_SET ENTITYは通常コマンドと同じ対象選択木から1体を解決します。 */
     TEMPORARY_ENTITY("temporary_entity", "entity"),
     /** TEMP_SET LOCATIONは位置と向きをまとめた親画面から共通設定へ進みます。 */
@@ -111,6 +118,10 @@ enum class CommandSettingEditor {
     CONDITION_INVERSION,
     CAMERA_SHAKE_TYPE,
     SOUND_SCOPE,
+    SOUND_OPERATION,
+    SOUND_TARGET_POSITION,
+    PARTICLE_DISPLAY,
+    PARTICLE_GEOMETRY,
     BLOCK_OPERATION,
 }
 
@@ -164,7 +175,7 @@ object CommandSettingsModel {
             "block" -> if (node.type == CommandType.BLOCK_OPERATION) {
                 TemporaryValueBinding("blockTempRef", setOf("block"))
             } else null
-            "sound" -> if (node.type == CommandType.PLAY_SOUND) {
+            "sound", "volume", "pitch", "soundSetting" -> if (node.type == CommandType.PLAY_SOUND) {
                 TemporaryValueBinding("soundTempRef", setOf("sound", "volume", "pitch"))
             } else null
             "effect" -> if (node.type == CommandType.APPLY_EFFECT) {
@@ -351,6 +362,29 @@ object CommandSettingsModel {
                 } else {
                     fields.filterNot { it.key == "from" || it.key == "to" }
                 }
+            // 効果音は操作（再生／停止）を先頭タブで切り替え、以降のタブを組み替えます。
+            // 除外リスト方式では、別操作へ追加した項目が無関係な操作へ漏れるため、
+            // 操作ごとの許可リストを明示します。
+            node.type == CommandType.PLAY_SOUND -> {
+                val operation = SoundSettings.operation(node)
+                val allowed = if (operation == SoundOperation.STOP) {
+                    setOf("soundOperation", "soundTargetPosition", "soundSetting")
+                } else {
+                    setOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope")
+                }
+                fields.filter { it.key in allowed }
+            }
+            // パーティクルは表示方式（点／図形）を先頭タブで切り替えます。
+            // 点表示は従来の散布設定を維持し、図形表示は形状と密度へ組み替えます。
+            node.type == CommandType.PARTICLE -> {
+                val mode = ParticleGeometry.displayMode(node)
+                val allowed = if (mode == ParticleDisplayMode.GEOMETRY) {
+                    setOf("particleDisplay", "particle", "geometrySettings", "particleDensity")
+                } else {
+                    setOf("particleDisplay", "particle", "position", "particleParameters")
+                }
+                fields.filter { it.key in allowed }
+            }
             node.type == CommandType.VARIABLE -> {
                 val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
                     .getOrDefault(VariableOperation.DEFINE)
@@ -380,22 +414,13 @@ object CommandSettingsModel {
         CommandType.TELEPORT ->
             fieldKey != "destinationFacing" || node.destinationSpec?.kind != PositionKind.TEMPORARY
 
-        CommandType.PLAY_SOUND ->
-            when {
-                fieldKey == "soundPosition" -> node.string("soundScope", "POSITION") != "WORLD"
-                fieldKey == "soundParameters" -> temporaryValueSource(node, "sound") != CommandValueSource.TEMPORARY
-                else -> true
-            }
+        CommandType.PLAY_SOUND -> true
 
         CommandType.APPLY_EFFECT ->
             fieldKey !in setOf("level", "seconds") ||
                 temporaryValueSource(node, "effect") != CommandValueSource.TEMPORARY
 
-        CommandType.PARTICLE ->
-            // 詳細データを必要としないParticleでは、空欄を入力するための
-            // 不要なタブを出さず、データ型を持つParticleだけ表示します。
-            fieldKey != "particleData" || ParticleSettings.particle(node)
-                ?.let(ParticleSettings::requiresData) != false
+        CommandType.PARTICLE -> true
 
         else -> true
     }
@@ -502,16 +527,24 @@ object CommandSettingsModel {
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.PLAY_SOUND -> when (fieldKey) {
-                "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND
-                "soundParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_PARAMETERS
+                "soundOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "soundTargetPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_TARGET_POSITION
+                "soundSetting" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_SETTING
                 "soundScope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_SCOPE
-                "soundPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.PARTICLE -> when (fieldKey) {
+                "particleDisplay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DISPLAY
                 "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
                 "particleParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
-                "particleData" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DATA
+                "geometrySettings" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GEOMETRY_SETTINGS
+                "particleDensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.FIREWORK_LAUNCH -> when (fieldKey) {
+                "fireworkPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SUMMON_POSITION
+                "fireworkContents" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_FIREWORK_CONTENTS
+                "burstHeight" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BURST_HEIGHT
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.APPLY_EFFECT -> when (fieldKey) {
@@ -593,9 +626,10 @@ object CommandSettingsModel {
                 else -> validationFieldKey
             }
             CommandType.PLAY_SOUND -> when (validationFieldKey) {
-                "volume", "pitch" -> "soundParameters"
+                "volume", "pitch", "sound", "soundCategory" -> "soundSetting"
+                "target" -> "soundTargetPosition"
                 // 現行バリデーターはscopeの不正をsoundPositionとして報告します。
-                "soundPosition" -> "soundScope"
+                "soundPosition" -> "soundTargetPosition"
                 else -> validationFieldKey
             }
             CommandType.PARTICLE -> when (validationFieldKey) {
@@ -605,6 +639,12 @@ object CommandSettingsModel {
                 ParticleSettings.PARAM_SPEED,
                 ParticleSettings.PARAM_COUNT,
                 -> "particleParameters"
+                ParticleSettings.PARAM_DATA -> "particle"
+                "target" -> "particleDisplay"
+                // 図形表示では中心位置タブを出さず、図形設定内で編集します。
+                "position" -> if (ParticleGeometry.displayMode(node) ==
+                    ParticleDisplayMode.GEOMETRY
+                ) "geometrySettings" else "position"
                 else -> validationFieldKey
             }
             CommandType.CONDITION -> when (validationFieldKey) {
@@ -658,12 +698,19 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.PLAY_SOUND -> when (fieldKey) {
-            "soundPosition" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.SOUND_POSITION)
+            "soundOperation" -> CommandSettingDescriptor(CommandSettingEditor.SOUND_OPERATION)
+            "soundTargetPosition" -> CommandSettingDescriptor(CommandSettingEditor.SOUND_TARGET_POSITION)
             "soundScope" -> CommandSettingDescriptor(CommandSettingEditor.SOUND_SCOPE)
             else -> text()
         }
         CommandType.PARTICLE -> when (fieldKey) {
+            "particleDisplay" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_DISPLAY)
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
+            "geometrySettings" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_GEOMETRY)
+            else -> text()
+        }
+        CommandType.FIREWORK_LAUNCH -> when (fieldKey) {
+            "fireworkPosition" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.FIREWORK_POSITION)
             else -> text()
         }
         CommandType.APPLY_EFFECT -> if (fieldKey == "target") {
@@ -775,6 +822,44 @@ object CommandSettingsModel {
         }
     }
 
+    /**
+     * 図形設定の完了状態を、現形状が必要とする項目だけから判定します。
+     *
+     * 他形状の残存値は表示・検証・実行へ漏らさないため、完了判定の対象外に
+     * します。形状未選択（POINT_SCATTER）の図形表示は未完了として扱います。
+     */
+    private fun isGeometryConfigured(node: CommandNode): Boolean {
+        val geometry = ParticleGeometry
+        val shape = geometry.shape(node)
+        if (shape == ParticleShape.POINT_SCATTER) return false
+        val numericKeys = when (shape) {
+            ParticleShape.LINE -> emptyList()
+            ParticleShape.CIRCLE ->
+                listOf(geometry.PARAM_RADIUS, geometry.PARAM_AXIS_YAW, geometry.PARAM_AXIS_PITCH, geometry.PARAM_ROTATION)
+            ParticleShape.ARC ->
+                listOf(geometry.PARAM_RADIUS, geometry.PARAM_START_ANGLE, geometry.PARAM_END_ANGLE, geometry.PARAM_AXIS_YAW, geometry.PARAM_AXIS_PITCH, geometry.PARAM_ROTATION)
+            ParticleShape.BOX -> listOf(geometry.PARAM_WIREFRAME)
+            ParticleShape.SPHERE ->
+                listOf(geometry.PARAM_RADIUS, geometry.PARAM_AXIS_YAW, geometry.PARAM_AXIS_PITCH, geometry.PARAM_ROTATION)
+            ParticleShape.HELIX ->
+                listOf(geometry.PARAM_RADIUS, geometry.PARAM_HEIGHT, geometry.PARAM_TURNS, geometry.PARAM_AXIS_YAW, geometry.PARAM_AXIS_PITCH, geometry.PARAM_ROTATION)
+            ParticleShape.POINT_SCATTER -> emptyList()
+        } + geometry.PARAM_STEP
+        val numbersConfigured = numericKeys.any { key ->
+            val value = node.params[key]
+            value != null && value.isNotBlank() &&
+                (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
+        }
+        val shapeConfigured = node.params[geometry.PARAM_SHAPE]?.isNotBlank() == true
+        val endConfigured = when (shape) {
+            ParticleShape.LINE,
+            ParticleShape.BOX,
+            -> isPositionSpecConfigured(node.particleEndPositionSpec)
+            else -> false
+        }
+        return shapeConfigured || numbersConfigured || endConfigured
+    }
+
     /** 複数の文字列パラメータを同じ明示設定契約で保存します。 */
     fun setParameters(node: CommandNode, values: Map<String, String>) {
         values.forEach { (key, value) -> setParameter(node, key, value) }
@@ -846,7 +931,9 @@ object CommandSettingsModel {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
         CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec
+        CommandSettingRole.PARTICLE_END -> node.particleEndPositionSpec
         CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec
+        CommandSettingRole.FIREWORK_POSITION -> node.fireworkPositionSpec
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
@@ -872,7 +959,9 @@ object CommandSettingsModel {
         CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec?.kind
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec?.kind
         CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec?.kind
+        CommandSettingRole.PARTICLE_END -> node.particleEndPositionSpec?.kind
         CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec?.kind
+        CommandSettingRole.FIREWORK_POSITION -> node.fireworkPositionSpec?.kind
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
@@ -888,7 +977,9 @@ object CommandSettingsModel {
             }
             CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec = spec
             CommandSettingRole.PARTICLE_POSITION -> node.particlePositionSpec = spec
+            CommandSettingRole.PARTICLE_END -> node.particleEndPositionSpec = spec
             CommandSettingRole.SUMMON_POSITION -> node.summonPositionSpec = spec
+            CommandSettingRole.FIREWORK_POSITION -> node.fireworkPositionSpec = spec
             CommandSettingRole.CONDITION_POSITION -> node.conditionPositionSpec = spec
             CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec = spec
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
@@ -900,7 +991,9 @@ object CommandSettingsModel {
             when (role) {
                 CommandSettingRole.SOUND_POSITION -> "soundPosition"
                 CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
+                CommandSettingRole.PARTICLE_END -> "particleEnd"
                 CommandSettingRole.SUMMON_POSITION -> "summonPosition"
+                CommandSettingRole.FIREWORK_POSITION -> "fireworkPosition"
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
                 else -> "position"
             },
@@ -983,7 +1076,9 @@ object CommandSettingsModel {
                 CommandSettingRole.BLOCK_POSITION -> isPositionSpecConfigured(node.blockPositionSpec)
                 CommandSettingRole.SOUND_POSITION -> isPositionSpecConfigured(node.soundPositionSpec)
                 CommandSettingRole.PARTICLE_POSITION -> isPositionSpecConfigured(node.particlePositionSpec)
+                CommandSettingRole.PARTICLE_END -> isPositionSpecConfigured(node.particleEndPositionSpec)
                 CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
+                CommandSettingRole.FIREWORK_POSITION -> isPositionSpecConfigured(node.fireworkPositionSpec)
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> isPositionSpecConfigured(node.temporaryLocationPositionSpec)
                 else -> false
             }
@@ -999,14 +1094,57 @@ object CommandSettingsModel {
             }
             "soundPosition" -> isPositionSpecConfigured(node.soundPositionSpec)
             "particlePosition" -> isPositionSpecConfigured(node.particlePositionSpec)
+            "particleEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
-            // 音量とピッチは保存上は別パラメータですが、編集入口は一つです。
-            // 旧データも正しく「設定済み」と表示できるよう、両方の実値を確認します。
-            "soundParameters" -> listOf("volume", "pitch").any { key ->
-                val value = node.params[key]
-                value != null && value.isNotBlank() &&
-                    (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
+            "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
+            // 再生位置と対象は、対象と再生位置のどちらかが揃えば設定済みです。
+            // 停止操作では再生位置を使用しないため、対象だけを確認します。
+            "soundTargetPosition" -> if (SoundSettings.operation(node) ==
+                SoundOperation.STOP
+            ) {
+                isTargetSpecConfigured(node.targetSpec)
+            } else {
+                isTargetSpecConfigured(node.targetSpec) || isPositionSpecConfigured(node.soundPositionSpec)
             }
+            // 効果音設定は操作ごとに束ねます。再生はID・音量・ピッチ、停止は
+            // ID・カテゴリのいずれかがあれば設定済みです。一時変数参照も同様です。
+            "soundSetting" -> if (SoundSettings.operation(node) ==
+                SoundOperation.STOP
+            ) {
+                node.string("sound").isNotBlank() || node.string("soundCategory").isNotBlank() ||
+                    !node.soundTempRef.isNullOrBlank()
+            } else if (temporaryValueSource(node, "soundSetting") == CommandValueSource.TEMPORARY) {
+                !node.soundTempRef.isNullOrBlank()
+            } else {
+                node.string("sound").isNotBlank() ||
+                    listOf("volume", "pitch").any { key ->
+                        val value = node.params[key]
+                        value != null && value.isNotBlank() &&
+                            (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
+                    }
+            }
+            // 表示設定は、対象か表示方式の明示選択があれば設定済みです。
+            // 既定値のままでは完了扱いにしません。
+            "particleDisplay" -> isTargetSpecConfigured(node.targetSpec) ||
+                node.params[ParticleGeometry.PARAM_DISPLAY_MODE]
+                    ?.takeIf(String::isNotBlank)?.let {
+                        it != CommandType.PARTICLE.defaults[ParticleGeometry.PARAM_DISPLAY_MODE] ||
+                            node.isExplicitlyConfigured(ParticleGeometry.PARAM_DISPLAY_MODE)
+                    } == true
+            // パーティクル種類と詳細データは同じタブで編集します。
+            // 既定値のままでは完了扱いにしません。
+            "particle" -> {
+                val id = node.params[ParticleSettings.PARAM_PARTICLE]
+                val idConfigured = id != null && id.isNotBlank() &&
+                    (id != node.type.defaults[ParticleSettings.PARAM_PARTICLE] ||
+                        node.isExplicitlyConfigured(ParticleSettings.PARAM_PARTICLE))
+                val particle = ParticleSettings.particle(node)
+                idConfigured ||
+                    (particle != null && ParticleSettings.requiresData(particle) &&
+                        node.params[ParticleSettings.PARAM_DATA]?.isNotBlank() == true)
+            }
+            // 図形設定は、形状と現形状の数値・終端位置が揃えば設定済みです。
+            "geometrySettings" -> isGeometryConfigured(node)
             "particleParameters" -> listOf(
                 ParticleSettings.PARAM_DELTA_X,
                 ParticleSettings.PARAM_DELTA_Y,
@@ -1025,6 +1163,9 @@ object CommandSettingsModel {
                 if (particle == null || !ParticleSettings.requiresData(particle)) false
                 else node.params[ParticleSettings.PARAM_DATA]?.isNotBlank() == true
             }
+            // 花火の中身は、素材IDと実体のどちらかがあれば設定済みです。
+            "fireworkContents" -> node.string("fireworkItem").isNotBlank() ||
+                node.string("fireworkData").isNotBlank()
             "item" -> typedValueConfigured(node, "item") || node.string("itemData").isNotBlank()
             "block", "sound", "effect" -> typedValueConfigured(node, fieldKey)
             "diskId" -> node.string("diskId").isNotBlank() || node.snapshot != null
@@ -1258,7 +1399,9 @@ object CommandSettingsModel {
         CommandSettingRole.CONDITION_POSITION -> "condition.position"
         CommandSettingRole.SOUND_POSITION -> "soundPosition"
         CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
+        CommandSettingRole.PARTICLE_END -> "particleEnd"
         CommandSettingRole.SUMMON_POSITION -> "summonPosition"
+        CommandSettingRole.FIREWORK_POSITION -> "fireworkPosition"
         CommandSettingRole.TEMPORARY_ENTITY -> "entity"
         CommandSettingRole.TEMPORARY_LOCATION -> "location"
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"

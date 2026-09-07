@@ -32,6 +32,11 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.ParticleDisplayMode
+import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -287,11 +292,15 @@ class GestureLowerPanel(
                     TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
             )
         val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
-        val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting
+        // 花火の中身はメインハンドの実物（FIREWORK_ROCKET）から保存します。
+        // 空手・他アイテムはクリック時点で拒否し、保存契約と同じ判定を使います。
+        val heldFireworkSetting = field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH
+        val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting || heldFireworkSetting
         val heldMainHandAvailable = when {
             heldItemSetting -> GestureGuiClickPolicy.hasMainHandItem(player)
             heldBlockSetting -> HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
             heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
+            heldFireworkSetting -> player.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
             else -> true
         }
         val dialogInputSetting = !heldMainHandSetting &&
@@ -359,6 +368,8 @@ class GestureLowerPanel(
                             KantanItemService.diskId(actor.inventory.itemInMainHand) != null
                         } else if (heldBlockSetting) {
                             HeldBlockSettingPolicy.canSet(actor.inventory.itemInMainHand.type)
+                        } else if (heldFireworkSetting) {
+                            actor.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
                         } else {
                             GestureGuiClickPolicy.hasMainHandItem(actor)
                         }
@@ -403,6 +414,50 @@ class GestureLowerPanel(
                 targetVisualId = "lower-item-get-bg",
                 hoverText = singleLineHover(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
+                ),
+            ))
+        }
+        // 設定中の花火は、その場で打ち上げる試射ボタンを常設します。
+        // 保存は行わず使い捨てで発射するため、召喚体台帳の上限を消費しません。
+        if (field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
+            val fireworkConfigured = node.string("fireworkItem").isNotBlank() ||
+                node.string("fireworkData").isNotBlank()
+            addBlock(
+                visuals,
+                "lower-firework-preview-bg",
+                0.28,
+                -0.15,
+                1.2,
+                0.12,
+                if (fireworkConfigured) Material.ORANGE_CONCRETE else DisabledGuiVisualPolicy.material,
+                4,
+            )
+            addText(
+                visuals,
+                "lower-firework-preview",
+                0.28,
+                -0.15,
+                0.0048,
+                180,
+                Component.text(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FIREWORK_PREVIEW),
+                    if (fireworkConfigured) NamedTextColor.GOLD else NamedTextColor.GRAY,
+                ),
+            )
+            elements.add(GestureGuiElement(
+                elementId = "lower-firework-preview",
+                bounds = rect(0.28, -0.15, 1.2, 0.12),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                gestureGuard = { _, _ ->
+                    plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                        current.string("fireworkItem").isNotBlank() || current.string("fireworkData").isNotBlank()
+                    } == true
+                },
+                targetVisualId = "lower-firework-preview-bg",
+                hoverText = singleLineHover(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FIREWORK_PREVIEW),
                     x = HOVER_SLOT_X,
                     y = HOVER_SLOT_Y,
                 ),
@@ -503,7 +558,7 @@ class GestureLowerPanel(
         "item" -> GestureGuiClickPolicy.hasMainHandItem(player)
         "block" -> HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
         // SOUND／EFFECTはDialog入力なので、メインハンドの状態に依存しません。
-        "sound", "effect" -> true
+        "sound", "soundSetting", "effect" -> true
         else -> false
     }
 
@@ -1248,6 +1303,11 @@ class GestureLowerPanel(
                 "lower-sound-preview",
                 Material.PURPLE_CONCRETE,
             )
+            "soundSetting" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
+                "lower-sound-preview",
+                Material.PURPLE_CONCRETE,
+            )
             "effect" -> Triple(
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_APPLY_CONFIGURED_EFFECT,
                 "lower-effect-preview",
@@ -1298,6 +1358,7 @@ class GestureLowerPanel(
         "block" -> Material.matchMaterial(node.string("block"))
             ?.takeUnless { it == Material.AIR } != null
         "sound", "effect" -> node.string(fieldKey).isNotBlank()
+        "soundSetting" -> node.string("sound").isNotBlank()
         else -> false
     }
 
@@ -2431,6 +2492,114 @@ class GestureLowerPanel(
             SettingChoice("soundScope:POSITION", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_POSITION), node.string("soundScope", "POSITION") == "POSITION"),
             SettingChoice("soundScope:WORLD", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_WORLD_WIDE), node.string("soundScope", "POSITION") == "WORLD"),
         )
+        GestureSettingScreen.SOUND_OPERATION -> listOf(
+            SettingChoice("soundOperation:PLAY", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SOUND_PLAY), SoundSettings.operation(node) == SoundOperation.PLAY),
+            SettingChoice("soundOperation:STOP", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SOUND_STOP), SoundSettings.operation(node) == SoundOperation.STOP),
+        )
+        // 再生位置と対象は、対象選択と再生位置選択の2つの掘り下げで構成します。
+        // 停止操作では再生位置を使用しないため、対象だけを提示します。
+        GestureSettingScreen.SOUND_TARGET_POSITION -> buildList {
+            add(
+                GestureSettingTreeNode(
+                    id = "sound-target",
+                    label = labeled(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                        node.targetSpec?.kind?.let { targetKindLabel(player, it) },
+                    ),
+                    selected = CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET),
+                    children = targetChoices(node, context.copy(role = CommandSettingRole.NODE_TARGET), player),
+                ),
+            )
+            if (SoundSettings.operation(node) == SoundOperation.PLAY) {
+                add(
+                    GestureSettingTreeNode(
+                        id = "sound-position",
+                        label = labeled(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_POSITION,
+                            CommandSettingsModel.positionKind(node, CommandSettingRole.SOUND_POSITION)
+                                ?.let { positionKindLabel(player, it) },
+                        ),
+                        selected = CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.SOUND_POSITION),
+                        children = positionChoices(node, context.copy(role = CommandSettingRole.SOUND_POSITION), player),
+                    ),
+                )
+            }
+        }
+        // 表示設定は、表示方式の択一と対象選択の掘り下げで構成します。
+        GestureSettingScreen.PARTICLE_DISPLAY -> listOf(
+            SettingChoice("display:POINT", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT), ParticleGeometry.displayMode(node) == ParticleDisplayMode.POINT),
+            SettingChoice("display:GEOMETRY", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY), ParticleGeometry.displayMode(node) == ParticleDisplayMode.GEOMETRY),
+            GestureSettingTreeNode(
+                id = "particle-target",
+                label = labeled(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                    node.targetSpec?.kind?.let { targetKindLabel(player, it) },
+                ),
+                selected = CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET),
+                children = targetChoices(node, context.copy(role = CommandSettingRole.NODE_TARGET), player),
+            ),
+        )
+        // 図形設定は、形状の択一・数値入力・終端位置の掘り下げで構成します。
+        // 数値入力はダイアログで開く葉であり、終端位置はLINE／BOXのときだけ提示します。
+        GestureSettingScreen.PARTICLE_GEOMETRY -> buildList {
+            addAll(
+                listOf(
+                    Triple(ParticleShape.LINE, "shape:LINE", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_LINE),
+                    Triple(ParticleShape.CIRCLE, "shape:CIRCLE", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_CIRCLE),
+                    Triple(ParticleShape.ARC, "shape:ARC", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_ARC),
+                    Triple(ParticleShape.BOX, "shape:BOX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_BOX),
+                    Triple(ParticleShape.SPHERE, "shape:SPHERE", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_SPHERE),
+                    Triple(ParticleShape.HELIX, "shape:HELIX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_GEOMETRY_HELIX),
+                ).map { (shape, id, label) ->
+                    SettingChoice(id, KcI18n.text(player, label), ParticleGeometry.shape(node) == shape)
+                },
+            )
+            if (ParticleGeometry.shape(node) == ParticleShape.BOX) {
+                // 枠線表示は条件の演算子と同じく、押すたびに切り替わる単一選択肢です。
+                val wireframe = node.params[ParticleGeometry.PARAM_WIREFRAME]?.toBooleanStrictOrNull() ?: true
+                add(
+                    SettingChoice(
+                        "wireframe:toggle",
+                        labeled(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS,
+                            KcI18n.text(
+                                player,
+                                if (wireframe) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED
+                                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
+                            ),
+                        ),
+                        wireframe,
+                    ),
+                )
+            }
+            add(
+                GestureSettingTreeNode(
+                    id = "geometry-numbers",
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS),
+                    selected = false,
+                ),
+            )
+            val shape = ParticleGeometry.shape(node)
+            if (shape == ParticleShape.LINE || shape == ParticleShape.BOX) {
+                add(
+                    GestureSettingTreeNode(
+                        id = "geometry-end",
+                        label = labeled(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                            CommandSettingsModel.positionKind(node, CommandSettingRole.PARTICLE_END)
+                                ?.let { positionKindLabel(player, it) },
+                        ),
+                        selected = CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.PARTICLE_END),
+                        children = positionChoices(node, context.copy(role = CommandSettingRole.PARTICLE_END), player),
+                    ),
+                )
+            }
+        }
         GestureSettingScreen.VARIABLE_TYPE -> if (node.type == CommandType.TEMP_SET) {
             TemporaryVariableType.entries.map { type ->
                 val label = when (type) {
@@ -3284,11 +3453,13 @@ class GestureLowerPanel(
         val titleKey = when (state.confirmKind) {
             GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
             GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_TITLE
+            GestureConfirmKind.FIREWORK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
             GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_TITLE
         }
         val warningKey = when (state.confirmKind) {
             GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
             GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_WARN
+            GestureConfirmKind.FIREWORK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
             GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_WARN
         }
         addText(
@@ -3610,6 +3781,7 @@ class GestureLowerPanel(
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
+            "particleDensity", "burstHeight",
             "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name",
             "condition", "variable", "value", "block", "sneaking",
         )
