@@ -44,7 +44,13 @@ class ControlBlockInventorySync(private val plugin: KantanCommanderPlugin) : Lis
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
-    fun onGameModeChange(event: PlayerGameModeChangeEvent) = normalizeSafely(event.player)
+    fun onGameModeChange(event: PlayerGameModeChangeEvent) {
+        // イベント時点では切替前のモードが読めるため、適用後のtickで評価します。
+        val playerId = event.player.uniqueId
+        plugin.server.scheduler.runTask(plugin, Runnable {
+            plugin.server.getPlayer(playerId)?.let(::normalizeSafely)
+        })
+    }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onInventoryOpen(event: InventoryOpenEvent) {
