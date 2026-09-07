@@ -29,43 +29,65 @@ object GraphEditor {
      * ビューポート上の左右入れ替え操作で使う方向です。
      *
      * グラフは表示座標を保存しないため、左右のボタンは座標だけを動かすのではなく、
-     * 同一の直列経路にある実行単位の `next` 関係を入れ替えます。条件分岐やforの
-     * ペアを途中で分解しないよう、構造ノードはこの操作の対象外にします。
+     * 同一の直列経路にある実行単位の順序を入れ替えます。通常ノード同士に加え、
+     * forブロック（開始〜終了）全体を一単位とする移動も扱います。条件分岐／合流は
+     * 構造が閉じていないため交換対象外とし、枝の並べ替えは [swapBranches] を使います。
      */
     enum class ReorderDirection { LEFT, RIGHT }
 
     /**
-     * 同一直列経路にある隣接ノードを入れ替えます。
+     * 条件分岐のTRUE鎖とFALSE鎖を入れ替えます。
      *
-     * 条件分岐／合流／for開始・終了は、分岐やペアの構造を一組で扱う別操作が必要です。
-     * それらを単純な `next` 入れ替えへ通すと、TRUE/FALSEの意味やforの対応関係を壊す
-     * ため、ここでは安全側に拒否します。通常実行ノードとbreak/continueは、親が
-     * 分岐の枝であっても同じ枝内の隣接ノードとして入れ替えられます。
+     * ペアの合流・後続・反転フラグには触れず、両枝の接続先だけを交換するため、
+     * 妥当なグラフは交換後も妥当です。分岐の実行意味そのものが変わる保存操作として
+     * 扱い、表示だけの反転は行いません。条件分岐以外には何もしません。
+     */
+    fun swapBranches(graph: CommandGraph, nodeId: UUID): Boolean {
+        val node = graph.nodes[nodeId] ?: return false
+        if (node.type != CommandType.CONDITION) return false
+        val trueNext = node.trueNext
+        node.trueNext = node.falseNext
+        node.falseNext = trueNext
+        return true
+    }
+
+    /**
+     * 同一直列経路にある隣接した実行単位を入れ替えます。
+     *
+     * 通常実行ノードとbreak/continueは、分岐の枝であっても同じ枝内の隣接ノードとして
+     * 入れ替えられます。forブロックは開始〜終了を一体として、前後の通常ノードとの
+     * 隣接交換（ブロック全体の移動）だけを許可し、本体への出し入れは行いません。
+     * 条件分岐／合流は交換対象外です。ブロック移動は適用後に検証し、不正になる
+     * 場合はグラフを変更せず拒否します。
      */
     fun swapAdjacent(graph: CommandGraph, nodeId: UUID, direction: ReorderDirection): Boolean {
         val node = graph.nodes[nodeId] ?: return false
-        if (!isLinearReorderable(node)) return false
+        if (node.type == CommandType.CONDITION || node.type == CommandType.MERGE) return false
 
-        return when (direction) {
+        val backup = graph.deepCopy()
+        val applied = when (direction) {
             ReorderDirection.LEFT -> swapWithPrevious(graph, node)
             ReorderDirection.RIGHT -> swapWithNext(graph, node)
         }
+        if (!applied) return false
+        // 線形交換は構造を保存しますが、ブロック移動はbreak/continueの所属などを
+        // 変える場合があるため、検証に通らない交換は元に戻して拒否します。
+        if (GraphValidator.validate(graph).isNotEmpty()) {
+            graph.entryNodeId = backup.entryNodeId
+            graph.nodes.clear()
+            graph.nodes.putAll(backup.nodes)
+            return false
+        }
+        return true
     }
 
     /** 表示前に左右ボタンを有効化できるかを、グラフを変更せず判定します。 */
     fun canSwapAdjacent(graph: CommandGraph, nodeId: UUID, direction: ReorderDirection): Boolean {
         val node = graph.nodes[nodeId] ?: return false
-        if (!isLinearReorderable(node)) return false
+        if (node.type == CommandType.CONDITION || node.type == CommandType.MERGE) return false
         return when (direction) {
-            ReorderDirection.LEFT -> {
-                val incoming = incomingExecutionLink(graph, node.id) ?: return false
-                incoming.edge == Edge.NEXT &&
-                    incoming.sourceId?.let(graph.nodes::get)?.let(::isLinearReorderable) == true
-            }
-            ReorderDirection.RIGHT -> {
-                val next = node.next?.let(graph.nodes::get) ?: return false
-                isLinearReorderable(next) && incomingExecutionLink(graph, node.id) != null
-            }
+            ReorderDirection.LEFT -> canSwapWithPrevious(graph, node)
+            ReorderDirection.RIGHT -> canSwapWithNext(graph, node)
         }
     }
 
@@ -364,9 +386,22 @@ object GraphEditor {
 
     private fun swapWithPrevious(graph: CommandGraph, node: CommandNode): Boolean {
         val incoming = incomingExecutionLink(graph, node.id) ?: return false
-        // 最初の枝要素を条件分岐そのものと入れ替えることはできません。
+        // 枝先頭を条件分岐そのものと入れ替えることはできません。本体への
+        // 出し入れになる交換も行いません。
         if (incoming.edge != Edge.NEXT) return false
         val previous = incoming.sourceId?.let(graph.nodes::get) ?: return false
+        // forブロック全体の左移動：前任者が通常ノードのときだけ許可します。
+        if (node.type == CommandType.FOR_START) {
+            val end = pairedForEnd(graph, node) ?: return false
+            if (!isLinearReorderable(previous)) return false
+            return spliceForBlockLeft(graph, node, end, previous)
+        }
+        if (!isLinearReorderable(node)) return false
+        // 通常ノードの左移動：前任者がfor終了ならブロック全体の後ろへ回ります。
+        if (previous.type == CommandType.FOR_END) {
+            val start = pairedForStart(graph, previous) ?: return false
+            return spliceNodeBeforeForBlock(graph, node, start, previous)
+        }
         if (!isLinearReorderable(previous)) return false
         val after = node.next
 
@@ -380,8 +415,25 @@ object GraphEditor {
     }
 
     private fun swapWithNext(graph: CommandGraph, node: CommandNode): Boolean {
+        // for開始の右移動は本体への格納になるため許可しません。
+        if (node.type == CommandType.FOR_START) {
+            val start = node
+            val end = pairedForEnd(graph, start) ?: return false
+            return swapForBlockRight(graph, start, end)
+        }
+        // for終了の右移動はブロック全体の移動です。後継は通常ノードに限ります。
+        if (node.type == CommandType.FOR_END) {
+            val start = pairedForStart(graph, node) ?: return false
+            return swapForBlockRight(graph, start, node)
+        }
+        if (!isLinearReorderable(node)) return false
         val nextId = node.next ?: return false
         val next = graph.nodes[nextId] ?: return false
+        // 通常ノードの右移動：後継がfor開始ならブロック全体の後ろへ回ります。
+        if (next.type == CommandType.FOR_START) {
+            val end = pairedForEnd(graph, next) ?: return false
+            return spliceNodeAfterForBlock(graph, node, next, end)
+        }
         if (!isLinearReorderable(next)) return false
         val incoming = incomingExecutionLink(graph, node.id) ?: return false
 
@@ -390,6 +442,148 @@ object GraphEditor {
         next.next = node.id
         return true
     }
+
+    private fun canSwapWithPrevious(graph: CommandGraph, node: CommandNode): Boolean {
+        val incoming = incomingExecutionLink(graph, node.id) ?: return false
+        if (incoming.edge != Edge.NEXT) return false
+        val previous = incoming.sourceId?.let(graph.nodes::get) ?: return false
+        if (node.type == CommandType.FOR_START) {
+            if (pairedForEnd(graph, node) == null || !isLinearReorderable(previous)) return false
+            return trialBlockMove(graph) { candidate ->
+                val cNode = candidate.nodes.getValue(node.id)
+                val cPrevious = candidate.nodes.getValue(previous.id)
+                val cEnd = pairedForEnd(candidate, cNode) ?: return@trialBlockMove false
+                spliceForBlockLeft(candidate, cNode, cEnd, cPrevious)
+            }
+        }
+        if (!isLinearReorderable(node)) return false
+        if (previous.type == CommandType.FOR_END) {
+            if (pairedForStart(graph, previous) == null) return false
+            return trialBlockMove(graph) { candidate ->
+                val cNode = candidate.nodes.getValue(node.id)
+                val cPrevious = candidate.nodes.getValue(previous.id)
+                val cStart = pairedForStart(candidate, cPrevious) ?: return@trialBlockMove false
+                spliceNodeBeforeForBlock(candidate, cNode, cStart, cPrevious)
+            }
+        }
+        return isLinearReorderable(previous)
+    }
+
+    private fun canSwapWithNext(graph: CommandGraph, node: CommandNode): Boolean {
+        if (node.type == CommandType.FOR_END) {
+            val start = pairedForStart(graph, node) ?: return false
+            return trialBlockMove(graph) { candidate ->
+                val cStart = candidate.nodes.getValue(start.id)
+                val cEnd = candidate.nodes.getValue(node.id)
+                swapForBlockRight(candidate, cStart, cEnd)
+            }
+        }
+        if (node.type == CommandType.FOR_START) return false
+        if (!isLinearReorderable(node)) return false
+        val next = node.next?.let(graph.nodes::get) ?: return false
+        if (next.type == CommandType.FOR_START) {
+            if (pairedForEnd(graph, next) == null) return false
+            return trialBlockMove(graph) { candidate ->
+                val cNode = candidate.nodes.getValue(node.id)
+                val cNext = candidate.nodes.getValue(next.id)
+                val cEnd = pairedForEnd(candidate, cNext) ?: return@trialBlockMove false
+                spliceNodeAfterForBlock(candidate, cNode, cNext, cEnd)
+            }
+        }
+        return isLinearReorderable(next) && incomingExecutionLink(graph, node.id) != null
+    }
+
+    /** ブロック移動の候補を複製上で試し、検証に通る場合だけ有効とします。 */
+    private fun trialBlockMove(graph: CommandGraph, move: (CommandGraph) -> Boolean): Boolean {
+        val candidate = graph.deepCopy()
+        if (!move(candidate)) return false
+        return GraphValidator.validate(candidate).isEmpty()
+    }
+
+    /**
+     * `[X, P, START..END, S]` を `[X, START..END, P, S]` へ組み替えます。
+     * forブロック全体が前任の通常ノードを追い越す左移動です。
+     */
+    private fun spliceForBlockLeft(
+        graph: CommandGraph,
+        start: CommandNode,
+        end: CommandNode,
+        previous: CommandNode,
+    ): Boolean {
+        val after = end.next
+        val previousIncoming = incomingExecutionLink(graph, previous.id) ?: return false
+        setExecutionLink(graph, previousIncoming, start.id)
+        previous.next = after
+        end.next = previous.id
+        return true
+    }
+
+    /**
+     * `[X, START..END, N, S]` を `[X, N, START..END, S]` へ組み替えます。
+     * for終了直後の通常ノードがブロック全体の前へ回る左移動です。
+     */
+    private fun spliceNodeBeforeForBlock(
+        graph: CommandGraph,
+        node: CommandNode,
+        start: CommandNode,
+        end: CommandNode,
+    ): Boolean {
+        val after = node.next
+        val startIncoming = incomingExecutionLink(graph, start.id) ?: return false
+        setExecutionLink(graph, startIncoming, node.id)
+        node.next = start.id
+        end.next = after
+        return true
+    }
+
+    /**
+     * `[X, N, START..END, S]` を `[X, START..END, N, S]` へ組み替えます。
+     * for開始直前の通常ノードがブロック全体の後ろへ回る右移動です。
+     */
+    private fun spliceNodeAfterForBlock(
+        graph: CommandGraph,
+        node: CommandNode,
+        start: CommandNode,
+        end: CommandNode,
+    ): Boolean {
+        val after = end.next
+        val nodeIncoming = incomingExecutionLink(graph, node.id) ?: return false
+        setExecutionLink(graph, nodeIncoming, start.id)
+        node.next = after
+        end.next = node.id
+        return true
+    }
+
+    /**
+     * `[X, START..END, S, T]` を `[X, S, START..END, T]` へ組み替えます。
+     * forブロック全体が後継の通常ノードを追い越す右移動です。
+     */
+    private fun swapForBlockRight(
+        graph: CommandGraph,
+        start: CommandNode,
+        end: CommandNode,
+    ): Boolean {
+        val successor = end.next?.let(graph.nodes::get) ?: return false
+        if (!isLinearReorderable(successor)) return false
+        val successorIncoming = incomingExecutionLink(graph, successor.id)
+        if (successorIncoming?.sourceId != end.id || successorIncoming.edge != Edge.NEXT) return false
+        val after = successor.next
+        val startIncoming = incomingExecutionLink(graph, start.id) ?: return false
+        setExecutionLink(graph, startIncoming, successor.id)
+        successor.next = start.id
+        end.next = after
+        return true
+    }
+
+    private fun pairedForEnd(graph: CommandGraph, start: CommandNode): CommandNode? =
+        start.takeIf { it.type == CommandType.FOR_START }
+            ?.pairedNodeId?.let(graph.nodes::get)
+            ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == start.id }
+
+    private fun pairedForStart(graph: CommandGraph, end: CommandNode): CommandNode? =
+        end.takeIf { it.type == CommandType.FOR_END }
+            ?.pairedNodeId?.let(graph.nodes::get)
+            ?.takeIf { it.type == CommandType.FOR_START && it.pairedNodeId == end.id }
 
     private fun isLinearReorderable(node: CommandNode): Boolean = node.type !in STRUCTURAL_TYPES
 
