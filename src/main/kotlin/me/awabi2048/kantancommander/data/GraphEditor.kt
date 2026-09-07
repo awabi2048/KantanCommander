@@ -246,6 +246,12 @@ object GraphEditor {
         continuationId: UUID? = null,
     ): CommandNode {
         require(type !in setOf(CommandType.MERGE, CommandType.FOR_END)) { "$type はこの経路へ挿入できません" }
+        // 条件分岐にNEXT実行経路は存在しないため、NEXT指定は無効です。書き込むと
+        // 到達不能ノードを生成し保存時検証で失敗するため、ここで即時失敗させます。
+        val source = sourceId?.let(graph.nodes::get)
+        require(edge != Edge.NEXT || source == null || source.type != CommandType.CONDITION) {
+            "条件分岐の直後にNEXT経路で挿入できません"
+        }
         val edgeTarget = edgeTarget(graph, sourceId, edge)
         // NULL終端の枝へ通常ノードを追加した場合は、その終端をそのまま引き継ぎます。
         // continuationIdは、明示的なMERGEを外側の継続先とする条件追加にだけ使います。

@@ -282,10 +282,11 @@ object GraphLayoutEngine {
         maxCells: Long = Long.MAX_VALUE,
         collapsedForStarts: Set<UUID> = emptySet(),
         collapsedConditionIds: Set<UUID> = emptySet(),
+        foldedAppendedRows: Map<UUID, List<UUID>> = emptyMap(),
     ): GraphLayout {
         require(maxCells > 0L) { "layout cell limit must be positive" }
         return try {
-            val builder = Builder(graph, maxCells, collapsedForStarts, collapsedConditionIds)
+            val builder = Builder(graph, maxCells, collapsedForStarts, collapsedConditionIds, foldedAppendedRows)
             builder.renderRoot()
             val cells = builder.cells.toMap()
             val maxX = cells.keys.maxOfOrNull(MapPoint::x) ?: 0
@@ -319,6 +320,7 @@ object GraphLayoutEngine {
         placeholderType: CommandType = CommandType.WAIT,
         collapsedForStarts: Set<UUID> = emptySet(),
         collapsedConditionIds: Set<UUID> = emptySet(),
+        foldedAppendedRows: Map<UUID, List<UUID>> = emptyMap(),
         onLayoutFailure: ((GraphLayoutException) -> Unit)? = null,
     ): InsertionPreview? {
         if (placeholderType == CommandType.MERGE || placeholderType == CommandType.FOR_END) return null
@@ -333,7 +335,12 @@ object GraphLayoutEngine {
             )
         }.getOrNull() ?: return null
         val previewLayout = try {
-            layout(candidate, collapsedForStarts = collapsedForStarts, collapsedConditionIds = collapsedConditionIds)
+            layout(
+                candidate,
+                collapsedForStarts = collapsedForStarts,
+                collapsedConditionIds = collapsedConditionIds,
+                foldedAppendedRows = foldedAppendedRows,
+            )
         } catch (failure: GraphLayoutException) {
             onLayoutFailure?.invoke(failure)
             return null
@@ -414,6 +421,7 @@ object GraphLayoutEngine {
         private val maxCells: Long,
         private val collapsedForStarts: Set<UUID> = emptySet(),
         private val collapsedConditionIds: Set<UUID> = emptySet(),
+        private val foldedAppendedRows: Map<UUID, List<UUID>> = emptyMap(),
     ) {
         val cells = linkedMapOf<MapPoint, MapCell>()
         val nodePoints = linkedMapOf<UUID, MapPoint>()
@@ -475,7 +483,8 @@ object GraphLayoutEngine {
                     // 通常の条件描画へ委ねます。
                     val folded = renderFoldedCondition(node, cursorX, y, stop, context)
                     if (folded != null) {
-                        cursorX += 2
+                        // 末端行・末尾追加点は描画済みのため、次列から続行・復帰します。
+                        cursorX = folded.nextX
                         maximumY = maxOf(maximumY, y)
                         val resume = folded.resumeId
                         if (resume != null && resume != stop && context.boundaryFor(resume) == null) {
@@ -709,15 +718,17 @@ object GraphLayoutEngine {
         }
 
         /**
-         * 折りたたみ条件の描画結果です。条件セル自体は配置済みです。
+         * 折りたたみ条件の描画結果です。条件セル・末端行・末尾追加点は配置済みです。
          *
+         * @param nextX 畳んだ範囲の直後の次列です。
          * @param resumeId 畳んだ範囲の直後に接続する後続。終端の場合はnullです。
-         * @param tail 末尾追加点を置く基準ノードです。
+         * @param tail 末尾追加点を置く基準ノードです。末尾追加点を描画済みの場合はnullです。
          * @param end 終端時の終端情報です。継続時は呼び出し側が組み立てます。
          * @param insertionTarget 継続経路へ付与する挿入先。未合流条件の継続は
          * 接続専用のためnullです（条件にNEXT実行経路はありません）。
          */
         private data class FoldedCondition(
+            val nextX: Int,
             val resumeId: UUID?,
             val tail: UUID?,
             val end: SegmentExit,
@@ -735,9 +746,11 @@ object GraphLayoutEngine {
          * 折りたたみ条件を条件1セルとして描きます。
          *
          * 合流がある場合は合流の後続へ接続し、ブロック後への挿入は合流NEXTとして
-         * 扱います。合流がない場合は両枝の終端までを畳み、条件ノードの直後に
-         * 末尾追加点を置きます。両枝の継続先が分かれる曖昧な形状ではnullを返し、
-         * 呼び出し側は通常の条件描画へ委ねます。グラフ構造自体は変えません。
+         * 扱います。合流がない場合は枝状態によらず条件・末端行・末尾追加点だけを
+         * 描き、固定ノードとして振る舞わせます。末端行は折畳み中の追加分だけを
+         * 示し、末尾追加点は上側（TRUE）枝への挿入先を持ちます。両枝の継続先が
+         * 分かれる曖昧な形状ではnullを返し、呼び出し側は通常の条件描画へ委ねます。
+         * グラフ構造自体は変えません。
          */
         private fun renderFoldedCondition(
             condition: CommandNode,
@@ -752,6 +765,7 @@ object GraphLayoutEngine {
             if (mergeId != null && context.boundaryFor(mergeId) == null) {
                 val merge = graph.nodes.getValue(mergeId)
                 return FoldedCondition(
+                    nextX = x + 2,
                     resumeId = merge.next,
                     tail = mergeId,
                     end = SegmentExit.Node(mergeId, merge.next),
@@ -771,12 +785,88 @@ object GraphLayoutEngine {
                 falseExit is FoldExit.Continue -> falseExit.resumeId
                 else -> null
             }
+            if (resume != null) {
+                return FoldedCondition(
+                    nextX = x + 2,
+                    resumeId = resume,
+                    tail = condition.id,
+                    end = SegmentExit.Node(condition.id, null),
+                    insertionTarget = null,
+                )
+            }
+            // 終端時は条件・末端行・末尾追加点を描き、あたかも閉じているかのように並べます。
+            // 末端行は折畳み中の追加分だけであり、既存枝ノードは隠蔽したままです。
+            val rowIds = foldedAppendedRows[condition.id].orEmpty()
+                .filter { it in graph.nodes }
+            val addTarget = foldedRowAddTarget(condition)
+            var penX = x + 2
+            for (rowId in rowIds) {
+                val rowNode = graph.nodes[rowId] ?: continue
+                putPath(penX - 1, y)
+                putNode(penX, y, rowNode)
+                penX += 2
+            }
+            putTargetedPath(penX - 1, y, target = addTarget)
+            putAdd(
+                penX,
+                y,
+                addTarget.sourceId,
+                addTarget.edge,
+                // 折畳み行への追加であることを示し、確定時に行へ追記できるようにします。
+                // 枝末端追加点と同じく分岐帰属を表すだけで、挿入操作自体は変えません。
+                mergeConditionId = condition.id,
+                continuationId = addTarget.continuationId,
+            )
+            val lastShown = rowIds.lastOrNull() ?: condition.id
             return FoldedCondition(
-                resumeId = resume,
-                tail = condition.id,
-                end = SegmentExit.Node(condition.id, null),
+                nextX = penX + 2,
+                resumeId = null,
+                tail = null,
+                end = SegmentExit.Node(lastShown, null),
                 insertionTarget = null,
             )
+        }
+
+        /**
+         * 折畳み未合流条件の末尾追加点が指す挿入先を返します。
+         *
+         * 上側（TRUE）枝へ追加するため、TRUE空なら条件自身のTRUE枝、占有なら
+         * TRUE鎖末尾を返します。鎖内は上側優先で辿り、`(条件 × NEXT)` の無効指定を
+         * 決して返しません。配置層と確定処理で同じ解決を使うことで、表示と実挿入を
+         * 一致させます。
+         */
+        private fun foldedRowAddTarget(condition: CommandNode): InsertionTarget {
+            val head = condition.trueNext ?: return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
+            var current = head
+            val visited = mutableSetOf<UUID>()
+            while (visited.add(current)) {
+                val node = graph.nodes[current]
+                    ?: return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
+                when (node.type) {
+                    // 鎖内の条件は上側優先で辿ります。空枝があればそこへ追加します。
+                    CommandType.CONDITION -> {
+                        val upper = node.trueNext
+                        if (upper == null) {
+                            return InsertionTarget(node.id, GraphEditor.Edge.TRUE)
+                        }
+                        // FALSE枝へは潜らず、行表示と一致するTRUE鎖末尾へ進みます。
+                        current = upper
+                    }
+                    CommandType.FOR_START -> {
+                        val endId = node.pairedNodeId?.let(graph.nodes::get)
+                            ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == node.id }?.id
+                            ?: return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
+                        val endNext = graph.nodes.getValue(endId).next
+                        if (endNext == null) return InsertionTarget(endId, GraphEditor.Edge.NEXT)
+                        current = endNext
+                    }
+                    else -> {
+                        val next = node.next ?: return InsertionTarget(node.id, GraphEditor.Edge.NEXT)
+                        current = next
+                    }
+                }
+            }
+            return InsertionTarget(condition.id, GraphEditor.Edge.TRUE)
         }
 
         /**

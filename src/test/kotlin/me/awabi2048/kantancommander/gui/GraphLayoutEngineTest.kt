@@ -1301,22 +1301,79 @@ class GraphLayoutEngineTest {
     }
 
     @Test
-    fun `folded unmerged if hides branches and keeps a tail add after the condition`() {
+    fun `folded unmerged terminal never targets condition next`() {
         val graph = CommandGraph.empty()
-        val before = GraphEditor.append(graph, CommandType.WAIT)
+        GraphEditor.append(graph, CommandType.WAIT)
         val condition = GraphEditor.append(graph, CommandType.CONDITION)
         val trueNode = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
-        assertEquals(trueNode.id, condition.trueNext)
+        GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
 
         val folded = GraphLayoutEngine.layout(graph, collapsedConditionIds = setOf(condition.id))
-        // 条件だけが描かれ、枝は畳まれます。
+        // 枝状態によらず条件と末尾追加点だけが描かれ、既存枝は隠蔽されます。
         assertTrue(condition.id in folded.nodePoints)
-        assertTrue(before.id in folded.nodePoints)
         assertFalse(trueNode.id in folded.nodePoints)
-        // 分岐ノードの次の位置に末尾追加点が配置されます。
         val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
         val tailAdd = folded.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y)]
         assertEquals(MapCellKind.ADD, tailAdd?.kind)
+        // 末尾追加点は上側（TRUE）鎖末尾を指し、(条件 × NEXT) の無効指定になりません。
+        assertEquals(
+            InsertionTarget(trueNode.id, GraphEditor.Edge.NEXT, condition.id),
+            tailAdd?.insertionTarget,
+        )
+    }
+
+    @Test
+    fun `folded unmerged terminal shows the appended row`() {
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.WAIT)
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        val trueNode = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val falseNode = GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
+        // 折畳み中の追加分としてTRUE鎖末尾へ新ノードを置きます。
+        val appended = GraphEditor.append(graph, CommandType.WAIT)
+        assertEquals(appended.id, trueNode.next)
+
+        val rows = mapOf(condition.id to listOf(appended.id))
+        val folded = GraphLayoutEngine.layout(
+            graph,
+            collapsedConditionIds = setOf(condition.id),
+            foldedAppendedRows = rows,
+        )
+        // 条件・行・末尾追加点が並び、既存枝は隠蔽されたままです。
+        val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
+        val appendedPoint = requireNotNull(folded.nodePoints[appended.id])
+        assertEquals(conditionPoint.y, appendedPoint.y)
+        assertEquals(conditionPoint.x + 2, appendedPoint.x)
+        assertFalse(trueNode.id in folded.nodePoints)
+        assertFalse(falseNode.id in folded.nodePoints)
+        val tailAdd = folded.cells[MapPoint(appendedPoint.x + 2, appendedPoint.y)]
+        assertEquals(MapCellKind.ADD, tailAdd?.kind)
+        assertEquals(
+            InsertionTarget(appended.id, GraphEditor.Edge.NEXT, condition.id),
+            tailAdd?.insertionTarget,
+        )
+    }
+
+    @Test
+    fun `folded unmerged with empty true branch targets the condition true edge`() {
+        val graph = CommandGraph.empty()
+        GraphEditor.append(graph, CommandType.WAIT)
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        // TRUE枝を空のまま、FALSE枝だけにノードを置きます。
+        val falseNode = GraphEditor.append(graph, CommandType.GIVE_ITEM, condition.id)
+        assertEquals(null, condition.trueNext)
+
+        val folded = GraphLayoutEngine.layout(graph, collapsedConditionIds = setOf(condition.id))
+        assertTrue(condition.id in folded.nodePoints)
+        assertFalse(falseNode.id in folded.nodePoints)
+        val conditionPoint = requireNotNull(folded.nodePoints[condition.id])
+        val tailAdd = folded.cells[MapPoint(conditionPoint.x + 2, conditionPoint.y)]
+        assertEquals(MapCellKind.ADD, tailAdd?.kind)
+        assertEquals(
+            InsertionTarget(condition.id, GraphEditor.Edge.TRUE, condition.id),
+            tailAdd?.insertionTarget,
+        )
+        assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 
     @Test

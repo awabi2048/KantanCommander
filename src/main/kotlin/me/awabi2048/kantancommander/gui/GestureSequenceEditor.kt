@@ -104,6 +104,14 @@ data class GestureEditorState(
      */
     var lastExpandedLayoutWidth: Int = 0,
     var lastExpandedLayoutHeight: Int = 0,
+    /**
+     * 折畳み未合流条件の末端行（条件ID→折畳み中の追加順ノードID列）です。
+     *
+     * 折畳み表示は枝状態によらず条件1単位＋行＋末尾追加点として振る舞い、
+     * 行は折畳み中の追加分だけを示します。描画にだけ使う表示状態のため
+     * セッション内保持で、永続化しません。畳み直し・拡げで消去します。
+     */
+    var foldedAppendedRows: MutableMap<UUID, MutableList<UUID>> = mutableMapOf(),
     /** ビューポート表示倍率。初期値は最大倍率、縮小25%まで25%刻みで許可します。 */
     var zoomLevel: Int = GestureEditorLayout.INITIAL_ZOOM_LEVEL,
     var selectedNodeId: UUID? = null,

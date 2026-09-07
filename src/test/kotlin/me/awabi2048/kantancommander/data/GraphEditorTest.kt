@@ -873,6 +873,19 @@ class GraphEditorTest {
         assertTrue(GraphValidator.validate(graph).isEmpty())
     }
 
+    @Test
+    fun `insertion with next edge into a condition fails immediately`() {
+        val graph = CommandGraph.empty()
+        val condition = GraphEditor.append(graph, CommandType.CONDITION)
+        GraphEditor.append(graph, CommandType.WAIT)
+
+        // 条件分岐にNEXT実行経路はないため、到達不能ノードを作る前に即時失敗します。
+        assertThrows(IllegalArgumentException::class.java) {
+            GraphEditor.insert(graph, condition.id, GraphEditor.Edge.NEXT, CommandType.WAIT)
+        }
+        assertTrue(GraphValidator.validate(graph).isEmpty())
+    }
+
     /** 構造化設定とDISK_CALLのsnapshotを含む、複製対象の全設定を一つのテストデータへ集約します。 */
     private fun configuredNode(type: CommandType): CommandNode {
         val nested = CommandType.WAIT.newNode()
