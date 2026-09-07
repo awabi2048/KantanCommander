@@ -1550,11 +1550,11 @@ class GestureSequenceEditor(
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
-                        // 折りたたみ中のFOR開始は、背景の外周へ青緑の縁取りを付けます。
-                        // 太さはアイコン幅の10%で、背景と同一範囲に内側配置するため
+                        // 折りたたみ中のFOR開始は、背景の外周へ黄緑の縁取りを付けます。
+                        // 太さはアイコン幅の20%で、背景と同一範囲に内側配置するため
                         // 隣接セルへはみ出さず、四隅の二重描画も避けます。
                         if (isCollapsedForStart) {
-                            val frameThickness = metrics.iconSize * 0.10
+                            val frameThickness = metrics.iconSize * 0.20
                             val frameHalf = metrics.iconSize / 2.0 - frameThickness / 2.0
                             val frameInner = metrics.iconSize - frameThickness * 2.0
                             listOf(
@@ -1566,7 +1566,7 @@ class GestureSequenceEditor(
                                     x = x, y = y,
                                     width = metrics.iconSize,
                                     height = frameThickness,
-                                    blockData = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                                    blockData = Bukkit.createBlockData(Material.LIME_CONCRETE),
                                     layer = GestureEditorLayout.ICON_LAYER,
                                 ))
                             }
@@ -1579,7 +1579,7 @@ class GestureSequenceEditor(
                                     x = x, y = y,
                                     width = frameThickness,
                                     height = frameInner,
-                                    blockData = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                                    blockData = Bukkit.createBlockData(Material.LIME_CONCRETE),
                                     layer = GestureEditorLayout.ICON_LAYER,
                                 ))
                             }
@@ -5108,7 +5108,7 @@ class GestureSequenceEditor(
         // 折りたたみ時は閉じる音、解除時は開く音で切替を伝えます。
         player.playSound(
             player.location,
-            if (wasCollapsed) Sound.BLOCK_SHULKER_BOX_OPEN else Sound.BLOCK_SHULKER_BOX_CLOSE,
+            if (wasCollapsed) Sound.BLOCK_BARREL_OPEN else Sound.BLOCK_BARREL_CLOSE,
             1.0f,
             1.0f,
         )
