@@ -313,6 +313,7 @@ object GraphLayoutEngine {
         graph: CommandGraph,
         target: InsertionTarget,
         placeholderType: CommandType = CommandType.WAIT,
+        collapsedForStarts: Set<UUID> = emptySet(),
         onLayoutFailure: ((GraphLayoutException) -> Unit)? = null,
     ): InsertionPreview? {
         if (placeholderType == CommandType.MERGE || placeholderType == CommandType.FOR_END) return null
@@ -327,7 +328,7 @@ object GraphLayoutEngine {
             )
         }.getOrNull() ?: return null
         val previewLayout = try {
-            layout(candidate)
+            layout(candidate, collapsedForStarts = collapsedForStarts)
         } catch (failure: GraphLayoutException) {
             onLayoutFailure?.invoke(failure)
             return null

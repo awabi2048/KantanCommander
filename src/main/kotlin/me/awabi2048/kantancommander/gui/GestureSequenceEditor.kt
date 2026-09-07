@@ -1401,7 +1401,11 @@ class GestureSequenceEditor(
         val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return emptyView()
         if (!testActive) observedRevision = script.revision
-        val persistedLayout = runCatching { GraphLayoutEngine.layout(script.graph) }
+        // 最小化表示はテスト実行中は無視し、全展開で実行ノードの可視性を優先します。
+        val collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script)
+        val persistedLayout = runCatching {
+            GraphLayoutEngine.layout(script.graph, collapsedForStarts = collapsedForStarts)
+        }
             .getOrElse { failure ->
                 reportLayoutFailure(
                     player,
@@ -1534,6 +1538,13 @@ class GestureSequenceEditor(
                         // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
                         // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
                         // 旧選択の解除と新ノードの選択を1クリックで完了させます。
+                        // 入れ替えボタン表示中はホバー文言をボタンのさらに上へ退避させ、
+                        // ボタン・ホバーをノード上側に積み上げます。条件分岐／合流は
+                        // 交換対象外のため、ボタン表示の対象外のままにします。
+                        val showReorder = !testActive && insertionPreview == null && isSelected &&
+                            node.type != CommandType.CONDITION && node.type != CommandType.MERGE
+                        val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
+                        val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
                         if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
                             bounds = iconBounds(cx, cy, metrics.iconSize),
@@ -1542,19 +1553,13 @@ class GestureSequenceEditor(
                             hoverText = GestureGuiHoverText(
                                 text = hoverText,
                                 x = cx,
-                                y = cy + metrics.iconSize * 0.9,
+                                y = if (showReorder) reorderY + reorderSize / 2.0 + 0.03
+                                else cy + metrics.iconSize * 0.9,
                                 size = 0.006,
                                 lineWidth = 180,
                             ),
                         ))
-                        if (!testActive && insertionPreview == null && isSelected && node.type !in setOf(
-                                CommandType.CONDITION,
-                                CommandType.MERGE,
-                                CommandType.FOR_START,
-                                CommandType.FOR_END,
-                            )) {
-                            val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
-                            val reorderY = cy - metrics.iconSize / 2.0 - reorderSize / 2.0 - 0.008
+                        if (showReorder) {
                             val reorderOffset = reorderSize * 0.78
                             listOf(
                                 GraphEditor.ReorderDirection.LEFT to "←",
@@ -4424,6 +4429,20 @@ class GestureSequenceEditor(
                     if (settingChildOpen(ownerId)) {
                         api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                     }
+                    // 選択済みノードへの再クリックは、種類別の変形動作です。
+                    // FOR開始は最小化のトグル、条件分岐はTRUE/FALSE鎖の入替を行い、
+                    // 下部の設定表示は維持します。新規選択は従来どおり設定表示へ遷移します。
+                    val clicked = script.graph.nodes.getValue(nodeId)
+                    if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
+                        if (clicked.type == CommandType.FOR_START && clicked.pairedNodeId != null) {
+                            toggleForCollapsed(player, nodeId)
+                            return
+                        }
+                        if (clicked.type == CommandType.CONDITION) {
+                            swapConditionBranches(player, nodeId)
+                            return
+                        }
+                    }
                     state.selectedNodeId = nodeId
                     state.selectedAddPoint = null
                     state.selectedInsertionCandidatePoint = null
@@ -4993,6 +5012,67 @@ class GestureSequenceEditor(
         }
     }
 
+    /**
+     * 選択済みFOR開始の再クリックで最小化表示を切り替えます。
+     *
+     * グラフ構造は変えず、表示状態だけを正本へ保存します。下部の設定表示は
+     * 維持し、上部ビューポートだけを更新します。
+     */
+    private fun toggleForCollapsed(player: Player, nodeId: UUID) {
+        val saved = runCatching {
+            CommandSettingsModel.updateScript(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { current ->
+                val collapsed = current.collapsedForStartIds?.toMutableSet() ?: mutableSetOf()
+                if (!collapsed.add(nodeId)) collapsed.remove(nodeId)
+                current.collapsedForStartIds = collapsed.takeIf { it.isNotEmpty() }
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "FOR最小化を保存できませんでした: script=${state.scriptId} node=$nodeId",
+                failure,
+            )
+            return
+        }
+        if (!saved) return
+        state.selectedNodeId = nodeId
+        updateUpper(player)
+    }
+
+    /**
+     * 選択済み条件分岐の再クリックでTRUE/FALSE鎖を入れ替えます。
+     *
+     * 表示だけの反転ではなく構造化データの操作として保存します。合流・後続・
+     * 反転フラグは不変で、両枝の接続先だけが交換されます。
+     */
+    private fun swapConditionBranches(player: Player, nodeId: UUID) {
+        val swapped = runCatching {
+            CommandSettingsModel.updateGraph(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { candidateGraph ->
+                if (GraphEditor.swapBranches(candidateGraph, nodeId)) true else null
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "条件分岐の枝入れ替えを保存できませんでした: script=${state.scriptId} node=$nodeId",
+                failure,
+            )
+            return
+        }
+        if (swapped != true) return
+        state.selectedNodeId = nodeId
+        updateUpper(player)
+        updateLower(player)
+    }
+
     private fun emptyView(): GestureGuiView {
         return GestureGuiView(
             GestureGuiScreenDefinition(
@@ -5251,6 +5331,15 @@ class GestureSequenceEditor(
      * 動かないためプレビューを適用しません。描画とナビゲーションの両方がこの
      * 共通判定を使うことで、表示と入力判定の基準が分岐しません。
      */
+    /**
+     * 永続化された最小化集合のうち、現存する対応ペア付きFOR_STARTだけを有効とします。
+     * 残骸IDは描画へ影響させません。
+     */
+    private fun effectiveCollapsedForStarts(script: DiskScript): Set<UUID> =
+        script.collapsedForStartIds.orEmpty().filter { id ->
+            script.graph.nodes[id]?.type == CommandType.FOR_START
+        }.toSet()
+
     private fun insertionPreview(script: DiskScript, player: Player? = null): InsertionPreview? {
         val target = state.pendingInsertion ?: return null
         // 追加起点（ADDセル選択中）ではADDセルの選択glowがそのまま候補位置を示します。
@@ -5258,6 +5347,7 @@ class GestureSequenceEditor(
         return GraphLayoutEngine.previewInsertion(
             script.graph,
             target,
+            collapsedForStarts = effectiveCollapsedForStarts(script),
             onLayoutFailure = { failure ->
                 player?.let {
                     reportLayoutFailure(
