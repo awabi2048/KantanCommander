@@ -1374,7 +1374,7 @@ sealed interface DisplayValue {
         // まとめます。表示時間タブと同一形状になり、既存の複数行配置に収まります。
         fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE),
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_SPREAD),
                 listOf(deltaX, deltaY, deltaZ).joinToString(" / "),
             ),
             TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SPEED), speed),

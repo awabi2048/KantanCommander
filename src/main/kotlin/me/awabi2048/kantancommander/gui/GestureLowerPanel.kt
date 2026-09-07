@@ -215,6 +215,9 @@ class GestureLowerPanel(
             }
         }.orEmpty()
         val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
+        // 複数値行の画面では先頭行が常設説明文へ接するため、説明文だけ上へ退避
+        // させます。表示時間タブと粒子表示設定タブで共通の呼び出しに寄せ、
+        // コマンド型ごとの個別調整を増やしません。
         addDescriptionRows(
             visuals,
             player,
@@ -223,6 +226,7 @@ class GestureLowerPanel(
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
             warning = attentionWarning(player, node, field.key, attentionFields),
+            hoverY = if (compositeRows != null) SETTING_COMPOSITE_DESCRIPTION_Y else ACTION_DESCRIPTION_Y,
             detailY = compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
         )
         if (compositeRows != null && compositeLayout != null) {
@@ -1511,7 +1515,8 @@ class GestureLowerPanel(
      * ジェスチャーGUIから外しました。候補や操作面のホバー説明は、この灰色
      * スロットをreplacesVisualIdで置き換えて同じ位置・寸法へ表示します。
      * 2行目は要確認の状態名、無ければ「詳細を持つ候補の再クリック」案内です。
-     * 複数の現在値行を表示する画面では、呼び出し側が値行数に応じたdetailYを渡します。
+     * 複数の現在値行を表示する画面では、呼び出し側が値行数に応じたdetailYと、
+     * 先頭行との干渉を避けるhoverYを渡します。
      */
     private fun addDescriptionRows(
         visuals: MutableList<GestureGuiVisual>,
@@ -3533,6 +3538,10 @@ class GestureLowerPanel(
         const val SETTING_DETAIL_ANCHOR_Y = 0.17
         // 既存タブと同じ比率指定で、行高の30%を行間として確保します。
         const val TIMING_ROW_GAP_RATIO = 0.30
+        // 複数値行の先頭行（0.315付近）が常設説明文（0.36）と接するため、
+        // 複合表示の画面だけ説明文を上へ退避させます。1〜2行の説明文でも
+        // 先頭値行と干渉せず、左タブ列とも横方向に分離しています。
+        const val SETTING_COMPOSITE_DESCRIPTION_Y = 0.40
         const val SETTING_INPUT_CENTER_Y = 0.02
         const val SETTING_INPUT_HEIGHT = 0.16
         // 既存の入力欄（幅1.20）を、外周余白と中央間隔を保ったまま2分割します。
