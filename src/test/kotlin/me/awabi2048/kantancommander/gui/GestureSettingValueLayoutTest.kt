@@ -48,6 +48,29 @@ class GestureSettingValueLayoutTest {
     }
 
     @Test
+    fun `five values share the same pitch rule and honor the lower boundary`() {
+        val layout = GestureSettingValueLayout.calculate(
+            rowCount = 5,
+            valueAnchorY = 0.27,
+            detailAnchorY = 0.17,
+            rowGapRatio = 0.30,
+            minimumDetailY = 0.12,
+        )
+
+        assertEquals(5, layout.rowCentersY.size)
+        assertEquals(0.2825, layout.rowCentersY[0], 1.0e-9)
+        assertEquals(0.25, layout.rowCentersY[1], 1.0e-9)
+        assertEquals(0.2175, layout.rowCentersY[2], 1.0e-9)
+        assertEquals(0.185, layout.rowCentersY[3], 1.0e-9)
+        assertEquals(0.1525, layout.rowCentersY[4], 1.0e-9)
+        assertEquals(0.12, layout.detailCenterY, 1.0e-9)
+        // 各行の間隔は3行表示と同じ行ピッチ規則に従います。
+        val pitch = layout.rowCentersY[0] - layout.rowCentersY[1]
+        assertEquals(pitch, layout.rowCentersY[1] - layout.rowCentersY[2], 1.0e-9)
+        assertEquals(pitch, layout.rowCentersY[3] - layout.rowCentersY[4], 1.0e-9)
+    }
+
+    @Test
     fun `invalid row count and reversed anchors are rejected`() {
         assertThrows(IllegalArgumentException::class.java) {
             GestureSettingValueLayout.calculate(0, 0.27, 0.17)

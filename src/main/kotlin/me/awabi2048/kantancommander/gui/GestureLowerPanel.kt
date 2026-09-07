@@ -180,8 +180,15 @@ class GestureLowerPanel(
             ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
         val displayLabel = KcI18n.text(player, field.label)
         val displayValue = field.value(node)
-        val timingRows = (displayValue as? DisplayValue.Timing)?.rows(player)
-        val timingLayout = timingRows?.let {
+        // 複数の意味値を持つ表示は1行へ連結せず、意味ごとの行へ分けて配置します。
+        // Timingの3行もParticleParametersの5行も同じ複数行レイアウトへ通し、
+        // コマンド型ごとの分岐を描画側へ増やしません。
+        val compositeRows = when (displayValue) {
+            is DisplayValue.Timing -> displayValue.rows(player)
+            is DisplayValue.ParticleParameters -> displayValue.rows(player)
+            else -> null
+        }
+        val compositeLayout = compositeRows?.let {
             GestureSettingValueLayout.calculate(
                 rowCount = it.size,
                 valueAnchorY = SETTING_VALUE_ANCHOR_Y,
@@ -216,10 +223,10 @@ class GestureLowerPanel(
             detailHint = selectedDetail
                 ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
             warning = attentionWarning(player, node, field.key, attentionFields),
-            detailY = timingLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
+            detailY = compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
         )
-        if (timingRows != null && timingLayout != null) {
-            addTimingValueRows(visuals, timingRows, timingLayout)
+        if (compositeRows != null && compositeLayout != null) {
+            addCompositeValueRows(visuals, compositeRows, compositeLayout)
         } else {
             addValueRow(visuals, "lower-setting", SETTING_VALUE_ANCHOR_Y, displayLabel, value)
         }
@@ -1476,19 +1483,19 @@ class GestureLowerPanel(
         addText(visuals, "$id-value", valueX, y, 0.0060, 170, Component.text(value))
     }
 
-    /** 表示時間の意味を1行ずつ分離し、共通の値行レイアウトで配置します。 */
-    private fun addTimingValueRows(
+    /** 複数の意味値を1行ずつ分離し、共通の値行レイアウトで配置します。 */
+    private fun addCompositeValueRows(
         visuals: MutableList<GestureGuiVisual>,
         rows: List<DisplayValue.TimingRow>,
         layout: GestureSettingValueRowsLayout,
     ) {
         check(rows.size == layout.rowCentersY.size) {
-            "表示時間の値行とレイアウトの行数が一致しません: ${rows.size} != ${layout.rowCentersY.size}"
+            "複合表示の値行とレイアウトの行数が一致しません: ${rows.size} != ${layout.rowCentersY.size}"
         }
         rows.forEachIndexed { index, row ->
             addValueRow(
                 visuals,
-                id = "lower-setting-timing-$index",
+                id = "lower-setting-composite-$index",
                 y = layout.rowCentersY[index],
                 label = row.label,
                 value = row.value,

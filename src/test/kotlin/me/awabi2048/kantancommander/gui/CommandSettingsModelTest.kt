@@ -576,4 +576,15 @@ class CommandSettingsModelTest {
         assertFalse(CommandSettingsModel.isFieldConfigured(node, "particleData"))
     }
 
+    @Test
+    fun `particle detail tab follows the selected kind`() {
+        val node = CommandType.PARTICLE.newNode()
+        assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
+
+        CommandSettingsModel.setParameter(node, ParticleSettings.PARAM_PARTICLE, "DUST")
+
+        assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
+        assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particleData" })
+    }
+
 }
