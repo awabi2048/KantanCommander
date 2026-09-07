@@ -50,6 +50,28 @@ data class MapCell(
 )
 
 /**
+ * 横向き経路上の方向矢印の向きです。
+ *
+ * 順方向（左→右）は `»`、ループ戻り（右→左）は `«` で示します。
+ * 縦経路や角セルには配置せず、横向きの直線ランだけを対象にします。
+ */
+enum class HorizontalArrowDirection {
+    FORWARD,
+    RETURN,
+}
+
+/**
+ * 横向き経路上の方向矢印です。
+ *
+ * 配置確定元であるレイアウトエンジンで一括決定し、描画側では方向に応じた
+ * 字形へ変換するだけにします。論理座標基準のためズーム・パン後も同じセルを参照します。
+ */
+data class HorizontalArrow(
+    val point: MapPoint,
+    val direction: HorizontalArrowDirection,
+)
+
+/**
  * 経路の接続判定で使うセル種別を一箇所に集約します。
  *
  * 画面描画側が個別に「経路らしいセル」を定義すると、レイアウトと描画の境界で
@@ -99,8 +121,8 @@ data class ViewportProjection(
     val height: Int,
     val cells: Map<MapPoint, MapCell>,
     val boundaryConnections: Set<ViewportBoundaryConnection>,
-    /** 開始・終了セルを空け、戻り経路上へ1つおきに配置する矢印の論理スロットです。 */
-    val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
+    /** 横向きの直線ランへ1つおきに配置する方向矢印です。順方向は»、戻りは«を示します。 */
+    val horizontalArrowPoints: Set<HorizontalArrow> = emptySet(),
 ) {
     fun contains(local: MapPoint): Boolean =
         local.x in 0 until width && local.y in 0 until height
@@ -120,8 +142,8 @@ data class GraphLayout(
     val nodePoints: Map<UUID, MapPoint>,
     val width: Int,
     val height: Int,
-    /** 開始・終了セルを空け、戻り経路上へ1つおきに配置する矢印の論理座標です。 */
-    val loopReturnArrowPoints: Set<MapPoint> = emptySet(),
+    /** 横向きの直線ランへ1つおきに配置する方向矢印の論理座標です。順方向は»、戻りは«を示します。 */
+    val horizontalArrowPoints: Set<HorizontalArrow> = emptySet(),
 ) {
     /**
      * テスト実行表示用に編集用アーティファクトを除いた配置を返します。
@@ -167,7 +189,7 @@ data class GraphLayout(
             cells = remaining,
             width = maxX + 2,
             height = maxY + 2,
-            loopReturnArrowPoints = loopReturnArrowPoints.filter(remaining::containsKey).toSet(),
+            horizontalArrowPoints = horizontalArrowPoints.filter { remaining.containsKey(it.point) }.toSet(),
         )
     }
 
@@ -205,9 +227,9 @@ data class GraphLayout(
                 }
             }
         }
-        val arrows = loopReturnArrowPoints.mapNotNull { global ->
-            val local = MapPoint(global.x - origin.x, global.y - origin.y)
-            local.takeIf { it.x in 0 until width && it.y in 0 until height }
+        val arrows = horizontalArrowPoints.mapNotNull { global ->
+            val local = MapPoint(global.point.x - origin.x, global.point.y - origin.y)
+            local.takeIf { it.x in 0 until width && it.y in 0 until height }?.let { HorizontalArrow(it, global.direction) }
         }.toSet()
         return ViewportProjection(origin, width, height, visible, boundaries, arrows)
     }
@@ -255,14 +277,15 @@ object GraphLayoutEngine {
         return try {
             val builder = Builder(graph, maxCells)
             builder.renderRoot()
-            val maxX = builder.cells.keys.maxOfOrNull(MapPoint::x) ?: 0
-            val maxY = builder.cells.keys.maxOfOrNull(MapPoint::y) ?: 0
+            val cells = builder.cells.toMap()
+            val maxX = cells.keys.maxOfOrNull(MapPoint::x) ?: 0
+            val maxY = cells.keys.maxOfOrNull(MapPoint::y) ?: 0
             GraphLayout(
-                cells = builder.cells.toMap(),
+                cells = cells,
                 nodePoints = builder.nodePoints.toMap(),
                 width = maxX + 2,
                 height = maxY + 2,
-                loopReturnArrowPoints = builder.loopReturnArrowPoints.toSet(),
+                horizontalArrowPoints = collectHorizontalArrows(cells),
             )
         } catch (failure: GraphLayoutException) {
             throw failure
@@ -306,13 +329,80 @@ object GraphLayoutEngine {
         return InsertionPreview(candidate, previewLayout, inserted.id)
     }
 
+    /**
+     * 横向きの直線ランへ1つおきに方向矢印を配置します。
+     *
+     * 候補は経路セルに限定し、上下にも経路隣接を持つ角・T字セルは除外します。
+     * これにより進行方向が一意でない位置へ誤った向きを示しません。左右に接続が
+     * ない縦専用セルも除外し、横向きの流れだけを対象にします。追加ポイントに隣接する
+     * 編集用スタブは実行フローではないため除外し、編集表示とテスト表示の不整合を防ぎます。
+     * ラン先頭から0, 2, 4...番目を採用することで、単独1セルには1個、長い経路には
+     * ひとつ飛ばしで配置します（従来のFOR戻りと同一規則）。方向はセル種別から
+     * 決定し、LOOP_RETURN_PATHだけを戻り（«）、それ以外を順方向（»）とします。
+     * body形状や分岐構造からの推測は行いません。
+     */
+    internal fun collectHorizontalArrows(cells: Map<MapPoint, MapCell>): Set<HorizontalArrow> {
+        fun hasVerticalPathNeighbor(point: MapPoint): Boolean {
+            val up = cells[MapPoint(point.x, point.y - 1)]?.kind
+            val down = cells[MapPoint(point.x, point.y + 1)]?.kind
+            return up in PATH_CELL_KINDS || down in PATH_CELL_KINDS
+        }
+
+        fun hasHorizontalConnection(point: MapPoint): Boolean {
+            val left = cells[MapPoint(point.x - 1, point.y)]?.kind
+            val right = cells[MapPoint(point.x + 1, point.y)]?.kind
+            return left in CONNECTABLE_CELL_KINDS || right in CONNECTABLE_CELL_KINDS
+        }
+
+        fun touchesAdd(point: MapPoint): Boolean {
+            // 追加ポイント自体やその直前スタブへ矢印を置くと、実行フローと編集操作が混同されます。
+            // 直交4方向のいずれかにADDがあれば候補から外します。
+            return ORTHOGONAL_DIRECTIONS.any { direction ->
+                cells[MapPoint(point.x + direction.x, point.y + direction.y)]?.kind == MapCellKind.ADD
+            }
+        }
+
+        val candidates = cells.values.filter { cell ->
+            cell.kind in PATH_CELL_KINDS &&
+                !hasVerticalPathNeighbor(cell.point) &&
+                hasHorizontalConnection(cell.point) &&
+                !touchesAdd(cell.point)
+        }
+        val arrows = linkedSetOf<HorizontalArrow>()
+        candidates.groupBy { it.point.y }.forEach { (_, rowCells) ->
+            val sorted = rowCells.sortedBy { it.point.x }
+            var run = mutableListOf<MapCell>()
+            fun flushRun() {
+                run.sortedBy { it.point.x }.forEachIndexed { index, cell ->
+                    if (index % 2 == 0) {
+                        val direction = if (cell.kind == MapCellKind.LOOP_RETURN_PATH) {
+                            HorizontalArrowDirection.RETURN
+                        } else {
+                            HorizontalArrowDirection.FORWARD
+                        }
+                        arrows += HorizontalArrow(cell.point, direction)
+                    }
+                }
+                run = mutableListOf()
+            }
+            sorted.forEach { cell ->
+                val previous = run.lastOrNull()
+                if (previous != null && cell.point.x != previous.point.x + 1) {
+                    flushRun()
+                }
+                run += cell
+            }
+            if (run.isNotEmpty()) flushRun()
+        }
+        return arrows
+    }
+
     private class Builder(
         private val graph: CommandGraph,
         private val maxCells: Long,
     ) {
         val cells = linkedMapOf<MapPoint, MapCell>()
         val nodePoints = linkedMapOf<UUID, MapPoint>()
-        val loopReturnArrowPoints = linkedSetOf<MapPoint>()
 
         fun renderRoot() {
             val entry = graph.entryNodeId
@@ -1092,16 +1182,8 @@ object GraphLayoutEngine {
                 putPath(x, verticalY, MapCellKind.LOOP_RETURN_PATH, loopReturnId = endId)
             }
             fillHorizontal(x, endX, returnY, MapCellKind.LOOP_RETURN_PATH, loopReturnId = endId)
-            // 矢印はbodyのノード種類や分岐形状から推測しません。戻り経路そのものを
-            // 基準に、ループ開始・終了セル（x/endX）を空けたうえで、開始直後の論理スロット
-            // から1つおきに配置します。戻り経路を先に生成することで、矢印が必ず戻り経路上に
-            // 乗ることも同時に保証します（例: S « ・ « ・ « E）。
-            for (arrowX in (x + 1 until endX step 2)) {
-                val arrowPoint = MapPoint(arrowX, returnY)
-                if (cells[arrowPoint]?.kind == MapCellKind.LOOP_RETURN_PATH) {
-                    loopReturnArrowPoints += arrowPoint
-                }
-            }
+            // 方向矢印は個別構造で配置しません。配置確定後に全横向きランから一括生成するため、
+            // ここでは戻り経路の生成だけを行います（例: S « ・ « ・ « E）。
             val endExit = SegmentExit.Node(end.id, end.next)
             return Segment(
                 endX + 2,

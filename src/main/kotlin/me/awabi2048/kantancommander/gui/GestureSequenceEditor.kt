@@ -1743,18 +1743,21 @@ class GestureSequenceEditor(
             ))
         }
 
-        // 戻り経路の矢印は、ループ開始・終了セルを空けた1つおきの白色経路上へ
-        // 配置します。経路自体は白いため、矢印だけを空色で示します。
+        // 横向き経路の方向矢印は、角・縦経路を除いた直線ランへ1つおきに配置します。
+        // 順方向は»、ループ戻りは«で示します。経路自体は白いため、矢印だけを空色で示します。
         // 論理座標から投影するため、ズーム・パン後も矢印とホバー用の
-        // 当たり判定が同じ戻り経路セルを参照します。
-        projection.loopReturnArrowPoints.forEach { localPoint ->
+        // 当たり判定が同じ経路セルを参照します。矢印自体は表示専用です。
+        projection.horizontalArrowPoints.forEach { arrow ->
+            val localPoint = arrow.point
             val gx = state.origin.x + localPoint.x
             val gy = state.origin.y + localPoint.y
+            val glyph = if (arrow.direction == HorizontalArrowDirection.RETURN) "«" else "»"
+            val kind = if (arrow.direction == HorizontalArrowDirection.RETURN) "return" else "forward"
             visuals.add(GestureGuiVisual.Text(
-                visualId = "path-return-arrow-$gx-$gy",
+                visualId = "path-$kind-arrow-$gx-$gy",
                 x = metrics.x(localPoint.x),
                 y = metrics.y(localPoint.y) - 0.006,
-                text = Component.text("«").color(NamedTextColor.AQUA),
+                text = Component.text(glyph).color(NamedTextColor.AQUA),
                 size = 0.010,
                 layer = 2,
             ))
