@@ -1590,7 +1590,6 @@ class GestureLowerPanel(
             }
             cards += ScriptSettingCard(
                 elementId = "lower-script-name",
-                backgroundId = "lower-script-name-bg",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROGRAM_NAME),
                 value = Component.text(script.name.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }),
                 background = Bukkit.createBlockData(
@@ -1621,7 +1620,6 @@ class GestureLowerPanel(
             }
             cards += ScriptSettingCard(
                 elementId = "lower-script-timer",
-                backgroundId = "lower-script-timer-bg",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
                 value = Component.text(timerValue),
                 background = Bukkit.createBlockData(
@@ -1661,7 +1659,6 @@ class GestureLowerPanel(
             }
             cards += ScriptSettingCard(
                 elementId = "lower-script-variables",
-                backgroundId = "lower-script-variables-bg",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES),
                 value = Component.text(variablesValue),
                 background = Bukkit.createBlockData(

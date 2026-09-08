@@ -113,14 +113,19 @@ data class SettingsActionCard(
 
 /** プログラム全体設定カード1件です。背景・図柄・2行文言・操作面を同じ矩形で表します。 */
 data class ScriptSettingCard(
-    /** 要素 ID 全文です（例 lower-script-name）。 */
+    /**
+     * 要素 ID 全文です（例 lower-script-name）。
+     * 操作面のノード ID を兼ね、コンパイル後の要素 ID になります。
+     */
     val elementId: String,
-    /** 背景 visual の ID です（例 lower-script-name-bg）。 */
-    val backgroundId: String,
     val label: String,
     val value: Component,
     val background: BlockData,
-    val icon: ItemStack,
+    /**
+     * 図柄です。サーバーなし単体テストでは ItemStack を生成できないため、
+     * null の場合は図柄ノードを作りません（本番経路は常に指定します）。
+     */
+    val icon: ItemStack?,
     /** 未完了時の注意ホバーです。完了時は null です。 */
     val attentionHover: GestureGuiHoverText?,
     val cx: Double,
@@ -498,24 +503,27 @@ object DeclarativeSettings {
     ) {
         // プログラム全体設定はタブではないため、未完了でも警告表示を付けません。
         // 未完了の状態名はホバーで伝え、警告表示の対象はノード設定タブへ限定します（旧実装どおり）。
+        // ノード ID は要素 ID と同一にし、操作振分けの照合対象を維持します。
         nodes += GestureGuiBlock(
             blockData = card.background,
             width = GestureGuiSizeSpec.Fixed(card.w),
             height = GestureGuiSizeSpec.Fixed(SCRIPT_CARD_HEIGHT),
-            id = card.backgroundId,
+            id = card.elementId,
             actionId = card.elementId,
             acceptedGestures = GestureGuiClickPolicy.CLICK,
             hover = card.attentionHover?.let(::hoverSpecOf),
             absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y, card.w, SCRIPT_CARD_HEIGHT),
         )
-        nodes += GestureGuiItem(
-            item = card.icon,
-            scale = 0.08,
-            width = GestureGuiSizeSpec.Fixed(0.08),
-            height = GestureGuiSizeSpec.Fixed(0.08),
-            id = "${card.elementId}-icon",
-            absolute = placed(frame, card.cx - card.w / 2.0 + 0.07, SCRIPT_CARD_CENTER_Y, 0.08, 0.08),
-        )
+        card.icon?.let { icon ->
+            nodes += GestureGuiItem(
+                item = icon,
+                scale = 0.08,
+                width = GestureGuiSizeSpec.Fixed(0.08),
+                height = GestureGuiSizeSpec.Fixed(0.08),
+                id = "${card.elementId}-icon",
+                absolute = placed(frame, card.cx - card.w / 2.0 + 0.07, SCRIPT_CARD_CENTER_Y, 0.08, 0.08),
+            )
+        }
         nodes += GestureGuiText(
             text = Component.text(card.label),
             size = 0.0052,
