@@ -12,6 +12,7 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHover
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHoverPosition
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHoverTarget
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiItem
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
@@ -21,6 +22,7 @@ import me.awabi2048.kantancommander.gui.GestureSettingVisualPolicy
 import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
 import org.bukkit.entity.Player
+import org.bukkit.inventory.ItemStack
 
 /** 内容域の原点です。旧来の全画面座標からの換算に用います。 */
 data class ContentFrame(val minX: Double, val maxY: Double)
@@ -109,6 +111,27 @@ data class SettingsActionCard(
     val consume: Boolean = false,
 )
 
+/** プログラム全体設定カード1件です。背景・図柄・2行文言・操作面を同じ矩形で表します。 */
+data class ScriptSettingCard(
+    /**
+     * 要素 ID 全文です（例 lower-script-name）。
+     * 操作面のノード ID を兼ね、コンパイル後の要素 ID になります。
+     */
+    val elementId: String,
+    val label: String,
+    val value: Component,
+    val background: BlockData,
+    /**
+     * 図柄です。サーバーなし単体テストでは ItemStack を生成できないため、
+     * null の場合は図柄ノードを作りません（本番経路は常に指定します）。
+     */
+    val icon: ItemStack?,
+    /** 未完了時の注意ホバーです。完了時は null です。 */
+    val attentionHover: GestureGuiHoverText?,
+    val cx: Double,
+    val w: Double,
+)
+
 /**
  * 設定系画面の宣言区画です。
  *
@@ -117,6 +140,12 @@ data class SettingsActionCard(
  * i18n・候補算出・スクリプト参照は含まず、実行時 adapter が解決します。
  */
 object DeclarativeSettings {
+    /** プログラム全体設定カードの中心高さです（旧 `addScriptSetting` と同一）。 */
+    private const val SCRIPT_CARD_CENTER_Y = -0.02
+
+    /** プログラム全体設定カードの高さです（旧 `addScriptSetting` と同一）。 */
+    private const val SCRIPT_CARD_HEIGHT = 0.17
+
     /** 旧ホバー文を宣言仕様へ変換します。置換先は宣言ノード ID 基準で解決します。 */
     internal fun hoverSpecOf(hover: GestureGuiHoverText): GestureGuiHover = GestureGuiHover(
         text = hover.text,
@@ -464,6 +493,79 @@ object DeclarativeSettings {
                 absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
             )
         }
+    }
+
+    /** プログラム全体設定（ノード未選択時）の1枚です。背景・図柄・2行文言・操作面を配置します。 */
+    fun scriptSettingSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        card: ScriptSettingCard,
+    ) {
+        // プログラム全体設定はタブではないため、未完了でも警告表示を付けません。
+        // 未完了の状態名はホバーで伝え、警告表示の対象はノード設定タブへ限定します（旧実装どおり）。
+        // ノード ID は要素 ID と同一にし、操作振分けの照合対象を維持します。
+        nodes += GestureGuiBlock(
+            blockData = card.background,
+            width = GestureGuiSizeSpec.Fixed(card.w),
+            height = GestureGuiSizeSpec.Fixed(SCRIPT_CARD_HEIGHT),
+            id = card.elementId,
+            actionId = card.elementId,
+            acceptedGestures = GestureGuiClickPolicy.CLICK,
+            hover = card.attentionHover?.let(::hoverSpecOf),
+            absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y, card.w, SCRIPT_CARD_HEIGHT),
+        )
+        card.icon?.let { icon ->
+            nodes += GestureGuiItem(
+                item = icon,
+                scale = 0.08,
+                width = GestureGuiSizeSpec.Fixed(0.08),
+                height = GestureGuiSizeSpec.Fixed(0.08),
+                id = "${card.elementId}-icon",
+                absolute = placed(frame, card.cx - card.w / 2.0 + 0.07, SCRIPT_CARD_CENTER_Y, 0.08, 0.08),
+            )
+        }
+        nodes += GestureGuiText(
+            text = Component.text(card.label),
+            size = 0.0052,
+            lineWidth = 120,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "${card.elementId}-label",
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y - 0.025, 1.0, 0.0052 * 3.0),
+        )
+        nodes += GestureGuiText(
+            text = card.value,
+            size = 0.0044,
+            lineWidth = 170,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "${card.elementId}-value",
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y + 0.015, 1.0, 0.0044 * 3.0),
+        )
+    }
+
+    /** プログラム全体設定画面の文書です。案内文言と3枚のカードからなります。 */
+    fun scriptSettingsDocument(
+        hint: Component,
+        cards: List<ScriptSettingCard>,
+        panel: GestureGuiPanel = GestureGuiPanel(),
+    ): GestureGuiDocument {
+        val frame = contentFrame(panel)
+        val nodes = mutableListOf<GestureGuiNode>()
+        nodes += GestureGuiText(
+            text = hint,
+            size = 0.008,
+            lineWidth = 230,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "lower-hint",
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, 0.0, 0.27, 1.0, 0.008 * 3.0),
+        )
+        cards.forEach { scriptSettingSection(nodes, frame, it) }
+        return document(nodes, panel)
     }
 
     fun document(nodes: List<GestureGuiNode>, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =

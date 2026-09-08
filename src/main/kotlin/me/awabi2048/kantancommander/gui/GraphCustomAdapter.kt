@@ -165,97 +165,12 @@ internal class KantanGraphCustomRenderer internal constructor(
     override fun render(
         node: GestureGuiCustom,
         layout: ResolvedGestureGuiNode,
-    ): GestureGuiCustomRenderResult = convertForShadow()
+    ): GestureGuiCustomRenderResult = convert()
 
-    /** shadow検証・将来の切替えで共用する変換本体です。 */
-    fun convertForShadow(): GestureGuiCustomRenderResult {
+    /** グラフ出力の拡縮と Custom 変換本体です。 */
+    fun convert(): GestureGuiCustomRenderResult {
         val scaled = scaleGraphOutput(output.visuals, output.elements, zoomScale)
         return toCustomResult(scaled, frame)
     }
 }
 
-/**
- * 旧来結果とCustom変換結果の差分を求めます。空なら等価です。
- *
- * 表示ID・要素IDの集合一致、切断除去の決定境界、ガード・ホバーの有無を
- * 検証します。文言内容・素材の同一性は同一関数由来のため対象外です。
- * shadow検証用の一時口であり、上部画面の切替え時に除去します。
- */
-internal fun diffGraphShadow(
-    scaledVisuals: List<GestureGuiVisual>,
-    scaledElements: List<GestureGuiElement>,
-    clippedVisuals: List<GestureGuiVisual>,
-    finalElements: List<GestureGuiElement>,
-    result: GestureGuiCustomRenderResult,
-    clip: GestureGuiBounds,
-): List<String> {
-    val diffs = mutableListOf<String>()
-    fun boundsOf(visual: GestureGuiVisual): GestureGuiBounds = when (visual) {
-        is GestureGuiVisual.Block -> GestureGuiBounds(
-            visual.x - visual.width / 2.0,
-            visual.y - visual.height / 2.0,
-            visual.x + visual.width / 2.0,
-            visual.y + visual.height / 2.0,
-        )
-        else -> GestureGuiBounds(visual.x, visual.y, visual.x, visual.y)
-    }
-    fun disjoint(bounds: GestureGuiBounds): Boolean =
-        bounds.maxX <= clip.minX || bounds.minX >= clip.maxX ||
-            bounds.maxY <= clip.minY || bounds.minY >= clip.maxY
-
-    fun contains(bounds: GestureGuiBounds): Boolean =
-        bounds.minX >= clip.minX && bounds.maxX <= clip.maxX &&
-            bounds.minY >= clip.minY && bounds.maxY <= clip.maxY
-
-    val scaledIds = scaledVisuals.mapTo(hashSetOf(), GestureGuiVisual::visualId)
-    val resultIds = result.visuals.mapTo(hashSetOf(), GestureGuiVisual::visualId)
-    (scaledIds - resultIds).sorted().take(5).forEach { diffs += "missing visual: $it" }
-    (resultIds - scaledIds).sorted().take(5).forEach { diffs += "extra visual: $it" }
-
-    val scaledElementIds = scaledElements.mapTo(hashSetOf(), GestureGuiElement::elementId)
-    val resultElementIds = result.elements.map { it.elementId }.toHashSet()
-    (scaledElementIds - resultElementIds).sorted().take(5).forEach { diffs += "missing element: $it" }
-    (resultElementIds - scaledElementIds).sorted().take(5).forEach { diffs += "extra element: $it" }
-
-    val clippedIds = clippedVisuals.mapTo(hashSetOf(), GestureGuiVisual::visualId)
-    val declared = result.visualBounds
-    scaledVisuals.filter { it.visualId !in clippedIds }.forEach { visual ->
-        // 除去された表示は、申告矩形が領域内に収まらない場合に限り compiler と一致します。
-        // Blockは幅・高さから求まるため申告対象外です。
-        if (visual is GestureGuiVisual.Text || visual is GestureGuiVisual.Item) {
-            val bounds = declared[visual.visualId]
-            if (bounds == null) {
-                diffs += "dropped visual without declared bounds: ${visual.visualId}"
-            } else if (contains(bounds)) {
-                diffs += "dropped visual declared inside clip: ${visual.visualId}"
-            }
-        }
-    }
-
-    val finalIds = finalElements.mapTo(hashSetOf(), GestureGuiElement::elementId)
-    val byId = scaledElements.associateBy(GestureGuiElement::elementId)
-    scaledElements.filter { it.elementId !in finalIds }.forEach { element ->
-        // 除去された操作面は、切断で消えるか、対象表示の消滅に伴うものでなければずれです。
-        val boundsGone = disjoint(element.bounds)
-        val targetGone = element.targetVisualId != null && element.targetVisualId !in clippedIds
-        if (!boundsGone && !targetGone) {
-            diffs += "dropped element without clip reason: ${element.elementId}"
-        }
-    }
-
-    val legacyGuards = scaledElements.associate { it.elementId to (it.gestureGuard != null) }
-    result.elements.forEach { custom ->
-        if (custom.elementId !in legacyGuards) {
-            diffs += "extra custom element: ${custom.elementId}"
-            return@forEach
-        }
-        if (legacyGuards.getValue(custom.elementId) != (custom.gestureGuard != null)) {
-            diffs += "guard mismatch: ${custom.elementId}"
-        }
-        val legacy = byId.getValue(custom.elementId)
-        if ((legacy.hoverText != null) != (custom.hoverText != null)) {
-            diffs += "hover mismatch: ${custom.elementId}"
-        }
-    }
-    return diffs
-}

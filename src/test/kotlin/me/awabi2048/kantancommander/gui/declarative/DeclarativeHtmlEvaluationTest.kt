@@ -5,9 +5,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.html.GestureGuiHtmlEnvironment
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutErrorCode
-import com.awabi2048.ccsystem.core.gesturegui.html.GestureGuiHtml
-import com.awabi2048.ccsystem.core.gesturegui.layout.GestureGuiLayoutCompiler
-import com.awabi2048.ccsystem.core.gesturegui.layout.GestureGuiLayoutEngine
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutFacade
 import java.lang.reflect.Proxy
 import net.kyori.adventure.text.Component
 import org.bukkit.block.data.BlockData
@@ -68,12 +66,12 @@ class DeclarativeHtmlEvaluationTest {
     )
 
     private fun htmlCompiled() = run {
-        val parsed = GestureGuiHtml.parse(html, environment, "confirm.html", panel)
+        val parsed = GestureGuiLayoutFacade.parseHtml(html, environment, "confirm.html", panel)
         assertTrue(parsed.diagnostics.isEmpty(), "diagnostics: ${parsed.diagnostics}")
         val actions = setOf("confirm-delete", "confirm-cancel")
-        val resolved = GestureGuiLayoutEngine.layout(parsed.document, knownActionIds = actions)
+        val resolved = GestureGuiLayoutFacade.layout(parsed.document, knownActionIds = actions)
         assertTrue(resolved.diagnostics.isEmpty(), "diagnostics: ${resolved.diagnostics}")
-        val compiled = GestureGuiLayoutCompiler.compile(
+        val compiled = GestureGuiLayoutFacade.compile(
             resolved,
             screenId = "s",
             actionHandlers = actions.associateWith { {} },
@@ -122,11 +120,11 @@ class DeclarativeHtmlEvaluationTest {
     @Test
     fun `known html gaps are recorded`() {
         val html = htmlCompiled()
-        // 受付種別は PRIMARY のみで、スニーク対応の CLICK 集合になりません（Profile 1 の制限）。
+        // 受付種別は PRIMARY のみです（gestures 属性を指定していないため）。
         html.view.definition.elements.forEach {
             assertEquals(setOf(GestureGuiGesture.PRIMARY), it.acceptedGestures)
         }
-        // 文言色・行幅は指定できず、無色・既定行幅になります。
+        // 文言色・行幅は指定していないため、無色・既定行幅になります。
         val texts = html.view.visuals.filterIsInstance<GestureGuiVisual.Text>()
         assertTrue(texts.isNotEmpty())
     }
@@ -140,7 +138,7 @@ class DeclarativeHtmlEvaluationTest {
               <button id="b">NoAction</button>
             </section>
         """.trimIndent()
-        val parsed = GestureGuiHtml.parse(bad, environment, "eval.html", panel)
+        val parsed = GestureGuiLayoutFacade.parseHtml(bad, environment, "eval.html", panel)
         assertTrue(
             parsed.diagnostics.any { it.code == GestureGuiLayoutErrorCode.UNSUPPORTED_TAG && it.source == "eval.html" },
             "diagnostics: ${parsed.diagnostics}",
