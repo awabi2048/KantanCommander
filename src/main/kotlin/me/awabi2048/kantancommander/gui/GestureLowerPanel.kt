@@ -48,6 +48,7 @@ import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
+import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.kantancommander.gui.declarative.CenteredLine
@@ -1561,10 +1562,10 @@ class GestureLowerPanel(
      * ノード未選択時の中央パネルです。
      *
      * ノード選択を促すだけではプログラム全体の設定へ到達できず、空のグラフでは
-     * 「何をすれば追加できるか」も分かりません。ここではプログラム名とタイマーを
-     * 常設の編集項目として同じ中央領域へ置き、グラフが空の場合だけ追加操作の
-     * 明示的な案内を表示します。これらはノード設定のタブ木とは別ドメインなので、
-     * ノードを選択していないときにだけ表示します。
+     * 「何をすれば追加できるか」も分かりません。ここではプログラム名・タイマー・
+     * ワールド変数・ディスク取得を常設項目として同じ中央領域へ4等分で置き、
+     * グラフが空の場合だけ追加操作の明示的な案内を表示します。これらはノード設定の
+     * タブ木とは別ドメインなので、ノードを選択していないときにだけ表示します。
      */
     /**
      * プログラム全体設定の宣言実装です。旧実装と同じ算出・文言・座標・要素 ID・ホバーを用い、
@@ -1600,7 +1601,7 @@ class GestureLowerPanel(
                 ),
                 icon = ItemStack(Material.NAME_TAG),
                 attentionHover = null,
-                cx = SCRIPT_SETTING_LEFT_X,
+                cx = SCRIPT_SETTING_FIRST_X,
                 w = SCRIPT_SETTING_WIDTH,
             )
             val timerState = if (script.timer.enabled) {
@@ -1638,7 +1639,7 @@ class GestureLowerPanel(
                 } else {
                     null
                 },
-                cx = SCRIPT_SETTING_CENTER_X,
+                cx = SCRIPT_SETTING_SECOND_X,
                 w = SCRIPT_SETTING_WIDTH,
             )
             val worldId = resolveVariableWorldId(state)
@@ -1669,7 +1670,41 @@ class GestureLowerPanel(
                 ),
                 icon = ItemStack(Material.WRITABLE_BOOK),
                 attentionHover = null,
-                cx = SCRIPT_SETTING_RIGHT_X,
+                cx = SCRIPT_SETTING_THIRD_X,
+                w = SCRIPT_SETTING_WIDTH,
+            )
+            // 未選択時下部の4枚目はプログラムディスクの取得操作です。設定値の編集ではなく
+            // 内容の複製であり、簡易GUIの出力操作と同じく内容があるときだけ有効にします。
+            // 空のプログラムでは未設定表示とし、クリック時点のガードでも受け付けません。
+            val diskAvailable = script.hasDiskContent()
+            val diskState = if (diskAvailable) {
+                GestureSettingValueState.CONFIGURED
+            } else {
+                GestureSettingValueState.INITIAL
+            }
+            val diskValue = if (diskAvailable) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)
+            } else {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+            }
+            cards += ScriptSettingCard(
+                elementId = "lower-script-disk",
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_DISK),
+                value = Component.text(diskValue),
+                background = Bukkit.createBlockData(
+                    GestureSettingVisualPolicy.material(
+                        GestureSettingSelectionMode.MULTIPLE,
+                        diskState,
+                    ),
+                ),
+                icon = ItemStack(Material.MUSIC_DISC_OTHERSIDE),
+                attentionHover = null,
+                // 所持状態や保存内容は表示生成後に変わるため、表示時の真偽値を焼き付けず
+                // クリック時点で最新スクリプトの内容有無を再確認します。
+                guard = { _, _ ->
+                    plugin.scripts.load(state.scriptId)?.hasDiskContent() == true
+                },
+                cx = SCRIPT_SETTING_FOURTH_X,
                 w = SCRIPT_SETTING_WIDTH,
             )
         }
@@ -3711,11 +3746,13 @@ class GestureLowerPanel(
 
     /** 配置定数は宣言実装と共有します。同一モジュール内のみに公開します。 */
     internal companion object {
-        // プログラム全体設定カードを3列で配置するための定数です。
-        const val SCRIPT_SETTING_LEFT_X = -0.68
-        const val SCRIPT_SETTING_CENTER_X = 0.0
-        const val SCRIPT_SETTING_RIGHT_X = 0.68
-        const val SCRIPT_SETTING_WIDTH = 0.60
+        // プログラム全体設定カードを4列で配置するための定数です。各項目を同じ大きさで
+        // 画面領域を等分し、カード間0.08・両端0.035の余白を保ちます。
+        const val SCRIPT_SETTING_FIRST_X = -0.765
+        const val SCRIPT_SETTING_SECOND_X = -0.255
+        const val SCRIPT_SETTING_THIRD_X = 0.255
+        const val SCRIPT_SETTING_FOURTH_X = 0.765
+        const val SCRIPT_SETTING_WIDTH = 0.43
         const val SETTING_DESCRIPTION_HOVER_ID = "setting-description-hover"
         /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます。 */
         const val DESCRIPTION_TEXT_SIZE = 0.0043

@@ -128,6 +128,12 @@ data class ScriptSettingCard(
     val icon: ItemStack?,
     /** 未完了時の注意ホバーです。完了時は null です。 */
     val attentionHover: GestureGuiHoverText?,
+    /**
+     * 操作受付の実行可否です。null の場合は常に受け付けます。
+     * 内容があるときだけ有効な操作（未選択時下部のディスク取得など）は、
+     * クリック時点の最新状態を返す判定を渡します。
+     */
+    val guard: ((Player, GestureGuiGesture) -> Boolean)? = null,
     val cx: Double,
     val w: Double,
 )
@@ -511,6 +517,7 @@ object DeclarativeSettings {
             id = card.elementId,
             actionId = card.elementId,
             acceptedGestures = GestureGuiClickPolicy.CLICK,
+            gestureGuard = card.guard,
             hover = card.attentionHover?.let(::hoverSpecOf),
             absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y, card.w, SCRIPT_CARD_HEIGHT),
         )
@@ -546,7 +553,7 @@ object DeclarativeSettings {
         )
     }
 
-    /** プログラム全体設定画面の文書です。案内文言と3枚のカードからなります。 */
+    /** プログラム全体設定画面の文書です。案内文言と4枚のカードからなります。 */
     fun scriptSettingsDocument(
         hint: Component,
         cards: List<ScriptSettingCard>,

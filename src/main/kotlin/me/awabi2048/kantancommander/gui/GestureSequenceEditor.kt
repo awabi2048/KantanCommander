@@ -74,6 +74,7 @@ import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.toggleControlBlockState
 import me.awabi2048.kantancommander.security.PlacementDecision
 import me.awabi2048.kantancommander.util.KcI18n
@@ -3691,6 +3692,30 @@ class GestureSequenceEditor(
         }
     }
 
+    /**
+     * 未選択時下部のディスク取得操作です。簡易GUIの出力操作と同じく、内容のある
+     * プログラムだけを独立したプログラムディスクへ複製して配布します。
+     * 元スクリプトは変更しないため、画面の再描画は行いません。
+     */
+    private fun outputScriptDisk(player: Player) {
+        val source = plugin.scripts.load(state.scriptId) ?: return
+        // 空プログラムの取得は表示側のガードでも拒否しますが、保存内容は操作後に
+        // 変わり得るため、実行時点でも同じ条件を再確認します。
+        if (!source.hasDiskContent()) return
+        val placement = state.placement ?: return
+        if (!plugin.placementAccess.requireManage(player, placement.world)) return
+        val world = plugin.server.getWorld(placement.world) ?: return
+        val block = world.getBlockAt(placement.x, placement.y, placement.z)
+        if (plugin.placements.find(block.location)?.scriptId != source.id) return
+        val output = runCatching { plugin.scripts.copyForItem(source) }.getOrNull() ?: return
+        val item = runCatching { KantanItemService.createDisk(output, player) }.getOrElse {
+            runCatching { plugin.scripts.delete(output.id) }
+            return
+        }
+        player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
+        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
+    }
+
     /** ワールド内変数一覧の子画面を閉じて親へ戻します。 */
     private fun closeWorldVariables(player: Player) {
         val ownerId = ownerIdFor(player)
@@ -5575,6 +5600,9 @@ class GestureSequenceEditor(
             }
             context.elementId == "lower-script-variables" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 openWorldVariables(player)
+            }
+            context.elementId == "lower-script-disk" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                outputScriptDisk(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
