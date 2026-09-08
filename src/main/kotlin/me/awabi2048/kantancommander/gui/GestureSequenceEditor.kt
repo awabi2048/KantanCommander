@@ -6471,40 +6471,23 @@ class GestureSequenceEditor(
     }
 
     private fun viewportMetrics(scale: Double): ViewportMetrics {
-        val columns = GestureEditorLayout.viewportColumns(scale)
-        val rows = GestureEditorLayout.viewportRows(scale)
-        require(scale.isFinite() && scale > 0.0) { "viewport zoom scale must be positive and finite" }
-
-        /*
-         * 表示面の実寸を先に決め、そこへ可視論理セルを等分します。
-         * 以前は固定のFIRST_COL_X/FIRST_ROW_Yを拡大縮小していたため、
-         * 10×4の論理範囲が画面中央の狭い帯に留まり、ズーム時には
-         * アイコンと経路の端点も別々に切り取られていました。
-         * ここでは「画面上の寸法」を基準にし、最後の一括scaleで戻せる
-         * ズーム前座標へ変換します。
-         */
-        val screenPitchX =
-            (GestureEditorLayout.UPPER_GRAPH_MAX_X - GestureEditorLayout.UPPER_GRAPH_MIN_X) / columns
-        val screenPitchY =
-            (GestureEditorLayout.UPPER_GRAPH_MAX_Y - GestureEditorLayout.UPPER_GRAPH_MIN_Y) / rows
-        val screenIconSize = minOf(screenPitchX, screenPitchY) * 0.9
-        val screenPathThickness = minOf(screenPitchX, screenPitchY) * 2.0 / 3.0
-        val iconScaleRatio = GestureEditorLayout.ICON_SCALE / GestureEditorLayout.ICON_W
+        // 座標式の正本は GraphViewportMapper です。宣言経路と共有し、 divergences を防ぎます。
+        val frame = GraphViewportMapper.legacyFrame(scale)
         return ViewportMetrics(
-            zoomScale = scale,
-            columns = columns,
-            rows = rows,
-            firstX = (GestureEditorLayout.UPPER_GRAPH_MIN_X + screenPitchX / 2.0) / scale,
-            firstY = (GestureEditorLayout.UPPER_GRAPH_MAX_Y - screenPitchY / 2.0) / scale,
-            pitchX = screenPitchX / scale,
-            pitchY = screenPitchY / scale,
-            iconSize = screenIconSize / scale,
-            iconScale = screenIconSize * iconScaleRatio / scale,
-            pathThickness = screenPathThickness / scale,
-            graphMinX = GestureEditorLayout.UPPER_GRAPH_MIN_X,
-            graphMaxX = GestureEditorLayout.UPPER_GRAPH_MAX_X,
-            graphMinY = GestureEditorLayout.UPPER_GRAPH_MIN_Y,
-            graphMaxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y,
+            zoomScale = frame.zoomScale,
+            columns = frame.columns,
+            rows = frame.rows,
+            firstX = frame.firstX,
+            firstY = frame.firstY,
+            pitchX = frame.pitchX,
+            pitchY = frame.pitchY,
+            iconSize = frame.iconSize,
+            iconScale = frame.iconScale,
+            pathThickness = frame.pathThickness,
+            graphMinX = frame.minX,
+            graphMaxX = frame.maxX,
+            graphMinY = frame.minY,
+            graphMaxY = frame.maxY,
         )
     }
 
