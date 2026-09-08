@@ -9,6 +9,17 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
+import me.awabi2048.kantancommander.gui.declarative.ContentFrame
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeSettings
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeVariables
+import me.awabi2048.kantancommander.gui.declarative.DescriptionDetail
+import me.awabi2048.kantancommander.gui.declarative.SettingsActionCard
+import me.awabi2048.kantancommander.gui.declarative.SettingsChoiceCard
+import me.awabi2048.kantancommander.gui.declarative.SettingsTabEntry
+import me.awabi2048.kantancommander.gui.declarative.SettingsValueRow
+import me.awabi2048.kantancommander.gui.declarative.contentFrame
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
@@ -39,6 +50,25 @@ import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
+import me.awabi2048.kantancommander.gui.declarative.CenteredLine
+import me.awabi2048.kantancommander.gui.declarative.ConfirmTexts
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeTest
+import me.awabi2048.kantancommander.gui.declarative.TestConfirmData
+import me.awabi2048.kantancommander.gui.declarative.TestToggleData
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeConfirm
+import me.awabi2048.kantancommander.gui.declarative.DeclarativePicker
+import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
+import me.awabi2048.kantancommander.gui.declarative.KantanLayoutBridge
+import me.awabi2048.kantancommander.gui.declarative.PickerArrow
+import me.awabi2048.kantancommander.gui.declarative.PickerCard
+import me.awabi2048.kantancommander.gui.declarative.PickerCategory
+import me.awabi2048.kantancommander.gui.declarative.PickerData
+import me.awabi2048.kantancommander.gui.declarative.PickerPager
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableDeleteData
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableEntry
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableTypeData
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableTypeOption
+import me.awabi2048.kantancommander.gui.declarative.WorldVariablesData
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
@@ -73,8 +103,8 @@ class GestureLowerPanel(
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
     val TEST_CONFIRM_SCREEN_ID = "gesture-editor-test-confirm"
 
-    /** 子画面の面積を親の50%にするための縦横縮尺です。 */
-    private val SETTING_CHILD_SCALE = sqrt(0.5)
+    /** 子画面の面積を親の50%にするための縦横縮尺です。宣言実装と共有します。 */
+    internal val SETTING_CHILD_SCALE = sqrt(0.5)
 
     fun build(
         state: GestureEditorState,
@@ -84,7 +114,9 @@ class GestureLowerPanel(
     ): GestureGuiView {
         return when (state.lowerMode) {
             GestureLowerMode.SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
-            GestureLowerMode.PICKER -> buildPicker(state, player)
+            GestureLowerMode.PICKER ->
+                if (KantanDeclarativeGui.usePicker) buildPickerNew(state, player)
+                else buildPicker(state, player)
             GestureLowerMode.SETTING_CHOICES -> buildSettingChoices(
                 state,
                 player,
@@ -97,10 +129,18 @@ class GestureLowerPanel(
             GestureLowerMode.WORLD_VARIABLE_TYPE -> buildSettings(state, player, attention, suppressHighlight)
             // 削除確認も一覧と同じ子画面契約で表示し、親画面へ確認ボタンを混在させません。
             GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> buildSettings(state, player, attention, suppressHighlight)
-            GestureLowerMode.CONFIRM -> buildConfirm(state, player)
-            GestureLowerMode.TEST_CONFIRM -> buildTestConfirmation(state, player, child = true)
-            GestureLowerMode.TEST_STATUS -> buildTestStatus(state, player)
-            GestureLowerMode.TEST_RESULT -> buildTestResult(state, player)
+            GestureLowerMode.CONFIRM ->
+                if (KantanDeclarativeGui.useConfirm) buildConfirmNew(state, player)
+                else buildConfirm(state, player)
+            GestureLowerMode.TEST_CONFIRM ->
+                if (KantanDeclarativeGui.useTestConfirm) buildTestConfirmationNew(state, player, child = true)
+                else buildTestConfirmation(state, player, child = true)
+            GestureLowerMode.TEST_STATUS ->
+                if (KantanDeclarativeGui.useTestStatus) buildTestStatusNew(state, player)
+                else buildTestStatus(state, player)
+            GestureLowerMode.TEST_RESULT ->
+                if (KantanDeclarativeGui.useTestResult) buildTestResultNew(state, player)
+                else buildTestResult(state, player)
         }
     }
 
@@ -110,35 +150,1187 @@ class GestureLowerPanel(
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
         suppressHighlight: Boolean = false,
-    ): GestureGuiView =
+    ): GestureGuiView = if (KantanDeclarativeGui.useSettingChoices) {
+        buildSettingChoicesChildNew(state, player, attention, suppressHighlight)
+    } else {
         buildSettingChoices(state, player, attention, child = true, suppressHighlight = suppressHighlight)
+    }
+
+    /**
+     * 設定候補子画面の宣言実装です。旧 `buildSettingChoices(child = true)` と同じ
+     * 算出・文言・座標・要素 ID・ホバーを用い、既存の画面定義・子画面縮尺・
+     * 操作振分け（`view()`）を利用します。
+     */
+    private fun buildSettingChoicesChildNew(
+        state: GestureEditorState,
+        player: Player,
+        attention: GestureAttentionState = GestureAttentionState.EMPTY,
+        suppressHighlight: Boolean = false,
+    ): GestureGuiView {
+        val context = state.settingContext
+        val script = context?.let { plugin.scripts.load(it.scriptId) }
+        val node = context?.let { script?.graph?.nodes?.get(it.nodeId) }
+        val fieldKey = state.settingFieldKey
+        val screen = state.settingScreen
+        val frame = contentFrame(GestureGuiPanel())
+        val nodes = mutableListOf<GestureGuiNode>()
+        val noFields = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS))
+        val backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK))
+        val backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE)
+        if (context == null || node == null || fieldKey == null || screen == null) {
+            DeclarativeSettings.hintSection(nodes, frame, noFields, x = 0.0, y = 0.12, id = "setting-hint")
+            DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
+            return finishSettingChoicesChild(nodes)
+        }
+        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
+        val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
+        if (field == null) {
+            DeclarativeSettings.hintSection(nodes, frame, noFields, x = 0.0, y = 0.12, id = "setting-hidden")
+            DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
+            return finishSettingChoicesChild(nodes)
+        }
+        val fieldLabel = KcI18n.text(player, field.label)
+        val fieldValue = field.value(node).render(player)
+        val choices = settingTreeNodes(node, context, screen, fieldKey, player, attentionFields).map { choice ->
+            if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
+                choice.copy(selected = true)
+            } else choice
+        }
+        val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
+        DeclarativeSettings.descriptionSection(
+            nodes,
+            frame,
+            body = Component.text(fieldDescription(player, field), NamedTextColor.GRAY),
+            detail = run {
+                val warning = attentionWarning(player, node, fieldKey, attentionFields)
+                val detailHint = selectedDetail
+                    ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
+                when {
+                    !warning.isNullOrBlank() -> DescriptionDetail(
+                        Component.text(warning, NamedTextColor.RED),
+                        CHILD_DETAIL_HINT_Y,
+                    )
+                    !detailHint.isNullOrBlank() -> DescriptionDetail(
+                        Component.text(detailHint, NamedTextColor.GRAY),
+                        CHILD_DETAIL_HINT_Y,
+                    )
+                    else -> null
+                }
+            },
+            centerX = 0.0,
+            hoverY = CHILD_HOVER_Y,
+        )
+        DeclarativeSettings.valueRowsSection(
+            nodes,
+            frame,
+            rows = listOf(SettingsValueRow("setting-header", fieldLabel, fieldValue, CHILD_HEADER_Y)),
+            labelX = -0.53,
+            valueX = 0.53,
+        )
+        val pageSize = SETTING_CHOICE_PAGE_SIZE
+        val pageCount = (choices.size + pageSize - 1) / pageSize
+        val page = state.settingChoicePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        appendSettingChoiceCards(
+            nodes,
+            frame,
+            choices.drop(page * pageSize).take(pageSize),
+            fieldKey,
+            player,
+            child = true,
+            suppressHighlight = suppressHighlight,
+        )
+        if (pageCount > 1) {
+            DeclarativeSettings.pagerSection(
+                nodes,
+                frame,
+                idPrefix = "setting-choice",
+                elementPrefix = "lower-setting-choice-page",
+                page = page,
+                pageCount = pageCount,
+                centerX = 0.0,
+                centerY = CHILD_PAGER_Y,
+                arrowBackgrounds = listOf(page - 1, page + 1).map { targetPage ->
+                    Bukkit.createBlockData(
+                        if (targetPage in 0 until pageCount) Material.CYAN_CONCRETE
+                        else DisabledGuiVisualPolicy.material,
+                    )
+                },
+                arrowGlyphs = listOf("◀", "▶").mapIndexed { arrowIndex, glyph ->
+                    val targetPage = if (arrowIndex == 0) page - 1 else page + 1
+                    Component.text(glyph).color(
+                        if (targetPage in 0 until pageCount) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    )
+                },
+                status = Component.text("${page + 1}/$pageCount"),
+            )
+        }
+        DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
+        return finishSettingChoicesChild(nodes)
+    }
+
+    /** 宣言の候補子画面を解決・変換し、既存の子画面定義へ載せます。 */
+    private fun finishSettingChoicesChild(nodes: List<GestureGuiNode>): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeSettings.document(nodes),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeSettingChoices] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
+    }
 
     /** ワールド変数一覧の子画面を生成します。 */
     fun buildWorldVariablesChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildWorldVariables(state, player)
+    ): GestureGuiView = if (KantanDeclarativeGui.useWorldVariables) {
+        buildWorldVariablesNew(state, player)
+    } else {
+        buildWorldVariables(state, player)
+    }
+
+    /**
+     * 変数一覧子画面の宣言実装です。旧 `buildWorldVariables` と同じ算出・文言・
+     * 座標・要素 ID・ホバーを用い、既存の画面定義・子画面縮尺・操作振分けを利用します。
+     */
+    private fun buildWorldVariablesNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val worldId = resolveVariableWorldId(state)
+        val entries = worldId?.let { plugin.variables.list(it).toSortedMap() }.orEmpty()
+        val definitions = worldId?.let { plugin.variables.definitions(it) }.orEmpty()
+        val descriptionBody = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DESCRIPTION_SINGLE)
+            .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SETTINGS_FIELD_FALLBACK) }
+        if (entries.isEmpty()) {
+            return finishVariablesChild(
+                DeclarativeVariables.variablesDocument(
+                    WorldVariablesData(
+                        title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TITLE)),
+                        description = Component.text(descriptionBody, NamedTextColor.GRAY),
+                        emptyLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_EMPTY)),
+                        entries = emptyList(),
+                        entryBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                        deleteBackgroundInUse = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                        deleteBackgroundFree = Bukkit.createBlockData(Material.RED_CONCRETE),
+                        page = 0,
+                        pageCount = 1,
+                        pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                        pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                        createLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_CREATE)),
+                        createBackground = Bukkit.createBlockData(Material.GREEN_CONCRETE),
+                        backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                        backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                    ),
+                ),
+                GestureLowerMode.WORLD_VARIABLES,
+                "[DeclarativeVariables]",
+            )
+        }
+        val pageSize = WORLD_VARIABLE_PAGE_SIZE
+        val pageCount = (entries.size + pageSize - 1) / pageSize
+        val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        val usageScan = state.placement?.world
+            ?.let { worldName -> plugin.findWorldVariableUsagesSafely(worldName, entries.keys) }
+            ?: WorldVariableUsageScanResult(emptyMap(), complete = true)
+        val usagesByName = usageScan.usages
+        return finishVariablesChild(
+            DeclarativeVariables.variablesDocument(
+                WorldVariablesData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TITLE)),
+                    description = Component.text(descriptionBody, NamedTextColor.GRAY),
+                    emptyLabel = null,
+                    entries = entries.keys.toList().drop(page * pageSize).take(pageSize).map { name ->
+                        val value = entries.getValue(name)
+                        val type = definitions[name]?.type ?: value.type
+                        val inUse = !usageScan.complete || usagesByName[name].orEmpty().isNotEmpty()
+                        WorldVariableEntry(
+                            name = name,
+                            label = Component.text(name),
+                            hover = multiLineHover(
+                                listOf(
+                                    KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_VALUE,
+                                        mapOf("value" to VariableTemplate.stringify(value)),
+                                    ),
+                                    KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TYPE,
+                                        mapOf("type" to variableTypeName(player, type)),
+                                    ),
+                                ),
+                                x = 0.0,
+                                y = CHILD_HOVER_Y,
+                                replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                            ),
+                            inUse = inUse,
+                            deleteHover = singleLineHover(
+                                KcI18n.text(
+                                    player,
+                                    if (inUse) {
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_IN_USE
+                                    } else {
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE
+                                    },
+                                ),
+                                x = 0.0,
+                                y = CHILD_HOVER_Y,
+                                replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                            ),
+                        )
+                    },
+                    entryBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                    deleteBackgroundInUse = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    deleteBackgroundFree = Bukkit.createBlockData(Material.RED_CONCRETE),
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    createLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_CREATE)),
+                    createBackground = Bukkit.createBlockData(Material.GREEN_CONCRETE),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.WORLD_VARIABLES,
+            "[DeclarativeVariables]",
+        )
+    }
+
+    /** 変数系子画面の宣言区画を解決・変換し、既存の子画面定義へ載せます。 */
+    private fun finishVariablesChild(document: GestureGuiDocument, mode: GestureLowerMode, tag: String): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            document,
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander]$tag $diagnostics")
+            },
+        )
+        return view(mode, compiled.elements, compiled.visuals, child = true)
+    }
 
     /** ワールド変数の型選択子画面を生成します。 */
     fun buildWorldVariableTypeChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildWorldVariableType(state, player)
+    ): GestureGuiView = if (KantanDeclarativeGui.useWorldVariableType) {
+        buildWorldVariableTypeNew(state, player)
+    } else {
+        buildWorldVariableType(state, player)
+    }
+
+    /**
+     * 型選択子画面の宣言実装です。旧 `buildWorldVariableType` と同じ算出・文言・
+     * 座標・要素 ID を用い、既存の画面定義・子画面縮尺・操作振分けを利用します。
+     */
+    private fun buildWorldVariableTypeNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val selectedType = state.pendingWorldVariableType
+        return finishVariablesChild(
+            DeclarativeVariables.typeDocument(
+                WorldVariableTypeData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_CREATE_TITLE)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_TYPE),
+                    ),
+                    options = listOf(VariableType.NUMBER, VariableType.STRING).map { type ->
+                        val selected = selectedType == type
+                        val label = variableTypeName(player, type)
+                        WorldVariableTypeOption(
+                            key = type.name,
+                            label = Component.text(
+                                label,
+                                GestureSettingVisualPolicy.settingChoiceTextColor(
+                                    GestureSettingTreeNode(id = "world-variable-type:${type.name}", label = label, selected = selected),
+                                ),
+                            ),
+                            selected = selected,
+                            background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                            outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(selected)?.let {
+                                Bukkit.createBlockData(it)
+                            },
+                        )
+                    },
+                    nextLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_NEXT),
+                        if (selectedType != null) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    ),
+                    nextBackground = Bukkit.createBlockData(
+                        if (selectedType != null) Material.GREEN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    nextEnabled = selectedType != null,
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.WORLD_VARIABLE_TYPE,
+            "[DeclarativeVariableType]",
+        )
+    }
 
     /** ワールド内変数の削除確認子画面を生成します。 */
     fun buildWorldVariableDeleteConfirmationChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildWorldVariableDeleteConfirmation(state, player)
+    ): GestureGuiView = if (KantanDeclarativeGui.useWorldVariableDeleteConfirm) {
+        buildWorldVariableDeleteConfirmationNew(state, player)
+    } else {
+        buildWorldVariableDeleteConfirmation(state, player)
+    }
+
+    /**
+     * 削除確認子画面の宣言実装です。旧実装と同じ文言・座標・要素 ID を用い、
+     * 取消には戻る操作と同一 ID を用います（旧実装どおり）。
+     */
+    private fun buildWorldVariableDeleteConfirmationNew(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val name = state.pendingWorldVariableDeleteName.orEmpty()
+        return finishVariablesChild(
+            DeclarativeVariables.deleteConfirmDocument(
+                WorldVariableDeleteData(
+                    title = Component.text(
+                        KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_TITLE,
+                        ),
+                    ),
+                    body = Component.text(
+                        KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_BODY,
+                            mapOf("name" to name),
+                        ),
+                        NamedTextColor.GRAY,
+                    ),
+                    confirmLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                        NamedTextColor.WHITE,
+                    ),
+                    confirmBackground = Bukkit.createBlockData(Material.RED_CONCRETE),
+                    cancelLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                        NamedTextColor.WHITE,
+                    ),
+                    cancelBackground = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                ),
+            ),
+            GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM,
+            "[DeclarativeVariableDelete]",
+        )
+    }
 
     /** テスト開始確認は下部中央画面へ重ねる専用子画面です。 */
     fun buildTestConfirmationChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildTestConfirmation(state, player, child = true)
+    ): GestureGuiView = if (KantanDeclarativeGui.useTestConfirm) {
+        buildTestConfirmationNew(state, player, child = true)
+    } else {
+        buildTestConfirmation(state, player, child = true)
+    }
+
+    /**
+     * テスト開始確認の宣言実装です。旧実装と同じ文言・座標・要素 ID を用い、
+     * 既存の画面定義・パネル・操作振分けを利用します。
+     */
+    private fun buildTestConfirmationNew(
+        state: GestureEditorState,
+        player: Player,
+        child: Boolean,
+    ): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        fun toggleLabel(labelKey: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, enabled: Boolean): Component {
+            val value = KcI18n.text(
+                player,
+                if (enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF,
+            )
+            return Component.text(KcI18n.text(player, labelKey), NamedTextColor.WHITE)
+                .append(Component.text("  ", NamedTextColor.GRAY))
+                .append(Component.text(value, if (enabled) NamedTextColor.GREEN else NamedTextColor.GRAY))
+        }
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeTest.confirmDocument(
+                TestConfirmData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CONFIRM_TITLE)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DEBUG_MODE_DESCRIPTION),
+                        NamedTextColor.GRAY,
+                    ),
+                    toggles = listOf(
+                        TestToggleData(
+                            id = "test-confirm-debug",
+                            label = toggleLabel(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DEBUG_MODE, test.debugMode),
+                            background = Bukkit.createBlockData(
+                                if (test.debugMode) Material.LIME_CONCRETE else Material.LIGHT_GRAY_CONCRETE,
+                            ),
+                            centerY = 0.13,
+                        ),
+                        TestToggleData(
+                            id = "test-confirm-log",
+                            label = toggleLabel(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT, test.logOutput),
+                            background = Bukkit.createBlockData(
+                                if (test.logOutput) Material.LIME_CONCRETE else Material.LIGHT_GRAY_CONCRETE,
+                            ),
+                            centerY = -0.02,
+                        ),
+                    ),
+                    startLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CONFIRM)),
+                    startBackground = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                    cancelLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CANCEL)),
+                    cancelBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeTestConfirm] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.TEST_CONFIRM, compiled.elements, compiled.visuals, child = child)
+    }
+
+    /**
+     * テスト状態・結果の宣言実装です。旧実装と同じ行構成・要素 ID を用います。
+     * 実行中は毎tick再生成されるため、解決・変換の軽さを前提にします。
+     */
+    private fun buildTestStatusNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        fun row(id: String, label: String, value: String, y: Double): CenteredLine =
+            CenteredLine(id, Component.text(label, NamedTextColor.GRAY)
+                .append(Component.text(" ", NamedTextColor.GRAY))
+                .append(Component.text(value, NamedTextColor.WHITE)), y)
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeTest.statusDocument(
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_STATUS_TITLE)),
+                rows = listOf(
+                    row(
+                        "test-status-elapsed",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
+                        formatTestElapsedSeconds(test.elapsedTicks),
+                        0.21,
+                    ),
+                    row(
+                        "test-status-count",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
+                        test.successfulNodeCount.toString(),
+                        0.00,
+                    ),
+                    row(
+                        "test-status-log",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT),
+                        if (test.logOutput) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON)
+                        else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF),
+                        -0.21,
+                    ),
+                ),
+                hint = Component.text(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RUNNING_HINT),
+                    NamedTextColor.GRAY,
+                ),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeTestStatus] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.TEST_STATUS, compiled.elements, compiled.visuals)
+    }
+
+    private fun buildTestResultNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        val result = test.result
+        val elapsed = result?.elapsedTicks ?: test.elapsedTicks
+        val waitTicks = result?.waitTicks ?: 0L
+        val showReal = test.debugMode
+        val durationY = if (showReal) 0.24 else 0.22
+        val waitY = if (showReal) 0.11 else 0.09
+        val countY = if (showReal) -0.15 else -0.04
+        val statusY = if (showReal) -0.28 else -0.17
+        fun row(id: String, label: String, value: String, color: NamedTextColor, y: Double): CenteredLine =
+            CenteredLine(id, Component.text(label, NamedTextColor.GRAY)
+                .append(Component.text(" ", NamedTextColor.GRAY))
+                .append(Component.text(value, color)), y)
+        val rows = mutableListOf(
+            row(
+                "test-result-duration",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DURATION),
+                formatTestElapsed(elapsed),
+                NamedTextColor.WHITE,
+                durationY,
+            ),
+            row(
+                "test-result-wait",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_WAIT_DURATION),
+                formatTestElapsed(waitTicks),
+                NamedTextColor.WHITE,
+                waitY,
+            ),
+        )
+        if (showReal) {
+            rows += row(
+                "test-result-real",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REAL_DURATION),
+                formatTestElapsed(
+                    TestExecutionTimeFormatter.realProcessingTicks(elapsed, result?.debugWaitTicks ?: 0L),
+                ),
+                NamedTextColor.WHITE,
+                -0.02,
+            )
+        }
+        rows += row(
+            "test-result-count",
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
+            (result?.successfulNodeCount ?: test.successfulNodeCount).toString(),
+            NamedTextColor.WHITE,
+            countY,
+        )
+        val status = when (result?.status) {
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.SUCCESS ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_SUCCESS)
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.CANCELLED ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_INTERRUPTED)
+            else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FAILURE)
+        }
+        val statusColor = when (result?.status) {
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.SUCCESS -> NamedTextColor.GREEN
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.FAILURE -> NamedTextColor.RED
+            else -> NamedTextColor.GOLD
+        }
+        rows += row(
+            "test-result-status",
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FINAL_RESULT),
+            status,
+            statusColor,
+            statusY,
+        )
+        if (result?.status == me.awabi2048.kantancommander.execution.ExecutionFinishStatus.FAILURE) {
+            rows += row(
+                "test-result-cause",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE),
+                result.reason ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                NamedTextColor.WHITE,
+                -0.40,
+            )
+        }
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeTest.resultDocument(
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RESULT_TITLE)),
+                rows = rows,
+                completeLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMPLETE)),
+                completeBackground = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeTestResult] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.TEST_RESULT, compiled.elements, compiled.visuals)
+    }
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
+        state: GestureEditorState,
+        player: Player,
+        attention: GestureAttentionState,
+        suppressHighlight: Boolean = false,
+    ): GestureGuiView = if (KantanDeclarativeGui.useSettings) {
+        buildSettingsNew(state, player, attention, suppressHighlight)
+    } else {
+        buildSettingsLegacy(state, player, attention, suppressHighlight)
+    }
+
+    /**
+     * SETTINGS の宣言実装です。旧実装と同じ算出・文言・座標・要素 ID・ガード・ホバーを用い、
+     * 既存の画面定義・パネル・操作振分け（`view()`）を利用します。ノード未選択時は
+     * 旧実装へ委譲し、プログラム全体設定の描画は変えません。
+     */
+    private fun buildSettingsNew(
+        state: GestureEditorState,
+        player: Player,
+        attention: GestureAttentionState,
+        suppressHighlight: Boolean = false,
+    ): GestureGuiView {
+        val script = plugin.scripts.load(state.scriptId)
+        val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
+        if (node == null) return buildScriptSettings(state, player, script, attention)
+        val frame = contentFrame(GestureGuiPanel())
+        val nodes = mutableListOf<GestureGuiNode>()
+        val canDuplicate = script?.let {
+            GraphEditor.canDuplicate(it.graph, node.id, plugin.graphLimits().maximumNodeCount)
+        } == true
+        val duplicateBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE)
+        val deleteBackground = Bukkit.createBlockData(Material.RED_CONCRETE)
+        val duplicateLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DUPLICATE))
+        val deleteLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE))
+        val fields = CommandSettingsModel.gestureVisibleFields(node)
+        if (fields.isEmpty()) {
+            DeclarativeSettings.hintSection(
+                nodes,
+                frame,
+                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS)),
+            )
+            DeclarativeSettings.tabsSection(
+                nodes,
+                frame,
+                tabs = emptyList(),
+                duplicateLabel = if (canDuplicate) duplicateLabel else null,
+                duplicateBackground = if (canDuplicate) duplicateBackground else null,
+                deleteLabel = deleteLabel,
+                deleteBackground = deleteBackground,
+            )
+            return finishSettings(nodes)
+        }
+        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
+        val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
+            ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
+        check(fields.size <= SETTINGS_TAB_MAX) {
+            "設定タブは${SETTINGS_TAB_MAX}個以内で定義してください: ${node.type}=${fields.size}"
+        }
+        DeclarativeSettings.tabsSection(
+            nodes,
+            frame,
+            tabs = fields.mapIndexed { index, field ->
+                val on = index == activeField
+                val fieldAttention = field.key in attentionFields
+                val tabSelected = on && !suppressHighlight
+                val tabTextColor = GestureSettingVisualPolicy.tabTextColor(fieldAttention)
+                SettingsTabEntry(
+                    label = Component.text(fieldTabLabel(player, node, field)).let {
+                        if (tabTextColor == null) it else it.color(tabTextColor)
+                    },
+                    selected = tabSelected,
+                    attentionHover = if (fieldAttention) attentionWarningHover(player, node, field.key) else null,
+                    background = Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(tabSelected)),
+                )
+            },
+            duplicateLabel = if (canDuplicate) duplicateLabel else null,
+            duplicateBackground = if (canDuplicate) duplicateBackground else null,
+            deleteLabel = deleteLabel,
+            deleteBackground = deleteBackground,
+        )
+        val field = fields[state.settingsTab.coerceIn(0, fields.lastIndex)]
+        val descriptor = CommandSettingsModel.descriptor(node, field.key)
+        val settingContext = state.settingContext
+            ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
+        val displayLabel = KcI18n.text(player, field.label)
+        val displayValue = field.value(node)
+        val compositeRows = when (displayValue) {
+            is DisplayValue.Timing -> displayValue.rows(player)
+            is DisplayValue.ParticleParameters -> displayValue.rows(player)
+            is DisplayValue.SoundTargetPosition -> displayValue.rows(player)
+            is DisplayValue.SoundSetting -> displayValue.rows(player)
+            is DisplayValue.ParticleDisplay -> displayValue.rows(player)
+            else -> null
+        }
+        val compositeLayout = compositeRows?.let {
+            GestureSettingValueLayout.calculate(
+                rowCount = it.size,
+                valueAnchorY = SETTING_VALUE_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
+                detailAnchorY = SETTING_DETAIL_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
+                rowGapRatio = TIMING_ROW_GAP_RATIO,
+                minimumDetailY = SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT +
+                    SETTING_INPUT_HEIGHT / 2.0 + SETTING_DETAIL_INPUT_GAP,
+            )
+        }
+        val inputCenterY = if (compositeRows != null) {
+            SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT
+        } else {
+            SETTING_INPUT_CENTER_Y
+        }
+        val value = displayValue.render(player)
+        val settingScreen = gestureSettingScreenFor(descriptor.editor)
+        val settingChoices = settingScreen?.let { screen ->
+            settingTreeNodes(node, settingContext, screen, field.key, player, attentionFields).map { choice ->
+                if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
+                    choice.copy(selected = true)
+                } else choice
+            }
+        }.orEmpty()
+        val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
+        val warning = attentionWarning(player, node, field.key, attentionFields)
+        val detailHint = selectedDetail
+            ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
+        DeclarativeSettings.descriptionSection(
+            nodes,
+            frame,
+            body = Component.text(fieldDescription(player, field), NamedTextColor.GRAY),
+            detail = when {
+                !warning.isNullOrBlank() -> DescriptionDetail(
+                    Component.text(warning, NamedTextColor.RED),
+                    compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
+                )
+                !detailHint.isNullOrBlank() -> DescriptionDetail(
+                    Component.text(detailHint, NamedTextColor.GRAY),
+                    compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
+                )
+                else -> null
+            },
+        )
+        if (compositeRows != null && compositeLayout != null) {
+            check(compositeRows.size == compositeLayout.rowCentersY.size) {
+                "複合表示の値行とレイアウトの行数が一致しません: ${compositeRows.size} != ${compositeLayout.rowCentersY.size}"
+            }
+            DeclarativeSettings.valueRowsSection(
+                nodes,
+                frame,
+                rows = compositeRows.mapIndexed { index, row ->
+                    SettingsValueRow("lower-setting-composite-$index", row.label, row.value, compositeLayout.rowCentersY[index])
+                },
+            )
+        } else {
+            DeclarativeSettings.valueRowsSection(
+                nodes,
+                frame,
+                rows = listOf(SettingsValueRow("lower-setting", displayLabel, value, SETTING_VALUE_ANCHOR_Y)),
+            )
+        }
+        if (settingScreen != null) {
+            appendSettingChoiceCards(
+                nodes,
+                frame,
+                settingChoices,
+                fieldKey = field.key,
+                player = player,
+                child = false,
+                suppressHighlight = suppressHighlight,
+            )
+        }
+        val destinationTarget = if (
+            settingScreen == GestureSettingScreen.POSITION &&
+            settingContext.role == CommandSettingRole.DESTINATION
+        ) {
+            settingChoices.firstOrNull {
+                it.id == "position:${PositionKind.TARGET.name}" && it.selected
+            }
+        } else null
+        destinationTarget?.let {
+            appendDestinationChoiceCards(nodes, frame, it.children, field.key, player, suppressHighlight)
+        }
+        appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight)
+        return finishSettings(nodes)
+    }
+
+    /** 宣言区画を解決・変換し、既存の画面定義へ載せます。 */
+    private fun finishSettings(nodes: List<GestureGuiNode>): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeSettings.document(nodes),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeSettings] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.SETTINGS, compiled.elements, compiled.visuals)
+    }
+
+    private fun appendSettingChoiceCards(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        choices: List<GestureSettingTreeNode>,
+        fieldKey: String,
+        player: Player,
+        child: Boolean,
+        suppressHighlight: Boolean,
+    ) {
+        val rowCount = (choices.size + 1) / 2
+        choices.forEachIndexed { index, choice ->
+            val column = index % 2
+            val row = index / 2
+            val cx = if (child) {
+                if (column == 0) -0.53 else 0.53
+            } else if (column == 0) -0.10 else 0.67
+            val cy = if (child) {
+                CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH
+            } else {
+                TARGET_PARENT_CHOICE_TOP_Y - row * TARGET_PARENT_CHOICE_PITCH
+            }
+            val width = if (child) CHILD_CHOICE_WIDTH else SETTING_CHOICE_WIDTH
+            DeclarativeSettings.choiceCardsSection(
+                nodes,
+                frame,
+                cards = listOf(
+                    SettingsChoiceCard(
+                        elementId = "lower-setting-choice:${choice.id}",
+                        label = Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+                        background = Bukkit.createBlockData(settingChoiceMaterial(choice)),
+                        outline = if (suppressHighlight) {
+                            null
+                        } else {
+                            GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)?.let {
+                                Bukkit.createBlockData(it)
+                            }
+                        },
+                        enabled = choice.enabled,
+                        cx = cx,
+                        cy = cy,
+                        w = width,
+                        h = SETTING_CHOICE_HEIGHT,
+                        labelDy = -0.012,
+                        labelSize = 0.0045,
+                        labelWidth = 115,
+                        hover = DisabledChoiceVisualPolicy.hoverText(
+                            enabled = choice.enabled,
+                            normal = choice.description.takeIf(String::isNotBlank)
+                                ?: choiceDescription(player, choice, fieldKey),
+                            disabled = choice.disabledHoverText,
+                        )?.let {
+                            parallelButtonHover(
+                                text = it,
+                                x = cx,
+                                y = cy,
+                                row = row,
+                                rowCount = rowCount,
+                                height = SETTING_CHOICE_HEIGHT,
+                                descriptionX = if (child) 0.0 else HOVER_SLOT_X,
+                                descriptionY = if (child) CHILD_HOVER_Y else HOVER_SLOT_Y,
+                                replacesDescription = child,
+                                parallel = choices.size > 1,
+                            )
+                        },
+                        replacesDescription = child,
+                        visualTag = "setting-choice",
+                        visualIndex = index,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun appendDestinationChoiceCards(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        choices: List<GestureSettingTreeNode>,
+        fieldKey: String,
+        player: Player,
+        suppressHighlight: Boolean,
+    ) {
+        val visibleChoices = choices.take(GestureTargetChoiceLayoutPolicy.CHOICE_COUNT)
+        GestureTargetChoiceLayoutPolicy.slots(visibleChoices.size)
+            .zip(visibleChoices)
+            .forEachIndexed { index, (slot, choice) ->
+                val cx = slot.centerX
+                val cy = POSITION_TARGET_CHOICE_Y
+                DeclarativeSettings.choiceCardsSection(
+                    nodes,
+                    frame,
+                    cards = listOf(
+                        SettingsChoiceCard(
+                            elementId = "lower-setting-choice:${choice.id}",
+                            label = Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+                            background = Bukkit.createBlockData(settingChoiceMaterial(choice)),
+                            outline = if (suppressHighlight) {
+                                null
+                            } else {
+                                GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)?.let {
+                                    Bukkit.createBlockData(it)
+                                }
+                            },
+                            enabled = choice.enabled,
+                            cx = cx,
+                            cy = cy,
+                            w = slot.width,
+                            h = POSITION_TARGET_CHOICE_HEIGHT,
+                            labelDy = -0.02,
+                            labelSize = 0.0055,
+                            labelWidth = 90,
+                            hover = DisabledChoiceVisualPolicy.hoverText(
+                                enabled = choice.enabled,
+                                normal = choice.description.takeIf(String::isNotBlank)
+                                    ?: choiceDescription(player, choice, fieldKey),
+                                disabled = choice.disabledHoverText,
+                            )?.let {
+                                parallelButtonHover(
+                                    text = it,
+                                    x = cx,
+                                    y = cy,
+                                    row = 0,
+                                    rowCount = 1,
+                                    height = POSITION_TARGET_CHOICE_HEIGHT,
+                                    descriptionX = HOVER_SLOT_X,
+                                    descriptionY = HOVER_SLOT_Y,
+                                    replacesDescription = false,
+                                    parallel = visibleChoices.size > 1,
+                                )
+                            },
+                            replacesDescription = false,
+                            visualTag = "position-target-choice",
+                            visualIndex = index,
+                        ),
+                    ),
+                )
+            }
+    }
+
+    private fun appendSettingsInputCards(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        state: GestureEditorState,
+        player: Player,
+        node: CommandNode,
+        field: EditorField,
+        descriptor: CommandSettingDescriptor,
+        inputCenterY: Double,
+        suppressHighlight: Boolean = false,
+    ) {
+        val typedValueSourceSetting =
+            CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
+        val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
+            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
+        val heldBlockSetting = field.key == "block" && (
+            node.type == CommandType.BLOCK_OPERATION ||
+                (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                (node.type == CommandType.TEMP_SET &&
+                    TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
+            )
+        val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
+        val heldFireworkSetting = field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH
+        val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting || heldFireworkSetting
+        val heldMainHandAvailable = when {
+            heldItemSetting -> GestureGuiClickPolicy.hasMainHandItem(player)
+            heldBlockSetting -> HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
+            heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
+            heldFireworkSetting -> player.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
+            else -> true
+        }
+        val dialogInputSetting = !heldMainHandSetting &&
+            descriptor.editor == CommandSettingEditor.TEXT && field.key in TEXT_EDITABLE_KEYS
+        if (typedValueSourceSetting) {
+            val selectedSource = CommandSettingsModel.temporaryValueSource(node, field.key)
+                ?: CommandValueSource.LITERAL
+            val sources = listOf(CommandValueSource.LITERAL, CommandValueSource.TEMPORARY)
+            sources.forEachIndexed { index, source ->
+                val selected = source == selectedSource
+                // 方式指定は手持ちの有無にかかわらず行えます。手持ち要件は
+                // 二段階目の適用時判定に残し、クリック時点のガードで再評価します。
+                val lines = typedValueSourceLines(player, field.key, source)
+                val x = if (index == 0) TYPED_VALUE_SOURCE_LEFT_X else TYPED_VALUE_SOURCE_RIGHT_X
+                DeclarativeSettings.actionCardSection(
+                    nodes,
+                    frame,
+                    SettingsActionCard(
+                        elementId = "lower-value-source:${field.key}:${source.name}",
+                        label = typedValueSourceComponent(lines).color(NamedTextColor.GOLD),
+                        background = Bukkit.createBlockData(
+                            if (selected) Material.CYAN_TERRACOTTA else Material.LIGHT_GRAY_CONCRETE,
+                        ),
+                        outline = if (suppressHighlight) {
+                            null
+                        } else {
+                            GestureSettingVisualPolicy.nonTabOutlineMaterial(selected)?.let {
+                                Bukkit.createBlockData(it)
+                            }
+                        },
+                        cx = x,
+                        cy = SETTING_INPUT_CENTER_Y,
+                        w = TYPED_VALUE_SOURCE_WIDTH,
+                        h = SETTING_INPUT_HEIGHT,
+                        labelSize = 0.0043,
+                        labelWidth = 92,
+                        gestures = typedValueSourceGestures(field.key, source),
+                        // 方式指定自体は常時許可します。手持ち要件は二段階目の
+                        // 適用時（heldValueAvailable）に判定するため、ここでは拒否しません。
+                        guard = null,
+                    hover = multiLineHover(lines, x = x, y = HOVER_SLOT_Y),
+                    visualTag = "lower-value-source-${source.name.lowercase()}",
+                ),
+            )
+        }
+            appendTypedValuePreview(nodes, frame, node, field.key, selectedSource, state.scriptId, player)
+        } else if (heldMainHandSetting || dialogInputSetting) {
+            val editVisualText = if (heldMainHandSetting) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
+            } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER
+            val editTextColor = if (heldMainHandAvailable) NamedTextColor.GOLD else NamedTextColor.GRAY
+            DeclarativeSettings.actionCardSection(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-edit:${field.key}",
+                    label = Component.text(KcI18n.text(player, editVisualText), editTextColor),
+                    background = Bukkit.createBlockData(
+                        if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = 0.28,
+                    cy = inputCenterY,
+                    w = 1.2,
+                    h = SETTING_INPUT_HEIGHT,
+                    labelSize = 0.0055,
+                    labelWidth = 180,
+                    gestures = if (heldMainHandSetting) {
+                        GestureGuiClickPolicy.MAIN_HAND
+                    } else GestureGuiClickPolicy.CLICK,
+                    guard = if (heldMainHandSetting) {
+                        { actor, _ ->
+                            if (heldDiskSetting) {
+                                KantanItemService.diskId(actor.inventory.itemInMainHand) != null
+                            } else if (heldBlockSetting) {
+                                HeldBlockSettingPolicy.canSet(actor.inventory.itemInMainHand.type)
+                            } else if (heldFireworkSetting) {
+                                actor.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
+                            } else {
+                                GestureGuiClickPolicy.hasMainHandItem(actor)
+                            }
+                        }
+                    } else null,
+                    hover = singleLineHover(
+                        KcI18n.text(
+                            player,
+                            if (heldMainHandSetting) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_HOVER
+                            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER,
+                        ),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    ),
+                    visualTag = "lower-edit",
+                ),
+            )
+        }
+        if (heldItemSetting && !typedValueSourceSetting) {
+            val itemConfigured = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+            DeclarativeSettings.actionCardSection(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-item-get",
+                    label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM)),
+                    background = Bukkit.createBlockData(
+                        if (itemConfigured) Material.BROWN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = 0.28,
+                    cy = -0.15,
+                    w = 1.2,
+                    h = 0.12,
+                    labelSize = 0.0048,
+                    labelWidth = 180,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ ->
+                        plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                            current.string("item").isNotBlank() || current.string("itemData").isNotBlank()
+                        } == true
+                    },
+                    hover = singleLineHover(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    ),
+                    visualTag = "lower-item-get",
+                ),
+            )
+        }
+        if (field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
+            val fireworkConfigured = node.string("fireworkItem").isNotBlank() ||
+                node.string("fireworkData").isNotBlank()
+            DeclarativeSettings.actionCardSection(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-firework-preview",
+                    label = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FIREWORK_PREVIEW),
+                        if (fireworkConfigured) NamedTextColor.GOLD else NamedTextColor.GRAY,
+                    ),
+                    background = Bukkit.createBlockData(
+                        if (fireworkConfigured) Material.ORANGE_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = 0.28,
+                    cy = -0.15,
+                    w = 1.2,
+                    h = 0.12,
+                    labelSize = 0.0048,
+                    labelWidth = 180,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ ->
+                        plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                            current.string("fireworkItem").isNotBlank() || current.string("fireworkData").isNotBlank()
+                        } == true
+                    },
+                    hover = singleLineHover(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIREWORK_PREVIEW_HOVER),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    ),
+                    visualTag = "lower-firework-preview",
+                ),
+            )
+        }
+    }
+
+    private fun appendTypedValuePreview(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        node: CommandNode,
+        fieldKey: String,
+        source: CommandValueSource,
+        scriptId: java.util.UUID,
+        player: Player,
+    ) {
+        if (source != CommandValueSource.LITERAL) return
+        val mapping = when (fieldKey) {
+            "item" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_CONFIGURED_ITEM,
+                "lower-item-get",
+                Material.BROWN_CONCRETE,
+            )
+            "block" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_CONFIGURED_BLOCK,
+                "lower-block-get",
+                Material.GRAY_CONCRETE,
+            )
+            "sound" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
+                "lower-sound-preview",
+                Material.PURPLE_CONCRETE,
+            )
+            "soundSetting" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
+                "lower-sound-preview",
+                Material.PURPLE_CONCRETE,
+            )
+            "effect" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_APPLY_CONFIGURED_EFFECT,
+                "lower-effect-preview",
+                Material.MAGENTA_CONCRETE,
+            )
+            else -> return
+        }
+        val (labelKey, elementId, material) = mapping
+        val lines = KcI18n.list(player, labelKey).filter(String::isNotBlank)
+        val configured = typedValuePreviewConfigured(node, fieldKey)
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = elementId,
+                label = typedValueSourceComponent(lines).color(
+                    if (configured) NamedTextColor.GOLD else NamedTextColor.GRAY,
+                ),
+                background = Bukkit.createBlockData(
+                    if (configured) material else DisabledGuiVisualPolicy.material,
+                ),
+                cx = TYPED_VALUE_PREVIEW_CENTER_X,
+                cy = TYPED_VALUE_PREVIEW_CENTER_Y,
+                w = TYPED_VALUE_PREVIEW_WIDTH,
+                h = TYPED_VALUE_PREVIEW_HEIGHT,
+                labelSize = 0.0043,
+                labelWidth = 180,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = { _, _ ->
+                    plugin.scripts.load(scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                        CommandSettingsModel.temporaryValueSource(current, fieldKey) == CommandValueSource.LITERAL &&
+                            typedValuePreviewConfigured(current, fieldKey)
+                    } == true
+                },
+                hover = multiLineHover(lines, x = HOVER_SLOT_X, y = HOVER_SLOT_Y),
+                visualTag = elementId,
+            ),
+        )
+    }
+
+    /**
+     * SETTINGS旧実装です。宣言移行の対照として保持します。
+     * `useSettings` が false の場合と、ノード未選択時（プログラム全体設定）に用います。
+     */
+    private fun buildSettingsLegacy(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState,
@@ -565,7 +1757,7 @@ class GestureLowerPanel(
         else -> false
     }
 
-    private fun typedValueSourceGestures(
+    internal fun typedValueSourceGestures(
         fieldKey: String,
         source: CommandValueSource,
     ): Set<GestureGuiGesture> = if (
@@ -1356,7 +2548,7 @@ class GestureLowerPanel(
         )
     }
 
-    private fun typedValuePreviewConfigured(node: CommandNode, fieldKey: String): Boolean = when (fieldKey) {
+    internal fun typedValuePreviewConfigured(node: CommandNode, fieldKey: String): Boolean = when (fieldKey) {
         "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
         "block" -> Material.matchMaterial(node.string("block"))
             ?.takeUnless { it == Material.AIR } != null
@@ -1370,7 +2562,7 @@ class GestureLowerPanel(
      * 通常の設定項目や空欄の無効表示とは意味が異なるため、無効な選択肢だけを
      * DisabledChoiceVisualPolicyへ通します。
      */
-    private fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
+    internal fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
         if (choice.enabled) {
             // 択一／複数選択、初期／設定済みの区別は背景色へ反映しません。
             Material.LIGHT_GRAY_CONCRETE
@@ -1532,7 +2724,7 @@ class GestureLowerPanel(
     }
 
     /** 表示時間はグループ名をタブへ、表示継続時間は内部の現在値ラベルへ分離します。 */
-    private fun fieldTabLabel(player: Player, node: CommandNode, field: EditorField): String =
+    internal fun fieldTabLabel(player: Player, node: CommandNode, field: EditorField): String =
         if (node.type == CommandType.DISPLAY_TEXT && field.key == "staySeconds") {
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE)
         } else {
@@ -1631,7 +2823,7 @@ class GestureLowerPanel(
     }
 
     /** 項目の説明文です。複数行の説明は1文へ連結し、折り返しは描画側へ任せます。 */
-    private fun fieldDescription(player: Player, field: EditorField): String =
+    internal fun fieldDescription(player: Player, field: EditorField): String =
         KcI18n.list(player, field.descriptionKey)
             .filter(String::isNotBlank)
             .joinToString(" ")
@@ -1644,7 +2836,7 @@ class GestureLowerPanel(
      * 統一します。キーの選択はCommandSettingsModelへ集約し、表示側でコマンド型の
      * 分岐や入力値の解析を行わないようにします。
      */
-    private fun attentionWarning(
+    internal fun attentionWarning(
         player: Player,
         node: CommandNode,
         fieldKey: String,
@@ -1656,7 +2848,7 @@ class GestureLowerPanel(
     }
 
     /** 要確認タブへホバーしたときも、そのタブ固有の固定警告文を表示します。 */
-    private fun attentionWarningHover(
+    internal fun attentionWarningHover(
         player: Player,
         node: CommandNode,
         fieldKey: String,
@@ -1668,7 +2860,7 @@ class GestureLowerPanel(
         )
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
-    private fun choiceDescription(player: Player, choice: SettingChoice, fieldKey: String?): String? = when {
+    internal fun choiceDescription(player: Player, choice: SettingChoice, fieldKey: String?): String? = when {
         // 対象分類は、ラベルと同一の文面ではなく項目の説明を表示します。
         choice.id == "target:${TargetCategory.PLAYER.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PLAYER_TARGET)
@@ -1896,7 +3088,7 @@ class GestureLowerPanel(
             replacesVisualId = replacesVisualId,
         )
 
-    private fun singleLineHover(
+    internal fun singleLineHover(
         text: String,
         x: Double,
         y: Double,
@@ -1904,7 +3096,7 @@ class GestureLowerPanel(
     ): GestureGuiHoverText = hoverText(Component.text(text), x, y, replacesVisualId)
 
     /** 複数の意味行を、空行を挿入せずに一つのホバーTextDisplayへ配置します。 */
-    private fun multiLineHover(
+    internal fun multiLineHover(
         lines: List<String>,
         x: Double,
         y: Double,
@@ -1925,8 +3117,9 @@ class GestureLowerPanel(
      * 交差しないよう共通説明領域へ集約します。子画面は常設説明を置き換え、
      * 親画面は右下の専用ホバースロットを使うという既存の画面契約もここで
      * 吸収し、各ボタン生成側に配置条件を複製しません。
+     * 宣言実装と共有するためモジュール内へ公開します。
      */
-    private fun parallelButtonHover(
+    internal fun parallelButtonHover(
         text: String,
         x: Double,
         y: Double,
@@ -2808,7 +4001,7 @@ class GestureLowerPanel(
             }
     }
 
-    private fun targetFilterChoices(
+    internal fun targetFilterChoices(
         node: CommandNode,
         context: CommandSettingContext,
         player: Player,
@@ -3152,7 +4345,7 @@ class GestureLowerPanel(
             "test-status-elapsed",
             0.21,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
-            formatTestElapsed(test.elapsedTicks),
+            formatTestElapsedSeconds(test.elapsedTicks),
             NamedTextColor.WHITE,
         )
         addTestResultRow(
@@ -3326,6 +4519,11 @@ class GestureLowerPanel(
         return TestExecutionTimeFormatter.formatTicks(ticks)
     }
 
+    /** 実行中の経過表示用の秒単位の書式です。最終結果には使いません。 */
+    private fun formatTestElapsedSeconds(ticks: Long): String {
+        return TestExecutionTimeFormatter.formatTicksSeconds(ticks)
+    }
+
     /** PICKER: 左タブ列＝カテゴリ（EXECUTION/CONTROL）、右詳細＝コマンド種別一覧 */
     private fun buildPicker(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
@@ -3448,6 +4646,101 @@ class GestureLowerPanel(
         return view(GestureLowerMode.PICKER, elements, visuals)
     }
 
+    /**
+     * PICKER の宣言実装です。旧 `buildPicker` と同じ分類・候補算出・座標・要素 ID・
+     * ホバー行位置規則を用い、既存の画面定義・パネル・操作振分け（`view()`）を利用します。
+     */
+    private fun buildPickerNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val categories = CommandCategory.entries
+        val insertionTarget = state.pendingInsertion
+        val selectedCategory = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
+        val script = plugin.scripts.load(state.scriptId)
+        val mergeConditionId = state.pendingInsertion?.mergeConditionId
+        val mergeAvailable = script?.let {
+            GraphEditor.canAppendMerge(it.graph, mergeConditionId, insertionTarget?.continuationId)
+        } == true
+        val insideForBody = script?.graph?.let {
+            GraphEditor.isInsideFor(
+                it,
+                insertionTarget?.sourceId,
+                insertionTarget?.edge ?: GraphEditor.Edge.ENTRY,
+            )
+        } == true
+        val types = CommandPickerTypePolicy.types(
+            category = selectedCategory,
+            mergeAvailable = mergeAvailable,
+            insideForBody = insideForBody,
+        )
+        val pageCount = GestureCommandPickerLayoutPolicy.pageCount(types.size)
+        val page = state.pickerPage.coerceIn(0, pageCount - 1)
+        val pageTypes = types
+            .drop(page * GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+            .take(GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+        val rowCount = GestureCommandPickerLayoutPolicy.rowCount(pageTypes.size)
+        val parallel = pageTypes.size > 1
+        val data = PickerData(
+            categories = categories.map { PickerCategory(KcI18n.text(player, it.labelKey), it == selectedCategory) },
+            tabBackgrounds = categories.map {
+                Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(it == selectedCategory))
+            },
+            description = Component.text(
+                KcI18n.list(player, selectedCategory.descriptionKey)
+                    .filter(String::isNotBlank)
+                    .joinToString(" "),
+                NamedTextColor.GRAY,
+            ),
+            cards = pageTypes.mapIndexed { index, type ->
+                val column = index % GestureCommandPickerLayoutPolicy.COLUMNS
+                val row = index / GestureCommandPickerLayoutPolicy.COLUMNS
+                val cx = GestureCommandPickerLayoutPolicy.columnX(column)
+                val cy = GestureCommandPickerLayoutPolicy.rowY(row)
+                val hoverText = KcI18n.list(player, type.descriptionKey)
+                    .filter(String::isNotBlank)
+                    .joinToString(" ")
+                val hover = parallelButtonHover(
+                    hoverText,
+                    cx,
+                    cy,
+                    row,
+                    rowCount,
+                    GestureCommandPickerLayoutPolicy.CARD_HEIGHT,
+                    HOVER_SLOT_X,
+                    PICKER_HOVER_SLOT_Y,
+                    replacesDescription = false,
+                    parallel = parallel,
+                )
+                PickerCard(type.name, KcI18n.text(player, type.key), hoverText, hover.x, hover.y)
+            },
+            cardBackgrounds = pageTypes.map { Bukkit.createBlockData(Material.CYAN_TERRACOTTA) },
+            pager = if (pageCount > 1) PickerPager(
+                arrows = listOf(page - 1 to "◀", page + 1 to "▶").map { (targetPage, glyph) ->
+                    val available = targetPage in 0 until pageCount
+                    PickerArrow(
+                        targetPage = targetPage,
+                        glyph = Component.text(glyph).color(
+                            if (available) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                        ),
+                        background = Bukkit.createBlockData(
+                            if (available) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                        ),
+                        available = available,
+                    )
+                },
+                status = Component.text("${page + 1}/$pageCount"),
+            ) else null,
+            closeLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)),
+            closeBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+        )
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativePicker.document(data),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativePicker] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.PICKER, compiled.elements, compiled.visuals)
+    }
+
     /** CONFIRM: 子画面（上部エディターがopenChildで赤ガラスを重ねる） */
     private fun buildConfirm(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
@@ -3519,6 +4812,49 @@ class GestureLowerPanel(
         return view(GestureLowerMode.CONFIRM, elements, visuals, child = true)
     }
 
+    /**
+     * CONFIRM の宣言実装です。旧 `buildConfirm` と同じ文言・座標・要素 ID を用い、
+     * 既存の画面定義・パネル・子画面縮尺・操作振分け（`view()`）をそのまま利用します。
+     */
+    private fun buildConfirmNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val overwrite = state.confirmKind != GestureConfirmKind.DELETE
+        val texts = ConfirmTexts(
+            title = Component.text(KcI18n.text(player, when (state.confirmKind) {
+                GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
+                GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_TITLE
+                GestureConfirmKind.FIREWORK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
+                GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_TITLE
+            })),
+            warn = Component.text(
+                KcI18n.text(player, when (state.confirmKind) {
+                    GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
+                    GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_WARN
+                    GestureConfirmKind.FIREWORK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
+                    GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_WARN
+                }),
+                NamedTextColor.GRAY,
+            ),
+            yes = Component.text(KcI18n.text(
+                player,
+                if (overwrite) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_OVERWRITE_YES
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_EXECUTE,
+            )),
+            no = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_CANCEL)),
+        )
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeConfirm.document(
+                texts,
+                Bukkit.createBlockData(DeclarativeConfirm.YES_BACKGROUND_MATERIAL),
+                Bukkit.createBlockData(DeclarativeConfirm.NO_BACKGROUND_MATERIAL),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeConfirm] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.CONFIRM, compiled.elements, compiled.visuals, child = true)
+    }
+
     private fun view(
         mode: GestureLowerMode,
         elements: List<GestureGuiElement>,
@@ -3555,8 +4891,8 @@ class GestureLowerPanel(
         onAction = onAction,
     ).let { view -> if (child) scaleChildView(view) else view }
 
-    /** 子画面のパネル寸法と内容座標を同じ縮尺で変換し、端の要素を欠落させません。 */
-    private fun scaleChildView(view: GestureGuiView): GestureGuiView {
+    /** 子画面のパネル寸法と内容座標を同じ縮尺で変換し、端の要素を欠落させません。宣言実装と共有します。 */
+    internal fun scaleChildView(view: GestureGuiView): GestureGuiView {
         val scaledVisuals = view.visuals.map { visual ->
             when (visual) {
                 is GestureGuiVisual.Block -> visual.copy(
@@ -3698,7 +5034,8 @@ class GestureLowerPanel(
             bounds.maxY * scale,
         )
 
-    private companion object {
+    /** 配置定数は宣言実装と共有します。同一モジュール内のみに公開します。 */
+    internal companion object {
         // プログラム全体設定カードを3列で配置するための定数です。
         const val SCRIPT_SETTING_LEFT_X = -0.68
         const val SCRIPT_SETTING_CENTER_X = 0.0

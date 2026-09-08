@@ -39,6 +39,11 @@ import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
 import me.awabi2048.kantancommander.execution.NodeExecutionOutcome
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeUpper
+import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
+import me.awabi2048.kantancommander.gui.declarative.KantanLayoutBridge
+import me.awabi2048.kantancommander.gui.declarative.SettingsActionCard
+import me.awabi2048.kantancommander.gui.declarative.UpperViewportRect
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
@@ -80,6 +85,7 @@ import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.block.data.BlockData
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
 import org.bukkit.Sound
@@ -605,6 +611,27 @@ class GestureSequenceEditor(
     }
 
     /**
+     * 世代単位の検証結果です。上下画面の重複検証を1回にします。
+     *
+     * 同一世代の再検証は同一結果になるため、スクリプトIDと世代で保持します。
+     * 保存成功で世代が進むと自動的に再検証します。
+     */
+    private var validationCacheKey: Pair<java.util.UUID, Long>? = null
+    private var validationCacheErrors: List<me.awabi2048.kantancommander.data.ScriptValidationError> = emptyList()
+
+    /** 世代キャッシュ付きの実行前検証です。変数定義付きの検証には使いません。 */
+    private fun validatedErrors(
+        script: me.awabi2048.kantancommander.model.DiskScript,
+    ): List<me.awabi2048.kantancommander.data.ScriptValidationError> {
+        val key = script.id to script.revision
+        if (validationCacheKey != key) {
+            validationCacheKey = key
+            validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+        }
+        return validationCacheErrors
+    }
+
+    /**
      * 実行前検証を、下部パネルの「要確認」表示用の情報へ要約します。
      *
      * 構造化エラー（nodeId/fieldKeys）を表示上のタブへ正規化して集約するため、表示側で
@@ -613,7 +640,7 @@ class GestureSequenceEditor(
      */
     private fun attentionState(): GestureAttentionState {
         val script = plugin.scripts.load(state.scriptId) ?: return GestureAttentionState.EMPTY
-        val errors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+        val errors = validatedErrors(script)
         val fieldKeysByNode = errors
             .filter { it.nodeId != null && it.nodeId in script.graph.nodes }
             .groupBy { it.nodeId!! }
@@ -984,6 +1011,8 @@ class GestureSequenceEditor(
 
     private fun startTestRefreshTask() {
         testRefreshTask?.cancel()
+        // 経過表示は秒単位・1Hzで十分なため、毎tickの全量再構築は行いません。
+        // 上部の色・通過表示は状態変化イベントで即時反映します。
         testRefreshTask = plugin.server.scheduler.runTaskTimer(plugin, Runnable {
             val test = state.testExecution
             if (test?.phase != GestureTestPhase.RUNNING) {
@@ -992,8 +1021,14 @@ class GestureSequenceEditor(
                 return@Runnable
             }
             test.elapsedTicks = (plugin.server.currentTick.toLong() - test.startedAtTick).coerceAtLeast(0L)
-            onTestStateChanged()
-        }, 1L, 1L)
+            onTestTimerTick()
+        }, 1L, TEST_STATUS_REFRESH_PERIOD_TICKS)
+    }
+
+    /** 1Hzの経過表示更新です。下部の秒表示だけを更新し、上部は再構築しません。 */
+    private fun onTestTimerTick() {
+        val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
+        updateLower(owner)
     }
 
     private fun onTestStateChanged() {
@@ -1415,7 +1450,8 @@ class GestureSequenceEditor(
      */
     private fun buildUpperViewport(player: Player): GestureGuiView =
         try {
-            buildUpperViewportContent(player)
+            if (KantanDeclarativeGui.useUpperNew) buildUpperViewportContentNew(player)
+            else buildUpperViewportContent(player)
         } catch (failure: RuntimeException) {
             reportLayoutFailure(
                 player,
@@ -1425,95 +1461,102 @@ class GestureSequenceEditor(
             layoutErrorView(player)
         }
 
-    private fun buildUpperViewportContent(player: Player): GestureGuiView {
-        layoutFailureDuringCurrentRender = false
-        val test = state.testExecution
-        val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
-        val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return emptyView()
-        if (!testActive) observedRevision = script.revision
-        val persistedLayout = runCatching {
-            GraphLayoutEngine.layout(script.graph)
-        }
-            .getOrElse { failure ->
-                reportLayoutFailure(
-                    player,
-                    "ジェスチャーGUIの経路描画でレイアウトを生成できません: script=${script.id}",
-                    failure,
-                )
-                return layoutErrorView(player)
-            }
-        // 挿入プレビューは「経路クリックによる挿入」のときだけ適用します。
-        // 追加ポイントからの追加は、追加ボタン自体が候補位置であり既存ノードが
-        // 動かないため、仮ノード入りレイアウトや候補マーカーは二重表示になります。
-        val insertionPreview = if (testActive) null else insertionPreview(script, player)
-        val renderGraph = insertionPreview?.graph ?: script.graph
-        // テスト中はADDとその延長経路を除いた真の配置で描画します。
-        // testActiveが真のときtestは非nullであることが確定しています。
-        val layout = (insertionPreview?.layout ?: persistedLayout).let { base ->
-            if (testActive) base.withoutEditArtifacts(test.passedEdges) else base
-        }
-        val zoomScale = zoomScale()
-        val metrics = viewportMetrics(zoomScale)
-        // 折り畳み／展開で配置寸法が変わっても、軸ごとに最大寸法を覚えて原点を正規化します。
-        // 縮小（折り畳み）では記憶を維持して原点を引き戻さず、拡大（展開・追加）では追従します。
-        // FOR・分岐のいずれの折り畳みでも同じ扱いです。
-        if (!testActive) {
-            val remembered = GestureEditorLayout.rememberLayoutSize(
-                state.lastExpandedLayoutWidth,
-                state.lastExpandedLayoutHeight,
-                persistedLayout.width,
-                persistedLayout.height,
+    /**
+     * 素材単位の表示素材です。毎回の生成を避けるため保持します。
+     *
+     * 保持物は生成後に変更しません。描画側も読取りだけに用います。
+     * 生成後に変更する素材（点灯切替え等）はここへ入れず個別生成します。
+     * GUI更新はメインスレッドからのみ行います。
+     */
+    private val blockDataCache = mutableMapOf<Material, BlockData>()
+
+    /** 共有の表示素材を返します。変更せずに表示専用として用います。 */
+    private fun blockDataOf(material: Material): BlockData =
+        blockDataCache.getOrPut(material) { Bukkit.createBlockData(material) }
+
+    /** shadow検証の直近の差分署名です。同一差分の連投を抑えます。 */
+    private var lastGraphShadowSignature: String = ""
+
+    /**
+     * Custom経路との等価性を検証します。表示は旧来のままにし、差分だけを記録します。
+     *
+     * 同一の拡縮済み出力からCustom変換を行い、旧来の切断結果と突合します。
+     * 不一致がなければ何も記録しません。上部画面の切替え時に除去します。
+     */
+    private fun runGraphShadow(
+        scaledVisuals: List<GestureGuiVisual>,
+        scaledElements: List<GestureGuiElement>,
+        clippedVisuals: List<GestureGuiVisual>,
+        finalElements: List<GestureGuiElement>,
+        metrics: ViewportMetrics,
+        zoomScale: Double,
+    ) {
+        if (!KantanDeclarativeGui.shadowGraphCustom) return
+        runCatching {
+            val frame = GraphViewportMapper.frame(
+                minX = metrics.graphMinX,
+                maxX = metrics.graphMaxX,
+                minY = metrics.graphMinY,
+                maxY = metrics.graphMaxY,
+                columns = metrics.columns,
+                rows = metrics.rows,
+                scale = zoomScale,
             )
-            state.lastExpandedLayoutWidth = remembered.x
-            state.lastExpandedLayoutHeight = remembered.y
-        }
-        // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
-        // 描画・入力判定で共有する原点を毎回正規化します。
-        state.origin = clampOriginWithRemembered(state.origin, metrics.columns, metrics.rows, layout)
-        // アイコン・経路・経路の入力判定は必ず同じ投影を共有します。
-        // 経路だけを画面外へ拡張すると、アイコンが消えた後も帯だけ残るため、
-        // 画面外へ続く接続は projection の境界情報だけで表現します。
-        val projection = layout.projection(state.origin, metrics.columns, metrics.rows)
-        val cells = projection.cells
-        // 実行前検証を一度だけ行い、ノード単位の未設定状態を背景色とホバーへ
-        // 投影します。グラフ全体の検証を各セルで繰り返さないことで、ノード数が
-        // 増えたときにも描画コストを線形に保ちます。
-        // 検証結果は構造化エラー（nodeId/fieldKeys）として受けるため、表示文字列の
-        // パス解析は行いません。snapshot・内部グラフ内のエラーは外側の対応ノードへ
-        // 対応付けるため、存在しないノードIDは自然に除外されます。
-        val validationErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
-        val incompleteNodeIds = buildSet {
-            validationErrors.forEach { error ->
-                error.nodeId?.let { nodeId ->
-                    // 内部グラフの未設定は外側の折り畳みノードへ対応付けて示します。
-                    FoldedGraphs.outermostWrapperId(script.graph, nodeId)?.let(::add)
-                }
+            // Custom renderer 本体と同じ変換を通し、旧来の切断結果と突合します。
+            val renderer = KantanGraphCustomRenderer(
+                GraphCellOutput(scaledVisuals, scaledElements),
+                zoomScale,
+                frame,
+            )
+            val clip = GestureGuiBounds(frame.minX, frame.minY, frame.maxX, frame.maxY)
+            val result = renderer.convertForShadow()
+            diffGraphShadow(scaledVisuals, scaledElements, clippedVisuals, finalElements, result, clip)
+        }.onSuccess { diffs ->
+            val signature = diffs.sorted().joinToString("|")
+            if (diffs.isEmpty()) {
+                lastGraphShadowSignature = ""
+                return
+            }
+            if (signature == lastGraphShadowSignature) return
+            lastGraphShadowSignature = signature
+            plugin.logger.warning("[KantanCommander][GraphShadow] ${diffs.size} mismatches: ${diffs.take(10)}")
+        }.onFailure { failure ->
+            if (lastGraphShadowSignature != "error") {
+                lastGraphShadowSignature = "error"
+                plugin.logger.warning("[KantanCommander][GraphShadow] shadow failure: ${failure.message}")
             }
         }
+    }
+
+    /**
+     * グラフセル・経路・矢印・挿入候補を描画します。
+     *
+     * 座標基準だけを [GraphViewportFrame] で受け、旧来の矩形基準配置と同一式です。
+     * ナビ等の外枠・ズーム後段の拡縮切断・画面組立は呼び出し側で行います。
+     */
+    private fun renderGraphCells(
+        player: Player,
+        script: DiskScript,
+        renderGraph: CommandGraph,
+        projection: ViewportProjection,
+        cells: Map<MapPoint, MapCell>,
+        frame: GraphViewportFrame,
+        incompleteNodeIds: Set<java.util.UUID>,
+        test: GestureTestState?,
+        testActive: Boolean,
+        insertionPreview: InsertionPreview?,
+        zoomScale: Double,
+    ): GraphCellOutput {
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
-        // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
-        if (!testActive) {
-            elements.add(GestureGuiElement(
-                elementId = "viewport-empty",
-                bounds = GestureGuiBounds(
-                    -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
-                    -GestureEditorLayout.UPPER_H / 2.0 + GestureEditorLayout.FRAME_WIDTH,
-                    GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
-                    GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
-                ),
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-            ))
-        }
-
         cells.forEach { (localPoint, cell) ->
             // セル検索はグリッド座標、配置は列/行インデックスで行う（origin移動してもグリッド位置は固定）
             val colIndex = localPoint.x
             val rowIndex = localPoint.y
             val gx = state.origin.x + colIndex
             val gy = state.origin.y + rowIndex
-            val cx = metrics.x(colIndex)
-            val cy = metrics.y(rowIndex)
+            val cx = frame.x(colIndex)
+            val cy = frame.y(rowIndex)
             when (cell.kind) {
                 MapCellKind.NODE -> {
                     val node = cell.nodeId?.let { renderGraph.nodes[it] }
@@ -1569,9 +1612,9 @@ class GestureSequenceEditor(
                         visuals.add(GestureGuiVisual.Block(
                             visualId = "node-bg-${node.id}",
                             x = cx, y = cy,
-                            width = metrics.iconSize,
-                            height = metrics.iconSize,
-                            blockData = Bukkit.createBlockData(backgroundMaterial),
+                            width = frame.iconSize,
+                            height = frame.iconSize,
+                            blockData = blockDataOf(backgroundMaterial),
                             // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
                             layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                             glowColor = glowColor,
@@ -1583,7 +1626,7 @@ class GestureSequenceEditor(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
                             item = foldedIconStack(node, isFoldedFor || isFoldedIf),
-                            scale = metrics.iconScale,
+                            scale = frame.iconScale,
                             // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
@@ -1600,15 +1643,15 @@ class GestureSequenceEditor(
                         // 縁にもノードと同じクリック・ホバー判定を設け、縁経由でも
                         // 選択・再クリック変化が行えるようにします。単一ヒット確定の
                         // ため二重発火しません。
-                        val frameThickness = metrics.iconSize * 0.30
-                        val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
+                        val frameThickness = frame.iconSize * 0.30
+                        val frameOffset = frame.iconSize / 2.0 + frameThickness / 2.0
                         if (foldedFrameMaterial != null) {
                             visuals.add(GestureGuiVisual.Block(
                                 visualId = "node-folded-frame-right-${node.id}",
                                 x = cx + frameOffset, y = cy,
                                 width = frameThickness,
-                                height = metrics.iconSize,
-                                blockData = Bukkit.createBlockData(foldedFrameMaterial),
+                                height = frame.iconSize,
+                                blockData = blockDataOf(foldedFrameMaterial),
                                 layer = GestureEditorLayout.ICON_LAYER,
                             ))
                         }
@@ -1620,8 +1663,8 @@ class GestureSequenceEditor(
                         // 折り畳みノードだけが対象で、展開中の構造ノードは表示しません。
                         val showReorder = !testActive && insertionPreview == null && isSelected &&
                             !FoldedGraphs.isExpandedStructural(node)
-                        val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
-                        val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
+                        val reorderSize = minOf(frame.pitchX, frame.pitchY) * 0.20
+                        val reorderY = cy + frame.iconSize / 2.0 + reorderSize / 2.0 + 0.008
                         if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
                             // 折畳み縁にもノードと同じクリック・ホバー判定を設けます。
@@ -1629,13 +1672,13 @@ class GestureSequenceEditor(
                             // ノード要素の領域を縁まで拡張します。
                             bounds = if (foldedFrameMaterial != null) {
                                 GestureGuiBounds(
-                                    cx - metrics.iconSize / 2.0,
-                                    cy - metrics.iconSize / 2.0,
-                                    cx + metrics.iconSize / 2.0 + frameThickness,
-                                    cy + metrics.iconSize / 2.0,
+                                    cx - frame.iconSize / 2.0,
+                                    cy - frame.iconSize / 2.0,
+                                    cx + frame.iconSize / 2.0 + frameThickness,
+                                    cy + frame.iconSize / 2.0,
                                 )
                             } else {
-                                iconBounds(cx, cy, metrics.iconSize)
+                                iconBounds(cx, cy, frame.iconSize)
                             },
                             acceptedGestures = GestureGuiClickPolicy.CLICK,
                             targetVisualId = "node-icon-${node.id}",
@@ -1643,7 +1686,7 @@ class GestureSequenceEditor(
                                 text = hoverText,
                                 x = cx,
                                 y = if (showReorder) reorderY + reorderSize / 2.0 + 0.03
-                                else cy + metrics.iconSize * 0.9,
+                                else cy + frame.iconSize * 0.9,
                                 size = 0.006,
                                 lineWidth = 180,
                             ),
@@ -1664,7 +1707,7 @@ class GestureSequenceEditor(
                                     y = reorderY,
                                     width = reorderSize,
                                     height = reorderSize,
-                                    blockData = Bukkit.createBlockData(
+                                    blockData = blockDataOf(
                                         if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                                     ),
                                     layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
@@ -1703,9 +1746,9 @@ class GestureSequenceEditor(
                     visuals.add(GestureGuiVisual.Block(
                         visualId = "add-block-$gx-$gy",
                         x = cx, y = cy,
-                        width = metrics.iconSize,
-                        height = metrics.iconSize,
-                        blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                        width = frame.iconSize,
+                        height = frame.iconSize,
+                        blockData = blockDataOf(Material.YELLOW_CONCRETE),
                         layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                         glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
                     ))
@@ -1720,7 +1763,7 @@ class GestureSequenceEditor(
                     if (!testActive && insertionPreview == null) {
                         elements.add(GestureGuiElement(
                             elementId = "add:$gx:$gy",
-                            bounds = iconBounds(cx, cy, metrics.iconSize),
+                            bounds = iconBounds(cx, cy, frame.iconSize),
                             acceptedGestures = GestureGuiClickPolicy.CLICK,
                             targetVisualId = "add-plus-$gx-$gy",
                             hoverText = GestureGuiHoverText(
@@ -1728,7 +1771,7 @@ class GestureSequenceEditor(
                                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_ADD),
                                 ),
                                 x = cx,
-                                y = cy + metrics.iconSize * 0.9,
+                                y = cy + frame.iconSize * 0.9,
                                 size = 0.006,
                                 lineWidth = 120,
                             ),
@@ -1746,14 +1789,14 @@ class GestureSequenceEditor(
                             // 漏れてしまいます。通常経路と同じpath:配下に置くことで、表示と入力の
                             // 座標変換を同じ規則で適用します。
                             elementId = "path:return:$gx:$gy",
-                            bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
+                            bounds = rect(cx, cy, frame.pitchX, frame.pitchY),
                             acceptedGestures = emptySet(),
                             hoverText = GestureGuiHoverText(
                                 text = Component.text(
                                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_LOOP_RETURN_HOVER),
                                 ),
                                 x = cx,
-                                y = cy + metrics.pathThickness,
+                                y = cy + frame.pathThickness,
                                 size = 0.0055,
                                 lineWidth = 120,
                             ),
@@ -1764,14 +1807,14 @@ class GestureSequenceEditor(
                         if (!testActive && insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
                             elements.add(GestureGuiElement(
                                 elementId = "path:${gx}:${gy}",
-                                bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
+                                bounds = rect(cx, cy, frame.pitchX, frame.pitchY),
                                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                                 hoverText = GestureGuiHoverText(
                                     text = net.kyori.adventure.text.Component.text(
                                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_INSERT),
                                     ),
                                     x = cx,
-                                    y = cy + metrics.pathThickness,
+                                    y = cy + frame.pathThickness,
                                     size = 0.0055,
                                     lineWidth = 120,
                                 ),
@@ -1809,17 +1852,17 @@ class GestureSequenceEditor(
         GesturePathRenderer.buildSegments(
             cells,
             boundaryConnections = projection.boundaryConnections,
-            xCenter = metrics::x,
-            yCenter = metrics::y,
-            thickness = metrics.pathThickness,
+            xCenter = frame::x,
+            yCenter = frame::y,
+            thickness = frame.pathThickness,
             glowColorFor = testPathMark,
             clipBounds = GesturePathRenderer.ClipBounds(
                 // 仮想境界セルをグラフ領域の端までだけ延長します。これより外側へ
                 // 経路を出さないため、ナビゲーション列との重なりが発生しません。
-                minX = GestureEditorLayout.UPPER_GRAPH_MIN_X / zoomScale,
-                maxX = GestureEditorLayout.UPPER_GRAPH_MAX_X / zoomScale,
-                minY = GestureEditorLayout.UPPER_GRAPH_MIN_Y / zoomScale,
-                maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y / zoomScale,
+                minX = frame.minX / zoomScale,
+                maxX = frame.maxX / zoomScale,
+                minY = frame.minY / zoomScale,
+                maxY = frame.maxY / zoomScale,
             ),
         ).forEach { seg ->
             // テスト中はGlowではなくテクスチャ変更で示します。通過経路=黄緑、
@@ -1833,7 +1876,7 @@ class GestureSequenceEditor(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
                 width = seg.w, height = seg.h,
-                blockData = Bukkit.createBlockData(pathMaterial),
+                blockData = blockDataOf(pathMaterial),
                 layer = 1,
                 glowColor = null,
             ))
@@ -1851,8 +1894,8 @@ class GestureSequenceEditor(
             val kind = if (arrow.direction == HorizontalArrowDirection.RETURN) "return" else "forward"
             visuals.add(GestureGuiVisual.Text(
                 visualId = "path-$kind-arrow-$gx-$gy",
-                x = metrics.x(localPoint.x),
-                y = metrics.y(localPoint.y) - 0.006,
+                x = frame.x(localPoint.x),
+                y = frame.y(localPoint.y) - 0.006,
                 text = Component.text(glyph).color(NamedTextColor.AQUA),
                 size = 0.010,
                 layer = 2,
@@ -1872,15 +1915,15 @@ class GestureSequenceEditor(
                 selectedGlobal.x - state.origin.x,
                 selectedGlobal.y - state.origin.y,
             )
-            val cx = metrics.x(local.x)
-            val cy = metrics.y(local.y)
+            val cx = frame.x(local.x)
+            val cy = frame.y(local.y)
             visuals.add(GestureGuiVisual.Block(
                 visualId = "path-insertion-candidate-bg-${selectedGlobal.x}-${selectedGlobal.y}",
                 x = cx,
                 y = cy,
-                width = metrics.iconSize,
-                height = metrics.iconSize,
-                blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                width = frame.iconSize,
+                height = frame.iconSize,
+                blockData = blockDataOf(Material.YELLOW_CONCRETE),
                 layer = GestureEditorLayout.ICON_BACKGROUND_LAYER + 1,
                 glowColor = Color.YELLOW.asARGB(),
             ))
@@ -1893,6 +1936,168 @@ class GestureSequenceEditor(
                 layer = GestureEditorLayout.ICON_LAYER + 1,
             ))
         }
+        return GraphCellOutput(visuals, elements)
+    }
+
+    /**
+     * 上部描画の共通前段です。旧来経路と宣言経路で共有します。
+     *
+     * 配置・投影・検証までを行い、表示・入力の組立は呼び出し側で行います。
+     * 空表示と配置失敗の画面もここで確定し、呼び出し側の分岐を減らします。
+     */
+    private data class UpperGraphData(
+        val script: DiskScript,
+        val renderGraph: CommandGraph,
+        val layout: GraphLayout,
+        val projection: ViewportProjection,
+        val cells: Map<MapPoint, MapCell>,
+        val metrics: ViewportMetrics,
+        val zoomScale: Double,
+        val incompleteNodeIds: Set<java.util.UUID>,
+        val test: GestureTestState?,
+        val testActive: Boolean,
+        val insertionPreview: InsertionPreview?,
+    )
+
+    private sealed interface UpperGraphInput {
+        data class Ready(val data: UpperGraphData) : UpperGraphInput
+        data object Empty : UpperGraphInput
+        data class LayoutFailed(val view: GestureGuiView) : UpperGraphInput
+    }
+
+    private fun resolveUpperGraph(player: Player): UpperGraphInput {
+        val test = state.testExecution
+        val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
+        val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId)
+        if (script == null) return UpperGraphInput.Empty
+        if (!testActive) observedRevision = script.revision
+        val persistedLayout = runCatching {
+            GraphLayoutEngine.layout(script.graph)
+        }
+            .getOrElse { failure ->
+                reportLayoutFailure(
+                    player,
+                    "ジェスチャーGUIの経路描画でレイアウトを生成できません: script=${script.id}",
+                    failure,
+                )
+                return UpperGraphInput.LayoutFailed(layoutErrorView(player))
+            }
+        // 挿入プレビューは「経路クリックによる挿入」のときだけ適用します。
+        // 追加ポイントからの追加は、追加ボタン自体が候補位置であり既存ノードが
+        // 動かないため、仮ノード入りレイアウトや候補マーカーは二重表示になります。
+        val insertionPreview = if (testActive) null else insertionPreview(script, player)
+        val renderGraph = insertionPreview?.graph ?: script.graph
+        // テスト中はADDとその延長経路を除いた真の配置で描画します。
+        // testActiveが真のときtestは非nullであることが確定しています。
+        val layout = (insertionPreview?.layout ?: persistedLayout).let { base ->
+            if (testActive) base.withoutEditArtifacts(test.passedEdges) else base
+        }
+        val zoomScale = zoomScale()
+        val metrics = viewportMetrics(zoomScale)
+        // 折り畳み／展開で配置寸法が変わっても、軸ごとに最大寸法を覚えて原点を正規化します。
+        // 縮小（折り畳み）では記憶を維持して原点を引き戻さず、拡大（展開・追加）では追従します。
+        // FOR・分岐のいずれの折り畳みでも同じ扱いです。
+        if (!testActive) {
+            val remembered = GestureEditorLayout.rememberLayoutSize(
+                state.lastExpandedLayoutWidth,
+                state.lastExpandedLayoutHeight,
+                persistedLayout.width,
+                persistedLayout.height,
+            )
+            state.lastExpandedLayoutWidth = remembered.x
+            state.lastExpandedLayoutHeight = remembered.y
+        }
+        // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
+        // 描画・入力判定で共有する原点を毎回正規化します。
+        state.origin = clampOriginWithRemembered(state.origin, metrics.columns, metrics.rows, layout)
+        // アイコン・経路・経路の入力判定は必ず同じ投影を共有します。
+        // 経路だけを画面外へ拡張すると、アイコンが消えた後も帯だけ残るため、
+        // 画面外へ続く接続は projection の境界情報だけで表現します。
+        val projection = layout.projection(state.origin, metrics.columns, metrics.rows)
+        val cells = projection.cells
+        // 実行前検証を一度だけ行い、ノード単位の未設定状態を背景色とホバーへ
+        // 投影します。グラフ全体の検証を各セルで繰り返さないことで、ノード数が
+        // 増えたときにも描画コストを線形に保ちます。
+        // 検証結果は構造化エラー（nodeId/fieldKeys）として受けるため、表示文字列の
+        // パス解析は行いません。snapshot・内部グラフ内のエラーは外側の対応ノードへ
+        // 対応付けるため、存在しないノードIDは自然に除外されます。
+        val validationErrors = validatedErrors(script)
+        val incompleteNodeIds = buildSet {
+            validationErrors.forEach { error ->
+                error.nodeId?.let { nodeId ->
+                    // 内部グラフの未設定は外側の折り畳みノードへ対応付けて示します。
+                    FoldedGraphs.outermostWrapperId(script.graph, nodeId)?.let(::add)
+                }
+            }
+        }
+        return UpperGraphInput.Ready(
+            UpperGraphData(
+                script = script,
+                renderGraph = renderGraph,
+                layout = layout,
+                projection = projection,
+                cells = cells,
+                metrics = metrics,
+                zoomScale = zoomScale,
+                incompleteNodeIds = incompleteNodeIds,
+                test = test,
+                testActive = testActive,
+                insertionPreview = insertionPreview,
+            ),
+        )
+    }
+
+    private fun buildUpperViewportContent(player: Player): GestureGuiView {
+        layoutFailureDuringCurrentRender = false
+        val data = when (val input = resolveUpperGraph(player)) {
+            UpperGraphInput.Empty -> return emptyView()
+            is UpperGraphInput.LayoutFailed -> return input.view
+            is UpperGraphInput.Ready -> input.data
+        }
+        val script = data.script
+        val renderGraph = data.renderGraph
+        val layout = data.layout
+        val projection = data.projection
+        val cells = data.cells
+        val metrics = data.metrics
+        val zoomScale = data.zoomScale
+        val incompleteNodeIds = data.incompleteNodeIds
+        val test = data.test
+        val testActive = data.testActive
+        val insertionPreview = data.insertionPreview
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
+        if (!testActive) {
+            elements.add(GestureGuiElement(
+                elementId = "viewport-empty",
+                bounds = GestureGuiBounds(
+                    -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    -GestureEditorLayout.UPPER_H / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                    GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                ),
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+            ))
+        }
+
+        // グラフ本体の描画は共有関数へ委譲します。旧来は上部グラフ領域で解決します。
+        val frame = GraphViewportMapper.legacyFrame(zoomScale)
+        val graphOutput = renderGraphCells(
+            player,
+            script,
+            renderGraph,
+            projection,
+            cells,
+            frame,
+            incompleteNodeIds,
+            test,
+            testActive,
+            insertionPreview,
+            zoomScale,
+        )
+        visuals += graphOutput.visuals
+        elements += graphOutput.elements
 
         if (!testActive) {
             addNavigation(player, visuals, elements, layout, metrics.columns, metrics.rows)
@@ -1904,7 +2109,7 @@ class GestureSequenceEditor(
                 y = GestureEditorLayout.BACK_Y,
                 width = GestureEditorLayout.NAV_SIZE,
                 height = GestureEditorLayout.NAV_SIZE,
-                blockData = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                blockData = blockDataOf(Material.BROWN_CONCRETE),
                 layer = 4,
             ))
             visuals.add(GestureGuiVisual.Text(
@@ -1945,31 +2150,10 @@ class GestureSequenceEditor(
         // IDの接頭辞判定はisMapVisual/isMapElementへ集約し、表示だけ・入力だけが
         // 変換対象から外れる状態を防ぎます。特に戻り経路のホバー要素はpath:名前空間へ
         // 統一しているため、通常経路と同じ縮尺・クリップ処理を通ります。
-        val scaledVisuals = visuals.map { visual ->
-            if (isMapVisual(visual)) {
-                when (visual) {
-                    is GestureGuiVisual.Block -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
-                        width = visual.width * zoomScale, height = visual.height * zoomScale)
-                    is GestureGuiVisual.Item -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
-                        scale = visual.scale * zoomScale)
-                    is GestureGuiVisual.Text -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
-                        size = visual.size * zoomScale)
-                }
-            } else visual
-        }
-        val scaledElements = elements.map { element ->
-            if (isMapElement(element)) {
-                val hover = element.hoverText
-                element.copy(
-                    bounds = scaleBounds(element.bounds, zoomScale),
-                    hoverText = hover?.copy(
-                        x = hover.x * zoomScale,
-                        y = hover.y * zoomScale,
-                        size = hover.size * zoomScale,
-                    ),
-                )
-            } else element
-        }
+        // 拡縮式は共有関数へ一本化し、Custom経路と分岐させません。
+        val scaled = scaleGraphOutput(visuals, elements, zoomScale)
+        val scaledVisuals = scaled.visuals
+        val scaledElements = scaled.elements
         // 表示と入力の境界は同じグラフ矩形から生成します。従来は表示だけを
         // filterしていたため、画面外へ消えたアイコンのInteractionがナビ列を
         // 横取りしていました。Blockは矩形を実際に切り詰め、Item/Textは
@@ -1985,6 +2169,7 @@ class GestureSequenceEditor(
             it.targetVisualId == null || it.targetVisualId in visibleVisualIds
         }
         ensureUniqueScreenElementIds(finalElements, script.id)
+        runGraphShadow(scaledVisuals, scaledElements, clippedVisuals, finalElements, metrics, zoomScale)
 
         // 今回の描画が最後まで完了した場合だけ、次回の別障害を通知できるように
         // 通知抑制を解除します。プレビューだけ失敗した場合は、上の処理で失敗状態を
@@ -2008,6 +2193,313 @@ class GestureSequenceEditor(
                 frameWidth = GestureEditorLayout.FRAME_WIDTH,
             ),
         ) { context -> handleUpperAction(context) }
+    }
+
+    /**
+     * 上部画面の宣言実装です。グラフ本体は Custom 描画口へ接続し、外枠は
+     * 旧来座標のまま転記します。独自の切断処理は compiler へ任せます。
+     */
+    private fun buildUpperViewportContentNew(player: Player): GestureGuiView {
+        layoutFailureDuringCurrentRender = false
+        val data = when (val input = resolveUpperGraph(player)) {
+            UpperGraphInput.Empty -> return emptyView()
+            is UpperGraphInput.LayoutFailed -> return input.view
+            is UpperGraphInput.Ready -> input.data
+        }
+        val script = data.script
+        val layout = data.layout
+        val metrics = data.metrics
+        val zoomScale = data.zoomScale
+        val test = data.test
+        val testActive = data.testActive
+        val chrome = mutableListOf<SettingsActionCard>()
+        if (!testActive) {
+            listOf(
+                Quad("nav-up", 0, 1, "▲"),
+                Quad("nav-down", 0, -1, "▼"),
+                Quad("nav-left", -1, 0, "◀"),
+                Quad("nav-right", 1, 0, "▶"),
+            ).forEach { quad ->
+                val nx = GestureEditorLayout.NAV_CENTER_X + quad.second * GestureEditorLayout.NAV_PITCH
+                val ny = GestureEditorLayout.NAV_CENTER_Y + quad.third * GestureEditorLayout.NAV_PITCH
+                val delta = MapPoint(quad.second, -quad.third)
+                val enabled = canNavigate(layout, metrics.columns, metrics.rows, delta)
+                val hoverKey = when (quad.first) {
+                    "nav-up" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP
+                    "nav-down" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN
+                    "nav-left" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT
+                    "nav-right" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT
+                    else -> error("unknown gesture navigation button: ${quad.first}")
+                }
+                chrome += SettingsActionCard(
+                    elementId = quad.first,
+                    label = Component.text(quad.fourth).color(
+                        if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    ),
+                    background = blockDataOf(
+                        if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = nx,
+                    cy = ny,
+                    w = GestureEditorLayout.NAV_SIZE,
+                    h = GestureEditorLayout.NAV_SIZE,
+                    labelSize = 0.011,
+                    labelWidth = 90,
+                    labelDy = -0.01,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ -> canMoveCurrentViewport(delta) },
+                    hover = if (enabled) navigationHover(player, hoverKey) else null,
+                    visualTag = quad.first,
+                )
+            }
+            // back-to-start（十字の下・左に隣接）
+            chrome += SettingsActionCard(
+                elementId = "back-to-start",
+                label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_GLYPH)),
+                background = blockDataOf(Material.BROWN_CONCRETE),
+                cx = GestureEditorLayout.BACK_X,
+                cy = GestureEditorLayout.BACK_Y,
+                w = GestureEditorLayout.NAV_SIZE,
+                h = GestureEditorLayout.NAV_SIZE,
+                labelSize = 0.0055,
+                labelWidth = 90,
+                labelDy = -0.02,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_ACTION),
+                visualTag = "back",
+            )
+            listOf(
+                "nav-zoom-in" to "＋",
+                "nav-zoom-out" to "－",
+            ).forEachIndexed { index, (id, glyph) ->
+                val enabled = if (id == "nav-zoom-in") {
+                    state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
+                } else {
+                    state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
+                }
+                chrome += SettingsActionCard(
+                    elementId = id,
+                    label = Component.text(glyph).color(
+                        if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    ),
+                    background = blockDataOf(
+                        if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = GestureEditorLayout.ZOOM_X,
+                    cy = GestureEditorLayout.ZOOM_IN_Y + index * GestureEditorLayout.ZOOM_PITCH,
+                    w = GestureEditorLayout.ZOOM_SIZE,
+                    h = GestureEditorLayout.ZOOM_SIZE,
+                    labelSize = 0.010,
+                    labelWidth = 90,
+                    labelDy = -0.01,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ ->
+                        if (id == "nav-zoom-in") {
+                            state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
+                        } else {
+                            state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
+                        }
+                    },
+                    hover = if (enabled) {
+                        navigationHover(
+                            player,
+                            if (id == "nav-zoom-in") {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_IN
+                            } else {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_OUT
+                            },
+                        )
+                    } else null,
+                    visualTag = id,
+                )
+            }
+        }
+        // クリップ（位置固定）と閉じるボタンはテスト中も通常通り表示します。
+        run {
+            val following = state.anchor == null
+            chrome += SettingsActionCard(
+                elementId = "nav-clip",
+                label = Component.text("@"),
+                background = blockDataOf(
+                    if (following) Material.CYAN_CONCRETE else Material.LIGHT_BLUE_CONCRETE,
+                ),
+                cx = GestureEditorLayout.CLIP_X,
+                cy = GestureEditorLayout.CLIP_Y,
+                w = GestureEditorLayout.CLIP_SIZE,
+                h = GestureEditorLayout.CLIP_SIZE,
+                labelSize = 0.010,
+                labelWidth = 90,
+                labelDy = -0.01,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = { actor, _ -> actor.uniqueId == sessionOwnerId },
+                hover = if (player.uniqueId == sessionOwnerId) {
+                    navigationHover(
+                        player,
+                        if (following) {
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP
+                        } else {
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP_FIXED
+                        },
+                    )
+                } else null,
+                visualTag = "nav-clip",
+            )
+        }
+        chrome += SettingsActionCard(
+            elementId = "nav-close",
+            label = Component.text("×"),
+            background = blockDataOf(Material.RED_CONCRETE),
+            cx = GestureEditorLayout.CLOSE_X,
+            cy = GestureEditorLayout.CLOSE_Y,
+            w = GestureEditorLayout.CLOSE_SIZE,
+            h = GestureEditorLayout.CLOSE_SIZE,
+            labelSize = 0.010,
+            labelWidth = 90,
+            labelDy = -0.01,
+            gestures = GestureGuiClickPolicy.CLICK,
+            guard = null,
+            hover = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE),
+            visualTag = "nav-close",
+        )
+        when {
+            test?.phase == GestureTestPhase.RUNNING -> {
+                val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
+                if (lamp is org.bukkit.block.data.Lightable) lamp.isLit = true
+                chrome += SettingsActionCard(
+                    elementId = "test-execution",
+                    label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
+                    background = lamp,
+                    cx = GestureEditorLayout.ZOOM_X,
+                    cy = GestureEditorLayout.TEST_RUNNING_Y,
+                    w = GestureEditorLayout.ZOOM_SIZE,
+                    h = GestureEditorLayout.ZOOM_SIZE,
+                    labelSize = 0.010,
+                    labelWidth = 90,
+                    labelDy = -0.01,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = null,
+                    hover = navigationHoverText(
+                        Component.text(
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RUNNING_HINT),
+                        ),
+                    ),
+                    visualTag = "test-execution",
+                )
+            }
+            state.testExecution == null && !testActive -> {
+                val reason = testUnavailableReason(player)
+                if (reason == null) {
+                    val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
+                    chrome += SettingsActionCard(
+                        elementId = "test-execution",
+                        label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
+                        background = lamp,
+                        cx = GestureEditorLayout.ZOOM_X,
+                        cy = GestureEditorLayout.TEST_BUTTON_Y,
+                        w = GestureEditorLayout.ZOOM_SIZE,
+                        h = GestureEditorLayout.ZOOM_SIZE,
+                        labelSize = 0.010,
+                        labelWidth = 90,
+                        labelDy = -0.01,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = navigationHoverText(
+                            Component.text(
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION),
+                            ),
+                        ),
+                        visualTag = "test-execution",
+                    )
+                } else {
+                    val bulb = Bukkit.createBlockData(Material.COPPER_BULB)
+                    if (bulb is org.bukkit.block.data.Lightable) bulb.isLit = true
+                    chrome += SettingsActionCard(
+                        elementId = "test-execution",
+                        // 無言操作面のため文言表示は作りません（旧実装どおり）。
+                        label = null,
+                        background = bulb,
+                        cx = GestureEditorLayout.ZOOM_X,
+                        cy = GestureEditorLayout.TEST_BUTTON_Y,
+                        w = GestureEditorLayout.ZOOM_SIZE,
+                        h = GestureEditorLayout.ZOOM_SIZE,
+                        labelSize = 0.010,
+                        labelWidth = 90,
+                        labelDy = -0.01,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = { _, _ -> false },
+                        hover = navigationHoverText(Component.text(reason)),
+                        visualTag = "test-execution",
+                    )
+                }
+            }
+        }
+        // グラフ本体の描画は共有関数へ委譲し、座標基準は旧来と同一にします。
+        val frame = GraphViewportMapper.legacyFrame(zoomScale)
+        val graphOutput = renderGraphCells(
+            player,
+            script,
+            data.renderGraph,
+            data.projection,
+            data.cells,
+            frame,
+            data.incompleteNodeIds,
+            test,
+            testActive,
+            data.insertionPreview,
+            zoomScale,
+        )
+        val panel = GestureGuiPanel(
+            width = GestureEditorLayout.UPPER_W,
+            height = GestureEditorLayout.UPPER_H,
+            backgroundMaterial = Material.GRAY_CONCRETE,
+            frameMaterial = Material.LIGHT_GRAY_CONCRETE,
+            frameWidth = GestureEditorLayout.FRAME_WIDTH,
+        )
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeUpper.document(
+                viewport = UpperViewportRect(
+                    minX = GestureEditorLayout.UPPER_GRAPH_MIN_X,
+                    minY = GestureEditorLayout.UPPER_GRAPH_MIN_Y,
+                    maxX = GestureEditorLayout.UPPER_GRAPH_MAX_X,
+                    maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y,
+                ),
+                emptyRect = UpperViewportRect(
+                    minX = -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    minY = -GestureEditorLayout.UPPER_H / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    maxX = GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                    maxY = GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                ),
+                chrome = chrome,
+                includeViewportEmpty = !testActive,
+                panel = panel,
+            ),
+            onAction = { context ->
+                handleUpperAction(context.copy(elementId = DeclarativeUpper.stripGraphPrefix(context.elementId)))
+            },
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeUpper] $diagnostics")
+            },
+            extraActionIds = graphOutput.elements.map { it.elementId }.toSet(),
+            customRenderers = mapOf(
+                DeclarativeUpper.GRAPH_RENDERER_ID to KantanGraphCustomRenderer(graphOutput, zoomScale, frame),
+            ),
+        )
+        ensureUniqueScreenElementIds(compiled.elements, script.id)
+        if (!layoutFailureDuringCurrentRender) layoutFailureNoticeSent = false
+        return GestureGuiView(
+            GestureGuiScreenDefinition(
+                UPPER_SCREEN_ID,
+                compiled.elements,
+                access = screenAccess,
+                accessPolicy = screenAccessPolicy,
+                visibilityPolicy = screenVisibilityPolicy,
+            ),
+            compiled.visuals,
+            panel = panel,
+        ) { context ->
+            handleUpperAction(context.copy(elementId = DeclarativeUpper.stripGraphPrefix(context.elementId)))
+        }
     }
 
     /**
@@ -2200,28 +2692,7 @@ class GestureSequenceEditor(
         }
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
-        if (fieldKey == "item" && (
-                node.type == CommandType.GIVE_ITEM ||
-                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
-                    node.type == CommandType.TEMP_SET
-                )) {
-            applyHeldItem(player, context)
-            return
-        }
-        if (fieldKey == "block" && (
-                node.type == CommandType.BLOCK_OPERATION ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
-                    (node.type == CommandType.TEMP_SET &&
-                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
-                )) {
-            applyHeldBlock(player, context)
-            return
-        }
-        if (fieldKey == "diskId" && node.type == CommandType.DISK_CALL) {
-            applyHeldDisk(player, context)
-            return
-        }
+        if (applyHeldField(player, context, node, fieldKey)) return
         if (fieldKey == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
             // 表示時間は1つのタブにまとめ、現在値欄では3項目を表示します。編集時は
             // インベントリGUIと同じ一組の入力欄・最大長・検証を使います。
@@ -2336,11 +2807,50 @@ class GestureSequenceEditor(
     /**
      * ITEM／BLOCK／SOUND／EFFECTの設定元を選択します。
      *
-     * 一時変数・直接値のどちらも、選択操作は設定元の切替だけを行い、値の入力へ
-     * 引き継ぎません。直接値の入力は `lower-edit` の2クリック目から開きます。
-     * 選択だけでDialogや手持ち保存へ進むと、設定元の確認と値入力が分離できず、
-     * 誤った設定元で値を確定する操作を防げないためです。
+     * 1回目の選択操作は設定元の切替だけを行い、値の入力へ引き継ぎません。
+     * 選択済みの直接値をもう一度押す2回目の操作で、項目別の子設定
+     * （手持ち適用・設定対話）へ進みます。選択だけでDialogや手持ち保存へ
+     * 進むと、設定元の確認と値入力が分離できず、誤った設定元で値を確定する
+     * 操作を防げないためです。
      */
+
+    /**
+     * 手持ち対応項目へ手持ち内容を適用します。編集枠と同等の導線です。
+     *
+     * 編集枠と直接値2回目の両方から共用します。引き受けた場合（上書き確認を
+     * 開いた場合を含む）はtrueを返します。
+     */
+    private fun applyHeldField(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+        fieldKey: String,
+    ): Boolean {
+        if (fieldKey == "item" && (
+                node.type == CommandType.GIVE_ITEM ||
+                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
+                    node.type == CommandType.TEMP_SET
+                )) {
+            applyHeldItem(player, context)
+            return true
+        }
+        if (fieldKey == "block" && (
+                node.type == CommandType.BLOCK_OPERATION ||
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                    (node.type == CommandType.TEMP_SET &&
+                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
+                )) {
+            applyHeldBlock(player, context)
+            return true
+        }
+        if (fieldKey == "diskId" && node.type == CommandType.DISK_CALL) {
+            applyHeldDisk(player, context)
+            return true
+        }
+        return false
+    }
+
     private fun selectTypedValueSource(
         player: Player,
         fieldKey: String,
@@ -2381,7 +2891,16 @@ class GestureSequenceEditor(
         if (!updateSettingNode(player, context, configuredFields = emptySet()) {
                 CommandSettingsModel.selectLiteralValueSource(it, fieldKey)
             }) return
-        updateLower(player)
+        // 直接値の1回目は方式指定のみ行います（慣習どおり）。
+        if (currentSource != CommandValueSource.LITERAL) {
+            updateLower(player)
+            return
+        }
+        // 直接値の2回目は子設定へ進みます。束縛付き項目の記述子は対話系か
+        // 手持ち系に限られ、構造化画面への遷移は起きません。
+        // 空手等の案内表示は各導線の既存動作に従います。
+        beginSelectedFieldEdit(player, fieldKey)
+        return
     }
 
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
@@ -5907,26 +6426,6 @@ class GestureSequenceEditor(
         }
     }
 
-    /**
-     * グラフの表示要素を一括変換する対象か判定します。
-     * 表示IDはハイフン区切りの名前空間として扱い、経路上の矢印も含めます。
-     */
-    private fun isMapVisual(visual: GestureGuiVisual): Boolean =
-        visual.visualId.startsWith("node-") ||
-            visual.visualId.startsWith("add-") ||
-            visual.visualId.startsWith("path-")
-
-    /**
-     * グラフの入力要素を表示と同じ変換対象へ揃えます。
-     * node-reorderもグラフ上の操作要素であるため、通常ノードと同じ縮尺・クリップを
-     * 適用します。IDの名前空間を追加するときは、ここだけでなく生成側も同じ規則に従います。
-     */
-    private fun isMapElement(element: GestureGuiElement): Boolean =
-        element.elementId.startsWith("node:") ||
-            element.elementId.startsWith("node-reorder:") ||
-            element.elementId.startsWith("add:") ||
-            element.elementId.startsWith("path:")
-
     private fun clipMapVisual(visual: GestureGuiVisual, metrics: ViewportMetrics): GestureGuiVisual? {
         val halfWidth = when (visual) {
             is GestureGuiVisual.Block -> visual.width / 2.0
@@ -6006,9 +6505,6 @@ class GestureSequenceEditor(
     private fun rect(cx: Double, cy: Double, width: Double, height: Double): GestureGuiBounds =
         GestureGuiBounds(cx - width / 2.0, cy - height / 2.0, cx + width / 2.0, cy + height / 2.0)
 
-    private fun scaleBounds(bounds: GestureGuiBounds, scale: Double): GestureGuiBounds =
-        GestureGuiBounds(bounds.minX * scale, bounds.minY * scale, bounds.maxX * scale, bounds.maxY * scale)
-
     /** 十字ナビゲーション（75%サイズ・右下） */
     private fun addNavigation(
         player: Player,
@@ -6044,7 +6540,7 @@ class GestureSequenceEditor(
                 visualId = "${quad.first}-block",
                 x = nx, y = ny,
                 width = s, height = s,
-                blockData = Bukkit.createBlockData(
+                blockData = blockDataOf(
                     if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                 ),
                 layer = 4,
@@ -6197,7 +6693,7 @@ class GestureSequenceEditor(
             visuals.add(GestureGuiVisual.Block(
                 visualId = "$id-block", x = x, y = y,
                 width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
-                blockData = Bukkit.createBlockData(
+                blockData = blockDataOf(
                     if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                 ), layer = 4,
             ))
@@ -6248,7 +6744,7 @@ class GestureSequenceEditor(
             y = y,
             width = size,
             height = size,
-            blockData = Bukkit.createBlockData(
+            blockData = blockDataOf(
                 // クリップはトグル操作です。追従中(クリップで固定できる状態)と
                 // 固定中(クリップで解除できる状態)の両方が押せるため、無効表現は
                 // 使わず、状態を素材の色で示します。
@@ -6299,7 +6795,7 @@ class GestureSequenceEditor(
             y = y,
             width = size,
             height = size,
-            blockData = Bukkit.createBlockData(Material.RED_CONCRETE),
+            blockData = blockDataOf(Material.RED_CONCRETE),
             layer = 4,
         ))
         visuals.add(GestureGuiVisual.Text(
@@ -6444,40 +6940,23 @@ class GestureSequenceEditor(
     }
 
     private fun viewportMetrics(scale: Double): ViewportMetrics {
-        val columns = GestureEditorLayout.viewportColumns(scale)
-        val rows = GestureEditorLayout.viewportRows(scale)
-        require(scale.isFinite() && scale > 0.0) { "viewport zoom scale must be positive and finite" }
-
-        /*
-         * 表示面の実寸を先に決め、そこへ可視論理セルを等分します。
-         * 以前は固定のFIRST_COL_X/FIRST_ROW_Yを拡大縮小していたため、
-         * 10×4の論理範囲が画面中央の狭い帯に留まり、ズーム時には
-         * アイコンと経路の端点も別々に切り取られていました。
-         * ここでは「画面上の寸法」を基準にし、最後の一括scaleで戻せる
-         * ズーム前座標へ変換します。
-         */
-        val screenPitchX =
-            (GestureEditorLayout.UPPER_GRAPH_MAX_X - GestureEditorLayout.UPPER_GRAPH_MIN_X) / columns
-        val screenPitchY =
-            (GestureEditorLayout.UPPER_GRAPH_MAX_Y - GestureEditorLayout.UPPER_GRAPH_MIN_Y) / rows
-        val screenIconSize = minOf(screenPitchX, screenPitchY) * 0.9
-        val screenPathThickness = minOf(screenPitchX, screenPitchY) * 2.0 / 3.0
-        val iconScaleRatio = GestureEditorLayout.ICON_SCALE / GestureEditorLayout.ICON_W
+        // 座標式の正本は GraphViewportMapper です。宣言経路と共有し、 divergences を防ぎます。
+        val frame = GraphViewportMapper.legacyFrame(scale)
         return ViewportMetrics(
-            zoomScale = scale,
-            columns = columns,
-            rows = rows,
-            firstX = (GestureEditorLayout.UPPER_GRAPH_MIN_X + screenPitchX / 2.0) / scale,
-            firstY = (GestureEditorLayout.UPPER_GRAPH_MAX_Y - screenPitchY / 2.0) / scale,
-            pitchX = screenPitchX / scale,
-            pitchY = screenPitchY / scale,
-            iconSize = screenIconSize / scale,
-            iconScale = screenIconSize * iconScaleRatio / scale,
-            pathThickness = screenPathThickness / scale,
-            graphMinX = GestureEditorLayout.UPPER_GRAPH_MIN_X,
-            graphMaxX = GestureEditorLayout.UPPER_GRAPH_MAX_X,
-            graphMinY = GestureEditorLayout.UPPER_GRAPH_MIN_Y,
-            graphMaxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y,
+            zoomScale = frame.zoomScale,
+            columns = frame.columns,
+            rows = frame.rows,
+            firstX = frame.firstX,
+            firstY = frame.firstY,
+            pitchX = frame.pitchX,
+            pitchY = frame.pitchY,
+            iconSize = frame.iconSize,
+            iconScale = frame.iconScale,
+            pathThickness = frame.pathThickness,
+            graphMinX = frame.minX,
+            graphMaxX = frame.maxX,
+            graphMinY = frame.minY,
+            graphMaxY = frame.maxY,
         )
     }
 
@@ -6506,6 +6985,8 @@ class GestureSequenceEditor(
         const val EDITOR_FOLLOW_DISTANCE: Double = 1.875
         /** CC-SystemのOPENING完了待ちを吸収する上限（13tickのアニメーションより長くします）。 */
         const val MAX_RENDER_RETRY_TICKS = 20
+        /** テスト中の経過表示の更新周期です。秒表示のため1Hzで十分です。 */
+        const val TEST_STATUS_REFRESH_PERIOD_TICKS = 20L
     }
 
 }
