@@ -2424,8 +2424,14 @@ class GestureSequenceEditor(
         if (!updateSettingNode(player, context, configuredFields = emptySet()) {
                 CommandSettingsModel.selectLiteralValueSource(it, fieldKey)
             }) return
-        // 直接値選択時に手持ち対応項目なら、手持ち内容も同時に適用します。
+        // 直接値の1回目は方式指定のみ行います（慣習どおり）。
+        if (currentSource != CommandValueSource.LITERAL) {
+            updateLower(player)
+            return
+        }
+        // 直接値の2回目は子設定として手持ち適用を行います。
         // 束縛付き項目では編集枠が表示されないため、この合流が唯一の適用導線です。
+        // 空手等で適用対象がない場合は何もせず、方式選択だけが残ります。
         if (heldValueAvailable(player, node, fieldKey)) {
             dbgIssue25("selectTypedValueSource applying held value field=$fieldKey node=${node.id}")
             applyHeldField(player, context, node, fieldKey)
