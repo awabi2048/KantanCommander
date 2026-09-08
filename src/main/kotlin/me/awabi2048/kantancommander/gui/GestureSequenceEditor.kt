@@ -81,6 +81,7 @@ import org.bukkit.Bukkit
 import org.bukkit.Color
 import org.bukkit.Location
 import org.bukkit.Material
+import org.bukkit.block.data.BlockData
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
 import org.bukkit.Sound
@@ -606,6 +607,27 @@ class GestureSequenceEditor(
     }
 
     /**
+     * 世代単位の検証結果です。上下画面の重複検証を1回にします。
+     *
+     * 同一世代の再検証は同一結果になるため、スクリプトIDと世代で保持します。
+     * 保存成功で世代が進むと自動的に再検証します。
+     */
+    private var validationCacheKey: Pair<java.util.UUID, Long>? = null
+    private var validationCacheErrors: List<me.awabi2048.kantancommander.data.ScriptValidationError> = emptyList()
+
+    /** 世代キャッシュ付きの実行前検証です。変数定義付きの検証には使いません。 */
+    private fun validatedErrors(
+        script: me.awabi2048.kantancommander.model.DiskScript,
+    ): List<me.awabi2048.kantancommander.data.ScriptValidationError> {
+        val key = script.id to script.revision
+        if (validationCacheKey != key) {
+            validationCacheKey = key
+            validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+        }
+        return validationCacheErrors
+    }
+
+    /**
      * 実行前検証を、下部パネルの「要確認」表示用の情報へ要約します。
      *
      * 構造化エラー（nodeId/fieldKeys）を表示上のタブへ正規化して集約するため、表示側で
@@ -614,7 +636,7 @@ class GestureSequenceEditor(
      */
     private fun attentionState(): GestureAttentionState {
         val script = plugin.scripts.load(state.scriptId) ?: return GestureAttentionState.EMPTY
-        val errors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+        val errors = validatedErrors(script)
         val fieldKeysByNode = errors
             .filter { it.nodeId != null && it.nodeId in script.graph.nodes }
             .groupBy { it.nodeId!! }
@@ -985,6 +1007,8 @@ class GestureSequenceEditor(
 
     private fun startTestRefreshTask() {
         testRefreshTask?.cancel()
+        // 経過表示は秒単位・1Hzで十分なため、毎tickの全量再構築は行いません。
+        // 上部の色・通過表示は状態変化イベントで即時反映します。
         testRefreshTask = plugin.server.scheduler.runTaskTimer(plugin, Runnable {
             val test = state.testExecution
             if (test?.phase != GestureTestPhase.RUNNING) {
@@ -993,8 +1017,14 @@ class GestureSequenceEditor(
                 return@Runnable
             }
             test.elapsedTicks = (plugin.server.currentTick.toLong() - test.startedAtTick).coerceAtLeast(0L)
-            onTestStateChanged()
-        }, 1L, 1L)
+            onTestTimerTick()
+        }, 1L, TEST_STATUS_REFRESH_PERIOD_TICKS)
+    }
+
+    /** 1Hzの経過表示更新です。下部の秒表示だけを更新し、上部は再構築しません。 */
+    private fun onTestTimerTick() {
+        val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
+        updateLower(owner)
     }
 
     private fun onTestStateChanged() {
@@ -1426,6 +1456,19 @@ class GestureSequenceEditor(
             layoutErrorView(player)
         }
 
+    /**
+     * 素材単位の表示素材です。毎回の生成を避けるため保持します。
+     *
+     * 保持物は生成後に変更しません。描画側も読取りだけに用います。
+     * 生成後に変更する素材（点灯切替え等）はここへ入れず個別生成します。
+     * GUI更新はメインスレッドからのみ行います。
+     */
+    private val blockDataCache = mutableMapOf<Material, BlockData>()
+
+    /** 共有の表示素材を返します。変更せずに表示専用として用います。 */
+    private fun blockDataOf(material: Material): BlockData =
+        blockDataCache.getOrPut(material) { Bukkit.createBlockData(material) }
+
     /** shadow検証の直近の差分署名です。同一差分の連投を抑えます。 */
     private var lastGraphShadowSignature: String = ""
 
@@ -1566,7 +1609,7 @@ class GestureSequenceEditor(
                             x = cx, y = cy,
                             width = frame.iconSize,
                             height = frame.iconSize,
-                            blockData = Bukkit.createBlockData(backgroundMaterial),
+                            blockData = blockDataOf(backgroundMaterial),
                             // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
                             layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                             glowColor = glowColor,
@@ -1603,7 +1646,7 @@ class GestureSequenceEditor(
                                 x = cx + frameOffset, y = cy,
                                 width = frameThickness,
                                 height = frame.iconSize,
-                                blockData = Bukkit.createBlockData(foldedFrameMaterial),
+                                blockData = blockDataOf(foldedFrameMaterial),
                                 layer = GestureEditorLayout.ICON_LAYER,
                             ))
                         }
@@ -1659,7 +1702,7 @@ class GestureSequenceEditor(
                                     y = reorderY,
                                     width = reorderSize,
                                     height = reorderSize,
-                                    blockData = Bukkit.createBlockData(
+                                    blockData = blockDataOf(
                                         if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                                     ),
                                     layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
@@ -1700,7 +1743,7 @@ class GestureSequenceEditor(
                         x = cx, y = cy,
                         width = frame.iconSize,
                         height = frame.iconSize,
-                        blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                        blockData = blockDataOf(Material.YELLOW_CONCRETE),
                         layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
                         glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
                     ))
@@ -1828,7 +1871,7 @@ class GestureSequenceEditor(
                 visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
                 x = seg.x, y = seg.y,
                 width = seg.w, height = seg.h,
-                blockData = Bukkit.createBlockData(pathMaterial),
+                blockData = blockDataOf(pathMaterial),
                 layer = 1,
                 glowColor = null,
             ))
@@ -1875,7 +1918,7 @@ class GestureSequenceEditor(
                 y = cy,
                 width = frame.iconSize,
                 height = frame.iconSize,
-                blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                blockData = blockDataOf(Material.YELLOW_CONCRETE),
                 layer = GestureEditorLayout.ICON_BACKGROUND_LAYER + 1,
                 glowColor = Color.YELLOW.asARGB(),
             ))
@@ -1947,7 +1990,7 @@ class GestureSequenceEditor(
         // 検証結果は構造化エラー（nodeId/fieldKeys）として受けるため、表示文字列の
         // パス解析は行いません。snapshot・内部グラフ内のエラーは外側の対応ノードへ
         // 対応付けるため、存在しないノードIDは自然に除外されます。
-        val validationErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+        val validationErrors = validatedErrors(script)
         val incompleteNodeIds = buildSet {
             validationErrors.forEach { error ->
                 error.nodeId?.let { nodeId ->
@@ -2000,7 +2043,7 @@ class GestureSequenceEditor(
                 y = GestureEditorLayout.BACK_Y,
                 width = GestureEditorLayout.NAV_SIZE,
                 height = GestureEditorLayout.NAV_SIZE,
-                blockData = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                blockData = blockDataOf(Material.BROWN_CONCRETE),
                 layer = 4,
             ))
             visuals.add(GestureGuiVisual.Text(
@@ -6124,7 +6167,7 @@ class GestureSequenceEditor(
                 visualId = "${quad.first}-block",
                 x = nx, y = ny,
                 width = s, height = s,
-                blockData = Bukkit.createBlockData(
+                blockData = blockDataOf(
                     if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                 ),
                 layer = 4,
@@ -6277,7 +6320,7 @@ class GestureSequenceEditor(
             visuals.add(GestureGuiVisual.Block(
                 visualId = "$id-block", x = x, y = y,
                 width = GestureEditorLayout.ZOOM_SIZE, height = GestureEditorLayout.ZOOM_SIZE,
-                blockData = Bukkit.createBlockData(
+                blockData = blockDataOf(
                     if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
                 ), layer = 4,
             ))
@@ -6328,7 +6371,7 @@ class GestureSequenceEditor(
             y = y,
             width = size,
             height = size,
-            blockData = Bukkit.createBlockData(
+            blockData = blockDataOf(
                 // クリップはトグル操作です。追従中(クリップで固定できる状態)と
                 // 固定中(クリップで解除できる状態)の両方が押せるため、無効表現は
                 // 使わず、状態を素材の色で示します。
@@ -6379,7 +6422,7 @@ class GestureSequenceEditor(
             y = y,
             width = size,
             height = size,
-            blockData = Bukkit.createBlockData(Material.RED_CONCRETE),
+            blockData = blockDataOf(Material.RED_CONCRETE),
             layer = 4,
         ))
         visuals.add(GestureGuiVisual.Text(
@@ -6569,6 +6612,8 @@ class GestureSequenceEditor(
         const val EDITOR_FOLLOW_DISTANCE: Double = 1.875
         /** CC-SystemのOPENING完了待ちを吸収する上限（13tickのアニメーションより長くします）。 */
         const val MAX_RENDER_RETRY_TICKS = 20
+        /** テスト中の経過表示の更新周期です。秒表示のため1Hzで十分です。 */
+        const val TEST_STATUS_REFRESH_PERIOD_TICKS = 20L
     }
 
 }

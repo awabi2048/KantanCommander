@@ -30,6 +30,20 @@ class TestExecutionTimeFormatterTest {
     }
 
     @Test
+    fun `seconds format drops sub-second precision for live display`() {
+        assertEquals("00:00", TestExecutionTimeFormatter.formatTicksSeconds(0L))
+        assertEquals("00:00", TestExecutionTimeFormatter.formatTicksSeconds(19L))
+        assertEquals("00:01", TestExecutionTimeFormatter.formatTicksSeconds(20L))
+        assertEquals("01:00", TestExecutionTimeFormatter.formatTicksSeconds(1_200L))
+        assertEquals("00:00", TestExecutionTimeFormatter.formatTicksSeconds(-1L))
+    }
+
+    @Test
+    fun `seconds format switches to cumulative hours after one hour`() {
+        assertEquals("01:00:00", TestExecutionTimeFormatter.formatTicksSeconds(72_000L))
+    }
+
+    @Test
     fun `real processing time subtracts only debug waits`() {
         // デバッグ待機の合計だけを差し引き、待機コマンドの時間は含めたままにします。
         assertEquals(80L, TestExecutionTimeFormatter.realProcessingTicks(100L, 20L))

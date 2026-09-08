@@ -40,6 +40,37 @@ internal object TestExecutionTimeFormatter {
     }
 
     /**
+     * 実行中の経過表示用の秒単位の書式です。
+     *
+     * テスト中の定周期更新を1Hzへ間引くため、百分秒・tick数の毎tick変化を
+     * なくします。最終結果の表示は [formatTicks] のままにし、小数点以下と
+     * tick表記を残します。
+     */
+    fun formatTicksSeconds(ticks: Long): String {
+        val safeTicks = ticks.coerceAtLeast(0L)
+        val totalSeconds = safeTicks / TICKS_PER_SECOND
+        val seconds = totalSeconds % 60L
+        val totalMinutes = totalSeconds / 60L
+        return if (totalMinutes < 60L) {
+            String.format(
+                Locale.ROOT,
+                "%02d:%02d",
+                totalMinutes,
+                seconds,
+            )
+        } else {
+            val hours = totalMinutes / 60L
+            val minutes = totalMinutes % 60L
+            String.format(
+                Locale.ROOT,
+                "%02d:%02d:%02d",
+                hours,
+                minutes,
+                seconds,
+            )
+        }
+    }
+    /**
      * 所要時間からデバッグ待機の合計を差し引いた実処理時間を求めます。
      * 待機コマンドの所要時間は差し引かず、実処理に含めたままにします。
      */

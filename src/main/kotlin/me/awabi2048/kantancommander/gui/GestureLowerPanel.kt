@@ -606,7 +606,7 @@ class GestureLowerPanel(
                     row(
                         "test-status-elapsed",
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
-                        formatTestElapsed(test.elapsedTicks),
+                        formatTestElapsedSeconds(test.elapsedTicks),
                         0.21,
                     ),
                     row(
@@ -4345,7 +4345,7 @@ class GestureLowerPanel(
             "test-status-elapsed",
             0.21,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
-            formatTestElapsed(test.elapsedTicks),
+            formatTestElapsedSeconds(test.elapsedTicks),
             NamedTextColor.WHITE,
         )
         addTestResultRow(
@@ -4517,6 +4517,11 @@ class GestureLowerPanel(
 
     private fun formatTestElapsed(ticks: Long): String {
         return TestExecutionTimeFormatter.formatTicks(ticks)
+    }
+
+    /** 実行中の経過表示用の秒単位の書式です。最終結果には使いません。 */
+    private fun formatTestElapsedSeconds(ticks: Long): String {
+        return TestExecutionTimeFormatter.formatTicksSeconds(ticks)
     }
 
     /** PICKER: 左タブ列＝カテゴリ（EXECUTION/CONTROL）、右詳細＝コマンド種別一覧 */
