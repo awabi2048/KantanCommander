@@ -1663,8 +1663,15 @@ class GestureSequenceEditor(
                         // 折り畳みノードだけが対象で、展開中の構造ノードは表示しません。
                         val showReorder = !testActive && insertionPreview == null && isSelected &&
                             !FoldedGraphs.isExpandedStructural(node)
-                        val reorderSize = minOf(frame.pitchX, frame.pitchY) * 0.20
-                        val reorderY = cy + frame.iconSize / 2.0 + reorderSize / 2.0 + 0.008
+                        // ボタン寸法はノードアイコン一辺の50%とし、配置計算は
+                        // NodeReorderLayoutへ集約します（寸法導出の二重持ち防止）。
+                        val reorderSize = NodeReorderLayout.buttonSize(frame.iconSize)
+                        val reorderY = NodeReorderLayout.buttonY(cy, frame.iconSize, reorderSize)
+                        val reorderGlyphSize = NodeReorderLayout.glyphSize(reorderSize, minOf(frame.pitchX, frame.pitchY))
+                        val reorderGlyphDy = NodeReorderLayout.glyphDy(reorderGlyphSize)
+                        // 折り畳み操作ができる場合は中央に折り畳みボタンを足して3個構成、
+                        // ない場合は従来どおり入れ替え2個のままとします。
+                        val showFold = showReorder && NodeReorderLayout.isFoldToggleAvailable(node, renderGraph)
                         if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
                             // 折畳み縁にもノードと同じクリック・ホバー判定を設けます。
@@ -1685,14 +1692,16 @@ class GestureSequenceEditor(
                             hoverText = GestureGuiHoverText(
                                 text = hoverText,
                                 x = cx,
-                                y = if (showReorder) reorderY + reorderSize / 2.0 + 0.03
+                                y = if (showReorder) NodeReorderLayout.hoverY(reorderY, reorderSize)
                                 else cy + frame.iconSize * 0.9,
                                 size = 0.006,
                                 lineWidth = 180,
                             ),
                         ))
                         if (showReorder) {
-                            val reorderOffset = reorderSize * 0.78
+                            // 左右の入れ替えボタンは中央揃え（左右対称）に固定し、
+                            // 中央ボタンの有無で位置を変えません。
+                            val reorderOffset = NodeReorderLayout.sideOffset(reorderSize)
                             listOf(
                                 GraphEditor.ReorderDirection.LEFT to "←",
                                 GraphEditor.ReorderDirection.RIGHT to "→",
@@ -1715,11 +1724,11 @@ class GestureSequenceEditor(
                                 visuals.add(GestureGuiVisual.Text(
                                     visualId = "node-reorder-$directionName-glyph-${node.id}",
                                     x = x,
-                                    y = reorderY - 0.006,
+                                    y = reorderY - reorderGlyphDy,
                                     text = Component.text(glyph).color(
                                         if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
                                     ),
-                                    size = 0.007,
+                                    size = reorderGlyphSize,
                                     layer = GestureEditorLayout.ICON_LAYER,
                                 ))
                                 elements.add(GestureGuiElement(
@@ -1736,6 +1745,52 @@ class GestureSequenceEditor(
                                         } == true
                                     },
                                     targetVisualId = "node-reorder-$directionName-glyph-${node.id}",
+                                ))
+                            }
+                            if (showFold) {
+                                // 中央の折り畳みボタン。展開中は▼（折り畳む）、
+                                // 折り畳み中は▲（展開する）を示します。
+                                // 再クリックと同一の変形動作へ接続し、処理の二重持ちを避けます。
+                                val foldGlyph = NodeReorderLayout.foldGlyph(node)
+                                visuals.add(GestureGuiVisual.Block(
+                                    visualId = "node-fold-bg-${node.id}",
+                                    x = cx,
+                                    y = reorderY,
+                                    width = reorderSize,
+                                    height = reorderSize,
+                                    blockData = blockDataOf(Material.CYAN_CONCRETE),
+                                    layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
+                                ))
+                                visuals.add(GestureGuiVisual.Text(
+                                    visualId = "node-fold-glyph-${node.id}",
+                                    x = cx,
+                                    y = reorderY - reorderGlyphDy,
+                                    text = Component.text(foldGlyph).color(NamedTextColor.WHITE),
+                                    size = reorderGlyphSize,
+                                    layer = GestureEditorLayout.ICON_LAYER,
+                                ))
+                                elements.add(GestureGuiElement(
+                                    elementId = "node-fold:${node.id}",
+                                    bounds = iconBounds(cx, reorderY, reorderSize),
+                                    // 入れ替えボタンと同様、描画時の可否を入力可否へ固定せず、
+                                    // クリック時に最新グラフで再判定して誤操作を防ぎます。
+                                    acceptedGestures = GestureGuiClickPolicy.CLICK,
+                                    gestureGuard = { _, _ ->
+                                        val guardGraph = plugin.scripts.load(state.scriptId)?.graph
+                                        val guardNode = guardGraph?.nodes?.get(node.id)
+                                        guardGraph != null && guardNode != null &&
+                                            NodeReorderLayout.isFoldToggleAvailable(guardNode, guardGraph)
+                                    },
+                                    targetVisualId = "node-fold-glyph-${node.id}",
+                                    hoverText = foldGuidanceText(player, node, renderGraph)?.let { guidance ->
+                                        GestureGuiHoverText(
+                                            text = Component.text(guidance, NamedTextColor.GRAY),
+                                            x = cx,
+                                            y = NodeReorderLayout.hoverY(reorderY, reorderSize),
+                                            size = 0.006,
+                                            lineWidth = 180,
+                                        )
+                                    },
                                 ))
                             }
                         }
@@ -5558,6 +5613,16 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
+            context.elementId.startsWith("node-fold:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node-fold:")) }.getOrNull() ?: return
+                val script = plugin.scripts.load(state.scriptId) ?: return
+                val node = script.graph.nodes[nodeId] ?: return
+                // 表示時の可否を入力時にも再確認し、古い表示からの誤操作を防ぎます。
+                // 条件分岐のShift+枝入替はノード再クリック側だけが受け持ち、
+                // 中央ボタンは通常クリックの変形動作に専念します。
+                if (!NodeReorderLayout.isFoldToggleAvailable(node, script.graph)) return
+                applyFoldToggle(player, node)
+            }
             context.elementId.startsWith("node:") -> {
                 val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node:")) }.getOrNull() ?: return
                 // 画面更新後に削除されたノードからの遅延入力は、選択も効果音も発生させません。
@@ -5570,26 +5635,20 @@ class GestureSequenceEditor(
                     // 選択済みノードへの再クリックは、種類別の変形動作です。
                     // 折り畳みノードの再クリックは展開、FOR開始・条件分岐の再クリックは
                     // 折り畳み（条件分岐は合流済みのみ）を行い、条件分岐のShift+再クリックは
-                    // TRUE/FALSE鎖の入替です。下部の設定表示は維持します。
+                    // TRUE/FALSE鎖の入替です。通常クリックの折り畳み変形は中央ボタンと
+                    // 共通化し、下部の設定表示は維持します。
                     // 新規選択は従来どおり設定表示へ遷移します。
                     val clicked = script.graph.nodes.getValue(nodeId)
                     if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
-                        if (clicked.type == CommandType.FOLDED_FOR || clicked.type == CommandType.FOLDED_IF) {
-                            unfoldNode(player, nodeId)
+                        // Shift+再クリックの枝入替だけを先に分岐し、通常クリックの
+                        // 折り畳み変形は中央ボタンと共有の applyFoldToggle へ任せます。
+                        if (clicked.type == CommandType.CONDITION &&
+                            context.gesture == GestureGuiGesture.SHIFT_PRIMARY
+                        ) {
+                            swapConditionBranches(player, nodeId)
                             return
                         }
-                        if (clicked.type == CommandType.FOR_START && clicked.pairedNodeId != null) {
-                            foldFor(player, nodeId)
-                            return
-                        }
-                        if (clicked.type == CommandType.CONDITION) {
-                            if (context.gesture == GestureGuiGesture.SHIFT_PRIMARY) {
-                                swapConditionBranches(player, nodeId)
-                                return
-                            }
-                            foldIf(player, nodeId)
-                            return
-                        }
+                        if (applyFoldToggle(player, clicked)) return
                     }
                     state.selectedNodeId = nodeId
                     state.selectedAddPoint = null
@@ -6184,28 +6243,42 @@ class GestureSequenceEditor(
      * 1行目は案内、2行目がノード名となるよう、呼び出し側で名前へ改行接続します。
      * 対象外ノードではnullを返し、従来どおり名前だけを表示します。
      * 未合流の条件分岐は折り畳めないため案内を出しません（素の再クリックは枝入替）。
+     * 可否条件は中央ボタンの表示・受付と共有し、案内と操作のずれを防ぎます。
      */
     private fun foldGuidanceText(player: Player, node: CommandNode, graph: CommandGraph): String? {
-        when (node.type) {
-            CommandType.FOLDED_FOR -> return KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_FOR,
-            )
-            CommandType.FOLDED_IF -> return KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_IF,
-            )
-            CommandType.FOR_START -> if (node.pairedNodeId != null) return KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_FOR,
-            )
-            CommandType.CONDITION -> if (GraphEditor.canFoldCondition(graph, node.id)) return KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_IF,
-            )
-            else -> Unit
+        if (!NodeReorderLayout.isFoldToggleAvailable(node, graph)) return null
+        val key = when (node.type) {
+            CommandType.FOLDED_FOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_FOR
+            CommandType.FOLDED_IF -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_IF
+            CommandType.FOR_START -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_FOR
+            CommandType.CONDITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_IF
+            else -> return null
         }
-        return null
+        return KcI18n.text(player, key)
+    }
+
+    /**
+     * 選択済みノードへの通常クリック・中央折り畳みボタンで共有する変形動作です。
+     *
+     * 折り畳みノードは展開、FOR開始・条件分岐は折り畳みを行い、処理した場合は
+     * trueを返します。条件分岐のShift+再クリック（枝入替）は呼び出し側で先に
+     * 分岐するため、ここでは扱いません。対象外ノードでは何もせずfalseを返し、
+     * 呼び出し側は従来どおり選択処理へ進みます。
+     */
+    private fun applyFoldToggle(player: Player, node: CommandNode): Boolean = when (node.type) {
+        CommandType.FOLDED_FOR, CommandType.FOLDED_IF -> {
+            unfoldNode(player, node.id)
+            true
+        }
+        CommandType.FOR_START -> if (node.pairedNodeId != null) {
+            foldFor(player, node.id)
+            true
+        } else false
+        CommandType.CONDITION -> {
+            foldIf(player, node.id)
+            true
+        }
+        else -> false
     }
 
     /**
