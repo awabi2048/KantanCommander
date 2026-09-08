@@ -560,9 +560,9 @@ class GestureLowerPanel(
                         labelSize = 0.0043,
                         labelWidth = 92,
                         gestures = typedValueSourceGestures(field.key, source),
-                        guard = { actor, _ ->
-                            source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(actor, field.key)
-                        },
+                        // 方式指定自体は常時許可します。手持ち要件は二段階目の
+                        // 適用時（heldValueAvailable）に判定するため、ここでは拒否しません。
+                        guard = null,
                     hover = multiLineHover(lines, x = x, y = HOVER_SLOT_Y),
                     visualTag = "lower-value-source-${source.name.lowercase()}",
                 ),
