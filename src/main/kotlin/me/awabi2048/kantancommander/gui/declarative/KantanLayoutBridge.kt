@@ -36,21 +36,28 @@ object KantanLayoutBridge {
      *
      * @param onAction 共有の操作処理です。全 action ID に同じ処理を接続します。
      * @param onDiagnostics 診断の通知先です。空でない場合は表示崩れの疑いがあります。
+     * @param extraActionIds 文書外で生成する操作の action ID です。
+     * Custom renderer の動的要素など、文書走査で集まらない ID を渡します。
+     * @param customRenderers rendererId から Custom renderer への対応表です。
      */
     fun compile(
         document: GestureGuiDocument,
         onAction: (GestureGuiActionContext) -> Unit,
         onDiagnostics: (List<GestureGuiLayoutDiagnostic>) -> Unit = {},
+        extraActionIds: Set<String> = emptySet(),
+        customRenderers: Map<String, com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomRenderer> = emptyMap(),
     ): Compiled {
-        val actions = collectActions(document.root)
+        val actions = collectActions(document.root) + extraActionIds
         val resolved = GestureGuiLayoutEngine.layout(document, knownActionIds = actions)
         val handlers = actions.associateWith { onAction }
         val compiled = GestureGuiLayoutCompiler.compile(
             resolved,
             screenId = "kantan-bridge",
             actionHandlers = handlers,
+            customRenderers = customRenderers,
         )
-        val diagnostics = resolved.diagnostics + compiled.diagnostics
+        // compiler の診断には解決時の診断も含まれるため、そのまま用います。
+        val diagnostics = compiled.diagnostics
         if (diagnostics.isNotEmpty()) onDiagnostics(diagnostics)
         return Compiled(
             elements = compiled.view.definition.elements,

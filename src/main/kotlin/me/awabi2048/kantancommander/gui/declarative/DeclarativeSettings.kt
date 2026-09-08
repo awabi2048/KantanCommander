@@ -88,7 +88,8 @@ data class SettingsChoiceCard(
 data class SettingsActionCard(
     /** 要素 ID 全文です。操作面なしの場合は null にします。 */
     val elementId: String?,
-    val label: Component,
+    /** 文言です。ない場合（表示専用の無言操作面）は文言表示を作りません。 */
+    val label: Component?,
     val background: BlockData,
     val cx: Double,
     val cy: Double,
@@ -96,6 +97,8 @@ data class SettingsActionCard(
     val h: Double,
     val labelSize: Double,
     val labelWidth: Int,
+    /** 文言の中心の垂直ずらしです。装飾グリフ等の微調整に用います。 */
+    val labelDy: Double = 0.0,
     val gestures: Set<GestureGuiGesture>,
     val guard: ((Player, GestureGuiGesture) -> Boolean)?,
     val hover: GestureGuiHoverText?,
@@ -449,16 +452,18 @@ object DeclarativeSettings {
             hover = card.hover?.let(::hoverSpecOf),
             absolute = placed(frame, card.cx, card.cy, card.w, card.h),
         )
-        nodes += GestureGuiText(
-            text = card.label,
-            size = card.labelSize,
-            lineWidth = card.labelWidth,
-            alignment = GestureGuiTextAlignment.CENTER,
-            id = "${card.visualTag}-label",
-            width = GestureGuiSizeSpec.Fixed(1.0),
-            height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, card.cx, card.cy, 1.0, card.labelSize * 3.0),
-        )
+        card.label?.let { label ->
+            nodes += GestureGuiText(
+                text = label,
+                size = card.labelSize,
+                lineWidth = card.labelWidth,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "${card.visualTag}-label",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
+            )
+        }
     }
 
     fun document(nodes: List<GestureGuiNode>, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =

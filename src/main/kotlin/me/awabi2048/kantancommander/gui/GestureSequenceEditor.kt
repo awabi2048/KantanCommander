@@ -39,7 +39,11 @@ import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
 import me.awabi2048.kantancommander.execution.NodeExecutionOutcome
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeUpper
 import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
+import me.awabi2048.kantancommander.gui.declarative.KantanLayoutBridge
+import me.awabi2048.kantancommander.gui.declarative.SettingsActionCard
+import me.awabi2048.kantancommander.gui.declarative.UpperViewportRect
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
@@ -1446,7 +1450,8 @@ class GestureSequenceEditor(
      */
     private fun buildUpperViewport(player: Player): GestureGuiView =
         try {
-            buildUpperViewportContent(player)
+            if (KantanDeclarativeGui.useUpperNew) buildUpperViewportContentNew(player)
+            else buildUpperViewportContent(player)
         } catch (failure: RuntimeException) {
             reportLayoutFailure(
                 player,
@@ -1934,11 +1939,37 @@ class GestureSequenceEditor(
         return GraphCellOutput(visuals, elements)
     }
 
-    private fun buildUpperViewportContent(player: Player): GestureGuiView {
-        layoutFailureDuringCurrentRender = false
+    /**
+     * 上部描画の共通前段です。旧来経路と宣言経路で共有します。
+     *
+     * 配置・投影・検証までを行い、表示・入力の組立は呼び出し側で行います。
+     * 空表示と配置失敗の画面もここで確定し、呼び出し側の分岐を減らします。
+     */
+    private data class UpperGraphData(
+        val script: DiskScript,
+        val renderGraph: CommandGraph,
+        val layout: GraphLayout,
+        val projection: ViewportProjection,
+        val cells: Map<MapPoint, MapCell>,
+        val metrics: ViewportMetrics,
+        val zoomScale: Double,
+        val incompleteNodeIds: Set<java.util.UUID>,
+        val test: GestureTestState?,
+        val testActive: Boolean,
+        val insertionPreview: InsertionPreview?,
+    )
+
+    private sealed interface UpperGraphInput {
+        data class Ready(val data: UpperGraphData) : UpperGraphInput
+        data object Empty : UpperGraphInput
+        data class LayoutFailed(val view: GestureGuiView) : UpperGraphInput
+    }
+
+    private fun resolveUpperGraph(player: Player): UpperGraphInput {
         val test = state.testExecution
         val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
-        val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return emptyView()
+        val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId)
+        if (script == null) return UpperGraphInput.Empty
         if (!testActive) observedRevision = script.revision
         val persistedLayout = runCatching {
             GraphLayoutEngine.layout(script.graph)
@@ -1949,7 +1980,7 @@ class GestureSequenceEditor(
                     "ジェスチャーGUIの経路描画でレイアウトを生成できません: script=${script.id}",
                     failure,
                 )
-                return layoutErrorView(player)
+                return UpperGraphInput.LayoutFailed(layoutErrorView(player))
             }
         // 挿入プレビューは「経路クリックによる挿入」のときだけ適用します。
         // 追加ポイントからの追加は、追加ボタン自体が候補位置であり既存ノードが
@@ -1999,6 +2030,41 @@ class GestureSequenceEditor(
                 }
             }
         }
+        return UpperGraphInput.Ready(
+            UpperGraphData(
+                script = script,
+                renderGraph = renderGraph,
+                layout = layout,
+                projection = projection,
+                cells = cells,
+                metrics = metrics,
+                zoomScale = zoomScale,
+                incompleteNodeIds = incompleteNodeIds,
+                test = test,
+                testActive = testActive,
+                insertionPreview = insertionPreview,
+            ),
+        )
+    }
+
+    private fun buildUpperViewportContent(player: Player): GestureGuiView {
+        layoutFailureDuringCurrentRender = false
+        val data = when (val input = resolveUpperGraph(player)) {
+            UpperGraphInput.Empty -> return emptyView()
+            is UpperGraphInput.LayoutFailed -> return input.view
+            is UpperGraphInput.Ready -> input.data
+        }
+        val script = data.script
+        val renderGraph = data.renderGraph
+        val layout = data.layout
+        val projection = data.projection
+        val cells = data.cells
+        val metrics = data.metrics
+        val zoomScale = data.zoomScale
+        val incompleteNodeIds = data.incompleteNodeIds
+        val test = data.test
+        val testActive = data.testActive
+        val insertionPreview = data.insertionPreview
         val visuals = mutableListOf<GestureGuiVisual>()
         val elements = mutableListOf<GestureGuiElement>()
         // 画面内の余白クリックをActionへ届け、選択状態を解除できるようにします。
@@ -2127,6 +2193,313 @@ class GestureSequenceEditor(
                 frameWidth = GestureEditorLayout.FRAME_WIDTH,
             ),
         ) { context -> handleUpperAction(context) }
+    }
+
+    /**
+     * 上部画面の宣言実装です。グラフ本体は Custom 描画口へ接続し、外枠は
+     * 旧来座標のまま転記します。独自の切断処理は compiler へ任せます。
+     */
+    private fun buildUpperViewportContentNew(player: Player): GestureGuiView {
+        layoutFailureDuringCurrentRender = false
+        val data = when (val input = resolveUpperGraph(player)) {
+            UpperGraphInput.Empty -> return emptyView()
+            is UpperGraphInput.LayoutFailed -> return input.view
+            is UpperGraphInput.Ready -> input.data
+        }
+        val script = data.script
+        val layout = data.layout
+        val metrics = data.metrics
+        val zoomScale = data.zoomScale
+        val test = data.test
+        val testActive = data.testActive
+        val chrome = mutableListOf<SettingsActionCard>()
+        if (!testActive) {
+            listOf(
+                Quad("nav-up", 0, 1, "▲"),
+                Quad("nav-down", 0, -1, "▼"),
+                Quad("nav-left", -1, 0, "◀"),
+                Quad("nav-right", 1, 0, "▶"),
+            ).forEach { quad ->
+                val nx = GestureEditorLayout.NAV_CENTER_X + quad.second * GestureEditorLayout.NAV_PITCH
+                val ny = GestureEditorLayout.NAV_CENTER_Y + quad.third * GestureEditorLayout.NAV_PITCH
+                val delta = MapPoint(quad.second, -quad.third)
+                val enabled = canNavigate(layout, metrics.columns, metrics.rows, delta)
+                val hoverKey = when (quad.first) {
+                    "nav-up" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_UP
+                    "nav-down" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_DOWN
+                    "nav-left" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_LEFT
+                    "nav-right" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_MOVE_RIGHT
+                    else -> error("unknown gesture navigation button: ${quad.first}")
+                }
+                chrome += SettingsActionCard(
+                    elementId = quad.first,
+                    label = Component.text(quad.fourth).color(
+                        if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    ),
+                    background = blockDataOf(
+                        if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = nx,
+                    cy = ny,
+                    w = GestureEditorLayout.NAV_SIZE,
+                    h = GestureEditorLayout.NAV_SIZE,
+                    labelSize = 0.011,
+                    labelWidth = 90,
+                    labelDy = -0.01,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ -> canMoveCurrentViewport(delta) },
+                    hover = if (enabled) navigationHover(player, hoverKey) else null,
+                    visualTag = quad.first,
+                )
+            }
+            // back-to-start（十字の下・左に隣接）
+            chrome += SettingsActionCard(
+                elementId = "back-to-start",
+                label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_GLYPH)),
+                background = blockDataOf(Material.BROWN_CONCRETE),
+                cx = GestureEditorLayout.BACK_X,
+                cy = GestureEditorLayout.BACK_Y,
+                w = GestureEditorLayout.NAV_SIZE,
+                h = GestureEditorLayout.NAV_SIZE,
+                labelSize = 0.0055,
+                labelWidth = 90,
+                labelDy = -0.02,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CENTER_ACTION),
+                visualTag = "back",
+            )
+            listOf(
+                "nav-zoom-in" to "＋",
+                "nav-zoom-out" to "－",
+            ).forEachIndexed { index, (id, glyph) ->
+                val enabled = if (id == "nav-zoom-in") {
+                    state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
+                } else {
+                    state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
+                }
+                chrome += SettingsActionCard(
+                    elementId = id,
+                    label = Component.text(glyph).color(
+                        if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    ),
+                    background = blockDataOf(
+                        if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = GestureEditorLayout.ZOOM_X,
+                    cy = GestureEditorLayout.ZOOM_IN_Y + index * GestureEditorLayout.ZOOM_PITCH,
+                    w = GestureEditorLayout.ZOOM_SIZE,
+                    h = GestureEditorLayout.ZOOM_SIZE,
+                    labelSize = 0.010,
+                    labelWidth = 90,
+                    labelDy = -0.01,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ ->
+                        if (id == "nav-zoom-in") {
+                            state.zoomLevel < GestureEditorLayout.MAX_ZOOM_LEVEL
+                        } else {
+                            state.zoomLevel > GestureEditorLayout.MIN_ZOOM_LEVEL
+                        }
+                    },
+                    hover = if (enabled) {
+                        navigationHover(
+                            player,
+                            if (id == "nav-zoom-in") {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_IN
+                            } else {
+                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ZOOM_OUT
+                            },
+                        )
+                    } else null,
+                    visualTag = id,
+                )
+            }
+        }
+        // クリップ（位置固定）と閉じるボタンはテスト中も通常通り表示します。
+        run {
+            val following = state.anchor == null
+            chrome += SettingsActionCard(
+                elementId = "nav-clip",
+                label = Component.text("@"),
+                background = blockDataOf(
+                    if (following) Material.CYAN_CONCRETE else Material.LIGHT_BLUE_CONCRETE,
+                ),
+                cx = GestureEditorLayout.CLIP_X,
+                cy = GestureEditorLayout.CLIP_Y,
+                w = GestureEditorLayout.CLIP_SIZE,
+                h = GestureEditorLayout.CLIP_SIZE,
+                labelSize = 0.010,
+                labelWidth = 90,
+                labelDy = -0.01,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = { actor, _ -> actor.uniqueId == sessionOwnerId },
+                hover = if (player.uniqueId == sessionOwnerId) {
+                    navigationHover(
+                        player,
+                        if (following) {
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP
+                        } else {
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CLIP_FIXED
+                        },
+                    )
+                } else null,
+                visualTag = "nav-clip",
+            )
+        }
+        chrome += SettingsActionCard(
+            elementId = "nav-close",
+            label = Component.text("×"),
+            background = blockDataOf(Material.RED_CONCRETE),
+            cx = GestureEditorLayout.CLOSE_X,
+            cy = GestureEditorLayout.CLOSE_Y,
+            w = GestureEditorLayout.CLOSE_SIZE,
+            h = GestureEditorLayout.CLOSE_SIZE,
+            labelSize = 0.010,
+            labelWidth = 90,
+            labelDy = -0.01,
+            gestures = GestureGuiClickPolicy.CLICK,
+            guard = null,
+            hover = navigationHover(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE),
+            visualTag = "nav-close",
+        )
+        when {
+            test?.phase == GestureTestPhase.RUNNING -> {
+                val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
+                if (lamp is org.bukkit.block.data.Lightable) lamp.isLit = true
+                chrome += SettingsActionCard(
+                    elementId = "test-execution",
+                    label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
+                    background = lamp,
+                    cx = GestureEditorLayout.ZOOM_X,
+                    cy = GestureEditorLayout.TEST_RUNNING_Y,
+                    w = GestureEditorLayout.ZOOM_SIZE,
+                    h = GestureEditorLayout.ZOOM_SIZE,
+                    labelSize = 0.010,
+                    labelWidth = 90,
+                    labelDy = -0.01,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = null,
+                    hover = navigationHoverText(
+                        Component.text(
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RUNNING_HINT),
+                        ),
+                    ),
+                    visualTag = "test-execution",
+                )
+            }
+            state.testExecution == null && !testActive -> {
+                val reason = testUnavailableReason(player)
+                if (reason == null) {
+                    val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
+                    chrome += SettingsActionCard(
+                        elementId = "test-execution",
+                        label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
+                        background = lamp,
+                        cx = GestureEditorLayout.ZOOM_X,
+                        cy = GestureEditorLayout.TEST_BUTTON_Y,
+                        w = GestureEditorLayout.ZOOM_SIZE,
+                        h = GestureEditorLayout.ZOOM_SIZE,
+                        labelSize = 0.010,
+                        labelWidth = 90,
+                        labelDy = -0.01,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = navigationHoverText(
+                            Component.text(
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION),
+                            ),
+                        ),
+                        visualTag = "test-execution",
+                    )
+                } else {
+                    val bulb = Bukkit.createBlockData(Material.COPPER_BULB)
+                    if (bulb is org.bukkit.block.data.Lightable) bulb.isLit = true
+                    chrome += SettingsActionCard(
+                        elementId = "test-execution",
+                        // 無言操作面のため文言表示は作りません（旧実装どおり）。
+                        label = null,
+                        background = bulb,
+                        cx = GestureEditorLayout.ZOOM_X,
+                        cy = GestureEditorLayout.TEST_BUTTON_Y,
+                        w = GestureEditorLayout.ZOOM_SIZE,
+                        h = GestureEditorLayout.ZOOM_SIZE,
+                        labelSize = 0.010,
+                        labelWidth = 90,
+                        labelDy = -0.01,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = { _, _ -> false },
+                        hover = navigationHoverText(Component.text(reason)),
+                        visualTag = "test-execution",
+                    )
+                }
+            }
+        }
+        // グラフ本体の描画は共有関数へ委譲し、座標基準は旧来と同一にします。
+        val frame = GraphViewportMapper.legacyFrame(zoomScale)
+        val graphOutput = renderGraphCells(
+            player,
+            script,
+            data.renderGraph,
+            data.projection,
+            data.cells,
+            frame,
+            data.incompleteNodeIds,
+            test,
+            testActive,
+            data.insertionPreview,
+            zoomScale,
+        )
+        val panel = GestureGuiPanel(
+            width = GestureEditorLayout.UPPER_W,
+            height = GestureEditorLayout.UPPER_H,
+            backgroundMaterial = Material.GRAY_CONCRETE,
+            frameMaterial = Material.LIGHT_GRAY_CONCRETE,
+            frameWidth = GestureEditorLayout.FRAME_WIDTH,
+        )
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeUpper.document(
+                viewport = UpperViewportRect(
+                    minX = GestureEditorLayout.UPPER_GRAPH_MIN_X,
+                    minY = GestureEditorLayout.UPPER_GRAPH_MIN_Y,
+                    maxX = GestureEditorLayout.UPPER_GRAPH_MAX_X,
+                    maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y,
+                ),
+                emptyRect = UpperViewportRect(
+                    minX = -GestureEditorLayout.UPPER_W / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    minY = -GestureEditorLayout.UPPER_H / 2.0 + GestureEditorLayout.FRAME_WIDTH,
+                    maxX = GestureEditorLayout.UPPER_W / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                    maxY = GestureEditorLayout.UPPER_H / 2.0 - GestureEditorLayout.FRAME_WIDTH,
+                ),
+                chrome = chrome,
+                includeViewportEmpty = !testActive,
+                panel = panel,
+            ),
+            onAction = { context ->
+                handleUpperAction(context.copy(elementId = DeclarativeUpper.stripGraphPrefix(context.elementId)))
+            },
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeUpper] $diagnostics")
+            },
+            extraActionIds = graphOutput.elements.map { it.elementId }.toSet(),
+            customRenderers = mapOf(
+                DeclarativeUpper.GRAPH_RENDERER_ID to KantanGraphCustomRenderer(graphOutput, zoomScale, frame),
+            ),
+        )
+        ensureUniqueScreenElementIds(compiled.elements, script.id)
+        if (!layoutFailureDuringCurrentRender) layoutFailureNoticeSent = false
+        return GestureGuiView(
+            GestureGuiScreenDefinition(
+                UPPER_SCREEN_ID,
+                compiled.elements,
+                access = screenAccess,
+                accessPolicy = screenAccessPolicy,
+                visibilityPolicy = screenVisibilityPolicy,
+            ),
+            compiled.visuals,
+            panel = panel,
+        ) { context ->
+            handleUpperAction(context.copy(elementId = DeclarativeUpper.stripGraphPrefix(context.elementId)))
+        }
     }
 
     /**

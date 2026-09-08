@@ -26,6 +26,12 @@ object KantanDeclarativeGui {
      */
     var shadowGraphCustom: Boolean = true
 
+    /**
+     * 上部画面を宣言実装へ切り替えます。
+     * グラフ本体はCustom描画口、外枠は宣言転記です。
+     */
+    var useUpperNew: Boolean = false
+
     /** ワールド変数削除確認子画面を宣言実装へ切り替えます。 */
     var useWorldVariableDeleteConfirm: Boolean = false
 
