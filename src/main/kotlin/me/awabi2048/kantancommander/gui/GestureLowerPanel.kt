@@ -9,9 +9,11 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import me.awabi2048.kantancommander.gui.declarative.ContentFrame
 import me.awabi2048.kantancommander.gui.declarative.DeclarativeSettings
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeVariables
 import me.awabi2048.kantancommander.gui.declarative.DescriptionDetail
 import me.awabi2048.kantancommander.gui.declarative.SettingsActionCard
 import me.awabi2048.kantancommander.gui.declarative.SettingsChoiceCard
@@ -58,6 +60,11 @@ import me.awabi2048.kantancommander.gui.declarative.PickerCard
 import me.awabi2048.kantancommander.gui.declarative.PickerCategory
 import me.awabi2048.kantancommander.gui.declarative.PickerData
 import me.awabi2048.kantancommander.gui.declarative.PickerPager
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableDeleteData
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableEntry
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableTypeData
+import me.awabi2048.kantancommander.gui.declarative.WorldVariableTypeOption
+import me.awabi2048.kantancommander.gui.declarative.WorldVariablesData
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
@@ -267,19 +274,240 @@ class GestureLowerPanel(
     fun buildWorldVariablesChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildWorldVariables(state, player)
+    ): GestureGuiView = if (KantanDeclarativeGui.useWorldVariables) {
+        buildWorldVariablesNew(state, player)
+    } else {
+        buildWorldVariables(state, player)
+    }
+
+    /**
+     * 変数一覧子画面の宣言実装です。旧 `buildWorldVariables` と同じ算出・文言・
+     * 座標・要素 ID・ホバーを用い、既存の画面定義・子画面縮尺・操作振分けを利用します。
+     */
+    private fun buildWorldVariablesNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val worldId = resolveVariableWorldId(state)
+        val entries = worldId?.let { plugin.variables.list(it).toSortedMap() }.orEmpty()
+        val definitions = worldId?.let { plugin.variables.definitions(it) }.orEmpty()
+        val descriptionBody = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DESCRIPTION_SINGLE)
+            .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SETTINGS_FIELD_FALLBACK) }
+        if (entries.isEmpty()) {
+            return finishVariablesChild(
+                DeclarativeVariables.variablesDocument(
+                    WorldVariablesData(
+                        title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TITLE)),
+                        description = Component.text(descriptionBody, NamedTextColor.GRAY),
+                        emptyLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_EMPTY)),
+                        entries = emptyList(),
+                        entryBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                        deleteBackgroundInUse = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                        deleteBackgroundFree = Bukkit.createBlockData(Material.RED_CONCRETE),
+                        page = 0,
+                        pageCount = 1,
+                        pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                        pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                        createLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_CREATE)),
+                        createBackground = Bukkit.createBlockData(Material.GREEN_CONCRETE),
+                        backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                        backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                    ),
+                ),
+                GestureLowerMode.WORLD_VARIABLES,
+                "[DeclarativeVariables]",
+            )
+        }
+        val pageSize = WORLD_VARIABLE_PAGE_SIZE
+        val pageCount = (entries.size + pageSize - 1) / pageSize
+        val page = state.variablePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        val usageScan = state.placement?.world
+            ?.let { worldName -> plugin.findWorldVariableUsagesSafely(worldName, entries.keys) }
+            ?: WorldVariableUsageScanResult(emptyMap(), complete = true)
+        val usagesByName = usageScan.usages
+        return finishVariablesChild(
+            DeclarativeVariables.variablesDocument(
+                WorldVariablesData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TITLE)),
+                    description = Component.text(descriptionBody, NamedTextColor.GRAY),
+                    emptyLabel = null,
+                    entries = entries.keys.toList().drop(page * pageSize).take(pageSize).map { name ->
+                        val value = entries.getValue(name)
+                        val type = definitions[name]?.type ?: value.type
+                        val inUse = !usageScan.complete || usagesByName[name].orEmpty().isNotEmpty()
+                        WorldVariableEntry(
+                            name = name,
+                            label = Component.text(name),
+                            hover = multiLineHover(
+                                listOf(
+                                    KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_VALUE,
+                                        mapOf("value" to VariableTemplate.stringify(value)),
+                                    ),
+                                    KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_TYPE,
+                                        mapOf("type" to variableTypeName(player, type)),
+                                    ),
+                                ),
+                                x = 0.0,
+                                y = CHILD_HOVER_Y,
+                                replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                            ),
+                            inUse = inUse,
+                            deleteHover = singleLineHover(
+                                KcI18n.text(
+                                    player,
+                                    if (inUse) {
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_IN_USE
+                                    } else {
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE
+                                    },
+                                ),
+                                x = 0.0,
+                                y = CHILD_HOVER_Y,
+                                replacesVisualId = SETTING_DESCRIPTION_HOVER_ID,
+                            ),
+                        )
+                    },
+                    entryBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                    deleteBackgroundInUse = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    deleteBackgroundFree = Bukkit.createBlockData(Material.RED_CONCRETE),
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    createLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_CREATE)),
+                    createBackground = Bukkit.createBlockData(Material.GREEN_CONCRETE),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.WORLD_VARIABLES,
+            "[DeclarativeVariables]",
+        )
+    }
+
+    /** 変数系子画面の宣言区画を解決・変換し、既存の子画面定義へ載せます。 */
+    private fun finishVariablesChild(document: GestureGuiDocument, mode: GestureLowerMode, tag: String): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            document,
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander]$tag $diagnostics")
+            },
+        )
+        return view(mode, compiled.elements, compiled.visuals, child = true)
+    }
 
     /** ワールド変数の型選択子画面を生成します。 */
     fun buildWorldVariableTypeChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildWorldVariableType(state, player)
+    ): GestureGuiView = if (KantanDeclarativeGui.useWorldVariableType) {
+        buildWorldVariableTypeNew(state, player)
+    } else {
+        buildWorldVariableType(state, player)
+    }
+
+    /**
+     * 型選択子画面の宣言実装です。旧 `buildWorldVariableType` と同じ算出・文言・
+     * 座標・要素 ID を用い、既存の画面定義・子画面縮尺・操作振分けを利用します。
+     */
+    private fun buildWorldVariableTypeNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val selectedType = state.pendingWorldVariableType
+        return finishVariablesChild(
+            DeclarativeVariables.typeDocument(
+                WorldVariableTypeData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_CREATE_TITLE)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_TYPE),
+                    ),
+                    options = listOf(VariableType.NUMBER, VariableType.STRING).map { type ->
+                        val selected = selectedType == type
+                        val label = variableTypeName(player, type)
+                        WorldVariableTypeOption(
+                            key = type.name,
+                            label = Component.text(
+                                label,
+                                GestureSettingVisualPolicy.settingChoiceTextColor(
+                                    GestureSettingTreeNode(id = "world-variable-type:${type.name}", label = label, selected = selected),
+                                ),
+                            ),
+                            selected = selected,
+                            background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                            outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(selected)?.let {
+                                Bukkit.createBlockData(it)
+                            },
+                        )
+                    },
+                    nextLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_NEXT),
+                        if (selectedType != null) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    ),
+                    nextBackground = Bukkit.createBlockData(
+                        if (selectedType != null) Material.GREEN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    nextEnabled = selectedType != null,
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.WORLD_VARIABLE_TYPE,
+            "[DeclarativeVariableType]",
+        )
+    }
 
     /** ワールド内変数の削除確認子画面を生成します。 */
     fun buildWorldVariableDeleteConfirmationChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildWorldVariableDeleteConfirmation(state, player)
+    ): GestureGuiView = if (KantanDeclarativeGui.useWorldVariableDeleteConfirm) {
+        buildWorldVariableDeleteConfirmationNew(state, player)
+    } else {
+        buildWorldVariableDeleteConfirmation(state, player)
+    }
+
+    /**
+     * 削除確認子画面の宣言実装です。旧実装と同じ文言・座標・要素 ID を用い、
+     * 取消には戻る操作と同一 ID を用います（旧実装どおり）。
+     */
+    private fun buildWorldVariableDeleteConfirmationNew(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val name = state.pendingWorldVariableDeleteName.orEmpty()
+        return finishVariablesChild(
+            DeclarativeVariables.deleteConfirmDocument(
+                WorldVariableDeleteData(
+                    title = Component.text(
+                        KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_TITLE,
+                        ),
+                    ),
+                    body = Component.text(
+                        KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_BODY,
+                            mapOf("name" to name),
+                        ),
+                        NamedTextColor.GRAY,
+                    ),
+                    confirmLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+                        NamedTextColor.WHITE,
+                    ),
+                    confirmBackground = Bukkit.createBlockData(Material.RED_CONCRETE),
+                    cancelLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+                        NamedTextColor.WHITE,
+                    ),
+                    cancelBackground = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                ),
+            ),
+            GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM,
+            "[DeclarativeVariableDelete]",
+        )
+    }
 
     /** テスト開始確認は下部中央画面へ重ねる専用子画面です。 */
     fun buildTestConfirmationChild(

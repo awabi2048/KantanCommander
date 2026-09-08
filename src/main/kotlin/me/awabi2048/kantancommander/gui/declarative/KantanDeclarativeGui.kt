@@ -25,4 +25,10 @@ object KantanDeclarativeGui {
 
     /** 設定候補子画面を宣言実装へ切り替えます。 */
     var useSettingChoices: Boolean = true
+
+    /** ワールド変数一覧子画面を宣言実装へ切り替えます。 */
+    var useWorldVariables: Boolean = true
+
+    /** ワールド変数型選択子画面を宣言実装へ切り替えます。 */
+    var useWorldVariableType: Boolean = true
 }
