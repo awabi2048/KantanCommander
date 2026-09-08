@@ -20,6 +20,6 @@ object KantanDeclarativeGui {
     /** PICKER 画面を宣言実装へ切り替えます。 */
     var usePicker: Boolean = true
 
-    /** 設定系画面を宣言実装へ切り替えます。 */
-    var useSettings: Boolean = true
+    /** 設定系画面を宣言実装へ切り替えます。切り分け実験のため旧実装に戻します。 */
+    var useSettings: Boolean = false
 }
