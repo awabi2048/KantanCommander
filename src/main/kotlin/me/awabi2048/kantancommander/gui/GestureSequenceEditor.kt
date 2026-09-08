@@ -1555,12 +1555,13 @@ class GestureSequenceEditor(
                         }
                         val hoverText = foldGuidanceText(player, node, renderGraph)
                             .let { guidance ->
-                                // 折りたたみ操作案内は黄色（§e）で示し、状態名でも判別できるようにします。
+                                // 折り畳み操作案内は灰色（§7）で示します。§形式へ直列化すると
+                                // 先行色が後続行へ漏れるため、ノード名には白色を明示します。
                                 val firstLine = if (guidance != null) {
-                                    Component.text(guidance, NamedTextColor.YELLOW).append(Component.newline())
-                                        .append(Component.text(KcI18n.text(player, node.type.key)))
+                                    Component.text(guidance, NamedTextColor.GRAY).append(Component.newline())
+                                        .append(Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE))
                                 } else {
-                                    Component.text(KcI18n.text(player, node.type.key))
+                                    Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE)
                                 }
                                 statusLine?.let { firstLine.append(Component.newline()).append(it) } ?: firstLine
                             }
@@ -5048,9 +5049,9 @@ class GestureSequenceEditor(
                         api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                     }
                     // 選択済みノードへの再クリックは、種類別の変形動作です。
-                    // 折り畳みノードの再クリックは展開、FOR開始の再クリックは折り畳み、
-                    // 条件分岐の素の再クリックはTRUE/FALSE鎖の入替、Shift+再クリックは
-                    // 折り畳み（合流済みのみ）を行い、下部の設定表示は維持します。
+                    // 折り畳みノードの再クリックは展開、FOR開始・条件分岐の再クリックは
+                    // 折り畳み（条件分岐は合流済みのみ）を行い、条件分岐のShift+再クリックは
+                    // TRUE/FALSE鎖の入替です。下部の設定表示は維持します。
                     // 新規選択は従来どおり設定表示へ遷移します。
                     val clicked = script.graph.nodes.getValue(nodeId)
                     if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
@@ -5064,10 +5065,10 @@ class GestureSequenceEditor(
                         }
                         if (clicked.type == CommandType.CONDITION) {
                             if (context.gesture == GestureGuiGesture.SHIFT_PRIMARY) {
-                                foldIf(player, nodeId)
+                                swapConditionBranches(player, nodeId)
                                 return
                             }
-                            swapConditionBranches(player, nodeId)
+                            foldIf(player, nodeId)
                             return
                         }
                     }
@@ -5706,7 +5707,7 @@ class GestureSequenceEditor(
     }
 
     /**
-     * 選択済み条件分岐の再クリックでTRUE/FALSE鎖を入れ替えます。
+     * 選択済み条件分岐のShift+再クリックでTRUE/FALSE鎖を入れ替えます。
      *
      * 表示だけの反転ではなく構造化データの操作として保存します。合流・後続・
      * 反転フラグは不変で、両枝の接続先だけが交換されます。
@@ -5766,7 +5767,7 @@ class GestureSequenceEditor(
     }
 
     /**
-     * 選択済み条件分岐のShift+再クリックで閉じた分岐全体を折り畳みノードへ再構成します。
+     * 選択済み条件分岐の再クリックで閉じた分岐全体を折り畳みノードへ再構成します。
      *
      * 合流のある分岐だけが対象です。未合流の分岐は折り畳めないため何もしません。
      * 下部の設定表示は維持し、上下ビューポートを更新します。
