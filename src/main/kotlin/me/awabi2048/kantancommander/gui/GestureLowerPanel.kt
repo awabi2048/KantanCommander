@@ -64,6 +64,7 @@ import me.awabi2048.kantancommander.gui.declarative.PickerCard
 import me.awabi2048.kantancommander.gui.declarative.PickerCategory
 import me.awabi2048.kantancommander.gui.declarative.PickerData
 import me.awabi2048.kantancommander.gui.declarative.PickerPager
+import me.awabi2048.kantancommander.gui.declarative.ScriptSettingCard
 import me.awabi2048.kantancommander.gui.declarative.WorldVariableDeleteData
 import me.awabi2048.kantancommander.gui.declarative.WorldVariableEntry
 import me.awabi2048.kantancommander.gui.declarative.WorldVariableTypeData
@@ -466,15 +467,11 @@ class GestureLowerPanel(
         )
     }
 
-    /** ワールド内変数の削除確認子画面を生成します。 */
+    /** ワールド内変数の削除確認子画面を生成します（宣言実装）。 */
     fun buildWorldVariableDeleteConfirmationChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = if (KantanDeclarativeGui.useWorldVariableDeleteConfirm) {
-        buildWorldVariableDeleteConfirmationNew(state, player)
-    } else {
-        buildWorldVariableDeleteConfirmation(state, player)
-    }
+    ): GestureGuiView = buildWorldVariableDeleteConfirmationNew(state, player)
 
     /**
      * 削除確認子画面の宣言実装です。旧実装と同じ文言・座標・要素 ID を用い、
@@ -727,22 +724,18 @@ class GestureLowerPanel(
         return view(GestureLowerMode.TEST_RESULT, compiled.elements, compiled.visuals)
     }
 
-    /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
+    /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です（宣言実装）。 */
     private fun buildSettings(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState,
         suppressHighlight: Boolean = false,
-    ): GestureGuiView = if (KantanDeclarativeGui.useSettings) {
-        buildSettingsNew(state, player, attention, suppressHighlight)
-    } else {
-        buildSettingsLegacy(state, player, attention, suppressHighlight)
-    }
+    ): GestureGuiView = buildSettingsNew(state, player, attention, suppressHighlight)
 
     /**
      * SETTINGS の宣言実装です。旧実装と同じ算出・文言・座標・要素 ID・ガード・ホバーを用い、
      * 既存の画面定義・パネル・操作振分け（`view()`）を利用します。ノード未選択時は
-     * 旧実装へ委譲し、プログラム全体設定の描画は変えません。
+     * プログラム全体設定の宣言実装へ委譲します。
      */
     private fun buildSettingsNew(
         state: GestureEditorState,
@@ -752,7 +745,7 @@ class GestureLowerPanel(
     ): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId)
         val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
-        if (node == null) return buildScriptSettings(state, player, script, attention)
+        if (node == null) return buildScriptSettingsNew(state, player, script, attention)
         val frame = contentFrame(GestureGuiPanel())
         val nodes = mutableListOf<GestureGuiNode>()
         val canDuplicate = script?.let {
@@ -1327,341 +1320,6 @@ class GestureLowerPanel(
     }
 
     /**
-     * SETTINGS旧実装です。宣言移行の対照として保持します。
-     * `useSettings` が false の場合と、ノード未選択時（プログラム全体設定）に用います。
-     */
-    private fun buildSettingsLegacy(
-        state: GestureEditorState,
-        player: Player,
-        attention: GestureAttentionState,
-        suppressHighlight: Boolean = false,
-    ): GestureGuiView {
-        val visuals = mutableListOf<GestureGuiVisual>()
-        val elements = mutableListOf<GestureGuiElement>()
-        val script = plugin.scripts.load(state.scriptId)
-        val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
-        if (node == null) {
-            return buildScriptSettings(state, player, script, attention)
-        }
-        val canDuplicate = script?.let {
-            GraphEditor.canDuplicate(it.graph, node.id, plugin.graphLimits().maximumNodeCount)
-        } == true
-
-        val fields = CommandSettingsModel.gestureVisibleFields(node)
-        if (fields.isEmpty()) {
-            addText(visuals, "lower-hint", 0.28, 0.20, 0.010, 160, Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS)))
-            // MERGE／FOR_END／BREAK／CONTINUEのように設定値を持たない構造制御
-            // ノードにも、通常ノードと同じ削除導線を常設します。削除処理自体は
-            // lower-deleteの既存確認画面へ集約し、設定項目の有無で操作可能性を
-            // 変えないことが共通UI仕様上の契約です。
-            addNodeActions(player, visuals, elements, canDuplicate)
-            return view(GestureLowerMode.SETTINGS, elements, visuals)
-        }
-        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
-        addSettingsNavigation(
-            state,
-            player,
-            node,
-            visuals,
-            elements,
-            attentionFields,
-            suppressHighlight = suppressHighlight,
-            canDuplicate = canDuplicate,
-        )
-        // 設定タブはページ分割せず、常に全フィールドを同じ画面へ描画します。
-        // 設定項目はCommandSettingsModelで最大6項目へ整理されているため、
-        // タブを探すためのページング操作を挟まずにすべての入口へ到達できます。
-        val field = fields[state.settingsTab.coerceIn(0, fields.lastIndex)]
-        val descriptor = CommandSettingsModel.descriptor(node, field.key)
-        val settingContext = state.settingContext
-            ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
-        val displayLabel = KcI18n.text(player, field.label)
-        val displayValue = field.value(node)
-        // 複数の意味値を持つ表示は1行へ連結せず、意味ごとの行へ分けて配置します。
-        // Timingの3行もParticleParametersの5行も同じ複数行レイアウトへ通し、
-        // コマンド型ごとの分岐を描画側へ増やしません。
-        val compositeRows = when (displayValue) {
-            is DisplayValue.Timing -> displayValue.rows(player)
-            is DisplayValue.ParticleParameters -> displayValue.rows(player)
-            is DisplayValue.SoundTargetPosition -> displayValue.rows(player)
-            is DisplayValue.SoundSetting -> displayValue.rows(player)
-            is DisplayValue.ParticleDisplay -> displayValue.rows(player)
-            else -> null
-        }
-        val compositeLayout = compositeRows?.let {
-            GestureSettingValueLayout.calculate(
-                rowCount = it.size,
-                valueAnchorY = SETTING_VALUE_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
-                detailAnchorY = SETTING_DETAIL_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
-                rowGapRatio = TIMING_ROW_GAP_RATIO,
-                minimumDetailY = SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT +
-                    SETTING_INPUT_HEIGHT / 2.0 + SETTING_DETAIL_INPUT_GAP,
-            )
-        }
-        // 複数値行の画面では編集枠も同じ量だけ下へ移動させ、詳細行との間隔を保ちます。
-        val inputCenterY = if (compositeRows != null) {
-            SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT
-        } else {
-            SETTING_INPUT_CENTER_Y
-        }
-        val value = displayValue.render(player)
-        val settingScreen = gestureSettingScreenFor(descriptor.editor)
-        val settingChoices = settingScreen?.let { screen ->
-            settingTreeNodes(
-                node,
-                settingContext,
-                screen,
-                field.key,
-                player,
-                attentionFields,
-            ).map { choice ->
-                if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
-                    choice.copy(selected = true)
-                } else choice
-            }
-        }.orEmpty()
-        val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
-        addDescriptionRows(
-            visuals,
-            player,
-            field,
-            fallback = displayLabel,
-            detailHint = selectedDetail
-                ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) },
-            warning = attentionWarning(player, node, field.key, attentionFields),
-            detailY = compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
-        )
-        if (compositeRows != null && compositeLayout != null) {
-            addCompositeValueRows(visuals, compositeRows, compositeLayout)
-        } else {
-            addValueRow(visuals, "lower-setting", SETTING_VALUE_ANCHOR_Y, displayLabel, value)
-        }
-
-        if (settingScreen != null) {
-            // 設定木の直下は常に親画面へ表示します。子画面は、選択中の
-            // ノードがさらに子要素を持つ場合だけ、再クリックで開きます。
-            addSettingChoiceNodes(
-                settingChoices,
-                player,
-                visuals,
-                elements,
-                field.key,
-                suppressHighlight = suppressHighlight,
-            )
-        }
-        // 「移動先→ほかのエンティティ」は親のSETTINGS画面から選択します。
-        // 子画面側だけへ対象分類を追加すると、最初の選択直後に親画面へ残る
-        // 実際の表示経路では候補が消え、保存済みの対象設定も再編集できません。
-        // 親画面でもposition:TARGETの選択状態を共通モデルから読み取り、子画面と
-        // 同じ右下領域へ描画します。
-        val destinationTarget = if (
-            settingScreen == GestureSettingScreen.POSITION &&
-            settingContext.role == CommandSettingRole.DESTINATION
-        ) {
-            settingChoices.firstOrNull {
-                it.id == "position:${PositionKind.TARGET.name}" && it.selected
-            }
-        } else null
-        destinationTarget?.let {
-            addLowerRightTargetChoiceNodes(
-                it.children,
-                player,
-                visuals,
-                elements,
-                field.key,
-                suppressHighlight = suppressHighlight,
-            )
-        }
-
-        // 設定木の直下はこの親画面に直接表示します。葉の入力や、木に含まれない
-        // 文字列・数値だけを右ペインの入力画面導線へ残し、専用子画面を増やしません。
-        val typedValueSourceSetting =
-            CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
-        val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
-            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
-        val heldBlockSetting = field.key == "block" && (
-            node.type == CommandType.BLOCK_OPERATION ||
-                (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
-                (node.type == CommandType.TEMP_SET &&
-                    TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
-            )
-        val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
-        // 花火の中身はメインハンドの実物（FIREWORK_ROCKET）から保存します。
-        // 空手・他アイテムはクリック時点で拒否し、保存契約と同じ判定を使います。
-        val heldFireworkSetting = field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH
-        val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting || heldFireworkSetting
-        val heldMainHandAvailable = when {
-            heldItemSetting -> GestureGuiClickPolicy.hasMainHandItem(player)
-            heldBlockSetting -> HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
-            heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
-            heldFireworkSetting -> player.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
-            else -> true
-        }
-        val dialogInputSetting = !heldMainHandSetting &&
-            descriptor.editor == CommandSettingEditor.TEXT && field.key in TEXT_EDITABLE_KEYS
-        if (typedValueSourceSetting) {
-            // ITEM／BLOCK／SOUND／EFFECTは「設定元」と「実値入力」を分離します。
-            // 一時変数を選んだときだけ参照名の入力へ進み、直接値を選んだときは
-            // 既存のメインハンド設定／Dialogを次の操作として開きます。
-            addTypedValueSourceControls(
-                node = node,
-                fieldKey = field.key,
-                scriptId = state.scriptId,
-                player = player,
-                visuals = visuals,
-                elements = elements,
-                suppressHighlight = suppressHighlight,
-            )
-        } else if (heldMainHandSetting || dialogInputSetting) {
-            // 入力欄は、既存 lower-edit（例:「待機する秒数を設定する」）
-            // の位置を唯一の設定入口として再利用します。同じ枠・寸法・装飾で入力方法を
-            // 表示し、上のアクション説明行や新しい配置へ設定導線を増やしません。
-            val editVisualText = if (heldMainHandSetting) {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
-            } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER
-            val editTextColor = if (heldMainHandAvailable) {
-                // クリック後に実値の入力・投入へ進む導線は、値入力を示す§6で統一します。
-                NamedTextColor.GOLD
-            } else {
-                NamedTextColor.GRAY
-            }
-            addBlock(
-                visuals,
-                "lower-edit-bg",
-                0.28,
-                inputCenterY,
-                1.2,
-                SETTING_INPUT_HEIGHT,
-                if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
-                4,
-            )
-            addText(
-                visuals,
-                "lower-edit",
-                0.28,
-                inputCenterY,
-                0.0055,
-                180,
-                Component.text(KcI18n.text(player, editVisualText), editTextColor),
-            )
-            elements.add(GestureGuiElement(
-                elementId = "lower-edit:${field.key}",
-                // すべての入力画面への導線を既存のlower-edit枠へ集約します。
-                // 説明行は意味を伝える表示専用であり、同じ設定を別の位置から
-                // 開ける二重導線にはしません。
-                bounds = rect(0.28, inputCenterY, 1.2, SETTING_INPUT_HEIGHT),
-                // メインハンドの中身はview生成後にも変わるため、acceptedGesturesへ
-                // 空集合を焼き付けず、クリック時点のガードで判定します。ブロック設定は
-                // 空手もAIRとして有効なので、保存契約と同じポリシーをここでも使います。
-                acceptedGestures = if (heldMainHandSetting) {
-                    GestureGuiClickPolicy.MAIN_HAND
-                } else GestureGuiClickPolicy.CLICK,
-                gestureGuard = if (heldMainHandSetting) {
-                    { actor, _ ->
-                        if (heldDiskSetting) {
-                            KantanItemService.diskId(actor.inventory.itemInMainHand) != null
-                        } else if (heldBlockSetting) {
-                            HeldBlockSettingPolicy.canSet(actor.inventory.itemInMainHand.type)
-                        } else if (heldFireworkSetting) {
-                            actor.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
-                        } else {
-                            GestureGuiClickPolicy.hasMainHandItem(actor)
-                        }
-                    }
-                } else null,
-                targetVisualId = "lower-edit-bg",
-                hoverText = singleLineHover(
-                    KcI18n.text(
-                        player,
-                        if (heldMainHandSetting) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_HOVER
-                        else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER,
-                    ),
-                    x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
-                ),
-            ))
-        }
-        if (heldItemSetting && !typedValueSourceSetting) {
-            val itemConfigured = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
-            addBlock(
-                visuals,
-                "lower-item-get-bg",
-                0.28,
-                -0.15,
-                1.2,
-                0.12,
-                if (itemConfigured) Material.BROWN_CONCRETE else DisabledGuiVisualPolicy.material,
-                4,
-            )
-            addText(visuals, "lower-item-get", 0.28, -0.15, 0.0048, 180, Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM)))
-            elements.add(GestureGuiElement(
-                elementId = "lower-item-get",
-                bounds = rect(0.28, -0.15, 1.2, 0.12),
-                // 設定有無は外部保存や別経路の更新でも変わるため、表示時のBooleanを
-                // acceptedGesturesへ固定せず、クリック時点で最新ノードを確認します。
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                gestureGuard = { _, _ ->
-                    plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
-                        current.string("item").isNotBlank() || current.string("itemData").isNotBlank()
-                    } == true
-                },
-                targetVisualId = "lower-item-get-bg",
-                hoverText = singleLineHover(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
-                    x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
-                ),
-            ))
-        }
-        // 設定中の花火は、その場で打ち上げる試射ボタンを常設します。
-        // 保存は行わず使い捨てで発射するため、召喚体台帳の上限を消費しません。
-        if (field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
-            val fireworkConfigured = node.string("fireworkItem").isNotBlank() ||
-                node.string("fireworkData").isNotBlank()
-            addBlock(
-                visuals,
-                "lower-firework-preview-bg",
-                0.28,
-                -0.15,
-                1.2,
-                0.12,
-                if (fireworkConfigured) Material.ORANGE_CONCRETE else DisabledGuiVisualPolicy.material,
-                4,
-            )
-            addText(
-                visuals,
-                "lower-firework-preview",
-                0.28,
-                -0.15,
-                0.0048,
-                180,
-                Component.text(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FIREWORK_PREVIEW),
-                    if (fireworkConfigured) NamedTextColor.GOLD else NamedTextColor.GRAY,
-                ),
-            )
-            elements.add(GestureGuiElement(
-                elementId = "lower-firework-preview",
-                bounds = rect(0.28, -0.15, 1.2, 0.12),
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                gestureGuard = { _, _ ->
-                    plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
-                        current.string("fireworkItem").isNotBlank() || current.string("fireworkData").isNotBlank()
-                    } == true
-                },
-                targetVisualId = "lower-firework-preview-bg",
-                hoverText = singleLineHover(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIREWORK_PREVIEW_HOVER),
-                    x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
-                ),
-            ))
-        }
-        return view(GestureLowerMode.SETTINGS, elements, visuals)
-    }
-
-    /**
      * ITEM／BLOCK／SOUND／EFFECTの設定元を、既存の入力欄と同じ右下領域へ2分割で表示します。
      *
      * 直接値側はITEM／BLOCKならメインハンド、SOUND／EFFECTならDialogへ進みます。
@@ -1777,46 +1435,43 @@ class GestureLowerPanel(
      * 明示的な案内を表示します。これらはノード設定のタブ木とは別ドメインなので、
      * ノードを選択していないときにだけ表示します。
      */
-    private fun buildScriptSettings(
+    /**
+     * プログラム全体設定の宣言実装です。旧実装と同じ算出・文言・座標・要素 ID・ホバーを用い、
+     * 既存の画面定義・操作振分け（`view()`）を利用します。
+     */
+    private fun buildScriptSettingsNew(
         state: GestureEditorState,
         player: Player,
         script: me.awabi2048.kantancommander.model.DiskScript?,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
     ): GestureGuiView {
-        val visuals = mutableListOf<GestureGuiVisual>()
-        val elements = mutableListOf<GestureGuiElement>()
         val hint = if (script?.graph?.nodes?.isEmpty() == true) {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EMPTY_GRAPH_HINT
         } else {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_SELECT_NODE_HINT
         }
-        addText(
-            visuals,
-            "lower-hint",
-            0.0,
-            0.27,
-            0.008,
-            230,
-            Component.text(KcI18n.text(player, hint)),
-        )
+        val cards = mutableListOf<ScriptSettingCard>()
         if (script != null) {
             val programNameState = if (script.name.isBlank()) {
                 GestureSettingValueState.INITIAL
             } else {
                 GestureSettingValueState.CONFIGURED
             }
-            addScriptSetting(
-                player = player,
-                visuals = visuals,
-                elements = elements,
-                id = "lower-script-name",
+            cards += ScriptSettingCard(
+                elementId = "lower-script-name",
                 backgroundId = "lower-script-name-bg",
-                x = SCRIPT_SETTING_LEFT_X,
-                width = SCRIPT_SETTING_WIDTH,
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROGRAM_NAME),
-                value = script.name.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) },
-                valueState = programNameState,
-                material = Material.NAME_TAG,
+                value = Component.text(script.name.ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }),
+                background = Bukkit.createBlockData(
+                    GestureSettingVisualPolicy.material(
+                        GestureSettingSelectionMode.MULTIPLE,
+                        programNameState,
+                    ),
+                ),
+                icon = ItemStack(Material.NAME_TAG),
+                attentionHover = null,
+                cx = SCRIPT_SETTING_LEFT_X,
+                w = SCRIPT_SETTING_WIDTH,
             )
             val timerState = if (script.timer.enabled) {
                 GestureSettingValueState.CONFIGURED
@@ -1833,19 +1488,29 @@ class GestureLowerPanel(
             } else {
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED)
             }
-            addScriptSetting(
-                player = player,
-                visuals = visuals,
-                elements = elements,
-                id = "lower-script-timer",
+            cards += ScriptSettingCard(
+                elementId = "lower-script-timer",
                 backgroundId = "lower-script-timer-bg",
-                x = SCRIPT_SETTING_CENTER_X,
-                width = SCRIPT_SETTING_WIDTH,
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
-                value = timerValue,
-                valueState = timerState,
-                material = Material.CLOCK,
-                attention = attention.timer,
+                value = Component.text(timerValue),
+                background = Bukkit.createBlockData(
+                    GestureSettingVisualPolicy.material(
+                        GestureSettingSelectionMode.MULTIPLE,
+                        timerState,
+                    ),
+                ),
+                icon = ItemStack(Material.CLOCK),
+                attentionHover = if (attention.timer) {
+                    singleLineHover(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    )
+                } else {
+                    null
+                },
+                cx = SCRIPT_SETTING_CENTER_X,
+                w = SCRIPT_SETTING_WIDTH,
             )
             val worldId = resolveVariableWorldId(state)
             val variableCount = worldId?.let { plugin.variables.list(it).size }
@@ -1863,21 +1528,34 @@ class GestureLowerPanel(
                     mapOf("value" to (variableCount ?: 0)),
                 )
             }
-            addScriptSetting(
-                player = player,
-                visuals = visuals,
-                elements = elements,
-                id = "lower-script-variables",
+            cards += ScriptSettingCard(
+                elementId = "lower-script-variables",
                 backgroundId = "lower-script-variables-bg",
-                x = SCRIPT_SETTING_RIGHT_X,
-                width = SCRIPT_SETTING_WIDTH,
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES),
-                value = variablesValue,
-                valueState = variablesState,
-                material = Material.WRITABLE_BOOK,
+                value = Component.text(variablesValue),
+                background = Bukkit.createBlockData(
+                    GestureSettingVisualPolicy.material(
+                        GestureSettingSelectionMode.MULTIPLE,
+                        variablesState,
+                    ),
+                ),
+                icon = ItemStack(Material.WRITABLE_BOOK),
+                attentionHover = null,
+                cx = SCRIPT_SETTING_RIGHT_X,
+                w = SCRIPT_SETTING_WIDTH,
             )
         }
-        return view(GestureLowerMode.SETTINGS, elements, visuals)
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeSettings.scriptSettingsDocument(
+                Component.text(KcI18n.text(player, hint)),
+                cards,
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeScriptSettings] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.SETTINGS, compiled.elements, compiled.visuals)
     }
 
     /**
@@ -2195,113 +1873,6 @@ class GestureLowerPanel(
         return view(GestureLowerMode.WORLD_VARIABLE_TYPE, elements, visuals, child = true)
     }
 
-    /**
-     * ワールド内変数削除の確認子画面です。
-     *
-     * SS1で示された一覧下端の左右位置をそのまま確認画面の操作列へ使い、
-     * 左を確定、右をキャンセルとして固定します。値編集Dialogへ削除を置かない
-     * ことで、値の保存と定義の破棄を別の操作境界として認識できます。
-     */
-    private fun buildWorldVariableDeleteConfirmation(
-        state: GestureEditorState,
-        player: Player,
-    ): GestureGuiView {
-        val visuals = mutableListOf<GestureGuiVisual>()
-        val elements = mutableListOf<GestureGuiElement>()
-        val name = state.pendingWorldVariableDeleteName.orEmpty()
-
-        addText(
-            visuals,
-            "world-variable-delete-title",
-            0.0,
-            CHILD_HEADER_Y,
-            0.0060,
-            200,
-            Component.text(
-                KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_TITLE,
-                ),
-            ),
-        )
-        addText(
-            visuals,
-            "world-variable-delete-body",
-            0.0,
-            CHILD_HOVER_Y,
-            DESCRIPTION_TEXT_SIZE,
-            220,
-            Component.text(
-                KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_WORLD_VARIABLES_DELETE_BODY,
-                    mapOf("name" to name),
-                ),
-                NamedTextColor.GRAY,
-            ),
-        )
-
-        // 一覧画面の「新規作成／戻る」と同じ下端の左右位置を維持します。
-        addBlock(
-            visuals,
-            "world-variable-delete-confirm-bg",
-            -0.53,
-            -0.43,
-            CHILD_CHOICE_WIDTH,
-            0.10,
-            Material.RED_CONCRETE,
-            4,
-        )
-        addText(
-            visuals,
-            "world-variable-delete-confirm-label",
-            -0.53,
-            -0.43,
-            0.0048,
-            100,
-            Component.text(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
-                NamedTextColor.WHITE,
-            ),
-        )
-        elements.add(GestureGuiElement(
-            elementId = "lower-world-variable-delete-confirm",
-            bounds = rect(-0.53, -0.43, CHILD_CHOICE_WIDTH, 0.10),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            targetVisualId = "world-variable-delete-confirm-bg",
-        ))
-
-        addBlock(
-            visuals,
-            "world-variable-delete-cancel-bg",
-            0.53,
-            -0.43,
-            CHILD_CHOICE_WIDTH,
-            0.10,
-            Material.CYAN_TERRACOTTA,
-            4,
-        )
-        addText(
-            visuals,
-            "world-variable-delete-cancel-label",
-            0.53,
-            -0.43,
-            0.0048,
-            100,
-            Component.text(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
-                NamedTextColor.WHITE,
-            ),
-        )
-        elements.add(GestureGuiElement(
-            elementId = "lower-setting-back",
-            bounds = rect(0.53, -0.43, CHILD_CHOICE_WIDTH, 0.10),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            targetVisualId = "world-variable-delete-cancel-bg",
-        ))
-        return view(GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM, elements, visuals, child = true)
-    }
-
     /** ワールド変数の型名を、ノード設定と同じ表示キーで解決します。 */
     private fun variableTypeName(player: Player, type: VariableType): String = KcI18n.text(
         player,
@@ -2310,65 +1881,6 @@ class GestureLowerPanel(
             VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
         },
     )
-
-    /** プログラム全体設定のカードと入力面を共通の寸法で生成します。 */
-    private fun addScriptSetting(
-        player: Player,
-        visuals: MutableList<GestureGuiVisual>,
-        elements: MutableList<GestureGuiElement>,
-        id: String,
-        backgroundId: String,
-        x: Double,
-        label: String,
-        value: String,
-        valueState: GestureSettingValueState,
-        material: Material,
-        attention: Boolean = false,
-        width: Double = 0.68,
-    ) {
-        addBlock(
-            visuals,
-            backgroundId,
-            x,
-            -0.02,
-            width,
-            0.17,
-            GestureSettingVisualPolicy.material(
-                GestureSettingSelectionMode.MULTIPLE,
-                valueState,
-            ),
-            4,
-            // プログラム全体設定はタブではないため、未完了でも警告表示を付けません。
-            // 未完了の状態名はホバーで伝え、警告表示の対象はノード設定タブへ限定します。
-            glowColor = null,
-        )
-        visuals.add(GestureGuiVisual.Item(
-            visualId = "$id-icon",
-            x = x - width / 2.0 + 0.07,
-            y = -0.02,
-            item = ItemStack(material),
-            scale = 0.08,
-            layer = 5,
-        ))
-        addText(visuals, "$id-label", x, -0.045, 0.0052, 120, Component.text(label))
-        addText(visuals, "$id-value", x, -0.005, 0.0044, 170, Component.text(value))
-        // アイテム名は表示の識別用に使わず、設定値は常にLore／別TextDisplayへ出します。
-        // このカードも同じ規則に従い、クリック対象のNameを持たせず入力面だけを公開します。
-        elements.add(GestureGuiElement(
-            elementId = id,
-            bounds = rect(x, -0.02, width, 0.17),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            targetVisualId = backgroundId,
-            // プログラム全体設定も状態名をホバーで示します（色だけの通知を避ける規則）。
-            hoverText = if (attention) {
-                singleLineHover(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
-                    x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
-                )
-            } else null,
-        ))
-    }
 
     /**
      * 設定木の現在画面に属する直下ノードを配置します。

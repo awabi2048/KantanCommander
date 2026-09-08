@@ -33,15 +33,12 @@ object KantanDeclarativeGui {
     var useUpperNew: Boolean = true
 
     /** ワールド変数削除確認子画面を宣言実装へ切り替えます。 */
-    var useWorldVariableDeleteConfirm: Boolean = false
+    var useWorldVariableDeleteConfirm: Boolean = true
 
-    /** PICKER 画面を宣言実装へ切り替えます。 */
+    /** PICKER 画面は宣言実装です。 */
     var usePicker: Boolean = true
 
-    /** 設定系画面を宣言実装へ切り替えます。切り分け実験が終わったため戻します。 */
-    var useSettings: Boolean = true
-
-    /** 設定候補子画面を宣言実装へ切り替えます。 */
+    /** 設定候補子画面は宣言実装です。 */
     var useSettingChoices: Boolean = true
 
     /** ワールド変数一覧子画面を宣言実装へ切り替えます。 */
