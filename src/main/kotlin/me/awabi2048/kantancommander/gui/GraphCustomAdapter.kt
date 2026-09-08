@@ -29,13 +29,12 @@ internal fun isMapVisual(visual: GestureGuiVisual): Boolean =
 
 /**
  * グラフの入力要素を表示と同じ変換対象へ揃えます。
- * node-reorder・node-foldもグラフ上の操作要素であるため、通常ノードと同じ縮尺・クリップを
+ * node-reorderもグラフ上の操作要素であるため、通常ノードと同じ縮尺・クリップを
  * 適用します。IDの名前空間を追加するときは、生成側も同じ規則に従います。
  */
 internal fun isMapElement(element: GestureGuiElement): Boolean =
     element.elementId.startsWith("node:") ||
         element.elementId.startsWith("node-reorder:") ||
-        element.elementId.startsWith("node-fold:") ||
         element.elementId.startsWith("add:") ||
         element.elementId.startsWith("path:")
 

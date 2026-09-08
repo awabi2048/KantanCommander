@@ -29,42 +29,34 @@ class NodeReorderLayoutTest {
     }
 
     @Test
-    fun `side buttons stay centered with room for the middle button`() {
+    fun `side buttons sit adjacent and centered as a pair`() {
         val buttonSize = NodeReorderLayout.buttonSize(0.18)
         val offset = NodeReorderLayout.sideOffset(buttonSize)
-        // 中心→左右の距離はボタン一辺＋隙間のため、中央ボタンと重なりません。
-        assertEquals(buttonSize + NodeReorderLayout.BUTTON_GAP, offset, 1.0e-9)
-        // 左右ボタン同士も重ならず、2個時も中央揃え（左右対称）を保ちます。
-        assertTrue(offset * 2.0 > buttonSize)
-        assertTrue(offset - buttonSize / 2.0 > buttonSize / 2.0)
+        // 中心→左右の距離は半辺＋半隙間のため、ボタン間は隙間ちょうどで隣接します。
+        assertEquals(buttonSize / 2.0 + NodeReorderLayout.BUTTON_GAP / 2.0, offset, 1.0e-9)
+        assertEquals(NodeReorderLayout.BUTTON_GAP, (offset - buttonSize / 2.0) * 2.0, 1.0e-9)
+        // 左右ボタンの外端は原点対称であり、対全体が中央揃えになります。
+        assertEquals(0.0, (-offset - buttonSize / 2.0) + (offset + buttonSize / 2.0), 1.0e-9)
     }
 
     @Test
-    fun `glyph size follows the button scale`() {
-        // 変更前（対ピッチ20%）と同じ詰まり具合になるよう比例拡大します。
+    fun `glyph size follows the button scale at half density`() {
+        // 変更前（対ピッチ20%）の実寸比へ換算したうえで50%に縮小します。
         val legacyPitch = 0.30
         val legacySize = legacyPitch * NodeReorderLayout.LEGACY_BUTTON_PITCH_RATIO
         assertEquals(
-            NodeReorderLayout.LEGACY_GLYPH_SIZE,
+            NodeReorderLayout.LEGACY_GLYPH_SIZE * NodeReorderLayout.GLYPH_SIZE_SCALE,
             NodeReorderLayout.glyphSize(legacySize, legacyPitch),
             1.0e-9,
         )
-        // 50%化ではちょうど2.25倍になります（0.9 × 0.5 ÷ 0.20）。
+        // 50%ボタン化では2.25倍のうえ50%縮小となり、実質1.125倍です。
         val scaled = NodeReorderLayout.glyphSize(NodeReorderLayout.buttonSize(legacyPitch * 0.9), legacyPitch)
-        assertEquals(NodeReorderLayout.LEGACY_GLYPH_SIZE * 2.25, scaled, 1.0e-9)
+        assertEquals(NodeReorderLayout.LEGACY_GLYPH_SIZE * 1.125, scaled, 1.0e-9)
         assertEquals(
-            NodeReorderLayout.LEGACY_GLYPH_DY * 2.25,
+            NodeReorderLayout.LEGACY_GLYPH_DY * 1.125,
             NodeReorderLayout.glyphDy(scaled),
             1.0e-9,
         )
-    }
-
-    @Test
-    fun `fold glyph shows unfold for folded nodes and fold otherwise`() {
-        assertEquals("▲", NodeReorderLayout.foldGlyph(CommandType.FOLDED_FOR.newNode()))
-        assertEquals("▲", NodeReorderLayout.foldGlyph(CommandType.FOLDED_IF.newNode()))
-        assertEquals("▼", NodeReorderLayout.foldGlyph(CommandType.FOR_START.newNode()))
-        assertEquals("▼", NodeReorderLayout.foldGlyph(CommandType.CONDITION.newNode()))
     }
 
     @Test

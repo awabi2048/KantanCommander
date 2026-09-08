@@ -1669,9 +1669,6 @@ class GestureSequenceEditor(
                         val reorderY = NodeReorderLayout.buttonY(cy, frame.iconSize, reorderSize)
                         val reorderGlyphSize = NodeReorderLayout.glyphSize(reorderSize, minOf(frame.pitchX, frame.pitchY))
                         val reorderGlyphDy = NodeReorderLayout.glyphDy(reorderGlyphSize)
-                        // 折り畳み操作ができる場合は中央に折り畳みボタンを足して3個構成、
-                        // ない場合は従来どおり入れ替え2個のままとします。
-                        val showFold = showReorder && NodeReorderLayout.isFoldToggleAvailable(node, renderGraph)
                         if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
                             // 折畳み縁にもノードと同じクリック・ホバー判定を設けます。
@@ -1699,8 +1696,8 @@ class GestureSequenceEditor(
                             ),
                         ))
                         if (showReorder) {
-                            // 左右の入れ替えボタンは中央揃え（左右対称）に固定し、
-                            // 中央ボタンの有無で位置を変えません。
+                            // 左右の入れ替えボタンは隙間だけ空けて隣接させ、
+                            // 対全体を中央揃え（左右対称）にします。
                             val reorderOffset = NodeReorderLayout.sideOffset(reorderSize)
                             listOf(
                                 GraphEditor.ReorderDirection.LEFT to "←",
@@ -1745,52 +1742,6 @@ class GestureSequenceEditor(
                                         } == true
                                     },
                                     targetVisualId = "node-reorder-$directionName-glyph-${node.id}",
-                                ))
-                            }
-                            if (showFold) {
-                                // 中央の折り畳みボタン。展開中は▼（折り畳む）、
-                                // 折り畳み中は▲（展開する）を示します。
-                                // 再クリックと同一の変形動作へ接続し、処理の二重持ちを避けます。
-                                val foldGlyph = NodeReorderLayout.foldGlyph(node)
-                                visuals.add(GestureGuiVisual.Block(
-                                    visualId = "node-fold-bg-${node.id}",
-                                    x = cx,
-                                    y = reorderY,
-                                    width = reorderSize,
-                                    height = reorderSize,
-                                    blockData = blockDataOf(Material.CYAN_CONCRETE),
-                                    layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
-                                ))
-                                visuals.add(GestureGuiVisual.Text(
-                                    visualId = "node-fold-glyph-${node.id}",
-                                    x = cx,
-                                    y = reorderY - reorderGlyphDy,
-                                    text = Component.text(foldGlyph).color(NamedTextColor.WHITE),
-                                    size = reorderGlyphSize,
-                                    layer = GestureEditorLayout.ICON_LAYER,
-                                ))
-                                elements.add(GestureGuiElement(
-                                    elementId = "node-fold:${node.id}",
-                                    bounds = iconBounds(cx, reorderY, reorderSize),
-                                    // 入れ替えボタンと同様、描画時の可否を入力可否へ固定せず、
-                                    // クリック時に最新グラフで再判定して誤操作を防ぎます。
-                                    acceptedGestures = GestureGuiClickPolicy.CLICK,
-                                    gestureGuard = { _, _ ->
-                                        val guardGraph = plugin.scripts.load(state.scriptId)?.graph
-                                        val guardNode = guardGraph?.nodes?.get(node.id)
-                                        guardGraph != null && guardNode != null &&
-                                            NodeReorderLayout.isFoldToggleAvailable(guardNode, guardGraph)
-                                    },
-                                    targetVisualId = "node-fold-glyph-${node.id}",
-                                    hoverText = foldGuidanceText(player, node, renderGraph)?.let { guidance ->
-                                        GestureGuiHoverText(
-                                            text = Component.text(guidance, NamedTextColor.GRAY),
-                                            x = cx,
-                                            y = NodeReorderLayout.hoverY(reorderY, reorderSize),
-                                            size = 0.006,
-                                            lineWidth = 180,
-                                        )
-                                    },
                                 ))
                             }
                         }
@@ -5613,16 +5564,6 @@ class GestureSequenceEditor(
                 updateUpper(player)
                 updateLower(player)
             }
-            context.elementId.startsWith("node-fold:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node-fold:")) }.getOrNull() ?: return
-                val script = plugin.scripts.load(state.scriptId) ?: return
-                val node = script.graph.nodes[nodeId] ?: return
-                // 表示時の可否を入力時にも再確認し、古い表示からの誤操作を防ぎます。
-                // 条件分岐のShift+枝入替はノード再クリック側だけが受け持ち、
-                // 中央ボタンは通常クリックの変形動作に専念します。
-                if (!NodeReorderLayout.isFoldToggleAvailable(node, script.graph)) return
-                applyFoldToggle(player, node)
-            }
             context.elementId.startsWith("node:") -> {
                 val nodeId = runCatching { UUID.fromString(context.elementId.removePrefix("node:")) }.getOrNull() ?: return
                 // 画面更新後に削除されたノードからの遅延入力は、選択も効果音も発生させません。
@@ -5635,13 +5576,13 @@ class GestureSequenceEditor(
                     // 選択済みノードへの再クリックは、種類別の変形動作です。
                     // 折り畳みノードの再クリックは展開、FOR開始・条件分岐の再クリックは
                     // 折り畳み（条件分岐は合流済みのみ）を行い、条件分岐のShift+再クリックは
-                    // TRUE/FALSE鎖の入替です。通常クリックの折り畳み変形は中央ボタンと
-                    // 共通化し、下部の設定表示は維持します。
+                    // TRUE/FALSE鎖の入替です。折り畳み操作は再クリックを唯一の経路とし、
+                    // 下部の設定表示は維持します。
                     // 新規選択は従来どおり設定表示へ遷移します。
                     val clicked = script.graph.nodes.getValue(nodeId)
                     if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
                         // Shift+再クリックの枝入替だけを先に分岐し、通常クリックの
-                        // 折り畳み変形は中央ボタンと共有の applyFoldToggle へ任せます。
+                        // 折り畳み変形は applyFoldToggle へ任せます。
                         if (clicked.type == CommandType.CONDITION &&
                             context.gesture == GestureGuiGesture.SHIFT_PRIMARY
                         ) {
@@ -6243,7 +6184,7 @@ class GestureSequenceEditor(
      * 1行目は案内、2行目がノード名となるよう、呼び出し側で名前へ改行接続します。
      * 対象外ノードではnullを返し、従来どおり名前だけを表示します。
      * 未合流の条件分岐は折り畳めないため案内を出しません（素の再クリックは枝入替）。
-     * 可否条件は中央ボタンの表示・受付と共有し、案内と操作のずれを防ぎます。
+     * 可否条件は再クリック受付と共有し、案内と操作のずれを防ぎます。
      */
     private fun foldGuidanceText(player: Player, node: CommandNode, graph: CommandGraph): String? {
         if (!NodeReorderLayout.isFoldToggleAvailable(node, graph)) return null
@@ -6258,8 +6199,9 @@ class GestureSequenceEditor(
     }
 
     /**
-     * 選択済みノードへの通常クリック・中央折り畳みボタンで共有する変形動作です。
+     * 選択済みノードへの再クリックによる折り畳み変形動作です。
      *
+     * 折り畳み操作は再クリックを唯一の経路とします。
      * 折り畳みノードは展開、FOR開始・条件分岐は折り畳みを行い、処理した場合は
      * trueを返します。条件分岐のShift+再クリック（枝入替）は呼び出し側で先に
      * 分岐するため、ここでは扱いません。対象外ノードでは何もせずfalseを返し、
