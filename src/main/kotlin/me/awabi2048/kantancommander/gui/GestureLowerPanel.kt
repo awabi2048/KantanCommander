@@ -39,6 +39,10 @@ import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
+import me.awabi2048.kantancommander.gui.declarative.ConfirmTexts
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeConfirm
+import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
+import me.awabi2048.kantancommander.gui.declarative.KantanLayoutBridge
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
@@ -73,8 +77,8 @@ class GestureLowerPanel(
     val CONFIRM_SCREEN_ID = "gesture-editor-confirm"
     val TEST_CONFIRM_SCREEN_ID = "gesture-editor-test-confirm"
 
-    /** 子画面の面積を親の50%にするための縦横縮尺です。 */
-    private val SETTING_CHILD_SCALE = sqrt(0.5)
+    /** 子画面の面積を親の50%にするための縦横縮尺です。宣言実装と共有します。 */
+    internal val SETTING_CHILD_SCALE = sqrt(0.5)
 
     fun build(
         state: GestureEditorState,
@@ -97,7 +101,9 @@ class GestureLowerPanel(
             GestureLowerMode.WORLD_VARIABLE_TYPE -> buildSettings(state, player, attention, suppressHighlight)
             // 削除確認も一覧と同じ子画面契約で表示し、親画面へ確認ボタンを混在させません。
             GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> buildSettings(state, player, attention, suppressHighlight)
-            GestureLowerMode.CONFIRM -> buildConfirm(state, player)
+            GestureLowerMode.CONFIRM ->
+                if (KantanDeclarativeGui.useConfirm) buildConfirmNew(state, player)
+                else buildConfirm(state, player)
             GestureLowerMode.TEST_CONFIRM -> buildTestConfirmation(state, player, child = true)
             GestureLowerMode.TEST_STATUS -> buildTestStatus(state, player)
             GestureLowerMode.TEST_RESULT -> buildTestResult(state, player)
@@ -3519,6 +3525,49 @@ class GestureLowerPanel(
         return view(GestureLowerMode.CONFIRM, elements, visuals, child = true)
     }
 
+    /**
+     * CONFIRM の宣言実装です。旧 `buildConfirm` と同じ文言・座標・要素 ID を用い、
+     * 既存の画面定義・パネル・子画面縮尺・操作振分け（`view()`）をそのまま利用します。
+     */
+    private fun buildConfirmNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val overwrite = state.confirmKind != GestureConfirmKind.DELETE
+        val texts = ConfirmTexts(
+            title = Component.text(KcI18n.text(player, when (state.confirmKind) {
+                GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
+                GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_TITLE
+                GestureConfirmKind.FIREWORK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_TITLE
+                GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_TITLE
+            })),
+            warn = Component.text(
+                KcI18n.text(player, when (state.confirmKind) {
+                    GestureConfirmKind.ITEM_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
+                    GestureConfirmKind.BLOCK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_BLOCK_OVERWRITE_WARN
+                    GestureConfirmKind.FIREWORK_OVERWRITE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN
+                    GestureConfirmKind.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_DELETE_WARN
+                }),
+                NamedTextColor.GRAY,
+            ),
+            yes = Component.text(KcI18n.text(
+                player,
+                if (overwrite) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_OVERWRITE_YES
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_EXECUTE,
+            )),
+            no = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE_CONFIRM_CANCEL)),
+        )
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeConfirm.document(
+                texts,
+                Bukkit.createBlockData(DeclarativeConfirm.YES_BACKGROUND_MATERIAL),
+                Bukkit.createBlockData(DeclarativeConfirm.NO_BACKGROUND_MATERIAL),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeConfirm] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.CONFIRM, compiled.elements, compiled.visuals, child = true)
+    }
+
     private fun view(
         mode: GestureLowerMode,
         elements: List<GestureGuiElement>,
@@ -3555,8 +3604,8 @@ class GestureLowerPanel(
         onAction = onAction,
     ).let { view -> if (child) scaleChildView(view) else view }
 
-    /** 子画面のパネル寸法と内容座標を同じ縮尺で変換し、端の要素を欠落させません。 */
-    private fun scaleChildView(view: GestureGuiView): GestureGuiView {
+    /** 子画面のパネル寸法と内容座標を同じ縮尺で変換し、端の要素を欠落させません。宣言実装と共有します。 */
+    internal fun scaleChildView(view: GestureGuiView): GestureGuiView {
         val scaledVisuals = view.visuals.map { visual ->
             when (visual) {
                 is GestureGuiVisual.Block -> visual.copy(

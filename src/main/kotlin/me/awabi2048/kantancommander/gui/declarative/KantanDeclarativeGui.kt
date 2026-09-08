@@ -9,7 +9,7 @@ package me.awabi2048.kantancommander.gui.declarative
  */
 object KantanDeclarativeGui {
     /** 確認系子画面（削除・上書き確認）を宣言実装へ切り替えます。 */
-    var useConfirm: Boolean = false
+    var useConfirm: Boolean = true
 
     /** テスト開始確認子画面を宣言実装へ切り替えます。 */
     var useTestConfirm: Boolean = false
