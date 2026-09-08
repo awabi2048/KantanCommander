@@ -1562,10 +1562,12 @@ class GestureLowerPanel(
      * ノード未選択時の中央パネルです。
      *
      * ノード選択を促すだけではプログラム全体の設定へ到達できず、空のグラフでは
-     * 「何をすれば追加できるか」も分かりません。ここではプログラム名・タイマー・
-     * ワールド変数・ディスク取得を常設項目として同じ中央領域へ4等分で置き、
+     * 「何をすれば追加できるか」も分かりません。ここではプログラム名・タイマーを上段、
+     * ワールド変数・ディスク取得を下段とする2x2配置で同じ中央領域へ置き、
      * グラフが空の場合だけ追加操作の明示的な案内を表示します。これらはノード設定の
      * タブ木とは別ドメインなので、ノードを選択していないときにだけ表示します。
+     *
+     * ホバーは上段カードでは図柄の上側、下段カードでは図柄の下側へ出します。
      */
     /**
      * プログラム全体設定の宣言実装です。旧実装と同じ算出・文言・座標・要素 ID・ホバーを用い、
@@ -1601,7 +1603,8 @@ class GestureLowerPanel(
                 ),
                 icon = ItemStack(Material.NAME_TAG),
                 attentionHover = null,
-                cx = SCRIPT_SETTING_FIRST_X,
+                cx = SCRIPT_SETTING_COL_LEFT_X,
+                cy = SCRIPT_SETTING_ROW_TOP_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
             val timerState = if (script.timer.enabled) {
@@ -1631,15 +1634,20 @@ class GestureLowerPanel(
                 ),
                 icon = ItemStack(Material.CLOCK),
                 attentionHover = if (attention.timer) {
+                    // 注意ホバーは上段カードの図柄の上側へ出します（下段は下側の規則）。
+                    // 固定ホバースロット（HOVER_SLOT_Y）は使わず、対象カードの直上へ置きます。
                     singleLineHover(
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
-                        x = HOVER_SLOT_X,
-                        y = HOVER_SLOT_Y,
+                        x = SCRIPT_SETTING_COL_RIGHT_X,
+                        y = SCRIPT_SETTING_ROW_TOP_Y +
+                            DeclarativeSettings.SCRIPT_CARD_HEIGHT / 2.0 +
+                            HOVER_BUTTON_GAP,
                     )
                 } else {
                     null
                 },
-                cx = SCRIPT_SETTING_SECOND_X,
+                cx = SCRIPT_SETTING_COL_RIGHT_X,
+                cy = SCRIPT_SETTING_ROW_TOP_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
             val worldId = resolveVariableWorldId(state)
@@ -1670,7 +1678,8 @@ class GestureLowerPanel(
                 ),
                 icon = ItemStack(Material.WRITABLE_BOOK),
                 attentionHover = null,
-                cx = SCRIPT_SETTING_THIRD_X,
+                cx = SCRIPT_SETTING_COL_LEFT_X,
+                cy = SCRIPT_SETTING_ROW_BOTTOM_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
             // 未選択時下部の4枚目はプログラムディスクの取得操作です。設定値の編集ではなく
@@ -1704,7 +1713,8 @@ class GestureLowerPanel(
                 guard = { _, _ ->
                     plugin.scripts.load(state.scriptId)?.hasDiskContent() == true
                 },
-                cx = SCRIPT_SETTING_FOURTH_X,
+                cx = SCRIPT_SETTING_COL_RIGHT_X,
+                cy = SCRIPT_SETTING_ROW_BOTTOM_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
         }
@@ -3746,13 +3756,14 @@ class GestureLowerPanel(
 
     /** 配置定数は宣言実装と共有します。同一モジュール内のみに公開します。 */
     internal companion object {
-        // プログラム全体設定カードを4列で配置するための定数です。各項目を同じ大きさで
-        // 画面領域を等分し、カード間0.08・両端0.035の余白を保ちます。
-        const val SCRIPT_SETTING_FIRST_X = -0.765
-        const val SCRIPT_SETTING_SECOND_X = -0.255
-        const val SCRIPT_SETTING_THIRD_X = 0.255
-        const val SCRIPT_SETTING_FOURTH_X = 0.765
-        const val SCRIPT_SETTING_WIDTH = 0.43
+        // プログラム全体設定カードを2列x2行で配置するための定数です。各項目を同じ大きさで
+        // 画面領域を等分し、上段にプログラム名・タイマー、下段にワールド変数・ディスク取得を置きます。
+        // カード間0.08・両端0.035の余白を保ちます。
+        const val SCRIPT_SETTING_COL_LEFT_X = -0.48
+        const val SCRIPT_SETTING_COL_RIGHT_X = 0.48
+        const val SCRIPT_SETTING_ROW_TOP_Y = 0.13
+        const val SCRIPT_SETTING_ROW_BOTTOM_Y = -0.16
+        const val SCRIPT_SETTING_WIDTH = 0.88
         const val SETTING_DESCRIPTION_HOVER_ID = "setting-description-hover"
         /** 常設説明とホバー説明に共通する文字寸法です。置き換え時のサイズ変化を防ぎます。 */
         const val DESCRIPTION_TEXT_SIZE = 0.0043

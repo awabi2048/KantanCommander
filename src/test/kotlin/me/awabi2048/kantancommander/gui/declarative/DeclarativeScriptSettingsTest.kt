@@ -31,6 +31,7 @@ class DeclarativeScriptSettingsTest {
     private fun card(
         elementId: String,
         cx: Double,
+        cy: Double,
         attentionHover: String?,
         guard: ((org.bukkit.entity.Player, com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture) -> Boolean)? = null,
     ) = ScriptSettingCard(
@@ -46,7 +47,8 @@ class DeclarativeScriptSettingsTest {
         },
         guard = guard,
         cx = cx,
-        w = 0.43,
+        cy = cy,
+        w = 0.88,
     )
 
     @Test
@@ -55,10 +57,10 @@ class DeclarativeScriptSettingsTest {
             DeclarativeSettings.scriptSettingsDocument(
                 Component.text("hint"),
                 listOf(
-                    card("lower-script-name", -0.765, null),
-                    card("lower-script-timer", -0.255, "unset"),
-                    card("lower-script-variables", 0.255, null),
-                    card("lower-script-disk", 0.765, null, guard = { _, _ -> true }),
+                    card("lower-script-name", -0.48, 0.13, null),
+                    card("lower-script-timer", 0.48, 0.13, "unset"),
+                    card("lower-script-variables", -0.48, -0.16, null),
+                    card("lower-script-disk", 0.48, -0.16, null, guard = { _, _ -> true }),
                 ),
                 panel,
             ),
@@ -71,18 +73,23 @@ class DeclarativeScriptSettingsTest {
             setOf("lower-script-name", "lower-script-timer", "lower-script-variables", "lower-script-disk"),
             elements.keys,
         )
-        // 操作域は旧来の矩形（中心・寸法）と一致します。
+        // 操作域は2x2配置の矩形（中心・寸法）と一致します。
         val timer = elements.getValue("lower-script-timer")
-        assertEquals(0.43, timer.bounds.maxX - timer.bounds.minX, 1.0e-9)
+        assertEquals(0.88, timer.bounds.maxX - timer.bounds.minX, 1.0e-9)
         assertEquals(0.17, timer.bounds.maxY - timer.bounds.minY, 1.0e-9)
-        assertEquals(-0.255, (timer.bounds.minX + timer.bounds.maxX) / 2.0, 1.0e-9)
-        assertEquals(-0.02, (timer.bounds.minY + timer.bounds.maxY) / 2.0, 1.0e-9)
-        // 右端のディスク取得カードは同じ寸法で等分区画へ収まります。
+        assertEquals(0.48, (timer.bounds.minX + timer.bounds.maxX) / 2.0, 1.0e-9)
+        assertEquals(0.13, (timer.bounds.minY + timer.bounds.maxY) / 2.0, 1.0e-9)
+        // 右下のディスク取得カードは同じ寸法で下段区画へ収まります。
         val disk = elements.getValue("lower-script-disk")
-        assertEquals(0.43, disk.bounds.maxX - disk.bounds.minX, 1.0e-9)
+        assertEquals(0.88, disk.bounds.maxX - disk.bounds.minX, 1.0e-9)
         assertEquals(0.17, disk.bounds.maxY - disk.bounds.minY, 1.0e-9)
-        assertEquals(0.765, (disk.bounds.minX + disk.bounds.maxX) / 2.0, 1.0e-9)
-        assertEquals(-0.02, (disk.bounds.minY + disk.bounds.maxY) / 2.0, 1.0e-9)
+        assertEquals(0.48, (disk.bounds.minX + disk.bounds.maxX) / 2.0, 1.0e-9)
+        assertEquals(-0.16, (disk.bounds.minY + disk.bounds.maxY) / 2.0, 1.0e-9)
+        // 左下のワールド変数カードも同じ寸法で下段区画へ収まります。
+        val variables = elements.getValue("lower-script-variables")
+        assertEquals(0.88, variables.bounds.maxX - variables.bounds.minX, 1.0e-9)
+        assertEquals(-0.48, (variables.bounds.minX + variables.bounds.maxX) / 2.0, 1.0e-9)
+        assertEquals(-0.16, (variables.bounds.minY + variables.bounds.maxY) / 2.0, 1.0e-9)
         // 注意ホバーは timer のみに付き、他には付きません。
         assertNotNull(timer.hoverText)
         assertNull(elements.getValue("lower-script-name").hoverText)
