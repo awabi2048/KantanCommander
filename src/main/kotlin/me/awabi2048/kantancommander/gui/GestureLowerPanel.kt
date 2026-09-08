@@ -41,8 +41,14 @@ import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.kantancommander.gui.declarative.ConfirmTexts
 import me.awabi2048.kantancommander.gui.declarative.DeclarativeConfirm
+import me.awabi2048.kantancommander.gui.declarative.DeclarativePicker
 import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
 import me.awabi2048.kantancommander.gui.declarative.KantanLayoutBridge
+import me.awabi2048.kantancommander.gui.declarative.PickerArrow
+import me.awabi2048.kantancommander.gui.declarative.PickerCard
+import me.awabi2048.kantancommander.gui.declarative.PickerCategory
+import me.awabi2048.kantancommander.gui.declarative.PickerData
+import me.awabi2048.kantancommander.gui.declarative.PickerPager
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Bukkit
@@ -88,7 +94,9 @@ class GestureLowerPanel(
     ): GestureGuiView {
         return when (state.lowerMode) {
             GestureLowerMode.SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
-            GestureLowerMode.PICKER -> buildPicker(state, player)
+            GestureLowerMode.PICKER ->
+                if (KantanDeclarativeGui.usePicker) buildPickerNew(state, player)
+                else buildPicker(state, player)
             GestureLowerMode.SETTING_CHOICES -> buildSettingChoices(
                 state,
                 player,
@@ -1931,8 +1939,9 @@ class GestureLowerPanel(
      * 交差しないよう共通説明領域へ集約します。子画面は常設説明を置き換え、
      * 親画面は右下の専用ホバースロットを使うという既存の画面契約もここで
      * 吸収し、各ボタン生成側に配置条件を複製しません。
+     * 宣言実装と共有するためモジュール内へ公開します。
      */
-    private fun parallelButtonHover(
+    internal fun parallelButtonHover(
         text: String,
         x: Double,
         y: Double,
@@ -3454,6 +3463,101 @@ class GestureLowerPanel(
         return view(GestureLowerMode.PICKER, elements, visuals)
     }
 
+    /**
+     * PICKER の宣言実装です。旧 `buildPicker` と同じ分類・候補算出・座標・要素 ID・
+     * ホバー行位置規則を用い、既存の画面定義・パネル・操作振分け（`view()`）を利用します。
+     */
+    private fun buildPickerNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val categories = CommandCategory.entries
+        val insertionTarget = state.pendingInsertion
+        val selectedCategory = categories[state.pickerCategory.coerceIn(0, categories.lastIndex)]
+        val script = plugin.scripts.load(state.scriptId)
+        val mergeConditionId = state.pendingInsertion?.mergeConditionId
+        val mergeAvailable = script?.let {
+            GraphEditor.canAppendMerge(it.graph, mergeConditionId, insertionTarget?.continuationId)
+        } == true
+        val insideForBody = script?.graph?.let {
+            GraphEditor.isInsideFor(
+                it,
+                insertionTarget?.sourceId,
+                insertionTarget?.edge ?: GraphEditor.Edge.ENTRY,
+            )
+        } == true
+        val types = CommandPickerTypePolicy.types(
+            category = selectedCategory,
+            mergeAvailable = mergeAvailable,
+            insideForBody = insideForBody,
+        )
+        val pageCount = GestureCommandPickerLayoutPolicy.pageCount(types.size)
+        val page = state.pickerPage.coerceIn(0, pageCount - 1)
+        val pageTypes = types
+            .drop(page * GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+            .take(GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+        val rowCount = GestureCommandPickerLayoutPolicy.rowCount(pageTypes.size)
+        val parallel = pageTypes.size > 1
+        val data = PickerData(
+            categories = categories.map { PickerCategory(KcI18n.text(player, it.labelKey), it == selectedCategory) },
+            tabBackgrounds = categories.map {
+                Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(it == selectedCategory))
+            },
+            description = Component.text(
+                KcI18n.list(player, selectedCategory.descriptionKey)
+                    .filter(String::isNotBlank)
+                    .joinToString(" "),
+                NamedTextColor.GRAY,
+            ),
+            cards = pageTypes.mapIndexed { index, type ->
+                val column = index % GestureCommandPickerLayoutPolicy.COLUMNS
+                val row = index / GestureCommandPickerLayoutPolicy.COLUMNS
+                val cx = GestureCommandPickerLayoutPolicy.columnX(column)
+                val cy = GestureCommandPickerLayoutPolicy.rowY(row)
+                val hoverText = KcI18n.list(player, type.descriptionKey)
+                    .filter(String::isNotBlank)
+                    .joinToString(" ")
+                val hover = parallelButtonHover(
+                    hoverText,
+                    cx,
+                    cy,
+                    row,
+                    rowCount,
+                    GestureCommandPickerLayoutPolicy.CARD_HEIGHT,
+                    HOVER_SLOT_X,
+                    PICKER_HOVER_SLOT_Y,
+                    replacesDescription = false,
+                    parallel = parallel,
+                )
+                PickerCard(type.name, KcI18n.text(player, type.key), hoverText, hover.x, hover.y)
+            },
+            cardBackgrounds = pageTypes.map { Bukkit.createBlockData(Material.CYAN_TERRACOTTA) },
+            pager = if (pageCount > 1) PickerPager(
+                arrows = listOf(page - 1 to "◀", page + 1 to "▶").map { (targetPage, glyph) ->
+                    val available = targetPage in 0 until pageCount
+                    PickerArrow(
+                        targetPage = targetPage,
+                        glyph = Component.text(glyph).color(
+                            if (available) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                        ),
+                        background = Bukkit.createBlockData(
+                            if (available) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                        ),
+                        available = available,
+                    )
+                },
+                status = Component.text("${page + 1}/$pageCount"),
+            ) else null,
+            closeLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_CLOSE)),
+            closeBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+        )
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativePicker.document(data),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativePicker] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.PICKER, compiled.elements, compiled.visuals)
+    }
+
     /** CONFIRM: 子画面（上部エディターがopenChildで赤ガラスを重ねる） */
     private fun buildConfirm(state: GestureEditorState, player: Player): GestureGuiView {
         val visuals = mutableListOf<GestureGuiVisual>()
@@ -3747,7 +3851,8 @@ class GestureLowerPanel(
             bounds.maxY * scale,
         )
 
-    private companion object {
+    /** 配置定数は宣言実装と共有します。同一モジュール内のみに公開します。 */
+    internal companion object {
         // プログラム全体設定カードを3列で配置するための定数です。
         const val SCRIPT_SETTING_LEFT_X = -0.68
         const val SCRIPT_SETTING_CENTER_X = 0.0

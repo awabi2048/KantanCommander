@@ -18,7 +18,7 @@ object KantanDeclarativeGui {
     var useWorldVariableDeleteConfirm: Boolean = false
 
     /** PICKER 画面を宣言実装へ切り替えます。 */
-    var usePicker: Boolean = false
+    var usePicker: Boolean = true
 
     /** 設定系画面を宣言実装へ切り替えます。 */
     var useSettings: Boolean = false
