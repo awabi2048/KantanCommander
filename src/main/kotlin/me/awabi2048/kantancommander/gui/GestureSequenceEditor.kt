@@ -2200,28 +2200,7 @@ class GestureSequenceEditor(
         }
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
-        if (fieldKey == "item" && (
-                node.type == CommandType.GIVE_ITEM ||
-                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
-                    node.type == CommandType.TEMP_SET
-                )) {
-            applyHeldItem(player, context)
-            return
-        }
-        if (fieldKey == "block" && (
-                node.type == CommandType.BLOCK_OPERATION ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
-                    (node.type == CommandType.TEMP_SET &&
-                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
-                )) {
-            applyHeldBlock(player, context)
-            return
-        }
-        if (fieldKey == "diskId" && node.type == CommandType.DISK_CALL) {
-            applyHeldDisk(player, context)
-            return
-        }
+        if (applyHeldField(player, context, node, fieldKey)) return
         if (fieldKey == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
             // 表示時間は1つのタブにまとめ、現在値欄では3項目を表示します。編集時は
             // インベントリGUIと同じ一組の入力欄・最大長・検証を使います。
@@ -2346,6 +2325,64 @@ class GestureSequenceEditor(
         plugin.logger.info("[DbgIssue25] $message")
     }
 
+    /**
+     * 手持ち対応項目へ手持ち内容を適用します。編集枠と同等の導線です。
+     *
+     * 236c5cb以降、束縛付き項目では編集枠が表示されないため、直接値選択が
+     * 唯一の適用導線になります。引き受けた場合（上書き確認を開いた場合を
+     * 含む）はtrueを返します。
+     */
+    private fun applyHeldField(
+        player: Player,
+        context: CommandSettingContext,
+        node: CommandNode,
+        fieldKey: String,
+    ): Boolean {
+        if (fieldKey == "item" && (
+                node.type == CommandType.GIVE_ITEM ||
+                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
+                    node.type == CommandType.TEMP_SET
+                )) {
+            applyHeldItem(player, context)
+            return true
+        }
+        if (fieldKey == "block" && (
+                node.type == CommandType.BLOCK_OPERATION ||
+                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                    (node.type == CommandType.TEMP_SET &&
+                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
+                )) {
+            applyHeldBlock(player, context)
+            return true
+        }
+        if (fieldKey == "diskId" && node.type == CommandType.DISK_CALL) {
+            applyHeldDisk(player, context)
+            return true
+        }
+        return false
+    }
+
+    /**
+     * 直接値選択と同時に手持ち適用できる条件です。編集枠のガードと同一です。
+     * 空手等で適用対象がない場合は方式選択だけを行い、余計な通知を出しません。
+     */
+    private fun heldValueAvailable(player: Player, node: CommandNode, fieldKey: String): Boolean = when {
+        fieldKey == "item" && (node.type == CommandType.GIVE_ITEM ||
+            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
+            node.type == CommandType.TEMP_SET) ->
+            GestureGuiClickPolicy.hasMainHandItem(player)
+        fieldKey == "block" && (node.type == CommandType.BLOCK_OPERATION ||
+            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+            (node.type == CommandType.TEMP_SET &&
+                TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)) ->
+            HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
+        fieldKey == "diskId" && node.type == CommandType.DISK_CALL ->
+            KantanItemService.diskId(player.inventory.itemInMainHand) != null
+        else -> false
+    }
+
     private fun selectTypedValueSource(
         player: Player,
         fieldKey: String,
@@ -2387,6 +2424,12 @@ class GestureSequenceEditor(
         if (!updateSettingNode(player, context, configuredFields = emptySet()) {
                 CommandSettingsModel.selectLiteralValueSource(it, fieldKey)
             }) return
+        // 直接値選択時に手持ち対応項目なら、手持ち内容も同時に適用します。
+        // 束縛付き項目では編集枠が表示されないため、この合流が唯一の適用導線です。
+        if (heldValueAvailable(player, node, fieldKey)) {
+            dbgIssue25("selectTypedValueSource applying held value field=$fieldKey node=${node.id}")
+            applyHeldField(player, context, node, fieldKey)
+        }
         updateLower(player)
     }
 
