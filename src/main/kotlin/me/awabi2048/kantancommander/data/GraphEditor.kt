@@ -30,11 +30,11 @@ object GraphEditor {
      * ビューポート上の左右入れ替え操作で使う方向です。
      *
      * グラフは表示座標を保存しないため、左右のボタンは座標だけを動かすのではなく、
-     * 同一の直列経路にある隣接2ノードの順序を入れ替えます。移動できるのは通常
-     * ノードと折り畳みノード（FOLDED_FOR／FOLDED_IF）だけで、展開中の構造ノード
-     * （条件分岐／合流・FOR開始／終了）は移動単位にしないためボタンを表示しません。
-     * FOR境界を跨ぐ格納・取り出し・IF吸収は行いません。構造を変える場合は
-     * 折り畳み／展開・削除・挿入で行います。枝の並べ替えは [swapBranches] を使います。
+     * 移動ノードの順序を変えます。移動できるのは通常ノードと折り畳みノード
+     * （FOLDED_FOR／FOLDED_IF）だけで、展開中の構造ノード（条件分岐／合流・
+     * FOR開始／終了）は移動単位にしません。構造との隣接時は隣との交換ではなく、
+     * 構造の境界を越える出入り（本体・枝への格納と取り出し）として再定義します。
+     * 飛び越えは設けません。枝の並べ替えは [swapBranches] を使います。
      */
     enum class ReorderDirection { LEFT, RIGHT }
 
@@ -55,13 +55,16 @@ object GraphEditor {
     }
 
     /**
-     * 同一直列経路にある隣接した2ノードを入れ替えます。
+     * 移動ノードの順序を隣接方向へ変えます。
      *
-     * 通常ノードと折り畳みノード（FOLDED_FOR／FOLDED_IF）だけが対象で、どちらも
-     * 単一nextの通常形状のため、前任・後継との3者付け替えで順序を変えます。
-     * 展開中の構造ノード（条件分岐／合流・FOR開始／終了）は対象外です。
-     * FOR境界を跨ぐ移動（本体への格納・本体からの取り出し）は行いません。
-     * 適用後に検証し、不正になる場合はグラフを変更せず拒否します。
+     * 移動主体は通常ノードと折り畳みノード（FOLDED_FOR／FOLDED_IF）だけで、
+     * どちらも単一nextの通常形状のため、前任・後継との付け替えで順序を変えます。
+     * 展開中の構造ノード（条件分岐／合流・FOR開始／終了）は移動主体にしません。
+     * 構造との隣接時は交換ではなく境界を越える出入りになります：外側からは
+     * 本体先頭・TRUE先頭へ入り（B1・D1'）、内側からは本体・枝の先頭が外へ出ます
+     * （C1・E1）。本体末尾・枝末尾の出入り（B2・C2・D2'・E3）も同様に扱います。
+     * FALSE枝の境界を越える移動は設けません。適用後に検証し、不正になる場合は
+     * グラフを変更せず拒否します。
      */
     fun swapAdjacent(
         graph: CommandGraph,
@@ -106,42 +109,254 @@ object GraphEditor {
     }
 
     /**
-     * 指定ノードを直前の通常ノードと入れ替えます。
+     * 指定ノードを直前の位置へ移動します。
      *
-     * 前任は単一の実行入力で結ばれた通常ノードに限ります。前任が展開中の構造
-     * ノードの場合は拒否し、FOR境界の外への取り出しにはなりません。
+     * 前任が通常ノードの場合は順序を入れ替えます。前任がFOR終了・合流の場合は、
+     * その直後にいる外側ノードを本体末尾・TRUE末尾へ格納します（B2・D2'）。
+     * 前任がFOR開始・条件分岐の枝経由の場合は、本体・枝の先頭を外へ取り出します
+     * （C1・E1）。FALSE枝からの取り出しは行いません。
      */
     private fun swapWithPrevious(graph: CommandGraph, node: CommandNode): Boolean {
         val incoming = incomingExecutionLink(graph, node.id) ?: return false
         val previousId = incoming.sourceId ?: return false
         val previous = graph.nodes[previousId] ?: return false
-        if (!isLinearReorderable(previous)) return false
-        if (previous.next != node.id) return false
-        val previousIncoming = incomingExecutionLink(graph, previous.id) ?: return false
-        val after = node.next
-        // previousへ入っていた実行エッジをnodeへ向け直します。移動単位自身への
-        // 入力ではなく、前任への入力を使う点に注意します（同一にすると循環します）。
-        setExecutionLink(graph, previousIncoming, node.id)
-        node.next = previous.id
-        previous.next = after
-        return true
+        if (isLinearReorderable(previous)) {
+            if (previous.next != node.id) return false
+            val previousIncoming = incomingExecutionLink(graph, previous.id) ?: return false
+            val after = node.next
+            // previousへ入っていた実行エッジをnodeへ向け直します。移動単位自身への
+            // 入力ではなく、前任への入力を使う点に注意します（同一にすると循環します）。
+            setExecutionLink(graph, previousIncoming, node.id)
+            node.next = previous.id
+            previous.next = after
+            return true
+        }
+        // 本体末尾への格納（B2）：FOR終了の直後にいる外側ノードだけが対象です。
+        if (previous.type == CommandType.FOR_END) {
+            return storeIntoForTail(graph, node, previous)
+        }
+        // TRUE末尾への入り（D2'）：合流の直後にいる外側ノードだけが対象です。
+        if (previous.type == CommandType.MERGE) {
+            return enterTrueTail(graph, node, previous)
+        }
+        // 本体先頭の取り出し（C1）：FOR開始のTRUE経由で結ばれた先頭だけが対象です。
+        if (previous.type == CommandType.FOR_START && incoming.edge == Edge.TRUE) {
+            return takeOutOfForHead(graph, node, previous)
+        }
+        // 枝先頭の取り出し（E1）：TRUE枝経由だけが対象で、FALSE枝からは取り出しません。
+        if (previous.type == CommandType.CONDITION && incoming.edge == Edge.TRUE) {
+            return takeOutOfBranchHead(graph, node, previous, Edge.TRUE)
+        }
+        return false
     }
 
     /**
-     * 指定ノードを直後の通常ノードと入れ替えます。
+     * 指定ノードを直後の位置へ移動します。
      *
-     * 後継は単一nextで結ばれた通常ノードに限ります。後継が展開中の構造ノード
-     * の場合は拒否し、FOR境界の中への格納にはなりません。
+     * 後継が通常ノードの場合は順序を入れ替えます。後継がFOR開始・条件分岐の
+     * 場合は、外側ノードを本体先頭・TRUE先頭へ入れます（B1・D1'）。FALSE枝への
+     * 外側からの直接入りは経路がないため設けません。後継が合流・FOR終了の
+     * 場合は、枝末尾・本体末尾を出口の後ろへ取り出します（E3・C2）。
      */
     private fun swapWithNext(graph: CommandGraph, node: CommandNode): Boolean {
         val nextId = node.next ?: return false
         val next = graph.nodes[nextId] ?: return false
-        if (!isLinearReorderable(next)) return false
-        val incoming = incomingExecutionLink(graph, node.id) ?: return false
-        setExecutionLink(graph, incoming, next.id)
-        node.next = next.next
-        next.next = node.id
+        if (isLinearReorderable(next)) {
+            val incoming = incomingExecutionLink(graph, node.id) ?: return false
+            setExecutionLink(graph, incoming, next.id)
+            node.next = next.next
+            next.next = node.id
+            return true
+        }
+        // 本体先頭への格納（B1）：FOR開始の直前にいる外側ノードだけが対象です。
+        if (next.type == CommandType.FOR_START) {
+            return storeIntoForHead(graph, node, next)
+        }
+        // TRUE先頭への入り（D1'）：条件分岐の直前にいる外側ノードだけが対象です。
+        if (next.type == CommandType.CONDITION) {
+            return enterTrueHead(graph, node, next)
+        }
+        // 枝末尾・本体末尾の取り出し（E3・C2）：直後が出口の末端だけが対象です。
+        if (next.type == CommandType.MERGE || next.type == CommandType.FOR_END) {
+            return takeOutAfterExit(graph, node, next)
+        }
+        return false
+    }
+
+    /**
+     * 外側ノードをFOR本体の先頭へ格納します（B1）。
+     *
+     * 開始のTRUE枝先頭へ挿入し、空本体・null終端の意味は変えません。
+     * moverが対象FORの内部にある場合とペア壊れは拒否します。
+     */
+    private fun storeIntoForHead(graph: CommandGraph, mover: CommandNode, start: CommandNode): Boolean {
+        val end = pairedForEnd(graph, start) ?: return false
+        if (mover.id == start.id || mover.id == end.id) return false
+        if (containsNodeBefore(graph, start.trueNext, end.id, mover.id)) return false
+        val incoming = incomingExecutionLink(graph, mover.id) ?: return false
+        val headOld = start.trueNext
+        setExecutionLink(graph, incoming, start.id)
+        setEdge(graph, start.id, Edge.FOR_BODY, mover.id)
+        mover.next = headOld
         return true
+    }
+
+    /**
+     * FOR終了直後の外側ノードを本体末尾へ格納します（B2）。
+     *
+     * 本体が直列の場合に限り、本体末尾と終了の間へ挿入します。
+     * 本体に分岐構造を含む場合とペア壊れは拒否します。
+     * 呼び出し元でmoverの入力が終了からの一意リンクであることを保証します。
+     */
+    private fun storeIntoForTail(graph: CommandGraph, mover: CommandNode, end: CommandNode): Boolean {
+        val start = graph.nodes[end.pairedNodeId]
+            ?.takeIf { it.type == CommandType.FOR_START && it.pairedNodeId == end.id }
+            ?: return false
+        if (mover.id == start.id || mover.id == end.id) return false
+        if (containsNodeBefore(graph, start.trueNext, end.id, mover.id)) return false
+        val afterMover = mover.next
+        // 本体末尾は終了をnextで指す直列末端です。空本体なら開始自身を使います。
+        val tailId = bodyTailId(graph, start, end) ?: return false
+        if (tailId == start.id) setEdge(graph, start.id, Edge.FOR_BODY, mover.id)
+        else graph.nodes[tailId]?.let { it.next = mover.id } ?: return false
+        mover.next = end.id
+        setEdge(graph, end.id, Edge.NEXT, afterMover)
+        return true
+    }
+
+    /**
+     * FOR本体の先頭を外へ取り出します（C1）。
+     *
+     * 開始のTRUE経由で結ばれた先頭だけが対象です。開始への入力を先頭へ
+     * 向け直し、先頭の後続を開始のTRUE枝へ戻します。
+     */
+    private fun takeOutOfForHead(graph: CommandGraph, mover: CommandNode, start: CommandNode): Boolean {
+        if (pairedForEnd(graph, start) == null) return false
+        if (start.trueNext != mover.id) return false
+        val incoming = incomingExecutionLink(graph, start.id) ?: return false
+        val headOldNext = mover.next
+        setExecutionLink(graph, incoming, mover.id)
+        mover.next = start.id
+        setEdge(graph, start.id, Edge.FOR_BODY, headOldNext)
+        return true
+    }
+
+    /**
+     * 条件分岐の枝先頭を外へ取り出します（E1）。
+     *
+     * 指定した枝経由で結ばれた先頭だけが対象です。FALSE枝からの取り出しには
+     * 使わず、呼び出し側でTRUE枝に限定します。
+     */
+    private fun takeOutOfBranchHead(
+        graph: CommandGraph,
+        mover: CommandNode,
+        condition: CommandNode,
+        edge: Edge,
+    ): Boolean {
+        if (edgeTarget(graph, condition.id, edge) != mover.id) return false
+        val incoming = incomingExecutionLink(graph, condition.id) ?: return false
+        val headOldNext = mover.next
+        setExecutionLink(graph, incoming, mover.id)
+        mover.next = condition.id
+        setEdge(graph, condition.id, edge, headOldNext)
+        return true
+    }
+
+    /**
+     * 条件分岐の直前にいる外側ノードをTRUE先頭へ入れます（D1'）。
+     *
+     * 空枝・未合流・null終端も同じ式で成立し、終端の意味は変えません。
+     * FALSE枝への外側からの直接入りは経路がないため設けません。
+     * moverが対象条件の枝内部にある場合は拒否します。
+     */
+    private fun enterTrueHead(graph: CommandGraph, mover: CommandNode, condition: CommandNode): Boolean {
+        if (mover.id == condition.id) return false
+        if (containsNodeBefore(graph, condition.trueNext, null, mover.id)) return false
+        if (containsNodeBefore(graph, condition.falseNext, null, mover.id)) return false
+        val incoming = incomingExecutionLink(graph, mover.id) ?: return false
+        val headOld = condition.trueNext
+        setExecutionLink(graph, incoming, condition.id)
+        setEdge(graph, condition.id, Edge.TRUE, mover.id)
+        mover.next = headOld
+        return true
+    }
+
+    /**
+     * 合流直後の外側ノードをTRUE末尾へ入れます（D2'）。
+     *
+     * TRUE枝が合流に届く場合に限り、TRUE末尾と合流の間へ挿入します。
+     * 未合流・TRUE空終端・枝内の分岐構造がある場合は拒否します。
+     * 呼び出し元でmoverの入力が合流からの一意リンクであることを保証します。
+     */
+    private fun enterTrueTail(graph: CommandGraph, mover: CommandNode, merge: CommandNode): Boolean {
+        val condition = graph.nodes[merge.pairedNodeId]
+            ?.takeIf { it.type == CommandType.CONDITION && it.pairedNodeId == merge.id }
+            ?: return false
+        if (mover.id == condition.id || mover.id == merge.id) return false
+        val afterMover = mover.next
+        val trueHead = condition.trueNext ?: return false
+        if (trueHead == merge.id) {
+            setEdge(graph, condition.id, Edge.TRUE, mover.id)
+        } else {
+            val tailId = straightTailBefore(graph, trueHead, merge.id) ?: return false
+            graph.nodes[tailId]?.let { it.next = mover.id } ?: return false
+        }
+        mover.next = merge.id
+        setEdge(graph, merge.id, Edge.NEXT, afterMover)
+        return true
+    }
+
+    /**
+     * 枝末尾・本体末尾を出口の後ろへ取り出します（E3・C2）。
+     *
+     * moverの直後が出口（合流・FOR終了）である場合に限り、moverを出口の
+     * 後ろへ移します。前任（枝・本体側）の辺を出口へ向け直すため、
+     * moverへの入力は一意でなければなりません。
+     */
+    private fun takeOutAfterExit(graph: CommandGraph, mover: CommandNode, exit: CommandNode): Boolean {
+        if (mover.id == exit.id) return false
+        val incoming = incomingExecutionLink(graph, mover.id) ?: return false
+        val exitOldNext = exit.next
+        // 前任の辺（next・TRUE・FALSE・ENTRY）を出口へ向け直します。
+        setExecutionLink(graph, incoming, exit.id)
+        mover.next = exitOldNext
+        setEdge(graph, exit.id, Edge.NEXT, mover.id)
+        return true
+    }
+
+    /**
+     * FOR本体の末尾IDを返します。
+     *
+     * 終了をnextで指す直列末端を辿り、空本体なら開始IDを返します。
+     * 本体に分岐構造を含む場合はnullを返し、呼び出し側で拒否します。
+     */
+    private fun bodyTailId(graph: CommandGraph, start: CommandNode, end: CommandNode): UUID? {
+        val head = start.trueNext ?: return start.id
+        if (head == end.id) return start.id
+        return straightTailBefore(graph, head, end.id)
+    }
+
+    /**
+     * 直列経路の末尾IDを返します。
+     *
+     * headからnextだけを辿り、stopを指す直前のノードを返します。
+     * 条件分岐・FOR開始・合流・FOR終了に当たる場合、null終端・循環・
+     * 欠落でstopに届かない場合はnullを返し、呼び出し側で拒否します。
+     */
+    private fun straightTailBefore(graph: CommandGraph, head: UUID, stop: UUID): UUID? {
+        var current = head
+        val visited = mutableSetOf<UUID>()
+        while (true) {
+            val node = graph.nodes[current] ?: return null
+            // 分岐構造を含む経路は対象外とし、呼び出し側で拒否します。
+            if (node.type == CommandType.CONDITION || node.type == CommandType.FOR_START ||
+                node.type == CommandType.MERGE || node.type == CommandType.FOR_END
+            ) return null
+            val next = node.next ?: return null
+            if (next == stop) return current
+            if (!visited.add(current)) return null
+            current = next
+        }
     }
 
     /** 構造を分解せず、設定ノード単位で複製できる種類かを判定します。 */
