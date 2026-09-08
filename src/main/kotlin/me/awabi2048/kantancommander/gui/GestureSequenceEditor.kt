@@ -2315,10 +2315,11 @@ class GestureSequenceEditor(
     /**
      * ITEM／BLOCK／SOUND／EFFECTの設定元を選択します。
      *
-     * 一時変数・直接値のどちらも、選択操作は設定元の切替だけを行い、値の入力へ
-     * 引き継ぎません。直接値の入力は `lower-edit` の2クリック目から開きます。
-     * 選択だけでDialogや手持ち保存へ進むと、設定元の確認と値入力が分離できず、
-     * 誤った設定元で値を確定する操作を防げないためです。
+     * 1回目の選択操作は設定元の切替だけを行い、値の入力へ引き継ぎません。
+     * 選択済みの直接値をもう一度押す2回目の操作で、項目別の子設定
+     * （手持ち適用・設定対話）へ進みます。選択だけでDialogや手持ち保存へ
+     * 進むと、設定元の確認と値入力が分離できず、誤った設定元で値を確定する
+     * 操作を防げないためです。
      */
     /** TODO(debug-issue25): 調査後に削除します。アイテム設定経路の一時記録です。 */
     private fun dbgIssue25(message: String) {
@@ -2328,9 +2329,8 @@ class GestureSequenceEditor(
     /**
      * 手持ち対応項目へ手持ち内容を適用します。編集枠と同等の導線です。
      *
-     * 236c5cb以降、束縛付き項目では編集枠が表示されないため、直接値選択が
-     * 唯一の適用導線になります。引き受けた場合（上書き確認を開いた場合を
-     * 含む）はtrueを返します。
+     * 編集枠と直接値2回目の両方から共用します。引き受けた場合（上書き確認を
+     * 開いた場合を含む）はtrueを返します。
      */
     private fun applyHeldField(
         player: Player,
@@ -2361,26 +2361,6 @@ class GestureSequenceEditor(
             return true
         }
         return false
-    }
-
-    /**
-     * 直接値選択と同時に手持ち適用できる条件です。編集枠のガードと同一です。
-     * 空手等で適用対象がない場合は方式選択だけを行い、余計な通知を出しません。
-     */
-    private fun heldValueAvailable(player: Player, node: CommandNode, fieldKey: String): Boolean = when {
-        fieldKey == "item" && (node.type == CommandType.GIVE_ITEM ||
-            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
-            node.type == CommandType.TEMP_SET) ->
-            GestureGuiClickPolicy.hasMainHandItem(player)
-        fieldKey == "block" && (node.type == CommandType.BLOCK_OPERATION ||
-            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
-            (node.type == CommandType.TEMP_SET &&
-                TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)) ->
-            HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
-        fieldKey == "diskId" && node.type == CommandType.DISK_CALL ->
-            KantanItemService.diskId(player.inventory.itemInMainHand) != null
-        else -> false
     }
 
     private fun selectTypedValueSource(
@@ -2429,14 +2409,12 @@ class GestureSequenceEditor(
             updateLower(player)
             return
         }
-        // 直接値の2回目は子設定として手持ち適用を行います。
-        // 束縛付き項目では編集枠が表示されないため、この合流が唯一の適用導線です。
-        // 空手等で適用対象がない場合は何もせず、方式選択だけが残ります。
-        if (heldValueAvailable(player, node, fieldKey)) {
-            dbgIssue25("selectTypedValueSource applying held value field=$fieldKey node=${node.id}")
-            applyHeldField(player, context, node, fieldKey)
-        }
-        updateLower(player)
+        // 直接値の2回目は子設定へ進みます。束縛付き項目の記述子は対話系か
+        // 手持ち系に限られ、構造化画面への遷移は起きません。
+        // 空手等の案内表示は各導線の既存動作に従います。
+        dbgIssue25("selectTypedValueSource second click field=$fieldKey node=${node.id}")
+        beginSelectedFieldEdit(player, fieldKey)
+        return
     }
 
     /** メインハンドの実アイテムを設定値とスナップショットへ保存します。 */
