@@ -2321,10 +2321,6 @@ class GestureSequenceEditor(
      * 進むと、設定元の確認と値入力が分離できず、誤った設定元で値を確定する
      * 操作を防げないためです。
      */
-    /** TODO(debug-issue25): 調査後に削除します。アイテム設定経路の一時記録です。 */
-    private fun dbgIssue25(message: String) {
-        plugin.logger.info("[DbgIssue25] $message")
-    }
 
     /**
      * 手持ち対応項目へ手持ち内容を適用します。編集枠と同等の導線です。
@@ -2378,7 +2374,6 @@ class GestureSequenceEditor(
             CommandSettingsModel.descriptor(node, fieldKey).role,
         )
         val currentSource = CommandSettingsModel.temporaryValueSource(node, fieldKey)
-        dbgIssue25("selectTypedValueSource field=$fieldKey source=$source current=$currentSource")
         if (source == CommandValueSource.TEMPORARY) {
             if (currentSource != CommandValueSource.TEMPORARY) {
                 if (!updateSettingNode(player, context, configuredFields = emptySet()) {
@@ -2412,7 +2407,6 @@ class GestureSequenceEditor(
         // 直接値の2回目は子設定へ進みます。束縛付き項目の記述子は対話系か
         // 手持ち系に限られ、構造化画面への遷移は起きません。
         // 空手等の案内表示は各導線の既存動作に従います。
-        dbgIssue25("selectTypedValueSource second click field=$fieldKey node=${node.id}")
         beginSelectedFieldEdit(player, fieldKey)
         return
     }
@@ -2424,7 +2418,6 @@ class GestureSequenceEditor(
         parameter: String = "item",
     ): Boolean {
         val held = player.inventory.itemInMainHand.takeUnless { it.type == Material.AIR }
-        dbgIssue25("applyHeldItem parameter=$parameter held=${held?.type} node=${context.nodeId}")
         if (held == null) {
             player.sendMessage("§cメインハンドにアイテムを持ってください。")
             // 呼び出し元が専用選択画面から設定タブへ戻した直後でも、
@@ -2441,13 +2434,10 @@ class GestureSequenceEditor(
             node.string("itemData"),
         )
         if (parameter == "item" && hasExistingItem) {
-            dbgIssue25("applyHeldItem overwrite confirm node=${context.nodeId}")
             openItemOverwriteConfirm(player, context, itemKey, itemData)
             return false
         }
-        val saved = saveHeldItem(player, context, parameter, itemKey, itemData)
-        dbgIssue25("applyHeldItem direct save node=${context.nodeId} saved=$saved")
-        return saved
+        return saveHeldItem(player, context, parameter, itemKey, itemData)
     }
 
     /** ブロック設定はメインハンドからブロックIDを保存し、空手はminecraft:airとして扱います。 */
@@ -2994,7 +2984,6 @@ class GestureSequenceEditor(
                 failure,
             )
         }.getOrDefault(false)
-        dbgIssue25("updateSettingNode script=${context.scriptId} node=${context.nodeId} saved=$saved")
         if (!saved) return false
         updateUpper(player)
         updateLower(player)
@@ -5367,12 +5356,6 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-value-source:") &&
                 (context.gesture in GestureGuiClickPolicy.MAIN_HAND ||
                     GestureGuiClickPolicy.isPrimaryClick(context.gesture)) -> {
-                dbgIssue25(
-                    "value-source click element=${context.elementId} gesture=${context.gesture} " +
-                        "hand=${context.actorId.let { actorId ->
-                            plugin.server.getPlayer(actorId)?.inventory?.itemInMainHand?.type
-                        }}",
-                )
                 val encoded = context.elementId.removePrefix("lower-value-source:").split(":")
                 if (encoded.size != 2) return
                 val source = runCatching { CommandValueSource.valueOf(encoded[1]) }.getOrNull() ?: return
@@ -5380,7 +5363,6 @@ class GestureSequenceEditor(
             }
             context.elementId.startsWith("lower-edit:") &&
                 context.gesture in GestureGuiClickPolicy.MAIN_HAND -> {
-                dbgIssue25("edit click element=${context.elementId} gesture=${context.gesture}")
                 val fieldKey = context.elementId.removePrefix("lower-edit:")
                 beginSelectedFieldEdit(player, fieldKey)
             }
@@ -5619,7 +5601,6 @@ class GestureSequenceEditor(
                 openConfirmChild(player)
             }
             context.elementId == "confirm-delete" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                dbgIssue25("confirm-delete kind=${state.confirmKind} node=${state.confirmNodeId}")
                 if (state.confirmKind == GestureConfirmKind.ITEM_OVERWRITE) {
                     confirmItemOverwrite(player)
                     return
