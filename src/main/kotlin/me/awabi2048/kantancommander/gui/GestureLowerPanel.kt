@@ -9,6 +9,15 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
+import me.awabi2048.kantancommander.gui.declarative.ContentFrame
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeSettings
+import me.awabi2048.kantancommander.gui.declarative.DescriptionDetail
+import me.awabi2048.kantancommander.gui.declarative.SettingsActionCard
+import me.awabi2048.kantancommander.gui.declarative.SettingsChoiceCard
+import me.awabi2048.kantancommander.gui.declarative.SettingsTabEntry
+import me.awabi2048.kantancommander.gui.declarative.SettingsValueRow
+import me.awabi2048.kantancommander.gui.declarative.contentFrame
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiScreenDefinition
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiView
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
@@ -153,6 +162,611 @@ class GestureLowerPanel(
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
+        state: GestureEditorState,
+        player: Player,
+        attention: GestureAttentionState,
+        suppressHighlight: Boolean = false,
+    ): GestureGuiView = if (KantanDeclarativeGui.useSettings) {
+        buildSettingsNew(state, player, attention, suppressHighlight)
+    } else {
+        buildSettingsLegacy(state, player, attention, suppressHighlight)
+    }
+
+    /**
+     * SETTINGS の宣言実装です。旧実装と同じ算出・文言・座標・要素 ID・ガード・ホバーを用い、
+     * 既存の画面定義・パネル・操作振分け（`view()`）を利用します。ノード未選択時は
+     * 旧実装へ委譲し、プログラム全体設定の描画は変えません。
+     */
+    private fun buildSettingsNew(
+        state: GestureEditorState,
+        player: Player,
+        attention: GestureAttentionState,
+        suppressHighlight: Boolean = false,
+    ): GestureGuiView {
+        val script = plugin.scripts.load(state.scriptId)
+        val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
+        if (node == null) return buildScriptSettings(state, player, script, attention)
+        val frame = contentFrame(GestureGuiPanel())
+        val nodes = mutableListOf<GestureGuiNode>()
+        val canDuplicate = script?.let {
+            GraphEditor.canDuplicate(it.graph, node.id, plugin.graphLimits().maximumNodeCount)
+        } == true
+        val duplicateBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE)
+        val deleteBackground = Bukkit.createBlockData(Material.RED_CONCRETE)
+        val duplicateLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DUPLICATE))
+        val deleteLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE))
+        val fields = CommandSettingsModel.gestureVisibleFields(node)
+        if (fields.isEmpty()) {
+            DeclarativeSettings.hintSection(
+                nodes,
+                frame,
+                Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS)),
+            )
+            DeclarativeSettings.tabsSection(
+                nodes,
+                frame,
+                tabs = emptyList(),
+                duplicateLabel = if (canDuplicate) duplicateLabel else null,
+                duplicateBackground = if (canDuplicate) duplicateBackground else null,
+                deleteLabel = deleteLabel,
+                deleteBackground = deleteBackground,
+            )
+            return finishSettings(nodes)
+        }
+        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
+        val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
+            ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
+        check(fields.size <= SETTINGS_TAB_MAX) {
+            "設定タブは${SETTINGS_TAB_MAX}個以内で定義してください: ${node.type}=${fields.size}"
+        }
+        DeclarativeSettings.tabsSection(
+            nodes,
+            frame,
+            tabs = fields.mapIndexed { index, field ->
+                val on = index == activeField
+                val fieldAttention = field.key in attentionFields
+                val tabSelected = on && !suppressHighlight
+                val tabTextColor = GestureSettingVisualPolicy.tabTextColor(fieldAttention)
+                SettingsTabEntry(
+                    label = Component.text(fieldTabLabel(player, node, field)).let {
+                        if (tabTextColor == null) it else it.color(tabTextColor)
+                    },
+                    selected = tabSelected,
+                    attentionHover = if (fieldAttention) attentionWarningHover(player, node, field.key) else null,
+                    background = Bukkit.createBlockData(GestureSettingVisualPolicy.tabMaterial(tabSelected)),
+                )
+            },
+            duplicateLabel = if (canDuplicate) duplicateLabel else null,
+            duplicateBackground = if (canDuplicate) duplicateBackground else null,
+            deleteLabel = deleteLabel,
+            deleteBackground = deleteBackground,
+        )
+        val field = fields[state.settingsTab.coerceIn(0, fields.lastIndex)]
+        val descriptor = CommandSettingsModel.descriptor(node, field.key)
+        val settingContext = state.settingContext
+            ?: CommandSettingContext(state.scriptId, node.id, descriptor.role)
+        val displayLabel = KcI18n.text(player, field.label)
+        val displayValue = field.value(node)
+        val compositeRows = when (displayValue) {
+            is DisplayValue.Timing -> displayValue.rows(player)
+            is DisplayValue.ParticleParameters -> displayValue.rows(player)
+            is DisplayValue.SoundTargetPosition -> displayValue.rows(player)
+            is DisplayValue.SoundSetting -> displayValue.rows(player)
+            is DisplayValue.ParticleDisplay -> displayValue.rows(player)
+            else -> null
+        }
+        val compositeLayout = compositeRows?.let {
+            GestureSettingValueLayout.calculate(
+                rowCount = it.size,
+                valueAnchorY = SETTING_VALUE_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
+                detailAnchorY = SETTING_DETAIL_ANCHOR_Y - SETTING_COMPOSITE_SHIFT,
+                rowGapRatio = TIMING_ROW_GAP_RATIO,
+                minimumDetailY = SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT +
+                    SETTING_INPUT_HEIGHT / 2.0 + SETTING_DETAIL_INPUT_GAP,
+            )
+        }
+        val inputCenterY = if (compositeRows != null) {
+            SETTING_INPUT_CENTER_Y - SETTING_COMPOSITE_SHIFT
+        } else {
+            SETTING_INPUT_CENTER_Y
+        }
+        val value = displayValue.render(player)
+        val settingScreen = gestureSettingScreenFor(descriptor.editor)
+        val settingChoices = settingScreen?.let { screen ->
+            settingTreeNodes(node, settingContext, screen, field.key, player, attentionFields).map { choice ->
+                if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
+                    choice.copy(selected = true)
+                } else choice
+            }
+        }.orEmpty()
+        val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
+        val warning = attentionWarning(player, node, field.key, attentionFields)
+        val detailHint = selectedDetail
+            ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
+        DeclarativeSettings.descriptionSection(
+            nodes,
+            frame,
+            body = Component.text(fieldDescription(player, field), NamedTextColor.GRAY),
+            detail = when {
+                !warning.isNullOrBlank() -> DescriptionDetail(
+                    Component.text(warning, NamedTextColor.RED),
+                    compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
+                )
+                !detailHint.isNullOrBlank() -> DescriptionDetail(
+                    Component.text(detailHint, NamedTextColor.GRAY),
+                    compositeLayout?.detailCenterY ?: SETTING_DETAIL_ANCHOR_Y,
+                )
+                else -> null
+            },
+        )
+        if (compositeRows != null && compositeLayout != null) {
+            check(compositeRows.size == compositeLayout.rowCentersY.size) {
+                "複合表示の値行とレイアウトの行数が一致しません: ${compositeRows.size} != ${compositeLayout.rowCentersY.size}"
+            }
+            DeclarativeSettings.valueRowsSection(
+                nodes,
+                frame,
+                rows = compositeRows.mapIndexed { index, row ->
+                    SettingsValueRow("lower-setting-composite-$index", row.label, row.value, compositeLayout.rowCentersY[index])
+                },
+            )
+        } else {
+            DeclarativeSettings.valueRowsSection(
+                nodes,
+                frame,
+                rows = listOf(SettingsValueRow("lower-setting", displayLabel, value, SETTING_VALUE_ANCHOR_Y)),
+            )
+        }
+        if (settingScreen != null) {
+            appendSettingChoiceCards(
+                nodes,
+                frame,
+                settingChoices,
+                fieldKey = field.key,
+                player = player,
+                child = false,
+                suppressHighlight = suppressHighlight,
+            )
+        }
+        val destinationTarget = if (
+            settingScreen == GestureSettingScreen.POSITION &&
+            settingContext.role == CommandSettingRole.DESTINATION
+        ) {
+            settingChoices.firstOrNull {
+                it.id == "position:${PositionKind.TARGET.name}" && it.selected
+            }
+        } else null
+        destinationTarget?.let {
+            appendDestinationChoiceCards(nodes, frame, it.children, field.key, player, suppressHighlight)
+        }
+        appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY)
+        return finishSettings(nodes)
+    }
+
+    /** 宣言区画を解決・変換し、既存の画面定義へ載せます。 */
+    private fun finishSettings(nodes: List<GestureGuiNode>): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeSettings.document(nodes),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeSettings] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.SETTINGS, compiled.elements, compiled.visuals)
+    }
+
+    private fun appendSettingChoiceCards(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        choices: List<GestureSettingTreeNode>,
+        fieldKey: String,
+        player: Player,
+        child: Boolean,
+        suppressHighlight: Boolean,
+    ) {
+        val rowCount = (choices.size + 1) / 2
+        choices.forEachIndexed { index, choice ->
+            val column = index % 2
+            val row = index / 2
+            val cx = if (child) {
+                if (column == 0) -0.53 else 0.53
+            } else if (column == 0) -0.10 else 0.67
+            val cy = if (child) {
+                CHILD_CHOICE_TOP_Y - row * CHILD_CHOICE_PITCH
+            } else {
+                TARGET_PARENT_CHOICE_TOP_Y - row * TARGET_PARENT_CHOICE_PITCH
+            }
+            val width = if (child) CHILD_CHOICE_WIDTH else SETTING_CHOICE_WIDTH
+            DeclarativeSettings.choiceCardsSection(
+                nodes,
+                frame,
+                cards = listOf(
+                    SettingsChoiceCard(
+                        elementId = "lower-setting-choice:${choice.id}",
+                        label = Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+                        background = Bukkit.createBlockData(settingChoiceMaterial(choice)),
+                        outline = if (suppressHighlight) {
+                            null
+                        } else {
+                            GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)?.let {
+                                Bukkit.createBlockData(it)
+                            }
+                        },
+                        enabled = choice.enabled,
+                        cx = cx,
+                        cy = cy,
+                        w = width,
+                        h = SETTING_CHOICE_HEIGHT,
+                        labelDy = -0.012,
+                        labelSize = 0.0045,
+                        labelWidth = 115,
+                        hover = DisabledChoiceVisualPolicy.hoverText(
+                            enabled = choice.enabled,
+                            normal = choice.description.takeIf(String::isNotBlank)
+                                ?: choiceDescription(player, choice, fieldKey),
+                            disabled = choice.disabledHoverText,
+                        )?.let {
+                            parallelButtonHover(
+                                text = it,
+                                x = cx,
+                                y = cy,
+                                row = row,
+                                rowCount = rowCount,
+                                height = SETTING_CHOICE_HEIGHT,
+                                descriptionX = if (child) 0.0 else HOVER_SLOT_X,
+                                descriptionY = if (child) CHILD_HOVER_Y else HOVER_SLOT_Y,
+                                replacesDescription = child,
+                                parallel = choices.size > 1,
+                            )
+                        },
+                        replacesDescription = child,
+                        visualTag = "setting-choice",
+                        visualIndex = index,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private fun appendDestinationChoiceCards(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        choices: List<GestureSettingTreeNode>,
+        fieldKey: String,
+        player: Player,
+        suppressHighlight: Boolean,
+    ) {
+        val visibleChoices = choices.take(GestureTargetChoiceLayoutPolicy.CHOICE_COUNT)
+        GestureTargetChoiceLayoutPolicy.slots(visibleChoices.size)
+            .zip(visibleChoices)
+            .forEachIndexed { index, (slot, choice) ->
+                val cx = slot.centerX
+                val cy = POSITION_TARGET_CHOICE_Y
+                DeclarativeSettings.choiceCardsSection(
+                    nodes,
+                    frame,
+                    cards = listOf(
+                        SettingsChoiceCard(
+                            elementId = "lower-setting-choice:${choice.id}",
+                            label = Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+                            background = Bukkit.createBlockData(settingChoiceMaterial(choice)),
+                            outline = if (suppressHighlight) {
+                                null
+                            } else {
+                                GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)?.let {
+                                    Bukkit.createBlockData(it)
+                                }
+                            },
+                            enabled = choice.enabled,
+                            cx = cx,
+                            cy = cy,
+                            w = slot.width,
+                            h = POSITION_TARGET_CHOICE_HEIGHT,
+                            labelDy = -0.02,
+                            labelSize = 0.0055,
+                            labelWidth = 90,
+                            hover = DisabledChoiceVisualPolicy.hoverText(
+                                enabled = choice.enabled,
+                                normal = choice.description.takeIf(String::isNotBlank)
+                                    ?: choiceDescription(player, choice, fieldKey),
+                                disabled = choice.disabledHoverText,
+                            )?.let {
+                                parallelButtonHover(
+                                    text = it,
+                                    x = cx,
+                                    y = cy,
+                                    row = 0,
+                                    rowCount = 1,
+                                    height = POSITION_TARGET_CHOICE_HEIGHT,
+                                    descriptionX = HOVER_SLOT_X,
+                                    descriptionY = HOVER_SLOT_Y,
+                                    replacesDescription = false,
+                                    parallel = visibleChoices.size > 1,
+                                )
+                            },
+                            replacesDescription = false,
+                            visualTag = "position-target-choice",
+                            visualIndex = index,
+                        ),
+                    ),
+                )
+            }
+    }
+
+    private fun appendSettingsInputCards(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        state: GestureEditorState,
+        player: Player,
+        node: CommandNode,
+        field: EditorField,
+        descriptor: CommandSettingDescriptor,
+        inputCenterY: Double,
+    ) {
+        val typedValueSourceSetting =
+            CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
+        val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
+            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
+        val heldBlockSetting = field.key == "block" && (
+            node.type == CommandType.BLOCK_OPERATION ||
+                (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                (node.type == CommandType.TEMP_SET &&
+                    TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
+            )
+        val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
+        val heldFireworkSetting = field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH
+        val heldMainHandSetting = heldItemSetting || heldBlockSetting || heldDiskSetting || heldFireworkSetting
+        val heldMainHandAvailable = when {
+            heldItemSetting -> GestureGuiClickPolicy.hasMainHandItem(player)
+            heldBlockSetting -> HeldBlockSettingPolicy.canSet(player.inventory.itemInMainHand.type)
+            heldDiskSetting -> KantanItemService.diskId(player.inventory.itemInMainHand) != null
+            heldFireworkSetting -> player.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
+            else -> true
+        }
+        val dialogInputSetting = !heldMainHandSetting &&
+            descriptor.editor == CommandSettingEditor.TEXT && field.key in TEXT_EDITABLE_KEYS
+        if (typedValueSourceSetting) {
+            val selectedSource = CommandSettingsModel.temporaryValueSource(node, field.key)
+                ?: CommandValueSource.LITERAL
+            val sources = listOf(CommandValueSource.LITERAL, CommandValueSource.TEMPORARY)
+            sources.forEachIndexed { index, source ->
+                val selected = source == selectedSource
+                val enabled = source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(player, field.key)
+                val lines = typedValueSourceLines(player, field.key, source)
+                val x = if (index == 0) TYPED_VALUE_SOURCE_LEFT_X else TYPED_VALUE_SOURCE_RIGHT_X
+                DeclarativeSettings.actionCardSection(
+                    nodes,
+                    frame,
+                    SettingsActionCard(
+                        elementId = "lower-value-source:${field.key}:${source.name}",
+                        label = typedValueSourceComponent(lines).color(
+                            if (source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(player, field.key)) {
+                                NamedTextColor.GOLD
+                            } else {
+                                DisabledChoiceVisualPolicy.textColor
+                            },
+                        ),
+                        background = Bukkit.createBlockData(
+                            if (enabled) {
+                                if (selected) Material.CYAN_TERRACOTTA else Material.LIGHT_GRAY_CONCRETE
+                            } else DisabledGuiVisualPolicy.material,
+                        ),
+                        cx = x,
+                        cy = SETTING_INPUT_CENTER_Y,
+                        w = TYPED_VALUE_SOURCE_WIDTH,
+                        h = SETTING_INPUT_HEIGHT,
+                        labelSize = 0.0043,
+                        labelWidth = 92,
+                        gestures = if (enabled) {
+                            typedValueSourceGestures(field.key, source)
+                        } else emptySet(),
+                        guard = if (enabled) {
+                            { actor, _ -> source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(actor, field.key) }
+                        } else {
+                            { _, _ -> false }
+                        },
+                    hover = multiLineHover(lines, x = x, y = HOVER_SLOT_Y),
+                    visualTag = "lower-value-source-${source.name.lowercase()}",
+                ),
+            )
+        }
+            appendTypedValuePreview(nodes, frame, node, field.key, selectedSource, state.scriptId, player)
+        } else if (heldMainHandSetting || dialogInputSetting) {
+            val editVisualText = if (heldMainHandSetting) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
+            } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER
+            val editTextColor = if (heldMainHandAvailable) NamedTextColor.GOLD else NamedTextColor.GRAY
+            DeclarativeSettings.actionCardSection(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-edit:${field.key}",
+                    label = Component.text(KcI18n.text(player, editVisualText), editTextColor),
+                    background = Bukkit.createBlockData(
+                        if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = 0.28,
+                    cy = inputCenterY,
+                    w = 1.2,
+                    h = SETTING_INPUT_HEIGHT,
+                    labelSize = 0.0055,
+                    labelWidth = 180,
+                    gestures = if (heldMainHandSetting) {
+                        GestureGuiClickPolicy.MAIN_HAND
+                    } else GestureGuiClickPolicy.CLICK,
+                    guard = if (heldMainHandSetting) {
+                        { actor, _ ->
+                            if (heldDiskSetting) {
+                                KantanItemService.diskId(actor.inventory.itemInMainHand) != null
+                            } else if (heldBlockSetting) {
+                                HeldBlockSettingPolicy.canSet(actor.inventory.itemInMainHand.type)
+                            } else if (heldFireworkSetting) {
+                                actor.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
+                            } else {
+                                GestureGuiClickPolicy.hasMainHandItem(actor)
+                            }
+                        }
+                    } else null,
+                    hover = singleLineHover(
+                        KcI18n.text(
+                            player,
+                            if (heldMainHandSetting) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MAINHAND_SAVE_HOVER
+                            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER,
+                        ),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    ),
+                    visualTag = "lower-edit",
+                ),
+            )
+        }
+        if (heldItemSetting && !typedValueSourceSetting) {
+            val itemConfigured = node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+            DeclarativeSettings.actionCardSection(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-item-get",
+                    label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM)),
+                    background = Bukkit.createBlockData(
+                        if (itemConfigured) Material.BROWN_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = 0.28,
+                    cy = -0.15,
+                    w = 1.2,
+                    h = 0.12,
+                    labelSize = 0.0048,
+                    labelWidth = 180,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ ->
+                        plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                            current.string("item").isNotBlank() || current.string("itemData").isNotBlank()
+                        } == true
+                    },
+                    hover = singleLineHover(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_ITEM_HOVER),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    ),
+                    visualTag = "lower-item-get",
+                ),
+            )
+        }
+        if (field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
+            val fireworkConfigured = node.string("fireworkItem").isNotBlank() ||
+                node.string("fireworkData").isNotBlank()
+            DeclarativeSettings.actionCardSection(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-firework-preview",
+                    label = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FIREWORK_PREVIEW),
+                        if (fireworkConfigured) NamedTextColor.GOLD else NamedTextColor.GRAY,
+                    ),
+                    background = Bukkit.createBlockData(
+                        if (fireworkConfigured) Material.ORANGE_CONCRETE else DisabledGuiVisualPolicy.material,
+                    ),
+                    cx = 0.28,
+                    cy = -0.15,
+                    w = 1.2,
+                    h = 0.12,
+                    labelSize = 0.0048,
+                    labelWidth = 180,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = { _, _ ->
+                        plugin.scripts.load(state.scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                            current.string("fireworkItem").isNotBlank() || current.string("fireworkData").isNotBlank()
+                        } == true
+                    },
+                    hover = singleLineHover(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIREWORK_PREVIEW_HOVER),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    ),
+                    visualTag = "lower-firework-preview",
+                ),
+            )
+        }
+    }
+
+    private fun appendTypedValuePreview(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        node: CommandNode,
+        fieldKey: String,
+        source: CommandValueSource,
+        scriptId: java.util.UUID,
+        player: Player,
+    ) {
+        if (source != CommandValueSource.LITERAL) return
+        val mapping = when (fieldKey) {
+            "item" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_CONFIGURED_ITEM,
+                "lower-item-get",
+                Material.BROWN_CONCRETE,
+            )
+            "block" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_CONFIGURED_BLOCK,
+                "lower-block-get",
+                Material.GRAY_CONCRETE,
+            )
+            "sound" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
+                "lower-sound-preview",
+                Material.PURPLE_CONCRETE,
+            )
+            "soundSetting" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
+                "lower-sound-preview",
+                Material.PURPLE_CONCRETE,
+            )
+            "effect" -> Triple(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_APPLY_CONFIGURED_EFFECT,
+                "lower-effect-preview",
+                Material.MAGENTA_CONCRETE,
+            )
+            else -> return
+        }
+        val (labelKey, elementId, material) = mapping
+        val lines = KcI18n.list(player, labelKey).filter(String::isNotBlank)
+        val configured = typedValuePreviewConfigured(node, fieldKey)
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = elementId,
+                label = typedValueSourceComponent(lines).color(
+                    if (configured) NamedTextColor.GOLD else NamedTextColor.GRAY,
+                ),
+                background = Bukkit.createBlockData(
+                    if (configured) material else DisabledGuiVisualPolicy.material,
+                ),
+                cx = TYPED_VALUE_PREVIEW_CENTER_X,
+                cy = TYPED_VALUE_PREVIEW_CENTER_Y,
+                w = TYPED_VALUE_PREVIEW_WIDTH,
+                h = TYPED_VALUE_PREVIEW_HEIGHT,
+                labelSize = 0.0043,
+                labelWidth = 180,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = { _, _ ->
+                    plugin.scripts.load(scriptId)?.graph?.nodes?.get(node.id)?.let { current ->
+                        CommandSettingsModel.temporaryValueSource(current, fieldKey) == CommandValueSource.LITERAL &&
+                            typedValuePreviewConfigured(current, fieldKey)
+                    } == true
+                },
+                hover = multiLineHover(lines, x = HOVER_SLOT_X, y = HOVER_SLOT_Y),
+                visualTag = elementId,
+            ),
+        )
+    }
+
+    /**
+     * SETTINGS旧実装です。宣言移行の対照として保持します。
+     * `useSettings` が false の場合と、ノード未選択時（プログラム全体設定）に用います。
+     */
+    private fun buildSettingsLegacy(
         state: GestureEditorState,
         player: Player,
         attention: GestureAttentionState,
@@ -579,7 +1193,7 @@ class GestureLowerPanel(
         else -> false
     }
 
-    private fun typedValueSourceGestures(
+    internal fun typedValueSourceGestures(
         fieldKey: String,
         source: CommandValueSource,
     ): Set<GestureGuiGesture> = if (
@@ -1370,7 +1984,7 @@ class GestureLowerPanel(
         )
     }
 
-    private fun typedValuePreviewConfigured(node: CommandNode, fieldKey: String): Boolean = when (fieldKey) {
+    internal fun typedValuePreviewConfigured(node: CommandNode, fieldKey: String): Boolean = when (fieldKey) {
         "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
         "block" -> Material.matchMaterial(node.string("block"))
             ?.takeUnless { it == Material.AIR } != null
@@ -1384,7 +1998,7 @@ class GestureLowerPanel(
      * 通常の設定項目や空欄の無効表示とは意味が異なるため、無効な選択肢だけを
      * DisabledChoiceVisualPolicyへ通します。
      */
-    private fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
+    internal fun settingChoiceMaterial(choice: GestureSettingTreeNode): Material =
         if (choice.enabled) {
             // 択一／複数選択、初期／設定済みの区別は背景色へ反映しません。
             Material.LIGHT_GRAY_CONCRETE
@@ -1546,7 +2160,7 @@ class GestureLowerPanel(
     }
 
     /** 表示時間はグループ名をタブへ、表示継続時間は内部の現在値ラベルへ分離します。 */
-    private fun fieldTabLabel(player: Player, node: CommandNode, field: EditorField): String =
+    internal fun fieldTabLabel(player: Player, node: CommandNode, field: EditorField): String =
         if (node.type == CommandType.DISPLAY_TEXT && field.key == "staySeconds") {
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE)
         } else {
@@ -1645,7 +2259,7 @@ class GestureLowerPanel(
     }
 
     /** 項目の説明文です。複数行の説明は1文へ連結し、折り返しは描画側へ任せます。 */
-    private fun fieldDescription(player: Player, field: EditorField): String =
+    internal fun fieldDescription(player: Player, field: EditorField): String =
         KcI18n.list(player, field.descriptionKey)
             .filter(String::isNotBlank)
             .joinToString(" ")
@@ -1658,7 +2272,7 @@ class GestureLowerPanel(
      * 統一します。キーの選択はCommandSettingsModelへ集約し、表示側でコマンド型の
      * 分岐や入力値の解析を行わないようにします。
      */
-    private fun attentionWarning(
+    internal fun attentionWarning(
         player: Player,
         node: CommandNode,
         fieldKey: String,
@@ -1670,7 +2284,7 @@ class GestureLowerPanel(
     }
 
     /** 要確認タブへホバーしたときも、そのタブ固有の固定警告文を表示します。 */
-    private fun attentionWarningHover(
+    internal fun attentionWarningHover(
         player: Player,
         node: CommandNode,
         fieldKey: String,
@@ -1682,7 +2296,7 @@ class GestureLowerPanel(
         )
 
     /** 選択肢ごとの意味を、選択肢IDと明示対応させたカタログキーから生成します。 */
-    private fun choiceDescription(player: Player, choice: SettingChoice, fieldKey: String?): String? = when {
+    internal fun choiceDescription(player: Player, choice: SettingChoice, fieldKey: String?): String? = when {
         // 対象分類は、ラベルと同一の文面ではなく項目の説明を表示します。
         choice.id == "target:${TargetCategory.PLAYER.name}" ->
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PLAYER_TARGET)
@@ -1910,7 +2524,7 @@ class GestureLowerPanel(
             replacesVisualId = replacesVisualId,
         )
 
-    private fun singleLineHover(
+    internal fun singleLineHover(
         text: String,
         x: Double,
         y: Double,
@@ -1918,7 +2532,7 @@ class GestureLowerPanel(
     ): GestureGuiHoverText = hoverText(Component.text(text), x, y, replacesVisualId)
 
     /** 複数の意味行を、空行を挿入せずに一つのホバーTextDisplayへ配置します。 */
-    private fun multiLineHover(
+    internal fun multiLineHover(
         lines: List<String>,
         x: Double,
         y: Double,
@@ -2823,7 +3437,7 @@ class GestureLowerPanel(
             }
     }
 
-    private fun targetFilterChoices(
+    internal fun targetFilterChoices(
         node: CommandNode,
         context: CommandSettingContext,
         player: Player,

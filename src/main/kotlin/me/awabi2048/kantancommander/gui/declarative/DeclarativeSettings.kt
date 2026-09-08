@@ -1,0 +1,375 @@
+package me.awabi2048.kantancommander.gui.declarative
+
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiHoverText
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiOutline
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiPanel
+import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiAbsoluteOffsets
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBlock
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHover
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHoverPosition
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiHoverTarget
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
+import me.awabi2048.kantancommander.gui.GestureGuiClickPolicy
+import me.awabi2048.kantancommander.gui.GestureLowerPanel
+import me.awabi2048.kantancommander.gui.GestureSettingVisualPolicy
+import net.kyori.adventure.text.Component
+import org.bukkit.block.data.BlockData
+import org.bukkit.entity.Player
+
+/** 内容域の原点です。旧来の全画面座標からの換算に用います。 */
+data class ContentFrame(val minX: Double, val maxY: Double)
+
+/** パネル内容域の原点を求めます。 */
+internal fun contentFrame(panel: GestureGuiPanel): ContentFrame = ContentFrame(
+    minX = -panel.width / 2.0 + panel.frameWidth,
+    maxY = panel.height / 2.0 - panel.frameWidth,
+)
+
+/** 旧来の中心・寸法指定を絶対配置へ変換します。 */
+internal fun placed(frame: ContentFrame, cx: Double, cy: Double, w: Double, h: Double): GestureGuiAbsoluteOffsets =
+    GestureGuiAbsoluteOffsets(
+        left = (cx - w / 2.0) - frame.minX,
+        top = frame.maxY - (cy + h / 2.0),
+    )
+
+/** 設定タブ列の1件です。文言・素材・ホバー解決値は呼び出し側で用意します。 */
+data class SettingsTabEntry(
+    val label: Component,
+    val selected: Boolean,
+    val attentionHover: GestureGuiHoverText?,
+    val background: BlockData,
+)
+
+/** 説明ブロックの2行目です。警告（赤）または案内（灰）のどちらかです。 */
+data class DescriptionDetail(
+    val text: Component,
+    val y: Double,
+)
+
+/** 現在値の1行です。 */
+data class SettingsValueRow(
+    val id: String,
+    val label: String,
+    val value: String,
+    val y: Double,
+)
+
+/** 設定候補・対象分類カードの1件です。座標は呼び出し側で解決済みで渡します。 */
+data class SettingsChoiceCard(
+    /** 要素 ID 全文です（例 lower-setting-choice:xxx）。無効時は消費面になります。 */
+    val elementId: String,
+    val label: Component,
+    val background: BlockData,
+    val outline: BlockData?,
+    val enabled: Boolean,
+    val cx: Double,
+    val cy: Double,
+    val w: Double,
+    val h: Double,
+    val labelDy: Double,
+    val labelSize: Double,
+    val labelWidth: Int,
+    /** 旧ホバー規則の解決値をそのまま渡します。 */
+    val hover: GestureGuiHoverText?,
+    /** 常設説明の置換要否です（子画面のみ true）。 */
+    val replacesDescription: Boolean,
+    /** 視覚 ID の接頭辞です（例 setting-choice / position-target-choice）。 */
+    val visualTag: String,
+    val visualIndex: Int,
+)
+
+/** 汎用操作カード1件です。入力枠・取得・試射・候補導線を同じ形で表します。 */
+data class SettingsActionCard(
+    /** 要素 ID 全文です。操作面なしの場合は null にします。 */
+    val elementId: String?,
+    val label: Component,
+    val background: BlockData,
+    val cx: Double,
+    val cy: Double,
+    val w: Double,
+    val h: Double,
+    val labelSize: Double,
+    val labelWidth: Int,
+    val gestures: Set<GestureGuiGesture>,
+    val guard: ((Player, GestureGuiGesture) -> Boolean)?,
+    val hover: GestureGuiHoverText?,
+    val visualTag: String,
+    /** action なしで入力を無音消費します（余白解除・バリア等）。表示専用では false です。 */
+    val consume: Boolean = false,
+)
+
+/**
+ * 設定系画面の宣言区画です。
+ *
+ * 旧 `buildSettings` 系 helper の座標・寸法・素材・要素 ID・ホバー位置をそのまま転記し、
+ * 文言・素材・ガード・ホバー解決値だけを呼び出し側から受けます。
+ * i18n・候補算出・スクリプト参照は含まず、実行時 adapter が解決します。
+ */
+object DeclarativeSettings {
+    /** 旧ホバー文を宣言仕様へ変換します。置換先は宣言ノード ID 基準で解決します。 */
+    internal fun hoverSpecOf(hover: GestureGuiHoverText): GestureGuiHover = GestureGuiHover(
+        text = hover.text,
+        size = hover.size,
+        lineWidth = hover.lineWidth,
+        position = GestureGuiHoverPosition.Fixed(hover.x, hover.y),
+        replacement = hover.replacesVisualId?.let(GestureGuiHoverTarget::Node)
+            ?: GestureGuiHoverTarget.None,
+    )
+
+    /**
+     * 左タブ列と固定操作（複製・削除）を配置します。
+     * 設定項目なしの案内画面でも同じ固定操作を用います。
+     */
+    fun tabsSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        tabs: List<SettingsTabEntry>,
+        duplicateLabel: Component?,
+        duplicateBackground: BlockData?,
+        deleteLabel: Component,
+        deleteBackground: BlockData,
+    ) {
+        tabs.forEachIndexed { index, tab ->
+            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - index * GestureLowerPanel.SETTINGS_TAB_PITCH
+            val width = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, tab.selected)
+            val cx = GestureSettingVisualPolicy.selectedTabCenterX(
+                GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+                GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                tab.selected,
+            )
+            nodes += GestureGuiBlock(
+                blockData = tab.background,
+                width = GestureGuiSizeSpec.Fixed(width),
+                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+                id = "lower-tab:$index",
+                actionId = "lower-tab:$index",
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                hover = tab.attentionHover?.let(::hoverSpecOf),
+                absolute = placed(frame, cx, cy, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            )
+            nodes += GestureGuiText(
+                text = tab.label,
+                size = 0.0055,
+                lineWidth = 90,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "tab-$index",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, 1.0, 0.0055 * 3.0),
+            )
+        }
+        if (duplicateLabel != null && duplicateBackground != null) {
+            appendActionCard(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-duplicate",
+                    label = duplicateLabel,
+                    background = duplicateBackground,
+                    cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+                    cy = GestureLowerPanel.SETTINGS_TAB_DUPLICATE_Y,
+                    w = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                    h = GestureLowerPanel.SETTINGS_TAB_HEIGHT,
+                    labelSize = 0.0049,
+                    labelWidth = 90,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = null,
+                    hover = null,
+                    visualTag = "duplicate",
+                ),
+            )
+        }
+        appendActionCard(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-delete",
+                label = deleteLabel,
+                background = deleteBackground,
+                cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+                cy = GestureLowerPanel.SETTINGS_TAB_ACTION_Y,
+                w = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                h = GestureLowerPanel.SETTINGS_TAB_HEIGHT,
+                labelSize = 0.0049,
+                labelWidth = 90,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = null,
+                visualTag = "delete",
+            ),
+        )
+    }
+
+    /** 設定項目なしの案内文を配置します。固定操作は tabsSection 側で配置します。 */
+    fun hintSection(nodes: MutableList<GestureGuiNode>, frame: ContentFrame, hint: Component) {
+        nodes += GestureGuiText(
+            text = hint,
+            size = 0.010,
+            lineWidth = 160,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "lower-hint",
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, 0.28, 0.20, 1.0, 0.010 * 3.0),
+        )
+    }
+
+    /** 説明ブロック（常設説明＋詳細2行目）を配置します。 */
+    fun descriptionSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        body: Component,
+        detail: DescriptionDetail?,
+        centerX: Double = 0.28,
+        hoverY: Double = GestureLowerPanel.ACTION_DESCRIPTION_Y,
+    ) {
+        nodes += GestureGuiText(
+            text = body,
+            size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
+            lineWidth = 280,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = GestureLowerPanel.SETTING_DESCRIPTION_HOVER_ID,
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, centerX, hoverY, 1.0, 0.0043 * 3.0),
+        )
+        detail?.let {
+            nodes += GestureGuiText(
+                text = it.text,
+                size = 0.0041,
+                lineWidth = 280,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "setting-description-detail",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, centerX, it.y, 1.0, 0.0041 * 3.0),
+            )
+        }
+    }
+
+    /** 現在値行を配置します。単行・複合行とも同じ形です。 */
+    fun valueRowsSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        rows: List<SettingsValueRow>,
+        labelX: Double = -0.08,
+        valueX: Double = 0.52,
+    ) {
+        rows.forEach { row ->
+            nodes += GestureGuiText(
+                text = Component.text(row.label),
+                size = 0.0060,
+                lineWidth = 120,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "${row.id}-label",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, labelX, row.y, 1.0, 0.0060 * 3.0),
+            )
+            nodes += GestureGuiText(
+                text = Component.text(row.value),
+                size = 0.0060,
+                lineWidth = 170,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "${row.id}-value",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, valueX, row.y, 1.0, 0.0060 * 3.0),
+            )
+        }
+    }
+
+    /**
+     * 設定候補・対象分類カードを配置します。
+     * 無効な候補は操作面なしの消費面にし、ホバーは維持します。
+     */
+    fun choiceCardsSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        cards: List<SettingsChoiceCard>,
+    ) {
+        cards.forEach { card ->
+            nodes += GestureGuiBlock(
+                blockData = card.background,
+                width = GestureGuiSizeSpec.Fixed(card.w),
+                height = GestureGuiSizeSpec.Fixed(card.h),
+                outline = card.outline?.let { GestureGuiOutline(it) },
+                id = card.elementId,
+                actionId = if (card.enabled) card.elementId else null,
+                acceptedGestures = if (card.enabled) GestureGuiClickPolicy.CLICK else emptySet(),
+                consumeInput = !card.enabled,
+                hover = card.hover?.let {
+                    hoverSpecOf(it).copy(
+                        replacement = if (card.replacesDescription) {
+                            GestureGuiHoverTarget.Node(GestureLowerPanel.SETTING_DESCRIPTION_HOVER_ID)
+                        } else {
+                            GestureGuiHoverTarget.None
+                        },
+                    )
+                },
+                absolute = placed(frame, card.cx, card.cy, card.w, card.h),
+            )
+            nodes += GestureGuiText(
+                text = card.label,
+                size = card.labelSize,
+                lineWidth = card.labelWidth,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "${card.visualTag}-label-${card.visualIndex}",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
+            )
+        }
+    }
+
+    /** 汎用操作カード1件（背景＋文言＋操作面）を配置します。 */
+    fun actionCardSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        card: SettingsActionCard,
+    ) {
+        appendActionCard(nodes, frame, card)
+    }
+
+    private fun appendActionCard(nodes: MutableList<GestureGuiNode>, frame: ContentFrame, card: SettingsActionCard) {
+        nodes += GestureGuiBlock(
+            blockData = card.background,
+            width = GestureGuiSizeSpec.Fixed(card.w),
+            height = GestureGuiSizeSpec.Fixed(card.h),
+            id = card.elementId ?: "${card.visualTag}-bg",
+            actionId = card.elementId,
+            acceptedGestures = card.gestures,
+            consumeInput = card.consume,
+            gestureGuard = card.guard,
+            hover = card.hover?.let(::hoverSpecOf),
+            absolute = placed(frame, card.cx, card.cy, card.w, card.h),
+        )
+        nodes += GestureGuiText(
+            text = card.label,
+            size = card.labelSize,
+            lineWidth = card.labelWidth,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "${card.visualTag}-label",
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, card.cx, card.cy, 1.0, card.labelSize * 3.0),
+        )
+    }
+
+    fun document(nodes: List<GestureGuiNode>, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =
+        GestureGuiDocument(
+            GestureGuiBox(
+                children = nodes,
+                id = "settings-root",
+                width = GestureGuiSizeSpec.Percent(1.0),
+                height = GestureGuiSizeSpec.Percent(1.0),
+            ),
+            panel,
+        )
+}

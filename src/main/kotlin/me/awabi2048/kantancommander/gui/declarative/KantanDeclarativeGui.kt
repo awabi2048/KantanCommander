@@ -21,5 +21,5 @@ object KantanDeclarativeGui {
     var usePicker: Boolean = true
 
     /** 設定系画面を宣言実装へ切り替えます。 */
-    var useSettings: Boolean = false
+    var useSettings: Boolean = true
 }
