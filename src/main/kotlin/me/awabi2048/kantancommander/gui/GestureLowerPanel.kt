@@ -339,7 +339,7 @@ class GestureLowerPanel(
         destinationTarget?.let {
             appendDestinationChoiceCards(nodes, frame, it.children, field.key, player, suppressHighlight)
         }
-        appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY)
+        appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight)
         return finishSettings(nodes)
     }
 
@@ -502,6 +502,7 @@ class GestureLowerPanel(
         field: EditorField,
         descriptor: CommandSettingDescriptor,
         inputCenterY: Double,
+        suppressHighlight: Boolean = false,
     ) {
         val typedValueSourceSetting =
             CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
@@ -532,7 +533,8 @@ class GestureLowerPanel(
             val sources = listOf(CommandValueSource.LITERAL, CommandValueSource.TEMPORARY)
             sources.forEachIndexed { index, source ->
                 val selected = source == selectedSource
-                val enabled = source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(player, field.key)
+                // 方式指定は手持ちの有無にかかわらず行えます。手持ち要件は
+                // 二段階目の適用時判定に残し、クリック時点のガードで再評価します。
                 val lines = typedValueSourceLines(player, field.key, source)
                 val x = if (index == 0) TYPED_VALUE_SOURCE_LEFT_X else TYPED_VALUE_SOURCE_RIGHT_X
                 DeclarativeSettings.actionCardSection(
@@ -540,31 +542,26 @@ class GestureLowerPanel(
                     frame,
                     SettingsActionCard(
                         elementId = "lower-value-source:${field.key}:${source.name}",
-                        label = typedValueSourceComponent(lines).color(
-                            if (source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(player, field.key)) {
-                                NamedTextColor.GOLD
-                            } else {
-                                DisabledChoiceVisualPolicy.textColor
-                            },
-                        ),
+                        label = typedValueSourceComponent(lines).color(NamedTextColor.GOLD),
                         background = Bukkit.createBlockData(
-                            if (enabled) {
-                                if (selected) Material.CYAN_TERRACOTTA else Material.LIGHT_GRAY_CONCRETE
-                            } else DisabledGuiVisualPolicy.material,
+                            if (selected) Material.CYAN_TERRACOTTA else Material.LIGHT_GRAY_CONCRETE,
                         ),
+                        outline = if (suppressHighlight) {
+                            null
+                        } else {
+                            GestureSettingVisualPolicy.nonTabOutlineMaterial(selected)?.let {
+                                Bukkit.createBlockData(it)
+                            }
+                        },
                         cx = x,
                         cy = SETTING_INPUT_CENTER_Y,
                         w = TYPED_VALUE_SOURCE_WIDTH,
                         h = SETTING_INPUT_HEIGHT,
                         labelSize = 0.0043,
                         labelWidth = 92,
-                        gestures = if (enabled) {
-                            typedValueSourceGestures(field.key, source)
-                        } else emptySet(),
-                        guard = if (enabled) {
-                            { actor, _ -> source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(actor, field.key) }
-                        } else {
-                            { _, _ -> false }
+                        gestures = typedValueSourceGestures(field.key, source),
+                        guard = { actor, _ ->
+                            source == CommandValueSource.TEMPORARY || typedValueSourceAvailable(actor, field.key)
                         },
                     hover = multiLineHover(lines, x = x, y = HOVER_SLOT_Y),
                     visualTag = "lower-value-source-${source.name.lowercase()}",

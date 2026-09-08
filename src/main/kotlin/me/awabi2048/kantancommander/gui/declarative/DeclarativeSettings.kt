@@ -100,6 +100,8 @@ data class SettingsActionCard(
     val guard: ((Player, GestureGuiGesture) -> Boolean)?,
     val hover: GestureGuiHoverText?,
     val visualTag: String,
+    /** 選択中等の外周枠です。ない場合は枠なしです。 */
+    val outline: BlockData? = null,
     /** action なしで入力を無音消費します（余白解除・バリア等）。表示専用では false です。 */
     val consume: Boolean = false,
 )
@@ -342,6 +344,7 @@ object DeclarativeSettings {
             blockData = card.background,
             width = GestureGuiSizeSpec.Fixed(card.w),
             height = GestureGuiSizeSpec.Fixed(card.h),
+            outline = card.outline?.let { GestureGuiOutline(it) },
             id = card.elementId ?: "${card.visualTag}-bg",
             actionId = card.elementId,
             acceptedGestures = card.gestures,

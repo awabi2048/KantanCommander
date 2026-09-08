@@ -186,6 +186,42 @@ class DeclarativeSettingsTest {
     }
 
     @Test
+    fun `action card outline passes through to the block visual`() {
+        val nodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame(),
+            SettingsActionCard(
+                elementId = "lower-value-source:item:LITERAL",
+                label = Component.text("literal", NamedTextColor.GOLD),
+                background = blockData(),
+                outline = blockData(),
+                cx = -0.04,
+                cy = 0.02,
+                w = 0.56,
+                h = 0.16,
+                labelSize = 0.0043,
+                labelWidth = 92,
+                gestures = setOf(
+                    com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture.PRIMARY,
+                    com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture.SHIFT_PRIMARY,
+                ),
+                guard = null,
+                hover = null,
+                visualTag = "lower-value-source-literal",
+            ),
+        )
+        val compiled = KantanLayoutBridge.compile(DeclarativeSettings.document(nodes, panel), onAction = {})
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        val block = compiled.visuals.filterIsInstance<com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual.Block>()
+            .single()
+        // 選択中白枠が背景へ付与されます。
+        assertNotNull(block.outline)
+        // 方式指定は手持ちと無関係に操作面を持ちます。
+        assertEquals("lower-value-source:item:LITERAL", compiled.elements.single().elementId)
+    }
+
+    @Test
     fun `value rows and description place legacy coordinates`() {
         val nodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
         DeclarativeSettings.descriptionSection(
