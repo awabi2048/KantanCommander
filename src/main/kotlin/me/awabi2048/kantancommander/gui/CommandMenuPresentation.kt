@@ -76,6 +76,9 @@ internal object CommandPresentationPolicy {
         CommandType.FOR_END,
         CommandType.BREAK,
         CommandType.CONTINUE,
+        // 折り畳みノードは折り畳み操作だけで生成するため、新規追加の分類には載せません。
+        CommandType.FOLDED_FOR,
+        CommandType.FOLDED_IF,
         -> CommandCategory.CONTROL
 
     }
@@ -113,6 +116,8 @@ internal object CommandPickerTypePolicy {
             CommandType.FOR_END -> false
             CommandType.MERGE -> mergeAvailable
             CommandType.BREAK, CommandType.CONTINUE -> insideForBody
+            // 折り畳みノードは折り畳み操作だけで生成し、新規追加の候補に出しません。
+            CommandType.FOLDED_FOR, CommandType.FOLDED_IF -> false
             else -> true
         }
     }

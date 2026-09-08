@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 10
+const val STRUCTURED_FORMAT_VERSION = 11
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -33,13 +33,19 @@ data class DiskScript(
      */
     var revision: Long = 0L,
     /**
-     * ジェスチャーGUIで折りたたみ表示するfor開始ノードのID集合です。
+     * ジェスチャーGUIで折りたたみ表示するfor開始ノードのID群です。
      *
-     * グラフ構造には影響しない表示状態ですが、編集画面の見た目を保つため
-     * プログラムごとに永続化します。旧JSONには存在しないためnullableにし、
-     * 読み込み直後は空集合として扱います。実行内容・出力可否の判定には使いません。
+     * 新形式（v11）では折り畳み自体をノード種別（FOLDED_FOR／FOLDED_IF）として
+     * 永続化するため使用しません。旧JSONの読み捨て互換のために項目だけ残します。
      */
     var collapsedForStartIds: MutableSet<UUID>? = null,
+    /**
+     * ジェスチャーGUIで折りたたみ表示する条件分岐ノードのID群です。
+     *
+     * 新形式（v11）では折り畳み自体をノード種別（FOLDED_FOR／FOLDED_IF）として
+     * 永続化するため使用しません。旧JSONの読み捨て互換のために項目だけ残します。
+     */
+    var collapsedConditionIds: MutableSet<UUID>? = null,
     /**
      * ノードを持たないスクリプトでも、プログラム名またはタイマーを明示的に
      * 編集したことを保持します。配置からのディスク出力可否は値の非空判定では
@@ -53,13 +59,22 @@ data class DiskScript(
 fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotEmpty()
 
 /**
- * 折りたたみ表示するfor開始ノードのID集合です。
+ * 折りたたみ表示するfor開始ノードのID群です。
  *
- * 旧JSONには存在しないため欠落時は空集合を割り当てます。描画時は現存する
- * 対応ペア付きFOR_STARTとの積だけを有効とし、残骸IDは無視します。
+ * 新形式（v11）では使用しません。旧JSONの読み捨て互換のために残します。
  */
+@Deprecated("折り畳みはFOLDED_FORへ移行しました。読み捨て専用です。")
 fun DiskScript.collapsedForStarts(): MutableSet<UUID> =
     collapsedForStartIds ?: linkedSetOf<UUID>().also { collapsedForStartIds = it }
+
+/**
+ * 折りたたみ表示する条件分岐ノードのID群です。
+ *
+ * 新形式（v11）では使用しません。旧JSONの読み捨て互換のために残します。
+ */
+@Deprecated("折り畳みはFOLDED_IFへ移行しました。読み捨て専用です。")
+fun DiskScript.collapsedConditions(): MutableSet<UUID> =
+    collapsedConditionIds ?: linkedSetOf<UUID>().also { collapsedConditionIds = it }
 
 data class TimerSetting(
     var enabled: Boolean = false,
@@ -158,6 +173,16 @@ data class CommandNode(
     var soundTempRef: String? = null,
     var effectTempRef: String? = null,
     var snapshot: CommandGraph? = null,
+    /**
+     * 折り畳みノード（FOLDED_FOR／FOLDED_IF）が内包する構造全体です。
+     *
+     * 外側グラフには折り畳みノード1個だけが通常ノードと同じ接続形状（単一next）
+     * で残り、中身はこの内部グラフへ退避します。FOLDED_FORはFOR_START〜FOR_END
+     * の全体、FOLDED_IFはCONDITION〜MERGEの全体を、元のIDのまま保持します。
+     * 折り畳み／展開のたびに再構成され、通常グラフの中にそのまま永続化されます。
+     * 折り畳みノード以外では常にnullです。
+     */
+    var foldedGraph: CommandGraph? = null,
 ) {
     fun string(key: String, default: String = "") = params[key]?.takeIf(String::isNotBlank) ?: default
     fun int(key: String, default: Int = 0) = params[key]?.toIntOrNull() ?: default
@@ -187,6 +212,7 @@ data class CommandNode(
         temporaryLocationPositionSpec = temporaryLocationPositionSpec?.copy(),
         temporaryLocationFacingSpec = temporaryLocationFacingSpec?.copy(),
         snapshot = snapshot?.deepCopy(),
+        foldedGraph = foldedGraph?.deepCopy(),
     )
 
     fun isExplicitlyConfigured(key: String): Boolean = configuredFields?.contains(key) == true
@@ -519,6 +545,35 @@ enum class CommandType(
         "count" to "1",
     )),
     FOR_END(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_END, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_END_DESCRIPTION, Material.COMPARATOR, emptyMap()),
+    /**
+     * 折り畳まれたFOR全体（FOR_START〜FOR_END）を表す通常形状ノードです。
+     *
+     * 中身はfoldedGraphへ退避し、外側は単一nextだけで通常ノードと同じく
+     * 入れ替えできます。表示文言はFOR開始と共用し、新規言語キーを増やしません。
+     * 新規追加はできず、FOR_STARTの折り畳み操作だけで生成します。
+     */
+    FOLDED_FOR(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_FOR_START_DESCRIPTION, Material.REPEATER, mapOf(
+        "count" to "1",
+    )),
+    /**
+     * 折り畳まれた閉じた分岐全体（CONDITION〜MERGE）を表す通常形状ノードです。
+     *
+     * 合流のある分岐だけが対象で、未合流は折り畳めません。中身はfoldedGraphへ
+     * 退避し、外側は単一nextだけで通常ノードと同じく入れ替えできます。
+     * 表示文言は条件分岐と共用し、新規言語キーを増やしません。
+     * 新規追加はできず、CONDITIONの折り畳み操作だけで生成します。
+     */
+    FOLDED_IF(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
+        "kind" to ConditionKind.TARGET_EXISTS.name,
+        "inverted" to "false",
+        "sneaking" to "",
+        "item" to "",
+        "itemData" to "",
+        "variable" to "",
+        "operator" to ">=",
+        "value" to "0.0",
+        "block" to "minecraft:air",
+    )),
     BREAK(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONTINUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE_DESCRIPTION, Material.ARROW, emptyMap());
 

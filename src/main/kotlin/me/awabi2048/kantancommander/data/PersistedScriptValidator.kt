@@ -41,6 +41,7 @@ object PersistedScriptValidator {
         optionalInteger(root, "revision", path, errors)
         optionalBoolean(root, "contentModified", path, errors)
         optionalUuidArray(root, "collapsedForStartIds", path, errors)
+        optionalUuidArray(root, "collapsedConditionIds", path, errors)
         return errors
     }
 
@@ -107,6 +108,11 @@ object PersistedScriptValidator {
         }
         optionalObject(node, "snapshot", path, errors)?.let {
             validateGraph(it, "$path/snapshot", errors)
+        }
+        // 折り畳みノードの内部グラフは通常グラフの中にそのまま永続化されます。
+        // 旧形式の collapsed*Ids は読み捨て互換のため引き続き任意配列として許容します。
+        optionalObject(node, "foldedGraph", path, errors)?.let {
+            validateGraph(it, "$path/foldedGraph", errors)
         }
     }
 

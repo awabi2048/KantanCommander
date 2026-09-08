@@ -271,17 +271,17 @@ object GraphLayoutEngine {
      * [maxCells] は外部JSONや設定変更で異常に大きくなったグラフを、描画前に
      * 有限時間・有限メモリで拒否するための安全弁です。通常のGUI呼び出しは
      * 無制限の既定値を使い、ScriptStoreだけが設定上限に応じた値を渡します。
-     * [collapsedForStarts] に含まれるfor開始は、本体・終了・戻り経路を畳んで
-     * 開始1セルとして描きます。グラフ構造自体は変えません。
+     * 折り畳みノード（FOLDED_FOR／FOLDED_IF）は中身を内部グラフへ持つため、
+     * 外側では通常ノードと同じく1セルとして描きます。展開中の構造はすべて描画し、
+     * グラフ構造自体は変えません。
      */
     fun layout(
         graph: CommandGraph,
         maxCells: Long = Long.MAX_VALUE,
-        collapsedForStarts: Set<UUID> = emptySet(),
     ): GraphLayout {
         require(maxCells > 0L) { "layout cell limit must be positive" }
         return try {
-            val builder = Builder(graph, maxCells, collapsedForStarts)
+            val builder = Builder(graph, maxCells)
             builder.renderRoot()
             val cells = builder.cells.toMap()
             val maxX = cells.keys.maxOfOrNull(MapPoint::x) ?: 0
@@ -313,10 +313,11 @@ object GraphLayoutEngine {
         graph: CommandGraph,
         target: InsertionTarget,
         placeholderType: CommandType = CommandType.WAIT,
-        collapsedForStarts: Set<UUID> = emptySet(),
         onLayoutFailure: ((GraphLayoutException) -> Unit)? = null,
     ): InsertionPreview? {
         if (placeholderType == CommandType.MERGE || placeholderType == CommandType.FOR_END) return null
+        // 折り畳みノードは折り畳み操作だけで生成し、挿入候補に出しません。
+        if (placeholderType == CommandType.FOLDED_FOR || placeholderType == CommandType.FOLDED_IF) return null
         val candidate = graph.deepCopy()
         val inserted = runCatching {
             GraphEditor.insert(
@@ -328,7 +329,7 @@ object GraphLayoutEngine {
             )
         }.getOrNull() ?: return null
         val previewLayout = try {
-            layout(candidate, collapsedForStarts = collapsedForStarts)
+            layout(candidate)
         } catch (failure: GraphLayoutException) {
             onLayoutFailure?.invoke(failure)
             return null
@@ -407,7 +408,6 @@ object GraphLayoutEngine {
     private class Builder(
         private val graph: CommandGraph,
         private val maxCells: Long,
-        private val collapsedForStarts: Set<UUID> = emptySet(),
     ) {
         val cells = linkedMapOf<MapPoint, MapCell>()
         val nodePoints = linkedMapOf<UUID, MapPoint>()
@@ -543,45 +543,6 @@ object GraphLayoutEngine {
                     )
                 }
                 if (node.type == CommandType.FOR_START && node.pairedNodeId != null) {
-                    val collapsedEnd = node.pairedNodeId
-                        ?.takeIf { node.id in collapsedForStarts }
-                        ?.let(graph.nodes::get)
-                        ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == node.id }
-                    if (collapsedEnd != null) {
-                        // 折りたたみ表示：開始だけを通常1単位として描き、本体・終了・
-                        // 戻り経路を畳みます。後続への接続と末尾追加点は対応終了の
-                        // NEXTとして扱い、ブロック後への挿入が通常どおり動作します。
-                        putNode(cursorX, y, node)
-                        maximumY = maxOf(maximumY, y)
-                        val collapsedNext = collapsedEnd.next
-                        if (collapsedNext == null || collapsedNext == stop ||
-                            context.boundaryFor(collapsedNext) != null
-                        ) {
-                            if (collapsedNext != null && collapsedNext != stop) {
-                                putTargetedPath(
-                                    cursorX + 1,
-                                    y,
-                                    target = InsertionTarget(collapsedEnd.id, GraphEditor.Edge.NEXT),
-                                )
-                            }
-                            val collapsedExit = SegmentExit.Node(collapsedEnd.id, collapsedNext)
-                            return Segment(
-                                cursorX + 2,
-                                maximumY,
-                                collapsedEnd.id,
-                                end = collapsedExit,
-                                mainEnd = collapsedExit,
-                            )
-                        }
-                        putTargetedPath(
-                            cursorX + 1,
-                            y,
-                            target = InsertionTarget(collapsedEnd.id, GraphEditor.Edge.NEXT),
-                        )
-                        cursorX += 2
-                        currentId = collapsedNext
-                        continue
-                    }
                     val loop = renderFor(node, cursorX, y, context)
                     cursorX = loop.nextX
                     maximumY = maxOf(maximumY, loop.maxY)
@@ -654,13 +615,13 @@ object GraphLayoutEngine {
             return Segment(cursorX, maximumY, null, hasOpenEnd, end = SegmentExit.Open)
         }
 
+
         private fun renderCondition(
             condition: CommandNode,
             x: Int,
             y: Int,
             context: RenderContext,
-        ): Segment {
-            putNode(x, y, condition)
+        ): Segment {            putNode(x, y, condition)
             val mergeId = condition.pairedNodeId ?: return Segment(
                 x + 2,
                 y,

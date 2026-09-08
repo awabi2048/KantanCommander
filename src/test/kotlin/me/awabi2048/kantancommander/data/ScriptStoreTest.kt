@@ -5,6 +5,7 @@ import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.collapsedForStarts
+import me.awabi2048.kantancommander.model.collapsedConditions
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TargetKind
@@ -48,22 +49,80 @@ class ScriptStoreTest {
     }
 
     @Test
-    fun `collapsed for starts round trip and do not mark disk content`() {
-        val store = ScriptStore(temp.resolve("collapsed"), Logger.getAnonymousLogger())
+    fun `folded for round trips with its inner graph and copies stay independent`() {
+        val store = ScriptStore(temp.resolve("folded"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "test")
-        val collapsed = UUID.randomUUID()
-        script.collapsedForStartIds = mutableSetOf(collapsed)
+        val start = GraphEditor.append(script.graph, CommandType.FOR_START)
+        val end = requireNotNull(start.pairedNodeId)
+        val body = GraphEditor.appendToForBody(script.graph, start.id, CommandType.DISPLAY_TEXT)
+        GraphEditor.append(script.graph, CommandType.GIVE_ITEM)
+        assertTrue(GraphEditor.foldForStart(script.graph, start.id))
         store.save(script)
 
         val loaded = requireNotNull(store.load(script.id))
-        assertEquals(setOf(collapsed), loaded.collapsedForStarts())
-        // 折りたたみ表示は実行内容ではないため、ディスク内容ありとは判定しません。
-        assertFalse(loaded.hasDiskContent())
+        val folded = loaded.graph.nodes.getValue(start.id)
+        assertEquals(CommandType.FOLDED_FOR, folded.type)
+        val inner = requireNotNull(folded.foldedGraph)
+        assertEquals(setOf(start.id, body.id, end), inner.nodes.keys)
+        // 折り畳み自体は実行内容のため、ディスク内容ありと判定する。
+        assertTrue(loaded.hasDiskContent())
 
         val copy = store.copyForPlacement(loaded)
-        assertEquals(setOf(collapsed), copy.collapsedForStarts())
-        copy.collapsedForStarts().clear()
-        assertEquals(setOf(collapsed), loaded.collapsedForStarts())
+        copy.graph.nodes.getValue(start.id).foldedGraph?.nodes?.getValue(body.id)?.params?.set("text", "changed")
+        assertEquals("", loaded.graph.nodes.getValue(start.id).foldedGraph?.nodes?.getValue(body.id)?.string("text"))
+    }
+
+    @Test
+    fun `v10 collapsed display state is dropped by migration`() {
+        // 旧形式の折り畳み表示状態は引き継がず、旧データは展開形として扱う。
+        val dir = temp.resolve("v10-collapsed").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        val staleFor = UUID.randomUUID()
+        val staleCondition = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 10,
+              "id": "$scriptId",
+              "name": "v10",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 0,
+              "listed": false,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": false, "intervalSeconds": 1.0},
+              "graph": {
+                "entryNodeId": "$nodeId",
+                "nodes": {
+                  "$nodeId": {
+                    "id": "$nodeId",
+                    "type": "WAIT",
+                    "params": {"seconds": "1"}
+                  }
+                }
+              },
+              "revision": 0,
+              "contentModified": false,
+              "collapsedForStartIds": ["$staleFor"],
+              "collapsedConditionIds": ["$staleCondition"]
+            }
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val migrated = requireNotNull(store.load(scriptId))
+
+        assertEquals(11, migrated.formatVersion)
+        assertNull(migrated.collapsedForStartIds)
+        assertNull(migrated.collapsedConditionIds)
+        assertTrue(migrated.collapsedForStarts().isEmpty())
+        assertTrue(migrated.collapsedConditions().isEmpty())
+        assertTrue(nodeId in migrated.graph.nodes)
+        val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
+        assertTrue(rewritten.contains("\"formatVersion\": 11"))
+        assertTrue(!rewritten.contains("collapsedForStartIds"))
+        assertTrue(!rewritten.contains("collapsedConditionIds"))
     }
 
     @Test
@@ -72,7 +131,9 @@ class ScriptStoreTest {
         val script = store.create(UUID.randomUUID(), "test")
         val loaded = requireNotNull(store.load(script.id))
         assertTrue(loaded.collapsedForStarts().isEmpty())
+        assertTrue(loaded.collapsedConditions().isEmpty())
     }
+
 
     @Test
     fun `revision rejects stale saves and compare and set updates`() {
@@ -236,11 +297,11 @@ class ScriptStoreTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val migrated = requireNotNull(store.load(scriptId))
 
-        assertEquals(10, migrated.formatVersion)
+        assertEquals(11, migrated.formatVersion)
         assertEquals(3.0, migrated.timer.intervalSeconds)
         assertEquals("0.05", migrated.graph.nodes[nodeId]?.params?.get("seconds"))
         val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 10"))
+        assertTrue(rewritten.contains("\"formatVersion\": 11"))
         assertTrue(rewritten.contains("\"intervalSeconds\": 3.0"))
         assertTrue(!rewritten.contains("intervalUnits"))
         assertTrue(!rewritten.contains("\"ticks\""))
@@ -273,11 +334,11 @@ class ScriptStoreTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val migrated = requireNotNull(store.load(scriptId))
 
-        assertEquals(10, migrated.formatVersion)
+        assertEquals(11, migrated.formatVersion)
         assertEquals(5.0, migrated.timer.intervalSeconds)
         assertEquals(100L, migrated.timer.intervalTicks)
         val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 10"))
+        assertTrue(rewritten.contains("\"formatVersion\": 11"))
     }
 
     @Test

@@ -92,8 +92,10 @@ class ScriptStore(
             listed = false,
             revision = 0L,
             graph = source.graph.deepCopy(),
-            // グラフ複製はノードIDを維持するため、折りたたみ集合も独立複製して引き継ぎます。
-            collapsedForStartIds = source.collapsedForStartIds?.toMutableSet(),
+            // 旧形式の折り畳み表示状態は新形式で不使用のため引き継ぎません。
+            // 折り畳み自体はノード種別としてグラフ複製に含まれます。
+            collapsedForStartIds = null,
+            collapsedConditionIds = null,
         ).also(::save)
 
     fun copyForItem(source: DiskScript): DiskScript =
@@ -103,7 +105,8 @@ class ScriptStore(
             listed = false,
             revision = 0L,
             graph = source.graph.deepCopy(),
-            collapsedForStartIds = source.collapsedForStartIds?.toMutableSet(),
+            collapsedForStartIds = null,
+            collapsedConditionIds = null,
         ).also(::save)
 
     fun copyToLibrary(source: DiskScript, owner: UUID, name: String = source.name): DiskScript =
@@ -115,7 +118,8 @@ class ScriptStore(
             listed = false,
             revision = 0L,
             graph = source.graph.deepCopy(),
-            collapsedForStartIds = source.collapsedForStartIds?.toMutableSet(),
+            collapsedForStartIds = null,
+            collapsedConditionIds = null,
         ).also {
             save(it)
             addToLibrary(owner, it.id)
@@ -390,10 +394,12 @@ class ScriptStore(
     private fun DiskScript.deepCopy(): DiskScript = copy(
         // TimerSettingは可変データなので、グラフだけをコピーするとload()後の
         // タイマー編集が保存済みキャッシュへ直接波及し、差分追跡をすり抜けます。
-        // 折りたたみ集合も同じく可変のため複製し、独立性を保ちます。
+        // グラフの独立コピーは CommandGraph.deepCopy が内部グラフも含めて行います。
         timer = timer.copy(),
         graph = graph.deepCopy(),
-        collapsedForStartIds = collapsedForStartIds?.toMutableSet(),
+        // 旧形式の折り畳み表示状態は新形式で不使用のため引き継ぎません。
+        collapsedForStartIds = null,
+        collapsedConditionIds = null,
     )
 
     /**
@@ -437,7 +443,9 @@ class ScriptStore(
             ?: error("formatVersionがありません、または整数ではありません")
         val migrated = when (sourceVersion) {
             STRUCTURED_FORMAT_VERSION -> source
-            STRUCTURED_PREVIOUS_FORMAT_VERSION -> migrateStructuredV9ToV10(source)
+            STRUCTURED_V10_FORMAT_VERSION -> migrateStructuredV10ToV11(source)
+            STRUCTURED_PREVIOUS_FORMAT_VERSION ->
+                migrateStructuredV10ToV11(migrateStructuredV9ToV10(source))
             LEGACY_COMMAND_FORMAT_VERSION -> migrateCommandFormat(source)
             LEGACY_TICK_FORMAT_VERSION -> migrateCommandFormat(migrateLegacyTickFormat(source))
             else -> {
@@ -514,6 +522,19 @@ class ScriptStore(
      */
     private fun migrateStructuredV9ToV10(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
+        migrated.addProperty("formatVersion", STRUCTURED_V10_FORMAT_VERSION)
+        return migrated
+    }
+
+    /**
+     * v10の折り畳み表示状態（collapsedForStartIds／collapsedConditionIds）を
+     * 除去し v11 へ移行します。旧形式の折り畳みは引き継がず、旧データは
+     * 展開形として扱います。折り畳み自体は v11 でノード種別として保存します。
+     */
+    private fun migrateStructuredV10ToV11(source: JsonObject): JsonObject {
+        val migrated = source.deepCopy()
+        migrated.remove("collapsedForStartIds")
+        migrated.remove("collapsedConditionIds")
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
         return migrated
     }
@@ -799,6 +820,7 @@ class ScriptStore(
             }
             graph.nodes.values.forEach { node ->
                 node.snapshot?.let { validate(it, "$path/${node.id}") }
+                node.foldedGraph?.let { validate(it, "$path/${node.id}/folded") }
             }
             visited.remove(graph)
         }
@@ -810,6 +832,7 @@ class ScriptStore(
         private const val LEGACY_TICK_FORMAT_VERSION = 6
         private const val LEGACY_COMMAND_FORMAT_VERSION = 7
         private const val STRUCTURED_PREVIOUS_FORMAT_VERSION = 9
+        private const val STRUCTURED_V10_FORMAT_VERSION = 10
         /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
         private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
 

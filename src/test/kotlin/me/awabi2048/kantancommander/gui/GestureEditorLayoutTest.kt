@@ -114,6 +114,26 @@ class GestureEditorLayoutTest {
     }
 
     @Test
+    fun `remembered layout size keeps the maximum per axis`() {
+        // 折り畳み（FOR・分岐のいずれも）で縮んでも記憶を維持し、原点を引き戻さない。
+        // 幅20・高さ8の展開配置から幅14・高さ5へ縮んだ場合。
+        assertEquals(
+            MapPoint(20, 8),
+            GestureEditorLayout.rememberLayoutSize(20, 8, 14, 5),
+        )
+        // 展開・追加で広がった場合は軸ごとに追従する。
+        assertEquals(
+            MapPoint(22, 8),
+            GestureEditorLayout.rememberLayoutSize(20, 8, 22, 6),
+        )
+        // 初回（記憶なし）は現寸法をそのまま覚える。
+        assertEquals(
+            MapPoint(14, 5),
+            GestureEditorLayout.rememberLayoutSize(0, 0, 14, 5),
+        )
+    }
+
+    @Test
     fun `remembered range move matches normal rules inside the map`() {
         // 折りたたみなし（記憶＝実配置）では通常規則と等価です。幅20・10列で原点xは0..10。
         assertTrue(

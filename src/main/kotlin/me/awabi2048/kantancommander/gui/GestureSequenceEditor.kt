@@ -33,6 +33,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVerticalSlot
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.data.FoldedGraphs
 import me.awabi2048.kantancommander.execution.ExecutionFinishStatus
 import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
@@ -41,6 +42,7 @@ import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.VariableTemplate
@@ -97,10 +99,11 @@ data class GestureEditorState(
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
     /**
-     * 折りたたみ前の配置寸法（セル単位）です。
+     * 描画した配置寸法の軸ごとの最大値（セル単位）です。
      *
-     * 折りたたみで配置が縮んでも原点を引き戻さないよう、展開時の寸法を覚えて
-     * 原点の正規化基準に使います。セッション内保持で、永続化しません。
+     * 折り畳み／展開で配置が縮んでも原点を引き戻さないよう、縮小では維持し
+     * 拡大でのみ追従します。FOR・分岐のいずれの折り畳みでも同じ扱いです。
+     * 原点の正規化基準に使い、セッション内保持で、永続化しません。
      */
     var lastExpandedLayoutWidth: Int = 0,
     var lastExpandedLayoutHeight: Int = 0,
@@ -832,7 +835,7 @@ class GestureSequenceEditor(
         val placement = state.placement ?: return
         state.testExecution = GestureTestState(
             scopeKey = placement.key,
-            snapshot = current.copy(graph = current.graph.deepCopy()),
+            snapshot = current.copy(graph = FoldedGraphs.expand(current.graph.deepCopy())),
             ownerId = ownerId,
             originalOrigin = state.origin,
             originalZoomLevel = state.zoomLevel,
@@ -928,7 +931,7 @@ class GestureSequenceEditor(
         }
         // 確定クリック時点で最新グラフを複製して固定します。以後のGUI／外部保存は
         // このスナップショットを変更せず、同じ配置を見ている全員へ状態を配布します。
-        test.snapshot = current.copy(graph = current.graph.deepCopy())
+        test.snapshot = current.copy(graph = FoldedGraphs.expand(current.graph.deepCopy()))
         test.startedAtTick = plugin.server.currentTick.toLong()
         test.phase = GestureTestPhase.RUNNING
         state.lowerMode = GestureLowerMode.TEST_STATUS
@@ -1428,10 +1431,8 @@ class GestureSequenceEditor(
         val testActive = test?.phase == GestureTestPhase.RUNNING || test?.phase == GestureTestPhase.RESULT
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId) ?: return emptyView()
         if (!testActive) observedRevision = script.revision
-        // 折りたたみ表示はテスト実行中は無視し、全展開で実行ノードの可視性を優先します。
-        val collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script)
         val persistedLayout = runCatching {
-            GraphLayoutEngine.layout(script.graph, collapsedForStarts = collapsedForStarts)
+            GraphLayoutEngine.layout(script.graph)
         }
             .getOrElse { failure ->
                 reportLayoutFailure(
@@ -1453,12 +1454,18 @@ class GestureSequenceEditor(
         }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
-        // 折りたたみで配置が縮んでも、展開時の寸法を覚えておき原点を引き戻しません。
-        // 端付近のFORを折りたたんでもSTARTが同じ位置に留まります。引き戻し後の
-        // 空き領域へ戻る移動は、実寸法を見るcanMove側で拒否されます。
-        if (!testActive && collapsedForStarts.isEmpty()) {
-            state.lastExpandedLayoutWidth = persistedLayout.width
-            state.lastExpandedLayoutHeight = persistedLayout.height
+        // 折り畳み／展開で配置寸法が変わっても、軸ごとに最大寸法を覚えて原点を正規化します。
+        // 縮小（折り畳み）では記憶を維持して原点を引き戻さず、拡大（展開・追加）では追従します。
+        // FOR・分岐のいずれの折り畳みでも同じ扱いです。
+        if (!testActive) {
+            val remembered = GestureEditorLayout.rememberLayoutSize(
+                state.lastExpandedLayoutWidth,
+                state.lastExpandedLayoutHeight,
+                persistedLayout.width,
+                persistedLayout.height,
+            )
+            state.lastExpandedLayoutWidth = remembered.x
+            state.lastExpandedLayoutHeight = remembered.y
         }
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
         // 描画・入力判定で共有する原点を毎回正規化します。
@@ -1472,13 +1479,14 @@ class GestureSequenceEditor(
         // 投影します。グラフ全体の検証を各セルで繰り返さないことで、ノード数が
         // 増えたときにも描画コストを線形に保ちます。
         // 検証結果は構造化エラー（nodeId/fieldKeys）として受けるため、表示文字列の
-        // パス解析は行いません。snapshot内のエラーは主グラフのノードへ対応しないため、
-        // 存在しないノードIDは自然に除外されます。
+        // パス解析は行いません。snapshot・内部グラフ内のエラーは外側の対応ノードへ
+        // 対応付けるため、存在しないノードIDは自然に除外されます。
         val validationErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
         val incompleteNodeIds = buildSet {
             validationErrors.forEach { error ->
                 error.nodeId?.let { nodeId ->
-                    if (nodeId in script.graph.nodes) add(nodeId)
+                    // 内部グラフの未設定は外側の折り畳みノードへ対応付けて示します。
+                    FoldedGraphs.outermostWrapperId(script.graph, nodeId)?.let(::add)
                 }
             }
         }
@@ -1520,11 +1528,11 @@ class GestureSequenceEditor(
                         val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
                         val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
-                        // 折りたたみ中のFOR開始はブロック全体の代理として青緑の縁取りで示します。
+                        // 折り畳みノードは構造全体の代理として縁取りで示します。
                         // 背景色は変えないため、未設定警告やテスト色と両立します。
-                        // テスト実行中は折りたたみを無視するため、縁取りは出しません。
-                        val isCollapsedForStart = !testActive &&
-                            node.type == CommandType.FOR_START && node.id in collapsedForStarts
+                        // テスト実行中は展開表示のため、折り畳みノードは現れません。
+                        val isFoldedFor = node.type == CommandType.FOLDED_FOR
+                        val isFoldedIf = node.type == CommandType.FOLDED_IF
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
                         // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
                         // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
@@ -1545,9 +1553,18 @@ class GestureSequenceEditor(
                             )
                             else -> null
                         }
-                        val hoverText = Component.text(KcI18n.text(player, node.type.key)).let { firstLine ->
-                            statusLine?.let { firstLine.append(Component.newline()).append(it) } ?: firstLine
-                        }
+                        val hoverText = foldGuidanceText(player, node, renderGraph)
+                            .let { guidance ->
+                                // 折り畳み操作案内は灰色（§7）で示します。§形式へ直列化すると
+                                // 先行色が後続行へ漏れるため、ノード名には白色を明示します。
+                                val firstLine = if (guidance != null) {
+                                    Component.text(guidance, NamedTextColor.GRAY).append(Component.newline())
+                                        .append(Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE))
+                                } else {
+                                    Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE)
+                                }
+                                statusLine?.let { firstLine.append(Component.newline()).append(it) } ?: firstLine
+                            }
                         // アイコン単体を浮かせず、追加ポイントと同じマス背景で視認性と接続先を示します。
                         visuals.add(GestureGuiVisual.Block(
                             visualId = "node-bg-${node.id}",
@@ -1560,27 +1577,38 @@ class GestureSequenceEditor(
                             glowColor = glowColor,
                         ))
                         // マスの90% (ICON_W=0.198) に合わせます。追加ポイントの背景・記号も同じ寸法です。
+                        // 折りたたみ中の構造はアイコンにエンチャントグリントを付け、折畳み状態を
+                        // 補助表現します（システム横断UI設計の状態表現規則）。背景・縁取りは変えません。
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
-                            item = org.bukkit.inventory.ItemStack(node.type.icon),
+                            item = foldedIconStack(node, isFoldedFor || isFoldedIf),
                             scale = metrics.iconScale,
                             // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
                             layer = GestureEditorLayout.ICON_LAYER,
                             glowColor = null,
                         ))
-                        // 折りたたみ中のFOR開始は、背景の右の外縁へ空色の縁取りを付けます。
-                        // 太さはアイコン幅の20%、高さはアイコンと同じで、背景の外側に
+                        // 折り畳みノードは、背景の右の外縁へ縁取りを付けます。
+                        // 太さはアイコン幅の30%、高さはアイコンと同じで、背景の外側に
                         // 配置します。隣接ノードは2セル周期のため縁取りは届きません。
-                        if (isCollapsedForStart) {
-                            val frameThickness = metrics.iconSize * 0.20
-                            val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
+                        // FORは空色、IFは黄色で種別を区別します。
+                        val foldedFrameMaterial = when {
+                            isFoldedFor -> Material.LIGHT_BLUE_CONCRETE
+                            isFoldedIf -> Material.YELLOW_CONCRETE
+                            else -> null
+                        }
+                        // 縁にもノードと同じクリック・ホバー判定を設け、縁経由でも
+                        // 選択・再クリック変化が行えるようにします。単一ヒット確定の
+                        // ため二重発火しません。
+                        val frameThickness = metrics.iconSize * 0.30
+                        val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
+                        if (foldedFrameMaterial != null) {
                             visuals.add(GestureGuiVisual.Block(
-                                visualId = "node-collapsed-frame-right-${node.id}",
+                                visualId = "node-folded-frame-right-${node.id}",
                                 x = cx + frameOffset, y = cy,
                                 width = frameThickness,
                                 height = metrics.iconSize,
-                                blockData = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
+                                blockData = Bukkit.createBlockData(foldedFrameMaterial),
                                 layer = GestureEditorLayout.ICON_LAYER,
                             ))
                         }
@@ -1588,15 +1616,27 @@ class GestureSequenceEditor(
                         // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
                         // 旧選択の解除と新ノードの選択を1クリックで完了させます。
                         // 入れ替えボタン表示中はホバー文言をボタンのさらに上へ退避させ、
-                        // ボタン・ホバーをノード上側に積み上げます。条件分岐／合流は
-                        // 交換対象外のため、ボタン表示の対象外のままにします。
+                        // ボタン・ホバーをノード上側に積み上げます。通常ノードと
+                        // 折り畳みノードだけが対象で、展開中の構造ノードは表示しません。
                         val showReorder = !testActive && insertionPreview == null && isSelected &&
-                            node.type != CommandType.CONDITION && node.type != CommandType.MERGE
+                            !FoldedGraphs.isExpandedStructural(node)
                         val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
                         val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
                         if (!testActive) elements.add(GestureGuiElement(
                             elementId = "node:${node.id}",
-                            bounds = iconBounds(cx, cy, metrics.iconSize),
+                            // 折畳み縁にもノードと同じクリック・ホバー判定を設けます。
+                            // 要素IDの重複は構造エラーになるため別要素にせず、
+                            // ノード要素の領域を縁まで拡張します。
+                            bounds = if (foldedFrameMaterial != null) {
+                                GestureGuiBounds(
+                                    cx - metrics.iconSize / 2.0,
+                                    cy - metrics.iconSize / 2.0,
+                                    cx + metrics.iconSize / 2.0 + frameThickness,
+                                    cy + metrics.iconSize / 2.0,
+                                )
+                            } else {
+                                iconBounds(cx, cy, metrics.iconSize)
+                            },
                             acceptedGestures = GestureGuiClickPolicy.CLICK,
                             targetVisualId = "node-icon-${node.id}",
                             hoverText = GestureGuiHoverText(
@@ -1614,6 +1654,7 @@ class GestureSequenceEditor(
                                 GraphEditor.ReorderDirection.LEFT to "←",
                                 GraphEditor.ReorderDirection.RIGHT to "→",
                             ).forEach { (direction, glyph) ->
+                                // 入替可否は描画時と同じ折りたたみ集合で判定し、表示と実可否を一致させます。
                                 val enabled = GraphEditor.canSwapAdjacent(script.graph, node.id, direction)
                                 val x = cx + if (direction == GraphEditor.ReorderDirection.LEFT) -reorderOffset else reorderOffset
                                 val directionName = direction.name.lowercase()
@@ -1646,7 +1687,8 @@ class GestureSequenceEditor(
                                     // 最新グラフを再取得し、表示更新なしでも誤操作を防ぎます。
                                     acceptedGestures = GestureGuiClickPolicy.CLICK,
                                     gestureGuard = { _, _ ->
-                                        plugin.scripts.load(state.scriptId)?.graph?.let { currentGraph ->
+                                        val guardGraph = plugin.scripts.load(state.scriptId)?.graph
+                                        guardGraph?.let { currentGraph ->
                                             GraphEditor.canSwapAdjacent(currentGraph, node.id, direction)
                                         } == true
                                     },
@@ -5007,16 +5049,26 @@ class GestureSequenceEditor(
                         api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
                     }
                     // 選択済みノードへの再クリックは、種類別の変形動作です。
-                    // FOR開始は折りたたみのトグル、条件分岐はTRUE/FALSE鎖の入替を行い、
-                    // 下部の設定表示は維持します。新規選択は従来どおり設定表示へ遷移します。
+                    // 折り畳みノードの再クリックは展開、FOR開始・条件分岐の再クリックは
+                    // 折り畳み（条件分岐は合流済みのみ）を行い、条件分岐のShift+再クリックは
+                    // TRUE/FALSE鎖の入替です。下部の設定表示は維持します。
+                    // 新規選択は従来どおり設定表示へ遷移します。
                     val clicked = script.graph.nodes.getValue(nodeId)
                     if (state.selectedNodeId == nodeId && !settingChildOpen(ownerId)) {
+                        if (clicked.type == CommandType.FOLDED_FOR || clicked.type == CommandType.FOLDED_IF) {
+                            unfoldNode(player, nodeId)
+                            return
+                        }
                         if (clicked.type == CommandType.FOR_START && clicked.pairedNodeId != null) {
-                            toggleForCollapsed(player, nodeId)
+                            foldFor(player, nodeId)
                             return
                         }
                         if (clicked.type == CommandType.CONDITION) {
-                            swapConditionBranches(player, nodeId)
+                            if (context.gesture == GestureGuiGesture.SHIFT_PRIMARY) {
+                                swapConditionBranches(player, nodeId)
+                                return
+                            }
+                            foldIf(player, nodeId)
                             return
                         }
                     }
@@ -5133,9 +5185,9 @@ class GestureSequenceEditor(
                 }
                 val gx = context.elementId.removePrefix("add:").substringBefore(":").toIntOrNull() ?: return
                 val gy = context.elementId.removePrefix("add:").substringAfter(":").toIntOrNull() ?: return
-                // 追加ボタンは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
+                // 追加ボタンは現在の配置座標で表示されるため、確認も同じ配置で行います。
                 val layout = runCatching {
-                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                    GraphLayoutEngine.layout(script.graph)
                 }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
@@ -5170,9 +5222,9 @@ class GestureSequenceEditor(
                 }
                 val point = context.elementId.removePrefix("path:").split(":").mapNotNull(String::toIntOrNull)
                 if (point.size != 2) return
-                // 経路セルは折りたたみ配置の座標で表示されるため、確認も同じ配置で行います。
+                // 経路セルは現在の配置座標で表示されるため、確認も同じ配置で行います。
                 val layout = runCatching {
-                    GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                    GraphLayoutEngine.layout(script.graph)
                 }.getOrElse { failure ->
                     reportLayoutFailure(
                         player,
@@ -5343,9 +5395,9 @@ class GestureSequenceEditor(
                 // そのまま適用しません。現在のレイアウト上でも同じセルが同じ
                 // 挿入先を示すことを確認し、連続経路の装飾セルへの誤挿入を防ぎます。
                 state.selectedInsertionCandidatePoint?.let { point ->
-                    // 候補セルは折りたたみ配置の座標で選ばれるため、再確認も同じ配置で行います。
+                    // 候補セルは現在の配置座標で選ばれるため、再確認も同じ配置で行います。
                     val currentTarget = runCatching {
-                        GraphLayoutEngine.layout(script.graph, collapsedForStarts = effectiveCollapsedForStarts(script))
+                        GraphLayoutEngine.layout(script.graph)
                     }
                         .getOrElse { failure ->
                             reportLayoutFailure(
@@ -5603,57 +5655,59 @@ class GestureSequenceEditor(
         }
     }
 
+
+
+
+
     /**
-     * 選択済みFOR開始の再クリックで折りたたみ表示を切り替えます。
+     * ノードホバーの1行目に表示する折り畳み操作案内を返します。
      *
-     * グラフ構造は変えず、表示状態だけを正本へ保存します。下部の設定表示は
-     * 維持し、上部ビューポートだけを更新します。
+     * 1行目は案内、2行目がノード名となるよう、呼び出し側で名前へ改行接続します。
+     * 対象外ノードではnullを返し、従来どおり名前だけを表示します。
+     * 未合流の条件分岐は折り畳めないため案内を出しません（素の再クリックは枝入替）。
      */
-    private fun toggleForCollapsed(player: Player, nodeId: UUID) {
-        // 効果音のために切替前の状態を保持します。保存成功後の正本で判定し直しません。
-        val wasCollapsed = plugin.scripts.load(state.scriptId)
-            ?.collapsedForStartIds?.contains(nodeId) == true
-        val saved = runCatching {
-            CommandSettingsModel.updateScript(
-                plugin,
-                state.scriptId,
-                player.uniqueId,
-                expectedRevision = expectedMutationRevision(player),
-            ) { current ->
-                // 現存する対応ペア付きFOR_STARTだけを残し、残骸IDは同時に剪定します。
-                val previous = current.collapsedForStartIds.orEmpty()
-                val collapsed = previous
-                    .filter { it != nodeId && current.graph.nodes[it]?.type == CommandType.FOR_START }
-                    .toMutableSet()
-                if (nodeId !in previous &&
-                    current.graph.nodes[nodeId]?.type == CommandType.FOR_START
-                ) {
-                    collapsed.add(nodeId)
-                }
-                current.collapsedForStartIds = collapsed.takeIf { it.isNotEmpty() }
-            }
-        }.getOrElse { failure ->
-            reportGraphOperationFailure(
+    private fun foldGuidanceText(player: Player, node: CommandNode, graph: CommandGraph): String? {
+        when (node.type) {
+            CommandType.FOLDED_FOR -> return KcI18n.text(
                 player,
-                "FOR折りたたみを保存できませんでした: script=${state.scriptId} node=$nodeId",
-                failure,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_FOR,
             )
-            return
+            CommandType.FOLDED_IF -> return KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_UNFOLD_IF,
+            )
+            CommandType.FOR_START -> if (node.pairedNodeId != null) return KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_FOR,
+            )
+            CommandType.CONDITION -> if (GraphEditor.canFoldCondition(graph, node.id)) return KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_FOLD_IF,
+            )
+            else -> Unit
         }
-        if (!saved) return
-        state.selectedNodeId = nodeId
-        // 折りたたみ時は閉じる音、解除時は開く音で切替を伝えます。
-        player.playSound(
-            player.location,
-            if (wasCollapsed) Sound.BLOCK_BARREL_OPEN else Sound.BLOCK_BARREL_CLOSE,
-            1.0f,
-            1.0f,
-        )
-        updateUpper(player)
+        return null
     }
 
     /**
-     * 選択済み条件分岐の再クリックでTRUE/FALSE鎖を入れ替えます。
+     * ノードアイコンの表示用アイテムを返します。
+     *
+     * 折りたたみ中の構造はエンチャントグリントを付け、折畳み状態を補助表現します
+     * （システム横断UI設計の状態表現規則）。Block表示ではグリントを使えないため、
+     * アイコン（Item表示）にだけ付け、背景・縁取りは変えません。
+     */
+    private fun foldedIconStack(node: CommandNode, folded: Boolean): org.bukkit.inventory.ItemStack {
+        val stack = org.bukkit.inventory.ItemStack(node.type.icon)
+        if (!folded) return stack
+        val meta = stack.itemMeta ?: return stack
+        // グリント上書きで発光だけを付け、偽のエンチャントや説明文は付与しません。
+        runCatching { meta.setEnchantmentGlintOverride(true) }
+        stack.itemMeta = meta
+        return stack
+    }
+
+    /**
+     * 選択済み条件分岐のShift+再クリックでTRUE/FALSE鎖を入れ替えます。
      *
      * 表示だけの反転ではなく構造化データの操作として保存します。合流・後続・
      * 反転フラグは不変で、両枝の接続先だけが交換されます。
@@ -5681,6 +5735,99 @@ class GestureSequenceEditor(
         updateUpper(player)
         updateLower(player)
     }
+    /**
+     * 選択済みFOR開始の再クリックでFOR全体を折り畳みノードへ再構成します。
+     *
+     * 外側には開始と同じIDの折り畳みノードが残り、中身は内部グラフへ退避します。
+     * 下部の設定表示は維持し、上下ビューポートを更新します。
+     */
+    private fun foldFor(player: Player, nodeId: UUID) {
+        val folded = runCatching {
+            CommandSettingsModel.updateGraph(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { candidateGraph ->
+                if (GraphEditor.foldForStart(candidateGraph, nodeId)) true else null
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "FOR折り畳みを保存できませんでした: script=${state.scriptId} node=$nodeId",
+            failure,
+            )
+            return
+        }
+        if (folded != true) return
+        state.selectedNodeId = nodeId
+        player.playSound(player.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
+        updateUpper(player)
+        updateLower(player)
+    }
+
+    /**
+     * 選択済み条件分岐の再クリックで閉じた分岐全体を折り畳みノードへ再構成します。
+     *
+     * 合流のある分岐だけが対象です。未合流の分岐は折り畳めないため何もしません。
+     * 下部の設定表示は維持し、上下ビューポートを更新します。
+     */
+    private fun foldIf(player: Player, nodeId: UUID) {
+        val folded = runCatching {
+            CommandSettingsModel.updateGraph(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { candidateGraph ->
+                if (GraphEditor.foldCondition(candidateGraph, nodeId)) true else null
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "IF折り畳みを保存できませんでした: script=${state.scriptId} node=$nodeId",
+            failure,
+            )
+            return
+        }
+        if (folded != true) return
+        state.selectedNodeId = nodeId
+        player.playSound(player.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
+        updateUpper(player)
+        updateLower(player)
+    }
+
+    /**
+     * 選択済み折り畳みノードの再クリックで内部構造を元の位置へ展開します。
+     *
+     * 折り畳み中の外側設定を正として内部先頭へ反映します。下部の設定表示は
+     * 維持し、上下ビューポートを更新します。
+     */
+    private fun unfoldNode(player: Player, nodeId: UUID) {
+        val unfolded = runCatching {
+            CommandSettingsModel.updateGraph(
+                plugin,
+                state.scriptId,
+                player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            ) { candidateGraph ->
+                if (GraphEditor.unfold(candidateGraph, nodeId)) true else null
+            }
+        }.getOrElse { failure ->
+            reportGraphOperationFailure(
+                player,
+                "折り畳み展開を保存できませんでした: script=${state.scriptId} node=$nodeId",
+            failure,
+            )
+            return
+        }
+        if (unfolded != true) return
+        state.selectedNodeId = nodeId
+        player.playSound(player.location, Sound.BLOCK_BARREL_OPEN, 1.0f, 1.0f)
+        updateUpper(player)
+        updateLower(player)
+    }
+
 
     private fun emptyView(): GestureGuiView {
         return GestureGuiView(
@@ -5978,14 +6125,8 @@ class GestureSequenceEditor(
      * 動かないためプレビューを適用しません。描画とナビゲーションの両方がこの
      * 共通判定を使うことで、表示と入力判定の基準が分岐しません。
      */
-    /**
-     * 永続化された折りたたみ集合のうち、現存する対応ペア付きFOR_STARTだけを有効とします。
-     * 残骸IDは描画へ影響させません。
-     */
-    private fun effectiveCollapsedForStarts(script: DiskScript): Set<UUID> =
-        script.collapsedForStartIds.orEmpty().filter { id ->
-            script.graph.nodes[id]?.type == CommandType.FOR_START
-        }.toSet()
+
+
 
     private fun insertionPreview(script: DiskScript, player: Player? = null): InsertionPreview? {
         val target = state.pendingInsertion ?: return null
@@ -5994,7 +6135,6 @@ class GestureSequenceEditor(
         return GraphLayoutEngine.previewInsertion(
             script.graph,
             target,
-            collapsedForStarts = effectiveCollapsedForStarts(script),
             onLayoutFailure = { failure ->
                 player?.let {
                     reportLayoutFailure(
@@ -6017,7 +6157,6 @@ class GestureSequenceEditor(
         val persistedLayout = runCatching {
             GraphLayoutEngine.layout(
                 script.graph,
-                collapsedForStarts = if (testActive) emptySet() else effectiveCollapsedForStarts(script),
             )
         }.getOrElse { failure ->
             player?.let {
