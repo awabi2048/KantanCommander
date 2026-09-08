@@ -4,6 +4,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiActionContext
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiElement
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisual
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiBox
+import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiLayoutFacade
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiColumn
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustom
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiDocument
@@ -13,8 +14,6 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiOverlay
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiRow
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiViewport
-import com.awabi2048.ccsystem.core.gesturegui.layout.GestureGuiLayoutCompiler
-import com.awabi2048.ccsystem.core.gesturegui.layout.GestureGuiLayoutEngine
 
 /**
  * 宣言文書から低レベル表示・操作面への共通橋渡しです。
@@ -48,9 +47,9 @@ object KantanLayoutBridge {
         customRenderers: Map<String, com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomRenderer> = emptyMap(),
     ): Compiled {
         val actions = collectActions(document.root) + extraActionIds
-        val resolved = GestureGuiLayoutEngine.layout(document, knownActionIds = actions)
+        val resolved = GestureGuiLayoutFacade.layout(document, knownActionIds = actions)
         val handlers = actions.associateWith { onAction }
-        val compiled = GestureGuiLayoutCompiler.compile(
+        val compiled = GestureGuiLayoutFacade.compile(
             resolved,
             screenId = "kantan-bridge",
             actionHandlers = handlers,

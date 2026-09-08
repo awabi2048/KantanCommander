@@ -377,7 +377,12 @@ class KantanCommanderPlugin : JavaPlugin() {
         }
 
         val actualVersions = try {
-            CCSystem.getAPI().guiRuntimeContractVersion to CCSystem.getAPI().gestureGuiContractVersion
+            Quadruple(
+                CCSystem.getAPI().guiRuntimeContractVersion,
+                CCSystem.getAPI().gestureGuiContractVersion,
+                CCSystem.getAPI().gestureGuiLayoutContractVersion,
+                CCSystem.getAPI().gestureHtmlProfileVersion,
+            )
         } catch (failure: LinkageError) {
             logger.severe("CC-System GUI契約版を取得できないため、Kantan Commanderを無効化します: ${failure.message}")
             server.pluginManager.disablePlugin(this)
@@ -390,18 +395,25 @@ class KantanCommanderPlugin : JavaPlugin() {
 
         if (
             actualVersions.first != REQUIRED_GUI_RUNTIME_CONTRACT_VERSION ||
-            actualVersions.second != REQUIRED_GESTURE_GUI_CONTRACT_VERSION
+            actualVersions.second != REQUIRED_GESTURE_GUI_CONTRACT_VERSION ||
+            actualVersions.third != REQUIRED_GESTURE_GUI_LAYOUT_CONTRACT_VERSION ||
+            actualVersions.fourth != REQUIRED_GESTURE_HTML_PROFILE_VERSION
         ) {
             logger.severe(
                 "CC-System GUI契約版が一致しないため、Kantan Commanderを無効化します: " +
                     "expectedRuntime=$REQUIRED_GUI_RUNTIME_CONTRACT_VERSION, actualRuntime=${actualVersions.first}, " +
-                    "expectedGesture=$REQUIRED_GESTURE_GUI_CONTRACT_VERSION, actualGesture=${actualVersions.second}",
+                    "expectedGesture=$REQUIRED_GESTURE_GUI_CONTRACT_VERSION, actualGesture=${actualVersions.second}, " +
+                    "expectedLayout=$REQUIRED_GESTURE_GUI_LAYOUT_CONTRACT_VERSION, actualLayout=${actualVersions.third}, " +
+                    "expectedHtml=$REQUIRED_GESTURE_HTML_PROFILE_VERSION, actualHtml=${actualVersions.fourth}",
             )
             server.pluginManager.disablePlugin(this)
             return false
         }
         return true
     }
+
+    /** 4 版同時照合のための組です。Triple では版が不足します。 */
+    private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
     /**
      * KantanのGUIが要求する全ローカライズキーの世代を、機能登録より前に照合します。
@@ -429,6 +441,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     private companion object {
         const val REQUIRED_GUI_RUNTIME_CONTRACT_VERSION = CCSystemAPI.GUI_RUNTIME_CONTRACT_VERSION
         const val REQUIRED_GESTURE_GUI_CONTRACT_VERSION = CCSystemAPI.GESTURE_GUI_CONTRACT_VERSION
+        const val REQUIRED_GESTURE_GUI_LAYOUT_CONTRACT_VERSION = CCSystemAPI.GESTURE_GUI_LAYOUT_CONTRACT_VERSION
+        const val REQUIRED_GESTURE_HTML_PROFILE_VERSION = CCSystemAPI.GESTURE_HTML_PROFILE_VERSION
         const val LOCALIZATION_DOMAIN = "kantan_commander_clean"
         const val REQUIRED_LOCALIZATION_CONTRACT_FINGERPRINT =
             KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT
