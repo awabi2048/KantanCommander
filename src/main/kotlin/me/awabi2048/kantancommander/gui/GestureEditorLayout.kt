@@ -180,10 +180,27 @@ object GestureEditorLayout {
     }
 
     /**
+     * 描画した配置寸法の軸ごとの最大値を覚えます。
+     *
+     * 縮小（FOR・分岐の折り畳み）では記憶を維持して原点を引き戻さず、拡大
+     * （展開・追加）でのみ追従します。種別を問わず寸法比較だけで処理するため、
+     * FOR・分岐のいずれの折り畳みでも同じ扱いです。
+     */
+    fun rememberLayoutSize(
+        rememberedWidth: Int,
+        rememberedHeight: Int,
+        layoutWidth: Int,
+        layoutHeight: Int,
+    ): MapPoint = MapPoint(
+        maxOf(rememberedWidth, layoutWidth),
+        maxOf(rememberedHeight, layoutHeight),
+    )
+
+    /**
      * 配置寸法を直接指定してビューポート原点の範囲をclampします。
      *
-     * FOR折りたたみで配置が縮んでも、縮小前の寸法を渡すことで原点を引き戻さず、
-     * 折りたたんだSTARTが同じ位置に留まります。引き戻し後の空き領域へ
+     * FOR・分岐の折り畳みで配置が縮んでも、縮小前の寸法を渡すことで原点を引き戻さず、
+     * 折り畳んだ構造ノードが同じ位置に留まります。引き戻し後の空き領域へ
      * 戻る移動は、実寸法を見るcanMove側で拒否されます。
      */
     fun clampOrigin(

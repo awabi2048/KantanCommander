@@ -99,10 +99,11 @@ data class GestureEditorState(
     var placement: DiskPlacement?,
     var origin: MapPoint = MapPoint(0, 0),
     /**
-     * 直近に描画した配置寸法（セル単位）です。
+     * 描画した配置寸法の軸ごとの最大値（セル単位）です。
      *
-     * 折り畳み／展開で配置が縮んでも原点の正規化基準に使い、セッション内保持で、
-     * 永続化しません。
+     * 折り畳み／展開で配置が縮んでも原点を引き戻さないよう、縮小では維持し
+     * 拡大でのみ追従します。FOR・分岐のいずれの折り畳みでも同じ扱いです。
+     * 原点の正規化基準に使い、セッション内保持で、永続化しません。
      */
     var lastExpandedLayoutWidth: Int = 0,
     var lastExpandedLayoutHeight: Int = 0,
@@ -1453,10 +1454,18 @@ class GestureSequenceEditor(
         }
         val zoomScale = zoomScale()
         val metrics = viewportMetrics(zoomScale)
-        // 折り畳み／展開で配置寸法が変わっても、最新寸法を覚えて原点を正規化します。
+        // 折り畳み／展開で配置寸法が変わっても、軸ごとに最大寸法を覚えて原点を正規化します。
+        // 縮小（折り畳み）では記憶を維持して原点を引き戻さず、拡大（展開・追加）では追従します。
+        // FOR・分岐のいずれの折り畳みでも同じ扱いです。
         if (!testActive) {
-            state.lastExpandedLayoutWidth = persistedLayout.width
-            state.lastExpandedLayoutHeight = persistedLayout.height
+            val remembered = GestureEditorLayout.rememberLayoutSize(
+                state.lastExpandedLayoutWidth,
+                state.lastExpandedLayoutHeight,
+                persistedLayout.width,
+                persistedLayout.height,
+            )
+            state.lastExpandedLayoutWidth = remembered.x
+            state.lastExpandedLayoutHeight = remembered.y
         }
         // ズーム変更後に前回の原点が新しい表示可能範囲を越えないよう、
         // 描画・入力判定で共有する原点を毎回正規化します。
