@@ -239,7 +239,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
     }
 
-    /** かんたんコマンダー制御ブロックの破壊。管理権限があれば内容をプログラムディスクとして出力して撤去する。 */
+    /** かんたんコマンダー制御ブロックの破壊。管理権限があれば内容をプログラム入り制御ブロックとして出力して撤去する。 */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onBlockBreak(event: BlockBreakEvent) {
         val block = event.block
@@ -254,7 +254,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         plugin.testExecution.cancel(placement.key, showResult = false, reason = "placement_removed")
         // 編集中の表示Entity・入力クレームを先に解放し、破壊後に古い画面が残らないようにします。
         plugin.gestureEditor.closeForPlacement(placement)
-        outputDiskAndRemove(event.player, block, placement)
+        outputBlockAndRemove(event.player, block, placement)
     }
 
     /**
@@ -372,8 +372,11 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         })
     }
 
-    /** 破壊時の後始末。内容をプログラムディスクとして出力し、表示・配置・スクリプトを削除する。 */
-    private fun outputDiskAndRemove(player: Player, block: Block, placement: DiskPlacement) {
+    /**
+     * 破壊時の後始末。内容をスポイト操作と同じプログラム入り制御ブロックとして出力し、
+     * 表示・配置・スクリプトを削除する。
+     */
+    private fun outputBlockAndRemove(player: Player, block: Block, placement: DiskPlacement) {
         val world = block.world
         // 破壊音・パーティクルは、イベントキャンセル下でもバニラがクライアントへ送信するため自前では再生しない。
         val source = plugin.scripts.load(placement.scriptId)
@@ -392,11 +395,13 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             }
             if (copiedScript != null) {
                 outputScript = copiedScript
-                outputItem = runCatching { KantanItemService.createDisk(copiedScript, player) }.getOrElse { error ->
+                // スポイト操作（onPickControlBlock）と同じ生成経路を使い、配置中の
+                // プログラム全体を同梱した制御ブロックアイテムとして出力する。
+                outputItem = runCatching { KantanItemService.createBlock(copiedScript, player) }.getOrElse { error ->
                     runCatching { plugin.scripts.delete(copiedScript.id) }
                     plugin.logger.log(
                         java.util.logging.Level.WARNING,
-                        "破壊時のプログラムディスク生成に失敗: location=${block.location}, script=${copiedScript.id}",
+                        "破壊時のプログラム入り制御ブロック生成に失敗: location=${block.location}, script=${copiedScript.id}",
                         error,
                     )
                     outputScript = null
@@ -438,7 +443,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
         outputItem?.let { item ->
             player.inventory.addItem(item).values.forEach { world.dropItemNaturally(player.location, it) }
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_OUTPUT))
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_BLOCK_OUTPUT))
         }
     }
 }

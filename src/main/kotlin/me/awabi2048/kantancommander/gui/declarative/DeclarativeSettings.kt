@@ -128,7 +128,15 @@ data class ScriptSettingCard(
     val icon: ItemStack?,
     /** 未完了時の注意ホバーです。完了時は null です。 */
     val attentionHover: GestureGuiHoverText?,
+    /**
+     * 操作受付の実行可否です。null の場合は常に受け付けます。
+     * 内容があるときだけ有効な操作（未選択時下部のディスク取得など）は、
+     * クリック時点の最新状態を返す判定を渡します。
+     */
+    val guard: ((Player, GestureGuiGesture) -> Boolean)? = null,
     val cx: Double,
+    /** カード中心の垂直位置です。未選択時下部は2行配置のため呼び出し側で指定します。 */
+    val cy: Double = DeclarativeSettings.SCRIPT_CARD_CENTER_Y,
     val w: Double,
 )
 
@@ -140,11 +148,11 @@ data class ScriptSettingCard(
  * i18n・候補算出・スクリプト参照は含まず、実行時 adapter が解決します。
  */
 object DeclarativeSettings {
-    /** プログラム全体設定カードの中心高さです（旧 `addScriptSetting` と同一）。 */
-    private const val SCRIPT_CARD_CENTER_Y = -0.02
+    /** プログラム全体設定カードの中心高さです（1行配置時の既定値）。 */
+    internal const val SCRIPT_CARD_CENTER_Y = -0.02
 
-    /** プログラム全体設定カードの高さです（旧 `addScriptSetting` と同一）。 */
-    private const val SCRIPT_CARD_HEIGHT = 0.17
+    /** プログラム全体設定カードの高さです（旧 `addScriptSetting` と同一）。行別ホバー配置の基準にも使います。 */
+    internal const val SCRIPT_CARD_HEIGHT = 0.17
 
     /** 旧ホバー文を宣言仕様へ変換します。置換先は宣言ノード ID 基準で解決します。 */
     internal fun hoverSpecOf(hover: GestureGuiHoverText): GestureGuiHover = GestureGuiHover(
@@ -511,8 +519,9 @@ object DeclarativeSettings {
             id = card.elementId,
             actionId = card.elementId,
             acceptedGestures = GestureGuiClickPolicy.CLICK,
+            gestureGuard = card.guard,
             hover = card.attentionHover?.let(::hoverSpecOf),
-            absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y, card.w, SCRIPT_CARD_HEIGHT),
+            absolute = placed(frame, card.cx, card.cy, card.w, SCRIPT_CARD_HEIGHT),
         )
         card.icon?.let { icon ->
             nodes += GestureGuiItem(
@@ -521,7 +530,7 @@ object DeclarativeSettings {
                 width = GestureGuiSizeSpec.Fixed(0.08),
                 height = GestureGuiSizeSpec.Fixed(0.08),
                 id = "${card.elementId}-icon",
-                absolute = placed(frame, card.cx - card.w / 2.0 + 0.07, SCRIPT_CARD_CENTER_Y, 0.08, 0.08),
+                absolute = placed(frame, card.cx - card.w / 2.0 + 0.07, card.cy, 0.08, 0.08),
             )
         }
         nodes += GestureGuiText(
@@ -532,7 +541,7 @@ object DeclarativeSettings {
             id = "${card.elementId}-label",
             width = GestureGuiSizeSpec.Fixed(1.0),
             height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y - 0.025, 1.0, 0.0052 * 3.0),
+            absolute = placed(frame, card.cx, card.cy - 0.025, 1.0, 0.0052 * 3.0),
         )
         nodes += GestureGuiText(
             text = card.value,
@@ -542,11 +551,11 @@ object DeclarativeSettings {
             id = "${card.elementId}-value",
             width = GestureGuiSizeSpec.Fixed(1.0),
             height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, card.cx, SCRIPT_CARD_CENTER_Y + 0.015, 1.0, 0.0044 * 3.0),
+            absolute = placed(frame, card.cx, card.cy + 0.015, 1.0, 0.0044 * 3.0),
         )
     }
 
-    /** プログラム全体設定画面の文書です。案内文言と3枚のカードからなります。 */
+    /** プログラム全体設定画面の文書です。案内文言と4枚のカードからなります。 */
     fun scriptSettingsDocument(
         hint: Component,
         cards: List<ScriptSettingCard>,

@@ -31,7 +31,9 @@ class DeclarativeScriptSettingsTest {
     private fun card(
         elementId: String,
         cx: Double,
+        cy: Double,
         attentionHover: String?,
+        guard: ((org.bukkit.entity.Player, com.awabi2048.ccsystem.api.gesturegui.GestureGuiGesture) -> Boolean)? = null,
     ) = ScriptSettingCard(
         elementId = elementId,
         label = "label",
@@ -43,8 +45,10 @@ class DeclarativeScriptSettingsTest {
             // `singleLineHover` と等価な注意ホバーです（常設説明スロット位置）。
             GestureGuiHoverText(Component.text(it), x = 0.28, y = -0.35)
         },
+        guard = guard,
         cx = cx,
-        w = 0.60,
+        cy = cy,
+        w = 0.88,
     )
 
     @Test
@@ -53,9 +57,10 @@ class DeclarativeScriptSettingsTest {
             DeclarativeSettings.scriptSettingsDocument(
                 Component.text("hint"),
                 listOf(
-                    card("lower-script-name", -0.68, null),
-                    card("lower-script-timer", 0.0, "unset"),
-                    card("lower-script-variables", 0.68, null),
+                    card("lower-script-name", -0.48, 0.13, null),
+                    card("lower-script-timer", 0.48, 0.13, "unset"),
+                    card("lower-script-variables", -0.48, -0.16, null),
+                    card("lower-script-disk", 0.48, -0.16, null, guard = { _, _ -> true }),
                 ),
                 panel,
             ),
@@ -63,21 +68,38 @@ class DeclarativeScriptSettingsTest {
         )
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
         val elements = compiled.elements.associateBy { it.elementId }
-        // 操作振分けが照合する3件の ID がそのまま残ります。
+        // 操作振分けが照合する4件の ID がそのまま残ります。
         assertEquals(
-            setOf("lower-script-name", "lower-script-timer", "lower-script-variables"),
+            setOf("lower-script-name", "lower-script-timer", "lower-script-variables", "lower-script-disk"),
             elements.keys,
         )
-        // 操作域は旧来の矩形（中心・寸法）と一致します。
+        // 操作域は2x2配置の矩形（中心・寸法）と一致します。
         val timer = elements.getValue("lower-script-timer")
-        assertEquals(0.60, timer.bounds.maxX - timer.bounds.minX, 1.0e-9)
+        assertEquals(0.88, timer.bounds.maxX - timer.bounds.minX, 1.0e-9)
         assertEquals(0.17, timer.bounds.maxY - timer.bounds.minY, 1.0e-9)
-        assertEquals(0.0, (timer.bounds.minX + timer.bounds.maxX) / 2.0, 1.0e-9)
-        assertEquals(-0.02, (timer.bounds.minY + timer.bounds.maxY) / 2.0, 1.0e-9)
+        assertEquals(0.48, (timer.bounds.minX + timer.bounds.maxX) / 2.0, 1.0e-9)
+        assertEquals(0.13, (timer.bounds.minY + timer.bounds.maxY) / 2.0, 1.0e-9)
+        // 右下のディスク取得カードは同じ寸法で下段区画へ収まります。
+        val disk = elements.getValue("lower-script-disk")
+        assertEquals(0.88, disk.bounds.maxX - disk.bounds.minX, 1.0e-9)
+        assertEquals(0.17, disk.bounds.maxY - disk.bounds.minY, 1.0e-9)
+        assertEquals(0.48, (disk.bounds.minX + disk.bounds.maxX) / 2.0, 1.0e-9)
+        assertEquals(-0.16, (disk.bounds.minY + disk.bounds.maxY) / 2.0, 1.0e-9)
+        // 左下のワールド変数カードも同じ寸法で下段区画へ収まります。
+        val variables = elements.getValue("lower-script-variables")
+        assertEquals(0.88, variables.bounds.maxX - variables.bounds.minX, 1.0e-9)
+        assertEquals(-0.48, (variables.bounds.minX + variables.bounds.maxX) / 2.0, 1.0e-9)
+        assertEquals(-0.16, (variables.bounds.minY + variables.bounds.maxY) / 2.0, 1.0e-9)
         // 注意ホバーは timer のみに付き、他には付きません。
         assertNotNull(timer.hoverText)
         assertNull(elements.getValue("lower-script-name").hoverText)
         assertNull(elements.getValue("lower-script-variables").hoverText)
+        assertNull(disk.hoverText)
+        // 実行可否ガードはディスク取得カードだけが持ちます。
+        assertNotNull(disk.gestureGuard)
+        assertNull(elements.getValue("lower-script-name").gestureGuard)
+        assertNull(elements.getValue("lower-script-timer").gestureGuard)
+        assertNull(elements.getValue("lower-script-variables").gestureGuard)
         // 受付種別は旧来どおりクリックです。
         elements.values.forEach {
             assertEquals(GestureGuiClickPolicy.CLICK, it.acceptedGestures)
