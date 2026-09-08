@@ -22,4 +22,7 @@ object KantanDeclarativeGui {
 
     /** 設定系画面を宣言実装へ切り替えます。切り分け実験が終わったため戻します。 */
     var useSettings: Boolean = true
+
+    /** 設定候補子画面を宣言実装へ切り替えます。 */
+    var useSettingChoices: Boolean = true
 }

@@ -133,8 +133,135 @@ class GestureLowerPanel(
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
         suppressHighlight: Boolean = false,
-    ): GestureGuiView =
+    ): GestureGuiView = if (KantanDeclarativeGui.useSettingChoices) {
+        buildSettingChoicesChildNew(state, player, attention, suppressHighlight)
+    } else {
         buildSettingChoices(state, player, attention, child = true, suppressHighlight = suppressHighlight)
+    }
+
+    /**
+     * 設定候補子画面の宣言実装です。旧 `buildSettingChoices(child = true)` と同じ
+     * 算出・文言・座標・要素 ID・ホバーを用い、既存の画面定義・子画面縮尺・
+     * 操作振分け（`view()`）を利用します。
+     */
+    private fun buildSettingChoicesChildNew(
+        state: GestureEditorState,
+        player: Player,
+        attention: GestureAttentionState = GestureAttentionState.EMPTY,
+        suppressHighlight: Boolean = false,
+    ): GestureGuiView {
+        val context = state.settingContext
+        val script = context?.let { plugin.scripts.load(it.scriptId) }
+        val node = context?.let { script?.graph?.nodes?.get(it.nodeId) }
+        val fieldKey = state.settingFieldKey
+        val screen = state.settingScreen
+        val frame = contentFrame(GestureGuiPanel())
+        val nodes = mutableListOf<GestureGuiNode>()
+        val noFields = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_NO_FIELDS))
+        val backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK))
+        val backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE)
+        if (context == null || node == null || fieldKey == null || screen == null) {
+            DeclarativeSettings.hintSection(nodes, frame, noFields, x = 0.0, y = 0.12, id = "setting-hint")
+            DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
+            return finishSettingChoicesChild(nodes)
+        }
+        val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
+        val field = CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == fieldKey }
+        if (field == null) {
+            DeclarativeSettings.hintSection(nodes, frame, noFields, x = 0.0, y = 0.12, id = "setting-hidden")
+            DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
+            return finishSettingChoicesChild(nodes)
+        }
+        val fieldLabel = KcI18n.text(player, field.label)
+        val fieldValue = field.value(node).render(player)
+        val choices = settingTreeNodes(node, context, screen, fieldKey, player, attentionFields).map { choice ->
+            if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
+                choice.copy(selected = true)
+            } else choice
+        }
+        val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
+        DeclarativeSettings.descriptionSection(
+            nodes,
+            frame,
+            body = Component.text(fieldDescription(player, field), NamedTextColor.GRAY),
+            detail = run {
+                val warning = attentionWarning(player, node, fieldKey, attentionFields)
+                val detailHint = selectedDetail
+                    ?.let { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_OPEN_FILTERS) }
+                when {
+                    !warning.isNullOrBlank() -> DescriptionDetail(
+                        Component.text(warning, NamedTextColor.RED),
+                        CHILD_DETAIL_HINT_Y,
+                    )
+                    !detailHint.isNullOrBlank() -> DescriptionDetail(
+                        Component.text(detailHint, NamedTextColor.GRAY),
+                        CHILD_DETAIL_HINT_Y,
+                    )
+                    else -> null
+                }
+            },
+            centerX = 0.0,
+            hoverY = CHILD_HOVER_Y,
+        )
+        DeclarativeSettings.valueRowsSection(
+            nodes,
+            frame,
+            rows = listOf(SettingsValueRow("setting-header", fieldLabel, fieldValue, CHILD_HEADER_Y)),
+            labelX = -0.53,
+            valueX = 0.53,
+        )
+        val pageSize = SETTING_CHOICE_PAGE_SIZE
+        val pageCount = (choices.size + pageSize - 1) / pageSize
+        val page = state.settingChoicePage.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        appendSettingChoiceCards(
+            nodes,
+            frame,
+            choices.drop(page * pageSize).take(pageSize),
+            fieldKey,
+            player,
+            child = true,
+            suppressHighlight = suppressHighlight,
+        )
+        if (pageCount > 1) {
+            DeclarativeSettings.pagerSection(
+                nodes,
+                frame,
+                idPrefix = "setting-choice",
+                elementPrefix = "lower-setting-choice-page",
+                page = page,
+                pageCount = pageCount,
+                centerX = 0.0,
+                centerY = CHILD_PAGER_Y,
+                arrowBackgrounds = listOf(page - 1, page + 1).map { targetPage ->
+                    Bukkit.createBlockData(
+                        if (targetPage in 0 until pageCount) Material.CYAN_CONCRETE
+                        else DisabledGuiVisualPolicy.material,
+                    )
+                },
+                arrowGlyphs = listOf("◀", "▶").mapIndexed { arrowIndex, glyph ->
+                    val targetPage = if (arrowIndex == 0) page - 1 else page + 1
+                    Component.text(glyph).color(
+                        if (targetPage in 0 until pageCount) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    )
+                },
+                status = Component.text("${page + 1}/$pageCount"),
+            )
+        }
+        DeclarativeSettings.backSection(nodes, frame, backLabel, backBackground, 0.0, CHILD_BACK_WIDTH)
+        return finishSettingChoicesChild(nodes)
+    }
+
+    /** 宣言の候補子画面を解決・変換し、既存の子画面定義へ載せます。 */
+    private fun finishSettingChoicesChild(nodes: List<GestureGuiNode>): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeSettings.document(nodes),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeSettingChoices] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
+    }
 
     /** ワールド変数一覧の子画面を生成します。 */
     fun buildWorldVariablesChild(

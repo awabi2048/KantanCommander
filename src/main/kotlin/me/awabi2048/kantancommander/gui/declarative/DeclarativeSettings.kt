@@ -209,16 +209,23 @@ object DeclarativeSettings {
     }
 
     /** 設定項目なしの案内文を配置します。固定操作は tabsSection 側で配置します。 */
-    fun hintSection(nodes: MutableList<GestureGuiNode>, frame: ContentFrame, hint: Component) {
+    fun hintSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        hint: Component,
+        x: Double = 0.28,
+        y: Double = 0.20,
+        id: String = "lower-hint",
+    ) {
         nodes += GestureGuiText(
             text = hint,
             size = 0.010,
             lineWidth = 160,
             alignment = GestureGuiTextAlignment.CENTER,
-            id = "lower-hint",
+            id = id,
             width = GestureGuiSizeSpec.Fixed(1.0),
             height = GestureGuiSizeSpec.Auto,
-            absolute = placed(frame, 0.28, 0.20, 1.0, 0.010 * 3.0),
+            absolute = placed(frame, x, y, 1.0, 0.010 * 3.0),
         )
     }
 
@@ -337,6 +344,95 @@ object DeclarativeSettings {
         card: SettingsActionCard,
     ) {
         appendActionCard(nodes, frame, card)
+    }
+
+    /**
+     * ページャ（左右矢印＋ページ表示）を配置します。
+     * 利用不可方向は背景・文言だけを描画し、操作面を作りません。
+     */
+    fun pagerSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        idPrefix: String,
+        elementPrefix: String,
+        page: Int,
+        pageCount: Int,
+        centerX: Double,
+        centerY: Double,
+        arrowBackgrounds: List<BlockData>,
+        arrowGlyphs: List<Component>,
+        status: Component,
+    ) {
+        require(arrowBackgrounds.size == 2 && arrowGlyphs.size == 2) {
+            "pager requires exactly two arrows"
+        }
+        listOf(page - 1 to 0, page + 1 to 1).forEach { (targetPage, arrowIndex) ->
+            val available = targetPage in 0 until pageCount
+            val x = centerX + if (arrowIndex == 0) -0.12 else 0.12
+            appendActionCard(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = if (available) "$elementPrefix:$targetPage" else null,
+                    label = arrowGlyphs[arrowIndex],
+                    background = arrowBackgrounds[arrowIndex],
+                    cx = x,
+                    cy = centerY,
+                    w = 0.18,
+                    h = 0.10,
+                    labelSize = 0.005,
+                    labelWidth = 60,
+                    gestures = if (available) {
+                        GestureGuiClickPolicy.CLICK
+                    } else {
+                        emptySet()
+                    },
+                    guard = null,
+                    hover = null,
+                    visualTag = "$idPrefix-page-$targetPage",
+                ),
+            )
+        }
+        nodes += GestureGuiText(
+            text = status,
+            size = 0.004,
+            lineWidth = 80,
+            alignment = GestureGuiTextAlignment.CENTER,
+            id = "$idPrefix-page-status",
+            width = GestureGuiSizeSpec.Fixed(1.0),
+            height = GestureGuiSizeSpec.Auto,
+            absolute = placed(frame, centerX, centerY, 1.0, 0.004 * 3.0),
+        )
+    }
+
+    /** 戻る操作を配置します。 */
+    fun backSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        label: Component,
+        background: BlockData,
+        centerX: Double,
+        width: Double,
+    ) {
+        appendActionCard(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-setting-back",
+                label = label,
+                background = background,
+                cx = centerX,
+                cy = -0.43,
+                w = width,
+                h = 0.10,
+                labelSize = 0.0048,
+                labelWidth = 100,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = null,
+                visualTag = "setting-back",
+            ),
+        )
     }
 
     private fun appendActionCard(nodes: MutableList<GestureGuiNode>, frame: ContentFrame, card: SettingsActionCard) {
