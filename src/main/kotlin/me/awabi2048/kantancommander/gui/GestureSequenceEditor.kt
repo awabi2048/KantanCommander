@@ -39,6 +39,7 @@ import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
 import me.awabi2048.kantancommander.execution.NodeExecutionOutcome
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
+import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
@@ -1425,11 +1426,59 @@ class GestureSequenceEditor(
             layoutErrorView(player)
         }
 
-    /** グラフ描画の中核出力です。旧来経路とCustom経路で共有します。 */
-    private data class GraphCellOutput(
-        val visuals: List<GestureGuiVisual>,
-        val elements: List<GestureGuiElement>,
-    )
+    /** shadow検証の直近の差分署名です。同一差分の連投を抑えます。 */
+    private var lastGraphShadowSignature: String = ""
+
+    /**
+     * Custom経路との等価性を検証します。表示は旧来のままにし、差分だけを記録します。
+     *
+     * 同一の拡縮済み出力からCustom変換を行い、旧来の切断結果と突合します。
+     * 不一致がなければ何も記録しません。上部画面の切替え時に除去します。
+     */
+    private fun runGraphShadow(
+        scaledVisuals: List<GestureGuiVisual>,
+        scaledElements: List<GestureGuiElement>,
+        clippedVisuals: List<GestureGuiVisual>,
+        finalElements: List<GestureGuiElement>,
+        metrics: ViewportMetrics,
+        zoomScale: Double,
+    ) {
+        if (!KantanDeclarativeGui.shadowGraphCustom) return
+        runCatching {
+            val frame = GraphViewportMapper.frame(
+                minX = metrics.graphMinX,
+                maxX = metrics.graphMaxX,
+                minY = metrics.graphMinY,
+                maxY = metrics.graphMaxY,
+                columns = metrics.columns,
+                rows = metrics.rows,
+                scale = zoomScale,
+            )
+            // Custom renderer 本体と同じ変換を通し、旧来の切断結果と突合します。
+            val renderer = KantanGraphCustomRenderer(
+                GraphCellOutput(scaledVisuals, scaledElements),
+                zoomScale,
+                frame,
+            )
+            val clip = GestureGuiBounds(frame.minX, frame.minY, frame.maxX, frame.maxY)
+            val result = renderer.convertForShadow()
+            diffGraphShadow(scaledVisuals, scaledElements, clippedVisuals, finalElements, result, clip)
+        }.onSuccess { diffs ->
+            val signature = diffs.sorted().joinToString("|")
+            if (diffs.isEmpty()) {
+                lastGraphShadowSignature = ""
+                return
+            }
+            if (signature == lastGraphShadowSignature) return
+            lastGraphShadowSignature = signature
+            plugin.logger.warning("[KantanCommander][GraphShadow] ${diffs.size} mismatches: ${diffs.take(10)}")
+        }.onFailure { failure ->
+            if (lastGraphShadowSignature != "error") {
+                lastGraphShadowSignature = "error"
+                plugin.logger.warning("[KantanCommander][GraphShadow] shadow failure: ${failure.message}")
+            }
+        }
+    }
 
     /**
      * グラフセル・経路・矢印・挿入候補を描画します。
@@ -1992,31 +2041,10 @@ class GestureSequenceEditor(
         // IDの接頭辞判定はisMapVisual/isMapElementへ集約し、表示だけ・入力だけが
         // 変換対象から外れる状態を防ぎます。特に戻り経路のホバー要素はpath:名前空間へ
         // 統一しているため、通常経路と同じ縮尺・クリップ処理を通ります。
-        val scaledVisuals = visuals.map { visual ->
-            if (isMapVisual(visual)) {
-                when (visual) {
-                    is GestureGuiVisual.Block -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
-                        width = visual.width * zoomScale, height = visual.height * zoomScale)
-                    is GestureGuiVisual.Item -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
-                        scale = visual.scale * zoomScale)
-                    is GestureGuiVisual.Text -> visual.copy(x = visual.x * zoomScale, y = visual.y * zoomScale,
-                        size = visual.size * zoomScale)
-                }
-            } else visual
-        }
-        val scaledElements = elements.map { element ->
-            if (isMapElement(element)) {
-                val hover = element.hoverText
-                element.copy(
-                    bounds = scaleBounds(element.bounds, zoomScale),
-                    hoverText = hover?.copy(
-                        x = hover.x * zoomScale,
-                        y = hover.y * zoomScale,
-                        size = hover.size * zoomScale,
-                    ),
-                )
-            } else element
-        }
+        // 拡縮式は共有関数へ一本化し、Custom経路と分岐させません。
+        val scaled = scaleGraphOutput(visuals, elements, zoomScale)
+        val scaledVisuals = scaled.visuals
+        val scaledElements = scaled.elements
         // 表示と入力の境界は同じグラフ矩形から生成します。従来は表示だけを
         // filterしていたため、画面外へ消えたアイコンのInteractionがナビ列を
         // 横取りしていました。Blockは矩形を実際に切り詰め、Item/Textは
@@ -2032,6 +2060,7 @@ class GestureSequenceEditor(
             it.targetVisualId == null || it.targetVisualId in visibleVisualIds
         }
         ensureUniqueScreenElementIds(finalElements, script.id)
+        runGraphShadow(scaledVisuals, scaledElements, clippedVisuals, finalElements, metrics, zoomScale)
 
         // 今回の描画が最後まで完了した場合だけ、次回の別障害を通知できるように
         // 通知抑制を解除します。プレビューだけ失敗した場合は、上の処理で失敗状態を
@@ -5981,26 +6010,6 @@ class GestureSequenceEditor(
         }
     }
 
-    /**
-     * グラフの表示要素を一括変換する対象か判定します。
-     * 表示IDはハイフン区切りの名前空間として扱い、経路上の矢印も含めます。
-     */
-    private fun isMapVisual(visual: GestureGuiVisual): Boolean =
-        visual.visualId.startsWith("node-") ||
-            visual.visualId.startsWith("add-") ||
-            visual.visualId.startsWith("path-")
-
-    /**
-     * グラフの入力要素を表示と同じ変換対象へ揃えます。
-     * node-reorderもグラフ上の操作要素であるため、通常ノードと同じ縮尺・クリップを
-     * 適用します。IDの名前空間を追加するときは、ここだけでなく生成側も同じ規則に従います。
-     */
-    private fun isMapElement(element: GestureGuiElement): Boolean =
-        element.elementId.startsWith("node:") ||
-            element.elementId.startsWith("node-reorder:") ||
-            element.elementId.startsWith("add:") ||
-            element.elementId.startsWith("path:")
-
     private fun clipMapVisual(visual: GestureGuiVisual, metrics: ViewportMetrics): GestureGuiVisual? {
         val halfWidth = when (visual) {
             is GestureGuiVisual.Block -> visual.width / 2.0
@@ -6079,9 +6088,6 @@ class GestureSequenceEditor(
 
     private fun rect(cx: Double, cy: Double, width: Double, height: Double): GestureGuiBounds =
         GestureGuiBounds(cx - width / 2.0, cy - height / 2.0, cx + width / 2.0, cy + height / 2.0)
-
-    private fun scaleBounds(bounds: GestureGuiBounds, scale: Double): GestureGuiBounds =
-        GestureGuiBounds(bounds.minX * scale, bounds.minY * scale, bounds.maxX * scale, bounds.maxY * scale)
 
     /** 十字ナビゲーション（75%サイズ・右下） */
     private fun addNavigation(

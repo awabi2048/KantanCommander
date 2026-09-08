@@ -20,6 +20,12 @@ object KantanDeclarativeGui {
     /** テスト結果画面を宣言実装へ切り替えます。 */
     var useTestResult: Boolean = true
 
+    /**
+     * グラフCustom経路のshadow検証を行います。
+     * 表示は旧来のままにし、差分だけを記録します。上部画面の切替え時に除去します。
+     */
+    var shadowGraphCustom: Boolean = true
+
     /** ワールド変数削除確認子画面を宣言実装へ切り替えます。 */
     var useWorldVariableDeleteConfirm: Boolean = false
 
