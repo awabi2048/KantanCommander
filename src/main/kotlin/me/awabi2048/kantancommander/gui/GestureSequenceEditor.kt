@@ -1425,6 +1425,423 @@ class GestureSequenceEditor(
             layoutErrorView(player)
         }
 
+    /** グラフ描画の中核出力です。旧来経路とCustom経路で共有します。 */
+    private data class GraphCellOutput(
+        val visuals: List<GestureGuiVisual>,
+        val elements: List<GestureGuiElement>,
+    )
+
+    /**
+     * グラフセル・経路・矢印・挿入候補を描画します。
+     *
+     * 座標基準だけを [GraphViewportFrame] で受け、旧来の矩形基準配置と同一式です。
+     * ナビ等の外枠・ズーム後段の拡縮切断・画面組立は呼び出し側で行います。
+     */
+    private fun renderGraphCells(
+        player: Player,
+        script: DiskScript,
+        renderGraph: CommandGraph,
+        projection: ViewportProjection,
+        cells: Map<MapPoint, MapCell>,
+        frame: GraphViewportFrame,
+        incompleteNodeIds: Set<java.util.UUID>,
+        test: GestureTestState?,
+        testActive: Boolean,
+        insertionPreview: InsertionPreview?,
+        zoomScale: Double,
+    ): GraphCellOutput {
+        val visuals = mutableListOf<GestureGuiVisual>()
+        val elements = mutableListOf<GestureGuiElement>()
+        cells.forEach { (localPoint, cell) ->
+            // セル検索はグリッド座標、配置は列/行インデックスで行う（origin移動してもグリッド位置は固定）
+            val colIndex = localPoint.x
+            val rowIndex = localPoint.y
+            val gx = state.origin.x + colIndex
+            val gy = state.origin.y + rowIndex
+            val cx = frame.x(colIndex)
+            val cy = frame.y(rowIndex)
+            when (cell.kind) {
+                MapCellKind.NODE -> {
+                    val node = cell.nodeId?.let { renderGraph.nodes[it] }
+                    if (node != null && node.id != insertionPreview?.insertedNodeId) {
+                        val isSelected = !testActive && state.selectedNodeId == node.id
+                        val activeTest = test?.takeIf { testActive }
+                        val isFailedNode = activeTest?.failedNodeId == node.id
+                        val isWaitingNode = activeTest?.waitingNodeId == node.id
+                        val isRunningNode = activeTest?.phase == GestureTestPhase.RUNNING &&
+                            activeTest.currentNodeId == node.id
+                        // STARTはFOR全体を表現するため、全体が完了するまで実行中色で示します。
+                        val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
+                        val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
+                        val incomplete = node.id in incompleteNodeIds
+                        // 折り畳みノードは構造全体の代理として縁取りで示します。
+                        // 背景色は変えないため、未設定警告やテスト色と両立します。
+                        // テスト実行中は展開表示のため、折り畳みノードは現れません。
+                        val isFoldedFor = node.type == CommandType.FOLDED_FOR
+                        val isFoldedIf = node.type == CommandType.FOLDED_IF
+                        // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
+                        // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
+                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
+                        val backgroundMaterial = when {
+                            isFailedNode -> Material.RED_SHULKER_BOX
+                            isWaitingNode -> Material.YELLOW_SHULKER_BOX
+                            isRunningNode -> Material.LIGHT_BLUE_SHULKER_BOX
+                            isLoopActiveStart -> Material.LIGHT_BLUE_SHULKER_BOX
+                            isSuccessfulNode -> Material.LIME_SHULKER_BOX
+                            incomplete -> Material.ORANGE_SHULKER_BOX
+                            else -> Material.LIGHT_GRAY_SHULKER_BOX
+                        }
+                        val glowColor = if (testActive) null else if (isSelected) Color.YELLOW.asARGB() else null
+                        val statusLine = when {
+                            incomplete -> Component.text(
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                                NamedTextColor.RED,
+                            )
+                            else -> null
+                        }
+                        val hoverText = foldGuidanceText(player, node, renderGraph)
+                            .let { guidance ->
+                                // 折り畳み操作案内は灰色（§7）で示します。§形式へ直列化すると
+                                // 先行色が後続行へ漏れるため、ノード名には白色を明示します。
+                                val firstLine = if (guidance != null) {
+                                    Component.text(guidance, NamedTextColor.GRAY).append(Component.newline())
+                                        .append(Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE))
+                                } else {
+                                    Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE)
+                                }
+                                statusLine?.let { firstLine.append(Component.newline()).append(it) } ?: firstLine
+                            }
+                        // アイコン単体を浮かせず、追加ポイントと同じマス背景で視認性と接続先を示します。
+                        visuals.add(GestureGuiVisual.Block(
+                            visualId = "node-bg-${node.id}",
+                            x = cx, y = cy,
+                            width = frame.iconSize,
+                            height = frame.iconSize,
+                            blockData = Bukkit.createBlockData(backgroundMaterial),
+                            // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
+                            layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
+                            glowColor = glowColor,
+                        ))
+                        // マスの90% (ICON_W=0.198) に合わせます。追加ポイントの背景・記号も同じ寸法です。
+                        // 折りたたみ中の構造はアイコンにエンチャントグリントを付け、折畳み状態を
+                        // 補助表現します（システム横断UI設計の状態表現規則）。背景・縁取りは変えません。
+                        visuals.add(GestureGuiVisual.Item(
+                            visualId = "node-icon-${node.id}",
+                            x = cx, y = cy,
+                            item = foldedIconStack(node, isFoldedFor || isFoldedIf),
+                            scale = frame.iconScale,
+                            // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
+                            layer = GestureEditorLayout.ICON_LAYER,
+                            glowColor = null,
+                        ))
+                        // 折り畳みノードは、背景の右の外縁へ縁取りを付けます。
+                        // 太さはアイコン幅の30%、高さはアイコンと同じで、背景の外側に
+                        // 配置します。隣接ノードは2セル周期のため縁取りは届きません。
+                        // FORは空色、IFは黄色で種別を区別します。
+                        val foldedFrameMaterial = when {
+                            isFoldedFor -> Material.LIGHT_BLUE_CONCRETE
+                            isFoldedIf -> Material.YELLOW_CONCRETE
+                            else -> null
+                        }
+                        // 縁にもノードと同じクリック・ホバー判定を設け、縁経由でも
+                        // 選択・再クリック変化が行えるようにします。単一ヒット確定の
+                        // ため二重発火しません。
+                        val frameThickness = frame.iconSize * 0.30
+                        val frameOffset = frame.iconSize / 2.0 + frameThickness / 2.0
+                        if (foldedFrameMaterial != null) {
+                            visuals.add(GestureGuiVisual.Block(
+                                visualId = "node-folded-frame-right-${node.id}",
+                                x = cx + frameOffset, y = cy,
+                                width = frameThickness,
+                                height = frame.iconSize,
+                                blockData = Bukkit.createBlockData(foldedFrameMaterial),
+                                layer = GestureEditorLayout.ICON_LAYER,
+                            ))
+                        }
+                        // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
+                        // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
+                        // 旧選択の解除と新ノードの選択を1クリックで完了させます。
+                        // 入れ替えボタン表示中はホバー文言をボタンのさらに上へ退避させ、
+                        // ボタン・ホバーをノード上側に積み上げます。通常ノードと
+                        // 折り畳みノードだけが対象で、展開中の構造ノードは表示しません。
+                        val showReorder = !testActive && insertionPreview == null && isSelected &&
+                            !FoldedGraphs.isExpandedStructural(node)
+                        val reorderSize = minOf(frame.pitchX, frame.pitchY) * 0.20
+                        val reorderY = cy + frame.iconSize / 2.0 + reorderSize / 2.0 + 0.008
+                        if (!testActive) elements.add(GestureGuiElement(
+                            elementId = "node:${node.id}",
+                            // 折畳み縁にもノードと同じクリック・ホバー判定を設けます。
+                            // 要素IDの重複は構造エラーになるため別要素にせず、
+                            // ノード要素の領域を縁まで拡張します。
+                            bounds = if (foldedFrameMaterial != null) {
+                                GestureGuiBounds(
+                                    cx - frame.iconSize / 2.0,
+                                    cy - frame.iconSize / 2.0,
+                                    cx + frame.iconSize / 2.0 + frameThickness,
+                                    cy + frame.iconSize / 2.0,
+                                )
+                            } else {
+                                iconBounds(cx, cy, frame.iconSize)
+                            },
+                            acceptedGestures = GestureGuiClickPolicy.CLICK,
+                            targetVisualId = "node-icon-${node.id}",
+                            hoverText = GestureGuiHoverText(
+                                text = hoverText,
+                                x = cx,
+                                y = if (showReorder) reorderY + reorderSize / 2.0 + 0.03
+                                else cy + frame.iconSize * 0.9,
+                                size = 0.006,
+                                lineWidth = 180,
+                            ),
+                        ))
+                        if (showReorder) {
+                            val reorderOffset = reorderSize * 0.78
+                            listOf(
+                                GraphEditor.ReorderDirection.LEFT to "←",
+                                GraphEditor.ReorderDirection.RIGHT to "→",
+                            ).forEach { (direction, glyph) ->
+                                // 入替可否は描画時と同じ折りたたみ集合で判定し、表示と実可否を一致させます。
+                                val enabled = GraphEditor.canSwapAdjacent(script.graph, node.id, direction)
+                                val x = cx + if (direction == GraphEditor.ReorderDirection.LEFT) -reorderOffset else reorderOffset
+                                val directionName = direction.name.lowercase()
+                                visuals.add(GestureGuiVisual.Block(
+                                    visualId = "node-reorder-$directionName-bg-${node.id}",
+                                    x = x,
+                                    y = reorderY,
+                                    width = reorderSize,
+                                    height = reorderSize,
+                                    blockData = Bukkit.createBlockData(
+                                        if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
+                                    ),
+                                    layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
+                                ))
+                                visuals.add(GestureGuiVisual.Text(
+                                    visualId = "node-reorder-$directionName-glyph-${node.id}",
+                                    x = x,
+                                    y = reorderY - 0.006,
+                                    text = Component.text(glyph).color(
+                                        if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                                    ),
+                                    size = 0.007,
+                                    layer = GestureEditorLayout.ICON_LAYER,
+                                ))
+                                elements.add(GestureGuiElement(
+                                    elementId = "node-reorder:$directionName:${node.id}",
+                                    bounds = iconBounds(x, reorderY, reorderSize),
+                                    // 隣接ノードの状態は他の操作や外部保存で変わり得るため、
+                                    // 描画時のenabledを入力可否へ固定しません。クリック時に
+                                    // 最新グラフを再取得し、表示更新なしでも誤操作を防ぎます。
+                                    acceptedGestures = GestureGuiClickPolicy.CLICK,
+                                    gestureGuard = { _, _ ->
+                                        val guardGraph = plugin.scripts.load(state.scriptId)?.graph
+                                        guardGraph?.let { currentGraph ->
+                                            GraphEditor.canSwapAdjacent(currentGraph, node.id, direction)
+                                        } == true
+                                    },
+                                    targetVisualId = "node-reorder-$directionName-glyph-${node.id}",
+                                ))
+                            }
+                        }
+                    }
+                }
+                MapCellKind.ADD -> {
+                    val isSelected = insertionPreview == null && state.selectedAddPoint == MapPoint(gx, gy)
+                    visuals.add(GestureGuiVisual.Block(
+                        visualId = "add-block-$gx-$gy",
+                        x = cx, y = cy,
+                        width = frame.iconSize,
+                        height = frame.iconSize,
+                        blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                        layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
+                        glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
+                    ))
+                    visuals.add(GestureGuiVisual.Text(
+                        visualId = "add-plus-$gx-$gy",
+                        // 新規追加もコマンドアイコンと同じ中心・前景レベルで表示します。
+                        x = cx, y = cy,
+                        text = net.kyori.adventure.text.Component.text("+"),
+                        size = 0.012,
+                        layer = GestureEditorLayout.ICON_LAYER,
+                    ))
+                    if (!testActive && insertionPreview == null) {
+                        elements.add(GestureGuiElement(
+                            elementId = "add:$gx:$gy",
+                            bounds = iconBounds(cx, cy, frame.iconSize),
+                            acceptedGestures = GestureGuiClickPolicy.CLICK,
+                            targetVisualId = "add-plus-$gx-$gy",
+                            hoverText = GestureGuiHoverText(
+                                text = net.kyori.adventure.text.Component.text(
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_ADD),
+                                ),
+                                x = cx,
+                                y = cy + frame.iconSize * 0.9,
+                                size = 0.006,
+                                lineWidth = 120,
+                            ),
+                        ))
+                    }
+                }
+                MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
+                    if (!testActive && insertionPreview == null && cell.kind == MapCellKind.LOOP_RETURN_PATH) {
+                        // 戻り経路は処理の流れを示す表示専用要素です。クリック操作は受け付けず、
+                        // ホバー時だけ「戻って処理を繰り返します」と説明します。矢印と同じ論理セルを
+                        // 当たり判定に使うため、パン・ズーム後も戻り経路上の説明がずれません。
+                        elements.add(GestureGuiElement(
+                            // 経路要素の名前空間へ統一します。戻り経路だけ別の接頭辞にすると、
+                            // 表示側のpath-判定とは一致しても、当たり判定側の縮尺・クリップ判定から
+                            // 漏れてしまいます。通常経路と同じpath:配下に置くことで、表示と入力の
+                            // 座標変換を同じ規則で適用します。
+                            elementId = "path:return:$gx:$gy",
+                            bounds = rect(cx, cy, frame.pitchX, frame.pitchY),
+                            acceptedGestures = emptySet(),
+                            hoverText = GestureGuiHoverText(
+                                text = Component.text(
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_LOOP_RETURN_HOVER),
+                                ),
+                                x = cx,
+                                y = cy + frame.pathThickness,
+                                size = 0.0055,
+                                lineWidth = 120,
+                            ),
+                        ))
+                    } else {
+                        // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
+                        val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
+                        if (!testActive && insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
+                            elements.add(GestureGuiElement(
+                                elementId = "path:${gx}:${gy}",
+                                bounds = rect(cx, cy, frame.pitchX, frame.pitchY),
+                                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                                hoverText = GestureGuiHoverText(
+                                    text = net.kyori.adventure.text.Component.text(
+                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_INSERT),
+                                    ),
+                                    x = cx,
+                                    y = cy + frame.pathThickness,
+                                    size = 0.0055,
+                                    lineWidth = 120,
+                                ),
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+
+        // テスト中の経路通過マーカーです。Glow描画には使わず、コンクリートへの
+        // 張り替え判定にだけ使います。ループ戻りも通常通路と同じ仕様で扱います。
+        // 待機中の次の枝は空色で示し、通過表示より優先します。
+        val waitingPathMark = Color.fromRGB(85, 255, 255).asARGB()
+        val passedPathMark = Color.fromRGB(85, 255, 85).asARGB()
+        val testPathMark: ((MapPoint, MapCell) -> Int?)? = test?.takeIf { testActive }?.let { activeTest ->
+            val waitingEdge = activeTest.waitingEdge
+            val waitingLoopReturnId = activeTest.waitingLoopReturnId
+            val mark: (MapPoint, MapCell) -> Int? = { _, cell ->
+                when {
+                    waitingEdge != null && cell.insertionTarget?.let { target ->
+                        target.sourceId == waitingEdge.sourceId && target.edge == waitingEdge.edge
+                    } == true -> waitingPathMark
+                    waitingLoopReturnId != null && cell.loopReturnId == waitingLoopReturnId -> waitingPathMark
+                    cell.insertionTarget?.let { target ->
+                        target.sourceId?.let { sourceId ->
+                            activeTest.passedEdges.contains(TestExecutionEdge(sourceId, target.edge))
+                        }
+                    } == true -> passedPathMark
+                    else -> null
+                }
+            }
+            mark
+        }
+        GesturePathRenderer.buildSegments(
+            cells,
+            boundaryConnections = projection.boundaryConnections,
+            xCenter = frame::x,
+            yCenter = frame::y,
+            thickness = frame.pathThickness,
+            glowColorFor = testPathMark,
+            clipBounds = GesturePathRenderer.ClipBounds(
+                // 仮想境界セルをグラフ領域の端までだけ延長します。これより外側へ
+                // 経路を出さないため、ナビゲーション列との重なりが発生しません。
+                minX = frame.minX / zoomScale,
+                maxX = frame.maxX / zoomScale,
+                minY = frame.minY / zoomScale,
+                maxY = frame.maxY / zoomScale,
+            ),
+        ).forEach { seg ->
+            // テスト中はGlowではなくテクスチャ変更で示します。通過経路=黄緑、
+            // 待機中の次の枝=空色、それ以外は白色です。ループ戻りも通常通路と同じ仕様です。
+            val pathMaterial = if (testActive && seg.glowColor != null) {
+                if (seg.glowColor == waitingPathMark) Material.LIGHT_BLUE_CONCRETE else Material.LIME_CONCRETE
+            } else {
+                Material.WHITE_CONCRETE
+            }
+            visuals.add(GestureGuiVisual.Block(
+                visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
+                x = seg.x, y = seg.y,
+                width = seg.w, height = seg.h,
+                blockData = Bukkit.createBlockData(pathMaterial),
+                layer = 1,
+                glowColor = null,
+            ))
+        }
+
+        // 横向き経路の方向矢印は、角・縦経路を除いた直線ランへ1つおきに配置します。
+        // 順方向は»、ループ戻りは«で示します。経路自体は白いため、矢印だけを空色で示します。
+        // 論理座標から投影するため、ズーム・パン後も矢印とホバー用の
+        // 当たり判定が同じ経路セルを参照します。矢印自体は表示専用です。
+        projection.horizontalArrowPoints.forEach { arrow ->
+            val localPoint = arrow.point
+            val gx = state.origin.x + localPoint.x
+            val gy = state.origin.y + localPoint.y
+            val glyph = if (arrow.direction == HorizontalArrowDirection.RETURN) "«" else "»"
+            val kind = if (arrow.direction == HorizontalArrowDirection.RETURN) "return" else "forward"
+            visuals.add(GestureGuiVisual.Text(
+                visualId = "path-$kind-arrow-$gx-$gy",
+                x = frame.x(localPoint.x),
+                y = frame.y(localPoint.y) - 0.006,
+                text = Component.text(glyph).color(NamedTextColor.AQUA),
+                size = 0.010,
+                layer = 2,
+            ))
+        }
+
+        // 経路をクリックしてPICKERへ移った場合は、仮ノードを含むレイアウト上の
+        // 実際の挿入位置へ候補アイコンを置きます。仮ノード自体の標準アイコンは
+        // 上で描画せず、ここで「＋」と黄色ハイライトへ差し替えます。これにより、
+        // クリック元と異なる位置へ移動する後続コマンドも同じプレビュー上で確認できます。
+        val insertionCandidate = insertionPreview?.layout?.nodePoints?.get(insertionPreview.insertedNodeId)
+            ?.takeIf { selectedGlobal ->
+            projection.contains(MapPoint(selectedGlobal.x - state.origin.x, selectedGlobal.y - state.origin.y))
+            }
+        insertionCandidate?.let { selectedGlobal ->
+            val local = MapPoint(
+                selectedGlobal.x - state.origin.x,
+                selectedGlobal.y - state.origin.y,
+            )
+            val cx = frame.x(local.x)
+            val cy = frame.y(local.y)
+            visuals.add(GestureGuiVisual.Block(
+                visualId = "path-insertion-candidate-bg-${selectedGlobal.x}-${selectedGlobal.y}",
+                x = cx,
+                y = cy,
+                width = frame.iconSize,
+                height = frame.iconSize,
+                blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
+                layer = GestureEditorLayout.ICON_BACKGROUND_LAYER + 1,
+                glowColor = Color.YELLOW.asARGB(),
+            ))
+            visuals.add(GestureGuiVisual.Text(
+                visualId = "path-insertion-candidate-plus-${selectedGlobal.x}-${selectedGlobal.y}",
+                x = cx,
+                y = cy,
+                text = Component.text("+"),
+                size = 0.012,
+                layer = GestureEditorLayout.ICON_LAYER + 1,
+            ))
+        }
+        return GraphCellOutput(visuals, elements)
+    }
+
     private fun buildUpperViewportContent(player: Player): GestureGuiView {
         layoutFailureDuringCurrentRender = false
         val test = state.testExecution
@@ -1506,393 +1923,23 @@ class GestureSequenceEditor(
             ))
         }
 
-        cells.forEach { (localPoint, cell) ->
-            // セル検索はグリッド座標、配置は列/行インデックスで行う（origin移動してもグリッド位置は固定）
-            val colIndex = localPoint.x
-            val rowIndex = localPoint.y
-            val gx = state.origin.x + colIndex
-            val gy = state.origin.y + rowIndex
-            val cx = metrics.x(colIndex)
-            val cy = metrics.y(rowIndex)
-            when (cell.kind) {
-                MapCellKind.NODE -> {
-                    val node = cell.nodeId?.let { renderGraph.nodes[it] }
-                    if (node != null && node.id != insertionPreview?.insertedNodeId) {
-                        val isSelected = !testActive && state.selectedNodeId == node.id
-                        val activeTest = test?.takeIf { testActive }
-                        val isFailedNode = activeTest?.failedNodeId == node.id
-                        val isWaitingNode = activeTest?.waitingNodeId == node.id
-                        val isRunningNode = activeTest?.phase == GestureTestPhase.RUNNING &&
-                            activeTest.currentNodeId == node.id
-                        // STARTはFOR全体を表現するため、全体が完了するまで実行中色で示します。
-                        val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
-                        val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
-                        val incomplete = node.id in incompleteNodeIds
-                        // 折り畳みノードは構造全体の代理として縁取りで示します。
-                        // 背景色は変えないため、未設定警告やテスト色と両立します。
-                        // テスト実行中は展開表示のため、折り畳みノードは現れません。
-                        val isFoldedFor = node.type == CommandType.FOLDED_FOR
-                        val isFoldedIf = node.type == CommandType.FOLDED_IF
-                        // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
-                        // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
-                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
-                        val backgroundMaterial = when {
-                            isFailedNode -> Material.RED_SHULKER_BOX
-                            isWaitingNode -> Material.YELLOW_SHULKER_BOX
-                            isRunningNode -> Material.LIGHT_BLUE_SHULKER_BOX
-                            isLoopActiveStart -> Material.LIGHT_BLUE_SHULKER_BOX
-                            isSuccessfulNode -> Material.LIME_SHULKER_BOX
-                            incomplete -> Material.ORANGE_SHULKER_BOX
-                            else -> Material.LIGHT_GRAY_SHULKER_BOX
-                        }
-                        val glowColor = if (testActive) null else if (isSelected) Color.YELLOW.asARGB() else null
-                        val statusLine = when {
-                            incomplete -> Component.text(
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
-                                NamedTextColor.RED,
-                            )
-                            else -> null
-                        }
-                        val hoverText = foldGuidanceText(player, node, renderGraph)
-                            .let { guidance ->
-                                // 折り畳み操作案内は灰色（§7）で示します。§形式へ直列化すると
-                                // 先行色が後続行へ漏れるため、ノード名には白色を明示します。
-                                val firstLine = if (guidance != null) {
-                                    Component.text(guidance, NamedTextColor.GRAY).append(Component.newline())
-                                        .append(Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE))
-                                } else {
-                                    Component.text(KcI18n.text(player, node.type.key), NamedTextColor.WHITE)
-                                }
-                                statusLine?.let { firstLine.append(Component.newline()).append(it) } ?: firstLine
-                            }
-                        // アイコン単体を浮かせず、追加ポイントと同じマス背景で視認性と接続先を示します。
-                        visuals.add(GestureGuiVisual.Block(
-                            visualId = "node-bg-${node.id}",
-                            x = cx, y = cy,
-                            width = metrics.iconSize,
-                            height = metrics.iconSize,
-                            blockData = Bukkit.createBlockData(backgroundMaterial),
-                            // 背景は常にアイコンの背面。選択時もlayerを変えず素材色/glowだけを変えます。
-                            layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
-                            glowColor = glowColor,
-                        ))
-                        // マスの90% (ICON_W=0.198) に合わせます。追加ポイントの背景・記号も同じ寸法です。
-                        // 折りたたみ中の構造はアイコンにエンチャントグリントを付け、折畳み状態を
-                        // 補助表現します（システム横断UI設計の状態表現規則）。背景・縁取りは変えません。
-                        visuals.add(GestureGuiVisual.Item(
-                            visualId = "node-icon-${node.id}",
-                            x = cx, y = cy,
-                            item = foldedIconStack(node, isFoldedFor || isFoldedIf),
-                            scale = metrics.iconScale,
-                            // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
-                            layer = GestureEditorLayout.ICON_LAYER,
-                            glowColor = null,
-                        ))
-                        // 折り畳みノードは、背景の右の外縁へ縁取りを付けます。
-                        // 太さはアイコン幅の30%、高さはアイコンと同じで、背景の外側に
-                        // 配置します。隣接ノードは2セル周期のため縁取りは届きません。
-                        // FORは空色、IFは黄色で種別を区別します。
-                        val foldedFrameMaterial = when {
-                            isFoldedFor -> Material.LIGHT_BLUE_CONCRETE
-                            isFoldedIf -> Material.YELLOW_CONCRETE
-                            else -> null
-                        }
-                        // 縁にもノードと同じクリック・ホバー判定を設け、縁経由でも
-                        // 選択・再クリック変化が行えるようにします。単一ヒット確定の
-                        // ため二重発火しません。
-                        val frameThickness = metrics.iconSize * 0.30
-                        val frameOffset = metrics.iconSize / 2.0 + frameThickness / 2.0
-                        if (foldedFrameMaterial != null) {
-                            visuals.add(GestureGuiVisual.Block(
-                                visualId = "node-folded-frame-right-${node.id}",
-                                x = cx + frameOffset, y = cy,
-                                width = frameThickness,
-                                height = metrics.iconSize,
-                                blockData = Bukkit.createBlockData(foldedFrameMaterial),
-                                layer = GestureEditorLayout.ICON_LAYER,
-                            ))
-                        }
-                        // 挿入プレビュー中も既存ノードの入力要素を残します。仮ノードを
-                        // 含む再レイアウト後の座標へ同じnodeIdを結び付けることで、
-                        // 旧選択の解除と新ノードの選択を1クリックで完了させます。
-                        // 入れ替えボタン表示中はホバー文言をボタンのさらに上へ退避させ、
-                        // ボタン・ホバーをノード上側に積み上げます。通常ノードと
-                        // 折り畳みノードだけが対象で、展開中の構造ノードは表示しません。
-                        val showReorder = !testActive && insertionPreview == null && isSelected &&
-                            !FoldedGraphs.isExpandedStructural(node)
-                        val reorderSize = minOf(metrics.pitchX, metrics.pitchY) * 0.20
-                        val reorderY = cy + metrics.iconSize / 2.0 + reorderSize / 2.0 + 0.008
-                        if (!testActive) elements.add(GestureGuiElement(
-                            elementId = "node:${node.id}",
-                            // 折畳み縁にもノードと同じクリック・ホバー判定を設けます。
-                            // 要素IDの重複は構造エラーになるため別要素にせず、
-                            // ノード要素の領域を縁まで拡張します。
-                            bounds = if (foldedFrameMaterial != null) {
-                                GestureGuiBounds(
-                                    cx - metrics.iconSize / 2.0,
-                                    cy - metrics.iconSize / 2.0,
-                                    cx + metrics.iconSize / 2.0 + frameThickness,
-                                    cy + metrics.iconSize / 2.0,
-                                )
-                            } else {
-                                iconBounds(cx, cy, metrics.iconSize)
-                            },
-                            acceptedGestures = GestureGuiClickPolicy.CLICK,
-                            targetVisualId = "node-icon-${node.id}",
-                            hoverText = GestureGuiHoverText(
-                                text = hoverText,
-                                x = cx,
-                                y = if (showReorder) reorderY + reorderSize / 2.0 + 0.03
-                                else cy + metrics.iconSize * 0.9,
-                                size = 0.006,
-                                lineWidth = 180,
-                            ),
-                        ))
-                        if (showReorder) {
-                            val reorderOffset = reorderSize * 0.78
-                            listOf(
-                                GraphEditor.ReorderDirection.LEFT to "←",
-                                GraphEditor.ReorderDirection.RIGHT to "→",
-                            ).forEach { (direction, glyph) ->
-                                // 入替可否は描画時と同じ折りたたみ集合で判定し、表示と実可否を一致させます。
-                                val enabled = GraphEditor.canSwapAdjacent(script.graph, node.id, direction)
-                                val x = cx + if (direction == GraphEditor.ReorderDirection.LEFT) -reorderOffset else reorderOffset
-                                val directionName = direction.name.lowercase()
-                                visuals.add(GestureGuiVisual.Block(
-                                    visualId = "node-reorder-$directionName-bg-${node.id}",
-                                    x = x,
-                                    y = reorderY,
-                                    width = reorderSize,
-                                    height = reorderSize,
-                                    blockData = Bukkit.createBlockData(
-                                        if (enabled) Material.CYAN_CONCRETE else DisabledGuiVisualPolicy.material,
-                                    ),
-                                    layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
-                                ))
-                                visuals.add(GestureGuiVisual.Text(
-                                    visualId = "node-reorder-$directionName-glyph-${node.id}",
-                                    x = x,
-                                    y = reorderY - 0.006,
-                                    text = Component.text(glyph).color(
-                                        if (enabled) NamedTextColor.WHITE else NamedTextColor.GRAY,
-                                    ),
-                                    size = 0.007,
-                                    layer = GestureEditorLayout.ICON_LAYER,
-                                ))
-                                elements.add(GestureGuiElement(
-                                    elementId = "node-reorder:$directionName:${node.id}",
-                                    bounds = iconBounds(x, reorderY, reorderSize),
-                                    // 隣接ノードの状態は他の操作や外部保存で変わり得るため、
-                                    // 描画時のenabledを入力可否へ固定しません。クリック時に
-                                    // 最新グラフを再取得し、表示更新なしでも誤操作を防ぎます。
-                                    acceptedGestures = GestureGuiClickPolicy.CLICK,
-                                    gestureGuard = { _, _ ->
-                                        val guardGraph = plugin.scripts.load(state.scriptId)?.graph
-                                        guardGraph?.let { currentGraph ->
-                                            GraphEditor.canSwapAdjacent(currentGraph, node.id, direction)
-                                        } == true
-                                    },
-                                    targetVisualId = "node-reorder-$directionName-glyph-${node.id}",
-                                ))
-                            }
-                        }
-                    }
-                }
-                MapCellKind.ADD -> {
-                    val isSelected = insertionPreview == null && state.selectedAddPoint == MapPoint(gx, gy)
-                    visuals.add(GestureGuiVisual.Block(
-                        visualId = "add-block-$gx-$gy",
-                        x = cx, y = cy,
-                        width = metrics.iconSize,
-                        height = metrics.iconSize,
-                        blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
-                        layer = GestureEditorLayout.ICON_BACKGROUND_LAYER,
-                        glowColor = if (isSelected) Color.YELLOW.asARGB() else null,
-                    ))
-                    visuals.add(GestureGuiVisual.Text(
-                        visualId = "add-plus-$gx-$gy",
-                        // 新規追加もコマンドアイコンと同じ中心・前景レベルで表示します。
-                        x = cx, y = cy,
-                        text = net.kyori.adventure.text.Component.text("+"),
-                        size = 0.012,
-                        layer = GestureEditorLayout.ICON_LAYER,
-                    ))
-                    if (!testActive && insertionPreview == null) {
-                        elements.add(GestureGuiElement(
-                            elementId = "add:$gx:$gy",
-                            bounds = iconBounds(cx, cy, metrics.iconSize),
-                            acceptedGestures = GestureGuiClickPolicy.CLICK,
-                            targetVisualId = "add-plus-$gx-$gy",
-                            hoverText = GestureGuiHoverText(
-                                text = net.kyori.adventure.text.Component.text(
-                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_ADD),
-                                ),
-                                x = cx,
-                                y = cy + metrics.iconSize * 0.9,
-                                size = 0.006,
-                                lineWidth = 120,
-                            ),
-                        ))
-                    }
-                }
-                MapCellKind.PATH, MapCellKind.BRANCH_PATH, MapCellKind.LOOP_RETURN_PATH -> {
-                    if (!testActive && insertionPreview == null && cell.kind == MapCellKind.LOOP_RETURN_PATH) {
-                        // 戻り経路は処理の流れを示す表示専用要素です。クリック操作は受け付けず、
-                        // ホバー時だけ「戻って処理を繰り返します」と説明します。矢印と同じ論理セルを
-                        // 当たり判定に使うため、パン・ズーム後も戻り経路上の説明がずれません。
-                        elements.add(GestureGuiElement(
-                            // 経路要素の名前空間へ統一します。戻り経路だけ別の接頭辞にすると、
-                            // 表示側のpath-判定とは一致しても、当たり判定側の縮尺・クリップ判定から
-                            // 漏れてしまいます。通常経路と同じpath:配下に置くことで、表示と入力の
-                            // 座標変換を同じ規則で適用します。
-                            elementId = "path:return:$gx:$gy",
-                            bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
-                            acceptedGestures = emptySet(),
-                            hoverText = GestureGuiHoverText(
-                                text = Component.text(
-                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_LOOP_RETURN_HOVER),
-                                ),
-                                x = cx,
-                                y = cy + metrics.pathThickness,
-                                size = 0.0055,
-                                lineWidth = 120,
-                            ),
-                        ))
-                    } else {
-                        // 追加ポイント直前の経路は「クリックで挿入」を表示しません。
-                        val hasAddNeighbor = projection.hasNeighborOfKind(localPoint, MapCellKind.ADD)
-                        if (!testActive && insertionPreview == null && !hasAddNeighbor && cell.insertionTarget != null) {
-                            elements.add(GestureGuiElement(
-                                elementId = "path:${gx}:${gy}",
-                                bounds = rect(cx, cy, metrics.pitchX, metrics.pitchY),
-                                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                                hoverText = GestureGuiHoverText(
-                                    text = net.kyori.adventure.text.Component.text(
-                                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ACTION_CLICK_INSERT),
-                                    ),
-                                    x = cx,
-                                    y = cy + metrics.pathThickness,
-                                    size = 0.0055,
-                                    lineWidth = 120,
-                                ),
-                            ))
-                        }
-                    }
-                }
-            }
-        }
-
-        // テスト中の経路通過マーカーです。Glow描画には使わず、コンクリートへの
-        // 張り替え判定にだけ使います。ループ戻りも通常通路と同じ仕様で扱います。
-        // 待機中の次の枝は空色で示し、通過表示より優先します。
-        val waitingPathMark = Color.fromRGB(85, 255, 255).asARGB()
-        val passedPathMark = Color.fromRGB(85, 255, 85).asARGB()
-        val testPathMark: ((MapPoint, MapCell) -> Int?)? = test?.takeIf { testActive }?.let { activeTest ->
-            val waitingEdge = activeTest.waitingEdge
-            val waitingLoopReturnId = activeTest.waitingLoopReturnId
-            val mark: (MapPoint, MapCell) -> Int? = { _, cell ->
-                when {
-                    waitingEdge != null && cell.insertionTarget?.let { target ->
-                        target.sourceId == waitingEdge.sourceId && target.edge == waitingEdge.edge
-                    } == true -> waitingPathMark
-                    waitingLoopReturnId != null && cell.loopReturnId == waitingLoopReturnId -> waitingPathMark
-                    cell.insertionTarget?.let { target ->
-                        target.sourceId?.let { sourceId ->
-                            activeTest.passedEdges.contains(TestExecutionEdge(sourceId, target.edge))
-                        }
-                    } == true -> passedPathMark
-                    else -> null
-                }
-            }
-            mark
-        }
-        GesturePathRenderer.buildSegments(
+        // グラフ本体の描画は共有関数へ委譲します。旧来は上部グラフ領域で解決します。
+        val frame = GraphViewportMapper.legacyFrame(zoomScale)
+        val graphOutput = renderGraphCells(
+            player,
+            script,
+            renderGraph,
+            projection,
             cells,
-            boundaryConnections = projection.boundaryConnections,
-            xCenter = metrics::x,
-            yCenter = metrics::y,
-            thickness = metrics.pathThickness,
-            glowColorFor = testPathMark,
-            clipBounds = GesturePathRenderer.ClipBounds(
-                // 仮想境界セルをグラフ領域の端までだけ延長します。これより外側へ
-                // 経路を出さないため、ナビゲーション列との重なりが発生しません。
-                minX = GestureEditorLayout.UPPER_GRAPH_MIN_X / zoomScale,
-                maxX = GestureEditorLayout.UPPER_GRAPH_MAX_X / zoomScale,
-                minY = GestureEditorLayout.UPPER_GRAPH_MIN_Y / zoomScale,
-                maxY = GestureEditorLayout.UPPER_GRAPH_MAX_Y / zoomScale,
-            ),
-        ).forEach { seg ->
-            // テスト中はGlowではなくテクスチャ変更で示します。通過経路=黄緑、
-            // 待機中の次の枝=空色、それ以外は白色です。ループ戻りも通常通路と同じ仕様です。
-            val pathMaterial = if (testActive && seg.glowColor != null) {
-                if (seg.glowColor == waitingPathMark) Material.LIGHT_BLUE_CONCRETE else Material.LIME_CONCRETE
-            } else {
-                Material.WHITE_CONCRETE
-            }
-            visuals.add(GestureGuiVisual.Block(
-                visualId = "path-${seg.x}-${seg.y}-${seg.w}-${seg.h}",
-                x = seg.x, y = seg.y,
-                width = seg.w, height = seg.h,
-                blockData = Bukkit.createBlockData(pathMaterial),
-                layer = 1,
-                glowColor = null,
-            ))
-        }
-
-        // 横向き経路の方向矢印は、角・縦経路を除いた直線ランへ1つおきに配置します。
-        // 順方向は»、ループ戻りは«で示します。経路自体は白いため、矢印だけを空色で示します。
-        // 論理座標から投影するため、ズーム・パン後も矢印とホバー用の
-        // 当たり判定が同じ経路セルを参照します。矢印自体は表示専用です。
-        projection.horizontalArrowPoints.forEach { arrow ->
-            val localPoint = arrow.point
-            val gx = state.origin.x + localPoint.x
-            val gy = state.origin.y + localPoint.y
-            val glyph = if (arrow.direction == HorizontalArrowDirection.RETURN) "«" else "»"
-            val kind = if (arrow.direction == HorizontalArrowDirection.RETURN) "return" else "forward"
-            visuals.add(GestureGuiVisual.Text(
-                visualId = "path-$kind-arrow-$gx-$gy",
-                x = metrics.x(localPoint.x),
-                y = metrics.y(localPoint.y) - 0.006,
-                text = Component.text(glyph).color(NamedTextColor.AQUA),
-                size = 0.010,
-                layer = 2,
-            ))
-        }
-
-        // 経路をクリックしてPICKERへ移った場合は、仮ノードを含むレイアウト上の
-        // 実際の挿入位置へ候補アイコンを置きます。仮ノード自体の標準アイコンは
-        // 上で描画せず、ここで「＋」と黄色ハイライトへ差し替えます。これにより、
-        // クリック元と異なる位置へ移動する後続コマンドも同じプレビュー上で確認できます。
-        val insertionCandidate = insertionPreview?.layout?.nodePoints?.get(insertionPreview.insertedNodeId)
-            ?.takeIf { selectedGlobal ->
-            projection.contains(MapPoint(selectedGlobal.x - state.origin.x, selectedGlobal.y - state.origin.y))
-            }
-        insertionCandidate?.let { selectedGlobal ->
-            val local = MapPoint(
-                selectedGlobal.x - state.origin.x,
-                selectedGlobal.y - state.origin.y,
-            )
-            val cx = metrics.x(local.x)
-            val cy = metrics.y(local.y)
-            visuals.add(GestureGuiVisual.Block(
-                visualId = "path-insertion-candidate-bg-${selectedGlobal.x}-${selectedGlobal.y}",
-                x = cx,
-                y = cy,
-                width = metrics.iconSize,
-                height = metrics.iconSize,
-                blockData = Bukkit.createBlockData(Material.YELLOW_CONCRETE),
-                layer = GestureEditorLayout.ICON_BACKGROUND_LAYER + 1,
-                glowColor = Color.YELLOW.asARGB(),
-            ))
-            visuals.add(GestureGuiVisual.Text(
-                visualId = "path-insertion-candidate-plus-${selectedGlobal.x}-${selectedGlobal.y}",
-                x = cx,
-                y = cy,
-                text = Component.text("+"),
-                size = 0.012,
-                layer = GestureEditorLayout.ICON_LAYER + 1,
-            ))
-        }
+            frame,
+            incompleteNodeIds,
+            test,
+            testActive,
+            insertionPreview,
+            zoomScale,
+        )
+        visuals += graphOutput.visuals
+        elements += graphOutput.elements
 
         if (!testActive) {
             addNavigation(player, visuals, elements, layout, metrics.columns, metrics.rows)
