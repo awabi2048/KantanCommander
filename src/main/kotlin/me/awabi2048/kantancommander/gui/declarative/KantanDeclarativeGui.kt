@@ -12,7 +12,13 @@ object KantanDeclarativeGui {
     var useConfirm: Boolean = true
 
     /** テスト開始確認子画面を宣言実装へ切り替えます。 */
-    var useTestConfirm: Boolean = false
+    var useTestConfirm: Boolean = true
+
+    /** テスト実行中状態画面を宣言実装へ切り替えます。毎tick再生成されます。 */
+    var useTestStatus: Boolean = true
+
+    /** テスト結果画面を宣言実装へ切り替えます。 */
+    var useTestResult: Boolean = true
 
     /** ワールド変数削除確認子画面を宣言実装へ切り替えます。 */
     var useWorldVariableDeleteConfirm: Boolean = false

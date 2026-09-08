@@ -50,7 +50,11 @@ import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
+import me.awabi2048.kantancommander.gui.declarative.CenteredLine
 import me.awabi2048.kantancommander.gui.declarative.ConfirmTexts
+import me.awabi2048.kantancommander.gui.declarative.DeclarativeTest
+import me.awabi2048.kantancommander.gui.declarative.TestConfirmData
+import me.awabi2048.kantancommander.gui.declarative.TestToggleData
 import me.awabi2048.kantancommander.gui.declarative.DeclarativeConfirm
 import me.awabi2048.kantancommander.gui.declarative.DeclarativePicker
 import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
@@ -128,9 +132,15 @@ class GestureLowerPanel(
             GestureLowerMode.CONFIRM ->
                 if (KantanDeclarativeGui.useConfirm) buildConfirmNew(state, player)
                 else buildConfirm(state, player)
-            GestureLowerMode.TEST_CONFIRM -> buildTestConfirmation(state, player, child = true)
-            GestureLowerMode.TEST_STATUS -> buildTestStatus(state, player)
-            GestureLowerMode.TEST_RESULT -> buildTestResult(state, player)
+            GestureLowerMode.TEST_CONFIRM ->
+                if (KantanDeclarativeGui.useTestConfirm) buildTestConfirmationNew(state, player, child = true)
+                else buildTestConfirmation(state, player, child = true)
+            GestureLowerMode.TEST_STATUS ->
+                if (KantanDeclarativeGui.useTestStatus) buildTestStatusNew(state, player)
+                else buildTestStatus(state, player)
+            GestureLowerMode.TEST_RESULT ->
+                if (KantanDeclarativeGui.useTestResult) buildTestResultNew(state, player)
+                else buildTestResult(state, player)
         }
     }
 
@@ -513,7 +523,209 @@ class GestureLowerPanel(
     fun buildTestConfirmationChild(
         state: GestureEditorState,
         player: Player,
-    ): GestureGuiView = buildTestConfirmation(state, player, child = true)
+    ): GestureGuiView = if (KantanDeclarativeGui.useTestConfirm) {
+        buildTestConfirmationNew(state, player, child = true)
+    } else {
+        buildTestConfirmation(state, player, child = true)
+    }
+
+    /**
+     * テスト開始確認の宣言実装です。旧実装と同じ文言・座標・要素 ID を用い、
+     * 既存の画面定義・パネル・操作振分けを利用します。
+     */
+    private fun buildTestConfirmationNew(
+        state: GestureEditorState,
+        player: Player,
+        child: Boolean,
+    ): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        fun toggleLabel(labelKey: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, enabled: Boolean): Component {
+            val value = KcI18n.text(
+                player,
+                if (enabled) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF,
+            )
+            return Component.text(KcI18n.text(player, labelKey), NamedTextColor.WHITE)
+                .append(Component.text("  ", NamedTextColor.GRAY))
+                .append(Component.text(value, if (enabled) NamedTextColor.GREEN else NamedTextColor.GRAY))
+        }
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeTest.confirmDocument(
+                TestConfirmData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CONFIRM_TITLE)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DEBUG_MODE_DESCRIPTION),
+                        NamedTextColor.GRAY,
+                    ),
+                    toggles = listOf(
+                        TestToggleData(
+                            id = "test-confirm-debug",
+                            label = toggleLabel(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DEBUG_MODE, test.debugMode),
+                            background = Bukkit.createBlockData(
+                                if (test.debugMode) Material.LIME_CONCRETE else Material.LIGHT_GRAY_CONCRETE,
+                            ),
+                            centerY = 0.13,
+                        ),
+                        TestToggleData(
+                            id = "test-confirm-log",
+                            label = toggleLabel(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT, test.logOutput),
+                            background = Bukkit.createBlockData(
+                                if (test.logOutput) Material.LIME_CONCRETE else Material.LIGHT_GRAY_CONCRETE,
+                            ),
+                            centerY = -0.02,
+                        ),
+                    ),
+                    startLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CONFIRM)),
+                    startBackground = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                    cancelLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CANCEL)),
+                    cancelBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeTestConfirm] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.TEST_CONFIRM, compiled.elements, compiled.visuals, child = child)
+    }
+
+    /**
+     * テスト状態・結果の宣言実装です。旧実装と同じ行構成・要素 ID を用います。
+     * 実行中は毎tick再生成されるため、解決・変換の軽さを前提にします。
+     */
+    private fun buildTestStatusNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        fun row(id: String, label: String, value: String, y: Double): CenteredLine =
+            CenteredLine(id, Component.text(label, NamedTextColor.GRAY)
+                .append(Component.text(" ", NamedTextColor.GRAY))
+                .append(Component.text(value, NamedTextColor.WHITE)), y)
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeTest.statusDocument(
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_STATUS_TITLE)),
+                rows = listOf(
+                    row(
+                        "test-status-elapsed",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ELAPSED_TIME),
+                        formatTestElapsed(test.elapsedTicks),
+                        0.21,
+                    ),
+                    row(
+                        "test-status-count",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
+                        test.successfulNodeCount.toString(),
+                        0.00,
+                    ),
+                    row(
+                        "test-status-log",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_OUTPUT),
+                        if (test.logOutput) KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ON)
+                        else KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_OFF),
+                        -0.21,
+                    ),
+                ),
+                hint = Component.text(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RUNNING_HINT),
+                    NamedTextColor.GRAY,
+                ),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeTestStatus] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.TEST_STATUS, compiled.elements, compiled.visuals)
+    }
+
+    private fun buildTestResultNew(state: GestureEditorState, player: Player): GestureGuiView {
+        val test = state.testExecution ?: return buildSettings(state, player, GestureAttentionState.EMPTY)
+        val result = test.result
+        val elapsed = result?.elapsedTicks ?: test.elapsedTicks
+        val waitTicks = result?.waitTicks ?: 0L
+        val showReal = test.debugMode
+        val durationY = if (showReal) 0.24 else 0.22
+        val waitY = if (showReal) 0.11 else 0.09
+        val countY = if (showReal) -0.15 else -0.04
+        val statusY = if (showReal) -0.28 else -0.17
+        fun row(id: String, label: String, value: String, color: NamedTextColor, y: Double): CenteredLine =
+            CenteredLine(id, Component.text(label, NamedTextColor.GRAY)
+                .append(Component.text(" ", NamedTextColor.GRAY))
+                .append(Component.text(value, color)), y)
+        val rows = mutableListOf(
+            row(
+                "test-result-duration",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DURATION),
+                formatTestElapsed(elapsed),
+                NamedTextColor.WHITE,
+                durationY,
+            ),
+            row(
+                "test-result-wait",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_WAIT_DURATION),
+                formatTestElapsed(waitTicks),
+                NamedTextColor.WHITE,
+                waitY,
+            ),
+        )
+        if (showReal) {
+            rows += row(
+                "test-result-real",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REAL_DURATION),
+                formatTestElapsed(
+                    TestExecutionTimeFormatter.realProcessingTicks(elapsed, result?.debugWaitTicks ?: 0L),
+                ),
+                NamedTextColor.WHITE,
+                -0.02,
+            )
+        }
+        rows += row(
+            "test-result-count",
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMMAND_COUNT),
+            (result?.successfulNodeCount ?: test.successfulNodeCount).toString(),
+            NamedTextColor.WHITE,
+            countY,
+        )
+        val status = when (result?.status) {
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.SUCCESS ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_SUCCESS)
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.CANCELLED ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_INTERRUPTED)
+            else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FAILURE)
+        }
+        val statusColor = when (result?.status) {
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.SUCCESS -> NamedTextColor.GREEN
+            me.awabi2048.kantancommander.execution.ExecutionFinishStatus.FAILURE -> NamedTextColor.RED
+            else -> NamedTextColor.GOLD
+        }
+        rows += row(
+            "test-result-status",
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_FINAL_RESULT),
+            status,
+            statusColor,
+            statusY,
+        )
+        if (result?.status == me.awabi2048.kantancommander.execution.ExecutionFinishStatus.FAILURE) {
+            rows += row(
+                "test-result-cause",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE),
+                result.reason ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                NamedTextColor.WHITE,
+                -0.40,
+            )
+        }
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeTest.resultDocument(
+                title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_RESULT_TITLE)),
+                rows = rows,
+                completeLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_COMPLETE)),
+                completeBackground = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+            ),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][DeclarativeTestResult] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.TEST_RESULT, compiled.elements, compiled.visuals)
+    }
 
     /** SETTINGS: 左タブ列＋固定操作、右詳細＝値表示と編集導線です。 */
     private fun buildSettings(
