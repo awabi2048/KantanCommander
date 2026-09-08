@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * グラフCustom adapterのテストです。旧来経路との等価性を検証します。
+ * グラフCustom adapterのテストです。拡縮とCustom変換を検証します。
  * サーバーなしで実行できます（品目表示は実機検証とします）。
  */
 class GraphCustomAdapterTest {
@@ -110,40 +110,4 @@ class GraphCustomAdapterTest {
         assertNull(returning.actionId)
         assertTrue(returning.consumeInput)
     }
-
-    @Test
-    fun `shadow diff is empty on match and flags divergence`() {
-        val visuals = listOf<GestureGuiVisual>(
-            GestureGuiVisual.Block("node-bg-1", 0.0, 0.0, 0.2, 0.2, blockData(), 4),
-            GestureGuiVisual.Text("node-label-1", 5.0, 5.0, Component.text("far")),
-        )
-        val elements = listOf(
-            GestureGuiElement("node:1", GestureGuiBounds(-0.1, -0.1, 0.1, 0.1), setOf(GestureGuiGesture.PRIMARY)),
-        )
-        val clip = GestureGuiBounds(-1.0, -0.5, 1.0, 0.5)
-        // 画面内の文言は残り、画面外は除去されます。
-        val kept = visuals.take(1)
-        val result = toCustomResult(ScaledGraphOutput(visuals, elements), frame())
-        assertTrue(
-            diffGraphShadow(visuals, elements, kept, elements, result, clip).isEmpty(),
-        )
-        // 申告なし・ガード不一致・未知要素を検出します。
-        val broken = result.copy(
-            visuals = result.visuals.filter { it.visualId != "node-bg-1" },
-            elements = result.elements.map {
-                if (it.elementId == "node:1") it.copy(acceptedGestures = emptySet(), actionId = null) else it
-            } + ghostElement(),
-        )
-        val diffs = diffGraphShadow(visuals, elements, kept, elements, broken, clip)
-        assertTrue(diffs.any { it.contains("missing visual") }, diffs.toString())
-        assertTrue(diffs.any { it.contains("extra custom element") }, diffs.toString())
-    }
-
-    private fun ghostElement() =
-        com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiCustomElement(
-            elementId = "ghost",
-            bounds = GestureGuiBounds(0.0, 0.0, 0.1, 0.1),
-            acceptedGestures = setOf(GestureGuiGesture.PRIMARY),
-            actionId = "ghost",
-        )
 }

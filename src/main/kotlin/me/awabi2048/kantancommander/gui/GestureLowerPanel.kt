@@ -57,7 +57,6 @@ import me.awabi2048.kantancommander.gui.declarative.TestConfirmData
 import me.awabi2048.kantancommander.gui.declarative.TestToggleData
 import me.awabi2048.kantancommander.gui.declarative.DeclarativeConfirm
 import me.awabi2048.kantancommander.gui.declarative.DeclarativePicker
-import me.awabi2048.kantancommander.gui.declarative.KantanDeclarativeGui
 import me.awabi2048.kantancommander.gui.declarative.KantanLayoutBridge
 import me.awabi2048.kantancommander.gui.declarative.PickerArrow
 import me.awabi2048.kantancommander.gui.declarative.PickerCard
