@@ -1,0 +1,163 @@
+package me.awabi2048.kantancommander.model
+
+import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.data.ExecutableScriptValidator
+import me.awabi2048.kantancommander.data.GraphEditor
+import me.awabi2048.kantancommander.data.PersistedScriptValidator
+import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
+import java.util.UUID
+
+/**
+ * issue #4 の移植用骨組みの検証です。
+ * 設定方法は直方体＋距離を継続し、骨組みの判定だけを確認します。
+ */
+class SpatialSkeletonTest {
+    @Test
+    fun `position semantics default to absolute`() {
+        val spec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        assertEquals(CoordinateSemantics.ABSOLUTE, spec.semantics)
+    }
+
+    @Test
+    fun `spatial vector rejects non finite values`() {
+        assertTrue(SpatialVector(1.0, 2.0, 3.0).isFinite())
+        assertFalse(SpatialVector(Double.NaN, 0.0, 0.0).isFinite())
+        assertFalse(SpatialVector(0.0, Double.POSITIVE_INFINITY, 0.0).isFinite())
+    }
+
+    @Test
+    fun `spatial vector supports addition for future porting`() {
+        val sum = SpatialVector(1.0, 2.0, 3.0) + SpatialVector(4.0, -1.0, 0.5)
+        assertEquals(SpatialVector(5.0, 1.0, 3.5), sum)
+    }
+
+    @Test
+    fun `region spec keeps cuboid and distance vocabulary`() {
+        val region = RegionSpec(dx = 1.0, maximumDistance = 8.0)
+        assertEquals(RegionKind.CUBOID, region.kind)
+        assertTrue(region.hasAnySetting())
+        assertFalse(RegionSpec().hasAnySetting())
+    }
+
+    @Test
+    fun `relative semantics on non coordinate position fails validation`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        teleport.destinationSpec = PositionSpec(
+            PositionKind.DISK,
+            x = 1.0,
+            y = 2.0,
+            z = 3.0,
+            semantics = CoordinateSemantics.RELATIVE,
+        )
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.message.contains("相対・ローカルは座標指定") })
+    }
+
+    @Test
+    fun `relative coordinates require finite offsets`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        teleport.destinationSpec = PositionSpec(
+            PositionKind.COORDINATES,
+            x = 1.0,
+            y = null,
+            z = 3.0,
+            semantics = CoordinateSemantics.RELATIVE,
+        )
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.message.contains("座標が未設定") })
+    }
+
+    @Test
+    fun `absolute coordinates keep existing meaning`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        teleport.destinationSpec = PositionSpec(
+            PositionKind.COORDINATES,
+            x = 1.0,
+            y = 2.0,
+            z = 3.0,
+            semantics = CoordinateSemantics.ABSOLUTE,
+        )
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertFalse(errors.any { it.message.contains("座標が未設定") })
+        assertFalse(errors.any { it.message.contains("相対・ローカル") })
+    }
+
+    @Test
+    fun `region skeleton rejects non cuboid shapes`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val node = GraphEditor.append(script.graph, CommandType.WAIT)
+        val errors = mutableListOf<me.awabi2048.kantancommander.data.ScriptValidationError>()
+        ExecutableScriptValidator.validateRegionSpec(
+            RegionSpec(kind = RegionKind.SPHERE, dx = 1.0),
+            "root",
+            node,
+            errors,
+        )
+
+        assertTrue(errors.any { it.message.contains("未対応の領域形状") })
+    }
+
+    @Test
+    fun `region skeleton validates cuboid extents and distances`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val node = GraphEditor.append(script.graph, CommandType.WAIT)
+        val errors = mutableListOf<me.awabi2048.kantancommander.data.ScriptValidationError>()
+        ExecutableScriptValidator.validateRegionSpec(
+            RegionSpec(dx = -1.0, minimumDistance = 8.0, maximumDistance = 4.0),
+            "root",
+            node,
+            errors,
+        )
+
+        assertTrue(errors.any { it.message.contains("dx は有限な0以上") })
+        assertTrue(errors.any { it.message.contains("最小距離が最大距離") })
+    }
+
+    @Test
+    fun `persisted position requires explicit semantics`() {
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        val root = JsonParser.parseString(
+            """
+            {
+              "formatVersion": 12,
+              "id": "$scriptId",
+              "name": "spatial",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 0,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": false, "intervalSeconds": 1.0},
+              "graph": {
+                "nodes": {
+                  "$nodeId": {
+                    "id": "$nodeId",
+                    "type": "WAIT",
+                    "params": {},
+                    "destinationSpec": {"kind": "COORDINATES", "x": 1.0, "y": 2.0, "z": 3.0}
+                  }
+                }
+              }
+            }
+            """.trimIndent(),
+        ).asJsonObject
+
+        val violations = PersistedScriptValidator.validate(root)
+
+        assertTrue(violations.any { it.contains("semantics") })
+    }
+}

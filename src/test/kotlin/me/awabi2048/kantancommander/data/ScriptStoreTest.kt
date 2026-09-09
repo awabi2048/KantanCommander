@@ -73,8 +73,9 @@ class ScriptStoreTest {
     }
 
     @Test
-    fun `v10 collapsed display state is dropped by migration`() {
-        // 旧形式の折り畳み表示状態は引き継がず、旧データは展開形として扱う。
+    fun `v10 collapsed display state is quarantined as incompatible`() {
+        // issue #4 のスレッド指示により旧データは読み込み不可とします。
+        // v10は移行せず非対応形式として隔離します。
         val dir = temp.resolve("v10-collapsed").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
@@ -111,18 +112,9 @@ class ScriptStoreTest {
         )
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
-        val migrated = requireNotNull(store.load(scriptId))
-
-        assertEquals(11, migrated.formatVersion)
-        assertNull(migrated.collapsedForStartIds)
-        assertNull(migrated.collapsedConditionIds)
-        assertTrue(migrated.collapsedForStarts().isEmpty())
-        assertTrue(migrated.collapsedConditions().isEmpty())
-        assertTrue(nodeId in migrated.graph.nodes)
-        val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 11"))
-        assertTrue(!rewritten.contains("collapsedForStartIds"))
-        assertTrue(!rewritten.contains("collapsedConditionIds"))
+        assertNull(store.load(scriptId))
+        assertFalse(dir.resolve("$scriptId.json").exists())
+        assertEquals(1, requireNotNull(dir.resolve("incompatible").listFiles()).size)
     }
 
     @Test
@@ -264,7 +256,7 @@ class ScriptStoreTest {
     }
 
     @Test
-    fun `legacy tick format migrates timer and command durations to seconds`() {
+    fun `legacy tick format is quarantined as incompatible`() {
         val dir = temp.resolve("legacy-ticks").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
@@ -295,20 +287,13 @@ class ScriptStoreTest {
         )
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
-        val migrated = requireNotNull(store.load(scriptId))
-
-        assertEquals(11, migrated.formatVersion)
-        assertEquals(3.0, migrated.timer.intervalSeconds)
-        assertEquals("0.05", migrated.graph.nodes[nodeId]?.params?.get("seconds"))
-        val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 11"))
-        assertTrue(rewritten.contains("\"intervalSeconds\": 3.0"))
-        assertTrue(!rewritten.contains("intervalUnits"))
-        assertTrue(!rewritten.contains("\"ticks\""))
+        assertNull(store.load(scriptId))
+        assertFalse(dir.resolve("$scriptId.json").exists())
+        assertEquals(1, requireNotNull(dir.resolve("incompatible").listFiles()).size)
     }
 
     @Test
-    fun `v9 integer timer seconds migrate to v10 decimal form`() {
+    fun `v9 integer timer seconds are quarantined as incompatible`() {
         val dir = temp.resolve("v9-timer").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val owner = UUID.randomUUID()
@@ -332,13 +317,9 @@ class ScriptStoreTest {
         )
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
-        val migrated = requireNotNull(store.load(scriptId))
-
-        assertEquals(11, migrated.formatVersion)
-        assertEquals(5.0, migrated.timer.intervalSeconds)
-        assertEquals(100L, migrated.timer.intervalTicks)
-        val rewritten = dir.resolve("$scriptId.json").readText(Charsets.UTF_8)
-        assertTrue(rewritten.contains("\"formatVersion\": 11"))
+        assertNull(store.load(scriptId))
+        assertFalse(dir.resolve("$scriptId.json").exists())
+        assertEquals(1, requireNotNull(dir.resolve("incompatible").listFiles()).size)
     }
 
     @Test

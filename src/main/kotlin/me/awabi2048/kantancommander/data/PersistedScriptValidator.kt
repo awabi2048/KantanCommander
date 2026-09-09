@@ -4,6 +4,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
@@ -142,6 +143,9 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalString(spec, "tempName", path, errors)
+        // v12形式では座標意味付けを必須とします。旧データは形式番号で隔離するため、
+        // ここでの欠落は現行形式の破損として扱います。
+        requireEnum(spec, "semantics", path, enumNames<CoordinateSemantics>(), errors)
     }
 
     private fun validateFacing(spec: JsonObject, path: String, errors: MutableList<String>) {
