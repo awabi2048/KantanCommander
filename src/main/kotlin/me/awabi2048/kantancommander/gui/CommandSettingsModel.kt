@@ -1030,7 +1030,8 @@ object CommandSettingsModel {
         node: CommandNode,
         spec: FacingSpec,
         role: CommandSettingRole? = null,
-    ) {        check(
+    ) {
+        check(
             role == CommandSettingRole.DESTINATION_FACING ||
                 role == CommandSettingRole.TEMPORARY_LOCATION_FACING
         ) {

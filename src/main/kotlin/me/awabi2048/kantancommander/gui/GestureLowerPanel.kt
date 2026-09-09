@@ -3223,7 +3223,7 @@ class GestureLowerPanel(
                 PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
             )
         }
-        val kindChoices = choices.map { (kind, label) ->
+        return choices.map { (kind, label) ->
             SettingChoice(
                 id = "position:${kind.name}",
                 label = KcI18n.text(player, label),
@@ -3234,7 +3234,6 @@ class GestureLowerPanel(
                 } else null,
             )
         }
-        return kindChoices
     }
 
     private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
