@@ -23,6 +23,11 @@ import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.RegionAnchorKind
+import me.awabi2048.kantancommander.model.RegionKind
+import me.awabi2048.kantancommander.model.RegionSpec
+import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.TargetKind
@@ -925,7 +930,21 @@ object ExecutableScriptValidator {
     ) {
         if (spec.kind == PositionKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, TemporaryVariableType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
+            if (spec.hasNonAbsoluteSemantics()) {
+                errors += nodeError(node, path, setOf("semantics"), "一時変数位置に相対・ローカルは指定できません")
+            }
             return
+        }
+        // 成分別指定は座標種別だけの指定です。他種別への付与は拒否します。
+        if (spec.hasNonAbsoluteSemantics() &&
+            spec.kind !in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES)
+        ) {
+            errors += nodeError(node, path, setOf("semantics"), "相対・ローカルは座標指定のときだけ有効です")
+            return
+        }
+        // 角度にLOCALは基準が定義できないため拒否します。
+        if (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL) {
+            errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
         }
         // 位置は各コマンドのPositionSpecだけで解決し、実行者・前段対象を
         // 位置設定へ暗黙に読み替える経路は検証しません。
@@ -939,6 +958,83 @@ object ExecutableScriptValidator {
         }
     }
 
+    /**
+     * issue #4 の移植用ベクトル検証骨組みです。現行コマンドへの本接続は行わず、
+     * 将来Typed Value接続へ移植できる判定に留めます。
+     */
+    fun validateSpatialVector(
+        value: SpatialVector?,
+        path: String,
+        node: CommandNode,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        if (value == null) {
+            errors += nodeError(node, path, emptySet(), "ベクトルが未設定です")
+            return
+        }
+        if (!value.isFinite()) {
+            errors += nodeError(node, path, emptySet(), "ベクトルは有限値で指定してください")
+        }
+    }
+
+    /**
+     * issue #4 の明示領域の検証骨組みです。設定方法は直方体＋距離を継続し、
+     * SPHERE／CYLINDERは予約のため現行実行では拒否します。
+     */
+    fun validateRegionSpec(
+        spec: RegionSpec?,
+        path: String,
+        node: CommandNode,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        if (spec == null) {
+            errors += nodeError(node, path, emptySet(), "領域が未設定です")
+            return
+        }
+        if (spec.kind != RegionKind.CUBOID) {
+            errors += nodeError(node, path, setOf("kind"), "未対応の領域形状です")
+            return
+        }
+        listOf("dx" to spec.dx, "dy" to spec.dy, "dz" to spec.dz).forEach { (field, value) ->
+            if (value != null && (!value.isFinite() || value < 0.0)) {
+                errors += nodeError(node, path, setOf(field), "$field は有限な0以上の数値で指定してください")
+            }
+        }
+        if (spec.minimumDistance != null && (!spec.minimumDistance.isFinite() || spec.minimumDistance < 0.0)) {
+            errors += nodeError(node, path, setOf("minimumDistance"), "最小距離は0以上の有限値で指定してください")
+        }
+        if (spec.maximumDistance != null && (!spec.maximumDistance.isFinite() || spec.maximumDistance < 0.0)) {
+            errors += nodeError(node, path, setOf("maximumDistance"), "最大距離は0以上の有限値で指定してください")
+        }
+        if (spec.minimumDistance != null && spec.maximumDistance != null &&
+            spec.minimumDistance > spec.maximumDistance
+        ) {
+            errors += nodeError(node, path, setOf("minimumDistance"), "最小距離が最大距離を超えています")
+        }
+        when (spec.anchor.kind) {
+            RegionAnchorKind.CONTROL_BLOCK -> Unit
+            RegionAnchorKind.FIXED -> {
+                val position = spec.anchor.position
+                if (position == null) {
+                    errors += nodeError(node, path, setOf("anchor"), "固定基準の位置が未設定です")
+                } else {
+                    validatePosition(position, "$path/anchor", node, errors, temporaryDefinitions)
+                }
+            }
+            RegionAnchorKind.TEMPORARY -> {
+                if (spec.anchor.tempName.isNullOrBlank()) {
+                    errors += nodeError(node, path, setOf("anchor"), "一時変数基準の変数名が未設定です")
+                }
+            }
+            RegionAnchorKind.TARGET_ENTITY -> {
+                if (spec.anchor.target == null) {
+                    errors += nodeError(node, path, setOf("anchor"), "対象基準の対象が未設定です")
+                }
+            }
+        }
+    }
+
     private fun validateFacing(
         spec: FacingSpec,
         path: String,
@@ -948,7 +1044,21 @@ object ExecutableScriptValidator {
     ) {
         if (spec.kind == FacingKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, TemporaryVariableType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
+            if (spec.hasNonAbsoluteSemantics()) {
+                errors += nodeError(node, path, setOf("semantics"), "一時変数の向きに相対・ローカルは指定できません")
+            }
             return
+        }
+        // 意味付けはROTATION／CAPTUREDの向き成分だけの指定です。
+        if (spec.hasNonAbsoluteSemantics() &&
+            spec.kind != FacingKind.ROTATION && spec.kind != FacingKind.CAPTURED
+        ) {
+            errors += nodeError(node, path, setOf("semantics"), "相対・ローカルは向き指定のときだけ有効です")
+            return
+        }
+        // 角度にLOCALは基準が定義できないため拒否します。
+        if (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL) {
+            errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
         }
         // 向きは各コマンドのFacingSpecだけで解決し、前段の向きを
         // GUI設定として指定する経路は検証しません。

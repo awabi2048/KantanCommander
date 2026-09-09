@@ -441,22 +441,19 @@ class ScriptStore(
             ?.asString
             ?.toIntOrNull()
             ?: error("formatVersionがありません、または整数ではありません")
-        val migrated = when (sourceVersion) {
-            STRUCTURED_FORMAT_VERSION -> source
-            STRUCTURED_V10_FORMAT_VERSION -> migrateStructuredV10ToV11(source)
-            STRUCTURED_PREVIOUS_FORMAT_VERSION ->
-                migrateStructuredV10ToV11(migrateStructuredV9ToV10(source))
-            LEGACY_COMMAND_FORMAT_VERSION -> migrateCommandFormat(source)
-            LEGACY_TICK_FORMAT_VERSION -> migrateCommandFormat(migrateLegacyTickFormat(source))
-            else -> {
-                quarantine(
-                    file,
-                    QuarantineKind.INCOMPATIBLE,
-                    "formatVersion=$sourceVersion",
-                    fileTag = "v$sourceVersion",
-                )
-                return null
-            }
+        // issue #4 のスレッド指示により旧データは読み込み不可とします。
+        // 現行形式のみ受け付け、それ以外は非対応形式として隔離します。
+        // 旧形式の移行連鎖は保持せず、黙って別意味へ変換しません。
+        val migrated = if (sourceVersion == STRUCTURED_FORMAT_VERSION) {
+            source
+        } else {
+            quarantine(
+                file,
+                QuarantineKind.INCOMPATIBLE,
+                "formatVersion=$sourceVersion",
+                fileTag = "v$sourceVersion",
+            )
+            return null
         }
         val schemaViolations = PersistedScriptValidator.validate(migrated)
         require(schemaViolations.isEmpty()) {
@@ -480,12 +477,8 @@ class ScriptStore(
                     "${file.absolutePath} (${limitViolations.joinToString("; ")})"
             )
         }
-        if (sourceVersion != STRUCTURED_FORMAT_VERSION) {
-            // 旧形式を読み込んだ時点で現行形式の正本へ書き戻し、次回以降に
-            // 旧tick値や廃止コマンドを二重解釈しないようにします。
-            atomicWrite(file, gson.toJson(migrated))
-            logger.info("構造化プログラムディスクをv${STRUCTURED_FORMAT_VERSION}形式へ移行しました: ${file.absolutePath}")
-        }
+        // 旧形式は読み込み不可のため書き戻し移行は行いません。
+        // 現行形式のみを正本として扱います。
         script
     } catch (error: Exception) {
         quarantine(

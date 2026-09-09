@@ -27,6 +27,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -1205,26 +1206,43 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 FormTextField(
                     axis,
                     axis.uppercase(),
+                    // 保存値の意味付けを記法へ戻して表示し、Form内での往復を保ちます。
                     when (axis) {
-                        "x" -> current?.x ?: location.x
-                        "y" -> current?.y ?: location.y
-                        else -> current?.z ?: location.z
-                    }.toString(),
+                        "x" -> CommandDialogSpecs.formatCoordinateComponent(
+                            current?.semanticsX ?: CoordinateSemantics.ABSOLUTE,
+                            current?.x ?: location.x,
+                        )
+                        "y" -> CommandDialogSpecs.formatCoordinateComponent(
+                            current?.semanticsY ?: CoordinateSemantics.ABSOLUTE,
+                            current?.y ?: location.y,
+                        )
+                        else -> CommandDialogSpecs.formatCoordinateComponent(
+                            current?.semanticsZ ?: CoordinateSemantics.ABSOLUTE,
+                            current?.z ?: location.z,
+                        )
+                    },
                     spec = CommandDialogSpecs.coordinateSpec(axis),
                 )
             },
             save = { values ->
-                val x = CommandDialogSpecs.finiteDouble(values.getValue("x"))
-                val y = CommandDialogSpecs.finiteDouble(values.getValue("y"))
-                val z = CommandDialogSpecs.finiteDouble(values.getValue("z"))
+                val x = CommandDialogSpecs.parseCoordinateComponent(values.getValue("x"))
+                val y = CommandDialogSpecs.parseCoordinateComponent(values.getValue("y"))
+                val z = CommandDialogSpecs.parseCoordinateComponent(values.getValue("z"))
                 if (x == null || y == null || z == null) {
                     false
                 } else {
                     updateNode(player, route) { command ->
+                        // Dialog記法の意味付けを保存します。向き成分は本欄で扱わないため保持します。
+                        val kept = CommandSettingsModel.positionSpec(command, role)
+                            ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
+                            ?: PositionSpec(PositionKind.COORDINATES)
                         CommandSettingsModel.setPositionSpec(
                             command,
                             role,
-                            PositionSpec(PositionKind.COORDINATES, x, y, z),
+                            kept.copy(
+                                x = x.second, y = y.second, z = z.second,
+                                semanticsX = x.first, semanticsY = y.first, semanticsZ = z.first,
+                            ),
                         )
                     }
                 }
@@ -1467,25 +1485,40 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     axis,
                     axis.uppercase(),
                     when (axis) {
-                        "x" -> current?.x ?: location.x
-                        "y" -> current?.y ?: location.y
-                        else -> current?.z ?: location.z
-                    }.toString(),
+                        "x" -> CommandDialogSpecs.formatCoordinateComponent(
+                            current?.semanticsX ?: CoordinateSemantics.ABSOLUTE,
+                            current?.x ?: location.x,
+                        )
+                        "y" -> CommandDialogSpecs.formatCoordinateComponent(
+                            current?.semanticsY ?: CoordinateSemantics.ABSOLUTE,
+                            current?.y ?: location.y,
+                        )
+                        else -> CommandDialogSpecs.formatCoordinateComponent(
+                            current?.semanticsZ ?: CoordinateSemantics.ABSOLUTE,
+                            current?.z ?: location.z,
+                        )
+                    },
                     spec = CommandDialogSpecs.coordinateSpec(axis),
                 )
             },
             save = { values ->
-                val x = CommandDialogSpecs.finiteDouble(values.getValue("x"))
-                val y = CommandDialogSpecs.finiteDouble(values.getValue("y"))
-                val z = CommandDialogSpecs.finiteDouble(values.getValue("z"))
+                val x = CommandDialogSpecs.parseCoordinateComponent(values.getValue("x"))
+                val y = CommandDialogSpecs.parseCoordinateComponent(values.getValue("y"))
+                val z = CommandDialogSpecs.parseCoordinateComponent(values.getValue("z"))
                 if (x == null || y == null || z == null) {
                     false
                 } else {
                     updateNode(player, route) { command ->
+                        val kept = CommandSettingsModel.positionSpec(command, role)
+                            ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
+                            ?: PositionSpec(PositionKind.COORDINATES)
                         CommandSettingsModel.setPositionSpec(
                             command,
                             role,
-                            PositionSpec(PositionKind.COORDINATES, x, y, z),
+                            kept.copy(
+                                x = x.second, y = y.second, z = z.second,
+                                semanticsX = x.first, semanticsY = y.first, semanticsZ = z.first,
+                            ),
                         )
                     }
                 }

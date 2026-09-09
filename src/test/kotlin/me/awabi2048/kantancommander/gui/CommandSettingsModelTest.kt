@@ -598,5 +598,4 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "particle"))
         assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particle" })
     }
-
 }

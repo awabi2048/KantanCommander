@@ -59,6 +59,7 @@ import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -4464,51 +4465,72 @@ class GestureSequenceEditor(
         x: Double,
         y: Double,
         z: Double,
-        onSubmit: (Double, Double, Double) -> String?,
+        semanticsX: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+        semanticsY: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+        semanticsZ: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+        allowNotation: Boolean = true,
+        onSubmit: (CoordinateSemantics, Double, CoordinateSemantics, Double, CoordinateSemantics, Double) -> String?,
     ) {
         showInputDialog(
             player = player,
             body = CommandDialogSpecs.coordinateBody(player),
-            inputs = CommandDialogSpecs.coordinateInputs(player, x, y, z),
+            inputs = CommandDialogSpecs.coordinateInputs(
+                player,
+                CommandDialogSpecs.formatCoordinateComponent(semanticsX, x),
+                CommandDialogSpecs.formatCoordinateComponent(semanticsY, y),
+                CommandDialogSpecs.formatCoordinateComponent(semanticsZ, z),
+            ),
         ) { response ->
             val rawValues = listOf("x", "y", "z").associateWith { key -> response.textValue(key).trim() }
             val validationError = rawValues.entries
-                .mapNotNull { (key, raw) -> CommandDialogSpecs.coordinateSpec(key).validateInput(raw) }
+                .mapNotNull { (key, raw) ->
+                    CommandDialogSpecs.coordinateSpec(key, allowNotation).validateInput(raw)
+                }
                 .firstOrNull()
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
-            val xValue = CommandDialogSpecs.finiteDouble(rawValues.getValue("x"))
-            val yValue = CommandDialogSpecs.finiteDouble(rawValues.getValue("y"))
-            val zValue = CommandDialogSpecs.finiteDouble(rawValues.getValue("z"))
-            if (xValue == null || yValue == null || zValue == null) {
-                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID)
+            val parsed = rawValues.mapValues { (_, raw) ->
+                // 注視点など記法対象外の欄では、検証で接頭辞を弾いているため素の数値として扱います。
+                if (allowNotation) CommandDialogSpecs.parseCoordinateComponent(raw)
+                else CommandDialogSpecs.finiteDouble(raw)?.let { CoordinateSemantics.ABSOLUTE to it }
             }
-            onSubmit(xValue, yValue, zValue)
+            val (sx, xValue) = parsed.getValue("x") ?: return@showInputDialog invalidCoordinates(player)
+            val (sy, yValue) = parsed.getValue("y") ?: return@showInputDialog invalidCoordinates(player)
+            val (sz, zValue) = parsed.getValue("z") ?: return@showInputDialog invalidCoordinates(player)
+            onSubmit(sx, xValue, sy, yValue, sz, zValue)
         }
     }
+
+    private fun invalidCoordinates(player: Player): String =
+        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID)
 
     /** 回転設定用の入力欄をyaw/pitchへ分割します。 */
     private fun showRotationSettingDialog(
         player: Player,
         yaw: Float,
         pitch: Float,
-        onSubmit: (Float, Float) -> String?,
+        semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+        semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+        onSubmit: (CoordinateSemantics, Float, CoordinateSemantics, Float) -> String?,
     ) {
         showInputDialog(
             player = player,
             body = CommandDialogSpecs.rotationBody(player),
-            inputs = CommandDialogSpecs.rotationInputs(player, yaw, pitch),
+            inputs = CommandDialogSpecs.rotationInputs(
+                player,
+                CommandDialogSpecs.formatAngleComponent(semanticsYaw, yaw),
+                CommandDialogSpecs.formatAngleComponent(semanticsPitch, pitch),
+            ),
         ) { response ->
             val rawValues = listOf("yaw", "pitch").associateWith { key -> response.textValue(key).trim() }
             val validationError = rawValues.entries
                 .mapNotNull { (key, raw) -> CommandDialogSpecs.rotationSpec(key).validateInput(raw) }
                 .firstOrNull()
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
-            val yawValue = CommandDialogSpecs.finiteFloat(rawValues.getValue("yaw"))
-            val pitchValue = CommandDialogSpecs.finiteFloat(rawValues.getValue("pitch"))
-            if (yawValue == null || pitchValue == null) {
-                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID)
-            }
-            onSubmit(yawValue, pitchValue)
+            val (syaw, yawValue) = CommandDialogSpecs.parseAngleComponent(rawValues.getValue("yaw"))
+                ?: return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID)
+            val (spitch, pitchValue) = CommandDialogSpecs.parseAngleComponent(rawValues.getValue("pitch"))
+                ?: return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID)
+            onSubmit(syaw, yawValue, spitch, pitchValue)
         }
     }
 
@@ -4894,9 +4916,20 @@ class GestureSequenceEditor(
                         current?.x ?: player.location.x,
                         current?.y ?: player.location.y,
                         current?.z ?: player.location.z,
-                    ) { x, y, z ->
+                        semanticsX = current?.semanticsX ?: CoordinateSemantics.ABSOLUTE,
+                        semanticsY = current?.semanticsY ?: CoordinateSemantics.ABSOLUTE,
+                        semanticsZ = current?.semanticsZ ?: CoordinateSemantics.ABSOLUTE,
+                    ) { sx, x, sy, y, sz, z ->
                         if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, x = x, y = y, z = z))
+                            // Dialog記法の意味付けを保存します。向き成分は本欄で扱わないため保持します。
+                            val kept = CommandSettingsModel.positionSpec(it, settingContext.role)
+                                ?.takeIf { kept -> kept.kind == kind }
+                                ?: PositionSpec(kind)
+                            CommandSettingsModel.setPositionSpec(
+                                it,
+                                settingContext.role,
+                                kept.copy(x = x, y = y, z = z, semanticsX = sx, semanticsY = sy, semanticsZ = sz),
+                            )
                         }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         showSettingScreen()
                         null
@@ -4964,7 +4997,9 @@ class GestureSequenceEditor(
                         current?.x ?: player.location.x,
                         current?.y ?: player.location.y,
                         current?.z ?: player.location.z,
-                    ) { x, y, z ->
+                        // 注視点は絶対固定のため、記法を受け付けません。
+                        allowNotation = false,
+                    ) { _, x, _, y, _, z ->
                         if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, x = x, y = y, z = z), facingRole)
                         }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
@@ -4979,9 +5014,15 @@ class GestureSequenceEditor(
                         player,
                         current?.yaw ?: player.location.yaw,
                         current?.pitch ?: player.location.pitch,
-                    ) { yaw, pitch ->
+                        semanticsYaw = current?.semanticsYaw ?: CoordinateSemantics.ABSOLUTE,
+                        semanticsPitch = current?.semanticsPitch ?: CoordinateSemantics.ABSOLUTE,
+                    ) { syaw, yaw, spitch, pitch ->
                         if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = yaw, pitch = pitch), facingRole)
+                            CommandSettingsModel.setFacingSpec(
+                                it,
+                                FacingSpec(kind, yaw = yaw, pitch = pitch, semanticsYaw = syaw, semanticsPitch = spitch),
+                                facingRole,
+                            )
                         }) return@showRotationSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         showSettingScreen()
                         null

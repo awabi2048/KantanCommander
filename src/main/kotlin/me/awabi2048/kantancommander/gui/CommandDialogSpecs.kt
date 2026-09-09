@@ -6,6 +6,7 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.TemporaryTemplate
@@ -183,12 +184,18 @@ internal object CommandDialogSpecs {
         KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_COORDINATE_PROMPT),
     )
 
-    fun coordinateSpec(axis: String): Spec = finiteCoordinate(axis)
+    fun coordinateSpec(axis: String, allowNotation: Boolean = true): Spec =
+        finiteCoordinate(axis, allowNotation)
 
-    fun coordinateInputs(player: Player, x: Double, y: Double, z: Double): List<MenuDialogInput.Text> = listOf(
-        input(player, "x", x.toString(), coordinateSpec("x"), Component.text("X")),
-        input(player, "y", y.toString(), coordinateSpec("y"), Component.text("Y")),
-        input(player, "z", z.toString(), coordinateSpec("z"), Component.text("Z")),
+    fun coordinateInputs(
+        player: Player,
+        x: String,
+        y: String,
+        z: String,
+    ): List<MenuDialogInput.Text> = listOf(
+        input(player, "x", x, coordinateSpec("x"), Component.text("X")),
+        input(player, "y", y, coordinateSpec("y"), Component.text("Y")),
+        input(player, "z", z, coordinateSpec("z"), Component.text("Z")),
     )
 
     /** 回転入力も座標入力と同じく、表示と有限値判定の境界を共有します。 */
@@ -198,9 +205,9 @@ internal object CommandDialogSpecs {
 
     fun rotationSpec(axis: String): Spec = finiteRotation(axis)
 
-    fun rotationInputs(player: Player, yaw: Float, pitch: Float): List<MenuDialogInput.Text> = listOf(
-        input(player, "yaw", yaw.toString(), rotationSpec("yaw"), Component.text("ヨー")),
-        input(player, "pitch", pitch.toString(), rotationSpec("pitch"), Component.text("ピッチ")),
+    fun rotationInputs(player: Player, yaw: String, pitch: String): List<MenuDialogInput.Text> = listOf(
+        input(player, "yaw", yaw, rotationSpec("yaw"), Component.text("ヨー")),
+        input(player, "pitch", pitch, rotationSpec("pitch"), Component.text("ピッチ")),
     )
 
     /** 対象範囲の入力方法と制約だけを表示します。各軸の値は入力欄に表示します。 */
@@ -397,9 +404,9 @@ internal object CommandDialogSpecs {
             org.bukkit.Vibration::class.java -> {
                 val parts = vibrationParts(raw)
                 listOf(
-                    FieldInput("vibX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX, parts[0], coordinateSpec("x")),
-                    FieldInput("vibY", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY, parts[1], coordinateSpec("y")),
-                    FieldInput("vibZ", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ, parts[2], coordinateSpec("z")),
+                    FieldInput("vibX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX, parts[0], coordinateSpec("x", allowNotation = false)),
+                    FieldInput("vibY", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY, parts[1], coordinateSpec("y", allowNotation = false)),
+                    FieldInput("vibZ", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ, parts[2], coordinateSpec("z", allowNotation = false)),
                     FieldInput(
                         "vibT",
                         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TICKS,
@@ -415,9 +422,9 @@ internal object CommandDialogSpecs {
             org.bukkit.Particle.Trail::class.java -> {
                 val parts = trailParts(raw)
                 listOf(
-                    FieldInput("trailX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX, parts[0], coordinateSpec("x")),
-                    FieldInput("trailY", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY, parts[1], coordinateSpec("y")),
-                    FieldInput("trailZ", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ, parts[2], coordinateSpec("z")),
+                    FieldInput("trailX", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX, parts[0], coordinateSpec("x", allowNotation = false)),
+                    FieldInput("trailY", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY, parts[1], coordinateSpec("y", allowNotation = false)),
+                    FieldInput("trailZ", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ, parts[2], coordinateSpec("z", allowNotation = false)),
                     FieldInput(
                         "trailColor",
                         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_COLOR,
@@ -657,6 +664,53 @@ internal object CommandDialogSpecs {
     fun finiteDouble(raw: String): Double? = CommandValueRules.parseFiniteDouble(raw)
 
     fun finiteFloat(raw: String): Float? = raw.trim().toFloatOrNull()?.takeIf(Float::isFinite)
+
+    /**
+     * issue #4 のDialog記法を解析します。先頭の `~` は相対、`^` はローカル、
+     * 無印は絶対として、残りを有限Doubleへ変換します。`~`・`^` 単体は
+     * 差分0として受け付けます。不正な入力はnullを返します。
+     */
+    fun parseCoordinateComponent(raw: String): Pair<CoordinateSemantics, Double>? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        val semantics = when {
+            trimmed.startsWith("~") -> CoordinateSemantics.RELATIVE
+            trimmed.startsWith("^") -> CoordinateSemantics.LOCAL
+            else -> CoordinateSemantics.ABSOLUTE
+        }
+        val number = trimmed.removePrefix("~").removePrefix("^").trim()
+        val value = number.takeIf(String::isNotEmpty)?.toDoubleOrNull() ?: 0.0.takeIf { number.isEmpty() }
+        if (value == null || !value.isFinite()) return null
+        return semantics to value
+    }
+
+    /**
+     * issue #4 の角度欄のDialog記法を解析します。`~` は相対、無印は絶対です。
+     * 角度にローカルは基準が定義できないため `^` は拒否します。
+     */
+    fun parseAngleComponent(raw: String): Pair<CoordinateSemantics, Float>? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        if (trimmed.startsWith("^")) return null
+        val semantics = if (trimmed.startsWith("~")) CoordinateSemantics.RELATIVE else CoordinateSemantics.ABSOLUTE
+        val number = trimmed.removePrefix("~").trim()
+        val value = number.takeIf(String::isNotEmpty)?.toFloatOrNull() ?: 0f.takeIf { number.isEmpty() }
+        if (value == null || !value.isFinite()) return null
+        return semantics to value
+    }
+
+    /** 保存値の意味付けをDialogの初期表示へ戻します（`~5`・`^5`・`5`）。 */
+    fun formatCoordinateComponent(semantics: CoordinateSemantics, value: Double): String = when (semantics) {
+        CoordinateSemantics.ABSOLUTE -> value.toString()
+        CoordinateSemantics.RELATIVE -> "~$value"
+        CoordinateSemantics.LOCAL -> "^$value"
+    }
+
+    /** 保存値の意味付けをDialogの初期表示へ戻します（`~90`・`90`）。 */
+    fun formatAngleComponent(semantics: CoordinateSemantics, value: Float): String = when (semantics) {
+        CoordinateSemantics.RELATIVE -> "~$value"
+        else -> value.toString()
+    }
 
     private val particleSpread = decimalRange(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX,
@@ -1211,11 +1265,13 @@ internal object CommandDialogSpecs {
     }
 
     /** 有限の座標値を受け付ける仕様です。座標・回転の各入力欄で共有します。 */
-    private fun finiteCoordinate(axis: String): Spec = Spec(
+    private fun finiteCoordinate(axis: String, allowNotation: Boolean = true): Spec = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
         MULTI_VALUE_MAX_LENGTH,
         validate = { raw ->
-            if (CommandValueRules.parseFiniteDouble(raw) == null) {
+            // Particle形状値など記法対象外の欄では、接頭辞付き入力を拒否します。
+            val parsed = parseCoordinateComponent(raw)
+            if (parsed == null || (!allowNotation && parsed.first != CoordinateSemantics.ABSOLUTE)) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID
             } else null
         },
@@ -1227,7 +1283,7 @@ internal object CommandDialogSpecs {
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
         MULTI_VALUE_MAX_LENGTH,
         validate = { raw ->
-            if (CommandValueRules.parseFiniteDouble(raw) == null) {
+            if (parseAngleComponent(raw) == null) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID
             } else null
         },

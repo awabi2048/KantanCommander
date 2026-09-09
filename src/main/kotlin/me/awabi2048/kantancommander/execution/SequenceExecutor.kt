@@ -27,8 +27,15 @@ import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.clampMinecraftPitch
+import me.awabi2048.kantancommander.model.wrapMinecraftYaw
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.RegionAnchorKind
+import me.awabi2048.kantancommander.model.RegionKind
+import me.awabi2048.kantancommander.model.RegionSpec
+import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
@@ -1915,16 +1922,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
     ): Location? = when (spec.kind) {
-        PositionKind.CAPTURED, PositionKind.COORDINATES -> Location(
-            session.origin.world,
-            spec.x ?: session.origin.x,
-            spec.y ?: session.origin.y,
-            spec.z ?: session.origin.z,
-            spec.yaw ?: session.origin.yaw,
-            spec.pitch ?: session.origin.pitch,
-        )
-        PositionKind.DISK -> session.origin.clone()
+        PositionKind.CAPTURED, PositionKind.COORDINATES -> resolveCoordinatePosition(spec, session)
+        PositionKind.DISK -> {
+            // 成分別指定は座標種別だけの指定です。制御ブロック自体への付与は拒否します。
+            if (spec.hasNonAbsoluteSemantics()) return null
+            session.origin.clone()
+        }
         PositionKind.TEMPORARY -> {
+            if (spec.hasNonAbsoluteSemantics()) return null
             val temp = spec.tempName
                 ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
                     ?.takeIf { it.type == TemporaryVariableType.LOCATION }
@@ -1934,7 +1939,173 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         // TARGETはテレポート先などのコマンド固有設定で解決するため、通常の
         // 実行位置へ渡された場合は静的検証と同じく未解決として扱います。
         PositionKind.TARGET -> null
-        PositionKind.MYWORLD_SPAWN -> session.origin.world.spawnLocation
+        PositionKind.MYWORLD_SPAWN -> {
+            if (spec.hasNonAbsoluteSemantics()) return null
+            session.origin.world.spawnLocation
+        }
+    }
+
+    /**
+     * issue #4 の座標解決です。基準は `session.origin` に固定し、
+     * 実行コンテキスト位置は基準にしません。成分ごとに解釈が異なります。
+     *
+     * - ABSOLUTE軸：値そのまま（欠落時は起点値を継承します）。
+     * - RELATIVE軸：起点からの差分として加算します。欠落・非有限は未解決です。
+     * - LOCAL軸：起点の向きを基準にした左・上・前の合成ベクトルから対応成分を
+     *   採用します。向きの関係で他軸へ寄与する場合があります（例：yaw=90°時の
+     *   LOCAL-Xはworld-Zへ寄与します）。欠落・非有限は未解決です。
+     * - yaw／pitch：ABSOLUTEは上書き、RELATIVEは起点へ加算して正規化します。
+     *   LOCALは角度に基準が定義できないため未解決です。
+     */
+    private fun resolveCoordinatePosition(spec: PositionSpec, session: ExecutionSession): Location? {
+        val origin = session.origin
+        val localOffset = if (
+            spec.semanticsX == CoordinateSemantics.LOCAL ||
+            spec.semanticsY == CoordinateSemantics.LOCAL ||
+            spec.semanticsZ == CoordinateSemantics.LOCAL
+        ) {
+            // LOCAL軸だけを基底へ載せます。ABSOLUTE／RELATIVE軸は0として寄与させません。
+            localOffset(
+                origin.yaw,
+                origin.pitch,
+                if (spec.semanticsX == CoordinateSemantics.LOCAL) spec.x?.takeIf(Double::isFinite) ?: return null else 0.0,
+                if (spec.semanticsY == CoordinateSemantics.LOCAL) spec.y?.takeIf(Double::isFinite) ?: return null else 0.0,
+                if (spec.semanticsZ == CoordinateSemantics.LOCAL) spec.z?.takeIf(Double::isFinite) ?: return null else 0.0,
+            ) ?: return null
+        } else {
+            SpatialVector(0.0, 0.0, 0.0)
+        }
+        return Location(
+            origin.world,
+            resolveAxis(spec.semanticsX, spec.x, origin.x, origin.x + localOffset.x) ?: return null,
+            resolveAxis(spec.semanticsY, spec.y, origin.y, origin.y + localOffset.y) ?: return null,
+            resolveAxis(spec.semanticsZ, spec.z, origin.z, origin.z + localOffset.z) ?: return null,
+            resolveAngle(spec.semanticsYaw, spec.yaw, origin.yaw, ::wrapMinecraftYaw) ?: return null,
+            resolveAngle(spec.semanticsPitch, spec.pitch, origin.pitch, ::clampMinecraftPitch) ?: return null,
+        )
+    }
+
+    /**
+     * 1軸分の座標を解決します。ABSOLUTEは欠落時に起点値を継承し、
+     * RELATIVE／LOCALは有限値の明示を要求します。
+     */
+    private fun resolveAxis(
+        semantics: CoordinateSemantics,
+        value: Double?,
+        origin: Double,
+        localResolved: Double,
+    ): Double? = when (semantics) {
+        CoordinateSemantics.ABSOLUTE -> value ?: origin
+        CoordinateSemantics.RELATIVE -> value?.takeIf(Double::isFinite)?.let { origin + it }
+        CoordinateSemantics.LOCAL -> value?.takeIf(Double::isFinite)?.let { localResolved }
+    }
+
+    /**
+     * 1成分分の角度を解決します。ABSOLUTEは欠落時に起点値を継承し、
+     * RELATIVEは起点へ加算して正規化します。LOCALは未解決です。
+     */
+    private fun resolveAngle(
+        semantics: CoordinateSemantics,
+        value: Float?,
+        origin: Float,
+        normalize: (Float) -> Float,
+    ): Float? = when (semantics) {
+        CoordinateSemantics.ABSOLUTE -> value ?: origin
+        CoordinateSemantics.RELATIVE ->
+            value?.takeIf(Float::isFinite)?.let { normalize(origin + it) }
+        CoordinateSemantics.LOCAL -> null
+    }
+
+    /**
+     * ローカル座標の基底を `session.origin` の向きから求めます。
+     * Bukkitのyaw（0=南・90=西・-90=東・180=北）とpitch（-90=上・90=下）に合わせ、
+     * 左・上・前の正規直交基底で差分を合成します。向きが非有限なら未解決です。
+     */
+    internal fun localOffset(yaw: Float, pitch: Float, left: Double, up: Double, forward: Double): SpatialVector? {
+        if (!yaw.isFinite() || !pitch.isFinite()) return null
+        if (!left.isFinite() || !up.isFinite() || !forward.isFinite()) return null
+        val yawRad = Math.toRadians(yaw.toDouble())
+        val pitchRad = Math.toRadians(pitch.toDouble())
+        val sinYaw = kotlin.math.sin(yawRad)
+        val cosYaw = kotlin.math.cos(yawRad)
+        val sinPitch = kotlin.math.sin(pitchRad)
+        val cosPitch = kotlin.math.cos(pitchRad)
+        // 前は視線方向、左は水平面上の直交方向、上は両者に直交する方向です。
+        val forwardVector = SpatialVector(-sinYaw * cosPitch, -sinPitch, cosYaw * cosPitch)
+        val leftVector = SpatialVector(cosYaw, 0.0, sinYaw)
+        val upVector = SpatialVector(-sinYaw * sinPitch, cosPitch, cosYaw * sinPitch)
+        return SpatialVector(
+            leftVector.x * left + upVector.x * up + forwardVector.x * forward,
+            leftVector.y * left + upVector.y * up + forwardVector.y * forward,
+            leftVector.z * left + upVector.z * up + forwardVector.z * forward,
+        )
+    }
+
+    /**
+     * issue #4 の領域解決の骨組みです。現行コマンドへの本接続は行わず、
+     * 将来Target絞り込み・Condition判定へ移植できる形に留めます。
+     * worldを跨ぐ比較は呼び出し側で明示的に失敗させます。
+     */
+    internal data class ResolvedRegion(
+        val origin: Location,
+        val dx: Double?,
+        val dy: Double?,
+        val dz: Double?,
+        val minimumDistance: Double?,
+        val maximumDistance: Double?,
+    )
+
+    /**
+     * 領域基準を解決します。FIXEDは明示位置、CONTROL_BLOCKは制御ブロック位置、
+     * TEMPORARYはLOCATION型一時変数、TARGET_ENTITYは対象実体位置です。
+     * 未解決・world不一致はnullで返し、呼び出し側で区別できるようにします。
+     */
+    private fun resolveRegionAnchor(
+        spec: RegionSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec? = session.context,
+    ): Location? = when (spec.anchor.kind) {
+        RegionAnchorKind.CONTROL_BLOCK -> session.origin.clone()
+        RegionAnchorKind.FIXED -> {
+            val position = spec.anchor.position ?: return null
+            resolvePosition(position, session, context)
+        }
+        RegionAnchorKind.TEMPORARY -> {
+            val temp = spec.anchor.tempName
+                ?.takeIf(String::isNotBlank)
+                ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+                ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                ?.location ?: return null
+            Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
+        }
+        RegionAnchorKind.TARGET_ENTITY -> {
+            val target = spec.anchor.target ?: context?.target ?: return null
+            resolveTargetSpec(target, session, context)?.location
+        }
+    }
+
+    /**
+     * 直方体＋距離の骨組みを解決します。SPHERE／CYLINDERは予約のため、
+     * 現行実行では未対応としてnullを返します。呼び出し側でemptyと区別します。
+     */
+    private fun resolveRegion(
+        spec: RegionSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec? = session.context,
+    ): ResolvedRegion? {
+        if (spec.kind != RegionKind.CUBOID) return null
+        val origin = resolveRegionAnchor(spec, session, context) ?: return null
+        if (origin.world != session.origin.world) return null
+        return ResolvedRegion(
+            origin = origin,
+            dx = spec.dx?.takeIf { it.isFinite() && it >= 0.0 } ?: spec.dx?.let { return null },
+            dy = spec.dy?.takeIf { it.isFinite() && it >= 0.0 } ?: spec.dy?.let { return null },
+            dz = spec.dz?.takeIf { it.isFinite() && it >= 0.0 } ?: spec.dz?.let { return null },
+            minimumDistance = spec.minimumDistance?.takeIf { it.isFinite() && it >= 0.0 }
+                ?: spec.minimumDistance?.let { return null },
+            maximumDistance = spec.maximumDistance?.takeIf { it.isFinite() && it >= 0.0 }
+                ?: spec.maximumDistance?.let { return null },
+        ).takeIf { it.minimumDistance == null || it.maximumDistance == null || it.minimumDistance <= it.maximumDistance }
     }
 
     private fun applyFacing(
@@ -1943,10 +2114,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
         session: ExecutionSession,
     ) {
+        // 意味付けはROTATION／CAPTUREDの向き成分だけの指定です。他種別への付与は拒否します。
+        if (facing.hasNonAbsoluteSemantics() && facing.kind != FacingKind.ROTATION && facing.kind != FacingKind.CAPTURED) return
         when (facing.kind) {
             FacingKind.ROTATION, FacingKind.CAPTURED -> {
-                destination.yaw = facing.yaw ?: destination.yaw
-                destination.pitch = facing.pitch ?: destination.pitch
+                // 向きも成分ごとに解釈します。LOCALは角度に基準がないため未解決です。
+                destination.yaw = resolveAngle(
+                    facing.semanticsYaw, facing.yaw, destination.yaw, ::wrapMinecraftYaw,
+                ) ?: return
+                destination.pitch = resolveAngle(
+                    facing.semanticsPitch, facing.pitch, destination.pitch, ::clampMinecraftPitch,
+                ) ?: return
             }
             FacingKind.TARGET -> {
                 val location = context?.target

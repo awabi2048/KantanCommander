@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 11
+const val STRUCTURED_FORMAT_VERSION = 13
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -293,6 +293,75 @@ enum class PositionKind {
     /** テレポート先など、コマンド固有の「対象エンティティ位置」です。 */
     TARGET,
 }
+
+/**
+ * issue #4 の座標成分の意味付けです。スレッド指示により基準は `session.origin`
+ * （制御ブロック位置の複製）に固定します。実行コンテキスト位置は基準にしません。
+ *
+ * - ABSOLUTE: 絶対値として扱います。従来の保存値と同じ意味です。
+ * - RELATIVE: `~` 相当で、`session.origin` からの差分として扱います。
+ * - LOCAL: `^` 相当で、`session.origin` の位置と向きを基準にした左・上・前として扱います。
+ *   角度には基準が定義できないため使用できず、検証で拒否します。
+ */
+enum class CoordinateSemantics {
+    ABSOLUTE,
+    RELATIVE,
+    LOCAL,
+}
+
+/**
+ * Minecraftのyawを (-180, 180] へ正規化します。
+ * 相対指定の差分加算など、任意の有限値を起点に畳み込むために使います。
+ */
+fun wrapMinecraftYaw(degrees: Float): Float {    var value = degrees % 360f
+    if (value <= -180f) value += 360f
+    if (value > 180f) value -= 360f
+    return value
+}
+
+/**
+ * Minecraftのpitchを [-90, 90] へ丸めます。
+ * 相対指定の差分加算が範囲を超過した場合に、実行時の向きを壊さないために使います。
+ */
+fun clampMinecraftPitch(degrees: Float): Float = degrees.coerceIn(-90f, 90f)
+
+/**
+ * 指定軸の現在の意味付けを返します。不明な軸名は絶対として扱います。
+ * GUIの循環切替えと実行層で同じ軸名（x/y/z/yaw/pitch）を使います。
+ */
+fun PositionSpec.axisSemantics(axis: String): CoordinateSemantics = when (axis) {
+    "x" -> semanticsX
+    "y" -> semanticsY
+    "z" -> semanticsZ
+    "yaw" -> semanticsYaw
+    "pitch" -> semanticsPitch
+    else -> CoordinateSemantics.ABSOLUTE
+}
+
+/** 指定軸の意味付けだけを変えた複製を返します。不明な軸名はそのまま返します。 */
+fun PositionSpec.withAxisSemantics(axis: String, value: CoordinateSemantics): PositionSpec = when (axis) {
+    "x" -> copy(semanticsX = value)
+    "y" -> copy(semanticsY = value)
+    "z" -> copy(semanticsZ = value)
+    "yaw" -> copy(semanticsYaw = value)
+    "pitch" -> copy(semanticsPitch = value)
+    else -> this
+}
+
+/** 指定軸の現在の意味付けを返します。不明な軸名は絶対として扱います。 */
+fun FacingSpec.axisSemantics(axis: String): CoordinateSemantics = when (axis) {
+    "yaw" -> semanticsYaw
+    "pitch" -> semanticsPitch
+    else -> CoordinateSemantics.ABSOLUTE
+}
+
+/** 指定軸の意味付けだけを変えた複製を返します。不明な軸名はそのまま返します。 */
+fun FacingSpec.withAxisSemantics(axis: String, value: CoordinateSemantics): FacingSpec = when (axis) {
+    "yaw" -> copy(semanticsYaw = value)
+    "pitch" -> copy(semanticsPitch = value)
+    else -> this
+}
+
 data class PositionSpec(
     val kind: PositionKind,
     val x: Double? = null,
@@ -302,7 +371,105 @@ data class PositionSpec(
     val pitch: Float? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
-)
+    /**
+     * 成分ごとの解釈です。COORDINATES／CAPTURED の座標成分に RELATIVE／LOCAL を許し、
+     * yaw／pitch には ABSOLUTE／RELATIVE を許します。それ以外の種別・組合せは
+     * 検証で拒否します。既定は全 ABSOLUTE で従来の保存値と同じ意味です。
+     */
+    val semanticsX: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsY: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsZ: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+) {
+    /** 座標・角度のいずれかに絶対以外の指定があるかを返します。 */
+    fun hasNonAbsoluteSemantics(): Boolean =
+        listOf(semanticsX, semanticsY, semanticsZ, semanticsYaw, semanticsPitch)
+            .any { it != CoordinateSemantics.ABSOLUTE }
+}
+
+/**
+ * issue #4 の移植用ベクトル骨組みです。永続化可能な値表現として保持し、
+ * Bukkit実体は長期保持しません。演算・property・乱数接続は #3 送りです。
+ */
+data class SpatialVector(
+    val x: Double,
+    val y: Double,
+    val z: Double,
+) {
+    /** 有限値のみを有効とします。非有限は検証・実行で拒否します。 */
+    fun isFinite(): Boolean = x.isFinite() && y.isFinite() && z.isFinite()
+
+    operator fun plus(other: SpatialVector) =
+        SpatialVector(x + other.x, y + other.y, z + other.z)
+
+    operator fun minus(other: SpatialVector) =
+        SpatialVector(x - other.x, y - other.y, z - other.z)
+
+    fun lengthSquared(): Double = x * x + y * y + z * z
+}
+
+/**
+ * issue #4 の領域形状です。設定方法は直方体＋距離を継続するため、
+ * 初回は CUBOID のみ実行対象とし、SPHERE／CYLINDER は予約に留めます。
+ */
+enum class RegionKind {
+    CUBOID,
+    SPHERE,
+    CYLINDER,
+}
+
+/**
+ * issue #4 の領域基準です。スレッド指示により4系統を骨組みに含めます。
+ * FIXEDは明示座標、CONTROL_BLOCKは制御ブロック位置、TARGET_ENTITYは対象実体位置、
+ * TEMPORARYはLOCATION型一時変数を指します。
+ */
+enum class RegionAnchorKind {
+    FIXED,
+    CONTROL_BLOCK,
+    TARGET_ENTITY,
+    TEMPORARY,
+}
+
+/**
+ * 領域基準の指定です。将来そのまま移植できる形にするための骨組みで、
+ * 現行コマンドへの本接続は行いません。
+ */
+data class RegionAnchorSpec(
+    val kind: RegionAnchorKind = RegionAnchorKind.CONTROL_BLOCK,
+    /** FIXED のときの基準位置です。他基準では未使用です。 */
+    val position: PositionSpec? = null,
+    /** TEMPORARY のときの一時変数名です。他基準では未使用です。 */
+    val tempName: String? = null,
+    /** TARGET_ENTITY のときの対象指定です。他基準では未使用です。 */
+    val target: TargetSpec? = null,
+) {
+    fun hasAnySetting(): Boolean =
+        kind != RegionAnchorKind.CONTROL_BLOCK || position != null || tempName != null || target != null
+}
+
+/**
+ * issue #4 の明示領域の骨組みです。現行の直方体（dx/dy/dz相当）と
+ * 距離指定を同じ形で再表現でき、将来Target絞り込み・Condition判定へ
+ * 移植できることを目的とします。yaw/pitchは持ちません。
+ */
+data class RegionSpec(
+    val kind: RegionKind = RegionKind.CUBOID,
+    val anchor: RegionAnchorSpec = RegionAnchorSpec(),
+    /** 直方体の範囲です。vanillaのdx/dy/dz相当で、非負の有限値を要求します。 */
+    val dx: Double? = null,
+    val dy: Double? = null,
+    val dz: Double? = null,
+    /** 球・円筒予約を含む距離条件です。0以上の有限値を要求します。 */
+    val minimumDistance: Double? = null,
+    val maximumDistance: Double? = null,
+) {
+    /** 未指定はその条件で制限しない扱いです。UI都合の値を暗黙保存しません。 */
+    fun hasAnySetting(): Boolean =
+        dx != null || dy != null || dz != null ||
+            minimumDistance != null || maximumDistance != null ||
+            anchor.hasAnySetting() || kind != RegionKind.CUBOID
+}
 
 enum class FacingKind {
     CAPTURED, COORDINATES, MYWORLD_SPAWN, ROTATION, TEMPORARY,
@@ -318,7 +485,18 @@ data class FacingSpec(
     val pitch: Float? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
-)
+    /**
+     * 向き成分ごとの解釈です。ROTATION／CAPTURED のyaw／pitchに
+     * ABSOLUTE／RELATIVE を許します。LOCALと他種別への付与は検証で拒否します。
+     * 注視点（COORDINATES のx/y/z）は絶対据え置きです。
+     */
+    val semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+) {
+    /** 向きのいずれかに絶対以外の指定があるかを返します。 */
+    fun hasNonAbsoluteSemantics(): Boolean =
+        semanticsYaw != CoordinateSemantics.ABSOLUTE || semanticsPitch != CoordinateSemantics.ABSOLUTE
+}
 
 /**
  * 実行エンジンがコマンドをMinecraftの実行状態へ変換するための内部状態です。
