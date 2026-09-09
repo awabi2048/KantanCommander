@@ -492,6 +492,11 @@ class GestureSequenceEditor(
         }
         if (selectedNodeMissing || confirmedNodeMissing || settingNodeMissing) {
             invalidateInputs()
+            // 削除済みノードの一時previewは保存値へ戻せないため破棄します。
+            // 削除済みUUIDへ後続のpreview確定が届かないようにします。
+            state.selectedNodeId?.let(previewStore::removeNode)
+            state.confirmNodeId?.let(previewStore::removeNode)
+            state.settingContext?.nodeId?.let(previewStore::removeNode)
             state.selectedNodeId = null
             state.confirmNodeId = null
             state.pendingInsertion = null
@@ -517,8 +522,38 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
             }
         }
-        updateUpper(owner)
-        updateLower(owner)
+        // issue #15 の上部抑止です。上部は種別・接続・未設定色・選択だけを表示し
+        // 値そのものを表示しないため、要点が同じ間は下部だけを作り直します。
+        // テスト表示・挿入preview・追加点選択の途中は抑止せず、整合性を優先します。
+        val skipUpper = !hasMissingSelection &&
+            state.testExecution == null &&
+            state.pendingInsertion == null &&
+            state.selectedInsertionCandidatePoint == null &&
+            state.selectedAddPoint == null &&
+            lastUpperStructureSignature != null &&
+            GraphStructureFingerprint.fingerprint(current.graph) == lastUpperStructureSignature &&
+            currentIncompleteForSkip(current) == lastUpperIncomplete &&
+            state.selectedNodeId == lastUpperSelection
+        if (skipUpper) {
+            updateLower(owner)
+        } else {
+            updateUpper(owner)
+            updateLower(owner)
+        }
+    }
+
+    /**
+     * 上部抑止の比較用に、現在の未設定集合を求めます。
+     *
+     * [resolveUpperGraph] と同じ対応付け規則を使い、表示上の差の有無だけを
+     * 判定します。検証結果自体は世代cacheを使い回します。
+     */
+    private fun currentIncompleteForSkip(script: DiskScript): Set<java.util.UUID> = buildSet {
+        validatedErrors(script).forEach { error ->
+            error.nodeId?.let { nodeId ->
+                FoldedGraphs.outermostWrapperId(script.graph, nodeId)?.let(::add)
+            }
+        }
     }
 
     /** Facadeが終了通知を新しいエディターへ誤適用しないよう、現在のIDを照合します。 */
@@ -703,6 +738,17 @@ class GestureSequenceEditor(
      * 選択欠落がない限り再構築しません。他editorの stale 世代には影響しません。
      */
     private var lastDirectRenderedRevision: Long? = null
+
+    /**
+     * issue #15 の上部抑止判定に使う、前回描画時の表示内容の要点です。
+     *
+     * 上部のノード表示は種別・接続・未設定色・選択だけに依存し、値そのものを
+     * 表示しないため、署名・未設定集合・選択が同じ間は作り直しません。
+     * テスト表示・挿入preview中は記録せず、抑止判定から外します。
+     */
+    private var lastUpperStructureSignature: String? = null
+    private var lastUpperIncomplete: Set<java.util.UUID> = emptySet()
+    private var lastUpperSelection: java.util.UUID? = null
 
     /** 世代キャッシュ付きの実行前検証です。変数定義付きの検証には使いません。 */
     private fun validatedErrors(
@@ -958,6 +1004,9 @@ class GestureSequenceEditor(
     /** テスト確認子画面を開きます。グラフの固定は「確定」クリック時に行います。 */
     private fun openTestConfirmation(player: Player) {
         if (!canStartTest() || state.testExecution != null) return
+        // テストsnapshotは保存済み正本から作るため、未確定の一時previewは
+        // 持ち込まず破棄します。確定値だけがテスト対象になります。
+        previewStore.cancel()
         val current = plugin.scripts.load(state.scriptId) ?: return
         val ownerId = ownerIdFor(player)
         // テスト開始前に子画面を閉じるため、完了後は必ず通常のエディター親画面へ
@@ -1197,6 +1246,8 @@ class GestureSequenceEditor(
         testRefreshTask = null
         testObserver?.cancelPendingWait()
         testObserver = null
+        // テスト前後で一時previewを持ち越さず、保存値との不整合を残しません。
+        previewStore.cancel()
         state.testExecution = null
         state.lowerMode = test.originalLowerMode
         onTestStateChanged()
@@ -1261,6 +1312,8 @@ class GestureSequenceEditor(
         testRefreshTask = null
         testObserver?.cancelPendingWait()
         testObserver = null
+        // テスト前後で一時previewを持ち越さず、保存値との不整合を残しません。
+        previewStore.cancel()
         updateUpper(player)
         updateLower(player)
     }
@@ -2207,6 +2260,13 @@ class GestureSequenceEditor(
                     FoldedGraphs.outermostWrapperId(script.graph, nodeId)?.let(::add)
                 }
             }
+        }
+        // 上部抑止の判定要点を記録します。テスト表示・挿入preview中は
+        // 毎tick変化し得るため記録せず、抑止判定から外します。
+        if (!testActive && insertionPreview == null) {
+            lastUpperStructureSignature = GraphStructureFingerprint.fingerprint(script.graph)
+            lastUpperIncomplete = incompleteNodeIds
+            lastUpperSelection = state.selectedNodeId
         }
         return UpperGraphInput.Ready(
             UpperGraphData(
@@ -6236,6 +6296,8 @@ class GestureSequenceEditor(
                 }
                 // 削除確認を開いただけでは鳴らさず、保存成功後に削除音を再生します。
                 player.playSound(player.location, Sound.BLOCK_BAMBOO_HIT, 1.0f, 1.0f)
+                // 削除済みノードの一時previewは保存値へ戻せず残留するため破棄します。
+                previewStore.removeNode(nodeId)
                 val settingChildWasOpen = settingChildOpen(ownerId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE

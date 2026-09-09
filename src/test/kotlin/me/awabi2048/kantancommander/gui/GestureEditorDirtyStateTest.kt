@@ -4,7 +4,9 @@ import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -83,6 +85,30 @@ class GestureEditorDirtyStateTest {
         assertEquals(
             RenderPlan.UPPER_ONLY,
             EditorRenderPlanner.planFor(GraphChangeKind.NONE, selectionChanged = true),
+        )
+    }
+
+    @Test
+    fun `pre-save layout only for signature changes`() {
+        // 値変更だけでは配置が変わらないため保存前の検証レイアウトを省きます。
+        assertFalse(EditorRenderPlanner.needsPreSaveLayout("sig", "sig"))
+        assertTrue(EditorRenderPlanner.needsPreSaveLayout("before", "after"))
+    }
+
+    @Test
+    fun `field value change keeps signature so pre-save layout is skipped`() {
+        val before = CommandGraph.empty()
+        val node = GraphEditor.append(before, CommandType.WAIT)
+        val after = before.deepCopy()
+        after.nodes.getValue(node.id).params["seconds"] = "5"
+
+        // 分類と署名と保存前判定が一貫していることを検証します。
+        assertEquals(GraphChangeKind.FIELD_VALUE, GraphChangeClassifier.classify(before, after))
+        assertFalse(
+            EditorRenderPlanner.needsPreSaveLayout(
+                GraphStructureFingerprint.fingerprint(before),
+                GraphStructureFingerprint.fingerprint(after),
+            ),
         )
     }
 }

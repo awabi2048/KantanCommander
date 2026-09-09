@@ -181,4 +181,13 @@ object EditorRenderPlanner {
             GraphChangeKind.NONE -> RenderPlan(upperForState, chromeChanged)
         }
     }
+
+    /**
+     * 保存前の配置検証が必要かを判定します。
+     *
+     * 配置は構造署名だけから決まるため、署名が変わらない値変更では
+     * 検証の意味がありません。構造変更時だけ全量レイアウトします。
+     */
+    fun needsPreSaveLayout(beforeSignature: String, afterSignature: String): Boolean =
+        beforeSignature != afterSignature
 }

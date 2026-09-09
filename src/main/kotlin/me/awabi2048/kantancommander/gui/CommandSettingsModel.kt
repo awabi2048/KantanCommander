@@ -1313,11 +1313,17 @@ object CommandSettingsModel {
         change: (CommandGraph) -> T?,
     ): T? {
         val updated = plugin.scripts.update(scriptId, editorId, expectedRevision) { script ->
+            val beforeSignature = GraphStructureFingerprint.fingerprint(script.graph)
             val candidateGraph = script.graph.deepCopy()
             val result = change(candidateGraph) ?: return@update null
             // 描画セルの衝突・幅・高さ検証を保存前に必ず通し、両GUIの経路編集で
             // 「保存後にだけ描画不能になる」差を作りません。
-            GraphLayoutEngine.layout(candidateGraph)
+            // issue #15 の差分化として、接続構造が変わらない値変更では配置計算を
+            // 省略します。署名が同じ間は配置が変わらないため検証の意味がなく、
+            // 構造変更時だけ全量レイアウトします。
+            if (EditorRenderPlanner.needsPreSaveLayout(beforeSignature, GraphStructureFingerprint.fingerprint(candidateGraph))) {
+                GraphLayoutEngine.layout(candidateGraph)
+            }
             script.graph = candidateGraph
             result
         } ?: return null
