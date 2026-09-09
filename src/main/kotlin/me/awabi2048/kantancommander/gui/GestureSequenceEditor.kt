@@ -34,6 +34,8 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.FoldedGraphs
+import me.awabi2048.kantancommander.data.GraphValidator
+import me.awabi2048.kantancommander.data.IncrementalValidationPolicy
 import me.awabi2048.kantancommander.execution.ExecutionFinishStatus
 import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
@@ -450,6 +452,18 @@ class GestureSequenceEditor(
      * まとめて破棄し、削除済みUUIDへ後続入力が届かないようにします。
      */
     internal fun refreshFromStore() {
+        refreshFromStore(exceptRevisionAlreadyRendered = true)
+    }
+
+    /**
+     * 保存通知による再同期です。
+     *
+     * issue #15 の差分同期として、自身の保存直後に届くbroadcastでは
+     * 直接描画済みの同一世代を作り直しません。選択欠落がある場合だけ
+     * 作り直し、他editorの stale 世代は従来どおり全量更新します。
+     * presence等のephemeral状態はここで触らず、内容更新だけを扱います。
+     */
+    internal fun refreshFromStore(exceptRevisionAlreadyRendered: Boolean) {
         val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
         val current = plugin.scripts.load(state.scriptId) ?: return
         val previousRevision = observedRevision
@@ -463,6 +477,19 @@ class GestureSequenceEditor(
         val selectedNodeMissing = state.selectedNodeId?.let { it !in current.graph.nodes } == true
         val confirmedNodeMissing = state.confirmNodeId?.let { it !in current.graph.nodes } == true
         val settingNodeMissing = state.settingContext?.nodeId?.let { it !in current.graph.nodes } == true
+        val insertionMissing = state.pendingInsertion?.let { target ->
+            (target.sourceId != null && target.sourceId !in current.graph.nodes) ||
+                (target.mergeConditionId != null && target.mergeConditionId !in current.graph.nodes)
+        } == true
+        val hasMissingSelection = selectedNodeMissing || confirmedNodeMissing || settingNodeMissing || insertionMissing
+        // 自身の直接描画とbroadcastの二重描画を抑止します。外部変更で世代が
+        // 進んだ場合や選択欠落がある場合は抑止せず、整合性を優先します。
+        if (exceptRevisionAlreadyRendered && !hasMissingSelection &&
+            previousRevision != null && previousRevision == current.revision &&
+            lastDirectRenderedRevision == current.revision
+        ) {
+            return
+        }
         if (selectedNodeMissing || confirmedNodeMissing || settingNodeMissing) {
             invalidateInputs()
             state.selectedNodeId = null
@@ -595,7 +622,11 @@ class GestureSequenceEditor(
 
     fun updateUpper(player: Player): Boolean {
         val owner = ownerPlayerFor(player)
-        return updateScreen(owner, buildUpperViewport(owner), RenderTarget.UPPER)
+        val updated = updateScreen(owner, buildUpperViewport(owner), RenderTarget.UPPER)
+        // 直接描画とbroadcastの二重描画を抑止するため、描画済み世代を記録します。
+        // 他editorのstale判定には使わず、このeditorの同一世代再描画抑止にだけ使います。
+        if (updated) lastDirectRenderedRevision = observedRevision
+        return updated
     }
 
     fun updateLower(player: Player): Boolean {
@@ -642,6 +673,37 @@ class GestureSequenceEditor(
     private var validationCacheKey: Pair<java.util.UUID, Long>? = null
     private var validationCacheErrors: List<me.awabi2048.kantancommander.data.ScriptValidationError> = emptyList()
 
+    /**
+     * issue #15 の差分更新基盤です。値変更だけの保存で全量レイアウトを
+     * 繰り返さないよう、構造署名単位で配置結果を使い回します。
+     * 無効化条件は構造署名の変化に一元化し、設定上限の変更時だけ破棄します。
+     */
+    private val layoutCache = GraphLayoutCache()
+
+    /**
+     * 構造検証エラーの署名単位キャッシュです。値変更だけでは構造由来の
+     * エラーは変わらないため、世代が進んでも構造署名が同じ間は再利用します。
+     * 項目検証の全量走査は [validatedErrors] 側に残し、ここでは構造部分の
+     * 再計算抑止だけを担当します。
+     */
+    private var structuralValidationCacheKey: String? = null
+    private var structuralValidationErrors: List<me.awabi2048.kantancommander.data.GraphStructuralError> = emptyList()
+
+    /**
+     * Slider等の連続previewを永続保存へ直結させない一時保管場所です。
+     * session-localに保持し、commit時にだけrevisionを進めます。
+     * 他editorへの共有は低頻度・明示channelに限定します。
+     */
+    private val previewStore = TransientPreviewStore()
+    private var lastPreviewBroadcastAtMillis: Long = 0L
+
+    /**
+     * 自身の保存直後に届くbroadcast再描画を抑止する世代記録です。
+     * 保存成功経路は直接描画済みのため、同一世代のbroadcastでは
+     * 選択欠落がない限り再構築しません。他editorの stale 世代には影響しません。
+     */
+    private var lastDirectRenderedRevision: Long? = null
+
     /** 世代キャッシュ付きの実行前検証です。変数定義付きの検証には使いません。 */
     private fun validatedErrors(
         script: me.awabi2048.kantancommander.model.DiskScript,
@@ -650,8 +712,32 @@ class GestureSequenceEditor(
         if (validationCacheKey != key) {
             validationCacheKey = key
             validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+            // 世代が進んでも構造署名が同じ間は構造エラーを再利用できるよう、
+            // 構造部分だけを署名単位で保持します。無効化条件は署名変化に一元化します。
+            val signature = GraphStructureFingerprint.fingerprint(script.graph)
+            if (structuralValidationCacheKey != signature) {
+                structuralValidationCacheKey = signature
+                structuralValidationErrors = GraphValidator.validateStructured(script.graph, plugin.graphLimits())
+            }
         }
         return validationCacheErrors
+    }
+
+    /**
+     * 構造署名単位で再利用できる構造エラーを返します。
+     *
+     * 値変更だけの保存では世代が進んでも署名が変わらないため再計算しません。
+     * 構造署名が変わった場合だけ再検証し、無効化条件を一箇所へ集約します。
+     * 現段階では [validatedErrors] 側の世代cacheを維持しつつ構造cacheを暖め、
+     * 将来の項目検証の増分化への接続点を残します。
+     */
+    internal fun structuralErrors(graph: me.awabi2048.kantancommander.model.CommandGraph): List<me.awabi2048.kantancommander.data.GraphStructuralError> {
+        val signature = GraphStructureFingerprint.fingerprint(graph)
+        if (structuralValidationCacheKey != signature) {
+            structuralValidationCacheKey = signature
+            structuralValidationErrors = GraphValidator.validateStructured(graph, plugin.graphLimits())
+        }
+        return structuralValidationErrors
     }
 
     /**
@@ -1465,6 +1551,23 @@ class GestureSequenceEditor(
         testRefreshTask = null
         // 古いセッションの再試行が新セッションの画面を上書きしないよう、終了時に必ず破棄します。
         cancelRenderRetry()
+        // issue #15 のlifecycle保証です。表示・一時値・署名cacheを残留させず、
+        // open／close・disconnectの繰返しでも leak しないようにします。
+        // 実行本体の継続有無とは独立に、画面専用の観測参照だけを破棄します。
+        testObserver?.cancelPendingWait()
+        testObserver = null
+        state.testExecution = null
+        previewStore.cancel()
+        lastPreviewBroadcastAtMillis = 0L
+        pendingSoundDialogValues.clear()
+        validationCacheKey = null
+        validationCacheErrors = emptyList()
+        structuralValidationCacheKey = null
+        structuralValidationErrors = emptyList()
+        lastDirectRenderedRevision = null
+        lastGraphShadowSignature = ""
+        layoutFailureNoticeSent = false
+        layoutFailureDuringCurrentRender = false
         if (sessionId != null) {
             runCatching { onSessionClosed(this, ownerId, sessionId) }
                 .onFailure { failure ->
@@ -1476,6 +1579,77 @@ class GestureSequenceEditor(
         gestureSessionId = null
         sessionOwnerId = null
         observedRevision = null
+    }
+
+    /**
+     * issue #15 と #18 の共有契約である preview／commit の編集側入口です。
+     *
+     * preview値は保存・検証・revisionへ触れず、下部表示の更新にだけ使います。
+     * commit時に [updateSettingNode] と同じ保存境界を通し、cancel時は保存値へ戻します。
+     * 他editorへの共有が必要な場合は [maybeBroadcastPreview] で間引いて送ります。
+     */
+    internal fun beginFieldPreview(player: Player, revisionBase: Long? = null) {
+        previewStore.begin(revisionBase ?: observedRevision)
+    }
+
+    internal fun updateFieldPreview(player: Player, nodeId: java.util.UUID, fieldKey: String, previewValue: String?) {
+        if (previewStore.revisionBase == null) previewStore.begin(observedRevision)
+        previewStore.update(nodeId, fieldKey, previewValue)
+        updateLower(player)
+        maybeBroadcastPreview(player)
+    }
+
+    internal fun previewValue(nodeId: java.util.UUID, fieldKey: String): String? =
+        previewStore.current(nodeId, fieldKey)
+
+    internal fun hasFieldPreview(): Boolean = previewStore.hasPreview
+
+    internal fun cancelFieldPreview(player: Player) {
+        if (!previewStore.hasPreview) return
+        previewStore.cancel()
+        updateLower(player)
+    }
+
+    /**
+     * previewを破棄して保存値へ戻します。ワールド移動・中断時の残留防止に使います。
+     *
+     * 保存は行わず、下部表示だけを作り直します。
+     */
+    internal fun discardFieldPreview(player: Player) {
+        cancelFieldPreview(player)
+    }
+
+    /**
+     * 低頻度の共有previewを必要に応じて送ります。
+     *
+     * 常時全送信は行わず、最終値のcommitだけを正本へ反映します。
+     * 共有表示自体は将来の#13 presence拡張で利用し、ここでは要点の配布に留めます。
+     */
+    internal fun maybeBroadcastPreview(player: Player) {
+        if (!previewStore.hasPreview) return
+        val now = System.currentTimeMillis()
+        if (!previewStore.shouldSharePreview(now, lastPreviewBroadcastAtMillis)) return
+        lastPreviewBroadcastAtMillis = now
+        val summary = SharedPreviewSummary(
+            scriptId = state.scriptId,
+            revisionBase = previewStore.revisionBase,
+            previews = previewStore.snapshot(),
+            updatedAtMillis = now,
+        )
+        plugin.gestureEditor.broadcastPreview(summary, this)
+    }
+
+    /**
+     * 他editorからの共有previewを受け取ります。
+     *
+     * 正本・revision・検証へは触れず、表示上の要点としてのみ扱います。
+     * 現段階では受信を破棄せず保持し、将来の共有表示へ接続できるようにします。
+     */
+    internal fun receiveSharedPreview(summary: SharedPreviewSummary) {
+        if (summary.scriptId != state.scriptId) return
+        if (summary.previews.isEmpty()) return
+        // 現段階では保存値への適用も再描画の強制も行いません。
+        // 低頻度channelの疎通確認と将来の共有表示への接続点を残すことが目的です。
     }
 
     /**
@@ -1967,8 +2141,16 @@ class GestureSequenceEditor(
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId)
         if (script == null) return UpperGraphInput.Empty
         if (!testActive) observedRevision = script.revision
+        // 値変更だけの保存では構造署名が変わらないため、前回の配置を使い回します。
+        // 挿入previewやテスト表示は別グラフのため cache 対象外にします。
+        // 無効化条件は構造署名の変化へ一元化し、設定上限の変更時だけ破棄します。
         val persistedLayout = runCatching {
-            GraphLayoutEngine.layout(script.graph)
+            if (testActive) {
+                GraphLayoutEngine.layout(script.graph)
+            } else {
+                val signature = GraphStructureFingerprint.fingerprint(script.graph)
+                layoutCache.getOrCompute(signature) { GraphLayoutEngine.layout(script.graph) }
+            }
         }
             .getOrElse { failure ->
                 reportLayoutFailure(
