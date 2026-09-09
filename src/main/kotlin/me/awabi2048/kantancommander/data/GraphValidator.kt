@@ -1,16 +1,35 @@
 package me.awabi2048.kantancommander.data
 
+import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import java.util.UUID
 
+/**
+ * 構造検証の構造化エラーです。
+ *
+ * 旧来の List<String> では nodeId が文面へ埋没し、ExecutableScriptValidator 側で
+ * emptySet() 化されて GUI へ届きませんでした。issue #6 の共通分類として
+ * code と nodeId を保持し、表示文解析なしに該当ノードへ紐付けます。
+ */
+data class GraphStructuralError(
+    val code: ErrorCode,
+    val nodeId: UUID?,
+    val message: String,
+)
+
 object GraphValidator {
-    fun validate(graph: CommandGraph, limits: GraphLimits = GraphLimits()): List<String> {
-        val errors = mutableListOf<String>()
+    /** 旧来の文字列 API です。既存呼出との互換のため残します。 */
+    fun validate(graph: CommandGraph, limits: GraphLimits = GraphLimits()): List<String> =
+        validateStructured(graph, limits).map { it.message }.distinct()
+
+    /** 共通分類付きの構造検証です。新規呼出はこちらを使用します。 */
+    fun validateStructured(graph: CommandGraph, limits: GraphLimits = GraphLimits()): List<GraphStructuralError> {
+        val errors = mutableListOf<GraphStructuralError>()
         // 上限判定は内部グラフも含めた総ノード数で行います。
         if (FoldedGraphs.totalNodeCount(graph) > limits.maximumNodeCount) {
-            errors += "ノード数が上限 ${limits.maximumNodeCount} を超えています"
+            errors.add(ErrorCode.GRAPH_NODE_LIMIT, null, "ノード数が上限 ${limits.maximumNodeCount} を超えています")
         }
         // 折り畳みノードの中身は外側に通常形状で1個だけ残るため、構造検証は
         // メモリ上で展開した一時グラフに対して既存ロジックを適用します。
@@ -25,6 +44,10 @@ object GraphValidator {
         return errors.distinct()
     }
 
+    private fun MutableList<GraphStructuralError>.add(code: ErrorCode, nodeId: UUID?, message: String) {
+        this += GraphStructuralError(code, nodeId, message)
+    }
+
     /**
      * 折り畳みノード外側の接続形状を検証します。
      *
@@ -32,60 +55,60 @@ object GraphValidator {
      * 先頭は対応する種別で同じIDを保つ必要があります。中身の構造自体は
      * 展開後グラフの検証で確認します。
      */
-    private fun validateFoldedWrapper(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
+    private fun validateFoldedWrapper(graph: CommandGraph, node: CommandNode, errors: MutableList<GraphStructuralError>) {
         val inner = node.foldedGraph
         if (inner == null) {
-            errors += "${node.type} ${node.id} の内部グラフがありません"
+            errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の内部グラフがありません")
             return
         }
         if (node.trueNext != null || node.falseNext != null || node.pairedNodeId != null) {
-            errors += "${node.type} ${node.id} の外側接続が通常形状ではありません"
+            errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の外側接続が通常形状ではありません")
         }
         val head = inner.nodes[node.id]
         if (head == null) {
-            errors += "${node.type} ${node.id} の内部先頭が存在しません"
+            errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の内部先頭が存在しません")
             return
         }
         when (node.type) {
             CommandType.FOLDED_FOR -> {
                 if (head.type != CommandType.FOR_START) {
-                    errors += "${node.type} ${node.id} の内部先頭がFOR開始ではありません"
+                    errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の内部先頭がFOR開始ではありません")
                 } else if (head.pairedNodeId?.let(inner.nodes::get)
                         ?.takeIf { it.type == CommandType.FOR_END && it.pairedNodeId == head.id } == null
                 ) {
-                    errors += "${node.type} ${node.id} の内部FOR対応が不正です"
+                    errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の内部FOR対応が不正です")
                 }
             }
             CommandType.FOLDED_IF -> {
                 if (head.type != CommandType.CONDITION) {
-                    errors += "${node.type} ${node.id} の内部先頭が条件分岐ではありません"
+                    errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の内部先頭が条件分岐ではありません")
                 } else if (head.pairedNodeId?.let(inner.nodes::get)
                         ?.takeIf { it.type == CommandType.MERGE && it.pairedNodeId == head.id } == null
                 ) {
-                    errors += "${node.type} ${node.id} の内部合流対応が不正です"
+                    errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の内部合流対応が不正です")
                 }
             }
-            else -> errors += "${node.type} ${node.id} は折り畳みノードではありません"
+            else -> errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} は折り畳みノードではありません")
         }
         if (inner.entryNodeId != node.id) {
-            errors += "${node.type} ${node.id} の内部入口が外側IDと一致しません"
+            errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の内部入口が外側IDと一致しません")
         }
     }
 
-    private fun validateExpanded(graph: CommandGraph, limits: GraphLimits, errors: MutableList<String>) {
+    private fun validateExpanded(graph: CommandGraph, limits: GraphLimits, errors: MutableList<GraphStructuralError>) {
         val entry = graph.entryNodeId
         if (entry == null) {
-            if (graph.nodes.isNotEmpty()) errors += "開始ノードがありません"
+            if (graph.nodes.isNotEmpty()) errors.add(ErrorCode.MISSING_NODE, null, "開始ノードがありません")
             return
         }
-        if (entry !in graph.nodes) errors += "開始ノードが存在しません"
+        if (entry !in graph.nodes) errors.add(ErrorCode.DANGLING_REFERENCE, entry, "開始ノードが存在しません")
 
         val duplicateIds = graph.nodes.values.groupingBy(CommandNode::id).eachCount().filterValues { it > 1 }.keys
-        duplicateIds.forEach { errors += "ノードIDが重複しています: $it" }
+        duplicateIds.forEach { errors.add(ErrorCode.GRAPH_DUPLICATE_ID, it, "ノードIDが重複しています: $it") }
         graph.nodes.forEach { (key, node) ->
-            if (key != node.id) errors += "ノードの保存キーとIDが一致しません: key=$key id=${node.id}"
+            if (key != node.id) errors.add(ErrorCode.GRAPH_KEY_MISMATCH, node.id, "ノードの保存キーとIDが一致しません: key=$key id=${node.id}")
             node.outgoing().filterNot(graph.nodes::containsKey).forEach {
-                errors += "${node.id} が存在しないノード $it を参照しています"
+                errors.add(ErrorCode.GRAPH_UNKNOWN_REFERENCE, node.id, "${node.id} が存在しないノード $it を参照しています")
             }
             when (node.type) {
                 CommandType.CONDITION -> validateCondition(graph, node, errors)
@@ -102,11 +125,11 @@ object GraphValidator {
             val active = mutableSetOf<UUID>()
             fun visit(id: UUID, depth: Int) {
                 if (depth > limits.maximumBranchDepth) {
-                    errors += "構造の深さが上限 ${limits.maximumBranchDepth} を超えています"
+                    errors.add(ErrorCode.GRAPH_DEPTH_EXCEEDED, id, "構造の深さが上限 ${limits.maximumBranchDepth} を超えています")
                     return
                 }
                 if (!active.add(id)) {
-                    errors += "実行グラフに循環があります: $id"
+                    errors.add(ErrorCode.GRAPH_CYCLE, id, "実行グラフに循環があります: $id")
                     return
                 }
                 if (!visited.add(id)) {
@@ -124,14 +147,14 @@ object GraphValidator {
             }
             visit(entry, 0)
             validateStructuredControl(graph, entry, errors)
-            (graph.nodes.keys - visited).forEach { errors += "到達不能ノードがあります: $it" }
+            (graph.nodes.keys - visited).forEach { errors.add(ErrorCode.GRAPH_UNREACHABLE, it, "到達不能ノードがあります: $it") }
         }
     }
 
     private fun validateStructuredControl(
         graph: CommandGraph,
         entry: UUID,
-        errors: MutableList<String>,
+        errors: MutableList<GraphStructuralError>,
     ) {
         val visited = mutableSetOf<Pair<UUID, List<UUID>>>()
         fun visit(id: UUID?, forStack: List<UUID>) {
@@ -140,7 +163,7 @@ object GraphValidator {
             when (node.type) {
                 CommandType.BREAK, CommandType.CONTINUE -> {
                     if (forStack.isEmpty()) {
-                        errors += "${node.type} ${node.id} はfor本体の外では使用できません"
+                        errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} はfor本体の外では使用できません")
                     }
                 }
                 CommandType.FOR_START -> {
@@ -151,7 +174,7 @@ object GraphValidator {
                 CommandType.FOR_END -> {
                     val expectedStart = forStack.lastOrNull()
                     if (node.pairedNodeId != expectedStart) {
-                        errors += "FOR_END ${node.id} の所属forが実行経路と一致しません"
+                        errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "FOR_END ${node.id} の所属forが実行経路と一致しません")
                     }
                     visit(node.next, if (forStack.isEmpty()) forStack else forStack.dropLast(1))
                 }
@@ -165,25 +188,25 @@ object GraphValidator {
         visit(entry, emptyList())
     }
 
-    private fun validateCondition(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
+    private fun validateCondition(graph: CommandGraph, node: CommandNode, errors: MutableList<GraphStructuralError>) {
         val mergeId = node.pairedNodeId ?: return
         validatePair(graph, node, CommandType.MERGE, errors)
         if (!allPathsReachMergeOrEnd(graph, node.trueNext, mergeId)) {
-            errors += "CONDITION ${node.id} のtrue枝が対応合流または終端へ到達しません"
+            errors.add(ErrorCode.GRAPH_UNREACHABLE, node.id, "CONDITION ${node.id} のtrue枝が対応合流または終端へ到達しません")
         }
         if (!allPathsReachMergeOrEnd(graph, node.falseNext, mergeId)) {
-            errors += "CONDITION ${node.id} のfalse枝が対応合流または終端へ到達しません"
+            errors.add(ErrorCode.GRAPH_UNREACHABLE, node.id, "CONDITION ${node.id} のfalse枝が対応合流または終端へ到達しません")
         }
     }
 
-    private fun validateForStart(graph: CommandGraph, node: CommandNode, errors: MutableList<String>) {
+    private fun validateForStart(graph: CommandGraph, node: CommandNode, errors: MutableList<GraphStructuralError>) {
         val endId = node.pairedNodeId ?: run {
             validatePair(graph, node, CommandType.FOR_END, errors)
             return
         }
         validatePair(graph, node, CommandType.FOR_END, errors)
         if (!allPathsReach(graph, node.trueNext, endId)) {
-            errors += "FOR_START ${node.id} のbodyが対応for終了へ到達しません"
+            errors.add(ErrorCode.GRAPH_UNREACHABLE, node.id, "FOR_START ${node.id} のbodyが対応for終了へ到達しません")
         }
     }
 
@@ -191,15 +214,15 @@ object GraphValidator {
         graph: CommandGraph,
         node: CommandNode,
         expected: CommandType,
-        errors: MutableList<String>,
+        errors: MutableList<GraphStructuralError>,
     ) {
         val pair = node.pairedNodeId?.let(graph.nodes::get)
         if (pair?.type != expected || pair.pairedNodeId != node.id) {
-            errors += "${node.type} ${node.id} の対応ノードが不正です"
+            errors.add(ErrorCode.GRAPH_INVALID_PAIR, node.id, "${node.type} ${node.id} の対応ノードが不正です")
         }
     }
 
-    private fun validateIncomingEdges(graph: CommandGraph, errors: MutableList<String>) {
+    private fun validateIncomingEdges(graph: CommandGraph, errors: MutableList<GraphStructuralError>) {
         val incoming = mutableMapOf<UUID, Int>()
         graph.nodes.values.forEach { node ->
             node.outgoing().forEach { target -> incoming[target] = (incoming[target] ?: 0) + 1 }
@@ -215,7 +238,7 @@ object GraphValidator {
                 else -> 1
             }
             if (count > allowed) {
-                errors += "${node.type} ${node.id} に複数の親があります: $count"
+                errors.add(ErrorCode.GRAPH_MULTIPLE_PARENTS, node.id, "${node.type} ${node.id} に複数の親があります: $count")
             }
         }
     }

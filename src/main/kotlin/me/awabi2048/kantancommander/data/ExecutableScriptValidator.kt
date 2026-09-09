@@ -35,19 +35,49 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.error.ErrorCode
+import me.awabi2048.kantancommander.error.ErrorSeverity
+import me.awabi2048.kantancommander.error.ExecutionError
+import me.awabi2048.kantancommander.error.FailurePolicy
+import me.awabi2048.kantancommander.error.ValidationPhase
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.ArrayDeque
 import java.util.UUID
 
-/** 実行前検証の結果を、表示文字列ではなく対象ノードと設定項目で保持します。 */
+/**
+ * 実行前検証の結果を、表示文字列ではなく対象ノードと設定項目で保持します。
+ *
+ * issue #6 の共通分類として code/severity/phase/policy を持ちます。
+ * message はサーバーログ・デバッグ用の人間向け文で、プレイヤー表示の契約には
+ * しません。表示は [ErrorCode.displayKey] 経由で生成済みキーへ解決します。
+ * 既存呼出との互換のため message 付き構築も残しますが、新規検証は code 付きを
+ * 使用し、message のみによる判定は行いません。
+ */
 data class ScriptValidationError(
     val path: String,
     val nodeId: UUID?,
     val fieldKeys: Set<String>,
     val message: String,
+    val code: ErrorCode = ErrorCode.CONFIG_INVALID,
+    val severity: ErrorSeverity = code.defaultSeverity,
+    val phase: ValidationPhase = ValidationPhase.PREFLIGHT,
+    val failurePolicy: FailurePolicy = code.defaultPolicy,
 ) {
     fun rendered(): String = "$path: $message"
+
+    /** 共通エラー形式へ変換します。scriptId は呼出側で付与します。 */
+    fun toExecutionError(scriptId: UUID? = null): ExecutionError = ExecutionError(
+        code = code,
+        severity = severity,
+        phase = phase,
+        scriptId = scriptId,
+        nodeId = nodeId,
+        fieldKeys = fieldKeys,
+        path = path,
+        message = message,
+        failurePolicy = failurePolicy,
+    )
 }
 
 /** 保存・実行・出力で共通利用するコマンド設定検証です。 */
@@ -61,14 +91,21 @@ object ExecutableScriptValidator {
         limits: GraphLimits = GraphLimits(),
         variableDefinitions: Map<String, WorldVariableValue>? = null,
     ): List<ScriptValidationError> {
+        // variableDefinitions なしは未配置編集時の edit-time 検証、ありは配置済み
+        // MyWorld での preflight 検証です。phase はこの切替えで確定します。
+        val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
         val errors = mutableListOf<ScriptValidationError>()
         if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
-            errors += ScriptValidationError("root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません")
+            errors += ScriptValidationError(
+                "root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません",
+                code = ErrorCode.TIMER_CONFLICT, phase = phase,
+            )
         }
         if (script.timer.enabled && !CommandValueRules.isTimerSeconds(script.timer.intervalSeconds)) {
             errors += ScriptValidationError(
                 "root", null, setOf("timer"),
                 "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
+                code = ErrorCode.TIMER_RANGE, phase = phase,
             )
         }
         validateGraph(
@@ -78,7 +115,19 @@ object ExecutableScriptValidator {
             Collections.newSetFromMap(IdentityHashMap()),
             limits,
             variableDefinitions,
+            phase,
         )
+        // 個別項目検証は当面 code 既定のままのため、phase だけここで正規化します。
+        // 構造由来の PERSISTED_STRUCTURAL は維持し、それ以外の PREFLIGHT 既定値を
+        // 未配置編集時は EDIT_TIME へ寄せます。code 細分化は後続作業で行います。
+        if (phase == ValidationPhase.EDIT_TIME) {
+            for (index in errors.indices) {
+                val current = errors[index]
+                if (current.phase == ValidationPhase.PREFLIGHT) {
+                    errors[index] = current.copy(phase = ValidationPhase.EDIT_TIME)
+                }
+            }
+        }
         return errors
     }
 
@@ -89,12 +138,23 @@ object ExecutableScriptValidator {
         visited: MutableSet<CommandGraph>,
         limits: GraphLimits,
         variableDefinitions: Map<String, WorldVariableValue>?,
+        phase: ValidationPhase,
     ) {
         if (!visited.add(graph)) {
-            errors += ScriptValidationError(path, null, emptySet(), "別ディスクのコピー内容が循環参照しています")
+            errors += ScriptValidationError(
+                path, null, emptySet(), "別ディスクのコピー内容が循環参照しています",
+                code = ErrorCode.GRAPH_CYCLE, phase = ValidationPhase.PERSISTED_STRUCTURAL,
+            )
             return
         }
-        GraphValidator.validate(graph, limits).forEach { errors += ScriptValidationError(path, null, emptySet(), it) }
+        // 構造エラーは nodeId・code を保持したまま取込み、文面解析なしに
+        // GUI の該当ノードへ紐付けます。phase は保存構造由来で固定します。
+        GraphValidator.validateStructured(graph, limits).forEach { structural ->
+            errors += ScriptValidationError(
+                path, structural.nodeId, emptySet(), structural.message,
+                code = structural.code, phase = ValidationPhase.PERSISTED_STRUCTURAL,
+            )
+        }
         // 折り畳みノードの中身は外側に通常形状で1個だけ残るため、項目検証と
         // データフロー解析はメモリ上で展開した一時グラフに対して行います。
         // 保存内容は折り畳んだまま維持されます。
@@ -116,12 +176,13 @@ object ExecutableScriptValidator {
                 variableDefinitions,
                 isInsideForBody(effective, node.id),
                 temporaryAvailability[node.id] ?: emptyMap(),
+                phase,
             )
             node.snapshot?.let {
-                validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits, variableDefinitions)
+                validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits, variableDefinitions, phase)
             }
             node.foldedGraph?.let {
-                validateGraph(it, "$path/${node.id}/folded", errors, visited, limits, variableDefinitions)
+                validateGraph(it, "$path/${node.id}/folded", errors, visited, limits, variableDefinitions, phase)
             }
         }
         visited.remove(graph)
@@ -212,6 +273,7 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, WorldVariableValue>?,
         insideForBody: Boolean,
         temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+        phase: ValidationPhase = ValidationPhase.PREFLIGHT,
     ) {
         validateSystemReferences(node, path, insideForBody, errors)
         validateRemovedSystemReferences(node, path, errors)
@@ -1628,6 +1690,12 @@ object ExecutableScriptValidator {
             visit(start.trueNext)
         }
 
-    private fun nodeError(node: CommandNode, path: String, fields: Set<String>, message: String) =
-        ScriptValidationError(path, node.id, fields, message)
+    private fun nodeError(
+        node: CommandNode,
+        path: String,
+        fields: Set<String>,
+        message: String,
+        code: ErrorCode = ErrorCode.CONFIG_INVALID,
+        phase: ValidationPhase = ValidationPhase.PREFLIGHT,
+    ) = ScriptValidationError(path, node.id, fields, message, code = code, phase = phase)
 }

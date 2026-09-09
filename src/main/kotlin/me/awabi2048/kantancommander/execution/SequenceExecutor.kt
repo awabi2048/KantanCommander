@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -85,6 +86,9 @@ data class ExecutionNodeStarted(
  * テスト実行へ通知する、最上位グラフのノード完了イベントです。
  * expandedParamsは実行値の展開結果、positionTextは実行位置です。
  * ホバー表示で構造的に出すため、detailの本文とは別に保持します。
+ *
+ * issue #6 の共通分類として errorCode を保持します。reason 文字列は
+ * 旧呼出との互換のため残しますが、新規判定は code で行います。
  */
 data class ExecutionNodeFinished(
     val scriptId: UUID,
@@ -103,12 +107,17 @@ data class ExecutionNodeFinished(
     val positionText: String? = null,
     /** 次ノードまでのデバッグ遅延です。待機表示の切り替えに使います。 */
     val nextWaitTicks: Long = 0L,
+    /** 共通エラーコードです。旧 reason から読み替えた値が入ります。 */
+    val errorCode: ErrorCode? = ErrorCode.fromLegacyReason(reason),
 )
 
 /**
  * テスト実行の最終結果です。successfulNodeCountは失敗ノードを含みません。
  * waitTicksはWAITコマンドによる待機の合計、debugWaitTicksはノード間の
  * デバッグ待機（復帰後の追加待機を含む）の合計です。どちらもelapsedTicksの内数です。
+ *
+ * issue #6 の共通分類として errorCode を保持します。reason 文字列は
+ * 旧呼出との互換のため残しますが、新規判定は code で行います。
  */
 data class ExecutionResult(
     val status: ExecutionFinishStatus,
@@ -119,6 +128,8 @@ data class ExecutionResult(
     val reason: String? = null,
     val waitTicks: Long = 0L,
     val debugWaitTicks: Long = 0L,
+    /** 共通エラーコードです。旧 reason から読み替えた値が入ります。 */
+    val errorCode: ErrorCode? = ErrorCode.fromLegacyReason(reason),
 )
 
 /** 実行中のノードイベントと終了結果を受け取る観測者です。 */
@@ -372,6 +383,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session.lastExpandedParams = emptyMap()
         session.lastPositionText = null
         session.lastFailureReason = null
+        session.lastFailureCode = null
 
         val next: (UUID?, NodeExecutionOutcome) -> Unit = { target, outcome ->
             advanceNode(
@@ -389,6 +401,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     // ここを直前ノード専用の値だけにすると、ホバーと結果画面が
                     // 「command_failed」に戻り、実際の失敗原因を失ってしまいます。
                     session.lastFailureReason ?: session.failureReason ?: "command_failed"
+                } else if (outcome == NodeExecutionOutcome.SKIPPED) {
+                    // SKIPPED は成功扱いで継続しますが、理由コードは保持して
+                    // GUI の成功畳みを解消します。通常実行では表示しません。
+                    session.lastFailureReason
+                } else {
+                    null
+                },
+                errorCode = if (outcome == NodeExecutionOutcome.FAILED) {
+                    session.lastFailureCode ?: session.failureCode
+                        ?: ErrorCode.fromLegacyReason(session.lastFailureReason ?: session.failureReason)
+                } else if (outcome == NodeExecutionOutcome.SKIPPED) {
+                    session.lastFailureCode
                 } else {
                     null
                 },
@@ -432,15 +456,29 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             CommandType.CONDITION -> {
                 val effectiveContext = effectiveContext(session)
-                val rawResult = evaluateCondition(
-                    node,
-                    session,
-                    effectiveContext,
-                )
-                val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
-                session.previousContext = effectiveContext
-                session.lastDetail = "分岐: ${if (result) "TRUE" else "FALSE"} に進んだ"
-                next(if (result) node.trueNext else node.falseNext, NodeExecutionOutcome.SUCCESS)
+                // 正常 false と解決失敗を分離します。UNRESOLVED/INVALID は
+                // FALSE 分岐継続にせず、共通コード付きで失敗停止します。
+                when (val evaluation = evaluateConditionDetailed(node, session, effectiveContext)) {
+                    ConditionEvaluation.TRUE, ConditionEvaluation.FALSE -> {
+                        val rawResult = evaluation == ConditionEvaluation.TRUE
+                        val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
+                        session.previousContext = effectiveContext
+                        session.lastDetail = "分岐: ${if (result) "TRUE" else "FALSE"} に進んだ"
+                        next(if (result) node.trueNext else node.falseNext, NodeExecutionOutcome.SUCCESS)
+                    }
+                    ConditionEvaluation.UNRESOLVED -> {
+                        session.lastDetail = "条件値の解決に失敗した"
+                        session.lastFailureReason = ErrorCode.CONDITION_UNRESOLVED.code
+                        session.lastFailureCode = ErrorCode.CONDITION_UNRESOLVED
+                        next(node.next, NodeExecutionOutcome.FAILED)
+                    }
+                    ConditionEvaluation.INVALID -> {
+                        session.lastDetail = "条件値の形式が不正"
+                        session.lastFailureReason = ErrorCode.CONDITION_INVALID_TYPE.code
+                        session.lastFailureCode = ErrorCode.CONDITION_INVALID_TYPE
+                        next(node.next, NodeExecutionOutcome.FAILED)
+                    }
+                }
             }
             CommandType.DISK_CALL -> {
                 val callerContext = session.context
@@ -501,6 +539,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val outcome = when {
                     hasUnavailableTemporaryReference(node, session) -> {
                         session.lastDetail = "参照先が見つからないためスキップした"
+                        session.lastFailureReason = ErrorCode.TEMPORARY_UNRESOLVED.code
+                        session.lastFailureCode = ErrorCode.TEMPORARY_UNRESOLVED
                         NodeExecutionOutcome.SKIPPED
                     }
                     else -> when (executeImmediate(node, session)) {
@@ -528,6 +568,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         reason: String?,
         loopReturn: Boolean = false,
         followUpDelayTicks: Long = 0L,
+        errorCode: ErrorCode? = ErrorCode.fromLegacyReason(reason),
     ) {
         if (!session.isActive) return
         val success = outcome == NodeExecutionOutcome.SUCCESS || outcome == NodeExecutionOutcome.SKIPPED
@@ -555,12 +596,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     positionText = session.lastPositionText,
                     // 次までの待機合計です。待機表示の切り替えに使います。
                     nextWaitTicks = debugDelay + followUpDelay,
+                    errorCode = errorCode,
                 ),
             )
         }
         if (!success) {
             if (depth == 0) session.failedNodeId = node.id
             session.failureReason = session.failureReason ?: reason ?: "node_failed"
+            session.failureCode = session.failureCode ?: errorCode ?: ErrorCode.fromLegacyReason(session.failureReason)
             return stop(session, script, node.id, depth, session.failureReason!!, done)
         }
         if (target == null) return runNode(script, graph, null, session, depth, done)
@@ -773,17 +816,21 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             if (session.lastDetail.isNullOrBlank()) {
                 session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）"
             }
-            session.lastFailureReason = session.lastFailureReason ?: "command_failed"
+            session.lastFailureReason = session.lastFailureReason ?: ErrorCode.COMMAND_FAILED.code
+            session.lastFailureCode = session.lastFailureCode ?: ErrorCode.COMMAND_FAILED
             ImmediateExecutionResult.FAILED
         }
     } catch (_: ParticleQuotaRejected) {
         // 上限超過は入力・実行失敗ではなく、このノードだけを送信せず後続へ進める
         // 制御結果です。通常の例外ログへ混ぜると、運用上の想定内の抑止が障害に見えます。
         session.lastDetail = "Particle上限超過のためスキップした"
+        session.lastFailureReason = ErrorCode.PARTICLE_QUOTA_EXCEEDED.code
+        session.lastFailureCode = ErrorCode.PARTICLE_QUOTA_EXCEEDED
         ImmediateExecutionResult.SKIPPED
     } catch (failure: Throwable) {
         val reason = failure.message?.takeIf(String::isNotBlank) ?: failure::class.simpleName ?: "command_failed"
         session.lastFailureReason = reason
+        session.lastFailureCode = ErrorCode.fromLegacyReason(reason)
         session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）"
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
         ImmediateExecutionResult.FAILED
@@ -1453,13 +1500,39 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         node: CommandNode,
         session: ExecutionSession,
         context: ExecutionContextSpec?,
-    ): Boolean {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrDefault(ConditionKind.TARGET_EXISTS)
+    ): Boolean = when (evaluateConditionDetailed(node, session, context)) {
+        ConditionEvaluation.TRUE -> true
+        ConditionEvaluation.FALSE,
+        ConditionEvaluation.UNRESOLVED,
+        ConditionEvaluation.INVALID,
+        -> false
+    }
+
+    /**
+     * 条件評価の詳細版です。正常な比較結果と解決失敗を分離します。
+     *
+     * - TRUE/FALSE: 正常な比較結果。分岐継続します。
+     * - UNRESOLVED: 変数・位置などの解決失敗。FALSE 扱いにせず失敗停止します。
+     * - INVALID: 未知 kind・型不正。FALSE 扱いにせず失敗停止します。
+     */
+    private fun evaluateConditionDetailed(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): ConditionEvaluation {
+        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+            ?: return ConditionEvaluation.INVALID
         return when (kind) {
-            ConditionKind.TARGET_EXISTS -> resolveTarget(context, node.targetSpec, session) != null
+            ConditionKind.TARGET_EXISTS -> {
+                if (resolveTarget(context, node.targetSpec, session) != null) {
+                    ConditionEvaluation.TRUE
+                } else {
+                    ConditionEvaluation.FALSE
+                }
+            }
             ConditionKind.PLAYER_STATE -> {
                 val target = resolveTarget(context, node.targetSpec, session)
-                val player = target as? Player ?: return false
+                val player = target as? Player ?: return ConditionEvaluation.FALSE
                 val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
                 val sneakingMatches = sneaking == null || player.isSneaking == sneaking
                 val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
@@ -1468,33 +1541,55 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val item = refTemp?.item ?: node.string("item")
                 val itemData = refTemp?.itemData ?: node.string("itemData")
                 val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
-                sneakingMatches && itemMatches
+                if (sneakingMatches && itemMatches) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
             ConditionKind.VARIABLE_STATE -> {
                 val value = plugin.variables.get(session.worldId, node.string("variable"))
-                val comparisonValue = resolveNumber(node.string("value"), session) ?: return false
-                compareVariable(value, comparisonValue, node.string("operator", "=="))
+                    ?: return ConditionEvaluation.UNRESOLVED
+                // 非 NUMBER 変数との数値比較は正常 false ではなく型不一致として分離します。
+                if (value.type != VariableType.NUMBER) return ConditionEvaluation.INVALID
+                val comparisonValue = resolveNumber(node.string("value"), session)
+                    ?: return ConditionEvaluation.UNRESOLVED
+                val operator = node.string("operator", "==")
+                if (operator !in setOf("==", "!=", ">", "<", ">=", "<=")) {
+                    return ConditionEvaluation.INVALID
+                }
+                val applicable = compareVariable(value, comparisonValue, operator)
+                if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
             ConditionKind.BLOCK_STATE -> {
                 val conditionPosition = node.conditionPositionSpec
                 val location = when {
                     conditionPosition != null ->
-                        resolvePosition(conditionPosition, session, context) ?: return false
+                        resolvePosition(conditionPosition, session, context) ?: return ConditionEvaluation.UNRESOLVED
                     context?.position != null ->
-                        resolvePosition(context.position, session, context) ?: return false
+                        resolvePosition(context.position, session, context) ?: return ConditionEvaluation.UNRESOLVED
                     else -> session.origin
                 }
-                location.world == session.origin.world &&
-                    location.block.type == CommandValueRules.material(node.string("block"))
+                val expected = CommandValueRules.material(node.string("block"))
+                    ?: return ConditionEvaluation.INVALID
+                if (location.world == session.origin.world && location.block.type == expected) {
+                    ConditionEvaluation.TRUE
+                } else {
+                    ConditionEvaluation.FALSE
+                }
             }
             ConditionKind.CONTROL_BLOCK_STATE -> {
                 // 制御ブロック自身の現在状態を判定します。複数項目はポリシー側でAND評価し、
                 // 外側の反転指定は既存の条件実行共通処理へ任せます。
-                ControlBlockStateConditionPolicy.matches(
-                    node.selectedControlBlockStates(),
-                    RedstoneInputReader.isPowered(session.origin.block),
-                )
+                if (
+                    ControlBlockStateConditionPolicy.matches(
+                        node.selectedControlBlockStates(),
+                        RedstoneInputReader.isPowered(session.origin.block),
+                    )
+                ) {
+                    ConditionEvaluation.TRUE
+                } else {
+                    ConditionEvaluation.FALSE
+                }
             }
+            // 将来の ConditionKind 追加時に false 継続へ黙って畳まないための受け皿です。
+            else -> ConditionEvaluation.INVALID
         }
     }
 
@@ -2112,6 +2207,20 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /** 即時ノード処理結果。Particle上限超過は失敗ではなく、そのノードだけを省略します。 */
     private enum class ImmediateExecutionResult { SUCCESS, SKIPPED, FAILED }
 
+    /**
+     * 条件評価の3状態です。
+     *
+     * issue #6 で「値解決失敗=false」を無条件に採用しないため、正常な比較結果と
+     * 解決失敗を分離します。TRUE/FALSE は分岐継続、UNRESOLVED/INVALID は
+     * RETURN_ERROR 相当の失敗として停止します。
+     */
+    private enum class ConditionEvaluation {
+        TRUE,
+        FALSE,
+        UNRESOLVED,
+        INVALID,
+    }
+
     /** 上限超過を通常の実行例外と区別する内部制御例外です。 */
     private class ParticleQuotaRejected : RuntimeException()
 
@@ -2144,6 +2253,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var lastExpandedParams: Map<String, String> = emptyMap(),
         var lastPositionText: String? = null,
         var lastFailureReason: String? = null,
+        /** issue #6 の共通コード保持です。文字列 reason と対で更新します。 */
+        var failureCode: ErrorCode? = null,
+        var lastFailureCode: ErrorCode? = null,
         var cancelled: Boolean = false,
         var finished: Boolean = false,
         var context: ExecutionContextSpec? = null,
