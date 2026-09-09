@@ -143,9 +143,11 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalString(spec, "tempName", path, errors)
-        // v12形式では座標意味付けを必須とします。旧データは形式番号で隔離するため、
+        // v13形式では成分ごとの意味付けを必須とします。旧データは形式番号で隔離するため、
         // ここでの欠落は現行形式の破損として扱います。
-        requireEnum(spec, "semantics", path, enumNames<CoordinateSemantics>(), errors)
+        listOf("semanticsX", "semanticsY", "semanticsZ", "semanticsYaw", "semanticsPitch").forEach {
+            requireEnum(spec, it, path, enumNames<CoordinateSemantics>(), errors)
+        }
     }
 
     private fun validateFacing(spec: JsonObject, path: String, errors: MutableList<String>) {
@@ -154,6 +156,9 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalString(spec, "tempName", path, errors)
+        listOf("semanticsYaw", "semanticsPitch").forEach {
+            requireEnum(spec, it, path, enumNames<CoordinateSemantics>(), errors)
+        }
     }
 
     private fun requireObject(

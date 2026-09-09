@@ -25,7 +25,6 @@ import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
-import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -416,6 +415,9 @@ class VanillaDatapackExporter(
         if (kind == PositionKind.MYWORLD_SPAWN) {
             errors += "${script.id}/${node.id}: ${kind}の位置は完全バニラ出力に未対応です"
         }
+        if (position?.hasNonAbsoluteSemantics() == true) {
+            errors += "${script.id}/${node.id}: 相対・ローカル指定の位置は完全バニラ出力に未対応です"
+        }
     }
 
     private fun validateFacing(
@@ -426,6 +428,9 @@ class VanillaDatapackExporter(
     ) {
         if (facing?.kind == FacingKind.MYWORLD_SPAWN) {
             errors += "${script.id}/${node.id}: 出力先のマイワールドのスポーン位置の向きを検証できません"
+        }
+        if (facing?.hasNonAbsoluteSemantics() == true) {
+            errors += "${script.id}/${node.id}: 相対・ローカル指定の向きは完全バニラ出力に未対応です"
         }
     }
 
@@ -1067,9 +1072,9 @@ class VanillaDatapackExporter(
     /** PositionSpecをvanillaのexecute位置引数へ変換します。 */
     private fun positionCoordinates(position: PositionSpec): String = when (position.kind) {
         PositionKind.CAPTURED, PositionKind.COORDINATES -> {
-            // issue #4 の相対・ローカル骨組みは実行層のみで扱い、vanilla出力では
+            // issue #4 の成分別指定は実行層のみで扱い、vanilla出力では
             // 黙って別意味へ変換しないため明示的に拒否します。
-            if (position.semantics != CoordinateSemantics.ABSOLUTE) {
+            if (position.hasNonAbsoluteSemantics()) {
                 error("relative/local position is not supported by vanilla export")
             }
             "${position.x ?: error("location x is missing")} " +

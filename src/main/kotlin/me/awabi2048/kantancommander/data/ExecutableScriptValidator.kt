@@ -930,17 +930,21 @@ object ExecutableScriptValidator {
     ) {
         if (spec.kind == PositionKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, TemporaryVariableType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
-            if (spec.semantics != CoordinateSemantics.ABSOLUTE) {
+            if (spec.hasNonAbsoluteSemantics()) {
                 errors += nodeError(node, path, setOf("semantics"), "一時変数位置に相対・ローカルは指定できません")
             }
             return
         }
-        // 相対・ローカルは座標種別だけの指定です。他種別への付与は拒否します。
-        if (spec.semantics != CoordinateSemantics.ABSOLUTE &&
+        // 成分別指定は座標種別だけの指定です。他種別への付与は拒否します。
+        if (spec.hasNonAbsoluteSemantics() &&
             spec.kind !in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES)
         ) {
             errors += nodeError(node, path, setOf("semantics"), "相対・ローカルは座標指定のときだけ有効です")
             return
+        }
+        // 角度にLOCALは基準が定義できないため拒否します。
+        if (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL) {
+            errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
         }
         // 位置は各コマンドのPositionSpecだけで解決し、実行者・前段対象を
         // 位置設定へ暗黙に読み替える経路は検証しません。
@@ -1040,7 +1044,21 @@ object ExecutableScriptValidator {
     ) {
         if (spec.kind == FacingKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, TemporaryVariableType.LOCATION, temporaryDefinitions, node, path, emptySet(), errors)
+            if (spec.hasNonAbsoluteSemantics()) {
+                errors += nodeError(node, path, setOf("semantics"), "一時変数の向きに相対・ローカルは指定できません")
+            }
             return
+        }
+        // 意味付けはROTATION／CAPTUREDの向き成分だけの指定です。
+        if (spec.hasNonAbsoluteSemantics() &&
+            spec.kind != FacingKind.ROTATION && spec.kind != FacingKind.CAPTURED
+        ) {
+            errors += nodeError(node, path, setOf("semantics"), "相対・ローカルは向き指定のときだけ有効です")
+            return
+        }
+        // 角度にLOCALは基準が定義できないため拒否します。
+        if (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL) {
+            errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
         }
         // 向きは各コマンドのFacingSpecだけで解決し、前段の向きを
         // GUI設定として指定する経路は検証しません。

@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 12
+const val STRUCTURED_FORMAT_VERSION = 13
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -298,15 +298,33 @@ enum class PositionKind {
  * issue #4 の座標成分の意味付けです。スレッド指示により基準は `session.origin`
  * （制御ブロック位置の複製）に固定します。実行コンテキスト位置は基準にしません。
  *
- * - ABSOLUTE: 絶対座標として扱います。従来の保存値と同じ意味です。
+ * - ABSOLUTE: 絶対値として扱います。従来の保存値と同じ意味です。
  * - RELATIVE: `~` 相当で、`session.origin` からの差分として扱います。
  * - LOCAL: `^` 相当で、`session.origin` の位置と向きを基準にした左・上・前として扱います。
+ *   角度には基準が定義できないため使用できず、検証で拒否します。
  */
 enum class CoordinateSemantics {
     ABSOLUTE,
     RELATIVE,
     LOCAL,
 }
+
+/**
+ * Minecraftのyawを (-180, 180] へ正規化します。
+ * 相対指定の差分加算など、任意の有限値を起点に畳み込むために使います。
+ */
+fun wrapMinecraftYaw(degrees: Float): Float {
+    var value = degrees % 360f
+    if (value <= -180f) value += 360f
+    if (value > 180f) value -= 360f
+    return value
+}
+
+/**
+ * Minecraftのpitchを [-90, 90] へ丸めます。
+ * 相対指定の差分加算が範囲を超過した場合に、実行時の向きを壊さないために使います。
+ */
+fun clampMinecraftPitch(degrees: Float): Float = degrees.coerceIn(-90f, 90f)
 
 data class PositionSpec(
     val kind: PositionKind,
@@ -318,11 +336,21 @@ data class PositionSpec(
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
     /**
-     * 座標値の解釈です。COORDINATES／CAPTURED のときだけ RELATIVE／LOCAL を許します。
-     * それ以外の種別では ABSOLUTE のみ有効で、他値は検証で拒否します。
+     * 成分ごとの解釈です。COORDINATES／CAPTURED の座標成分に RELATIVE／LOCAL を許し、
+     * yaw／pitch には ABSOLUTE／RELATIVE を許します。それ以外の種別・組合せは
+     * 検証で拒否します。既定は全 ABSOLUTE で従来の保存値と同じ意味です。
      */
-    val semantics: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
-)
+    val semanticsX: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsY: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsZ: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+) {
+    /** 座標・角度のいずれかに絶対以外の指定があるかを返します。 */
+    fun hasNonAbsoluteSemantics(): Boolean =
+        listOf(semanticsX, semanticsY, semanticsZ, semanticsYaw, semanticsPitch)
+            .any { it != CoordinateSemantics.ABSOLUTE }
+}
 
 /**
  * issue #4 の移植用ベクトル骨組みです。永続化可能な値表現として保持し、
@@ -421,7 +449,18 @@ data class FacingSpec(
     val pitch: Float? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
-)
+    /**
+     * 向き成分ごとの解釈です。ROTATION／CAPTURED のyaw／pitchに
+     * ABSOLUTE／RELATIVE を許します。LOCALと他種別への付与は検証で拒否します。
+     * 注視点（COORDINATES のx/y/z）は絶対据え置きです。
+     */
+    val semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    val semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+) {
+    /** 向きのいずれかに絶対以外の指定があるかを返します。 */
+    fun hasNonAbsoluteSemantics(): Boolean =
+        semanticsYaw != CoordinateSemantics.ABSOLUTE || semanticsPitch != CoordinateSemantics.ABSOLUTE
+}
 
 /**
  * 実行エンジンがコマンドをMinecraftの実行状態へ変換するための内部状態です。

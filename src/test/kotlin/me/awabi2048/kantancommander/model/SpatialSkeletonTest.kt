@@ -18,7 +18,27 @@ class SpatialSkeletonTest {
     @Test
     fun `position semantics default to absolute`() {
         val spec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
-        assertEquals(CoordinateSemantics.ABSOLUTE, spec.semantics)
+        assertEquals(CoordinateSemantics.ABSOLUTE, spec.semanticsX)
+        assertEquals(CoordinateSemantics.ABSOLUTE, spec.semanticsY)
+        assertEquals(CoordinateSemantics.ABSOLUTE, spec.semanticsZ)
+        assertEquals(CoordinateSemantics.ABSOLUTE, spec.semanticsYaw)
+        assertEquals(CoordinateSemantics.ABSOLUTE, spec.semanticsPitch)
+        assertFalse(spec.hasNonAbsoluteSemantics())
+    }
+
+    @Test
+    fun `minecraft yaw wraps around 180 degrees`() {
+        assertEquals(170f, wrapMinecraftYaw(170f))
+        assertEquals(-170f, wrapMinecraftYaw(190f))
+        assertEquals(180f, wrapMinecraftYaw(-180f))
+        assertEquals(0f, wrapMinecraftYaw(360f))
+    }
+
+    @Test
+    fun `minecraft pitch clamps to vertical range`() {
+        assertEquals(45f, clampMinecraftPitch(45f))
+        assertEquals(90f, clampMinecraftPitch(120f))
+        assertEquals(-90f, clampMinecraftPitch(-120f))
     }
 
     @Test
@@ -52,12 +72,49 @@ class SpatialSkeletonTest {
             x = 1.0,
             y = 2.0,
             z = 3.0,
-            semantics = CoordinateSemantics.RELATIVE,
+            semanticsX = CoordinateSemantics.RELATIVE,
         )
 
         val errors = ExecutableScriptValidator.validate(script)
 
         assertTrue(errors.any { it.message.contains("相対・ローカルは座標指定") })
+    }
+
+    @Test
+    fun `local angle fails validation`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        teleport.destinationSpec = PositionSpec(
+            PositionKind.COORDINATES,
+            x = 1.0,
+            y = 2.0,
+            z = 3.0,
+            semanticsYaw = CoordinateSemantics.LOCAL,
+        )
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.message.contains("向きにローカルは指定できません") })
+    }
+
+    @Test
+    fun `single axis relative passes validation`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        teleport.destinationSpec = PositionSpec(
+            PositionKind.COORDINATES,
+            x = 1.0,
+            y = 2.0,
+            z = 3.0,
+            semanticsX = CoordinateSemantics.RELATIVE,
+        )
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertFalse(errors.any { it.message.contains("相対・ローカル") })
+        assertFalse(errors.any { it.message.contains("座標が未設定") })
     }
 
     @Test
@@ -70,7 +127,7 @@ class SpatialSkeletonTest {
             x = 1.0,
             y = null,
             z = 3.0,
-            semantics = CoordinateSemantics.RELATIVE,
+            semanticsX = CoordinateSemantics.RELATIVE,
         )
 
         val errors = ExecutableScriptValidator.validate(script)
@@ -88,13 +145,31 @@ class SpatialSkeletonTest {
             x = 1.0,
             y = 2.0,
             z = 3.0,
-            semantics = CoordinateSemantics.ABSOLUTE,
         )
 
         val errors = ExecutableScriptValidator.validate(script)
 
         assertFalse(errors.any { it.message.contains("座標が未設定") })
         assertFalse(errors.any { it.message.contains("相対・ローカル") })
+    }
+
+    @Test
+    fun `relative facing yaw passes validation`() {
+        val script = DiskScript(name = "spatial", owner = UUID.randomUUID())
+        val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
+        teleport.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        teleport.destinationSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        teleport.destinationFacingSpec = FacingSpec(
+            FacingKind.ROTATION,
+            yaw = 90f,
+            pitch = 0f,
+            semanticsYaw = CoordinateSemantics.RELATIVE,
+        )
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertFalse(errors.any { it.message.contains("向きにローカル") })
+        assertFalse(errors.any { it.message.contains("向きが未設定") })
     }
 
     @Test
@@ -129,13 +204,13 @@ class SpatialSkeletonTest {
     }
 
     @Test
-    fun `persisted position requires explicit semantics`() {
+    fun `persisted position requires explicit per axis semantics`() {
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
         val root = JsonParser.parseString(
             """
             {
-              "formatVersion": 12,
+              "formatVersion": 13,
               "id": "$scriptId",
               "name": "spatial",
               "owner": "${UUID.randomUUID()}",
@@ -158,6 +233,6 @@ class SpatialSkeletonTest {
 
         val violations = PersistedScriptValidator.validate(root)
 
-        assertTrue(violations.any { it.contains("semantics") })
+        assertTrue(violations.any { it.contains("semanticsX") })
     }
 }
