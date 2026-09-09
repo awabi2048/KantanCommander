@@ -38,6 +38,7 @@ import me.awabi2048.kantancommander.execution.ExecutionFinishStatus
 import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
 import me.awabi2048.kantancommander.execution.NodeExecutionOutcome
+import me.awabi2048.kantancommander.error.displayKey
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.gui.declarative.DeclarativeUpper
 import me.awabi2048.kantancommander.gui.declarative.KantanLayoutBridge
@@ -1168,6 +1169,8 @@ class GestureSequenceEditor(
         val command = KcI18n.text(player, event.nodeType.key)
         // 内部の通し番号は0始まりのため、表示時に#1始まりへ補正します。
         val attempt = event.attemptNumber + 1
+        // issue #6 の SKIPPED 分離です。失敗でも成功でもなく、成功ログへ畳みません。
+        // 新規キー追加なしで区別するため、文面は成功系を流用し、結果色と原因で示します。
         val key = if (event.outcome == NodeExecutionOutcome.FAILED) {
             KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_TEST_LOG_FAILURE
         } else {
@@ -1183,7 +1186,11 @@ class GestureSequenceEditor(
         } else {
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_SUCCESS)
         }
-        val resultColor = if (event.outcome == NodeExecutionOutcome.FAILED) NamedTextColor.RED else NamedTextColor.GREEN
+        val resultColor = when (event.outcome) {
+            NodeExecutionOutcome.FAILED -> NamedTextColor.RED
+            NodeExecutionOutcome.SKIPPED -> NamedTextColor.YELLOW
+            else -> NamedTextColor.GREEN
+        }
         val hover = Component.text()
             .append(Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_LOG_COMMAND), NamedTextColor.GRAY))
             .append(Component.text(": ", NamedTextColor.GRAY))
@@ -1226,7 +1233,12 @@ class GestureSequenceEditor(
         player.sendMessage(component)
     }
 
-    /** 失敗理由コードに対応する表示文です。未知の理由は原文のまま表示します。 */
+    /**
+     * 失敗・スキップ理由コードに対応する表示文です。
+     *
+     * issue #6 の共通分類として code で解決し、原文フォールバックは行いません。
+     * 未知コードは汎用失敗キーへ寄せ、code 自体の区別はログ・テストで保持します。
+     */
     private fun testReasonText(player: Player, reason: String): String {
         val key = when (reason) {
             "command_failed" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_COMMAND_FAILED
@@ -1238,8 +1250,12 @@ class GestureSequenceEditor(
             "test_start_rejected" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_TEST_START_REJECTED
             "outside_myworld" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_OUTSIDE_MYWORLD
             else -> null
-        } ?: return reason
-        return KcI18n.text(player, key)
+        }
+        if (key != null) return KcI18n.text(player, key)
+        // 新規コードは共通分類の表示キーへ解決し、未知は汎用キーへ寄せます。
+        val code = me.awabi2048.kantancommander.error.ErrorCode.fromLegacyReason(reason)
+        if (code != null) return KcI18n.text(player, code.displayKey())
+        return KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_NODE_FAILED)
     }
 
     fun openConfirmChild(player: Player) {
@@ -1519,6 +1535,8 @@ class GestureSequenceEditor(
                         // STARTはFOR全体を表現するため、全体が完了するまで実行中色で示します。
                         val isLoopActiveStart = activeTest?.activeLoopStarts?.contains(node.id) == true
                         val isSuccessfulNode = activeTest?.successfulNodeIds?.contains(node.id) == true
+                        // issue #6 の SKIPPED 分離です。成功の黄緑へ畳まず灰色で示します。
+                        val isSkippedNode = activeTest?.skippedNodeIds?.contains(node.id) == true
                         val incomplete = node.id in incompleteNodeIds
                         // 折り畳みノードは構造全体の代理として縁取りで示します。
                         // 背景色は変えないため、未設定警告やテスト色と両立します。
@@ -1527,13 +1545,14 @@ class GestureSequenceEditor(
                         val isFoldedIf = node.type == CommandType.FOLDED_IF
                         // テスト中はGlowではなく、ノード背景の張り替えで状態を示します。
                         // 背景はシュルカーボックスのtop系とし、同じ色分けで表現します。
-                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑です。
+                        // 失敗=赤、待機中=黄、実行中・ループ実行中=空色、成功済み=黄緑、スキップ=灰です。
                         val backgroundMaterial = when {
                             isFailedNode -> Material.RED_SHULKER_BOX
                             isWaitingNode -> Material.YELLOW_SHULKER_BOX
                             isRunningNode -> Material.LIGHT_BLUE_SHULKER_BOX
                             isLoopActiveStart -> Material.LIGHT_BLUE_SHULKER_BOX
                             isSuccessfulNode -> Material.LIME_SHULKER_BOX
+                            isSkippedNode -> Material.GRAY_SHULKER_BOX
                             incomplete -> Material.ORANGE_SHULKER_BOX
                             else -> Material.LIGHT_GRAY_SHULKER_BOX
                         }

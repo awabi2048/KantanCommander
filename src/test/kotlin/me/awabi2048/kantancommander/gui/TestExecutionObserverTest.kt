@@ -328,4 +328,22 @@ class TestExecutionObserverTest {
         assertEquals(wait.id, state.waitingNodeId)
         assertTrue(fake.scheduled.isEmpty())
     }
+
+    @Test
+    fun `skipped nodes do not merge into successful nodes`() {
+        // issue #6 の SKIPPED 分離です。成功数・成功色へ畳みません。
+        val graph = CommandGraph.empty()
+        val first = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val second = GraphEditor.append(graph, CommandType.DISPLAY_TEXT)
+        val script = DiskScript(name = "skipped", owner = ownerId, graph = graph)
+        val state = testState(script)
+        val observer = GestureTestExecutionObserver(state, {}, {}, {})
+        observer.onNodeFinished(
+            finished(script, first.id, CommandType.DISPLAY_TEXT, second.id, 0, 1L, outcome = NodeExecutionOutcome.SKIPPED),
+        )
+        assertTrue(state.skippedNodeIds.contains(first.id))
+        assertFalse(state.successfulNodeIds.contains(first.id))
+        assertEquals(0, state.successfulNodeCount)
+        assertNull(state.failedNodeId)
+    }
 }

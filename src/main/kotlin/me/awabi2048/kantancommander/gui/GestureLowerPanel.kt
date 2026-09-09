@@ -27,6 +27,7 @@ import com.awabi2048.ccsystem.api.gesturegui.GestureGuiVisibilityPolicy
 import com.awabi2048.ccsystem.api.gesturegui.GestureGuiTextAlignment
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.error.displayKey
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.item.KantanItemService
@@ -836,7 +837,12 @@ class GestureLowerPanel(
             rows += row(
                 "test-result-cause",
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_CAUSE),
-                result.reason ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                // issue #6 の共通分類として code で解決し、原文表示へ戻しません。
+                // errorCode 優先で表示キーを引き、旧 reason は読み替えます。
+                result.errorCode?.let { KcI18n.text(player, it.displayKey()) }
+                    ?: result.reason?.let { me.awabi2048.kantancommander.error.ErrorCode.fromLegacyReason(it) }
+                        ?.let { KcI18n.text(player, it.displayKey()) }
+                    ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
                 NamedTextColor.WHITE,
                 -0.40,
             )

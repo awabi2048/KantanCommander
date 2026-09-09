@@ -37,6 +37,8 @@ data class GestureTestState(
     var logOutput: Boolean = false,
     var currentNodeId: UUID? = null,
     var successfulNodeIds: MutableSet<UUID> = linkedSetOf(),
+    /** issue #6 の SKIPPED 分離用です。成功色へ畳まず灰色で示します。 */
+    var skippedNodeIds: MutableSet<UUID> = linkedSetOf(),
     var successfulNodeCount: Int = 0,
     var passedEdges: MutableSet<TestExecutionEdge> = linkedSetOf(),
     /** 次の開始で白に戻すループ内ノード集合です。復帰完了時に保持します。 */
@@ -102,6 +104,7 @@ class GestureTestExecutionObserver(
         state.pendingLoopRestartNodes?.let { loopNodes ->
             state.passedEdges.removeAll { it.sourceId in loopNodes }
             state.successfulNodeIds.removeAll(loopNodes)
+            state.skippedNodeIds.removeAll(loopNodes)
             state.pendingLoopRestartNodes = null
         }
         // S相当の再入場枝を黄緑に戻します。+40まで白→水色でした。
@@ -122,7 +125,16 @@ class GestureTestExecutionObserver(
     override fun onNodeFinished(event: ExecutionNodeFinished) {
         if (event.depth != 0) return
         cancelPendingWait()
-        if (event.outcome != me.awabi2048.kantancommander.execution.NodeExecutionOutcome.FAILED) {
+        if (event.outcome == me.awabi2048.kantancommander.execution.NodeExecutionOutcome.FAILED) {
+            state.failedNodeId = event.nodeId
+        } else if (event.outcome == me.awabi2048.kantancommander.execution.NodeExecutionOutcome.SKIPPED) {
+            // issue #6 の SKIPPED 分離です。成功数・成功色へ畳まず、専用集合へ記録します。
+            // 実行自体は継続するため、失敗扱いにはしません。
+            state.currentNodeId = null
+            state.skippedNodeIds += event.nodeId
+            pendingEdge?.let(state.passedEdges::add)
+            pendingEdge = edgeFor(state.snapshot, event.nodeId, event.nextNodeId)
+        } else {
             // ノード処理が成功した時点で、そのノードは実行中ではありません。
             // デバッグ待機中も水色を残すと「再度実行している」ように見えるため、
             // 次のNodeStartedまで実行中ノードを空にして成功色へ移します。
@@ -168,6 +180,7 @@ class GestureTestExecutionObserver(
                         state.pendingLoopRestartNodes?.let { loopNodes ->
                             state.passedEdges.removeAll { it.sourceId in loopNodes }
                             state.successfulNodeIds.removeAll(loopNodes)
+                            state.skippedNodeIds.removeAll(loopNodes)
                         }
                         state.pendingRestartEdge?.let { reentry ->
                             state.passedEdges.remove(reentry)
@@ -202,8 +215,6 @@ class GestureTestExecutionObserver(
                     }
                 }
             }
-        } else {
-            state.failedNodeId = event.nodeId
         }
         state.elapsedTicks = (event.tick - state.startedAtTick).coerceAtLeast(0L)
         onLog(event)
