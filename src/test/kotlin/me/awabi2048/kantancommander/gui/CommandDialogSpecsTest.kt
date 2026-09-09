@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.gui
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableType
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -316,6 +317,99 @@ class CommandDialogSpecsTest {
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT,
             entityTag.validate("entity_tag,other"),
+        )
+    }
+
+    @Test
+    fun `coordinate notation accepts absolute relative and local`() {
+        assertEquals(
+            CoordinateSemantics.ABSOLUTE to 5.0,
+            CommandDialogSpecs.parseCoordinateComponent("5"),
+        )
+        assertEquals(
+            CoordinateSemantics.RELATIVE to 5.0,
+            CommandDialogSpecs.parseCoordinateComponent("~5"),
+        )
+        assertEquals(
+            CoordinateSemantics.RELATIVE to -5.0,
+            CommandDialogSpecs.parseCoordinateComponent("~-5"),
+        )
+        assertEquals(
+            CoordinateSemantics.LOCAL to 5.0,
+            CommandDialogSpecs.parseCoordinateComponent("^5"),
+        )
+        // `~`・`^` 単体は差分0として受け付けます。
+        assertEquals(
+            CoordinateSemantics.RELATIVE to 0.0,
+            CommandDialogSpecs.parseCoordinateComponent("~"),
+        )
+        assertEquals(
+            CoordinateSemantics.LOCAL to 0.0,
+            CommandDialogSpecs.parseCoordinateComponent("^"),
+        )
+        assertNull(CommandDialogSpecs.parseCoordinateComponent(""))
+        assertNull(CommandDialogSpecs.parseCoordinateComponent("~~5"))
+        assertNull(CommandDialogSpecs.parseCoordinateComponent("abc"))
+        assertNull(CommandDialogSpecs.parseCoordinateComponent("1.7976931348623157E309"))
+    }
+
+    @Test
+    fun `coordinate spec validation follows notation parsing`() {
+        val spec = CommandDialogSpecs.coordinateSpec("x")
+        assertNull(spec.validate("1.5"))
+        assertNull(spec.validate("~1.5"))
+        assertNull(spec.validate("^1.5"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID,
+            spec.validate("abc"),
+        )
+        // 記法対象外の欄では接頭辞付き入力を拒否します。
+        val strict = CommandDialogSpecs.coordinateSpec("x", allowNotation = false)
+        assertNull(strict.validate("1.5"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_COORDINATES_INVALID,
+            strict.validate("~1.5"),
+        )
+    }
+
+    @Test
+    fun `angle notation accepts relative but rejects local`() {
+        assertEquals(
+            CoordinateSemantics.ABSOLUTE to 90f,
+            CommandDialogSpecs.parseAngleComponent("90"),
+        )
+        assertEquals(
+            CoordinateSemantics.RELATIVE to 90f,
+            CommandDialogSpecs.parseAngleComponent("~90"),
+        )
+        assertEquals(
+            CoordinateSemantics.RELATIVE to 0f,
+            CommandDialogSpecs.parseAngleComponent("~"),
+        )
+        assertNull(CommandDialogSpecs.parseAngleComponent("^90"))
+        assertNull(CommandDialogSpecs.parseAngleComponent("^"))
+        assertNull(CommandDialogSpecs.parseAngleComponent("abc"))
+        val spec = CommandDialogSpecs.rotationSpec("yaw")
+        assertNull(spec.validate("~90"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ROTATION_INVALID,
+            spec.validate("^90"),
+        )
+    }
+
+    @Test
+    fun `notation formats round trip through dialog display`() {
+        assertEquals("5.0", CommandDialogSpecs.formatCoordinateComponent(CoordinateSemantics.ABSOLUTE, 5.0))
+        assertEquals("~5.0", CommandDialogSpecs.formatCoordinateComponent(CoordinateSemantics.RELATIVE, 5.0))
+        assertEquals("^5.0", CommandDialogSpecs.formatCoordinateComponent(CoordinateSemantics.LOCAL, 5.0))
+        assertEquals("90.0", CommandDialogSpecs.formatAngleComponent(CoordinateSemantics.ABSOLUTE, 90f))
+        assertEquals("~90.0", CommandDialogSpecs.formatAngleComponent(CoordinateSemantics.RELATIVE, 90f))
+        // 表示した記法は再び解析できます。
+        assertEquals(
+            CoordinateSemantics.RELATIVE to 5.0,
+            CommandDialogSpecs.parseCoordinateComponent(
+                CommandDialogSpecs.formatCoordinateComponent(CoordinateSemantics.RELATIVE, 5.0),
+            ),
         )
     }
 }

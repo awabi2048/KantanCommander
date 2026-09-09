@@ -42,6 +42,24 @@ class SpatialSkeletonTest {
     }
 
     @Test
+    fun `axis semantics read and update round trip`() {
+        val spec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        assertEquals(CoordinateSemantics.ABSOLUTE, spec.axisSemantics("x"))
+
+        val updated = spec.withAxisSemantics("x", CoordinateSemantics.RELATIVE)
+        assertEquals(CoordinateSemantics.RELATIVE, updated.axisSemantics("x"))
+        assertEquals(CoordinateSemantics.ABSOLUTE, updated.axisSemantics("y"))
+        assertEquals(1.0, updated.x)
+        // 不明な軸名はそのまま返します。
+        assertEquals(spec, spec.withAxisSemantics("w", CoordinateSemantics.RELATIVE))
+
+        val facing = FacingSpec(FacingKind.ROTATION, yaw = 90f, pitch = 0f)
+        val turned = facing.withAxisSemantics("yaw", CoordinateSemantics.RELATIVE)
+        assertEquals(CoordinateSemantics.RELATIVE, turned.axisSemantics("yaw"))
+        assertEquals(CoordinateSemantics.ABSOLUTE, turned.axisSemantics("pitch"))
+    }
+
+    @Test
     fun `spatial vector rejects non finite values`() {
         assertTrue(SpatialVector(1.0, 2.0, 3.0).isFinite())
         assertFalse(SpatialVector(Double.NaN, 0.0, 0.0).isFinite())
