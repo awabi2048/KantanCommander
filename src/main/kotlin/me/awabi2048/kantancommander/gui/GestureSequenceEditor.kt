@@ -521,6 +521,27 @@ class GestureSequenceEditor(
         }
     }
 
+    /**
+     * 「閉じる」ボタンからの終了です。閉じるアニメーションを再生します。
+     *
+     * 終了ジェスチャー（Shift+Jump）や内部的な破棄は即時終了のままにし、
+     * アニメーションは明示のボタン操作に限定します。
+     */
+    internal fun closeWithAnimation(ownerId: UUID) {
+        // GUIを閉じた後に遅延した入力コールバックが設定を書き換えないよう、
+        // 画面の終了を入力セッションの終了として扱います。
+        val sessionId = gestureSessionId
+        val ownsCurrentServiceSession = sessionId != null && runCatching {
+            api.snapshot(ownerId)?.sessionId == sessionId
+        }.getOrDefault(false)
+        detachLocalSession(ownerId, sessionId)
+        // 既にCC-System側で終了済み、または別プラグインのセッションへ置き換わった
+        // 場合は、ownerIdだけを根拠に別セッションを閉じてはいけません。
+        if (ownsCurrentServiceSession) {
+            api.close(ownerId, com.awabi2048.ccsystem.api.gesturegui.GestureGuiCloseMode.ANIMATED)
+        }
+    }
+
     fun open(player: Player) {
         // 同一プレイヤーの再オープンは以前の入力セッションを必ず置き換えます。
         invalidateInputs()
@@ -5380,7 +5401,7 @@ class GestureSequenceEditor(
                     }
                     context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                         cancelTestConfirmation(player)
-                        closeImmediately(ownerId)
+                        closeWithAnimation(ownerId)
                     }
                     context.elementId == "test-confirm-start" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                         plugin.testExecutionPreferences.save(player, test.debugMode, test.logOutput)
@@ -5396,7 +5417,7 @@ class GestureSequenceEditor(
                     }
                     context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                         interruptTestWithoutResult("close")
-                        closeImmediately(ownerId)
+                        closeWithAnimation(ownerId)
                     }
                 }
                 GestureTestPhase.RESULT -> when {
@@ -5406,7 +5427,7 @@ class GestureSequenceEditor(
                     // 結果画面の閉じるボタンは、編集表示へ戻したうえで画面を閉じます。
                     context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                         completeTest(player)
-                        closeImmediately(ownerId)
+                        closeWithAnimation(ownerId)
                     }
                 }
             }
@@ -5908,9 +5929,10 @@ class GestureSequenceEditor(
                 updateLower(player)
             }
             context.elementId == "nav-close" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                // 右上の閉じる操作は、親・子画面と入力claimをまとめて即時解放します。
+                // 右上の閉じる操作は、閉じるアニメーションを再生して終了します。
+                // Shift+Jump 等の終了ジェスチャーは即時終了のままです。
                 if (context.actorId == ownerId) {
-                    closeImmediately(ownerId)
+                    closeWithAnimation(ownerId)
                 } else {
                     // 共有画面の第三者が押しても、所有者の編集セッション全体は
                     // 閉じず、その第三者の入力claimだけを解放します。
