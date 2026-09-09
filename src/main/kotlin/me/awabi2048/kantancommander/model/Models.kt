@@ -313,8 +313,7 @@ enum class CoordinateSemantics {
  * Minecraftのyawを (-180, 180] へ正規化します。
  * 相対指定の差分加算など、任意の有限値を起点に畳み込むために使います。
  */
-fun wrapMinecraftYaw(degrees: Float): Float {
-    var value = degrees % 360f
+fun wrapMinecraftYaw(degrees: Float): Float {    var value = degrees % 360f
     if (value <= -180f) value += 360f
     if (value > 180f) value -= 360f
     return value
@@ -325,6 +324,43 @@ fun wrapMinecraftYaw(degrees: Float): Float {
  * 相対指定の差分加算が範囲を超過した場合に、実行時の向きを壊さないために使います。
  */
 fun clampMinecraftPitch(degrees: Float): Float = degrees.coerceIn(-90f, 90f)
+
+/**
+ * 指定軸の現在の意味付けを返します。不明な軸名は絶対として扱います。
+ * GUIの循環切替えと実行層で同じ軸名（x/y/z/yaw/pitch）を使います。
+ */
+fun PositionSpec.axisSemantics(axis: String): CoordinateSemantics = when (axis) {
+    "x" -> semanticsX
+    "y" -> semanticsY
+    "z" -> semanticsZ
+    "yaw" -> semanticsYaw
+    "pitch" -> semanticsPitch
+    else -> CoordinateSemantics.ABSOLUTE
+}
+
+/** 指定軸の意味付けだけを変えた複製を返します。不明な軸名はそのまま返します。 */
+fun PositionSpec.withAxisSemantics(axis: String, value: CoordinateSemantics): PositionSpec = when (axis) {
+    "x" -> copy(semanticsX = value)
+    "y" -> copy(semanticsY = value)
+    "z" -> copy(semanticsZ = value)
+    "yaw" -> copy(semanticsYaw = value)
+    "pitch" -> copy(semanticsPitch = value)
+    else -> this
+}
+
+/** 指定軸の現在の意味付けを返します。不明な軸名は絶対として扱います。 */
+fun FacingSpec.axisSemantics(axis: String): CoordinateSemantics = when (axis) {
+    "yaw" -> semanticsYaw
+    "pitch" -> semanticsPitch
+    else -> CoordinateSemantics.ABSOLUTE
+}
+
+/** 指定軸の意味付けだけを変えた複製を返します。不明な軸名はそのまま返します。 */
+fun FacingSpec.withAxisSemantics(axis: String, value: CoordinateSemantics): FacingSpec = when (axis) {
+    "yaw" -> copy(semanticsYaw = value)
+    "pitch" -> copy(semanticsPitch = value)
+    else -> this
+}
 
 data class PositionSpec(
     val kind: PositionKind,
