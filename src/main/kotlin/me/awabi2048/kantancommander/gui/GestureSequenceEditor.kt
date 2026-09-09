@@ -61,6 +61,8 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
+import me.awabi2048.kantancommander.model.axisSemantics
+import me.awabi2048.kantancommander.model.withAxisSemantics
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
@@ -4805,6 +4807,22 @@ class GestureSequenceEditor(
                     handleTargetCategory(value)
                     return
                 }
+                // 成分別指定はクリックごとに循環切替えします。数値入力は従来のままです。
+                if (group == "semantics") {
+                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
+                        ?.takeIf { it.kind == PositionKind.COORDINATES || it.kind == PositionKind.CAPTURED }
+                        ?: return
+                    val axis = value.takeIf { it in setOf("x", "y", "z", "yaw", "pitch") } ?: return
+                    val next = if (axis == "yaw" || axis == "pitch") {
+                        CommandSettingsModel.nextAngleSemantics(current.axisSemantics(axis))
+                    } else {
+                        CommandSettingsModel.nextCoordinateSemantics(current.axisSemantics(axis))
+                    }
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setPositionSpec(it, settingContext.role, current.withAxisSemantics(axis, next))
+                        }) showSettingScreen()
+                    return
+                }
                 if (group != "position") return
                 val kind = runCatching { PositionKind.valueOf(value) }.getOrNull() ?: return
                 if (!CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(node, settingContext.role, kind)) {
@@ -4882,7 +4900,8 @@ class GestureSequenceEditor(
                                 CommandSettingsModel.setPositionSpec(
                                     it,
                                     settingContext.role,
-                                    PositionSpec(PositionKind.COORDINATES),
+                                    // 同一種別の選び直しでは成分別指定を保持します。
+                                    CommandSettingsModel.refreshPositionKind(current, PositionKind.COORDINATES),
                                 )
                             }) return
                         // 一回目は方式だけを選択し、二回目に入力画面を開きます。
@@ -4896,7 +4915,11 @@ class GestureSequenceEditor(
                         current?.z ?: player.location.z,
                     ) { x, y, z ->
                         if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setPositionSpec(it, settingContext.role, PositionSpec(kind, x = x, y = y, z = z))
+                            // 数値だけを更新し、成分別指定は保持します。
+                            val kept = CommandSettingsModel.positionSpec(it, settingContext.role)
+                                ?.takeIf { kept -> kept.kind == kind }
+                                ?: PositionSpec(kind)
+                            CommandSettingsModel.setPositionSpec(it, settingContext.role, kept.copy(x = x, y = y, z = z))
                         }) return@showCoordinateSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         showSettingScreen()
                         null
@@ -4904,14 +4927,31 @@ class GestureSequenceEditor(
                     return
                 }
                 val location = player.location
+                val previous = CommandSettingsModel.positionSpec(node, settingContext.role)
+                val base = CommandSettingsModel.refreshPositionKind(previous, kind)
                 val spec = if (kind == PositionKind.CAPTURED) {
-                    PositionSpec(kind, location.x, location.y, location.z, location.yaw, location.pitch)
-                } else PositionSpec(kind)
+                    // 現在値を再取得しますが、成分別指定は保持します。
+                    base.copy(x = location.x, y = location.y, z = location.z, yaw = location.yaw, pitch = location.pitch)
+                } else base
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setPositionSpec(it, settingContext.role, spec)
                     }) showSettingScreen()
             }
             GestureSettingScreen.FACING -> {
+                // 成分別指定はクリックごとに循環切替えします。角度のローカルは
+                // 検証で拒否されるため、循環では絶対へ戻します。
+                if (group == "semantics") {
+                    val facingRole = settingContext.role ?: return
+                    val current = CommandSettingsModel.facingSpec(node, facingRole)
+                        ?.takeIf { it.kind == FacingKind.ROTATION || it.kind == FacingKind.CAPTURED }
+                        ?: return
+                    val axis = value.takeIf { it == "yaw" || it == "pitch" } ?: return
+                    val next = CommandSettingsModel.nextAngleSemantics(current.axisSemantics(axis))
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setFacingSpec(it, current.withAxisSemantics(axis, next), facingRole)
+                        }) showSettingScreen()
+                    return
+                }
                 if (group != "facing") return
                 val kind = runCatching { FacingKind.valueOf(value) }.getOrNull() ?: return
                 val facingRole = settingContext.role ?: return
@@ -4981,7 +5021,11 @@ class GestureSequenceEditor(
                         current?.pitch ?: player.location.pitch,
                     ) { yaw, pitch ->
                         if (!updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setFacingSpec(it, FacingSpec(kind, yaw = yaw, pitch = pitch), facingRole)
+                            // 数値だけを更新し、成分別指定は保持します。
+                            val kept = CommandSettingsModel.facingSpec(it, facingRole)
+                                ?.takeIf { kept -> kept.kind == kind }
+                                ?: FacingSpec(kind)
+                            CommandSettingsModel.setFacingSpec(it, kept.copy(yaw = yaw, pitch = pitch), facingRole)
                         }) return@showRotationSettingDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                         showSettingScreen()
                         null
@@ -4989,8 +5033,13 @@ class GestureSequenceEditor(
                     return
                 }
                 val location = player.location
-                val spec = if (kind == FacingKind.CAPTURED) FacingSpec(kind, yaw = location.yaw, pitch = location.pitch)
-                else FacingSpec(kind)
+                val facingBase = CommandSettingsModel.refreshFacingKind(
+                    CommandSettingsModel.facingSpec(node, facingRole),
+                    kind,
+                )
+                val spec = if (kind == FacingKind.CAPTURED) {
+                    facingBase.copy(yaw = location.yaw, pitch = location.pitch)
+                } else facingBase
                 if (updateSettingNode(player, settingContext) { CommandSettingsModel.setFacingSpec(it, spec, facingRole) }) {
                     showSettingScreen()
                 }

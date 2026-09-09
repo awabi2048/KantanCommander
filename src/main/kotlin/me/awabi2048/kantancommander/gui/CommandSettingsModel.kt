@@ -10,6 +10,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
@@ -1026,12 +1027,47 @@ object CommandSettingsModel {
         else -> null
     }
 
+    /**
+     * issue #4 の成分別指定のGUI操作を純粋関数へ集約します。
+     *
+     * 座標軸は 絶対→相対→ローカル→絶対 の循環、角度は 絶対→相対→絶対 の循環です。
+     * 角度にローカルは基準が定義できないため、万一混入しても絶対へ戻します。
+     */
+    fun nextCoordinateSemantics(current: CoordinateSemantics): CoordinateSemantics = when (current) {
+        CoordinateSemantics.ABSOLUTE -> CoordinateSemantics.RELATIVE
+        CoordinateSemantics.RELATIVE -> CoordinateSemantics.LOCAL
+        CoordinateSemantics.LOCAL -> CoordinateSemantics.ABSOLUTE
+    }
+
+    fun nextAngleSemantics(current: CoordinateSemantics): CoordinateSemantics = when (current) {
+        CoordinateSemantics.ABSOLUTE -> CoordinateSemantics.RELATIVE
+        else -> CoordinateSemantics.ABSOLUTE
+    }
+
+    /**
+     * 種別選択時に保存する未完成Specを作ります。同じ種別の選び直しでは
+     * 成分別指定を保持し、種別変更時は絶対の初期状態から始めます。
+     * これをしないと、簡易GUIや方式再選択で相対・ローカル指定が黙って消えます。
+     */
+    fun refreshPositionKind(current: PositionSpec?, kind: PositionKind): PositionSpec {
+        if (current?.kind == kind) return current
+        return PositionSpec(kind)
+    }
+
+    /**
+     * 向き種別選択時に保存する未完成Specを作ります。位置側と同じく、
+     * 同一種別の選び直しでは成分別指定を保持します。
+     */
+    fun refreshFacingKind(current: FacingSpec?, kind: FacingKind): FacingSpec {
+        if (current?.kind == kind) return current
+        return FacingSpec(kind)
+    }
+
     fun setFacingSpec(
         node: CommandNode,
         spec: FacingSpec,
         role: CommandSettingRole? = null,
-    ) {
-        check(
+    ) {        check(
             role == CommandSettingRole.DESTINATION_FACING ||
                 role == CommandSettingRole.TEMPORARY_LOCATION_FACING
         ) {

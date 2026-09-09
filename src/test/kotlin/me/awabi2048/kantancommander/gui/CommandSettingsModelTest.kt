@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -599,4 +600,81 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particle" })
     }
 
+    @Test
+    fun `coordinate semantics cycle through absolute relative and local`() {
+        assertEquals(
+            CoordinateSemantics.RELATIVE,
+            CommandSettingsModel.nextCoordinateSemantics(CoordinateSemantics.ABSOLUTE),
+        )
+        assertEquals(
+            CoordinateSemantics.LOCAL,
+            CommandSettingsModel.nextCoordinateSemantics(CoordinateSemantics.RELATIVE),
+        )
+        assertEquals(
+            CoordinateSemantics.ABSOLUTE,
+            CommandSettingsModel.nextCoordinateSemantics(CoordinateSemantics.LOCAL),
+        )
+    }
+
+    @Test
+    fun `angle semantics cycle skips local`() {
+        assertEquals(
+            CoordinateSemantics.RELATIVE,
+            CommandSettingsModel.nextAngleSemantics(CoordinateSemantics.ABSOLUTE),
+        )
+        assertEquals(
+            CoordinateSemantics.ABSOLUTE,
+            CommandSettingsModel.nextAngleSemantics(CoordinateSemantics.RELATIVE),
+        )
+        // 万一混入したローカルも絶対へ戻します。
+        assertEquals(
+            CoordinateSemantics.ABSOLUTE,
+            CommandSettingsModel.nextAngleSemantics(CoordinateSemantics.LOCAL),
+        )
+    }
+
+    @Test
+    fun `kind reselection preserves per axis semantics`() {
+        val current = PositionSpec(
+            PositionKind.COORDINATES,
+            1.0, 2.0, 3.0,
+            semanticsX = CoordinateSemantics.RELATIVE,
+            semanticsYaw = CoordinateSemantics.RELATIVE,
+        )
+
+        val kept = CommandSettingsModel.refreshPositionKind(current, PositionKind.COORDINATES)
+
+        assertEquals(CoordinateSemantics.RELATIVE, kept.semanticsX)
+        assertEquals(CoordinateSemantics.RELATIVE, kept.semanticsYaw)
+        assertEquals(1.0, kept.x)
+    }
+
+    @Test
+    fun `kind change resets to absolute`() {
+        val current = PositionSpec(
+            PositionKind.COORDINATES,
+            1.0, 2.0, 3.0,
+            semanticsX = CoordinateSemantics.RELATIVE,
+        )
+
+        val fresh = CommandSettingsModel.refreshPositionKind(current, PositionKind.DISK)
+
+        assertEquals(PositionKind.DISK, fresh.kind)
+        assertFalse(fresh.hasNonAbsoluteSemantics())
+    }
+
+    @Test
+    fun `facing kind reselection preserves angle semantics`() {
+        val current = FacingSpec(
+            FacingKind.ROTATION,
+            yaw = 90f,
+            pitch = 0f,
+            semanticsYaw = CoordinateSemantics.RELATIVE,
+        )
+
+        val kept = CommandSettingsModel.refreshFacingKind(current, FacingKind.ROTATION)
+
+        assertEquals(CoordinateSemantics.RELATIVE, kept.semanticsYaw)
+        assertEquals(90f, kept.yaw)
+    }
 }

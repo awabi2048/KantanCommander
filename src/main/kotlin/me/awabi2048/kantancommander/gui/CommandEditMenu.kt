@@ -182,7 +182,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             CommandSettingsModel.setPositionSpec(
                                 node,
                                 role,
-                                PositionSpec(kind),
+                                // 同一種別の選び直しでは成分別指定を保持します。
+                                CommandSettingsModel.refreshPositionKind(
+                                    CommandSettingsModel.positionSpec(node, role),
+                                    kind,
+                                ),
                             )
                         }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -487,7 +491,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!updateNode(context.player, context.route) { node ->
-                                CommandSettingsModel.setPositionSpec(node, role, PositionSpec(PositionKind.DISK))
+                                CommandSettingsModel.setPositionSpec(
+                                    node,
+                                    role,
+                                    CommandSettingsModel.refreshPositionKind(
+                                        CommandSettingsModel.positionSpec(node, role),
+                                        PositionKind.DISK,
+                                    ),
+                                )
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
@@ -1221,10 +1232,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     false
                 } else {
                     updateNode(player, route) { command ->
+                        // 数値だけを更新し、成分別指定は保持します。
+                        val kept = CommandSettingsModel.positionSpec(command, role)
+                            ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
+                            ?: PositionSpec(PositionKind.COORDINATES)
                         CommandSettingsModel.setPositionSpec(
                             command,
                             role,
-                            PositionSpec(PositionKind.COORDINATES, x, y, z),
+                            kept.copy(x = x, y = y, z = z),
                         )
                     }
                 }
@@ -1482,10 +1497,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     false
                 } else {
                     updateNode(player, route) { command ->
+                        // 数値だけを更新し、成分別指定は保持します。
+                        val kept = CommandSettingsModel.positionSpec(command, role)
+                            ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
+                            ?: PositionSpec(PositionKind.COORDINATES)
                         CommandSettingsModel.setPositionSpec(
                             command,
                             role,
-                            PositionSpec(PositionKind.COORDINATES, x, y, z),
+                            kept.copy(x = x, y = y, z = z),
                         )
                     }
                 }

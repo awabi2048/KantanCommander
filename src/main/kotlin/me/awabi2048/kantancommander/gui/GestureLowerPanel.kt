@@ -2616,6 +2616,13 @@ class GestureLowerPanel(
             setOfNotNull(role?.tabFieldKey ?: "target")
         choiceId.startsWith("position:") -> setOfNotNull(role?.tabFieldKey ?: "position")
         choiceId.startsWith("facing:") -> setOfNotNull(role?.tabFieldKey ?: "facing")
+        // 成分別指定は属する画面の役割からタブを復元します。向き役割では向き、
+        // それ以外では位置のタブへ要確認を投影します。
+        choiceId.startsWith("semantics:") -> when (role) {
+            CommandSettingRole.DESTINATION_FACING, CommandSettingRole.TEMPORARY_LOCATION_FACING ->
+                setOfNotNull(role.tabFieldKey)
+            else -> setOfNotNull(role?.tabFieldKey ?: "position")
+        }
         choiceId == "condition-kind" -> setOf("kind")
         choiceId.startsWith("condition-") -> setOf("condition")
         choiceId.startsWith("block:") -> setOf("operation")
@@ -2668,6 +2675,11 @@ class GestureLowerPanel(
             id.startsWith("facing:") -> choice.selected &&
                 CommandSettingsModel.facingSpec(node, context.role)?.kind?.name == id.removePrefix("facing:") &&
                 CommandSettingsModel.isFieldConfigured(node, "facing", context.role)
+            // 成分別指定は親の位置・向きいずれかが設定済みであれば設定済みとします。
+            // 役割不一致側の判定は常にfalseのため、属する画面だけが有効になります。
+            id.startsWith("semantics:") -> choice.selected &&
+                (CommandSettingsModel.isFieldConfigured(node, "position", context.role) ||
+                    CommandSettingsModel.isFieldConfigured(node, "facing", context.role))
             id == "location:position" -> node.temporaryLocationPositionSpec != null
             id == "location:facing" -> node.temporaryLocationFacingSpec != null
             id == "condition-target" -> CommandSettingsModel.isFieldConfigured(
@@ -3223,7 +3235,7 @@ class GestureLowerPanel(
                 PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
             )
         }
-        return choices.map { (kind, label) ->
+        val kindChoices = choices.map { (kind, label) ->
             SettingChoice(
                 id = "position:${kind.name}",
                 label = KcI18n.text(player, label),
@@ -3234,6 +3246,22 @@ class GestureLowerPanel(
                 } else null,
             )
         }
+        // 座標種別の選択時だけ、成分ごとの指定方法（絶対／相対／ローカル）を
+        // 同じ画面へ並べます。クリックで循環切替えし、数値入力は従来のままです。
+        val spec = CommandSettingsModel.positionSpec(node, context.role)
+        if (spec == null || (spec.kind != PositionKind.COORDINATES && spec.kind != PositionKind.CAPTURED)) {
+            return kindChoices
+        }
+        return kindChoices + semanticsChoices(
+            player,
+            axes = listOf(
+                "X" to spec.semanticsX,
+                "Y" to spec.semanticsY,
+                "Z" to spec.semanticsZ,
+                "yaw" to spec.semanticsYaw,
+                "pitch" to spec.semanticsPitch,
+            ),
+        )
     }
 
     private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
@@ -3248,8 +3276,46 @@ class GestureLowerPanel(
             add(FacingKind.ROTATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC)
             add(FacingKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE)
         }
-        return choices.map { (kind, label) -> SettingChoice("facing:${kind.name}", KcI18n.text(player, label), current == kind) }
+        val kindChoices = choices.map { (kind, label) -> SettingChoice("facing:${kind.name}", KcI18n.text(player, label), current == kind) }
+        val spec = CommandSettingsModel.facingSpec(node, context.role)
+        if (spec == null || (spec.kind != FacingKind.ROTATION && spec.kind != FacingKind.CAPTURED)) {
+            return kindChoices
+        }
+        return kindChoices + semanticsChoices(
+            player,
+            axes = listOf(
+                "yaw" to spec.semanticsYaw,
+                "pitch" to spec.semanticsPitch,
+            ),
+        )
     }
+
+    /**
+     * 成分ごとの指定方法の選択行を作ります。軸名は記号のまま示し、
+     * 現在値はローカライズ済みの選択肢文言で示します（filter行と同じ表示契約です）。
+     */
+    private fun semanticsChoices(
+        player: Player,
+        axes: List<Pair<String, me.awabi2048.kantancommander.model.CoordinateSemantics>>,
+    ): List<SettingChoice> = axes.map { (axis, semantics) ->
+        SettingChoice(
+            id = "semantics:$axis",
+            label = "$axis ${semanticsLabel(player, semantics)}",
+            selected = semantics != me.awabi2048.kantancommander.model.CoordinateSemantics.ABSOLUTE,
+        )
+    }
+
+    private fun semanticsLabel(
+        player: Player,
+        semantics: me.awabi2048.kantancommander.model.CoordinateSemantics,
+    ): String = KcI18n.text(player, when (semantics) {
+        me.awabi2048.kantancommander.model.CoordinateSemantics.ABSOLUTE ->
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SEMANTICS_ABSOLUTE
+        me.awabi2048.kantancommander.model.CoordinateSemantics.RELATIVE ->
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SEMANTICS_RELATIVE
+        me.awabi2048.kantancommander.model.CoordinateSemantics.LOCAL ->
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SEMANTICS_LOCAL
+    })
 
     private fun conditionKindChoices(node: CommandNode, player: Player): List<SettingChoice> =
         ConditionKind.entries.map { kind ->
