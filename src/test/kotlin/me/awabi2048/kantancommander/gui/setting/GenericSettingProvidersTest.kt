@@ -155,6 +155,24 @@ class GenericSettingProvidersTest {
     }
 
     @Test
+    fun `position entity advances only on reselect while selected`() {
+        // 未選択時の初回は留まります（座標→実体参照の直接遷移を防ぎます）。
+        assertTrue(
+            SettingSelectionEngine.decidePositionEntity(false, true) is SettingSelectionEngine.Next.Stay,
+        )
+        assertTrue(
+            SettingSelectionEngine.decidePositionEntity(false, false) is SettingSelectionEngine.Next.Stay,
+        )
+        assertTrue(
+            SettingSelectionEngine.decidePositionEntity(true, false) is SettingSelectionEngine.Next.Stay,
+        )
+        // 選択状態での再クリックだけが進みます。開き直し直後の保存済み選択も含みます。
+        assertTrue(
+            SettingSelectionEngine.decidePositionEntity(true, true) is SettingSelectionEngine.Next.EnterChild,
+        )
+    }
+
+    @Test
     fun `duplicate visual tag with different elements does not diagnose`() {
         val nodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
         val frame = contentFrame(panel)

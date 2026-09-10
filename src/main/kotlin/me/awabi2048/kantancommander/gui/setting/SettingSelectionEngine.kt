@@ -58,4 +58,18 @@ object SettingSelectionEngine {
     fun decideFacingCopy(wasSelected: Boolean, currentKind: FacingKind?): Next =
         if (wasSelected && currentKind == FacingKind.COPY_ORIENTATION) Next.EnterChild
         else Next.Stay
+
+    /**
+     * 移動先実体参照カードの遷移判定を返します。
+     *
+     * 条件は回数ではなく選択状態での再クリックです。未選択時の初回は実体参照を
+     * 選択して留まり、既に実体参照が選択済みの場合だけ対象子画面へ進みます。
+     * 開き直し直後に実体参照が保存済みの場合の初回クリックも遷移に含みます。
+     *
+     * @param wasSelected クリック時点で実体参照カードが既に選択状態か。
+     * @param hasTarget クリック時点で実体参照先が保存済みか。
+     */
+    fun decidePositionEntity(wasSelected: Boolean, hasTarget: Boolean): Next =
+        if (wasSelected && hasTarget) Next.EnterChild
+        else Next.Stay
 }

@@ -5723,15 +5723,24 @@ class GestureSequenceEditor(
                         }) showSettingScreen()
                     return
                 }
-                // エンティティ由来位置の導線です。対象由来でなければ最寄り
-                // プレイヤーの既定値を保存し、共用の対象子画面へ進みます。
-                // 子画面では既定値が現在値として正しく表示されます。
+                // エンティティ由来位置の導線です。遷移条件は回数ではなく選択状態での
+                // 再クリックです。未選択時の初回は実体参照を選択して留まり、
+                // 選択状態でのクリックで共用の対象子画面へ進みます。
                 // 単一限定でも導線自体は開き、複数になり得る候補だけを子画面で無効化します。
                 // 移動先は対象指定（destinationTargetSpec）へ保存します。
                 if (group == "position-entity") {
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     rememberSettingNode(encoded)
                     if (settingContext.role == CommandSettingRole.DESTINATION) {
                         val currentTarget = CommandSettingsModel.targetSpec(node, CommandSettingRole.DESTINATION)
+                        if (SettingSelectionEngine.decidePositionEntity(wasSelected, currentTarget != null) is SettingSelectionEngine.Next.EnterChild) {
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
+                                encoded,
+                            )
+                            return
+                        }
                         if (currentTarget == null) {
                             if (!updateSettingNode(
                                     player,
@@ -5745,6 +5754,11 @@ class GestureSequenceEditor(
                                     )
                                 }) return
                         }
+                        showSettingScreen()
+                        return
+                    }
+                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
+                    if (SettingSelectionEngine.decidePositionEntity(wasSelected, current?.kind == PositionKind.TARGET) is SettingSelectionEngine.Next.EnterChild) {
                         pushSettingFrame(
                             player,
                             GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
@@ -5752,7 +5766,6 @@ class GestureSequenceEditor(
                         )
                         return
                     }
-                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
                     if (current?.kind != PositionKind.TARGET) {
                         if (!updateSettingNode(
                                 player,
@@ -5769,11 +5782,7 @@ class GestureSequenceEditor(
                                 )
                             }) return
                     }
-                    pushSettingFrame(
-                        player,
-                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
-                        encoded,
-                    )
+                    showSettingScreen()
                     return
                 }
                 // issue #29: 内包対象プリセットは位置仕様の対象部だけを書き換えます。
