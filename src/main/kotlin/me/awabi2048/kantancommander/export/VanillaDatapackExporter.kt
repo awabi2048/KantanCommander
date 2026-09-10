@@ -256,9 +256,6 @@ class VanillaDatapackExporter(
                             if (node.temporaryLocationPositionSpec?.kind == PositionKind.MYWORLD_SPAWN) {
                                 errors += "${script.id}/${node.id}: 一時LOCATIONのMyWorldスポーン位置は完全バニラ出力に未対応です"
                             }
-                            if (node.temporaryLocationFacingSpec?.kind == FacingKind.MYWORLD_SPAWN) {
-                                errors += "${script.id}/${node.id}: 一時LOCATIONのMyWorldスポーン向きは完全バニラ出力に未対応です"
-                            }
                         }
                         TemporaryVariableType.ENTITY -> if (node.temporaryEntityTargetSpec?.kind == TargetKind.FIXED_ENTITY) {
                             errors += "${script.id}/${node.id}: 一時ENTITYの固定エンティティ参照は完全バニラ出力できません"
@@ -426,11 +423,12 @@ class VanillaDatapackExporter(
         facing: me.awabi2048.kantancommander.model.FacingSpec?,
         errors: MutableList<String>,
     ) {
-        if (facing?.kind == FacingKind.MYWORLD_SPAWN) {
-            errors += "${script.id}/${node.id}: 出力先のマイワールドのスポーン位置の向きを検証できません"
-        }
         if (facing?.hasNonAbsoluteSemantics() == true) {
             errors += "${script.id}/${node.id}: 相対・ローカル指定の向きは完全バニラ出力に未対応です"
+        }
+        // 向き複写はバニラのtp facing entity（注視）では表現できないため未対応とします。
+        if (facing?.kind == FacingKind.COPY_ORIENTATION) {
+            errors += "${script.id}/${node.id}: 向き複写は完全バニラ出力に未対応です"
         }
     }
 
@@ -677,12 +675,14 @@ class VanillaDatapackExporter(
         val base = "tp ${effectiveTarget(node)} ${destination(node)}"
         val facing = node.destinationFacingSpec ?: return base
         return when (facing.kind) {
-            FacingKind.ROTATION, FacingKind.CAPTURED ->
+            FacingKind.ROTATION ->
                 "$base ${facing.yaw ?: 0f} ${facing.pitch ?: 0f}"
             FacingKind.TARGET -> {
-                val target = node.targetSpec ?: error("destination target is missing")
+                // 注視は向き専用の単一体参照へ帰着します。
+                val target = facing.entityTarget ?: error("destination facing target is missing")
                 "$base facing entity ${singleSelector(target)} eyes"
             }
+            FacingKind.COPY_ORIENTATION -> error("copy orientation is not supported by vanilla teleport")
             FacingKind.TEMPORARY -> {
                 val name = facing.tempName ?: error("temporary facing name is missing")
                 "$base facing ${temporaryPositionCoordinates(name)}"
@@ -691,7 +691,6 @@ class VanillaDatapackExporter(
                 "$base facing ${facing.x ?: error("destination facing x is missing")} " +
                     "${facing.y ?: error("destination facing y is missing")} " +
                     "${facing.z ?: error("destination facing z is missing")}"
-            FacingKind.MYWORLD_SPAWN -> error("unsupported destination facing")
         }
     }
 
@@ -878,7 +877,7 @@ class VanillaDatapackExporter(
                     require(position.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES)) {
                         "dynamic temporary LOCATION requires expanded commands"
                     }
-                    require(facing.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION)) {
+                    require(facing.kind == FacingKind.ROTATION) {
                         "dynamic temporary LOCATION facing requires expanded commands"
                     }
                     "data modify storage kantan:variables $destination set value " +
@@ -1025,7 +1024,7 @@ class VanillaDatapackExporter(
         }
 
         when (facing.kind) {
-            FacingKind.CAPTURED, FacingKind.ROTATION -> {
+            FacingKind.ROTATION -> {
                 commands += "data modify storage $storage.yaw set value ${number(facing.yaw ?: error("location yaw is missing"))}"
                 commands += "data modify storage $storage.pitch set value ${number(facing.pitch ?: error("location pitch is missing"))}"
             }
@@ -1046,6 +1045,7 @@ class VanillaDatapackExporter(
                 )
             }
             FacingKind.TARGET -> error("temporary LOCATION target facing is not supported")
+            FacingKind.COPY_ORIENTATION -> error("temporary LOCATION copy orientation is not supported")
             FacingKind.COORDINATES -> {
                 val rotation = staticFacingRotation(position, facing)
                 if (rotation != null) {
@@ -1064,7 +1064,6 @@ class VanillaDatapackExporter(
                     )
                 }
             }
-            FacingKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn facing is not supported by vanilla")
         }
         return commands
     }
@@ -1987,11 +1986,11 @@ class VanillaDatapackExporter(
             }
             context.facing?.let { facing ->
                 when (facing.kind) {
-                    FacingKind.TARGET -> context.target?.let { add("facing entity ${selector(it)} eyes") }
+                    FacingKind.TARGET -> facing.entityTarget?.let { add("facing entity ${selector(it)} eyes") }
+                    FacingKind.COPY_ORIENTATION -> error("copy orientation context is not supported by vanilla export")
                     FacingKind.COORDINATES -> add("facing ${facing.x} ${facing.y} ${facing.z}")
                     FacingKind.TEMPORARY -> facing.tempName?.let { name -> add("facing ${temporaryPositionCoordinates(name)}") }
-                    FacingKind.ROTATION, FacingKind.CAPTURED -> add("rotated ${facing.yaw} ${facing.pitch}")
-                    else -> Unit
+                    FacingKind.ROTATION -> add("rotated ${facing.yaw} ${facing.pitch}")
                 }
             }
         }

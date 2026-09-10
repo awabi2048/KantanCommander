@@ -472,9 +472,11 @@ data class RegionSpec(
 }
 
 enum class FacingKind {
-    CAPTURED, COORDINATES, MYWORLD_SPAWN, ROTATION, TEMPORARY,
-    /** テレポート先など、コマンド固有の「対象エンティティ方向」です。 */
+    COORDINATES, ROTATION, TEMPORARY,
+    /** 指定実体の位置を向く注視です。単一体参照へ帰着します。 */
     TARGET,
+    /** 指定実体と同じ向きを向く複写です。単一体参照へ帰着します。 */
+    COPY_ORIENTATION,
 }
 data class FacingSpec(
     val kind: FacingKind,
@@ -483,8 +485,13 @@ data class FacingSpec(
     val z: Double? = null,
     val yaw: Float? = null,
     val pitch: Float? = null,
-    /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
+    /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効で、LOCATION型のみを参照します。 */
     val tempName: String? = null,
+    /**
+     * 注視・向き複写の参照先実体です。kind=TARGET/COPY_ORIENTATION のときだけ有効で、
+     * 単一体に制限したTargetSpecとして解決します。旧JSONには存在しないためnull許容です。
+     */
+    val entityTarget: TargetSpec? = null,
     /**
      * 向き成分ごとの解釈です。ROTATION／CAPTURED のyaw／pitchに
      * ABSOLUTE／RELATIVE を許します。LOCALと他種別への付与は検証で拒否します。

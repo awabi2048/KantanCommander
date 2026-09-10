@@ -373,6 +373,13 @@ object ExecutableScriptValidator {
         node.temporaryLocationFacingSpec?.let {
             validateFacing(it, path, node, errors, temporaryDefinitions)
         }
+        // 向き注視・複写の参照先は汎用対象検証へ通し、対象設定と同じ規則で検証します。
+        listOfNotNull(
+            node.destinationFacingSpec?.entityTarget,
+            node.temporaryLocationFacingSpec?.entityTarget,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        }
         when (node.type) {
             CommandType.TELEPORT -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
@@ -1111,9 +1118,9 @@ object ExecutableScriptValidator {
             }
             return
         }
-        // 意味付けはROTATION／CAPTUREDの向き成分だけの指定です。
+        // 意味付けはROTATIONの向き成分だけの指定です。
         if (spec.hasNonAbsoluteSemantics() &&
-            spec.kind != FacingKind.ROTATION && spec.kind != FacingKind.CAPTURED
+            spec.kind != FacingKind.ROTATION
         ) {
             errors += nodeError(node, path, setOf("semantics"), "相対・ローカルは向き指定のときだけ有効です")
             return
@@ -1122,12 +1129,25 @@ object ExecutableScriptValidator {
         if (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL) {
             errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
         }
+        // 注視・向き複写は単一体参照へ帰着します。複数解決は汎用単一参照として拒否します。
+        // 詳細条件の妥当性は呼び出し側で汎用対象検証へ通すため、ここでは存在と単一性のみを見ます。
+        if (spec.kind == FacingKind.TARGET || spec.kind == FacingKind.COPY_ORIENTATION) {
+            val target = spec.entityTarget
+            if (target == null) {
+                errors += nodeError(node, path, emptySet(), "向き参照先の実体が未設定です")
+                return
+            }
+            if ((target.limit ?: 1) != 1) {
+                errors += nodeError(node, path, emptySet(), "向き参照は単一体のみ指定できます")
+            }
+            return
+        }
         // 向きは各コマンドのFacingSpecだけで解決し、前段の向きを
         // GUI設定として指定する経路は検証しません。
         if (spec.kind == FacingKind.COORDINATES && listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }) {
             errors += nodeError(node, path, emptySet(), "向く座標が未設定または有限値ではありません")
         }
-        if (spec.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION) &&
+        if (spec.kind == FacingKind.ROTATION &&
             (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)
         ) {
             errors += nodeError(node, path, emptySet(), "向きが未設定または有限値ではありません")

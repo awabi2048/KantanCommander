@@ -1688,7 +1688,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     z = resolveNumber(node.string("z"), session) ?: error("invalid z"),
                 )
                 val facingSpec = node.temporaryLocationFacingSpec ?: FacingSpec(
-                    FacingKind.CAPTURED,
+                    FacingKind.ROTATION,
                     yaw = node.string("yaw").takeIf(String::isNotBlank)
                         ?.let { resolveNumber(it, session)?.toFloat() } ?: 0f,
                     pitch = node.string("pitch").takeIf(String::isNotBlank)
@@ -2114,10 +2114,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
         session: ExecutionSession,
     ) {
-        // 意味付けはROTATION／CAPTUREDの向き成分だけの指定です。他種別への付与は拒否します。
-        if (facing.hasNonAbsoluteSemantics() && facing.kind != FacingKind.ROTATION && facing.kind != FacingKind.CAPTURED) return
+        // 意味付けはROTATIONの向き成分だけの指定です。他種別への付与は拒否します。
+        if (facing.hasNonAbsoluteSemantics() && facing.kind != FacingKind.ROTATION) return
         when (facing.kind) {
-            FacingKind.ROTATION, FacingKind.CAPTURED -> {
+            FacingKind.ROTATION -> {
                 // 向きも成分ごとに解釈します。LOCALは角度に基準がないため未解決です。
                 destination.yaw = resolveAngle(
                     facing.semanticsYaw, facing.yaw, destination.yaw, ::wrapMinecraftYaw,
@@ -2127,10 +2127,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 ) ?: return
             }
             FacingKind.TARGET -> {
-                val location = context?.target
-                    ?.let { resolveTargetSpec(it, session, context) }
-                    ?.location ?: return
-                faceLocation(destination, location)
+                // 注視は向き専用の単一体参照へ帰着します。旧来のcontext.target暗黙参照は使いません。
+                val target = facing.entityTarget?.let { resolveTargetSpec(it, session, context)?.location }
+                    ?: return
+                faceLocation(destination, target)
+            }
+            FacingKind.COPY_ORIENTATION -> {
+                // 向き複写は参照先実体と同じyaw/pitchを適用します。単一体のみに制限します。
+                val source = facing.entityTarget?.let { resolveTargetSpec(it, session, context)?.location }
+                    ?: return
+                destination.yaw = source.yaw
+                destination.pitch = source.pitch
             }
             FacingKind.COORDINATES -> faceLocation(
                 destination,
@@ -2148,7 +2155,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ?.location ?: return
                 faceLocation(destination, Location(destination.world, temp.x, temp.y, temp.z))
             }
-            FacingKind.MYWORLD_SPAWN -> faceLocation(destination, session.origin.world.spawnLocation)
         }
     }
 

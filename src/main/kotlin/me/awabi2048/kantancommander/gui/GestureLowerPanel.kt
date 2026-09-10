@@ -380,11 +380,7 @@ class GestureLowerPanel(
             child = false,
             suppressHighlight = suppressHighlight,
         )
-        if (screen == GestureSettingScreen.POSITION && context.role == CommandSettingRole.DESTINATION) {
-            choices.firstOrNull { it.id == "position:${PositionKind.TARGET.name}" && it.selected }?.let {
-                appendDestinationChoiceCards(nodes, frame, it.children, fieldKey, player, suppressHighlight)
-            }
-        }
+        // 移動先インライン表示は廃止済み（buildSettingsNew側の注記を参照）。
         if (pageCount > 1) {
             DeclarativeSettings.pagerSection(
                 nodes,
@@ -1026,17 +1022,8 @@ class GestureLowerPanel(
                 suppressHighlight = suppressHighlight,
             )
         }
-        val destinationTarget = if (
-            settingScreen == GestureSettingScreen.POSITION &&
-            settingContext.role == CommandSettingRole.DESTINATION
-        ) {
-            settingChoices.firstOrNull {
-                it.id == "position:${PositionKind.TARGET.name}" && it.selected
-            }
-        } else null
-        destinationTarget?.let {
-            appendDestinationChoiceCards(nodes, frame, it.children, field.key, player, suppressHighlight)
-        }
+        // 移動先実体参照のインライン表示は廃止し、汎用二段階フロー（子画面遷移）へ統一します。
+        // 位置→対象分類→詳細条件の導線は対象設定と同一規則で扱い、親画面への混在をなくします。
         appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight)
         return finishSettings(nodes)
     }
@@ -2192,11 +2179,10 @@ class GestureLowerPanel(
         }
         choice.id.startsWith("facing:") -> suffixKeyDescription(player, choice.id, "facing:") { suffix ->
             when (runCatching { FacingKind.valueOf(suffix) }.getOrNull()) {
-                FacingKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_CAPTURED
                 FacingKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_TARGET
+                FacingKind.COPY_ORIENTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_COPY_ORIENTATION
                 FacingKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SOURCE_TEMPORARY
                 FacingKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_COORDINATES
-                FacingKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_MYWORLD_SPAWN
                 FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_ROTATION
                 null -> null
             }
@@ -2449,6 +2435,13 @@ class GestureLowerPanel(
     }
 
     /**
+     * 向き参照先の役割かを返します。注視・複写の対象分類は単一体参照へ帰着します。
+     */
+    private fun isFacingRole(role: CommandSettingRole?): Boolean =
+        role == CommandSettingRole.DESTINATION_FACING ||
+            role == CommandSettingRole.TEMPORARY_LOCATION_FACING
+
+    /**
      * 現在の設定経路における直下の木ノードを返します。
      *
      * `TARGET` の対象種別、`POSITION` の移動先種別、条件の
@@ -2472,21 +2465,20 @@ class GestureLowerPanel(
         fieldKey: String,
         player: Player,
     ): List<GestureSettingTreeNode> = when (screen) {
-            GestureSettingScreen.TARGET -> targetChoices(node, context, player)
-        GestureSettingScreen.POSITION -> positionChoices(node, context, player).map { choice ->
-            if (choice.id == "position:${PositionKind.TARGET.name}" && context.role == CommandSettingRole.DESTINATION) {
-                // 移動先のインライン選択は、実体の分類（プレイヤー／プレイヤー以外）だけを
-                // 選ぶ画面契約です。一時変数は通常の対象設定経路に残し、この選択肢へ混在させません。
-                choice.copy(
-                    children = targetChoices(
-                        node,
-                        context.copy(role = CommandSettingRole.DESTINATION),
-                        player,
-                        includeTemporary = false,
-                    ),
+            // 向き参照先の対象分類は単一体参照へ帰着します。一時変数・上限数は除外します。
+            GestureSettingScreen.TARGET -> if (isFacingRole(context.role)) {
+                me.awabi2048.kantancommander.gui.setting.ReferenceSettingProviders.singleEntityCategories(
+                    node,
+                    context,
+                    player,
                 )
-            } else choice
-        }
+            } else {
+                targetChoices(node, context, player)
+            }
+        // 位置・向きの実体参照は各プロバイダが子として対象分類を保持します。
+        // 画面側で子を付け替える特例は持たず、汎用二段階フローへ委譲します。
+            GestureSettingScreen.POSITION -> positionChoices(node, context, player)
+            GestureSettingScreen.FACING -> facingChoices(node, context, player)
         GestureSettingScreen.LOCATION -> listOf(
             GestureSettingTreeNode(
                 id = "location:position",
@@ -2788,8 +2780,25 @@ class GestureLowerPanel(
         fieldKey: String,
         player: Player,
     ): List<GestureSettingTreeNode> = when (screen) {
-        GestureSettingScreen.TARGET -> targetChoices(node, context, player)
-        GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
+        GestureSettingScreen.TARGET -> if (isFacingRole(context.role)) {
+            me.awabi2048.kantancommander.gui.setting.ReferenceSettingProviders.singleEntityCategories(
+                node,
+                context,
+                player,
+            )
+        } else {
+            targetChoices(node, context, player)
+        }
+        GestureSettingScreen.TARGET_FILTERS -> if (isFacingRole(context.role)) {
+            me.awabi2048.kantancommander.gui.setting.ReferenceSettingProviders.targetFilters(
+                node,
+                context,
+                player,
+                singleOnly = true,
+            )
+        } else {
+            targetFilterChoices(node, context, player)
+        }
         GestureSettingScreen.POSITION -> positionChoices(node, context, player)
         GestureSettingScreen.FACING -> facingChoices(node, context, player)
         // LOCATIONはrawSettingTreeNodesで位置・向きの親木を生成します。
@@ -3049,35 +3058,19 @@ class GestureLowerPanel(
         ).joinToString(" / ")
     }
 
-    /** 対象種別を木の親ノードとして表示し、詳細条件を子ノードへぶら下げます。 */
+    /** 対象種別を木の親ノードとして表示し、詳細条件を子ノードへぶら下げます。汎用プロバイダへ委譲します。 */
     private fun targetChoices(
         node: CommandNode,
         context: CommandSettingContext,
         player: Player,
         includeTemporary: Boolean = true,
-    ): List<SettingChoice> {
-        val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
-        val choices = buildList {
-            add(TargetCategory.PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)
-            add(TargetCategory.NON_PLAYER_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY)
-            if (includeTemporary) {
-                add(TargetCategory.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE)
-            }
-        }
-        return choices.map { (category, label) ->
-            val selected = CommandSettingsModel.targetCategoryMatches(current, category) &&
-                CommandSettingsModel.isFieldConfigured(node, "target", context.role)
-            val effectiveKind = if (selected) current else CommandSettingsModel.defaultTargetKind(category)
-            SettingChoice(
-                id = "target:${category.name}",
-                label = KcI18n.text(player, label),
-                selected = selected,
-                children = if (CommandSettingsModel.targetSupportsDetailedFilters(effectiveKind)) {
-                    targetFilterChoices(node, context, player, kindOverride = effectiveKind)
-                } else emptyList(),
-            )
-        }
-    }
+    ): List<SettingChoice> =
+        me.awabi2048.kantancommander.gui.setting.ReferenceSettingProviders.targetCategories(
+            node,
+            context,
+            player,
+            includeTemporary,
+        )
 
     /**
      * 移動先の「他のエンティティ」を選んだときだけ、対象分類を右下へ並べます。
@@ -3165,91 +3158,21 @@ class GestureLowerPanel(
         context: CommandSettingContext,
         player: Player,
         kindOverride: TargetKind? = null,
-    ): List<SettingChoice> {
-        val currentSpec = CommandSettingsModel.targetSpec(node, context.role)
-            ?: me.awabi2048.kantancommander.model.TargetSpec(kindOverride ?: TargetKind.NEAREST_ENTITY)
-        val spec = kindOverride?.let { currentSpec.copy(kind = it) } ?: currentSpec
-        fun value(parameter: String): String? = when (parameter) {
-            "sort" -> KcI18n.text(player, when (spec.sort) {
-                TargetSort.NEAREST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_NEAREST
-                TargetSort.FURTHEST -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_FURTHEST
-                TargetSort.RANDOM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SORT_RANDOM
-            })
-            else -> spec.let {
-                when (parameter) {
-                    "gameMode" -> it.gameMode
-                    "entityType" -> it.entityType
-                    "distance" -> displayDistance(it.minimumDistance, it.maximumDistance)
-                    "range" -> displayTargetRange(player, it.dx, it.dy, it.dz)
-                    "limit" -> it.limit?.toString()
-                    "tag" -> it.tag
-                    else -> it.name
-                }
-            }
-        }
-        // Targetの上位画面で旧細分類（最も近い／全員／固定エンティティ等）は
-        // 3カテゴリへ統一して削除しました。ここでは詳細条件だけを残し、削除済み
-        // の選択肢を詳細画面へ再掲しないようにします。距離・上限数・名前等の既存
-        // の詳細設定は変更しません。
-        val filterChoices = listOf(
-            "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
-            "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
-            "range" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
-            "limit" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
-            "sort" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT,
-            "gameMode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE,
-            "tag" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
-            "name" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
+    ): List<SettingChoice> =
+        me.awabi2048.kantancommander.gui.setting.ReferenceSettingProviders.targetFilters(
+            node,
+            context,
+            player,
+            kindOverride,
         )
-            .filter { (id, _) -> CommandSettingsModel.targetFilterApplies(spec.kind, id) }
-            .map { (id, label) -> SettingChoice("filter:$id", labeled(player, label, value(id))) }
-        return filterChoices
-    }
 
-    private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
-        val destination = context.role == CommandSettingRole.DESTINATION
-        val current = CommandSettingsModel.positionKind(node, context.role)
-        val choices = if (destination) {
-            listOf(
-                PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES_SET,
-                PositionKind.TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_OTHER_ENTITY,
-                PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
-            )
-        } else {
-            listOf(
-                PositionKind.DISK to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION,
-                PositionKind.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
-                PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES,
-                PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
-            )
-        }
-        return choices.map { (kind, label) ->
-            SettingChoice(
-                id = "position:${kind.name}",
-                label = KcI18n.text(player, label),
-                selected = current == kind,
-                enabled = CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(node, context.role, kind),
-                disabledHoverText = if (kind == PositionKind.DISK) {
-                    CommandSettingAvailabilityPolicy.CONTROL_BLOCK_POSITION_DISABLED_HOVER
-                } else null,
-            )
-        }
-    }
+    /** 位置候補は汎用プロバイダへ委譲します。移動先実体参照は対象設定へ帰着します。 */
+    private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> =
+        me.awabi2048.kantancommander.gui.setting.PositionSettingProvider.choices(node, context, player)
 
-    private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
-        val current = CommandSettingsModel.facingSpec(node, context.role)?.kind
-        val choices = buildList {
-            add(FacingKind.CAPTURED to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_FACING)
-            if (context.role == CommandSettingRole.DESTINATION_FACING) {
-                add(FacingKind.TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET)
-            }
-            add(FacingKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COORDINATES)
-            add(FacingKind.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN)
-            add(FacingKind.ROTATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC)
-            add(FacingKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE)
-        }
-        return choices.map { (kind, label) -> SettingChoice("facing:${kind.name}", KcI18n.text(player, label), current == kind) }
-    }
+    /** 向き5項目は汎用プロバイダへ委譲します。役割による出し分けは行いません。 */
+    private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> =
+        me.awabi2048.kantancommander.gui.setting.FacingSettingProvider.choices(node, context, player)
 
     private fun conditionKindChoices(node: CommandNode, player: Player): List<SettingChoice> =
         ConditionKind.entries.map { kind ->
@@ -3357,11 +3280,10 @@ class GestureLowerPanel(
     })
 
     private fun facingKindLabel(player: Player, kind: FacingKind): String = KcI18n.text(player, when (kind) {
-        FacingKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_FACING
         FacingKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET
+        FacingKind.COPY_ORIENTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COPY_ORIENTATION
         FacingKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
         FacingKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COORDINATES
-        FacingKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
         FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC
     })
 

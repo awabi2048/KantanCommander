@@ -308,17 +308,17 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `fixed targets and captured orientations require complete values`() {
+    fun `fixed targets and rotation orientations require complete values`() {
         val script = DiskScript(name = "target-shape", owner = UUID.randomUUID())
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         teleport.targetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
         teleport.destinationSpec = PositionSpec(PositionKind.CAPTURED, 1.0, 2.0, 3.0, null, null)
-        teleport.destinationFacingSpec = FacingSpec(FacingKind.CAPTURED, yaw = null, pitch = null)
+        teleport.destinationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = null, pitch = null)
 
         val errors = ExecutableScriptValidator.validate(script)
 
         assertTrue(errors.any { it.message.contains("固定エンティティが未設定") })
-        assertTrue(errors.any { it.message.contains("捕捉した向き") })
+        assertTrue(errors.any { it.message.contains("向きが未設定") })
     }
 
     @Test

@@ -1056,6 +1056,36 @@ object CommandSettingsModel {
     }
 
     /**
+     * 向き注視・複写の参照先実体を返します。汎用単一実体参照として解決します。
+     *
+     * 向き設定の二段階目（実体分類・詳細条件）は対象設定と同じ規則で編集し、
+     * 保存先だけをFacingSpec.entityTargetへ向けるための取得口です。
+     */
+    fun facingEntityTarget(node: CommandNode, role: CommandSettingRole?): TargetSpec? =
+        facingSpec(node, role)?.entityTarget
+
+    /**
+     * 向き注視・複写の参照先実体を保存します。単一体に正規化し、向き種別を保持します。
+     *
+     * @param facingKind 注視（TARGET）／複写（COPY_ORIENTATION）のいずれかです。
+     */
+    fun setFacingEntityTarget(
+        node: CommandNode,
+        role: CommandSettingRole?,
+        facingKind: FacingKind,
+        target: TargetSpec,
+    ) {
+        require(facingKind == FacingKind.TARGET || facingKind == FacingKind.COPY_ORIENTATION) {
+            "向き参照先を持つ種別ではありません: $facingKind"
+        }
+        val single = target.copy(limit = 1)
+        val current = facingSpec(node, role)
+        val spec = (current?.takeIf { it.kind == facingKind } ?: FacingSpec(facingKind))
+            .copy(kind = facingKind, entityTarget = single)
+        setFacingSpec(node, spec, role)
+    }
+
+    /**
      * 設定画面で表示する値の状態を、文字列値と構造化値の両方から一元判定します。
      *
      * 既存JSONにはconfiguredFieldsがないため、まず構造化値／既定値との差を推定し、
@@ -1247,13 +1277,13 @@ object CommandSettingsModel {
         else -> true
     }
 
-    /** 座標・数値回転方式は入力値が揃った場合だけ設定完了とします。 */
+    /** 座標・数値回転方式は入力値が揃った場合だけ設定完了とします。注視・複写は単一体参照の完全性で判定します。 */
     private fun isFacingSpecConfigured(spec: FacingSpec?): Boolean = spec != null && when (spec.kind) {
         FacingKind.COORDINATES -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true }
-        FacingKind.CAPTURED, FacingKind.ROTATION -> listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
+        FacingKind.ROTATION -> listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
         FacingKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
-        else -> true
+        FacingKind.TARGET, FacingKind.COPY_ORIENTATION -> isTargetSpecConfigured(spec.entityTarget)
     }
 
     fun allowedVariableOperations(type: VariableType): List<VariableOperation> =

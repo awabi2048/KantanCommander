@@ -19,7 +19,7 @@ class ExecutionSemanticsTest {
             executor = TargetSpec(TargetKind.NEAREST_ENTITY),
             target = TargetSpec(TargetKind.NEAREST_PLAYER),
             position = PositionSpec(PositionKind.DISK),
-            facing = FacingSpec(FacingKind.CAPTURED, yaw = 0f, pitch = 0f),
+            facing = FacingSpec(FacingKind.ROTATION, yaw = 0f, pitch = 0f),
         )
         val override = ExecutionContextSpec(
             facing = FacingSpec(FacingKind.ROTATION, yaw = 90f, pitch = 10f),
