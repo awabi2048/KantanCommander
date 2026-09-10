@@ -66,13 +66,16 @@ class GestureEditorFacade(
      *
      * 内容更新とpresence等のephemeral状態を分離し、ここでは内容更新だけを扱います。
      * [except] で指定した編集者は直接描画済みのため配布対象外にでき、
-     * 自身の保存直後の二重描画を抑止します。既存呼び出しは全量配布のまま動作します。
+     * 自身の保存直後の二重描画を抑止します。[changedNodeIds] には保存前後で
+     * 変わったノードID集合を渡し、各editorで stale な一時previewの破棄対象に
+     * します。nullの場合は差分不明として従来どおり全量扱いします。
+     * 既存呼び出しは全量配布のまま動作します。
      */
-    internal fun refreshForScript(scriptId: UUID, except: GestureSequenceEditor? = null) {
+    internal fun refreshForScript(scriptId: UUID, except: GestureSequenceEditor? = null, changedNodeIds: Set<UUID>? = null) {
         sessions.values
             .filter { it.isEditingScript(scriptId) && it !== except }
             .toList()
-            .forEach { it.refreshFromStore() }
+            .forEach { it.refreshFromStore(changedNodeIds = changedNodeIds) }
     }
 
     /**

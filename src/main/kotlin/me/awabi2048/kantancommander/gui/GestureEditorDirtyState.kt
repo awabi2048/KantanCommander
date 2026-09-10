@@ -123,6 +123,52 @@ object GraphChangeClassifier {
     }
 
     /**
+     * 保存前後の差分に含まれるノードID集合を求めます。
+     *
+     * issue #15 の差分同期境界として、複数editorへの配布時に stale な
+     * 一時previewの破棄対象を特定します。追加・削除・値・接続のいずれかが
+     * 変わったノードを含み、明示設定フラグだけの差は含みません。
+     * 内部グラフ（snapshot／folded）の差は外側ノードIDへ対応付けます。
+     */
+    fun changedNodeIds(old: CommandGraph, new: CommandGraph): Set<java.util.UUID> {
+        if (old.entryNodeId != new.entryNodeId) return old.nodes.keys + new.nodes.keys
+        val changed = mutableSetOf<java.util.UUID>()
+        for (id in old.nodes.keys + new.nodes.keys) {
+            val before = old.nodes[id]
+            val after = new.nodes[id]
+            if (before == null || after == null) {
+                changed += id
+                continue
+            }
+            if (before.type != after.type ||
+                before.next != after.next ||
+                before.trueNext != after.trueNext ||
+                before.falseNext != after.falseNext ||
+                before.pairedNodeId != after.pairedNodeId ||
+                (before.snapshot == null) != (after.snapshot == null) ||
+                (before.foldedGraph == null) != (after.foldedGraph == null)
+            ) {
+                changed += id
+                continue
+            }
+            if (before.snapshot != null && after.snapshot != null &&
+                classify(before.snapshot!!, after.snapshot!!) != GraphChangeKind.NONE
+            ) {
+                changed += id
+                continue
+            }
+            if (before.foldedGraph != null && after.foldedGraph != null &&
+                classify(before.foldedGraph!!, after.foldedGraph!!) != GraphChangeKind.NONE
+            ) {
+                changed += id
+                continue
+            }
+            if (!hasSameFieldValues(before, after)) changed += id
+        }
+        return changed
+    }
+
+    /**
      * 配置へ影響しない値・仕様が同一かを判定します。
      *
      * 新しいSpec項目を追加した場合はここへ追加し、FIELD_VALUEへ分類されるようにします。

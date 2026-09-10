@@ -93,6 +93,46 @@ data class SharedPreviewSummary(
     val updatedAtMillis: Long,
 )
 
+/** preview確定の結果です。失敗分は保管場所へ戻し、最終値の消失を防ぎます。 */
+data class PreviewCommitResult(
+    val appliedCount: Int,
+    val failed: Map<FieldPreviewKey, String?>,
+) {
+    val isSuccess: Boolean get() = failed.isEmpty()
+
+    companion object {
+        val EMPTY = PreviewCommitResult(0, emptyMap())
+    }
+}
+
+/**
+ * issue #15 と #18 の共有契約であるpreview確定の集約口です。
+ *
+ * #18側の操作コントロールは値の意味解釈・保存境界への適用だけを [apply] に
+ * 実装し、取出し・失敗時復元・結果集約はここに任せます。確定成功分は
+ * [apply] 側の保存境界でrevisionを進め、共有previewは保存配布に任せます。
+ * Bukkitへ依存しないため単体テストで検証します。
+ */
+fun commitPreviews(
+    store: TransientPreviewStore,
+    apply: (FieldPreviewKey, String?) -> Boolean,
+): PreviewCommitResult {
+    if (!store.hasPreview) return PreviewCommitResult.EMPTY
+    val taken = store.consumeForCommit()
+    val failed = linkedMapOf<FieldPreviewKey, String?>()
+    var applied = 0
+    for ((key, value) in taken) {
+        val ok = runCatching { apply(key, value) }.getOrDefault(false)
+        if (ok) {
+            applied++
+        } else {
+            failed[key] = value
+        }
+    }
+    if (failed.isNotEmpty()) store.restore(failed)
+    return PreviewCommitResult(applied, failed)
+}
+
 /** 共有previewの送信間引き条件を一箇所へ集約します。 */
 object SharedPreviewThrottle {
     fun shouldBroadcast(nowMillis: Long, lastBroadcastAtMillis: Long, minIntervalMillis: Long = 200L): Boolean =

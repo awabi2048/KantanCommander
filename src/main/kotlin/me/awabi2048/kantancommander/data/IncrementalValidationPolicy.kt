@@ -46,17 +46,4 @@ object IncrementalValidationPolicy {
     /** 構造検証の再計算が必要かを判定します。 */
     fun requiresStructuralRevalidation(change: GraphChangeKind): Boolean =
         change == GraphChangeKind.STRUCTURE
-
-    /** 値変更だけの保存で構造エラーを再利用できるかを判定します。 */
-    fun canReuseStructuralErrors(change: GraphChangeKind): Boolean =
-        change == GraphChangeKind.FIELD_VALUE || change == GraphChangeKind.METADATA_ONLY
-
-    /** 対象ノード集合に関わるエラーのみを抽出します。差分同期の要点化に使います。 */
-    fun filterErrorsForNodes(
-        errors: List<ScriptValidationError>,
-        nodeIds: Set<java.util.UUID>,
-    ): List<ScriptValidationError> {
-        if (nodeIds.isEmpty()) return errors
-        return errors.filter { it.nodeId == null || it.nodeId in nodeIds }
-    }
 }

@@ -462,8 +462,13 @@ class GestureSequenceEditor(
      * 直接描画済みの同一世代を作り直しません。選択欠落がある場合だけ
      * 作り直し、他editorの stale 世代は従来どおり全量更新します。
      * presence等のephemeral状態はここで触らず、内容更新だけを扱います。
+     *
+     * [changedNodeIds] には保存前後で変わったノードID集合を渡し、
+     * 他editorの変更で古くなった一時previewを破棄します。Dialog系の
+     * 外部変更時の入力無効化と対になる扱いです。nullの場合は差分不明
+     * として破棄しません。
      */
-    internal fun refreshFromStore(exceptRevisionAlreadyRendered: Boolean) {
+    internal fun refreshFromStore(exceptRevisionAlreadyRendered: Boolean = true, changedNodeIds: Set<UUID>? = null) {
         val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
         val current = plugin.scripts.load(state.scriptId) ?: return
         val previousRevision = observedRevision
@@ -474,6 +479,11 @@ class GestureSequenceEditor(
             invalidateInputs()
         }
         observedRevision = current.revision
+        // 他editorの変更で古くなった一時previewは保存値へ戻せず残留するため破棄します。
+        // 自身の確定直後はconsume済みのため何も起きません。
+        if (!changedNodeIds.isNullOrEmpty()) {
+            changedNodeIds.forEach(previewStore::removeNode)
+        }
         val selectedNodeMissing = state.selectedNodeId?.let { it !in current.graph.nodes } == true
         val confirmedNodeMissing = state.confirmNodeId?.let { it !in current.graph.nodes } == true
         val settingNodeMissing = state.settingContext?.nodeId?.let { it !in current.graph.nodes } == true
@@ -664,6 +674,37 @@ class GestureSequenceEditor(
         return updated
     }
 
+    /**
+     * 保存成功後の上部更新です。表示内容が変わらない場合は作り直しません。
+     *
+     * issue #15 の部分再構築として、上部が種別・接続・未設定色・選択だけを
+     * 表示することを利用し、前回描画時の要点と一致すれば抑止します。
+     * 下部は値表示のため呼び出し側で必ず更新します。
+     *
+     * 適用条件は保存成功経路だけにします。以下を変える経路では使わず、
+     * [updateUpper] で無条件に作り直します。
+     * - 選択・原点・ズーム・固定（表示要点の追跡対象外）
+     * - テスト状態・挿入preview・追加点選択（毎tick変化し得る一時表示）
+     *
+     * 戻り値は上部が最新であることを表します。抑止時も最新のためtrueを返し、
+     * 描画失敗時は [updateUpper] の結果をそのまま返します。
+     */
+    private fun updateUpperIfNeeded(player: Player): Boolean {
+        val current = plugin.scripts.load(state.scriptId) ?: return updateUpper(player)
+        if (state.testExecution != null) return updateUpper(player)
+        if (state.pendingInsertion != null ||
+            state.selectedInsertionCandidatePoint != null ||
+            state.selectedAddPoint != null
+        ) {
+            return updateUpper(player)
+        }
+        val signature = lastUpperStructureSignature ?: return updateUpper(player)
+        if (GraphStructureFingerprint.fingerprint(current.graph) != signature) return updateUpper(player)
+        if (currentIncompleteForSkip(current) != lastUpperIncomplete) return updateUpper(player)
+        if (state.selectedNodeId != lastUpperSelection) return updateUpper(player)
+        return true
+    }
+
     fun updateLower(player: Player): Boolean {
         val owner = ownerPlayerFor(player)
         return runCatching {
@@ -766,20 +807,63 @@ class GestureSequenceEditor(
     /** 世代キャッシュ付きの実行前検証です。変数定義付きの検証には使いません。 */
     private fun validatedErrors(
         script: me.awabi2048.kantancommander.model.DiskScript,
+        baseline: Boolean = true,
     ): List<me.awabi2048.kantancommander.data.ScriptValidationError> {
         val key = script.id to script.revision
         if (validationCacheKey != key) {
+            // issue #15 の増分検証として、値変更だけの世代進行では前回結果から
+            // 変更ノード分だけを再検証します。全量が必要な場合は従来どおりです。
+            val incremental = if (baseline) tryIncrementalValidation(script) else null
+            if (incremental != null) {
+                validationCacheErrors = incremental
+                // 構造不変のため署名cacheは有効なままです。構造署名の一致は
+                // 増分側の分類で保証されています。
+            } else {
+                validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+                // 世代が進んでも構造署名が同じ間は構造エラーを再利用できるよう、
+                // 構造部分だけを署名単位で保持します。無効化条件は署名変化に一元化します。
+                val signature = GraphStructureFingerprint.fingerprint(script.graph)
+                if (structuralValidationCacheKey != signature) {
+                    structuralValidationCacheKey = signature
+                    structuralValidationErrors = GraphValidator.validateStructured(script.graph, plugin.graphLimits())
+                }
+            }
             validationCacheKey = key
-            validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
-            // 世代が進んでも構造署名が同じ間は構造エラーを再利用できるよう、
-            // 構造部分だけを署名単位で保持します。無効化条件は署名変化に一元化します。
-            val signature = GraphStructureFingerprint.fingerprint(script.graph)
-            if (structuralValidationCacheKey != signature) {
-                structuralValidationCacheKey = signature
-                structuralValidationErrors = GraphValidator.validateStructured(script.graph, plugin.graphLimits())
+            // テストsnapshotは正本の基準にせず、永続世代の検証基準だけを保持します。
+            if (baseline) {
+                lastValidatedScriptId = script.id
+                lastValidatedGraph = script.graph
             }
         }
         return validationCacheErrors
+    }
+
+    /**
+     * 増分検証の前回基準です。テストsnapshotの混入を防ぐため、
+     * 永続世代の検証時にだけ保持します。終了時に破棄します。
+     */
+    private var lastValidatedScriptId: java.util.UUID? = null
+    private var lastValidatedGraph: me.awabi2048.kantancommander.model.CommandGraph? = null
+
+    /**
+     * 前回検証結果からの増分更新を試みます。
+     *
+     * 全量が必要な場合は null を返し、呼び出し側は従来の全量検証を使います。
+     * 同一世代の再検証は呼び出し側の世代cacheで弾かれるため、ここでは
+     * 世代進行後の差分だけを扱います。
+     */
+    private fun tryIncrementalValidation(
+        script: me.awabi2048.kantancommander.model.DiskScript,
+    ): List<me.awabi2048.kantancommander.data.ScriptValidationError>? {
+        val previousGraph = lastValidatedGraph ?: return null
+        if (lastValidatedScriptId != script.id) return null
+        return me.awabi2048.kantancommander.data.IncrementalValidator.refresh(
+            previousGraph = previousGraph,
+            previousErrors = validationCacheErrors,
+            script = script,
+            limits = plugin.graphLimits(),
+            variableDefinitions = null,
+        )
     }
 
     /**
@@ -1635,6 +1719,8 @@ class GestureSequenceEditor(
         validationCacheErrors = emptyList()
         structuralValidationCacheKey = null
         structuralValidationErrors = emptyList()
+        lastValidatedScriptId = null
+        lastValidatedGraph = null
         testValidationCache.clear()
         iconTemplateCache.clear()
         litRedstoneLampData = null
@@ -1681,6 +1767,17 @@ class GestureSequenceEditor(
         previewStore.current(nodeId, fieldKey)
 
     internal fun hasFieldPreview(): Boolean = previewStore.hasPreview
+
+    /**
+     * issue #15 と #18 の共有契約であるpreview確定の編集側入口です。
+     *
+     * [apply] には (nodeId, fieldKey) から保存境界への適用だけを実装します。
+     * 取出し・失敗時復元・結果集約は [commitPreviews] に任せ、確定成功分は
+     * [apply] 側の保存境界（[updateSettingNode] 等）でrevisionを進めます。
+     * 描画は [apply] 側で行い、ここでは行いません。
+     */
+    internal fun commitFieldPreviews(apply: (FieldPreviewKey, String?) -> Boolean): PreviewCommitResult =
+        commitPreviews(previewStore, apply)
 
     internal fun cancelFieldPreview(player: Player) {
         if (!previewStore.hasPreview) return
@@ -2314,7 +2411,9 @@ class GestureSequenceEditor(
         // 検証結果は構造化エラー（nodeId/fieldKeys）として受けるため、表示文字列の
         // パス解析は行いません。snapshot・内部グラフ内のエラーは外側の対応ノードへ
         // 対応付けるため、存在しないノードIDは自然に除外されます。
-        val validationErrors = validatedErrors(script)
+        // テストsnapshotは正本の検証基準に混ぜず、永続世代のときだけ
+        // 増分検証の基準にします。
+        val validationErrors = validatedErrors(script, baseline = !testActive)
         val incompleteNodeIds = buildSet {
             validationErrors.forEach { error ->
                 error.nodeId?.let { nodeId ->
@@ -2943,7 +3042,7 @@ class GestureSequenceEditor(
                 if (updated == null) {
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                 } else {
-                    updateUpper(player)
+                    updateUpperIfNeeded(player)
                     updateLower(player)
                     null
                 }
@@ -3512,7 +3611,7 @@ class GestureSequenceEditor(
             clearSettingState()
             GestureLowerMode.SETTINGS
         }
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -3555,7 +3654,7 @@ class GestureSequenceEditor(
             clearSettingState()
             GestureLowerMode.SETTINGS
         }
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -3595,7 +3694,7 @@ class GestureSequenceEditor(
             clearSettingState()
             GestureLowerMode.SETTINGS
         }
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -3628,7 +3727,9 @@ class GestureSequenceEditor(
             )
         }.getOrDefault(false)
         if (!saved) return false
-        updateUpper(player)
+        // 約50箇所のfield編集が通る共通 funnel です。値変更だけでは
+        // 上部の表示内容が変わらないため、要点一致時は下部だけ更新します。
+        updateUpperIfNeeded(player)
         updateLower(player)
         return true
     }
@@ -3687,7 +3788,7 @@ class GestureSequenceEditor(
             }
             val error = result(minimumValue, maximumValue)
             if (error != null) return@showInputDialog error
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -3733,7 +3834,7 @@ class GestureSequenceEditor(
         showTextInputDialog(player, spec, initial, suggestionParameter = suggestionParameter) { raw ->
             val error = result(raw)
             if (error != null) return@showTextInputDialog error
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -3852,7 +3953,7 @@ class GestureSequenceEditor(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
                 )
             }
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -3901,7 +4002,7 @@ class GestureSequenceEditor(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
                 )
             }
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -5770,7 +5871,7 @@ class GestureSequenceEditor(
                 if (reordered != true) return
                 // 入れ替え後も同じノードを選択し続け、設定パネルの対象を失わせません。
                 state.selectedNodeId = nodeId
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
             }
             context.elementId.startsWith("node:") -> {
@@ -6213,7 +6314,7 @@ class GestureSequenceEditor(
                 state.selectedAddPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
                 // 新規追加時も既存ノード選択時と同じ初期表示経路を通し、
                 // 「タブだけ選択されて詳細が空」の状態を作りません。
@@ -6295,7 +6396,7 @@ class GestureSequenceEditor(
                 state.selectedNodeId = duplicated.id
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
                 openSettingsTab(player, 0)
             }
@@ -6369,7 +6470,7 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
                 if (settingChildWasOpen) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
             }
             context.elementId == "confirm-cancel" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -6481,7 +6582,7 @@ class GestureSequenceEditor(
         }
         if (swapped != true) return
         state.selectedNodeId = nodeId
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
     /**
@@ -6511,7 +6612,7 @@ class GestureSequenceEditor(
         if (folded != true) return
         state.selectedNodeId = nodeId
         player.playSound(player.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -6542,7 +6643,7 @@ class GestureSequenceEditor(
         if (folded != true) return
         state.selectedNodeId = nodeId
         player.playSound(player.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -6573,7 +6674,7 @@ class GestureSequenceEditor(
         if (unfolded != true) return
         state.selectedNodeId = nodeId
         player.playSound(player.location, Sound.BLOCK_BARREL_OPEN, 1.0f, 1.0f)
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 

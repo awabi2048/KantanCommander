@@ -82,6 +82,73 @@ class GesturePreviewContractTest {
     }
 
     @Test
+    fun `commit applies all and clears the store`() {
+        val store = TransientPreviewStore()
+        val first = UUID.randomUUID()
+        val second = UUID.randomUUID()
+        store.begin(4L)
+        store.update(first, "seconds", "1")
+        store.update(second, "seconds", "2")
+        val applied = mutableListOf<FieldPreviewKey>()
+
+        val result = commitPreviews(store) { key, _ ->
+            applied += key
+            true
+        }
+
+        assertTrue(result.isSuccess)
+        assertEquals(2, result.appliedCount)
+        assertTrue(result.failed.isEmpty())
+        assertEquals(
+            setOf(FieldPreviewKey(first, "seconds"), FieldPreviewKey(second, "seconds")),
+            applied.toSet(),
+        )
+        assertFalse(store.hasPreview)
+    }
+
+    @Test
+    fun `commit restores failures without losing final values`() {
+        val store = TransientPreviewStore()
+        val first = UUID.randomUUID()
+        val second = UUID.randomUUID()
+        store.begin(4L)
+        store.update(first, "seconds", "1")
+        store.update(second, "seconds", "2")
+
+        val result = commitPreviews(store) { key, _ -> key.nodeId == first }
+
+        assertFalse(result.isSuccess)
+        assertEquals(1, result.appliedCount)
+        assertEquals(mapOf(FieldPreviewKey(second, "seconds") to "2"), result.failed)
+        // 失敗分は保管場所へ戻り、最終値を失いません。
+        assertEquals("2", store.current(second, "seconds"))
+        assertEquals(null, store.current(first, "seconds"))
+    }
+
+    @Test
+    fun `commit exception counts as failure`() {
+        val store = TransientPreviewStore()
+        val nodeId = UUID.randomUUID()
+        store.begin(4L)
+        store.update(nodeId, "seconds", "1")
+
+        val result = commitPreviews(store) { _, _ -> error("保存境界の例外") }
+
+        assertFalse(result.isSuccess)
+        assertEquals("1", store.current(nodeId, "seconds"))
+    }
+
+    @Test
+    fun `commit without preview is empty`() {
+        val store = TransientPreviewStore()
+
+        val result = commitPreviews(store) { _, _ -> false }
+
+        assertEquals(PreviewCommitResult.EMPTY, result)
+        assertTrue(result.isSuccess)
+    }
+
+    @Test
     fun `command type reference keeps contract compilation anchor`() {
         // 将来#18側で種別別の既定方針を分岐する際の錨です。現段階では
         // 値変更が構造へ影響しないことを型参照で明示します。

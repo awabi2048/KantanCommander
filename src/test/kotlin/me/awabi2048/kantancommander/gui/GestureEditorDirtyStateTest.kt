@@ -111,4 +111,40 @@ class GestureEditorDirtyStateTest {
             ),
         )
     }
+
+    @Test
+    fun `changed node ids cover added removed and edited nodes`() {
+        val before = CommandGraph.empty()
+        val first = GraphEditor.append(before, CommandType.WAIT)
+        val second = GraphEditor.append(before, CommandType.DISPLAY_TEXT)
+        val after = before.deepCopy()
+        // 値変更・追加・削除を1件ずつ含めます。
+        after.nodes.getValue(first.id).params["seconds"] = "5"
+        val added = GraphEditor.append(after, CommandType.WAIT)
+        after.nodes.remove(second.id)
+
+        val changed = GraphChangeClassifier.changedNodeIds(before, after)
+
+        assertEquals(setOf(first.id, second.id, added.id), changed)
+    }
+
+    @Test
+    fun `changed node ids ignore metadata only differences`() {
+        val before = CommandGraph.empty()
+        val node = GraphEditor.append(before, CommandType.WAIT)
+        val after = before.deepCopy()
+        after.nodes.getValue(node.id).markConfigured("seconds")
+
+        // 明示設定フラグだけでは一時previewの破棄対象にしません。
+        assertTrue(GraphChangeClassifier.changedNodeIds(before, after).isEmpty())
+        assertEquals(GraphChangeKind.METADATA_ONLY, GraphChangeClassifier.classify(before, after))
+    }
+
+    @Test
+    fun `changed node ids are empty for identical graphs`() {
+        val before = CommandGraph.empty()
+        GraphEditor.append(before, CommandType.WAIT)
+
+        assertTrue(GraphChangeClassifier.changedNodeIds(before, before.deepCopy()).isEmpty())
+    }
 }

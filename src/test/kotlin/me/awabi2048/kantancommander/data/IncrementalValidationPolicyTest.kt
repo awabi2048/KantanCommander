@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.util.UUID
 
 /**
  * issue #15 の検証分離条件の回帰テストです。
@@ -37,31 +36,5 @@ class IncrementalValidationPolicyTest {
         assertFalse(IncrementalValidationPolicy.requiresStructuralRevalidation(GraphChangeKind.FIELD_VALUE))
         assertFalse(IncrementalValidationPolicy.requiresStructuralRevalidation(GraphChangeKind.METADATA_ONLY))
         assertFalse(IncrementalValidationPolicy.requiresStructuralRevalidation(GraphChangeKind.NONE))
-    }
-
-    @Test
-    fun `structural errors are reusable for value only changes`() {
-        assertTrue(IncrementalValidationPolicy.canReuseStructuralErrors(GraphChangeKind.FIELD_VALUE))
-        assertTrue(IncrementalValidationPolicy.canReuseStructuralErrors(GraphChangeKind.METADATA_ONLY))
-        assertFalse(IncrementalValidationPolicy.canReuseStructuralErrors(GraphChangeKind.STRUCTURE))
-        assertFalse(IncrementalValidationPolicy.canReuseStructuralErrors(GraphChangeKind.NONE))
-    }
-
-    @Test
-    fun `error filtering keeps global errors and drops unrelated nodes`() {
-        val first = UUID.randomUUID()
-        val second = UUID.randomUUID()
-        val errors = listOf(
-            ScriptValidationError("root", null, setOf("timer"), "timer"),
-            ScriptValidationError("root/1", first, setOf("seconds"), "first"),
-            ScriptValidationError("root/2", second, setOf("seconds"), "second"),
-        )
-
-        val filtered = IncrementalValidationPolicy.filterErrorsForNodes(errors, setOf(first))
-
-        // 全体エラーは残し、無関係ノードのエラーだけを落とします。
-        assertEquals(2, filtered.size)
-        assertTrue(filtered.any { it.nodeId == null })
-        assertTrue(filtered.any { it.nodeId == first })
     }
 }
