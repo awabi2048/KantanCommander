@@ -365,6 +365,7 @@ object ExecutableScriptValidator {
             node.particleEndPositionSpec,
             node.fireworkPositionSpec,
             node.summonPositionSpec,
+            node.executionPositionSpec,
         ).forEach { validatePosition(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationPositionSpec?.let {
             validatePosition(it, path, node, errors, temporaryDefinitions)

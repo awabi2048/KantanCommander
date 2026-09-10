@@ -96,6 +96,7 @@ object PersistedScriptValidator {
             "particleEndPositionSpec",
             "fireworkPositionSpec",
             "summonPositionSpec",
+            "executionPositionSpec",
             "temporaryLocationPositionSpec",
         ).forEach { field ->
             optionalObject(node, field, path, errors)?.let {
