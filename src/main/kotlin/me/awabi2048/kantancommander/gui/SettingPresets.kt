@@ -78,9 +78,12 @@ object SettingPresets {
      * 並び順の変更も詳細設定のため、既定の最寄り順以外は一致させません。
      * 最大距離だけはプリセットの既定値として持ち、変更後も再クリックで
      * 距離編集へ戻すため形状に含めます。
+     * 詳細設定入室時の変換で指定した距離下限0は、来歴付きの場合だけ許容し、
+     * 手入力の等価値はプリセット扱いにしません。
      */
     private fun isNearbyPresetShape(spec: TargetSpec): Boolean =
-        spec.entityType == null && spec.minimumDistance == null &&
+        spec.entityType == null && (spec.minimumDistance == null ||
+            (spec.minimumDistance == 0.0 && spec.convertedFromPreset)) &&
             spec.limit == null && spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
@@ -90,13 +93,38 @@ object SettingPresets {
      * 絞り込みなしの形状です。何らかの条件があれば正規内容から外れます。
      *
      * 並び順の変更も詳細設定のため、既定の最寄り順以外は一致させません。
+     * 詳細設定入室時の変換で指定した上限数1・距離下限0は、来歴付きの
+     * 場合だけ許容し、手入力の等価値はプリセット扱いにしません。
      */
     private fun isBareShape(spec: TargetSpec): Boolean =
-        spec.entityType == null && spec.minimumDistance == null && spec.maximumDistance == null &&
-            spec.limit == null && spec.sort == TargetSort.NEAREST &&
+        spec.entityType == null && (spec.minimumDistance == null ||
+            (spec.minimumDistance == 0.0 && spec.convertedFromPreset)) &&
+            spec.maximumDistance == null &&
+            (spec.limit == null || (spec.limit == 1 && spec.convertedFromPreset)) &&
+            spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
             spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null
+
+    /**
+     * プリセット相当の明示値を詳細初期値として指定します。
+     *
+     * 詳細設定入室時に来歴付きで変換し、無変更の間はプリセット選択表示を
+     * 維持します。等価性（セレクタ既定補完・件数判定・実行照合）は保たれるため、
+     * 実行・出力の意味は変わりません。対象外の指定はそのまま返します。
+     * 冪等であり、変換済みへの再適用で値は変化しません。
+     */
+    fun expandPresetToDetail(spec: TargetSpec): TargetSpec = when (matchTargetPreset(spec)) {
+        TargetPreset.NEAREST_PLAYER ->
+            spec.copy(limit = 1, minimumDistance = 0.0, convertedFromPreset = true)
+        TargetPreset.NEARBY_PLAYERS, TargetPreset.MYWORLD_PLAYERS, TargetPreset.NEARBY_ENTITIES ->
+            spec.copy(minimumDistance = 0.0, convertedFromPreset = true)
+        null -> spec
+    }
+
+    /** 詳細画面の保存で来歴を消し、手入力の等価値をプリセット扱いにしません。 */
+    fun withoutPresetConversion(spec: TargetSpec): TargetSpec =
+        spec.copy(convertedFromPreset = false)
 
     /** 位置プリセットの正規仕様を返します。初回選択時は実用的な既定値です。 */
     fun positionSpecFor(preset: PositionPreset): PositionSpec = when (preset) {

@@ -5155,6 +5155,63 @@ class GestureSequenceEditor(
     }
 
     /**
+     * 移動先の一時変数を位置用・向き用でまとめて入力します。
+     *
+     * 位置と向きは別タブ相当の保存先（destinationSpec／destinationFacingSpec）のため、
+     * 1画面2欄で受けます。空欄の側はその側の指定を解除し、両欄空では両側を解除します。
+     * 未定義の一時変数名は共通検証で検出します。
+     */
+    private fun openDestinationTemporaryDialog(
+        player: Player,
+        settingContext: CommandSettingContext,
+        node: CommandNode,
+    ) {
+        val positionTemp = node.destinationSpec
+            ?.takeIf { it.kind == PositionKind.TEMPORARY }?.tempName.orEmpty()
+        val facingTemp = node.destinationFacingSpec
+            ?.takeIf { it.kind == FacingKind.TEMPORARY }?.tempName.orEmpty()
+        showInputDialog(
+            player = player,
+            body = CommandDialogSpecs.body(player, CommandDialogSpecs.variableName),
+            inputs = listOf(
+                CommandDialogSpecs.input(
+                    player,
+                    "positionTemp",
+                    positionTemp,
+                    CommandDialogSpecs.variableName,
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION),
+                ),
+                CommandDialogSpecs.input(
+                    player,
+                    "facingTemp",
+                    facingTemp,
+                    CommandDialogSpecs.variableName,
+                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_FACING),
+                ),
+            ),
+            columns = 1,
+        ) { response ->
+            val positionName = response.textValue("positionTemp").trim()
+            val facingName = response.textValue("facingTemp").trim()
+            listOf(positionName, facingName)
+                .firstOrNull { it.isNotBlank() && CommandDialogSpecs.variableName.validateInput(it) != null }
+                ?.let { return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT) }
+            if (!updateSettingNode(player, settingContext) {
+                    it.destinationSpec = positionName.takeIf(String::isNotBlank)?.let { name ->
+                        PositionSpec(PositionKind.TEMPORARY, tempName = name)
+                    } ?: it.destinationSpec?.takeUnless { spec -> spec.kind == PositionKind.TEMPORARY }
+                    it.destinationFacingSpec = facingName.takeIf(String::isNotBlank)?.let { name ->
+                        FacingSpec(FacingKind.TEMPORARY, tempName = name)
+                    } ?: it.destinationFacingSpec?.takeUnless { spec -> spec.kind == FacingKind.TEMPORARY }
+                }) {
+                return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            }
+            updateLower(player)
+            null
+        }
+    }
+
+    /**
      * issue #29: 内包対象の付近距離を変更します。
      *
      * 位置・向きに内包する対象指定と、役割直下の対象指定を同じ入力仕様で扱い、
@@ -5189,7 +5246,10 @@ class GestureSequenceEditor(
                             it,
                             latest.copy(
                                 kind = FacingKind.TARGET,
-                                target = target.copy(minimumDistance = minimum, maximumDistance = maximum),
+                                // 距離の手入力で来歴を消し、等価値のプリセット誤判定を防ぎます。
+                                target = SettingPresets.withoutPresetConversion(
+                                    target.copy(minimumDistance = minimum, maximumDistance = maximum),
+                                ),
                             ),
                             requireNotNull(facingRole),
                         )
@@ -5203,7 +5263,10 @@ class GestureSequenceEditor(
                             settingContext.role,
                             latest.copy(
                                 kind = PositionKind.TARGET,
-                                target = target.copy(minimumDistance = minimum, maximumDistance = maximum),
+                                // 距離の手入力で来歴を消し、等価値のプリセット誤判定を防ぎます。
+                                target = SettingPresets.withoutPresetConversion(
+                                    target.copy(minimumDistance = minimum, maximumDistance = maximum),
+                                ),
                             ),
                         )
                     }
@@ -5302,97 +5365,95 @@ class GestureSequenceEditor(
          * 通常の対象設定画面で細分類の保存規則が分岐しないようにします。
          */
         fun handleTargetCategory(categoryValue: String) {
-            val category = runCatching { TargetCategory.valueOf(categoryValue) }.getOrNull() ?: return
+            // 対象画面の分類は「一時変数を参照」だけです。プレイヤー系・
+            // エンティティ系はプリセットと詳細設定へ集約しました。
+            if (runCatching { TargetCategory.valueOf(categoryValue) }.getOrNull() != TargetCategory.TEMPORARY) return
             val role = settingContext.role
             val current = CommandSettingsModel.targetSpec(node, role)
             val currentKind = current?.kind
-            val kind = if (CommandSettingsModel.targetCategoryMatches(currentKind, category)) {
-                currentKind ?: CommandSettingsModel.defaultTargetKind(category)
-            } else {
-                CommandSettingsModel.defaultTargetKind(category)
-            }
             val encodedCategory = "target:$categoryValue"
             val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encodedCategory)
-            if (category == TargetCategory.TEMPORARY) {
-                if (!wasSelected || currentKind != TargetKind.TEMPORARY) {
-                    // 一時変数は通常の選択肢と同じく、1回目は方式の選択だけにします。
-                    // 値未入力のTargetSpecを設定済み扱いにしないため、明示的に
-                    // configuredFieldsを空集合へ指定します。
-                    if (!updateSettingNode(
-                            player,
-                            settingContext.copy(role = role),
-                            configuredFields = emptySet(),
-                        ) {
-                            CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
-                        }) return
-                    rememberSettingNode(encodedCategory)
-                    showSettingScreen()
-                    return
-                }
-                // 二回目のクリックで初めて一時変数名を入力します。入力完了まで
-                // 未設定のまま保持し、途中状態を「設定済み」と表示しません。
-                beginSettingInput(
-                    player,
-                    CommandDialogSpecs.variableName,
-                    current.takeIf { it.kind == TargetKind.TEMPORARY }?.tempName.orEmpty(),
-                ) { raw ->
-                    if (!updateSettingNode(player, settingContext.copy(role = role)) {
-                            CommandSettingsModel.setTargetSpec(
-                                it,
-                                role,
-                                TargetSpec(TargetKind.TEMPORARY, tempName = raw.trim()),
-                            )
-                        }) {
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                    } else {
-                        showSettingScreen()
-                        null
-                    }
-                }
+            if (!wasSelected || currentKind != TargetKind.TEMPORARY) {
+                // 一時変数は通常の選択肢と同じく、1回目は方式の選択だけにします。
+                // 値未入力のTargetSpecを設定済み扱いにしないため、明示的に
+                // configuredFieldsを空集合へ指定します。
+                if (!updateSettingNode(
+                        player,
+                        settingContext.copy(role = role),
+                        configuredFields = emptySet(),
+                    ) {
+                        CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                    }) return
+                rememberSettingNode(encodedCategory)
+                showSettingScreen()
                 return
             }
-            val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encodedCategory)
-            val fixedId = if (kind == TargetKind.FIXED_ENTITY) {
-                current?.fixedEntityId ?: player.getTargetEntity(32)?.uniqueId ?: run {
-                    player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_NO_ENTITY_IN_SIGHT))
-                    return
+            // 二回目のクリックで初めて一時変数名を入力します。入力完了まで
+            // 未設定のまま保持し、途中状態を「設定済み」と表示しません。
+            beginSettingInput(
+                player,
+                CommandDialogSpecs.variableName,
+                current.takeIf { it.kind == TargetKind.TEMPORARY }?.tempName.orEmpty(),
+            ) { raw ->
+                if (!updateSettingNode(player, settingContext.copy(role = role)) {
+                        CommandSettingsModel.setTargetSpec(
+                            it,
+                            role,
+                            TargetSpec(TargetKind.TEMPORARY, tempName = raw.trim()),
+                        )
+                    }) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                } else {
+                    showSettingScreen()
+                    null
                 }
-            } else null
-            val entityKind = kind in setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES, TargetKind.FIXED_ENTITY)
-            if (!updateSettingNode(player, settingContext.copy(role = role)) { target ->
-                    CommandSettingsModel.setTargetSpec(
-                        target,
-                        role,
-                        (current ?: TargetSpec(kind)).copy(
-                            kind = kind,
-                            fixedEntityId = fixedId,
-                            entityType = if (entityKind) current?.entityType else null,
-                        ),
-                    )
-                }) return
-            rememberSettingNode(encodedCategory)
-            when (settingSelectionAction(wasSelected, hasChildren)) {
-                GestureSettingSelectionAction.ENTER_CHILD -> {
-                    pushSettingFrame(
-                        player,
-                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
-                        encodedCategory,
-                    )
-                }
-                GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
             }
+            return
         }
 
         when (screen) {
             GestureSettingScreen.TARGET -> {
                 // issue #29: 対象プリセットは1クリックで正規仕様へ設定します。
                 // 付近系は選択済みの再クリックで距離を変更します。
+                // 内包役割では位置・向き仕様の対象部だけを書き換えます。
+                val embeddedTarget = settingContext.role?.let {
+                    CommandSettingsModel.isEmbeddedTargetRole(it)
+                } == true
+                fun readBranchTarget(target: CommandNode): TargetSpec? = if (embeddedTarget) {
+                    CommandSettingsModel.embeddedTargetSpec(target, settingContext.role)
+                } else {
+                    CommandSettingsModel.targetSpec(target, settingContext.role)
+                }
+                fun writeBranchTarget(target: CommandNode, spec: TargetSpec) {
+                    val cleared = SettingPresets.withoutPresetConversion(spec)
+                    if (embeddedTarget) {
+                        CommandSettingsModel.setEmbeddedTargetSpec(target, settingContext.role, cleared)
+                    } else {
+                        CommandSettingsModel.setTargetSpec(target, settingContext.role, cleared)
+                    }
+                }
+                // 変換保存だけは来歴を維持します。絞込画面の一切の保存は来歴を消します。
+                fun writeConvertedTarget(target: CommandNode, spec: TargetSpec) {
+                    if (embeddedTarget) {
+                        CommandSettingsModel.setEmbeddedTargetSpec(target, settingContext.role, spec)
+                    } else {
+                        CommandSettingsModel.setTargetSpec(target, settingContext.role, spec)
+                    }
+                }
                 if (group == "target-preset") {
                     val preset = runCatching { SettingPresets.TargetPreset.valueOf(value) }.getOrNull() ?: return
-                    val role = settingContext.role
-                    val current = CommandSettingsModel.targetSpec(node, role)
+                    val current = readBranchTarget(node)
                     val matched = SettingPresets.matchTargetPreset(current) == preset
                     rememberSettingNode(encoded)
+                    // 内包役割では選択済みの再クリックで絞込子画面へ進みます。
+                    if (embeddedTarget && matched) {
+                        pushSettingFrame(
+                            player,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
+                            encoded,
+                        )
+                        return
+                    }
                     if (matched && (preset == SettingPresets.TargetPreset.NEARBY_PLAYERS ||
                             preset == SettingPresets.TargetPreset.NEARBY_ENTITIES)
                     ) {
@@ -5402,11 +5463,10 @@ class GestureSequenceEditor(
                             current?.maximumDistance,
                         ) { minimum, maximum ->
                             if (!updateSettingNode(player, settingContext) {
-                                    val latest = CommandSettingsModel.targetSpec(it, role)
+                                    val latest = readBranchTarget(it)
                                         ?: SettingPresets.targetSpecFor(preset)
-                                    CommandSettingsModel.setTargetSpec(
+                                    writeBranchTarget(
                                         it,
-                                        role,
                                         latest.copy(minimumDistance = minimum, maximumDistance = maximum),
                                     )
                                 }) {
@@ -5416,8 +5476,29 @@ class GestureSequenceEditor(
                         return
                     }
                     if (updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setTargetSpec(it, role, SettingPresets.targetSpecFor(preset))
+                            writeBranchTarget(it, SettingPresets.targetSpecFor(preset))
                         }) showSettingScreen()
+                    return
+                }
+                // 詳細設定は選択のみ行い、再クリックで現行の絞込子画面へ進みます。
+                // 未設定時は保存せず留まり、設定済み時はプリセット相当を明示値へ
+                // 変換保存してから遷移します。来歴付きのため無変更の間は
+                // プリセット選択表示が残ります。
+                if (group == "target-detail") {
+                    val current = readBranchTarget(node)
+                    rememberSettingNode(encoded)
+                    if (current == null) {
+                        showSettingScreen()
+                        return
+                    }
+                    if (!updateSettingNode(player, settingContext) {
+                            writeConvertedTarget(it, SettingPresets.expandPresetToDetail(current))
+                        }) return
+                    pushSettingFrame(
+                        player,
+                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
+                        encoded,
+                    )
                     return
                 }
                 if (group != "target") return
@@ -5435,10 +5516,13 @@ class GestureSequenceEditor(
                     CommandSettingsModel.targetSpec(target, role)
                 }
                 fun writeFilterTarget(target: CommandNode, spec: TargetSpec) {
+                    // 詳細画面の保存で来歴を消し、手入力の等価値をプリセット扱いにしません。
+                    // 変換保存だけが来歴を立てる入口です。
+                    val cleared = SettingPresets.withoutPresetConversion(spec)
                     if (embedded) {
-                        CommandSettingsModel.setEmbeddedTargetSpec(target, role, spec)
+                        CommandSettingsModel.setEmbeddedTargetSpec(target, role, cleared)
                     } else {
-                        CommandSettingsModel.setTargetSpec(target, role, spec)
+                        CommandSettingsModel.setTargetSpec(target, role, cleared)
                     }
                 }
                 val current = readFilterTarget(node) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
@@ -5576,30 +5660,133 @@ class GestureSequenceEditor(
                 )
             }
             GestureSettingScreen.POSITION -> {
-                // 移動先の「他のエンティティ」はPOSITION画面の右下へインライン表示した
-                // 対象分類です。対象設定画面へ遷移せず、ここでも同じ保存・二段階選択を使います。
-                if (settingContext.role == CommandSettingRole.DESTINATION && group == "target") {
-                    handleTargetCategory(value)
-                    return
+                // 移動先は位置設定・対象設定へ帰着させる4項目ハブです。
+                if (settingContext.role == CommandSettingRole.DESTINATION && group == "destination-face") {
+                    val facingRole = CommandSettingRole.DESTINATION_FACING
+                    rememberSettingNode(encoded)
+                    when (value) {
+                        "position" -> {
+                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                            val current = CommandSettingsModel.positionSpec(node, CommandSettingRole.DESTINATION)
+                            if (!wasSelected || current == null || current.kind == PositionKind.TEMPORARY) {
+                                if (!updateSettingNode(player, settingContext) {
+                                        CommandSettingsModel.setPositionSpec(
+                                            it,
+                                            CommandSettingRole.DESTINATION,
+                                            PositionSpec(PositionKind.COORDINATES),
+                                        )
+                                    }) return
+                                showSettingScreen()
+                                return
+                            }
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.POSITION),
+                                encoded,
+                            )
+                            return
+                        }
+                        "entity" -> {
+                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                            val currentTarget = CommandSettingsModel.targetSpec(node, CommandSettingRole.DESTINATION)
+                            if (!wasSelected || currentTarget == null) {
+                                if (!updateSettingNode(
+                                        player,
+                                        settingContext,
+                                        configuredFields = emptySet(),
+                                    ) {
+                                        CommandSettingsModel.setTargetSpec(
+                                            it,
+                                            CommandSettingRole.DESTINATION,
+                                            TargetSpec(TargetKind.NEAREST_PLAYER),
+                                        )
+                                    }) return
+                                showSettingScreen()
+                                return
+                            }
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
+                                encoded,
+                            )
+                            return
+                        }
+                        "angle" -> {
+                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                            val currentFacing = CommandSettingsModel.facingSpec(node, facingRole)
+                            if (!wasSelected || currentFacing?.kind != FacingKind.ROTATION) {
+                                if (!updateSettingNode(
+                                        player,
+                                        settingContext.copy(role = facingRole),
+                                        configuredFields = emptySet(),
+                                    ) {
+                                        CommandSettingsModel.setFacingSpec(
+                                            it,
+                                            FacingSpec(FacingKind.ROTATION),
+                                            facingRole,
+                                        )
+                                    }) return
+                                showSettingScreen()
+                                return
+                            }
+                            showRotationSettingDialog(
+                                player,
+                                currentFacing.yaw ?: player.location.yaw,
+                                currentFacing.pitch ?: player.location.pitch,
+                            ) { syaw, yaw, spitch, pitch ->
+                                if (!updateSettingNode(player, settingContext.copy(role = facingRole)) {
+                                        CommandSettingsModel.setFacingSpec(
+                                            it,
+                                            FacingSpec(
+                                                FacingKind.ROTATION,
+                                                yaw = yaw,
+                                                pitch = pitch,
+                                                semanticsYaw = syaw,
+                                                semanticsPitch = spitch,
+                                            ),
+                                            facingRole,
+                                        )
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else {
+                                    showSettingScreen()
+                                    null
+                                }
+                            }
+                            return
+                        }
+                        "temporary" -> {
+                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                            if (!wasSelected) {
+                                showSettingScreen()
+                                return
+                            }
+                            openDestinationTemporaryDialog(player, settingContext, node)
+                            return
+                        }
+                        else -> return
+                    }
                 }
                 // issue #29: 位置プリセットは1クリックで正規仕様へ設定します。
                 // 付近系・座標系は選択済みの再クリックで詳細を開きます。
-                // 移動先の最寄り・付近は対象指定へ保存します（二重保持の正規化は
-                // 共通setterが担います）。
+                // 移動先の対象由来はハブ項目へ集約したため、ここでは対象指定へ
+                // 保存しません。古い操作が届いた場合は拒否します。
                 // 付近系プリセットは複数になり得るため単一限定では拒否します。
                 // 最寄り等の静的0..1は許可し、表示側・Inventory側と同じ判定にします。
                 if (group == "position-preset") {
                     val preset = runCatching { SettingPresets.PositionPreset.valueOf(value) }.getOrNull() ?: return
-                    val isDestinationEntityPreset = settingContext.role == CommandSettingRole.DESTINATION &&
+                    if (settingContext.role == CommandSettingRole.DESTINATION &&
                         (preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
                             preset == SettingPresets.PositionPreset.NEARBY_PLAYERS)
-                    if (!isDestinationEntityPreset &&
-                        preset == SettingPresets.PositionPreset.NEARBY_PLAYERS &&
+                    ) {
+                        return
+                    }
+                    if (preset == SettingPresets.PositionPreset.NEARBY_PLAYERS &&
                         !CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(settingContext.role)
                     ) {
                         return
                     }
-                    if (!isDestinationEntityPreset && !CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
+                    if (!CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
                             node,
                             settingContext.role,
                             presetPositionKind(preset),
@@ -5610,43 +5797,6 @@ class GestureSequenceEditor(
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                     rememberSettingNode(encoded)
-                    if (isDestinationEntityPreset) {
-                        val targetPreset = if (preset == SettingPresets.PositionPreset.NEARBY_PLAYERS) {
-                            SettingPresets.TargetPreset.NEARBY_PLAYERS
-                        } else {
-                            SettingPresets.TargetPreset.NEAREST_PLAYER
-                        }
-                        val currentTarget = CommandSettingsModel.targetSpec(node, settingContext.role)
-                        val matchedTarget = SettingPresets.matchTargetPreset(currentTarget) == targetPreset
-                        if ((matchedTarget || wasSelected) && targetPreset == SettingPresets.TargetPreset.NEARBY_PLAYERS) {
-                            beginSettingDistanceInput(
-                                player,
-                                currentTarget?.minimumDistance,
-                                currentTarget?.maximumDistance,
-                            ) { minimum, maximum ->
-                                if (!updateSettingNode(player, settingContext) {
-                                        val latest = CommandSettingsModel.targetSpec(it, settingContext.role)
-                                            ?: SettingPresets.targetSpecFor(targetPreset)
-                                        CommandSettingsModel.setTargetSpec(
-                                            it,
-                                            settingContext.role,
-                                            latest.copy(minimumDistance = minimum, maximumDistance = maximum),
-                                        )
-                                    }) {
-                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                                } else null
-                            }
-                            return
-                        }
-                        if (updateSettingNode(player, settingContext) {
-                                CommandSettingsModel.setTargetSpec(
-                                    it,
-                                    settingContext.role,
-                                    SettingPresets.targetSpecFor(targetPreset),
-                                )
-                            }) showSettingScreen()
-                        return
-                    }
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
                     val matched = SettingPresets.matchPositionPreset(current) == preset
                     if ((matched || wasSelected) && preset == SettingPresets.PositionPreset.NEARBY_PLAYERS) {
@@ -5682,8 +5832,8 @@ class GestureSequenceEditor(
                         }) showSettingScreen()
                     return
                 }
-                // issue #29: エンティティ由来位置の導線です。初回は最寄りプレイヤーで
-                // 設定し、再クリックで子画面の対象プリセットへ進みます。
+                // エンティティ由来位置の導線です。初回は最寄りプレイヤーで
+                // 設定し、再クリックで共用の対象子画面へ進みます。
                 // 単一限定でも導線自体は開き、複数になり得る候補だけを子画面で無効化します。
                 if (group == "position-entity") {
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
@@ -5709,7 +5859,7 @@ class GestureSequenceEditor(
                     }
                     pushSettingFrame(
                         player,
-                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.POSITION),
+                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
                         encoded,
                     )
                     return
@@ -5963,8 +6113,8 @@ class GestureSequenceEditor(
                         }) showSettingScreen()
                     return
                 }
-                // issue #29: エンティティ向きの導線です。初回は最寄りプレイヤーで
-                // 設定し、再クリックで子画面の対象プリセットへ進みます。
+                // エンティティ向きの導線です。初回は最寄りプレイヤーで設定し、
+                // 再クリックで共用の対象子画面へ進みます。
                 if (group == "facing-entity") {
                     val facingRole = settingContext.role ?: return
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
@@ -5990,7 +6140,7 @@ class GestureSequenceEditor(
                     }
                     pushSettingFrame(
                         player,
-                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.FACING),
+                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
                         encoded,
                     )
                     return
@@ -6825,7 +6975,15 @@ class GestureSequenceEditor(
                 openWorldVariableTypeSelection(player)
             }
             context.elementId.startsWith("lower-tab:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
+                // 実行位置タブは固定行へ抽出しているため、全フィールド基準の番号へ戻します。
+                val suffix = context.elementId.removePrefix("lower-tab:")
+                val index = suffix.toIntOrNull() ?: run {
+                    if (suffix != "exec") return
+                    val script = plugin.scripts.load(state.scriptId) ?: return
+                    val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+                    CommandSettingsModel.gestureVisibleFields(node)
+                        .indexOfFirst { it.key == "executionPosition" }.takeIf { it >= 0 } ?: return
+                }
                 openSettingsTab(player, index)
             }
             // issue #18: Sliderのバー上クリック・段階操作です。検証の正本は

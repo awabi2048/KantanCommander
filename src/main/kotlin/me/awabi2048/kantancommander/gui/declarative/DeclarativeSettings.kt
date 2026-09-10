@@ -184,6 +184,11 @@ object DeclarativeSettings {
     /**
      * 左タブ列と固定操作（複製・削除）を配置します。
      * 設定項目なしの案内画面でも同じ固定操作を用います。
+     *
+     * 実行位置タブは `executionTabIndex` で指定し、タブ列から抽出して
+     * 下端の操作行の直上へ固定配置します。タブ列の番号は全項目基準の
+     * まま変えず、既存の選択記憶とずらしません。
+     * 削除・複製は下端1行に半幅で並べます（複製不可時は削除だけ全幅）。
      */
     fun tabsSection(
         nodes: MutableList<GestureGuiNode>,
@@ -193,9 +198,13 @@ object DeclarativeSettings {
         duplicateBackground: BlockData?,
         deleteLabel: Component,
         deleteBackground: BlockData,
+        executionTabIndex: Int? = null,
     ) {
+        val executionTab = executionTabIndex?.let { tabs.getOrNull(it) }
         tabs.forEachIndexed { index, tab ->
-            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - index * GestureLowerPanel.SETTINGS_TAB_PITCH
+            if (index == executionTabIndex) return@forEachIndexed
+            val position = if (executionTabIndex != null && index > executionTabIndex) index - 1 else index
+            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - position * GestureLowerPanel.SETTINGS_TAB_PITCH
             val width = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, tab.selected)
             val cx = GestureSettingVisualPolicy.selectedTabCenterX(
                 GestureLowerPanel.SETTINGS_TAB_CENTER_X,
@@ -223,7 +232,55 @@ object DeclarativeSettings {
                 absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, 1.0, 0.0055 * 3.0),
             )
         }
+        executionTab?.let { tab ->
+            val width = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, tab.selected)
+            val cx = GestureSettingVisualPolicy.selectedTabCenterX(
+                GestureLowerPanel.SETTINGS_TAB_CENTER_X,
+                GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                tab.selected,
+            )
+            nodes += GestureGuiBlock(
+                blockData = tab.background,
+                width = GestureGuiSizeSpec.Fixed(width),
+                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+                id = "lower-tab:exec",
+                actionId = "lower-tab:exec",
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                hover = tab.attentionHover?.let(::hoverSpecOf),
+                absolute = placed(frame, cx, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            )
+            nodes += GestureGuiText(
+                text = tab.label,
+                size = 0.0055,
+                lineWidth = 90,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "tab-exec",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y - 0.02, 1.0, 0.0055 * 3.0),
+            )
+        }
+        val halfWidth = GestureLowerPanel.SETTINGS_TAB_WIDTH / 2.0
         if (duplicateLabel != null && duplicateBackground != null) {
+            appendActionCard(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-delete",
+                    label = deleteLabel,
+                    background = deleteBackground,
+                    cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X - halfWidth / 2.0,
+                    cy = GestureLowerPanel.SETTINGS_TAB_ACTION_Y,
+                    w = halfWidth,
+                    h = GestureLowerPanel.SETTINGS_TAB_HEIGHT,
+                    labelSize = 0.0049,
+                    labelWidth = 45,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = null,
+                    hover = null,
+                    visualTag = "delete",
+                ),
+            )
             appendActionCard(
                 nodes,
                 frame,
@@ -231,18 +288,19 @@ object DeclarativeSettings {
                     elementId = "lower-duplicate",
                     label = duplicateLabel,
                     background = duplicateBackground,
-                    cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-                    cy = GestureLowerPanel.SETTINGS_TAB_DUPLICATE_Y,
-                    w = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                    cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X + halfWidth / 2.0,
+                    cy = GestureLowerPanel.SETTINGS_TAB_ACTION_Y,
+                    w = halfWidth,
                     h = GestureLowerPanel.SETTINGS_TAB_HEIGHT,
                     labelSize = 0.0049,
-                    labelWidth = 90,
+                    labelWidth = 45,
                     gestures = GestureGuiClickPolicy.CLICK,
                     guard = null,
                     hover = null,
                     visualTag = "duplicate",
                 ),
             )
+            return
         }
         appendActionCard(
             nodes,

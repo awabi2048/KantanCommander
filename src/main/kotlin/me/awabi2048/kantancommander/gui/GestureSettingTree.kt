@@ -26,6 +26,14 @@ data class GestureSettingTreeNode(
     val valueState: GestureSettingValueState = GestureSettingValueState.INITIAL,
     /** 実行前検証で要確認（未設定・不正）と判定された設定に属するかを表します。 */
     val attention: Boolean = false,
+    /**
+     * 下揃えで配置する詳細項目かを表します。
+     *
+     * プリセット等の上位項目は上揃えのまま、詳細設定・一時変数参照等の
+     * 下位項目だけを下端基準で配置します。上からの位置指定ではなく
+     * 下端からの行番号で定まるため、項目数の増減で位置がずれません。
+     */
+    val bottomAligned: Boolean = false,
 ) {
     val hasChildren: Boolean
         get() = children.isNotEmpty()

@@ -291,6 +291,15 @@ data class TargetSpec(
     val searchOrigin: SearchOriginSpec? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
+    /**
+     * プリセットから詳細設定へ変換した来歴です。
+     *
+     * 詳細設定入室時にプリセット相当の明示値（上限数1・距離下限0等）を
+     * 指定した場合だけ真にします。利用者が手入力で等価値にしても真に
+     * しないことで、プリセット選択表示への誤判定を防ぎます。
+     * 検証・実行・出力はこの値を無視し、Gson永続の既定値は偽です。
+     */
+    val convertedFromPreset: Boolean = false,
 ) {
     /**
      * issue #29: 静的に0..1件と確定する指定かを返します。

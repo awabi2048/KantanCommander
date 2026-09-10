@@ -88,6 +88,46 @@ class SettingPresetsTest {
     }
 
     @Test
+    fun `detail conversion materializes explicit equivalents with provenance`() {
+        val nearest = SettingPresets.expandPresetToDetail(TargetSpec(TargetKind.NEAREST_PLAYER))
+        assertTrue(nearest.limit == 1)
+        assertTrue(nearest.minimumDistance == 0.0)
+        assertTrue(nearest.convertedFromPreset)
+        // 無変更の間はプリセット選択表示が残ります。
+        assertEquals(SettingPresets.TargetPreset.NEAREST_PLAYER, SettingPresets.matchTargetPreset(nearest))
+
+        val nearby = SettingPresets.expandPresetToDetail(
+            TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0),
+        )
+        assertNull(nearby.limit)
+        assertTrue(nearby.minimumDistance == 0.0)
+        assertTrue(nearby.convertedFromPreset)
+        assertEquals(SettingPresets.TargetPreset.NEARBY_PLAYERS, SettingPresets.matchTargetPreset(nearby))
+
+        // 非プリセットは変換しません。
+        val detailed = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 12.0, tag = "vip")
+        assertEquals(detailed, SettingPresets.expandPresetToDetail(detailed))
+
+        // 冪等であり、変換済みへの再適用で値は変化しません。
+        assertEquals(nearest, SettingPresets.expandPresetToDetail(nearest))
+    }
+
+    @Test
+    fun `hand entered equivalents do not match presets`() {
+        // 来歴なしの明示既定値はプリセット扱いにしません。
+        assertNull(SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER, limit = 1)))
+        assertNull(SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER, minimumDistance = 0.0)))
+        assertNull(
+            SettingPresets.matchTargetPreset(
+                TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0, minimumDistance = 0.0),
+            ),
+        )
+        // 詳細保存で来歴は消え、等価値でもプリセット扱いに戻りません。
+        val converted = SettingPresets.expandPresetToDetail(TargetSpec(TargetKind.NEAREST_PLAYER))
+        assertNull(SettingPresets.matchTargetPreset(SettingPresets.withoutPresetConversion(converted)))
+    }
+
+    @Test
     fun `position presets embed entity targets for set resolution`() {
         val nearest = SettingPresets.positionSpecFor(SettingPresets.PositionPreset.NEAREST_PLAYER)
         assertEquals(PositionKind.TARGET, nearest.kind)
