@@ -3735,6 +3735,58 @@ class GestureSequenceEditor(
     }
 
     /**
+     * issue #18 のSlider段階操作です。
+     *
+     * [-][+]の離散操作で1刻みずつ確定します。上下限・step丸め・浮動小数誤差は
+     * [SliderValuePolicy]へ集約し、保存前検証は [CommandDialogSpecs] の共通仕様へ
+     * 通します。検証に通らない値は保存せず、表示だけを維持します。
+     */
+    private fun handleSliderAction(context: GestureGuiActionContext, player: Player) {
+        val increment = when {
+            context.elementId.startsWith("lower-slider-inc:") -> 1
+            context.elementId.startsWith("lower-slider-dec:") -> -1
+            else -> return
+        }
+        val fieldKey = context.elementId.substringAfter(":")
+        if (fieldKey.isBlank()) return
+        val settingContext = state.settingContext ?: return
+        val script = plugin.scripts.load(settingContext.scriptId) ?: return
+        observedRevision = script.revision
+        val node = script.graph.nodes[settingContext.nodeId] ?: return
+        val spec = SettingSpec.sliderSpecFor(node.type, fieldKey) ?: return
+        // テンプレート参照値はSliderで編集しません。Dialog側へ委譲します。
+        if (SliderValuePolicy.isTemplateReference(node.params[fieldKey])) return
+        val next = SliderValuePolicy.stepBy(spec, node.params[fieldKey], increment)
+        // 共通検証を通し、制約差異を生ませません。
+        val dialogSpec = CommandDialogSpecs.field(node, fieldKey)
+        if (dialogSpec != null && dialogSpec.validateInput(next) != null) return
+        updateSettingNode(player, settingContext) {
+            CommandSettingsModel.setParameter(it, fieldKey, next)
+        }
+    }
+
+    /**
+     * issue #18 のCheckbox直接切替えです。
+     *
+     * 1クリックで値を確定し、保存・表示更新まで反映します。nullable三値は
+     * ここへ載せず、別表現に委譲します。
+     */
+    private fun handleToggleAction(context: GestureGuiActionContext, player: Player) {
+        val fieldKey = context.elementId.removePrefix("lower-toggle:")
+        if (fieldKey.isBlank()) return
+        val settingContext = state.settingContext ?: return
+        val script = plugin.scripts.load(settingContext.scriptId) ?: return
+        observedRevision = script.revision
+        val node = script.graph.nodes[settingContext.nodeId] ?: return
+        val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
+        if (SettingSpec.presentationFor(node, fieldKey, descriptor) != GesturePresentation.CHECKBOX) return
+        val next = (!node.boolean(fieldKey)).toString()
+        updateSettingNode(player, settingContext) {
+            CommandSettingsModel.setParameter(it, fieldKey, next)
+        }
+    }
+
+    /**
      * 共通入力仕様（CommandDialogSpecs）に沿った単一テキスト入力です。
      * プロンプト・maxLength・検証をインベントリGUIと同一に保ちます。
      */
@@ -6153,6 +6205,16 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-tab:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
                 openSettingsTab(player, index)
+            }
+            // issue #18: Slider／Checkboxの直接操作です。検証の正本は
+            // CommandDialogSpecs側に残し、ここでは刻み・反転と保存だけを扱います。
+            (context.elementId.startsWith("lower-slider-dec:") || context.elementId.startsWith("lower-slider-inc:")) &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                handleSliderAction(context, player)
+            }
+            context.elementId.startsWith("lower-toggle:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                handleToggleAction(context, player)
             }
             context.elementId.startsWith("lower-setting-") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
