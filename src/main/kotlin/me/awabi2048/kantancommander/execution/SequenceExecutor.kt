@@ -462,7 +462,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 schedule(session, waitTicks) { next(node.next, NodeExecutionOutcome.SUCCESS) }
             }
             CommandType.CONDITION -> {
-                val effectiveContext = effectiveContext(session)
+                val effectiveContext = effectiveContextFor(node, session)
                 // 正常 false と解決失敗を分離します。UNRESOLVED/INVALID は
                 // FALSE 分岐継続にせず、共通コード付きで失敗停止します。
                 when (val evaluation = evaluateConditionDetailed(node, session, effectiveContext)) {
@@ -844,7 +844,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun executeImmediateBoolean(node: CommandNode, session: ExecutionSession): Boolean = run {
-        val effectiveContext = effectiveContext(session)
+        val effectiveContext = effectiveContextFor(node, session)
         val targets = resolveTargets(effectiveContext, node.targetSpec, session)
         val effectiveOrigin = if (effectiveContext?.position != null) {
             resolvePosition(effectiveContext.position, session, effectiveContext) ?: return false
@@ -1438,6 +1438,20 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 検証してから更新します。fillを無制限に受け付けると、1ノードだけでサーバー
      * メインスレッドを長時間占有できるため、実行時にも上限を再確認します。
      */
+    /**
+     * issue #26: コマンド固有位置の既定値として実行位置を解決します。
+     *
+     * コマンド固有位置があればそちらを優先し、未設定時のみ実行位置
+     * （context.position＝ノードのexecutionPositionSpec合成済み）を既定値とします。
+     * どちらもなければnullです。呼び出し側で従来の必須・任意扱いに従います。
+     */
+    private fun commandPositionOrExecution(
+        spec: PositionSpec?,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): Location? = spec?.let { resolvePosition(it, session, context) }
+        ?: context?.position?.let { resolvePosition(it, session, context) }
+
     private fun executeBlockOperation(
         node: CommandNode,
         session: ExecutionSession,
@@ -1453,7 +1467,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } ?: return false
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
-                val location = node.blockPositionSpec?.let { resolvePosition(it, session, context) } ?: return false
+                // issue #26: 未設定時はコマンド実行位置を既定値とします。
+                val location = commandPositionOrExecution(node.blockPositionSpec, session, context) ?: return false
                 val world = location.world ?: return false
                 if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
                     // 拡張コマンドブロックの位置は、setblockでも常に変更を拒否します。
@@ -1463,8 +1478,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 true
             }
             BlockOperationMode.FILL -> {
-                val from = node.blockFromSpec?.let { resolvePosition(it, session, context) } ?: return false
-                val to = node.blockToSpec?.let { resolvePosition(it, session, context) } ?: return false
+                // issue #26: 未設定時はコマンド実行位置を既定値とします。
+                val from = commandPositionOrExecution(node.blockFromSpec, session, context) ?: return false
+                val to = commandPositionOrExecution(node.blockToSpec, session, context) ?: return false
                 val world = from.world ?: return false
                 if (world != to.world) return false
                 val minX = minOf(from.blockX, to.blockX)
@@ -1916,6 +1932,20 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     /** GUI設定ではなく、実行エンジンが現在保持している内部状態だけを返します。 */
     private fun effectiveContext(session: ExecutionSession): ExecutionContextSpec? = session.context
+
+    /**
+     * issue #26: ノード単位の実行位置をambient実行状態へ合成します。
+     *
+     * 優先順位は searchOrigin > コマンド実行位置 > 制御ブロック位置です。
+     * searchOriginは対象解決側で別途最優先されるため、ここでは実行位置が
+     * ambientの位置設定より優先され、未設定時はambientを維持します。
+     * session自体は変更せず、後続ノードへ継承しません。
+     */
+    private fun effectiveContextFor(node: CommandNode, session: ExecutionSession): ExecutionContextSpec? {
+        val ambient = effectiveContext(session)
+        val spec = node.executionPositionSpec ?: return ambient
+        return ambient?.copy(position = spec) ?: ExecutionContextSpec(position = spec)
+    }
 
     private fun resolvePosition(
         spec: PositionSpec,

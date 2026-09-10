@@ -161,6 +161,14 @@ data class CommandNode(
     var fireworkPositionSpec: PositionSpec? = null,
     /** エンティティ召喚で指定された場合の召喚位置です。未設定時は制御ブロック位置を使用します。 */
     var summonPositionSpec: PositionSpec? = null,
+    /**
+     * issue #26 のコマンド単位の実行位置です。
+     *
+     * 廃止済みコンテキスト設定は復活させず、この位置だけを対応コマンドの設定として
+     * 保持します。後続コマンドへ継承せず、未設定時は制御ブロック位置を使用します。
+     * 対象探索の基準位置・コマンド固有位置の既定値として参照します。
+     */
+    var executionPositionSpec: PositionSpec? = null,
     /** TEMP_SET ENTITYの参照元です。通常コマンドと同じTargetSpecで対象を解決します。 */
     var temporaryEntityTargetSpec: TargetSpec? = null,
     /** TEMP_SET LOCATIONの位置側です。通常コマンドと同じPositionSpecで解決します。 */
@@ -208,6 +216,7 @@ data class CommandNode(
         particleEndPositionSpec = particleEndPositionSpec?.copy(),
         fireworkPositionSpec = fireworkPositionSpec?.copy(),
         summonPositionSpec = summonPositionSpec?.copy(),
+        executionPositionSpec = executionPositionSpec?.copy(),
         temporaryEntityTargetSpec = temporaryEntityTargetSpec?.copy(),
         temporaryLocationPositionSpec = temporaryLocationPositionSpec?.copy(),
         temporaryLocationFacingSpec = temporaryLocationFacingSpec?.copy(),

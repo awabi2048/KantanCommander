@@ -274,6 +274,12 @@ class VanillaDatapackExporter(
             validatePosition(script, node, node.particleEndPositionSpec, errors)
             validatePosition(script, node, node.fireworkPositionSpec, errors)
             validatePosition(script, node, node.summonPositionSpec, errors)
+            // issue #26: 実行位置も同じ制約で検証します。未設定時は従来どおり
+            // 制御ブロック位置で動作するため、出力可否に影響しません。
+            validatePosition(script, node, node.executionPositionSpec, errors)
+            if (node.executionPositionSpec?.kind == PositionKind.TARGET) {
+                errors += "${script.id}/${node.id}: 実行位置の対象位置指定は完全バニラ出力に未対応です"
+            }
             if (node.soundPositionSpec?.kind == PositionKind.TARGET) {
                 errors += "${script.id}/${node.id}: 効果音の対象位置指定は完全バニラ出力に未対応です"
             }
@@ -564,14 +570,20 @@ class VanillaDatapackExporter(
                     lines += storeFunctionResult(node, "function kantan:$helper")
                 }
                 else -> lower(node, graph)?.let { command ->
+                    // issue #26: 実行位置が設定され、バニラで表現できる場合だけ
+                    // positionedで包みます。相対指定は上記検証で既に除外済みの
+                    // ため、絶対指定のコマンド固有位置へ影響しません。
+                    val positionedCommand = executionPositionContext(node)?.let { context ->
+                        wrapContext(context, command, node)
+                    } ?: command
                     val temporaryReferences = temporaryEntityReferences(node, null)
                     temporaryReferences.forEach { reference ->
                         lines += temporaryEntityPreparation(reference)
                     }
                     val temporaryArgument = temporaryEntityArgumentReference(node)
                     val targetedCommand = temporaryArgument?.let { reference ->
-                        temporaryEntitySelection(reference, command)
-                    } ?: command
+                        temporaryEntitySelection(reference, positionedCommand)
+                    } ?: positionedCommand
                     if (node.type == CommandType.DISPLAY_TEXT && DisplayTextTimingPolicy.supports(node)) {
                         val timing = DisplayTextTiming.from(node)
                         val times = "title ${effectiveTarget(node)} times " +
@@ -1957,8 +1969,23 @@ class VanillaDatapackExporter(
     }
 
     private fun conditionContext(node: CommandNode): ExecutionContextSpec? {
-        val position = node.conditionPositionSpec ?: return null
+        // issue #26: 条件判定位置が未設定のときだけ実行位置を既定値とします。
+        val position = node.conditionPositionSpec ?: node.executionPositionSpec ?: return null
         return ExecutionContextSpec(position = position)
+    }
+
+    /**
+     * issue #26: バニラで表現できる実行位置だけを文脈化します。
+     *
+     * MYWORLD_SPAWN・相対・対象位置は上記検証で除外済みのためここでは扱わず、
+     * 未設定・DISK（制御ブロック位置と同義）は包みません。
+     */
+    private fun executionPositionContext(node: CommandNode): ExecutionContextSpec? {
+        val position = node.executionPositionSpec ?: return null
+        return when (position.kind) {
+            PositionKind.COORDINATES, PositionKind.CAPTURED, PositionKind.TEMPORARY -> ExecutionContextSpec(position = position)
+            else -> null
+        }
     }
 
     private fun wrapContext(
@@ -2060,6 +2087,7 @@ class VanillaDatapackExporter(
                 .append(":particlePosition=").append(node.particlePositionSpec)
                 .append(":particleEndPosition=").append(node.particleEndPositionSpec)
                 .append(":fireworkPosition=").append(node.fireworkPositionSpec)
+                .append(":executionPosition=").append(node.executionPositionSpec)
             node.snapshot?.let {
                 append(":snapshot={").append(graphFingerprint(it)).append('}')
             }

@@ -347,6 +347,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(genericPositionRoute(context.route, "firework_position"))
                             )
                         }
+                        // issue #26: 実行位置は汎用位置画面へ進みます。
+                        // 制御系には表示しないため、ここへ届くのは対応コマンドだけです。
+                        if (field == "executionPosition") {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(genericPositionRoute(context.route, "execution_position"))
+                            )
+                        }
                         if (field == "shakeType" && node.type == CommandType.CAMERA_SHAKE) {
                             if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(
