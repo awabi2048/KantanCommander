@@ -8,6 +8,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -113,8 +114,21 @@ class SettingPresetsTest {
             PositionMultiplicity.MULTI,
             MultiPositionPolicy.multiplicityFor(CommandSettingRole.CONDITION_POSITION),
         )
-        // 単一限定の対象由来位置だけが制約違反です。
+        // 単一限定では複数になり得る対象由来だけが制約違反であり、
+        // 静的0..1の指定は取得元にかかわらず許可します。
         assertTrue(
+            MultiPositionPolicy.isUnsupportedMulti(
+                PositionSpec(PositionKind.TARGET, target = TargetSpec(TargetKind.NEARBY_PLAYERS)),
+                CommandSettingRole.BLOCK_FROM,
+            ),
+        )
+        assertTrue(
+            MultiPositionPolicy.isUnsupportedMulti(
+                PositionSpec(PositionKind.TARGET),
+                CommandSettingRole.BLOCK_FROM,
+            ),
+        )
+        assertFalse(
             MultiPositionPolicy.isUnsupportedMulti(
                 PositionSpec(PositionKind.TARGET, target = TargetSpec(TargetKind.NEAREST_PLAYER)),
                 CommandSettingRole.BLOCK_FROM,
@@ -126,5 +140,19 @@ class SettingPresetsTest {
                 CommandSettingRole.SUMMON_POSITION,
             ),
         )
+    }
+
+    @Test
+    fun `static single targets allow zero or one entity`() {
+        assertTrue(TargetSpec(TargetKind.NEAREST_PLAYER).isStaticallySingle())
+        assertTrue(TargetSpec(TargetKind.NEAREST_ENTITY).isStaticallySingle())
+        assertTrue(TargetSpec(TargetKind.FIXED_ENTITY).isStaticallySingle())
+        assertTrue(TargetSpec(TargetKind.TEMPORARY, tempName = "x").isStaticallySingle())
+        assertFalse(TargetSpec(TargetKind.NEARBY_PLAYERS).isStaticallySingle())
+        assertFalse(TargetSpec(TargetKind.NEARBY_ENTITIES).isStaticallySingle())
+        assertFalse(TargetSpec(TargetKind.ALL_PLAYERS).isStaticallySingle())
+        // 上限引き上げで複数になり得る指定は含みません。
+        assertFalse(TargetSpec(TargetKind.NEAREST_PLAYER, limit = 3).isStaticallySingle())
+        assertTrue(TargetSpec(TargetKind.NEAREST_PLAYER, limit = 1).isStaticallySingle())
     }
 }

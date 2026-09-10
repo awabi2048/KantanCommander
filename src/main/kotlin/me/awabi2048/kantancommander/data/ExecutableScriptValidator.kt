@@ -1064,8 +1064,9 @@ object ExecutableScriptValidator {
      * issue #29: 単一限定の役割に対象由来位置が選ばれていないか検証します。
      *
      * 複数位置の対応関係が別途必要になる位置（fill始点終点・図形の対応位置・
-     * LOCATION一時変数そのもの）は、GUIでも無効化します。テレポート先の
-     * destinationSpecは旧来の対象移動経路（destinationTargetSpec併用）のため除外します。
+     * LOCATION一時変数そのもの）は、GUIでも無効化します。静的0..1の指定は
+     * 先頭1件へ解決するため許可します。テレポート先のdestinationSpecは
+     * 旧来の対象移動経路（destinationTargetSpec併用）のため除外します。
      */
     private fun validateSinglePositionTargets(
         node: CommandNode,
@@ -1077,8 +1078,19 @@ object ExecutableScriptValidator {
             node.blockToSpec,
             node.particleEndPositionSpec,
             node.temporaryLocationPositionSpec,
-        ).filter { it.kind == PositionKind.TARGET }
+        ).filter { it.kind == PositionKind.TARGET && (it.target == null || it.target.isMultiCapable()) }
             .forEach { errors += nodeError(node, path, setOf("position"), "この位置に対象由来の複数位置は指定できません") }
+        // issue #26・#29: fillの始点終点は単一へ定まる実行起点だけを既定値とします。
+        // 複数になり得る実行位置との組合せは実行時に定まらないため検証で拒否します。
+        val executionTarget = node.executionPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target
+        if (node.type == CommandType.BLOCK_OPERATION &&
+            BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+            BlockOperationMode.FILL &&
+            node.blockFromSpec == null && node.blockToSpec == null &&
+            executionTarget != null && executionTarget.isMultiCapable()
+        ) {
+            errors += nodeError(node, path, setOf("executionPosition"), "範囲指定の既定値に複数位置は指定できません")
+        }
     }
 
     /**

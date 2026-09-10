@@ -3719,9 +3719,10 @@ class GestureLowerPanel(
             SettingPresets.PositionPreset.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
             SettingPresets.PositionPreset.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES,
         ).map { (preset, label) ->
-            val isMultiPreset = preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
-                preset == SettingPresets.PositionPreset.NEARBY_PLAYERS
-            val multiEnabled = !isMultiPreset ||
+            // issue #29: 無効化は取得元ではなく件数で判定し、静的0..1の
+            // プリセットは単一限定でも許可します。
+            val multiCapable = preset == SettingPresets.PositionPreset.NEARBY_PLAYERS
+            val multiEnabled = !multiCapable ||
                 CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(context.role)
             SettingChoice(
                 id = "position-preset:${preset.name}",
@@ -3743,15 +3744,15 @@ class GestureLowerPanel(
                 } else emptyList(),
             )
         }
-        val entityEnabled = CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(context.role)
         val entityEntry = SettingChoice(
             id = "position-entity",
             label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION),
             selected = current?.kind == PositionKind.TARGET && matchedPreset == null,
-            enabled = entityEnabled,
-            disabledHoverText = if (entityEnabled) null
-            else CommandSettingAvailabilityPolicy.MULTI_POSITION_DISABLED_HOVER,
-            children = embeddedTargetPresetChoices(current?.target, player, "position-entity-preset"),
+            // issue #29: 導線自体は単一限定でも開き、複数になり得る内包候補だけを
+            // 子画面で無効化します。静的0..1の選択は許可します。
+            enabled = true,
+            disabledHoverText = null,
+            children = embeddedTargetPresetChoices(current?.target, player, "position-entity-preset", context.role),
         )
         // 子画面では導線自体を隠し、内包プリセットの選択に集中させます。
         val bottomEntries = (if (inChild) emptyList() else listOf(entityEntry)) + listOf(
@@ -3798,18 +3799,27 @@ class GestureLowerPanel(
         current: TargetSpec?,
         player: Player,
         prefix: String,
+        role: CommandSettingRole?,
     ): List<SettingChoice> {
         val matched = SettingPresets.matchTargetPreset(current)
+        // issue #29: 単一限定では複数になり得る内包候補だけを無効化し、
+        // 静的0..1の選択は許可します。
+        val singleRole = MultiPositionPolicy.multiplicityFor(role) == PositionMultiplicity.SINGLE
         return listOf(
             SettingPresets.TargetPreset.NEARBY_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS,
             SettingPresets.TargetPreset.MYWORLD_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL_PLAYERS,
             SettingPresets.TargetPreset.NEAREST_PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
             SettingPresets.TargetPreset.NEARBY_ENTITIES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES,
         ).map { (preset, label) ->
+            val multiCapable = preset != SettingPresets.TargetPreset.NEAREST_PLAYER
+            val enabled = !singleRole || !multiCapable
             SettingChoice(
                 id = "$prefix:${preset.name}",
                 label = KcI18n.text(player, label),
                 selected = matched == preset,
+                enabled = enabled,
+                disabledHoverText = if (enabled) null
+                else CommandSettingAvailabilityPolicy.MULTI_POSITION_DISABLED_HOVER,
             )
         }
     }
@@ -3854,7 +3864,7 @@ class GestureLowerPanel(
                 id = "facing-entity",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
                 selected = current?.kind == FacingKind.TARGET && matchedPreset == null,
-                children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset"),
+                children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset", context.role),
             ),
         )) + listOf(
             SettingChoice(

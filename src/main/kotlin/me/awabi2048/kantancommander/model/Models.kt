@@ -291,7 +291,32 @@ data class TargetSpec(
     val searchOrigin: SearchOriginSpec? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
-)
+) {
+    /**
+     * issue #29: 静的に0..1件と確定する指定かを返します。
+     *
+     * 単一限定の位置でも取得元ではなく件数で判定し、最寄り等の0..1指定を
+     * 許可します。上限引き上げで複数になり得る指定は含みません。
+     */
+    fun isStaticallySingle(): Boolean {
+        if ((limit ?: 1) > 1) return false
+        return when (kind) {
+            TargetKind.NEAREST_PLAYER,
+            TargetKind.NEAREST_ENTITY,
+            TargetKind.RANDOM_PLAYER,
+            TargetKind.FIXED_ENTITY,
+            TargetKind.TEMPORARY,
+            -> true
+            TargetKind.NEARBY_PLAYERS,
+            TargetKind.NEARBY_ENTITIES,
+            TargetKind.ALL_PLAYERS,
+            -> false
+        }
+    }
+
+    /** issue #29: 複数件になり得る指定かを返します。 */
+    fun isMultiCapable(): Boolean = !isStaticallySingle()
+}
 
 /**
  * DISKは保存形式上の既存値ですが、実際に参照するのはプログラムディスクではなく

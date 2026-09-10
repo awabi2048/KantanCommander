@@ -141,6 +141,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val embedRole = embeddedPositionRole(context.route)
                         if (embedRole != null) {
                             // 位置に内包する対象を同じ選択経路で設定します。
+                            // 単一限定では複数になり得る候補を拒否します。
+                            if (MultiPositionPolicy.multiplicityFor(embedRole) == PositionMultiplicity.SINGLE &&
+                                preset != SettingPresets.TargetPreset.NEAREST_PLAYER
+                            ) {
+                                return@MenuActionHandler MenuActionResult.Ignored
+                            }
                             if (!updateNode(context.player, context.route) { node ->
                                     val base = CommandSettingsModel.positionSpec(node, embedRole)
                                         ?.takeIf { base -> base.kind == PositionKind.TARGET }
@@ -544,8 +550,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val preset = context.payload["preset"]
                             ?.let { runCatching { SettingPresets.PositionPreset.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if ((preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
-                                preset == SettingPresets.PositionPreset.NEARBY_PLAYERS) &&
+                        // issue #29: 付近系プリセットは複数になり得るため単一限定では拒否します。
+                        // 最寄り等の静的0..1は許可します。
+                        if (preset == SettingPresets.PositionPreset.NEARBY_PLAYERS &&
                             !CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(role)
                         ) {
                             return@MenuActionHandler MenuActionResult.Ignored
@@ -899,6 +906,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         // 内包経路では位置に内包する対象を表示・編集します。
         val current = effectiveTargetSpec(route)
         val matched = SettingPresets.matchTargetPreset(current)
+        // issue #29: 内包経路の単一限定では、複数になり得る候補だけを無効化し、
+        // 静的0..1の選択は許可します。
+        val embedSingle = embeddedPositionRole(route)?.let {
+            MultiPositionPolicy.multiplicityFor(it) == PositionMultiplicity.SINGLE
+        } == true
         val options = listOf(
             Triple(SettingPresets.TargetPreset.NEARBY_PLAYERS, Material.COMPASS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS),
             Triple(SettingPresets.TargetPreset.MYWORLD_PLAYERS, Material.GLOBE_BANNER_PATTERN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL_PLAYERS),
@@ -909,6 +921,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             options.size + if (current?.kind == TargetKind.NEARBY_PLAYERS || current?.kind == TargetKind.NEARBY_ENTITIES) 1 else 0,
         )
         val elements = options.mapIndexed { index, option ->
+            val multiCapable = option.first != SettingPresets.TargetPreset.NEAREST_PLAYER
+            val enabled = !embedSingle || !multiCapable
             choiceElement(
                 player,
                 layout.itemSlots[index],
@@ -920,6 +934,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 dataValue = if (matched == option.first) {
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
                 } else null,
+                enabled = enabled,
+                disabledDescription = if (enabled) null
+                else listOf(CommandSettingAvailabilityPolicy.MULTI_POSITION_DISABLED_HOVER),
             )
         }.toMutableList()
         // 「付近」の距離だけを数値入力で調整します。
@@ -1843,7 +1860,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
         val rows = buildList {
             add(Row(Material.COMMAND_BLOCK, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION), "disk", selected = matched == SettingPresets.PositionPreset.CONTROL_BLOCK))
-            add(Row(Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER), "preset", mapOf("preset" to SettingPresets.PositionPreset.NEAREST_PLAYER.name), selected = matched == SettingPresets.PositionPreset.NEAREST_PLAYER, enabled = multiEnabled, disabledDescription = multiDisabled(multiEnabled)))
+            // issue #29: 無効化は取得元ではなく件数で判定し、静的0..1は単一限定でも許可します。
+            add(Row(Material.PLAYER_HEAD, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER), "preset", mapOf("preset" to SettingPresets.PositionPreset.NEAREST_PLAYER.name), selected = matched == SettingPresets.PositionPreset.NEAREST_PLAYER))
             add(Row(Material.COMPASS, KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS), "preset", mapOf("preset" to SettingPresets.PositionPreset.NEARBY_PLAYERS.name), selected = matched == SettingPresets.PositionPreset.NEARBY_PLAYERS, enabled = multiEnabled, disabledDescription = multiDisabled(multiEnabled)))
             add(Row(Material.BEACON, KcI18n.text(player, MyworldGuiSettingsKeys.GUI_SETTINGS_SPAWN_TYPE_MEMBER), "spawn", mapOf("spawn" to MyworldSpawnKind.MEMBER.name), selected = current?.kind == PositionKind.MYWORLD_SPAWN && SettingPresets.myworldSpawnOrMember(current.myworldSpawn) == MyworldSpawnKind.MEMBER))
             add(Row(Material.BEACON, KcI18n.text(player, MyworldGuiSettingsKeys.GUI_SETTINGS_SPAWN_TYPE_GUEST), "spawn", mapOf("spawn" to MyworldSpawnKind.GUEST.name), selected = current?.kind == PositionKind.MYWORLD_SPAWN && SettingPresets.myworldSpawnOrMember(current.myworldSpawn) == MyworldSpawnKind.GUEST))

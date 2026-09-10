@@ -202,9 +202,12 @@ object MultiPositionPolicy {
      * 単一限定の役割で対象由来位置が選ばれているかを返します。
      *
      * 単一限定ではGUIで無効化し、検証・出力で明示エラーとします。
+     * 取得元ではなく件数で判定し、静的0..1の指定は許可します。
      */
     fun isUnsupportedMulti(spec: PositionSpec?, role: CommandSettingRole?): Boolean {
         if (spec == null || multiplicityFor(role) != PositionMultiplicity.SINGLE) return false
-        return spec.kind == PositionKind.TARGET
+        if (spec.kind != PositionKind.TARGET) return false
+        val target = spec.target ?: return true
+        return target.isMultiCapable()
     }
 }

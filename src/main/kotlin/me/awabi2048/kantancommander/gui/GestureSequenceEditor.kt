@@ -5627,8 +5627,8 @@ class GestureSequenceEditor(
                 }
                 // issue #29: エンティティ由来位置の導線です。初回は最寄りプレイヤーで
                 // 設定し、再クリックで子画面の対象プリセットへ進みます。
+                // 単一限定でも導線自体は開き、複数になり得る候補だけを子画面で無効化します。
                 if (group == "position-entity") {
-                    if (!CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(settingContext.role)) return
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     rememberSettingNode(encoded)
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
@@ -5658,9 +5658,14 @@ class GestureSequenceEditor(
                     return
                 }
                 // issue #29: 内包対象プリセットは位置仕様の対象部だけを書き換えます。
+                // 単一限定では複数になり得る候補を拒否し、静的0..1だけを許可します。
                 if (group == "position-entity-preset") {
-                    if (!CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(settingContext.role)) return
                     val preset = runCatching { SettingPresets.TargetPreset.valueOf(value) }.getOrNull() ?: return
+                    if (MultiPositionPolicy.multiplicityFor(settingContext.role) == PositionMultiplicity.SINGLE &&
+                        preset != SettingPresets.TargetPreset.NEAREST_PLAYER
+                    ) {
+                        return
+                    }
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
                     val matched = SettingPresets.matchTargetPreset(current?.target) == preset
                     rememberSettingNode(encoded)

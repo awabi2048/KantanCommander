@@ -586,6 +586,27 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `single only positions allow statically single embedded targets`() {
+        val script = DiskScript(name = "single-static-target-position", owner = UUID.randomUUID())
+        val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.name
+            params["block"] = "minecraft:stone"
+            blockFromSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+            blockToSpec = PositionSpec(PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0)
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none {
+                it.nodeId == block.id && it.message.contains("複数位置は指定できません")
+            },
+            "最寄り等の0..1指定は単一限定でも許可する",
+        )
+    }
+
+    @Test
     fun `embedded targets in multi positions are validated`() {
         val script = DiskScript(name = "embedded-target", owner = UUID.randomUUID())
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
