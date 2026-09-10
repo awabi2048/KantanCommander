@@ -218,6 +218,36 @@ object SettingPresets {
 }
 
 /**
+ * プリセット選択表示の規則です。
+ *
+ * 形状一致だけでは詳細設定入室後もプリセットが選択表示のまま残るため、
+ * 詳細子画面への入室記録を組み合わせます。保存値は変更しません。
+ */
+object PresetSelectionDisplay {
+    /**
+     * 詳細訪問記録の識別子を返します。設定タブと役割ごとに独立させます。
+     */
+    fun detailVisitKey(fieldKey: String, role: CommandSettingRole?): String =
+        "$fieldKey:${role?.name ?: "NONE"}"
+
+    /**
+     * プリセットカードを選択表示するかを返します。
+     *
+     * 形状一致していても詳細入室後は選択表示にしません。
+     */
+    fun isPresetSelected(matched: Boolean, configured: Boolean, detailVisited: Boolean): Boolean =
+        matched && configured && !detailVisited
+
+    /**
+     * 詳細・汎用カードを選択表示するかを返します。
+     *
+     * 詳細入室後は形状一致の有無にかかわらず詳細側を表示します。
+     */
+    fun isDetailSelected(configured: Boolean, unmatched: Boolean, detailVisited: Boolean): Boolean =
+        configured && (unmatched || detailVisited)
+}
+
+/**
  * issue #29 の位置の複数対応可否です。
  *
  * 選択可否はGUIごとに個別実装せず、この共通ポリシーで判定します。

@@ -22,6 +22,41 @@ import org.junit.jupiter.api.Test
  */
 class SettingPresetsTest {
     @Test
+    fun `detail visit moves preset selection to detail side`() {
+        // 通常時は形状一致でプリセット側を表示します。
+        assertTrue(PresetSelectionDisplay.isPresetSelected(matched = true, configured = true, detailVisited = false))
+        assertFalse(
+            PresetSelectionDisplay.isDetailSelected(configured = true, unmatched = false, detailVisited = false),
+        )
+        // 詳細入室後は形状一致のままプリセット側を外し、詳細側を表示します。
+        assertFalse(PresetSelectionDisplay.isPresetSelected(matched = true, configured = true, detailVisited = true))
+        assertTrue(
+            PresetSelectionDisplay.isDetailSelected(configured = true, unmatched = false, detailVisited = true),
+        )
+        // 未設定時はどちらも表示しません。
+        assertFalse(PresetSelectionDisplay.isPresetSelected(matched = false, configured = false, detailVisited = true))
+        assertFalse(
+            PresetSelectionDisplay.isDetailSelected(configured = false, unmatched = true, detailVisited = true),
+        )
+        // 詳細で形状が崩れた場合は訪問記録なしでも詳細側を表示します。
+        assertTrue(
+            PresetSelectionDisplay.isDetailSelected(configured = true, unmatched = true, detailVisited = false),
+        )
+    }
+
+    @Test
+    fun `detail visit keys are independent per field and role`() {
+        assertEquals(
+            PresetSelectionDisplay.detailVisitKey("target", CommandSettingRole.NODE_TARGET),
+            PresetSelectionDisplay.detailVisitKey("target", CommandSettingRole.NODE_TARGET),
+        )
+        assertTrue(
+            PresetSelectionDisplay.detailVisitKey("target", CommandSettingRole.NODE_TARGET) !=
+                PresetSelectionDisplay.detailVisitKey("destination", CommandSettingRole.DESTINATION),
+        )
+    }
+
+    @Test
     fun `nearby presets default to distance 5`() {
         val players = SettingPresets.targetSpecFor(SettingPresets.TargetPreset.NEARBY_PLAYERS)
         assertEquals(TargetKind.NEARBY_PLAYERS, players.kind)

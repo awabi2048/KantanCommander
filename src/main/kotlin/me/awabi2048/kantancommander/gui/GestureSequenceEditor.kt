@@ -163,6 +163,14 @@ data class GestureEditorState(
     var settingScreen: GestureSettingScreen? = null,
     /** 設定候補だけに使うページ番号です。左側の設定タブはページ分割しません。 */
     var settingChoicePage: Int = 0,
+    /**
+     * 詳細子画面へ入室済みの設定タブ記録です。
+     *
+     * プリセットの形状一致だけでは詳細入室後も選択表示が残るため、
+     * 入室記録と組み合わせて選択表示を詳細側へ移します。保存値は変更しません。
+     * 永続化せず、タブ・ノード切替とプリセット再適用で破棄します。
+     */
+    var detailVisitedKeys: MutableSet<String> = mutableSetOf(),
     /** ワールド内変数一覧だけに使うページ番号です。 */
     var variablePage: Int = 0,
     /** ワールド内変数の新規作成で、Dialogへ進む前にGestureGUIで選択した型です。 */
@@ -2798,6 +2806,7 @@ class GestureSequenceEditor(
         state.settingRoute = emptyList()
         state.settingScreen = null
         state.settingChoicePage = 0
+        state.detailVisitedKeys.clear()
         state.pendingWorldVariableType = null
         state.pendingWorldVariableDeleteName = null
         state.resourcePickerFieldKey = null
@@ -2831,7 +2840,23 @@ class GestureSequenceEditor(
     /** タブから設定木のルートを開始します。 */
     private fun startSettingRoute(frame: GestureSettingFrame) {
         state.settingRoute = listOf(frame)
+        state.detailVisitedKeys.remove(PresetSelectionDisplay.detailVisitKey(frame.fieldKey, frame.context.role))
         activateSettingFrame(frame, emptyList())
+    }
+
+    /**
+     * 詳細子画面への入室を記録します。プリセットの選択表示を詳細側へ移すための
+     * 表示専用記録であり、保存値・検証・実行へ影響しません。
+     */
+    private fun markDetailVisited(fieldKey: String, role: CommandSettingRole?) {
+        state.detailVisitedKeys += PresetSelectionDisplay.detailVisitKey(fieldKey, role)
+    }
+
+    /**
+     * プリセット再適用時に入室記録を破棄し、プリセット側の選択表示に戻します。
+     */
+    private fun clearDetailVisited(fieldKey: String, role: CommandSettingRole?) {
+        state.detailVisitedKeys.remove(PresetSelectionDisplay.detailVisitKey(fieldKey, role))
     }
 
     /** 現在ノードの子フレームへ進みます。物理子画面は必要なときだけ開きます。 */
@@ -2853,6 +2878,9 @@ class GestureSequenceEditor(
         }
         val nextPath = state.settingTreePath?.enterChild(selectedNodeId)?.nodeIds.orEmpty()
         state.settingRoute = state.settingRoute + frame
+        if (frame.screen == GestureSettingScreen.TARGET_FILTERS) {
+            markDetailVisited(frame.fieldKey, frame.context.role)
+        }
         activateSettingFrame(frame, nextPath)
         state.lowerMode = GestureLowerMode.SETTING_CHOICES
         ensureSettingChild(player, parentView)
@@ -5436,7 +5464,10 @@ class GestureSequenceEditor(
                     }
                     if (updateSettingNode(player, settingContext) {
                             writeBranchTarget(it, SettingPresets.targetSpecFor(preset))
-                        }) showSettingScreen()
+                        }) {
+                        clearDetailVisited(fieldKey, settingContext.role)
+                        showSettingScreen()
+                    }
                     return
                 }
                 // 詳細設定は初回クリックで選択のみ行い、選択済みの再クリックで
@@ -5720,7 +5751,10 @@ class GestureSequenceEditor(
                                 settingContext.role,
                                 SettingPresets.positionSpecFor(preset),
                             )
-                        }) showSettingScreen()
+                        }) {
+                        clearDetailVisited(fieldKey, settingContext.role)
+                        showSettingScreen()
+                    }
                     return
                 }
                 // エンティティ由来位置の導線です。遷移条件は回数ではなく選択状態での
@@ -5817,6 +5851,7 @@ class GestureSequenceEditor(
                                 base.copy(kind = PositionKind.TARGET, target = SettingPresets.targetSpecFor(preset)),
                             )
                         }) return
+                    clearDetailVisited(fieldKey, settingContext.role)
                     if (state.settingRoute.size > 1) popSettingFrame(player) else showSettingScreen()
                     return
                 }
@@ -6025,7 +6060,10 @@ class GestureSequenceEditor(
                                 SettingPresets.facingSpecFor(preset),
                                 facingRole,
                             )
-                        }) showSettingScreen()
+                        }) {
+                        clearDetailVisited(fieldKey, settingContext.role)
+                        showSettingScreen()
+                    }
                     return
                 }
                 // エンティティ向きの導線です。遷移条件は回数ではなく選択状態での
@@ -6127,6 +6165,7 @@ class GestureSequenceEditor(
                                 facingRole,
                             )
                         }) return
+                    clearDetailVisited(fieldKey, settingContext.role)
                     if (state.settingRoute.size > 1) popSettingFrame(player) else showSettingScreen()
                     return
                 }

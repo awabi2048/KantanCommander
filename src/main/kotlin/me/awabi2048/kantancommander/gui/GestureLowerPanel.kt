@@ -327,7 +327,18 @@ class GestureLowerPanel(
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = field.value(node).render(player)
         // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
-        val choices = settingTreeNodes(node, context, screen, fieldKey, player, attentionFields, inChild = true).map { choice ->
+        val choices = settingTreeNodes(
+            node,
+            context,
+            screen,
+            fieldKey,
+            player,
+            attentionFields,
+            inChild = true,
+            detailVisited = state.detailVisitedKeys.contains(
+                PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+            ),
+        ).map { choice ->
             if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
                 choice.copy(selected = true)
             } else choice
@@ -486,7 +497,17 @@ class GestureLowerPanel(
         }
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = field.value(node).render(player)
-        val choices = settingTreeNodes(node, context, screen, fieldKey, player, attentionFields).map { choice ->
+        val choices = settingTreeNodes(
+            node,
+            context,
+            screen,
+            fieldKey,
+            player,
+            attentionFields,
+            detailVisited = state.detailVisitedKeys.contains(
+                PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+            ),
+        ).map { choice ->
             if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
                 choice.copy(selected = true)
             } else choice
@@ -1124,7 +1145,17 @@ class GestureLowerPanel(
         val checkboxPresentation = SettingSpec.presentationFor(node, field.key, descriptor) ==
             GesturePresentation.CHECKBOX
         val settingChoices = if (checkboxPresentation) emptyList() else settingScreen?.let { screen ->
-            settingTreeNodes(node, settingContext, screen, field.key, player, attentionFields).map { choice ->
+            settingTreeNodes(
+                node,
+                settingContext,
+                screen,
+                field.key,
+                player,
+                attentionFields,
+                detailVisited = state.detailVisitedKeys.contains(
+                    PresetSelectionDisplay.detailVisitKey(field.key, settingContext.role),
+                ),
+            ).map { choice ->
                 if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
                     choice.copy(selected = true)
                 } else choice
@@ -2871,7 +2902,9 @@ class GestureLowerPanel(
         attentionFields: Set<String> = emptySet(),
         // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
         inChild: Boolean = false,
-    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild)
+        // 詳細入室後はプリセットの選択表示を詳細側へ移します（保存値は不変）。
+        detailVisited: Boolean = false,
+    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild, detailVisited)
         .map { decorateSettingChoice(node, context, fieldKey, it, attentionFields) }
 
     private fun rawSettingTreeNodes(
@@ -2881,9 +2914,10 @@ class GestureLowerPanel(
         fieldKey: String,
         player: Player,
         inChild: Boolean = false,
+        detailVisited: Boolean = false,
     ): List<GestureSettingTreeNode> = when (screen) {
-        GestureSettingScreen.TARGET -> targetChoices(node, context, player)
-        GestureSettingScreen.POSITION -> positionChoices(node, context, player, inChild).map { choice ->
+        GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
+        GestureSettingScreen.POSITION -> positionChoices(node, context, player, inChild, detailVisited).map { choice ->
             if (choice.id == "position:${PositionKind.TARGET.name}" && context.role == CommandSettingRole.DESTINATION) {
                 // 移動先のインライン選択は、実体の分類（プレイヤー／プレイヤー以外）だけを
                 // 選ぶ画面契約です。一時変数は通常の対象設定経路に残し、この選択肢へ混在させません。
@@ -2893,6 +2927,7 @@ class GestureLowerPanel(
                         context.copy(role = CommandSettingRole.DESTINATION),
                         player,
                         includeTemporary = false,
+                        detailVisited = detailVisited,
                     ),
                 )
             } else choice
@@ -2911,6 +2946,7 @@ class GestureLowerPanel(
                     node,
                     context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_POSITION),
                     player,
+                    detailVisited = detailVisited,
                 ),
             ),
             GestureSettingTreeNode(
@@ -2927,6 +2963,7 @@ class GestureLowerPanel(
                     node,
                     context.copy(role = CommandSettingRole.TEMPORARY_LOCATION_FACING),
                     player,
+                    detailVisited = detailVisited,
                 ),
             ),
         )
@@ -2959,7 +2996,7 @@ class GestureLowerPanel(
                 else -> choice
             }
         }
-        else -> settingChoices(node, context, screen, fieldKey, player)
+        else -> settingChoices(node, context, screen, fieldKey, player, detailVisited)
     }
 
     /**
@@ -3257,11 +3294,12 @@ class GestureLowerPanel(
         screen: GestureSettingScreen,
         fieldKey: String,
         player: Player,
+        detailVisited: Boolean = false,
     ): List<GestureSettingTreeNode> = when (screen) {
-        GestureSettingScreen.TARGET -> targetChoices(node, context, player)
+        GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
         GestureSettingScreen.TARGET_FILTERS -> targetFilterChoices(node, context, player)
-        GestureSettingScreen.POSITION -> positionChoices(node, context, player)
-        GestureSettingScreen.FACING -> facingChoices(node, context, player)
+        GestureSettingScreen.POSITION -> positionChoices(node, context, player, detailVisited = detailVisited)
+        GestureSettingScreen.FACING -> facingChoices(node, context, player, detailVisited = detailVisited)
         // LOCATIONはrawSettingTreeNodesで位置・向きの親木を生成します。
         // ここは網羅性を保ちつつ、親木を単純な択一候補へ誤変換しないため空にします。
         GestureSettingScreen.LOCATION -> emptyList()
@@ -3532,6 +3570,7 @@ class GestureLowerPanel(
         context: CommandSettingContext,
         player: Player,
         includeTemporary: Boolean = true,
+        detailVisited: Boolean = false,
     ): List<SettingChoice> {
         // 内包役割では位置・向き仕様の対象部を編集します。「一時変数」は
         // 内包TEMPORARY対象の実行経路が未整備のため出しません。
@@ -3555,7 +3594,11 @@ class GestureLowerPanel(
             SettingChoice(
                 id = "target-preset:${preset.name}",
                 label = KcI18n.text(player, label),
-                selected = SettingPresets.matchTargetPreset(current) == preset && configured,
+                selected = PresetSelectionDisplay.isPresetSelected(
+                    SettingPresets.matchTargetPreset(current) == preset,
+                    configured,
+                    detailVisited,
+                ),
             )
         }
         val detailed = buildList {
@@ -3563,8 +3606,11 @@ class GestureLowerPanel(
                 SettingChoice(
                     id = "target-detail",
                     label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DETAIL_SETTINGS),
-                    selected = current != null &&
-                        SettingPresets.matchTargetPreset(current) == null && configured,
+                    selected = PresetSelectionDisplay.isDetailSelected(
+                        configured,
+                        current == null || SettingPresets.matchTargetPreset(current) == null,
+                        detailVisited,
+                    ),
                     children = targetFilterChoices(node, context, player),
                     bottomAligned = true,
                 ),
@@ -3642,7 +3688,7 @@ class GestureLowerPanel(
      * エンティティ由来位置）は下部導線へ残します。単一限定の役割では
      * 対象由来位置を無効化し、理由を表示します。
      */
-    private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false): List<SettingChoice> {
+    private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false, detailVisited: Boolean = false): List<SettingChoice> {
         // 移動先も位置画面と表示・文言・導線が完全同一です。保存先だけが
         // 移動先用に振り分けられます（受付側で対応します）。
         val current = CommandSettingsModel.positionSpec(node, context.role)
@@ -3662,7 +3708,11 @@ class GestureLowerPanel(
             SettingChoice(
                 id = "position-preset:${preset.name}",
                 label = KcI18n.text(player, label),
-                selected = matchedPreset == preset,
+                selected = PresetSelectionDisplay.isPresetSelected(
+                    matchedPreset == preset,
+                    true,
+                    detailVisited,
+                ),
                 enabled = multiEnabled &&
                     CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
                         node,
@@ -3682,7 +3732,7 @@ class GestureLowerPanel(
         val entityEntry = SettingChoice(
             id = "position-entity",
             label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_ENTITY_POSITION),
-            selected = current?.kind == PositionKind.TARGET && matchedPreset == null,
+            selected = current?.kind == PositionKind.TARGET && (matchedPreset == null || detailVisited),
             // 再クリックで共用の対象子画面へ進むため、子選択肢は持たせない。
             // 単一限定でも導線自体は開く。
             enabled = true,
@@ -3767,7 +3817,7 @@ class GestureLowerPanel(
      * エンティティ指定）は下揃えの詳細導線へ残します。
      * 注視・複写は単一体参照の汎用導線へ載せます。一時変数はLOCATIONのみです。
      */
-    private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false): List<SettingChoice> {
+    private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false, detailVisited: Boolean = false): List<SettingChoice> {
         val current = CommandSettingsModel.facingSpec(node, context.role)
         val matchedPreset = SettingPresets.matchFacingPreset(current)
         val presets = listOf(
@@ -3778,21 +3828,25 @@ class GestureLowerPanel(
             SettingChoice(
                 id = "facing-preset:${preset.name}",
                 label = KcI18n.text(player, label),
-                selected = matchedPreset == preset,
+                selected = PresetSelectionDisplay.isPresetSelected(
+                    matchedPreset == preset,
+                    true,
+                    detailVisited,
+                ),
             )
         }
         return presets + (if (inChild) emptyList() else listOf(
             SettingChoice(
                 id = "facing-entity",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
-                selected = current?.kind == FacingKind.TARGET && matchedPreset == null,
+                selected = current?.kind == FacingKind.TARGET && (matchedPreset == null || detailVisited),
                 children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset", context.role),
                 bottomAligned = true,
             ),
             SettingChoice(
                 id = "facing-copy",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COPY_ORIENTATION),
-                selected = current?.kind == FacingKind.COPY_ORIENTATION && matchedPreset == null,
+                selected = current?.kind == FacingKind.COPY_ORIENTATION,
                 children = embeddedTargetPresetChoices(current?.target, player, "facing-copy-preset", context.role),
                 bottomAligned = true,
             ),
