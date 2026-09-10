@@ -1420,6 +1420,26 @@ object CommandSettingsModel {
     }
 
     /**
+     * 周囲系（付近プレイヤー／付近エンティティ）かを返します。
+     *
+     * 周囲系の詳細設定項目は最大距離だけとし、他の絞り込みは提示しません。
+     */
+    fun isNearbyKind(kind: TargetKind?): Boolean =
+        kind == TargetKind.NEARBY_PLAYERS || kind == TargetKind.NEARBY_ENTITIES
+
+    /**
+     * 詳細画面に並べる絞り込み項目IDを返します。
+     *
+     * 周囲系は最大距離だけ、単一参照では上限数を除外し、それ以外は
+     * 対象種別ごとの適用可否に従います。表示順序は固定です。
+     */
+    fun visibleTargetFilterIds(kind: TargetKind?, singleOnly: Boolean = false): List<String> =
+        listOf("entityType", "distance", "range", "limit", "sort", "gameMode", "tag", "name")
+            .filter { id -> !isNearbyKind(kind) || id == "distance" }
+            .filter { id -> !singleOnly || id != "limit" }
+            .filter { id -> targetFilterApplies(kind, id) }
+
+    /**
      * 対象種別と詳細条件の境界を共有します。
      * 親画面の種別選択後に詳細子画面へ進めるかを、描画側と入力状態遷移側で
      * 別々に持つと、表示された「詳細設定」が開けない対象が生まれるためです。

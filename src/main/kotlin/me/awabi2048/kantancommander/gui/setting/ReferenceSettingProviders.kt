@@ -124,8 +124,7 @@ object ReferenceSettingProviders {
             "tag" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
             "name" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
         )
-            .filter { (id, _) -> !singleOnly || id != "limit" }
-            .filter { (id, _) -> CommandSettingsModel.targetFilterApplies(spec.kind, id) }
+            .filter { (id, _) -> id in CommandSettingsModel.visibleTargetFilterIds(spec.kind, singleOnly) }
             .map { (id, label) ->
                 GestureSettingTreeNode(
                     id = "filter:$id",
