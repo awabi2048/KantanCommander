@@ -970,7 +970,11 @@ class GestureLowerPanel(
         }
         val value = displayValue.render(player)
         val settingScreen = gestureSettingScreenFor(descriptor.editor)
-        val settingChoices = settingScreen?.let { screen ->
+        // issue #18: Checkbox対象は親画面のトグルで直接操作するため、
+        // 旧来の二択カードを重ねて表示しません。
+        val checkboxPresentation = SettingSpec.presentationFor(node, field.key, descriptor) ==
+            GesturePresentation.CHECKBOX
+        val settingChoices = if (checkboxPresentation) emptyList() else settingScreen?.let { screen ->
             settingTreeNodes(node, settingContext, screen, field.key, player, attentionFields).map { choice ->
                 if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
                     choice.copy(selected = true)
@@ -1223,8 +1227,25 @@ class GestureLowerPanel(
             heldFireworkSetting -> player.inventory.itemInMainHand.type == Material.FIREWORK_ROCKET
             else -> true
         }
+        // issue #18: 値仕様と表示操作を分離します。Slider／Checkbox対象は
+        // Dialog入力カードを出さず、親画面で直接操作できる操作面を置きます。
+        // 検証・既定値の正本は CommandDialogSpecs 側に残します。
+        val presentation = SettingSpec.presentationFor(node, field.key, descriptor)
+        val sliderSpec = SettingSpec.sliderSpecFor(node.type, field.key)
+            ?.takeIf { presentation == GesturePresentation.SLIDER }
+        val isCheckboxPresentation = presentation == GesturePresentation.CHECKBOX &&
+            (SettingSpec.isCheckbox(node.type, field.key) ||
+                descriptor.editor == CommandSettingEditor.ENTITY_OVERWRITE ||
+                descriptor.editor == CommandSettingEditor.CONDITION_INVERSION)
+        if (sliderSpec != null) {
+            appendSliderCards(nodes, frame, node, field.key, sliderSpec, inputCenterY, suppressHighlight)
+        }
+        if (isCheckboxPresentation) {
+            appendCheckboxCard(nodes, frame, node, field.key, inputCenterY, suppressHighlight)
+        }
         val dialogInputSetting = !heldMainHandSetting &&
-            descriptor.editor == CommandSettingEditor.TEXT && field.key in TEXT_EDITABLE_KEYS
+            descriptor.editor == CommandSettingEditor.TEXT && field.key in TEXT_EDITABLE_KEYS &&
+            sliderSpec == null && !isCheckboxPresentation
         if (typedValueSourceSetting) {
             val selectedSource = CommandSettingsModel.temporaryValueSource(node, field.key)
                 ?: CommandValueSource.LITERAL
@@ -1384,6 +1405,119 @@ class GestureLowerPanel(
                 ),
             )
         }
+    }
+
+    /**
+     * issue #18 のSlider操作面です。
+     *
+     * Gesture GUIに適した離散操作として [-][+] ボタンを置き、1クリックで
+     * 値を確定します。連続ドラッグのpreview／commit分離は、離散確定のため
+     * 保存直結で等価になります。範囲外・任意精度値はDialog側へ委譲し、
+     * ここでは範囲内刻みだけを扱います。
+     */
+    private fun appendSliderCards(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        node: CommandNode,
+        fieldKey: String,
+        spec: SliderSpec,
+        inputCenterY: Double,
+        suppressHighlight: Boolean = false,
+    ) {
+        val current = SliderValuePolicy.format(spec, SliderValuePolicy.parse(spec, node.params[fieldKey]))
+        val rangeHover = singleLineHover(
+            "範囲 ${SliderValuePolicy.format(spec, spec.min)}〜${SliderValuePolicy.format(spec, spec.max)}／刻み ${if (spec.integer) spec.step.toLong().toString() else spec.step.toString()}／現在値 $current",
+            x = HOVER_SLOT_X,
+            y = HOVER_SLOT_Y,
+        )
+        val buttonH = SETTING_INPUT_HEIGHT
+        val buttonW = 0.22
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-slider-dec:$fieldKey",
+                label = Component.text("−"),
+                background = Bukkit.createBlockData(Material.GRAY_CONCRETE),
+                cx = -0.18,
+                cy = inputCenterY,
+                w = buttonW,
+                h = buttonH,
+                labelSize = 0.008,
+                labelWidth = 40,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = rangeHover,
+                visualTag = "lower-slider-dec",
+                outline = if (suppressHighlight) null
+                else GestureSettingVisualPolicy.nonTabOutlineMaterial(false)?.let { Bukkit.createBlockData(it) },
+            ),
+        )
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-slider-inc:$fieldKey",
+                label = Component.text("＋"),
+                background = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                cx = 0.74,
+                cy = inputCenterY,
+                w = buttonW,
+                h = buttonH,
+                labelSize = 0.008,
+                labelWidth = 40,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = rangeHover,
+                visualTag = "lower-slider-inc",
+                outline = if (suppressHighlight) null
+                else GestureSettingVisualPolicy.nonTabOutlineMaterial(false)?.let { Bukkit.createBlockData(it) },
+            ),
+        )
+    }
+
+    /**
+     * issue #18 のCheckbox操作面です。
+     *
+     * 二値設定を1クリックで切り替え、checked／uncheckedを色で区別します。
+     * nullable三値はここへ載せず、別表現に委譲します。
+     */
+    private fun appendCheckboxCard(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        node: CommandNode,
+        fieldKey: String,
+        inputCenterY: Double,
+        suppressHighlight: Boolean = false,
+    ) {
+        val checked = node.boolean(fieldKey)
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-toggle:$fieldKey",
+                label = Component.text(if (checked) "ON" else "OFF"),
+                background = Bukkit.createBlockData(
+                    if (checked) Material.LIME_CONCRETE else Material.GRAY_CONCRETE,
+                ),
+                cx = 0.28,
+                cy = inputCenterY,
+                w = 1.2,
+                h = SETTING_INPUT_HEIGHT,
+                labelSize = 0.006,
+                labelWidth = 120,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = singleLineHover(
+                    if (checked) "ON（クリックでOFF）" else "OFF（クリックでON）",
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
+                ),
+                visualTag = "lower-toggle",
+                outline = if (suppressHighlight) null
+                else GestureSettingVisualPolicy.nonTabOutlineMaterial(checked)?.let { Bukkit.createBlockData(it) },
+            ),
+        )
     }
 
     private fun appendTypedValuePreview(
