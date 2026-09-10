@@ -642,4 +642,78 @@ class ExecutableScriptValidatorTest {
             "実行位置の対象由来は単一制約の対象外",
         )
     }
+
+    @Test
+    fun `particle end allows statically single embedded targets`() {
+        val script = DiskScript(name = "particle-end-static", owner = UUID.randomUUID())
+        val particle = GraphEditor.append(script.graph, CommandType.PARTICLE).apply {
+            particleEndPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none {
+                it.nodeId == particle.id && it.message.contains("複数位置は指定できません")
+            },
+            "図形終点の静的単一は先頭1件へ解決するため許可する",
+        )
+    }
+
+    @Test
+    fun `particle end rejects multi embedded targets`() {
+        val script = DiskScript(name = "particle-end-multi", owner = UUID.randomUUID())
+        val particle = GraphEditor.append(script.graph, CommandType.PARTICLE).apply {
+            particleEndPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEARBY_PLAYERS),
+            )
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == particle.id && it.message.contains("複数位置は指定できません")
+            },
+            "図形終点の複数は対応関係が定まらないため拒否する",
+        )
+    }
+
+    @Test
+    fun `block positions fall back to the execution position`() {
+        val script = DiskScript(name = "block-exec-fallback", owner = UUID.randomUUID())
+        val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.SETBLOCK.value
+            params["block"] = "minecraft:stone"
+            executionPositionSpec = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none {
+                it.nodeId == block.id && it.message.contains("ブロック配置位置が未設定です")
+            },
+            "実行位置があれば配置位置の省略を許可する",
+        )
+    }
+
+    @Test
+    fun `fill range rejects multi execution fallbacks`() {
+        val script = DiskScript(name = "fill-multi-exec", owner = UUID.randomUUID())
+        val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.value
+            params["block"] = "minecraft:stone"
+            blockFromSpec = PositionSpec(PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0)
+            executionPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEARBY_PLAYERS),
+            )
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == block.id && it.message.contains("既定値に複数位置は指定できません")
+            },
+            "片端欠落＋複数実行位置の組合せは拒否する",
+        )
+    }
 }

@@ -189,11 +189,26 @@ class VanillaDatapackExporter(
                     ) {
                         errors += "${script.id}/${node.id}: 完全バニラ出力できない配置ブロックです"
                     }
+                    // issue #26: コマンド固有位置が未設定のときは実行位置を既定値とします。
                     when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
-                        BlockOperationMode.SETBLOCK -> validatePosition(script, node, node.blockPositionSpec, errors)
+                        BlockOperationMode.SETBLOCK -> {
+                            val position = effectiveBlockPosition(node)
+                            if (position == null) {
+                                errors += "${script.id}/${node.id}: ブロック配置位置が未設定です"
+                            }
+                            validatePosition(script, node, position, errors)
+                        }
                         BlockOperationMode.FILL -> {
-                            validatePosition(script, node, node.blockFromSpec, errors)
-                            validatePosition(script, node, node.blockToSpec, errors)
+                            val from = effectiveFillFrom(node)
+                            if (from == null) {
+                                errors += "${script.id}/${node.id}: 範囲配置の始点が未設定です"
+                            }
+                            val to = effectiveFillTo(node)
+                            if (to == null) {
+                                errors += "${script.id}/${node.id}: 範囲配置の終点が未設定です"
+                            }
+                            validatePosition(script, node, from, errors)
+                            validatePosition(script, node, to, errors)
                         }
                         null -> errors += "${script.id}/${node.id}: 不明な配置方式です"
                     }
@@ -291,10 +306,11 @@ class VanillaDatapackExporter(
             ).filter { it.kind == PositionKind.TARGET && (it.target == null || it.target.isMultiCapable()) }
                 .forEach { errors += "${script.id}/${node.id}: この位置に対象由来の複数位置は指定できません" }
             // issue #29: fillの始点と終点が異なる対象由来の場合は1命令で表現できません。
-            val fillFromTarget = node.blockFromSpec
+            // 未設定の片端は実行位置を既定値とするため、既定値込みで比較します。
+            val fillFromTarget = effectiveFillFrom(node)
                 ?.takeIf { it.kind == PositionKind.TARGET }?.target
                 ?.takeIf { it.kind != TargetKind.TEMPORARY }
-            val fillToTarget = node.blockToSpec
+            val fillToTarget = effectiveFillTo(node)
                 ?.takeIf { it.kind == PositionKind.TARGET }?.target
                 ?.takeIf { it.kind != TargetKind.TEMPORARY }
             if (node.type == CommandType.BLOCK_OPERATION &&
@@ -303,6 +319,26 @@ class VanillaDatapackExporter(
                 fillFromTarget != null && fillToTarget != null && fillFromTarget != fillToTarget
             ) {
                 errors += "${script.id}/${node.id}: 始点と終点で異なる対象由来位置は完全バニラ出力に未対応です"
+            }
+            // issue #29: fillで片端だけがDISK（制御ブロック位置）の場合、
+            // もう片端の対象由来へ execute at で包むとDISK側の相対座標まで
+            // ずれるため、1命令では表現できません。未設定の片端は実行位置を
+            // 既定値とするため、既定値込みで比較します。
+            if (node.type == CommandType.BLOCK_OPERATION &&
+                BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+                BlockOperationMode.FILL
+            ) {
+                val fromDisk = effectiveFillFrom(node)?.kind == PositionKind.DISK
+                val toDisk = effectiveFillTo(node)?.kind == PositionKind.DISK
+                val fromEmbedded = effectiveFillFrom(node)
+                    ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                    ?.takeIf { it.kind != TargetKind.TEMPORARY }
+                val toEmbedded = effectiveFillTo(node)
+                    ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                    ?.takeIf { it.kind != TargetKind.TEMPORARY }
+                if ((fromDisk && toEmbedded != null) || (toDisk && fromEmbedded != null)) {
+                    errors += "${script.id}/${node.id}: 始点と終点で基準位置（制御ブロック位置と対象由来）が異なるfillは完全バニラ出力に未対応です"
+                }
             }
             // issue #29: 対象由来の扱いを表現可能性で分けます。
             // - MyWorld固有・実行位置の対象由来：表現不能のため明示エラーとします。
@@ -625,14 +661,20 @@ class VanillaDatapackExporter(
                 }
                 else -> lower(node, graph)?.let { command ->
                     // issue #26: 実行位置が設定され、バニラで表現できる場合だけ
-                    // positionedで包みます。相対指定は上記検証で既に除外済みの
-                    // ため、絶対指定のコマンド固有位置へ影響しません。
-                    val positionedCommand = executionPositionContext(node)?.let { context ->
-                        wrapContext(context, command, node)
-                    } ?: command
+                    // positionedで包みます。
+                    // issue #29: 対象由来位置は execute at で包むため positioned を
+                    // 付けません。内側の positioned が外側の at を上書きし、実行時の
+                    // 各位置実行と食い違うためです。DISK由来の相対座標も制御ブロック
+                    // 位置を指すためずらしてはならず、作用位置が未設定のときだけ包みます。
+                    val derivedTarget = entityDerivedTarget(node)
+                    val positionedCommand = executionPositionContext(node)
+                        ?.takeUnless { derivedTarget != null || PositionKind.DISK in actionPositionKinds(node) }
+                        ?.let { context ->
+                            wrapContext(context, command, node)
+                        } ?: command
                     // issue #29: 対象由来位置は execute at で包みます。
                     // 複数該当時はエンティティごとに実行され、実行時の各位置実行と一致します。
-                    val atCommand = entityDerivedTarget(node)?.let { target ->
+                    val atCommand = derivedTarget?.let { target ->
                         "execute at ${selector(target)} run $positionedCommand"
                     } ?: positionedCommand
                     val temporaryReferences = temporaryEntityReferences(node, null)
@@ -700,12 +742,14 @@ class VanillaDatapackExporter(
                     val inverted = node.boolean("inverted") xor conditionNeedsInversion(node)
                     val trueCheck = if (inverted) "unless" else "if"
                     val falseCheck = if (inverted) "if" else "unless"
-                    val trueBranch = node.trueNext?.let {
-                        "execute $trueCheck $predicateCommand run return run function kantan:${nodeFunction(prefix, it)}"
-                    } ?: "execute $trueCheck $predicateCommand run return 1"
-                    val falseBranch = node.falseNext?.let {
-                        "execute $falseCheck $predicateCommand run return run function kantan:${nodeFunction(prefix, it)}"
-                    } ?: "execute $falseCheck $predicateCommand run return 1"
+                    // issue #29: 空集合フォールバックと共用するため、継続先へ名前を付けます。
+                    fun continuation(next: UUID?): String = next?.let {
+                        "return run function kantan:${nodeFunction(prefix, it)}"
+                    } ?: "return 1"
+                    val trueBranch =
+                        "execute $trueCheck $predicateCommand run ${continuation(node.trueNext)}"
+                    val falseBranch =
+                        "execute $falseCheck $predicateCommand run ${continuation(node.falseNext)}"
                     val targetedTrueBranch = conditionTarget?.let { reference ->
                         temporaryEntitySelection(reference, trueBranch)
                     } ?: trueBranch
@@ -714,6 +758,19 @@ class VanillaDatapackExporter(
                     } ?: falseBranch
                     lines += conditionContext?.let { context -> wrapContext(context, atWrap(targetedTrueBranch), node) } ?: atWrap(targetedTrueBranch)
                     lines += conditionContext?.let { context -> wrapContext(context, atWrap(targetedFalseBranch), node) } ?: atWrap(targetedFalseBranch)
+                    conditionAtTarget?.let { target ->
+                        // issue #29: 対象由来位置のセレクタが0件の場合、at包みの枝は
+                        // 一度も実行されず分岐全体が途切れるため、false側の継続へ
+                        // 明示的にフォールバックします。実行時も対象由来の空集合は
+                        // FALSE扱いのため、ノード自身の反転だけを適用します。
+                        val emptyFallback = if (node.boolean("inverted")) {
+                            continuation(node.trueNext)
+                        } else {
+                            continuation(node.falseNext)
+                        }
+                        val emptyCheck = "execute unless entity ${selector(target)} run $emptyFallback"
+                        lines += conditionContext?.let { context -> wrapContext(context, emptyCheck, node) } ?: emptyCheck
+                    }
                     if (conditionTarget != null && temporaryConditionFound != null) {
                         // 一時ENTITYが消えている場合、execute as @e の枝は一度も
                         // 実行されないため、Java版と同じ「対象なし＝条件false」へ
@@ -2009,13 +2066,18 @@ class VanillaDatapackExporter(
             ?: node.string("block")
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
-                val position = requireNotNull(node.blockPositionSpec)
+                val position = effectiveBlockPosition(node)
+                    ?: error("structured block position is missing")
                 val anchor = blockAnchor(position)
                 "${anchor.prefix}setblock ${anchor.coordinates} $block"
             }
             BlockOperationMode.FILL -> {
-                val from = blockAnchor(requireNotNull(node.blockFromSpec))
-                val to = blockAnchor(requireNotNull(node.blockToSpec))
+                val from = blockAnchor(
+                    effectiveFillFrom(node) ?: error("structured fill range is missing"),
+                )
+                val to = blockAnchor(
+                    effectiveFillTo(node) ?: error("structured fill range is missing"),
+                )
                 require(from.prefix == to.prefix) {
                     "fillの始点と終点は同じ基準位置で指定してください"
                 }
@@ -2073,14 +2135,15 @@ class VanillaDatapackExporter(
     private fun entityDerivedTarget(node: CommandNode): TargetSpec? {
         // fillは始点の対象へ包みます。終点だけが対象由来の場合は終点へ包み、
         // 両端で異なる対象の場合は検証で除外済みです。
+        // 未設定の片端は実行位置を既定値とするため、既定値込みで判定します。
         if (node.type == CommandType.BLOCK_OPERATION &&
             BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
             BlockOperationMode.FILL
         ) {
-            val from = node.blockFromSpec
+            val from = effectiveFillFrom(node)
                 ?.takeIf { it.kind == PositionKind.TARGET }?.target
                 ?.takeIf { it.kind != TargetKind.TEMPORARY }
-            val to = node.blockToSpec
+            val to = effectiveFillTo(node)
                 ?.takeIf { it.kind == PositionKind.TARGET }?.target
                 ?.takeIf { it.kind != TargetKind.TEMPORARY }
             return from ?: to
@@ -2090,10 +2153,55 @@ class VanillaDatapackExporter(
             CommandType.PLAY_SOUND -> node.soundPositionSpec
             CommandType.PARTICLE -> node.particlePositionSpec
             CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
-            CommandType.BLOCK_OPERATION -> node.blockPositionSpec
+            CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
             else -> null
         }?.takeIf { it.kind == PositionKind.TARGET } ?: return null
         return spec.target?.takeIf { it.kind != TargetKind.TEMPORARY }
+    }
+
+    /**
+     * issue #26: ブロック操作の実行時と同じ既定値を返します。
+     *
+     * コマンド固有位置があればそちらを優先し、未設定時は実行位置を既定値とします。
+     * 実行位置の対象由来は上記検証で除外済みのため、ここへは到達しません。
+     */
+    private fun effectiveBlockPosition(node: CommandNode): me.awabi2048.kantancommander.model.PositionSpec? =
+        node.blockPositionSpec ?: node.executionPositionSpec
+
+    /** issue #26: fill始点の実行時と同じ既定値です。 */
+    private fun effectiveFillFrom(node: CommandNode): me.awabi2048.kantancommander.model.PositionSpec? =
+        node.blockFromSpec ?: node.executionPositionSpec
+
+    /** issue #26: fill終点の実行時と同じ既定値です。 */
+    private fun effectiveFillTo(node: CommandNode): me.awabi2048.kantancommander.model.PositionSpec? =
+        node.blockToSpec ?: node.executionPositionSpec
+
+    /**
+     * issue #29: コマンドの代表位置の種別を返します。
+     *
+     * DISK由来の相対座標は制御ブロック位置を指すため、実行位置の
+     * positioned包みでずらしてはなりません。テレポート先も同じ扱いです。
+     * セレクタ方式の移動先（destinationTargetSpec）は位置に依存しないため
+     * 含めません。
+     */
+    private fun actionPositionKinds(node: CommandNode): Set<PositionKind> {
+        if (node.type == CommandType.BLOCK_OPERATION &&
+            BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+            BlockOperationMode.FILL
+        ) {
+            return listOfNotNull(effectiveFillFrom(node), effectiveFillTo(node)).map { it.kind }.toSet()
+        }
+        return listOfNotNull(
+            when (node.type) {
+                CommandType.SUMMON_ENTITY -> node.summonPositionSpec
+                CommandType.PLAY_SOUND -> node.soundPositionSpec
+                CommandType.PARTICLE -> node.particlePositionSpec
+                CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
+                CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
+                CommandType.TELEPORT -> node.destinationSpec
+                else -> null
+            }?.kind,
+        ).toSet()
     }
 
     private fun wrapContext(

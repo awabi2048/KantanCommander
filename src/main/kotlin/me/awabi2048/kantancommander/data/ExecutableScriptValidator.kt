@@ -921,15 +921,27 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
         }
         when (operation) {
-            BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null) {
+            // issue #26: コマンド固有位置が未設定のときは実行位置を既定値とします。
+            // 実行位置も未設定の場合だけ未設定エラーにし、実行時のフォールバックと一致させます。
+            BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null && node.executionPositionSpec == null) {
                 errors += nodeError(node, path, setOf("position"), "ブロック配置位置が未設定です")
             }
             BlockOperationMode.FILL -> {
                 val from = node.blockFromSpec
                 val to = node.blockToSpec
-                if (from == null) errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
-                if (to == null) errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
-                if (from != null && to != null && blockVolume(from, to)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true) {
+                if (from == null && node.executionPositionSpec == null) {
+                    errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
+                }
+                if (to == null && node.executionPositionSpec == null) {
+                    errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
+                }
+                // 体積上限は実行位置の既定値も含めて判定します。座標に定まらない
+                // 指定（対象由来等）は blockVolume がnullを返すため対象外です。
+                val effectiveFrom = from ?: node.executionPositionSpec
+                val effectiveTo = to ?: node.executionPositionSpec
+                if (effectiveFrom != null && effectiveTo != null &&
+                    blockVolume(effectiveFrom, effectiveTo)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true
+                ) {
                     errors += nodeError(node, path, setOf("from", "to"), "範囲配置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
                 }
             }
@@ -1082,11 +1094,12 @@ object ExecutableScriptValidator {
             .forEach { errors += nodeError(node, path, setOf("position"), "この位置に対象由来の複数位置は指定できません") }
         // issue #26・#29: fillの始点終点は単一へ定まる実行起点だけを既定値とします。
         // 複数になり得る実行位置との組合せは実行時に定まらないため検証で拒否します。
+        // 片端だけの欠落も既定値を使うため、両端欠落に限定しません。
         val executionTarget = node.executionPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target
         if (node.type == CommandType.BLOCK_OPERATION &&
             BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
             BlockOperationMode.FILL &&
-            node.blockFromSpec == null && node.blockToSpec == null &&
+            (node.blockFromSpec == null || node.blockToSpec == null) &&
             executionTarget != null && executionTarget.isMultiCapable()
         ) {
             errors += nodeError(node, path, setOf("executionPosition"), "範囲指定の既定値に複数位置は指定できません")

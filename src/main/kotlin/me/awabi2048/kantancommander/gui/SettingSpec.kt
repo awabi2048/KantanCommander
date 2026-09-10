@@ -132,6 +132,7 @@ object SettingSpec {
      *
      * ここでは「どの項目にSliderを置くか」（UX判断）だけを保持し、
      * 範囲・刻み・既定値は `CommandDialogSpecs` の共有正本から導出します。
+     * 上限の定まらない数量（give個数・繰返し回数）は載せず、テキスト入力にします。
      * 検証範囲の変更は自動でSliderへ反映され、手作業の同期は不要です。
      * 時間系のtick整合は保存時検証に残し、刻みは整合済みの代表刻みです。
      */
@@ -142,8 +143,6 @@ object SettingSpec {
         CommandType.CAMERA_SHAKE to "seconds",
         CommandType.APPLY_EFFECT to "level",
         CommandType.APPLY_EFFECT to "seconds",
-        CommandType.GIVE_ITEM to "count",
-        CommandType.FOR_START to "count",
         CommandType.WAIT to "seconds",
         CommandType.DISPLAY_TEXT to "staySeconds",
         CommandType.DISPLAY_TEXT to "fadeInSeconds",

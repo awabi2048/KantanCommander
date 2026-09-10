@@ -1343,8 +1343,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): ParticleGeometry.ResolvedGeometry? {
         fun number(key: String, default: Double): Double? =
             resolveNumber(node.string(key, default.toString()), session)?.takeIf(Double::isFinite)
+        // issue #29: 終点も始点と同じく単一位置へ解決します。対象内包の静的単一は
+        // 先頭1件へ解決し、複数・対象なしは検証と同じく未解決として図形全体を
+        // 失敗させます。resolvePosition はTARGET種別を一律未解決にするため、
+        // ここでは使わず resolveSinglePosition を使います。
         val endOffset = node.particleEndPositionSpec
-            ?.let { resolvePosition(it, session, context) ?: return null }
+            ?.let { resolveSinglePosition(it, session, context) ?: return null }
             ?.let { Triple(it.x - origin.x, it.y - origin.y, it.z - origin.z) }
         return ParticleGeometry.ResolvedGeometry(
             radius = number(ParticleGeometry.PARAM_RADIUS, 3.0) ?: return null,

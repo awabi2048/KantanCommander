@@ -39,6 +39,7 @@ class SettingSpecTest {
     @Test
     fun `slider ranges stay within dialog validation`() {
         // Sliderの操作域は検証範囲の内側であり、生成値は検証を必ず通過します。
+        // 上限の定まらない数量系はSlider対象外のため含めません。
         val cases = listOf(
             CommandType.PLAY_SOUND to "volume",
             CommandType.PLAY_SOUND to "pitch",
@@ -46,8 +47,6 @@ class SettingSpecTest {
             CommandType.CAMERA_SHAKE to "seconds",
             CommandType.APPLY_EFFECT to "level",
             CommandType.APPLY_EFFECT to "seconds",
-            CommandType.GIVE_ITEM to "count",
-            CommandType.FOR_START to "count",
             CommandType.WAIT to "seconds",
             CommandType.DISPLAY_TEXT to "staySeconds",
             CommandType.DISPLAY_TEXT to "fadeInSeconds",
@@ -74,6 +73,23 @@ class SettingSpecTest {
             }
             // 刻みで進めた値も検証を通過します。
             assertNull(dialog!!.validateInput(SliderValuePolicy.stepBy(slider, slider.defaultValue, 1)), "$type.$fieldKey")
+        }
+    }
+
+    @Test
+    fun `unbounded quantities stay on text input`() {
+        // 上限の定まらない数量系はSliderに載せず、テキスト入力のまま検証します。
+        val cases = listOf(
+            CommandType.GIVE_ITEM to "count",
+            CommandType.FOR_START to "count",
+            CommandType.PARTICLE to me.awabi2048.kantancommander.model.ParticleSettings.PARAM_COUNT,
+        )
+        cases.forEach { (type, fieldKey) ->
+            val host = node(type)
+            assertNull(SettingSpec.sliderSpecFor(host, fieldKey), "$type.$fieldKey")
+            val dialog = CommandDialogSpecs.field(host, fieldKey)
+            assertNotNull(dialog, "$type.$fieldKey")
+            assertNull(dialog!!.validateInput("3"), "$type.$fieldKey")
         }
     }
 

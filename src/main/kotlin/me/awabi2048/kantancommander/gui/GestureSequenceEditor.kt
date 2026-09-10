@@ -5421,7 +5421,23 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.TARGET_FILTERS -> {
                 val role = settingContext.role
-                val current = CommandSettingsModel.targetSpec(node, role) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                // issue #29: 位置・向きの役割で開いた場合は内包対象を編集します。
+                // これらの役割で通常対象画面へ進む経路はないため、役割で判別します。
+                // 保存形式は変えず、表示・保存・検証・実行・出力は既存経路のままです。
+                val embedded = CommandSettingsModel.isEmbeddedTargetRole(role)
+                fun readFilterTarget(target: CommandNode): TargetSpec? = if (embedded) {
+                    CommandSettingsModel.embeddedTargetSpec(target, role)
+                } else {
+                    CommandSettingsModel.targetSpec(target, role)
+                }
+                fun writeFilterTarget(target: CommandNode, spec: TargetSpec) {
+                    if (embedded) {
+                        CommandSettingsModel.setEmbeddedTargetSpec(target, role, spec)
+                    } else {
+                        CommandSettingsModel.setTargetSpec(target, role, spec)
+                    }
+                }
+                val current = readFilterTarget(node) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
                 if (group == "kind") {
                     val category = CommandSettingsModel.targetCategory(current.kind)
                     val selectedKind = CommandSettingsModel.targetKinds(category)
@@ -5434,9 +5450,8 @@ class GestureSequenceEditor(
                         }
                     } else null
                     if (updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setTargetSpec(
+                            writeFilterTarget(
                                 it,
-                                role,
                                 current.copy(
                                     kind = selectedKind,
                                     fixedEntityId = fixedId,
@@ -5450,12 +5465,12 @@ class GestureSequenceEditor(
                 when (value) {
                     "sort" -> updateSettingNode(player, settingContext) {
                         val next = TargetSort.entries[(current.sort.ordinal + 1) % TargetSort.entries.size]
-                        CommandSettingsModel.setTargetSpec(it, role, current.copy(sort = next))
+                        writeFilterTarget(it, current.copy(sort = next))
                     }
                     "gameMode" -> updateSettingNode(player, settingContext) {
                         val modes = listOf(null, "SURVIVAL", "CREATIVE", "ADVENTURE", "SPECTATOR")
                         val next = modes[(modes.indexOf(current.gameMode) + 1).coerceAtLeast(0) % modes.size]
-                        CommandSettingsModel.setTargetSpec(it, role, current.copy(gameMode = next))
+                        writeFilterTarget(it, current.copy(gameMode = next))
                     }
                     "entityType", "distance", "range", "limit", "tag", "name" -> {
                         if (value == "distance") {
@@ -5465,11 +5480,10 @@ class GestureSequenceEditor(
                                 current.maximumDistance,
                             ) { minimum, maximum ->
                                 if (!updateSettingNode(player, settingContext) {
-                                        val latest = CommandSettingsModel.targetSpec(it, role)
+                                        val latest = readFilterTarget(it)
                                             ?: TargetSpec(current.kind)
-                                        CommandSettingsModel.setTargetSpec(
+                                        writeFilterTarget(
                                             it,
-                                            role,
                                             latest.copy(
                                                 minimumDistance = minimum,
                                                 maximumDistance = maximum,
@@ -5489,13 +5503,9 @@ class GestureSequenceEditor(
                                 current.dz,
                             ) { dx, dy, dz ->
                                 if (!updateSettingNode(player, settingContext) {
-                                        val latest = CommandSettingsModel.targetSpec(it, role)
+                                        val latest = readFilterTarget(it)
                                             ?: TargetSpec(current.kind)
-                                        CommandSettingsModel.setTargetSpec(
-                                            it,
-                                            role,
-                                            latest.copy(dx = dx, dy = dy, dz = dz),
-                                        )
+                                        writeFilterTarget(it, latest.copy(dx = dx, dy = dy, dz = dz))
                                     }) {
                                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                                 } else null
@@ -5520,7 +5530,7 @@ class GestureSequenceEditor(
                             val parsedText = raw.trim().takeIf(String::isNotEmpty)
                             val parsedLimit = parsedText?.let(CommandValueRules::parsePositiveInt)
                             if (!updateSettingNode(player, settingContext) {
-                                val latest = CommandSettingsModel.targetSpec(it, role)
+                                val latest = readFilterTarget(it)
                                     ?: TargetSpec(current.kind)
                                 val updated = when (value) {
                                     "entityType" -> latest.copy(entityType = parsedText)
@@ -5528,7 +5538,7 @@ class GestureSequenceEditor(
                                     "tag" -> latest.copy(tag = parsedText)
                                     else -> latest.copy(name = parsedText)
                                 }
-                                CommandSettingsModel.setTargetSpec(it, role, updated)
+                                writeFilterTarget(it, updated)
                             }) return@beginSettingInput KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                             null
                         }
@@ -5572,15 +5582,15 @@ class GestureSequenceEditor(
                 // 付近系・座標系は選択済みの再クリックで詳細を開きます。
                 // 移動先の最寄り・付近は対象指定へ保存します（二重保持の正規化は
                 // 共通setterが担います）。
+                // 付近系プリセットは複数になり得るため単一限定では拒否します。
+                // 最寄り等の静的0..1は許可し、表示側・Inventory側と同じ判定にします。
                 if (group == "position-preset") {
                     val preset = runCatching { SettingPresets.PositionPreset.valueOf(value) }.getOrNull() ?: return
                     val isDestinationEntityPreset = settingContext.role == CommandSettingRole.DESTINATION &&
                         (preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
                             preset == SettingPresets.PositionPreset.NEARBY_PLAYERS)
                     if (!isDestinationEntityPreset &&
-                        (preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
-                            preset == SettingPresets.PositionPreset.NEARBY_PLAYERS
-                            ) &&
+                        preset == SettingPresets.PositionPreset.NEARBY_PLAYERS &&
                         !CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(settingContext.role)
                     ) {
                         return
@@ -5702,6 +5712,8 @@ class GestureSequenceEditor(
                 }
                 // issue #29: 内包対象プリセットは位置仕様の対象部だけを書き換えます。
                 // 単一限定では複数になり得る候補を拒否し、静的0..1だけを許可します。
+                // 選択済みの再クリックで詳細条件（TARGET_FILTERS）へ進みます。
+                // 距離も詳細画面の項目から変更し、保存形式は変えません。
                 if (group == "position-entity-preset") {
                     val preset = runCatching { SettingPresets.TargetPreset.valueOf(value) }.getOrNull() ?: return
                     if (MultiPositionPolicy.multiplicityFor(settingContext.role) == PositionMultiplicity.SINGLE &&
@@ -5712,15 +5724,11 @@ class GestureSequenceEditor(
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
                     val matched = SettingPresets.matchTargetPreset(current?.target) == preset
                     rememberSettingNode(encoded)
-                    if (matched && (preset == SettingPresets.TargetPreset.NEARBY_PLAYERS ||
-                            preset == SettingPresets.TargetPreset.NEARBY_ENTITIES)
-                    ) {
-                        openEmbeddedTargetDistanceDialog(
+                    if (matched) {
+                        pushSettingFrame(
                             player,
-                            settingContext,
-                            fieldKey,
-                            current?.target,
-                            isFacing = false,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
+                            encoded,
                         )
                         return
                     }
@@ -5984,21 +5992,19 @@ class GestureSequenceEditor(
                     return
                 }
                 // issue #29: 内包対象プリセットは向き仕様の対象部だけを書き換えます。
+                // 選択済みの再クリックで詳細条件（TARGET_FILTERS）へ進みます。
+                // 保存形式は変えません。
                 if (group == "facing-entity-preset") {
                     val facingRole = settingContext.role ?: return
                     val preset = runCatching { SettingPresets.TargetPreset.valueOf(value) }.getOrNull() ?: return
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
                     val matched = SettingPresets.matchTargetPreset(current?.target) == preset
                     rememberSettingNode(encoded)
-                    if (matched && (preset == SettingPresets.TargetPreset.NEARBY_PLAYERS ||
-                            preset == SettingPresets.TargetPreset.NEARBY_ENTITIES)
-                    ) {
-                        openEmbeddedTargetDistanceDialog(
+                    if (matched) {
+                        pushSettingFrame(
                             player,
-                            settingContext,
-                            fieldKey,
-                            current?.target,
-                            isFacing = true,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
+                            encoded,
                         )
                         return
                     }

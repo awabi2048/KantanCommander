@@ -283,6 +283,175 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `entity derived action positions skip execution positioned wrapping`() {
+        val store = ScriptStore(temp.resolve("derived-skip-positioned"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "derived skip positioned")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:pig"
+            summonPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+            executionPositionSpec = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        // execute at で寄せた対象位置が、内側の positioned で上書きされない。
+        assertTrue(body.contains("execute at @a[") && body.contains("summon minecraft:pig ~ ~ ~"))
+        assertFalse(body.contains("positioned"))
+    }
+
+    @Test
+    fun `disk action positions skip execution positioned wrapping`() {
+        val store = ScriptStore(temp.resolve("disk-skip-positioned"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "disk skip positioned")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:pig"
+            summonPositionSpec = PositionSpec(PositionKind.DISK)
+            executionPositionSpec = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        // DISK由来の相対座標は制御ブロック位置を指すため、ずらさない。
+        assertTrue(body.contains("summon minecraft:pig ~ ~ ~"))
+        assertFalse(body.contains("positioned"))
+    }
+
+    @Test
+    fun `fill with mixed disk and embedded target ends is rejected`() {
+        val store = ScriptStore(temp.resolve("mixed-fill-ends"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "mixed fill ends")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.value
+            params["block"] = "minecraft:stone"
+            blockFromSpec = PositionSpec(PositionKind.DISK)
+            blockToSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+        }
+
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        assertTrue(failure.errors.any { it.contains("基準位置") })
+    }
+
+    @Test
+    fun `condition with empty embedded target falls back to the false branch`() {
+        val store = ScriptStore(temp.resolve("condition-empty-fallback"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "condition empty fallback")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+            params["kind"] = "BLOCK_STATE"
+            params["block"] = "minecraft:stone"
+            conditionPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+        }
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["text"] = "matched"
+        }
+        GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["text"] = "missed"
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        // 対象位置で判定し、セレクタ0件時はfalse側へフォールバックする。
+        assertTrue(body.contains("execute at @a["))
+        assertTrue(body.contains("unless entity @a["))
+    }
+
+    @Test
+    fun `setblock falls back to the execution position`() {
+        val store = ScriptStore(temp.resolve("setblock-exec-fallback"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "setblock exec fallback")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.SETBLOCK.value
+            params["block"] = "minecraft:stone"
+            executionPositionSpec = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("setblock 1.0 2.0 3.0 minecraft:stone"))
+    }
+
+    @Test
+    fun `setblock without any position is rejected`() {
+        val store = ScriptStore(temp.resolve("setblock-no-position"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "setblock no position")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.SETBLOCK.value
+            params["block"] = "minecraft:stone"
+        }
+
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        assertTrue(failure.errors.any { it.contains("ブロック配置位置が未設定です") })
+    }
+
+    @Test
+    fun `fill without range falls back to a single execution position`() {
+        val store = ScriptStore(temp.resolve("fill-exec-fallback"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "fill exec fallback")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.value
+            params["block"] = "minecraft:stone"
+            executionPositionSpec = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        // 始点＝終点＝実行位置の1ブロック配置になる。
+        assertTrue(body.contains("fill 1.0 2.0 3.0 1.0 2.0 3.0 minecraft:stone"))
+    }
+
+    @Test
+    fun `fill without range rejects multi execution positions`() {
+        val store = ScriptStore(temp.resolve("fill-multi-exec"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "fill multi exec")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.value
+            params["block"] = "minecraft:stone"
+            blockFromSpec = PositionSpec(PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0)
+            executionPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEARBY_PLAYERS),
+            )
+        }
+
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        assertTrue(failure.errors.any { it.contains("既定値に複数位置") })
+    }
+
+    @Test
     fun `block operation and entity deletion lower to vanilla commands`() {
         val store = ScriptStore(temp.resolve("block-commands"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "block commands")

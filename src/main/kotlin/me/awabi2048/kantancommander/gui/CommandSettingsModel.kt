@@ -1001,6 +1001,66 @@ object CommandSettingsModel {
         }
     }
 
+    /**
+     * issue #29: 内包対象を編集する役割かを返します。
+     *
+     * 位置・向きの各役割は対象指定を内部に持ち、通常対象画面へ進む経路を
+     * 持ちません。TARGET_FILTERS画面はこれらの役割では内包対象を編集します。
+     * 移動先は旧来の対象移動経路のため除外します。
+     */
+    fun isEmbeddedTargetRole(role: CommandSettingRole?): Boolean = when (role) {
+        CommandSettingRole.CONDITION_POSITION,
+        CommandSettingRole.BLOCK_POSITION,
+        CommandSettingRole.BLOCK_FROM,
+        CommandSettingRole.BLOCK_TO,
+        CommandSettingRole.SOUND_POSITION,
+        CommandSettingRole.PARTICLE_POSITION,
+        CommandSettingRole.PARTICLE_END,
+        CommandSettingRole.SUMMON_POSITION,
+        CommandSettingRole.FIREWORK_POSITION,
+        CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+        CommandSettingRole.EXECUTION_POSITION,
+        CommandSettingRole.DESTINATION_FACING,
+        CommandSettingRole.TEMPORARY_LOCATION_FACING,
+        -> true
+        else -> false
+    }
+
+    /** issue #29: 位置・向き仕様に内包された対象指定を返します。 */
+    fun embeddedTargetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? {
+        if (!isEmbeddedTargetRole(role)) return null
+        return when (role) {
+            CommandSettingRole.DESTINATION_FACING,
+            CommandSettingRole.TEMPORARY_LOCATION_FACING,
+            -> facingSpec(node, role)?.target
+            else -> positionSpec(node, role)?.target
+        }
+    }
+
+    /**
+     * issue #29: 内包対象だけを書き換えます。
+     *
+     * 種別・座標等の他要素は維持し、保存形式（PositionSpec/FacingSpecの
+     * target部）は変えません。検証・実行・出力への影響はありません。
+     */
+    fun setEmbeddedTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
+        check(isEmbeddedTargetRole(role)) { "${node.type} の内包対象の役割が不正です: $role" }
+        when (role) {
+            CommandSettingRole.DESTINATION_FACING,
+            CommandSettingRole.TEMPORARY_LOCATION_FACING,
+            -> {
+                val base = facingSpec(node, role)
+                    ?.takeIf { it.kind == FacingKind.TARGET } ?: FacingSpec(FacingKind.TARGET)
+                setFacingSpec(node, base.copy(kind = FacingKind.TARGET, target = spec), role)
+            }
+            else -> {
+                val base = positionSpec(node, role)
+                    ?.takeIf { it.kind == PositionKind.TARGET } ?: PositionSpec(PositionKind.TARGET)
+                setPositionSpec(node, role, base.copy(kind = PositionKind.TARGET, target = spec))
+            }
+        }
+    }
+
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
@@ -1265,7 +1325,12 @@ object CommandSettingsModel {
         role: CommandSettingRole?,
         parameter: String,
     ): Boolean {
-        val spec = targetSpec(node, role) ?: return false
+        // issue #29: 位置・向きの役割では内包対象を参照します。
+        val spec = if (isEmbeddedTargetRole(role)) {
+            embeddedTargetSpec(node, role)
+        } else {
+            targetSpec(node, role)
+        } ?: return false
         val explicitlyConfigured = node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))
         return when (parameter) {
             "kind" -> true

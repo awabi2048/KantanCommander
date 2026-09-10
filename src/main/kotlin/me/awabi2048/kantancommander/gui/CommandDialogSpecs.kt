@@ -1279,12 +1279,12 @@ internal object CommandDialogSpecs {
         }
         val positiveInteger = fieldKey in setOf("count", "level", "seconds")
         // issue #18: 有界数値の範囲・刻みは共有正本です。検証とSlider操作で同じ値を参照します。
+        // 上限の定まらない数量系（個数・レベル・秒数）はSlider対象にせず、
+        // テキスト入力のまま正の整数検証だけを適用します。
         val numericRange = when (fieldKey) {
             "volume" -> NumericRange(0.0, 34.0, step = 1.0)
             "pitch" -> NumericRange(0.5, 2.0, step = 0.1)
             "intensity" -> NumericRange(0.1, 4.0, step = 0.1)
-            "count", "level", "seconds" ->
-                NumericRange(1.0, Int.MAX_VALUE.toDouble(), step = 1.0, integer = true)
             else -> null
         }
         val required = fieldKey in setOf(
@@ -1396,7 +1396,12 @@ internal object CommandDialogSpecs {
         formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_VALUE_BODY,
     )
 
-    /** 正の整数を受け付ける仕様を、数量・整数秒数・上限で共有します。 */
+    /**
+     * 正の整数を受け付ける仕様を、数量・整数秒数・上限で共有します。
+     *
+     * 上限の定まらない数量はSlider対象にせず、テキスト入力のまま検証だけを
+     * 適用します。有界の整数は [integerRange] を使います。
+     */
     private fun positiveInteger(
         labelKey: LocalizationKey<String>,
         max: Int = Int.MAX_VALUE,
@@ -1414,7 +1419,8 @@ internal object CommandDialogSpecs {
             },
             required = true,
             format = InputFormat.QUANTITY,
-            numericRange = range,
+            // Slider導出には使わず、テキスト入力にします。
+            numericRange = null,
         )
     }
 

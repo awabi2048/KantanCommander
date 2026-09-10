@@ -1448,7 +1448,41 @@ class GestureLowerPanel(
                 ),
             )
         }
-            appendTypedValuePreview(nodes, frame, node, field.key, selectedSource, state.scriptId, player)
+            // issue #29: 一時変数参照に対応したID項目（効果音・効果）も、直接値の
+            // ときは一覧選択へ進めます。Dialog入力は直接値2回目の既存導線に残し、
+            // 試聴カードと並べて配置します。
+            val literalPickerKind = if (selectedSource == CommandValueSource.LITERAL) {
+                ResourcePicker.kindForFieldKey(field.key)
+            } else null
+            appendTypedValuePreview(
+                nodes, frame, node, field.key, selectedSource, state.scriptId, player,
+                compact = literalPickerKind != null,
+            )
+            if (literalPickerKind != null) {
+                DeclarativeSettings.actionCardSection(
+                    nodes,
+                    frame,
+                    SettingsActionCard(
+                        elementId = "lower-resource-open:${field.key}",
+                        label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS), NamedTextColor.GOLD),
+                        background = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                        cx = 0.58,
+                        cy = TYPED_VALUE_PREVIEW_CENTER_Y,
+                        w = 0.56,
+                        h = SETTING_INPUT_HEIGHT,
+                        labelSize = 0.0048,
+                        labelWidth = 92,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = singleLineHover(
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
+                            x = HOVER_SLOT_X,
+                            y = HOVER_SLOT_Y,
+                        ),
+                        visualTag = "lower-resource-open",
+                    ),
+                )
+            }
         } else if (heldMainHandSetting || dialogInputSetting) {
             val editVisualText = if (heldMainHandSetting) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
@@ -1779,6 +1813,8 @@ class GestureLowerPanel(
         source: CommandValueSource,
         scriptId: java.util.UUID,
         player: Player,
+        // issue #29: 一覧選択カードと並べるときは試聴カードを左半分へ寄せます。
+        compact: Boolean = false,
     ) {
         if (source != CommandValueSource.LITERAL) return
         val mapping = when (fieldKey) {
@@ -1823,9 +1859,9 @@ class GestureLowerPanel(
                 background = Bukkit.createBlockData(
                     if (configured) material else DisabledGuiVisualPolicy.material,
                 ),
-                cx = TYPED_VALUE_PREVIEW_CENTER_X,
+                cx = if (compact) -0.02 else TYPED_VALUE_PREVIEW_CENTER_X,
                 cy = TYPED_VALUE_PREVIEW_CENTER_Y,
-                w = TYPED_VALUE_PREVIEW_WIDTH,
+                w = if (compact) 0.56 else TYPED_VALUE_PREVIEW_WIDTH,
                 h = TYPED_VALUE_PREVIEW_HEIGHT,
                 labelSize = 0.0043,
                 labelWidth = 180,
@@ -3654,8 +3690,12 @@ class GestureLowerPanel(
         player: Player,
         kindOverride: TargetKind? = null,
     ): List<SettingChoice> {
-        val currentSpec = CommandSettingsModel.targetSpec(node, context.role)
-            ?: me.awabi2048.kantancommander.model.TargetSpec(kindOverride ?: TargetKind.NEAREST_ENTITY)
+        // issue #29: 位置・向きの役割で開いた場合は内包対象を表示します。
+        val currentSpec = (if (CommandSettingsModel.isEmbeddedTargetRole(context.role)) {
+            CommandSettingsModel.embeddedTargetSpec(node, context.role)
+        } else {
+            CommandSettingsModel.targetSpec(node, context.role)
+        }) ?: me.awabi2048.kantancommander.model.TargetSpec(kindOverride ?: TargetKind.NEAREST_ENTITY)
         val spec = kindOverride?.let { currentSpec.copy(kind = it) } ?: currentSpec
         fun value(parameter: String): String? = when (parameter) {
             "sort" -> KcI18n.text(player, when (spec.sort) {
