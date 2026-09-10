@@ -725,6 +725,19 @@ class GestureSequenceEditor(
     private var structuralValidationErrors: List<me.awabi2048.kantancommander.data.GraphStructuralError> = emptyList()
 
     /**
+     * 変数定義付きのテスト可否検証のTTLキャッシュです。
+     *
+     * 世代管理の対象外（ワールド変数の変更ではscript revisionが進まない）のため
+     * 世代cacheにはせず、短い鮮度で再計算を抑止します。上部再構築ごとの
+     * 全量検証＋MyWorld参照を間引き、ボタン表示のちらつきなく保ちます。
+     * 無効化条件はキー（script＋世代）の変化・TTL超過・セッション終了に一元化します。
+     */
+    private val testValidationCache =
+        TtlCache<Pair<java.util.UUID, Long>, List<me.awabi2048.kantancommander.data.ScriptValidationError>>(
+            ttlMillis = 1500L,
+        )
+
+    /**
      * Slider等の連続previewを永続保存へ直結させない一時保管場所です。
      * session-localに保持し、commit時にだけrevisionを進めます。
      * 他editorへの共有は低頻度・明示channelに限定します。
@@ -957,11 +970,16 @@ class GestureSequenceEditor(
                 ),
             )
         }
-        return ExecutableScriptValidator.validate(
-            script,
-            plugin.graphLimits(),
-            plugin.variables.definitions(worldData.uuid),
-        )
+        // 配置・ワールドの存在確認は安価なため毎回行い、高価な全量検証だけを
+        // 短い鮮度で使い回します。ワールド変数の変更は最大TTLだけ遅れて
+        // ボタン表示へ反映されますが、実行開始時の成否表示には影響しません。
+        return testValidationCache.getOrCompute(script.id to script.revision) {
+            ExecutableScriptValidator.validate(
+                script,
+                plugin.graphLimits(),
+                plugin.variables.definitions(worldData.uuid),
+            )
+        }
     }
 
     /**
@@ -1617,6 +1635,13 @@ class GestureSequenceEditor(
         validationCacheErrors = emptyList()
         structuralValidationCacheKey = null
         structuralValidationErrors = emptyList()
+        testValidationCache.clear()
+        iconTemplateCache.clear()
+        litRedstoneLampData = null
+        litCopperBulbData = null
+        lastUpperStructureSignature = null
+        lastUpperIncomplete = emptySet()
+        lastUpperSelection = null
         lastDirectRenderedRevision = null
         lastGraphShadowSignature = ""
         layoutFailureNoticeSent = false
@@ -1738,6 +1763,43 @@ class GestureSequenceEditor(
     private fun blockDataOf(material: Material): BlockData =
         blockDataCache.getOrPut(material) { Bukkit.createBlockData(material) }
 
+    /**
+     * 点灯状態が固定の表示素材です。無条件の共有欄へは入れず用途別に保持します。
+     *
+     * 生成後に点灯切替えを行わない固定表示だけを対象にし、描画側も読取りだけに
+     * 用います。テストボタンの状態表示はこの3通りに固定されています。
+     * GUI更新はメインスレッドからのみ行います。
+     */
+    private var litRedstoneLampData: BlockData? = null
+    private var litCopperBulbData: BlockData? = null
+
+    /** 点灯済みレッドストーンランプの共有表示素材を返します。 */
+    private fun litRedstoneLampData(): BlockData =
+        litRedstoneLampData ?: Bukkit.createBlockData(Material.REDSTONE_LAMP).also {
+            if (it is org.bukkit.block.data.Lightable) it.isLit = true
+            litRedstoneLampData = it
+        }
+
+    /** 点灯済み銅電球の共有表示素材を返します。 */
+    private fun litCopperBulbData(): BlockData =
+        litCopperBulbData ?: Bukkit.createBlockData(Material.COPPER_BULB).also {
+            if (it is org.bukkit.block.data.Lightable) it.isLit = true
+            litCopperBulbData = it
+        }
+
+    /**
+     * ノード種別ごとのアイコン雛形です。毎回の生成を避けるため保持します。
+     *
+     * 雛形自体は変更せず、描画へ渡す際に複写します。種別は有限であり、
+     * 折り畳み装飾の有無を合わせても数十件に収まります。
+     * GUI更新はメインスレッドからのみ行います。
+     */
+    private val iconTemplateCache = mutableMapOf<Pair<CommandType, Boolean>, ItemStack>()
+
+    /** 表示用のノードアイコンを返します。雛形の複写であり呼び出し側で変更できます。 */
+    private fun cachedIconStack(node: CommandNode, folded: Boolean): ItemStack =
+        iconTemplateCache.getOrPut(node.type to folded) { foldedIconStack(node, folded) }.clone()
+
     /** shadow検証の直近の差分署名です。同一差分の連投を抑えます。 */
     private var lastGraphShadowSignature: String = ""
 
@@ -1842,7 +1904,7 @@ class GestureSequenceEditor(
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
-                            item = foldedIconStack(node, isFoldedFor || isFoldedIf),
+                            item = cachedIconStack(node, isFoldedFor || isFoldedIf),
                             scale = frame.iconScale,
                             // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
                             layer = GestureEditorLayout.ICON_LAYER,
@@ -2455,8 +2517,7 @@ class GestureSequenceEditor(
         )
         when {
             test?.phase == GestureTestPhase.RUNNING -> {
-                val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
-                if (lamp is org.bukkit.block.data.Lightable) lamp.isLit = true
+                val lamp = litRedstoneLampData()
                 chrome += SettingsActionCard(
                     elementId = "test-execution",
                     label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
@@ -2481,7 +2542,7 @@ class GestureSequenceEditor(
             state.testExecution == null && !testActive -> {
                 val reason = testUnavailableReason(player)
                 if (reason == null) {
-                    val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
+                    val lamp = blockDataOf(Material.REDSTONE_LAMP)
                     chrome += SettingsActionCard(
                         elementId = "test-execution",
                         label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
@@ -2503,8 +2564,7 @@ class GestureSequenceEditor(
                         visualTag = "test-execution",
                     )
                 } else {
-                    val bulb = Bukkit.createBlockData(Material.COPPER_BULB)
-                    if (bulb is org.bukkit.block.data.Lightable) bulb.isLit = true
+                    val bulb = litCopperBulbData()
                     chrome += SettingsActionCard(
                         elementId = "test-execution",
                         // 無言操作面のため文言表示は作りません（旧実装どおり）。
