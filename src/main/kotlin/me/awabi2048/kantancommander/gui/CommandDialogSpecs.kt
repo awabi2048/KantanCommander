@@ -59,6 +59,28 @@ internal object CommandDialogSpecs {
         NUMERIC_EXPRESSION,
     }
 
+    /**
+     * issue #18 の数値範囲・刻みの共有正本です。
+     *
+     * 現在Slider操作は経路から外しているため、検証の正本として使います。
+     * Slider復活時はここから段階操作の範囲・刻みを導出します。
+     * `step` は段階操作の刻みであり、検証の合否には使いません
+     * （tick整合等の検証固有規則は `validate` 側に残します）。
+     */
+    data class NumericRange(
+        val min: Double,
+        val max: Double,
+        val step: Double,
+        val integer: Boolean = false,
+        /** trueの場合は下限値そのものを拒否します（0超過等）。 */
+        val exclusiveMin: Boolean = false,
+    ) {
+        init {
+            require(min <= max) { "数値範囲が不正です: $min..$max" }
+            require(step > 0.0 && step.isFinite()) { "刻みが不正です: $step" }
+        }
+    }
+
     /** テキスト入力欄の共通仕様。 */
     data class Spec(
         /** 入力欄のラベル（入力画面の見出し・案内へ使用）。 */
@@ -72,6 +94,8 @@ internal object CommandDialogSpecs {
         val format: InputFormat = InputFormat.ANY_STRING,
         /** 形式・範囲を入力本文へ表示する説明キーです。 */
         val formatHintKey: LocalizationKey<String>? = null,
+        /** 数値欄の範囲・刻みです。検証の正本であり、検証側が正とします。 */
+        val numericRange: NumericRange? = null,
     ) {
         /** GUI固有の空欄スキップを廃止し、必須／任意の契約をここで一元適用します。 */
         fun validateInput(raw: String): LocalizationKey<String>? =
@@ -151,6 +175,8 @@ internal object CommandDialogSpecs {
         required = true,
         format = InputFormat.TIME,
         formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT,
+        // issue #18: 範囲の共有正本です。検証クロージャと一致させます。
+        numericRange = NumericRange(0.0, MAX_TIMER_SECONDS.toDouble(), step = 1.0, exclusiveMin = true),
     )
 
     /** 検証済みのタイマー入力文字列を、保存用の秒数へ変換します。 */
@@ -508,11 +534,13 @@ internal object CommandDialogSpecs {
      * 図形数値の入力欄定義です。GUI表示型に依存しないため、両GUIで共有します。
      *
      * 終端位置（LINE／BOX）は位置選択画面で編集するため、ここには含めません。
+     * `step` は段階操作の刻みであり、検証には使いません。
      */
     data class GeometryNumberField(
         val key: String,
         val labelKey: LocalizationKey<String>,
         val range: ClosedFloatingPointRange<Double>,
+        val step: Double = 1.0,
     )
 
     /** 現形状が必要とする数値欄の一覧を返します。 */
@@ -521,12 +549,14 @@ internal object CommandDialogSpecs {
             key: String,
             labelKey: LocalizationKey<String>,
             range: ClosedFloatingPointRange<Double>,
-        ) = GeometryNumberField(key, labelKey, range)
+            step: Double = 1.0,
+        ) = GeometryNumberField(key, labelKey, range, step)
         val radius = {
             number(
                 ParticleGeometry.PARAM_RADIUS,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_RADIUS,
                 0.0..ParticleGeometry.MAX_RADIUS,
+                step = 0.5,
             )
         }
         val axis = listOf(
@@ -534,16 +564,19 @@ internal object CommandDialogSpecs {
                 ParticleGeometry.PARAM_AXIS_YAW,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_AXIS_YAW,
                 -180.0..180.0,
+                step = 5.0,
             ),
             number(
                 ParticleGeometry.PARAM_AXIS_PITCH,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_AXIS_PITCH,
                 -90.0..90.0,
+                step = 5.0,
             ),
             number(
                 ParticleGeometry.PARAM_ROTATION,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_ROTATION,
                 ParticleGeometry.MIN_ANGLE..ParticleGeometry.MAX_ANGLE,
+                step = 5.0,
             ),
         )
         val step = {
@@ -551,6 +584,7 @@ internal object CommandDialogSpecs {
                 ParticleGeometry.PARAM_STEP,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_STEP,
                 ParticleGeometry.MIN_STEP..ParticleGeometry.MAX_STEP,
+                step = 0.1,
             )
         }
         val shapeFields = when (shape) {
@@ -562,11 +596,13 @@ internal object CommandDialogSpecs {
                     ParticleGeometry.PARAM_START_ANGLE,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_START_ANGLE,
                     ParticleGeometry.MIN_ANGLE..ParticleGeometry.MAX_ANGLE,
+                    step = 5.0,
                 ),
                 number(
                     ParticleGeometry.PARAM_END_ANGLE,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_END_ANGLE,
                     ParticleGeometry.MIN_ANGLE..ParticleGeometry.MAX_ANGLE,
+                    step = 5.0,
                 ),
             ) + axis
             ParticleShape.BOX -> emptyList()
@@ -577,11 +613,13 @@ internal object CommandDialogSpecs {
                     ParticleGeometry.PARAM_HEIGHT,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_HEIGHT,
                     0.0..ParticleGeometry.MAX_HEIGHT,
+                    step = 1.0,
                 ),
                 number(
                     ParticleGeometry.PARAM_TURNS,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_TURNS,
                     ParticleGeometry.MIN_TURNS..ParticleGeometry.MAX_TURNS,
+                    step = 0.25,
                 ),
             ) + axis
             ParticleShape.POINT_SCATTER -> emptyList()
@@ -606,6 +644,7 @@ internal object CommandDialogSpecs {
                     field.labelKey,
                     field.range,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID,
+                    step = field.step,
                 ),
             )
         }
@@ -628,6 +667,8 @@ internal object CommandDialogSpecs {
         required = true,
         format = InputFormat.NUMBER,
         formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_PARTICLE_DENSITY_BODY,
+        // issue #18: 範囲の共有正本です。検証クロージャ（0超過・2.0以下）と一致させます。
+        numericRange = NumericRange(0.0, ParticleGeometry.DENSITY_MAX, step = 0.1, exclusiveMin = true),
     )
 
     /** 打ち上げ高さの入力仕様です。0〜320ブロックを受け付けます。 */
@@ -642,6 +683,12 @@ internal object CommandDialogSpecs {
         required = true,
         format = InputFormat.NUMBER,
         formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_BURST_HEIGHT_BODY,
+        // issue #18: 範囲の共有正本です。検証委譲先と一致させます。
+        numericRange = NumericRange(
+            FireworkSettings.HEIGHT_MIN,
+            FireworkSettings.HEIGHT_MAX,
+            step = 5.0,
+        ),
     )
     fun particleData(node: CommandNode): Spec = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DATA,
@@ -1029,6 +1076,7 @@ internal object CommandDialogSpecs {
                 -> particleSpread
                 ParticleSettings.PARAM_SPEED -> particleSpeed
                 ParticleSettings.PARAM_COUNT -> positiveInteger(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT)
+                "particleDensity" -> particleDensity
                 else -> field(fieldKey)
             }
         }
@@ -1037,9 +1085,6 @@ internal object CommandDialogSpecs {
         }
         if (node.type == CommandType.FIREWORK_LAUNCH && fieldKey == "burstHeight") {
             return burstHeight
-        }
-        if (node.type == CommandType.PARTICLE && fieldKey == "particleDensity") {
-            return particleDensity
         }
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "value" && node.type == CommandType.VARIABLE) {
@@ -1233,6 +1278,15 @@ internal object CommandDialogSpecs {
             else -> null
         }
         val positiveInteger = fieldKey in setOf("count", "level", "seconds")
+        // issue #18: 有界数値の範囲・刻みは共有正本です。検証の正本として使います。
+        // 上限の定まらない数量系（個数・レベル・秒数）は範囲を持たず、
+        // テキスト入力のまま正の整数検証だけを適用します。
+        val numericRange = when (fieldKey) {
+            "volume" -> NumericRange(0.0, 34.0, step = 1.0)
+            "pitch" -> NumericRange(0.5, 2.0, step = 0.1)
+            "intensity" -> NumericRange(0.1, 4.0, step = 0.1)
+            else -> null
+        }
         val required = fieldKey in setOf(
             "block", "entity", "sound", "effect", "count", "level", "seconds",
             "volume", "pitch", "intensity", "shakeType", "slot", "tag",
@@ -1251,17 +1305,15 @@ internal object CommandDialogSpecs {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
                 fieldKey == "slot" && !CommandValueRules.isEquipmentSlot(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey == "volume" && !isNumericTemplate(raw) && !CommandValueRules.isFiniteDoubleIn(raw, 0.0..34.0) ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey == "pitch" && !isNumericTemplate(raw) && !CommandValueRules.isFiniteDoubleIn(raw, 0.5..2.0) ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                fieldKey == "intensity" && !isNumericTemplate(raw) && !CommandValueRules.isFiniteDoubleIn(raw, 0.1..4.0) ->
+                numericRange != null && fieldKey in setOf("volume", "pitch", "intensity") &&
+                    !isNumericTemplate(raw) &&
+                    !CommandValueRules.isFiniteDoubleIn(raw, numericRange.min..numericRange.max) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 fieldKey in setOf("text", "subtitle", "customName", "itemData", "value") && hasMalformedAnyReference(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 else -> null
             }
-        }, required = required, format = format, formatHintKey = formatHintKey)
+        }, required = required, format = format, formatHintKey = formatHintKey, numericRange = numericRange)
     }
 
     /** 有限の座標値を受け付ける仕様です。座標・回転の各入力欄で共有します。 */
@@ -1297,29 +1349,36 @@ internal object CommandDialogSpecs {
         minimum: Double,
         exclusiveMinimum: Boolean,
         invalidKey: LocalizationKey<String>,
-    ): Spec = Spec(
-        labelKey,
-        16,
-        validate = { raw ->
-            if (isNumericTemplate(raw)) {
-                null
-            } else {
-                val value = CommandValueRules.parseFiniteDouble(raw)
-                when {
-                    value == null ||
-                        (exclusiveMinimum && value <= minimum) ||
-                        (!exclusiveMinimum && value < minimum) ||
-                        value > MAX_COMMAND_TIME_SECONDS -> invalidKey
-                    !CommandValueRules.isTickAlignedSeconds(raw) ->
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID
-                    else -> null
+        // issue #18: 段階操作の刻みです。tick整合（0.05）の倍数に限り、
+        // 生成値が検証を必ず通過します。
+        step: Double = 1.0,
+    ): Spec {
+        val range = NumericRange(minimum, MAX_COMMAND_TIME_SECONDS, step, exclusiveMin = exclusiveMinimum)
+        return Spec(
+            labelKey,
+            16,
+            validate = { raw ->
+                if (isNumericTemplate(raw)) {
+                    null
+                } else {
+                    val value = CommandValueRules.parseFiniteDouble(raw)
+                    when {
+                        value == null ||
+                            (range.exclusiveMin && value <= range.min) ||
+                            (!range.exclusiveMin && value < range.min) ||
+                            value > range.max -> invalidKey
+                        !CommandValueRules.isTickAlignedSeconds(raw) ->
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TICK_INVALID
+                        else -> null
+                    }
                 }
-            }
-        },
-        required = true,
-        format = InputFormat.TIME,
-        formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT,
-    )
+            },
+            required = true,
+            format = InputFormat.TIME,
+            formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT,
+            numericRange = range,
+        )
+    }
 
     /** 条件の数値比較値は、数値または単一の数値変数参照だけを許可します。 */
     private val conditionNumberValue = Spec(
@@ -1337,16 +1396,33 @@ internal object CommandDialogSpecs {
         formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONDITION_VALUE_BODY,
     )
 
-    /** 正の整数を受け付ける仕様を、数量・整数秒数・上限で共有します。 */
-    private fun positiveInteger(labelKey: LocalizationKey<String>): Spec = Spec(
-        labelKey,
-        16,
-        validate = { raw ->
-            if (!isNumericTemplate(raw) && !isPositiveInteger(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID else null
-        },
-        required = true,
-        format = InputFormat.QUANTITY,
-    )
+    /**
+     * 正の整数を受け付ける仕様を、数量・整数秒数・上限で共有します。
+     *
+     * 上限の定まらない数量はテキスト入力のまま検証だけを適用します。
+     * 有界の整数は [integerRange] を使います。
+     */
+    private fun positiveInteger(
+        labelKey: LocalizationKey<String>,
+        max: Int = Int.MAX_VALUE,
+    ): Spec {
+        val range = NumericRange(1.0, max.toDouble(), step = 1.0, integer = true)
+        return Spec(
+            labelKey,
+            16,
+            validate = { raw ->
+                // issue #18: 範囲判定は共有正本を参照します。
+                val value = CommandValueRules.parsePositiveInt(raw)?.toDouble()
+                if (!isNumericTemplate(raw) && (value == null || value < range.min || value > range.max)) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID
+                } else null
+            },
+            required = true,
+            format = InputFormat.QUANTITY,
+            // Slider導出には使わず、テキスト入力にします。
+            numericRange = null,
+        )
+    }
 
     /** 実行側のInt範囲まで入力時に確認し、保存後にだけ失敗する値を作りません。 */
     private fun integerRange(
@@ -1354,10 +1430,13 @@ internal object CommandDialogSpecs {
         range: IntRange,
         invalidKey: LocalizationKey<String>,
         format: InputFormat = InputFormat.INTEGER,
-    ): Spec = Spec(labelKey, 16, validate = { raw ->
-        val value = CommandValueRules.parsePositiveInt(raw)
-        if (!isNumericTemplate(raw) && (value == null || value !in range)) invalidKey else null
-    }, required = true, format = format)
+    ): Spec {
+        val numericRange = NumericRange(range.first.toDouble(), range.last.toDouble(), step = 1.0, integer = true)
+        return Spec(labelKey, 16, validate = { raw ->
+            val value = CommandValueRules.parsePositiveInt(raw)
+            if (!isNumericTemplate(raw) && (value == null || value < numericRange.min || value > numericRange.max)) invalidKey else null
+        }, required = true, format = format, numericRange = numericRange)
+    }
 
     /** 小数を許可する実行値は、整数仕様へ誤って流さないよう専用化します。 */
     private fun decimalRange(
@@ -1365,10 +1444,15 @@ internal object CommandDialogSpecs {
         range: ClosedFloatingPointRange<Double>,
         invalidKey: LocalizationKey<String>,
         format: InputFormat = InputFormat.NUMBER,
-    ): Spec = Spec(labelKey, 16, validate = { raw ->
-        val value = CommandValueRules.parseFiniteDouble(raw)
-        if (!isNumericTemplate(raw) && (value == null || !value.isFinite() || value !in range)) invalidKey else null
-    }, required = true, format = format)
+        // issue #18: 段階操作の刻みです。検証には使いません。
+        step: Double = 1.0,
+    ): Spec {
+        val numericRange = NumericRange(range.start, range.endInclusive, step)
+        return Spec(labelKey, 16, validate = { raw ->
+            val value = CommandValueRules.parseFiniteDouble(raw)
+            if (!isNumericTemplate(raw) && (value == null || !value.isFinite() || value < numericRange.min || value > numericRange.max)) invalidKey else null
+        }, required = true, format = format, numericRange = numericRange)
+    }
 
     /** 変数操作の保存値を、実行時の式評価と同じ型境界で検証します。 */
     private fun variableValue(type: VariableType?, operation: VariableOperation, changeMode: VariableChangeMode): Spec {
@@ -1423,15 +1507,24 @@ internal object CommandDialogSpecs {
     fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect", ParticleSettings.PARAM_PARTICLE)
 
     /**
+     * issue #28: Registry由来の全候補IDです。
+     *
+     * 検索ランキングを持たず、Dialogの候補検索とGesture Resource Pickerの
+     * 双方から利用する共通境界です。サーバーなしでは空列を返します。
+     */
+    fun registeredIds(fieldKey: String): List<String> = registeredValues(fieldKey)
+
+    /**
      * 入力中の文字列に近い登録IDを最大12件返します。
      * Paperの入力画面はキー入力ごとのコールバックを提供しないため、呼び出し側は
      * 「候補を表示」ボタン押下時の最新値を渡します。完全一致→前方一致→
      * 部分一致→編集距離の順で安定ソートし、空欄では候補を返しません。
+     * ランキングは [registeredIds] の取得と分離しています。
      */
     fun suggestions(fieldKey: String, query: String, limit: Int = 12): List<String> {
         val normalized = query.trim().lowercase()
         if (normalized.isEmpty() || !supportsSuggestions(fieldKey)) return emptyList()
-        val values = registeredValues(fieldKey)
+        val values = registeredIds(fieldKey)
         return values.asSequence()
             .map { value ->
                 val candidate = value.lowercase()

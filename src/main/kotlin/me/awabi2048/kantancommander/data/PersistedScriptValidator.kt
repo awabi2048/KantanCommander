@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
@@ -96,6 +97,7 @@ object PersistedScriptValidator {
             "particleEndPositionSpec",
             "fireworkPositionSpec",
             "summonPositionSpec",
+            "executionPositionSpec",
             "temporaryLocationPositionSpec",
         ).forEach { field ->
             optionalObject(node, field, path, errors)?.let {
@@ -148,6 +150,12 @@ object PersistedScriptValidator {
         listOf("semanticsX", "semanticsY", "semanticsZ", "semanticsYaw", "semanticsPitch").forEach {
             requireEnum(spec, it, path, enumNames<CoordinateSemantics>(), errors)
         }
+        // issue #29: スポーン種別と対象内包は任意項目です。旧データの欠落は
+        // メンバー用・対象なしとして互換解決します。
+        optionalEnum(spec, "myworldSpawn", path, enumNames<MyworldSpawnKind>(), errors)
+        optionalObject(spec, "target", path, errors)?.let {
+            validateTarget(it, "$path/target", errors)
+        }
     }
 
     private fun validateFacing(spec: JsonObject, path: String, errors: MutableList<String>) {
@@ -158,6 +166,24 @@ object PersistedScriptValidator {
         optionalString(spec, "tempName", path, errors)
         listOf("semanticsYaw", "semanticsPitch").forEach {
             requireEnum(spec, it, path, enumNames<CoordinateSemantics>(), errors)
+        }
+        optionalEnum(spec, "myworldSpawn", path, enumNames<MyworldSpawnKind>(), errors)
+        optionalObject(spec, "target", path, errors)?.let {
+            validateTarget(it, "$path/target", errors)
+        }
+    }
+
+    private fun optionalEnum(
+        parent: JsonObject,
+        field: String,
+        path: String,
+        allowed: Set<String>,
+        errors: MutableList<String>,
+    ) {
+        val raw = parent[field] ?: return
+        if (raw.isJsonNull) return
+        if (!raw.isJsonPrimitive || !raw.asJsonPrimitive.isString || raw.asString !in allowed) {
+            errors += "$path/$field: 未対応のenum値です"
         }
     }
 

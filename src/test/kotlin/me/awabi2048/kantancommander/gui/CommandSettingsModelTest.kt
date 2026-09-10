@@ -254,11 +254,11 @@ class CommandSettingsModelTest {
         val title = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
 
         assertEquals(
-            listOf("target", "mode", "text", "subtitle", "staySeconds"),
+            listOf("target", "mode", "text", "subtitle", "staySeconds", "executionPosition"),
             CommandSettingsModel.visibleFields(title).map { it.key },
         )
         assertEquals(
-            listOf("target", "mode", "text", "subtitle", "staySeconds"),
+            listOf("target", "mode", "text", "subtitle", "staySeconds", "executionPosition"),
             CommandSettingsModel.gestureVisibleFields(title).map { it.key },
         )
         assertEquals(
@@ -273,7 +273,7 @@ class CommandSettingsModelTest {
 
         val tellraw = CommandType.DISPLAY_TEXT.newNode()
         assertEquals(
-            listOf("target", "mode", "text"),
+            listOf("target", "mode", "text", "executionPosition"),
             CommandSettingsModel.gestureVisibleFields(tellraw).map { it.key },
         )
     }
@@ -351,10 +351,10 @@ class CommandSettingsModelTest {
             return CommandSettingsModel.visibleFields(node).map { it.key }
         }
 
-        assertEquals(listOf("target", "action", "other"), keys("ride"))
-        assertEquals(listOf("target", "action"), keys("dismount"))
-        assertEquals(listOf("target", "action", "slot", "item", "overwrite"), keys("equip"))
-        assertEquals(listOf("target", "action", "tagOperation", "tag"), keys("tag"))
+        assertEquals(listOf("target", "action", "other", "executionPosition"), keys("ride"))
+        assertEquals(listOf("target", "action", "executionPosition"), keys("dismount"))
+        assertEquals(listOf("target", "action", "slot", "item", "overwrite", "executionPosition"), keys("equip"))
+        assertEquals(listOf("target", "action", "tagOperation", "tag", "executionPosition"), keys("tag"))
     }
 
     @Test
@@ -432,7 +432,7 @@ class CommandSettingsModelTest {
         val node = CommandType.PLAY_SOUND.newNode()
         val fields = CommandSettingsModel.visibleFields(node)
 
-        assertEquals(listOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope"), fields.map { it.key })
+        assertEquals(listOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope", "executionPosition"), fields.map { it.key })
         assertFalse(fields.any { it.key == "volume" || it.key == "pitch" })
 
         node.params["volume"] = "0.5"

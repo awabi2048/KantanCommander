@@ -161,6 +161,14 @@ data class CommandNode(
     var fireworkPositionSpec: PositionSpec? = null,
     /** エンティティ召喚で指定された場合の召喚位置です。未設定時は制御ブロック位置を使用します。 */
     var summonPositionSpec: PositionSpec? = null,
+    /**
+     * issue #26 のコマンド単位の実行位置です。
+     *
+     * 廃止済みコンテキスト設定は復活させず、この位置だけを対応コマンドの設定として
+     * 保持します。後続コマンドへ継承せず、未設定時は制御ブロック位置を使用します。
+     * 対象探索の基準位置・コマンド固有位置の既定値として参照します。
+     */
+    var executionPositionSpec: PositionSpec? = null,
     /** TEMP_SET ENTITYの参照元です。通常コマンドと同じTargetSpecで対象を解決します。 */
     var temporaryEntityTargetSpec: TargetSpec? = null,
     /** TEMP_SET LOCATIONの位置側です。通常コマンドと同じPositionSpecで解決します。 */
@@ -208,6 +216,7 @@ data class CommandNode(
         particleEndPositionSpec = particleEndPositionSpec?.copy(),
         fireworkPositionSpec = fireworkPositionSpec?.copy(),
         summonPositionSpec = summonPositionSpec?.copy(),
+        executionPositionSpec = executionPositionSpec?.copy(),
         temporaryEntityTargetSpec = temporaryEntityTargetSpec?.copy(),
         temporaryLocationPositionSpec = temporaryLocationPositionSpec?.copy(),
         temporaryLocationFacingSpec = temporaryLocationFacingSpec?.copy(),
@@ -282,7 +291,41 @@ data class TargetSpec(
     val searchOrigin: SearchOriginSpec? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
     val tempName: String? = null,
-)
+    /**
+     * プリセットから詳細設定へ変換した来歴です。
+     *
+     * 詳細設定入室時にプリセット相当の明示値（上限数1・距離下限0等）を
+     * 指定した場合だけ真にします。利用者が手入力で等価値にしても真に
+     * しないことで、プリセット選択表示への誤判定を防ぎます。
+     * 検証・実行・出力はこの値を無視し、Gson永続の既定値は偽です。
+     */
+    val convertedFromPreset: Boolean = false,
+) {
+    /**
+     * issue #29: 静的に0..1件と確定する指定かを返します。
+     *
+     * 単一限定の位置でも取得元ではなく件数で判定し、最寄り等の0..1指定を
+     * 許可します。上限引き上げで複数になり得る指定は含みません。
+     */
+    fun isStaticallySingle(): Boolean {
+        if ((limit ?: 1) > 1) return false
+        return when (kind) {
+            TargetKind.NEAREST_PLAYER,
+            TargetKind.NEAREST_ENTITY,
+            TargetKind.RANDOM_PLAYER,
+            TargetKind.FIXED_ENTITY,
+            TargetKind.TEMPORARY,
+            -> true
+            TargetKind.NEARBY_PLAYERS,
+            TargetKind.NEARBY_ENTITIES,
+            TargetKind.ALL_PLAYERS,
+            -> false
+        }
+    }
+
+    /** issue #29: 複数件になり得る指定かを返します。 */
+    fun isMultiCapable(): Boolean = !isStaticallySingle()
+}
 
 /**
  * DISKは保存形式上の既存値ですが、実際に参照するのはプログラムディスクではなく
@@ -290,8 +333,20 @@ data class TargetSpec(
  */
 enum class PositionKind {
     CAPTURED, DISK, MYWORLD_SPAWN, COORDINATES, TEMPORARY,
-    /** テレポート先など、コマンド固有の「対象エンティティ位置」です。 */
+    /** issue #29 の対象エンティティ位置です。内包する対象指定の各位置へ0..N件解決します。 */
     TARGET,
+}
+
+/**
+ * issue #29 のMyWorldスポーン種別です。
+ *
+ * 旧来の単一 MYWORLD_SPAWN 相当はメンバー用スポーンとして互換移行します。
+ * 実行時はBukkitの通常world spawnではなく、MyWorldManagerが保持する
+ * 該当スポーン位置を参照します。
+ */
+enum class MyworldSpawnKind {
+    MEMBER,
+    GUEST,
 }
 
 /**
@@ -381,6 +436,16 @@ data class PositionSpec(
     val semanticsZ: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
     val semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
     val semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    /**
+     * issue #29 のMyWorldスポーン種別です。kind=MYWORLD_SPAWN のときだけ有効です。
+     * 未設定（旧データ）はメンバー用スポーンとして互換移行します。
+     */
+    val myworldSpawn: MyworldSpawnKind? = null,
+    /**
+     * issue #29 の対象内包指定です。kind=TARGET のときだけ有効であり、
+     * 選択されたエンティティそれぞれの位置へ0..N件解決します。
+     */
+    val target: TargetSpec? = null,
 ) {
     /** 座標・角度のいずれかに絶対以外の指定があるかを返します。 */
     fun hasNonAbsoluteSemantics(): Boolean =
@@ -490,10 +555,11 @@ data class FacingSpec(
     /**
      * 注視・向き複写の参照先実体です。kind=TARGET/COPY_ORIENTATION のときだけ有効で、
      * 単一体に制限したTargetSpecとして解決します。旧JSONには存在しないためnull許容です。
+     * 作業ブランチの対象内包指定と同一概念であり、名称を `target` へ統一します。
      */
-    val entityTarget: TargetSpec? = null,
+    val target: TargetSpec? = null,
     /**
-     * 向き成分ごとの解釈です。ROTATION／CAPTURED のyaw／pitchに
+     * 向き成分ごとの解釈です。ROTATION のyaw／pitchに
      * ABSOLUTE／RELATIVE を許します。LOCALと他種別への付与は検証で拒否します。
      * 注視点（COORDINATES のx/y/z）は絶対据え置きです。
      */

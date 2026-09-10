@@ -55,6 +55,8 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     PARTICLE_END("particle_end", "particleEnd"),
     SUMMON_POSITION("summon_position", "summonPosition"),
     FIREWORK_POSITION("firework_position", "fireworkPosition"),
+    /** issue #26 のコマンド単位の実行位置です。後続へ継承しません。 */
+    EXECUTION_POSITION("execution_position", "executionPosition"),
     /** TEMP_SET ENTITYは通常コマンドと同じ対象選択木から1体を解決します。 */
     TEMPORARY_ENTITY("temporary_entity", "entity"),
     /** TEMP_SET LOCATIONは位置と向きをまとめた親画面から共通設定へ進みます。 */
@@ -397,11 +399,62 @@ object CommandSettingsModel {
             }
             else -> fields
         }
+        // issue #26: 実行位置は対応コマンドの共通設定として末尾へ追加します。
+        // 制御系（待機・分岐端子・変数操作等）には表示しません。
+        val withExecutionPosition = if (supportsExecutionPosition(node.type)) {
+            conditionalFields + executionPositionField()
+        } else conditionalFields
         // 実行時に参照されない設定は、保存値を変更せずに両GUIから隠します。
         // ここで一元判定することで、表示だけ残って実行結果へ反映されない
         // 「テレポート先の向き」「サウンド位置」の設定入口を作りません。
-        return conditionalFields.filter { isFieldVisible(node, it.key) }
+        return withExecutionPosition.filter { isFieldVisible(node, it.key) }
     }
+
+    /**
+     * issue #26 の実行位置を表示するコマンドかを返します。
+     *
+     * 実行位置が意味を持たない制御系（待機・分岐端子・変数操作・繰返し制御等）には
+     * 表示しません。旧コンテキストの実行者・対象・向き・継承は復活させません。
+     */
+    fun supportsExecutionPosition(type: CommandType): Boolean = type in setOf(
+        CommandType.TELEPORT,
+        CommandType.GIVE_ITEM,
+        CommandType.ENTITY_ACTION,
+        CommandType.DISPLAY_TEXT,
+        CommandType.SUMMON_ENTITY,
+        CommandType.PLAY_SOUND,
+        CommandType.PARTICLE,
+        CommandType.FIREWORK_LAUNCH,
+        CommandType.APPLY_EFFECT,
+        CommandType.CAMERA_SHAKE,
+        CommandType.BLOCK_OPERATION,
+        CommandType.ENTITY_DELETE,
+        CommandType.CONDITION,
+        CommandType.DISK_CALL,
+    )
+
+    /** issue #26 の実行位置フィールドです。作用位置と区別できる専用文言を使います。 */
+    private fun executionPositionField(): EditorField = EditorField(
+        key = "executionPosition",
+        label = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXECUTION_POSITION,
+        material = org.bukkit.Material.COMPASS,
+        descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EXECUTION_POSITION,
+        actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EXECUTION_POSITION,
+        value = { node -> node.executionPositionSpec?.kind?.let { kind ->
+            // 表示キーは CommandEditMenu.displayPosition と同じ既存キーを使い、
+            // 新規言語キーを増やしません。
+            DisplayValue.Localized(
+                when (kind) {
+                    me.awabi2048.kantancommander.model.PositionKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAPTURED_POSITION
+                    me.awabi2048.kantancommander.model.PositionKind.DISK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION
+                    me.awabi2048.kantancommander.model.PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
+                    me.awabi2048.kantancommander.model.PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
+                    me.awabi2048.kantancommander.model.PositionKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
+                    me.awabi2048.kantancommander.model.PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
+                },
+            )
+        } ?: DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) },
+    )
 
     /**
      * コマンドの現在値に応じた実行依存フィールドの可視性を返します。
@@ -483,6 +536,10 @@ object CommandSettingsModel {
      * 解決し、タブ単位で常に同じ警告を表示します。
      */
     fun incompleteWarningKey(node: CommandNode, fieldKey: String): LocalizationKey<String> {
+        // issue #26: 実行位置タブの注意表示です。専用警告キーを使います。
+        if (fieldKey == "executionPosition") {
+            return KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EXECUTION_POSITION
+        }
         return when (node.type) {
             CommandType.TELEPORT -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
@@ -676,6 +733,11 @@ object CommandSettingsModel {
         error("未定義の設定警告キーです: type=${node.type}, field=$fieldKey")
 
     fun descriptor(node: CommandNode, fieldKey: String): CommandSettingDescriptor {
+        // issue #26: 実行位置はコマンド横断の共通設定項目です。表示可否は
+        // visibleFields側で制御し、ここでは保存先の役割だけを解決します。
+        if (fieldKey == "executionPosition") {
+            return CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.EXECUTION_POSITION)
+        }
         return when (node.type) {
         CommandType.TELEPORT -> when (fieldKey) {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
@@ -939,6 +1001,81 @@ object CommandSettingsModel {
         }
     }
 
+    /**
+     * issue #29: 内包対象を編集する役割かを返します。
+     *
+     * 位置・向きの各役割は対象指定を内部に持ち、通常対象画面へ進む経路を
+     * 持ちません。TARGET_FILTERS画面はこれらの役割では内包対象を編集します。
+     * 移動先は旧来の対象移動経路のため除外します。
+     */
+    fun isEmbeddedTargetRole(role: CommandSettingRole?): Boolean = when (role) {
+        CommandSettingRole.CONDITION_POSITION,
+        CommandSettingRole.BLOCK_POSITION,
+        CommandSettingRole.BLOCK_FROM,
+        CommandSettingRole.BLOCK_TO,
+        CommandSettingRole.SOUND_POSITION,
+        CommandSettingRole.PARTICLE_POSITION,
+        CommandSettingRole.PARTICLE_END,
+        CommandSettingRole.SUMMON_POSITION,
+        CommandSettingRole.FIREWORK_POSITION,
+        CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+        CommandSettingRole.EXECUTION_POSITION,
+        CommandSettingRole.DESTINATION_FACING,
+        CommandSettingRole.TEMPORARY_LOCATION_FACING,
+        -> true
+        else -> false
+    }
+
+    /** issue #29: 位置・向き仕様に内包された対象指定を返します。 */
+    fun embeddedTargetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? {
+        if (!isEmbeddedTargetRole(role)) return null
+        return when (role) {
+            CommandSettingRole.DESTINATION_FACING,
+            CommandSettingRole.TEMPORARY_LOCATION_FACING,
+            -> facingSpec(node, role)?.target
+            else -> positionSpec(node, role)?.target
+        }
+    }
+
+    /**
+     * issue #29: 内包対象だけを書き換えます。
+     *
+     * 種別・座標等の他要素は維持し、保存形式（PositionSpec/FacingSpecの
+     * target部）は変えません。検証・実行・出力への影響はありません。
+     * 向きでは注視・複写の種別を保持し、単一体に正規化します。
+     *
+     * @param facingKind 向き役割で種別を明示する場合に指定します（TARGET／COPY_ORIENTATION）。
+     */
+    fun setEmbeddedTargetSpec(
+        node: CommandNode,
+        role: CommandSettingRole?,
+        spec: TargetSpec,
+        facingKind: FacingKind? = null,
+    ) {
+        check(isEmbeddedTargetRole(role)) { "${node.type} の内包対象の役割が不正です: $role" }
+        when (role) {
+            CommandSettingRole.DESTINATION_FACING,
+            CommandSettingRole.TEMPORARY_LOCATION_FACING,
+            -> {
+                val resolvedKind = facingKind
+                    ?: facingSpec(node, role)?.kind?.takeIf {
+                        it == FacingKind.TARGET || it == FacingKind.COPY_ORIENTATION
+                    } ?: FacingKind.TARGET
+                require(resolvedKind == FacingKind.TARGET || resolvedKind == FacingKind.COPY_ORIENTATION) {
+                    "向き参照先を持つ種別ではありません: $resolvedKind"
+                }
+                val base = facingSpec(node, role)
+                    ?.takeIf { it.kind == resolvedKind } ?: FacingSpec(resolvedKind)
+                setFacingSpec(node, base.copy(kind = resolvedKind, target = spec.copy(limit = 1)), role)
+            }
+            else -> {
+                val base = positionSpec(node, role)
+                    ?.takeIf { it.kind == PositionKind.TARGET } ?: PositionSpec(PositionKind.TARGET)
+                setPositionSpec(node, role, base.copy(kind = PositionKind.TARGET, target = spec))
+            }
+        }
+    }
+
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
@@ -951,6 +1088,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
         CommandSettingRole.BLOCK_TO -> node.blockToSpec
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec
+        CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec
         else -> null
     }
 
@@ -978,6 +1116,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec?.kind
+        CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec?.kind
         else -> null
     }
 
@@ -997,6 +1136,7 @@ object CommandSettingsModel {
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
             CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec = spec
+            CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec = spec
             else -> error("${node.type} の位置設定役割が不正です: $role")
         }
         val configuredKey = configuredFieldKey(
@@ -1007,6 +1147,7 @@ object CommandSettingsModel {
                 CommandSettingRole.SUMMON_POSITION -> "summonPosition"
                 CommandSettingRole.FIREWORK_POSITION -> "fireworkPosition"
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
+                CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
                 else -> "position"
             },
             role,
@@ -1056,36 +1197,6 @@ object CommandSettingsModel {
     }
 
     /**
-     * 向き注視・複写の参照先実体を返します。汎用単一実体参照として解決します。
-     *
-     * 向き設定の二段階目（実体分類・詳細条件）は対象設定と同じ規則で編集し、
-     * 保存先だけをFacingSpec.entityTargetへ向けるための取得口です。
-     */
-    fun facingEntityTarget(node: CommandNode, role: CommandSettingRole?): TargetSpec? =
-        facingSpec(node, role)?.entityTarget
-
-    /**
-     * 向き注視・複写の参照先実体を保存します。単一体に正規化し、向き種別を保持します。
-     *
-     * @param facingKind 注視（TARGET）／複写（COPY_ORIENTATION）のいずれかです。
-     */
-    fun setFacingEntityTarget(
-        node: CommandNode,
-        role: CommandSettingRole?,
-        facingKind: FacingKind,
-        target: TargetSpec,
-    ) {
-        require(facingKind == FacingKind.TARGET || facingKind == FacingKind.COPY_ORIENTATION) {
-            "向き参照先を持つ種別ではありません: $facingKind"
-        }
-        val single = target.copy(limit = 1)
-        val current = facingSpec(node, role)
-        val spec = (current?.takeIf { it.kind == facingKind } ?: FacingSpec(facingKind))
-            .copy(kind = facingKind, entityTarget = single)
-        setFacingSpec(node, spec, role)
-    }
-
-    /**
      * 設定画面で表示する値の状態を、文字列値と構造化値の両方から一元判定します。
      *
      * 既存JSONにはconfiguredFieldsがないため、まず構造化値／既定値との差を推定し、
@@ -1121,6 +1232,7 @@ object CommandSettingsModel {
                 CommandSettingRole.PARTICLE_END -> isPositionSpecConfigured(node.particleEndPositionSpec)
                 CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
                 CommandSettingRole.FIREWORK_POSITION -> isPositionSpecConfigured(node.fireworkPositionSpec)
+                CommandSettingRole.EXECUTION_POSITION -> isPositionSpecConfigured(node.executionPositionSpec)
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> isPositionSpecConfigured(node.temporaryLocationPositionSpec)
                 else -> false
             }
@@ -1139,6 +1251,7 @@ object CommandSettingsModel {
             "particleEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
+            "executionPosition" -> isPositionSpecConfigured(node.executionPositionSpec)
             // 再生位置と対象は、対象と再生位置のどちらかが揃えば設定済みです。
             // 停止操作では再生位置を使用しないため、対象だけを確認します。
             "soundTargetPosition" -> if (SoundSettings.operation(node) ==
@@ -1227,7 +1340,12 @@ object CommandSettingsModel {
         role: CommandSettingRole?,
         parameter: String,
     ): Boolean {
-        val spec = targetSpec(node, role) ?: return false
+        // issue #29: 位置・向きの役割では内包対象を参照します。
+        val spec = if (isEmbeddedTargetRole(role)) {
+            embeddedTargetSpec(node, role)
+        } else {
+            targetSpec(node, role)
+        } ?: return false
         val explicitlyConfigured = node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))
         return when (parameter) {
             "kind" -> true
@@ -1283,7 +1401,7 @@ object CommandSettingsModel {
         FacingKind.ROTATION -> listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
         FacingKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
-        FacingKind.TARGET, FacingKind.COPY_ORIENTATION -> isTargetSpecConfigured(spec.entityTarget)
+        FacingKind.TARGET, FacingKind.COPY_ORIENTATION -> isTargetSpecConfigured(spec.target)
     }
 
     fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
@@ -1465,6 +1583,7 @@ object CommandSettingsModel {
         CommandSettingRole.TEMPORARY_LOCATION -> "location"
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
         CommandSettingRole.TEMPORARY_LOCATION_FACING -> "locationFacing"
+        CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
         CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
             "destination.$fieldKey"
         } else "destination"

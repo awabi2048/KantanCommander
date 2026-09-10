@@ -991,6 +991,7 @@ object GraphEditor {
         head.particleEndPositionSpec = wrapper.particleEndPositionSpec?.copy()
         head.fireworkPositionSpec = wrapper.fireworkPositionSpec?.copy()
         head.summonPositionSpec = wrapper.summonPositionSpec?.copy()
+        head.executionPositionSpec = wrapper.executionPositionSpec?.copy()
         head.temporaryEntityTargetSpec = wrapper.temporaryEntityTargetSpec?.copy()
         head.temporaryLocationPositionSpec = wrapper.temporaryLocationPositionSpec?.copy()
         head.temporaryLocationFacingSpec = wrapper.temporaryLocationFacingSpec?.copy()

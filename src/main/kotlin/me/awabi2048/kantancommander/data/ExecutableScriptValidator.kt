@@ -365,18 +365,22 @@ object ExecutableScriptValidator {
             node.particleEndPositionSpec,
             node.fireworkPositionSpec,
             node.summonPositionSpec,
+            node.executionPositionSpec,
         ).forEach { validatePosition(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationPositionSpec?.let {
             validatePosition(it, path, node, errors, temporaryDefinitions)
         }
+        validateEmbeddedPositionTargets(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        validateSinglePositionTargets(node, path, errors)
+        validateBareTargetPositions(node, path, errors)
         node.destinationFacingSpec?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationFacingSpec?.let {
             validateFacing(it, path, node, errors, temporaryDefinitions)
         }
         // 向き注視・複写の参照先は汎用対象検証へ通し、対象設定と同じ規則で検証します。
         listOfNotNull(
-            node.destinationFacingSpec?.entityTarget,
-            node.temporaryLocationFacingSpec?.entityTarget,
+            node.destinationFacingSpec?.target,
+            node.temporaryLocationFacingSpec?.target,
         ).forEach {
             validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
         }
@@ -924,15 +928,27 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
         }
         when (operation) {
-            BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null) {
+            // issue #26: コマンド固有位置が未設定のときは実行位置を既定値とします。
+            // 実行位置も未設定の場合だけ未設定エラーにし、実行時のフォールバックと一致させます。
+            BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null && node.executionPositionSpec == null) {
                 errors += nodeError(node, path, setOf("position"), "ブロック配置位置が未設定です")
             }
             BlockOperationMode.FILL -> {
                 val from = node.blockFromSpec
                 val to = node.blockToSpec
-                if (from == null) errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
-                if (to == null) errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
-                if (from != null && to != null && blockVolume(from, to)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true) {
+                if (from == null && node.executionPositionSpec == null) {
+                    errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
+                }
+                if (to == null && node.executionPositionSpec == null) {
+                    errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
+                }
+                // 体積上限は実行位置の既定値も含めて判定します。座標に定まらない
+                // 指定（対象由来等）は blockVolume がnullを返すため対象外です。
+                val effectiveFrom = from ?: node.executionPositionSpec
+                val effectiveTo = to ?: node.executionPositionSpec
+                if (effectiveFrom != null && effectiveTo != null &&
+                    blockVolume(effectiveFrom, effectiveTo)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true
+                ) {
                     errors += nodeError(node, path, setOf("from", "to"), "範囲配置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
                 }
             }
@@ -1025,6 +1041,104 @@ object ExecutableScriptValidator {
         if (spec.kind == PositionKind.CAPTURED && (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)) {
             errors += nodeError(node, path, emptySet(), "捕捉した向きが未設定または有限値ではありません")
         }
+    }
+
+    /**
+     * issue #29: 位置・向きに内包された対象指定を、通常の対象検証へ通します。
+     *
+     * 対象内包なし（旧データ）は検証対象外であり、互換性を維持します。
+     */
+    private fun validateEmbeddedPositionTargets(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        insideForBody: Boolean,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        listOfNotNull(
+            node.destinationSpec?.target,
+            node.conditionPositionSpec?.target,
+            node.blockPositionSpec?.target,
+            node.blockFromSpec?.target,
+            node.blockToSpec?.target,
+            node.soundPositionSpec?.target,
+            node.particlePositionSpec?.target,
+            node.particleEndPositionSpec?.target,
+            node.fireworkPositionSpec?.target,
+            node.summonPositionSpec?.target,
+            node.executionPositionSpec?.target,
+            node.temporaryLocationPositionSpec?.target,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        }
+        listOfNotNull(
+            node.destinationFacingSpec?.target,
+            node.temporaryLocationFacingSpec?.target,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        }
+    }
+
+    /**
+     * issue #29: 単一限定の役割に対象由来位置が選ばれていないか検証します。
+     *
+     * 複数位置の対応関係が別途必要になる位置（fill始点終点・図形の対応位置・
+     * LOCATION一時変数そのもの）は、GUIでも無効化します。静的0..1の指定は
+     * 先頭1件へ解決するため許可します。テレポート先のdestinationSpecは
+     * 旧来の対象移動経路（destinationTargetSpec併用）のため除外します。
+     */
+    private fun validateSinglePositionTargets(        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        listOfNotNull(
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.particleEndPositionSpec,
+            node.temporaryLocationPositionSpec,
+        ).filter { it.kind == PositionKind.TARGET && (it.target == null || it.target.isMultiCapable()) }
+            .forEach { errors += nodeError(node, path, setOf("position"), "この位置に対象由来の複数位置は指定できません") }
+        // issue #26・#29: fillの始点終点は単一へ定まる実行起点だけを既定値とします。
+        // 複数になり得る実行位置との組合せは実行時に定まらないため検証で拒否します。
+        // 片端だけの欠落も既定値を使うため、両端欠落に限定しません。
+        val executionTarget = node.executionPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target
+        if (node.type == CommandType.BLOCK_OPERATION &&
+            BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+            BlockOperationMode.FILL &&
+            (node.blockFromSpec == null || node.blockToSpec == null) &&
+            executionTarget != null && executionTarget.isMultiCapable()
+        ) {
+            errors += nodeError(node, path, setOf("executionPosition"), "範囲指定の既定値に複数位置は指定できません")
+        }
+    }
+
+    /**
+     * issue #29: 対象指定のない対象由来位置を検証します。
+     *
+     * 内包対象のないTARGET種別は解決不能な旧データであり、黙って
+     * 空集合扱いにせず明示エラーとします。テレポート先のdestinationSpecと
+     * 向きの旧来形式（実行状態対象）は従来経路のため除外します。
+     */
+    private fun validateBareTargetPositions(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        listOfNotNull(
+            node.conditionPositionSpec,
+            node.blockPositionSpec,
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.soundPositionSpec,
+            node.particlePositionSpec,
+            node.particleEndPositionSpec,
+            node.fireworkPositionSpec,
+            node.summonPositionSpec,
+            node.executionPositionSpec,
+            node.temporaryLocationPositionSpec,
+        ).filter { it.kind == PositionKind.TARGET && it.target == null }
+            .forEach { errors += nodeError(node, path, setOf("position"), "対象由来位置に対象の指定がありません") }
     }
 
     /**
@@ -1132,7 +1246,7 @@ object ExecutableScriptValidator {
         // 注視・向き複写は単一体参照へ帰着します。複数解決は汎用単一参照として拒否します。
         // 詳細条件の妥当性は呼び出し側で汎用対象検証へ通すため、ここでは存在と単一性のみを見ます。
         if (spec.kind == FacingKind.TARGET || spec.kind == FacingKind.COPY_ORIENTATION) {
-            val target = spec.entityTarget
+            val target = spec.target
             if (target == null) {
                 errors += nodeError(node, path, emptySet(), "向き参照先の実体が未設定です")
                 return

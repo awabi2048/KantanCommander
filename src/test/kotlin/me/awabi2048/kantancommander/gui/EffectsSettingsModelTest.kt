@@ -19,13 +19,13 @@ class EffectsSettingsModelTest {
     fun `sound operation switches the visible tabs`() {
         val play = CommandType.PLAY_SOUND.newNode()
         assertEquals(
-            listOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope"),
+            listOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope", "executionPosition"),
             CommandSettingsModel.visibleFields(play).map { it.key },
         )
 
         val stop = CommandType.PLAY_SOUND.newNode().apply { params["soundOperation"] = SoundOperation.STOP.name }
         assertEquals(
-            listOf("soundOperation", "soundTargetPosition", "soundSetting"),
+            listOf("soundOperation", "soundTargetPosition", "soundSetting", "executionPosition"),
             CommandSettingsModel.visibleFields(stop).map { it.key },
         )
     }
@@ -66,13 +66,13 @@ class EffectsSettingsModelTest {
     fun `particle display mode switches the visible tabs`() {
         val point = CommandType.PARTICLE.newNode()
         assertEquals(
-            listOf("particleDisplay", "particle", "position", "particleParameters"),
+            listOf("particleDisplay", "particle", "position", "particleParameters", "executionPosition"),
             CommandSettingsModel.visibleFields(point).map { it.key },
         )
 
         val geometry = CommandType.PARTICLE.newNode().apply { params["particleDisplayMode"] = ParticleDisplayMode.GEOMETRY.name }
         assertEquals(
-            listOf("particleDisplay", "particle", "geometrySettings", "particleDensity"),
+            listOf("particleDisplay", "particle", "geometrySettings", "particleDensity", "executionPosition"),
             CommandSettingsModel.visibleFields(geometry).map { it.key },
         )
     }
@@ -111,7 +111,7 @@ class EffectsSettingsModelTest {
     fun `firework exposes three tabs with dedicated roles`() {
         val node = CommandType.FIREWORK_LAUNCH.newNode()
         assertEquals(
-            listOf("fireworkPosition", "fireworkContents", "burstHeight"),
+            listOf("fireworkPosition", "fireworkContents", "burstHeight", "executionPosition"),
             CommandSettingsModel.visibleFields(node).map { it.key },
         )
         assertFalse(CommandSettingsModel.isFieldConfigured(node, "fireworkPosition"))

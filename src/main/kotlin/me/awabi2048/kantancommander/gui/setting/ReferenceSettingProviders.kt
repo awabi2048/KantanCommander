@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.gui.setting
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.gui.CommandSettingContext
+import me.awabi2048.kantancommander.gui.CommandSettingRole
 import me.awabi2048.kantancommander.gui.CommandSettingsModel
 import me.awabi2048.kantancommander.gui.GestureSettingTreeNode
 import me.awabi2048.kantancommander.gui.TargetCategory
@@ -40,7 +41,10 @@ object ReferenceSettingProviders {
         singleOnly: Boolean = false,
         text: (LocalizationKey<String>) -> String = { KcI18n.text(player, it) },
     ): List<GestureSettingTreeNode> {
-        val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
+        // 向き役割では参照先がFacingSpec.targetのため、汎用targetSpecではなく向き参照先を見ます。
+        // 表示・選択・詳細のすべてを同一保存先へ統一し、テレポート対象等への混入を防ぎます。
+        val current = currentTargetSpec(node, context.role)?.kind
+        val configured = isTargetConfigured(node, context.role)
         val categories = buildList {
             add(TargetCategory.PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)
             add(TargetCategory.NON_PLAYER_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY)
@@ -49,8 +53,7 @@ object ReferenceSettingProviders {
             }
         }
         return categories.map { (category, label) ->
-            val selected = CommandSettingsModel.targetCategoryMatches(current, category) &&
-                CommandSettingsModel.isFieldConfigured(node, "target", context.role)
+            val selected = CommandSettingsModel.targetCategoryMatches(current, category) && configured
             val effectiveKind = if (selected) current else CommandSettingsModel.defaultTargetKind(category)
             GestureSettingTreeNode(
                 id = "target:${category.name}",
@@ -90,7 +93,7 @@ object ReferenceSettingProviders {
         singleOnly: Boolean = false,
         text: (LocalizationKey<String>) -> String = { KcI18n.text(player, it) },
     ): List<GestureSettingTreeNode> {
-        val currentSpec = CommandSettingsModel.targetSpec(node, context.role)
+        val currentSpec = currentTargetSpec(node, context.role)
             ?: TargetSpec(kindOverride ?: TargetKind.NEAREST_ENTITY)
         val spec = kindOverride?.let { currentSpec.copy(kind = it) } ?: currentSpec
         fun value(parameter: String): String? = when (parameter) {
@@ -151,6 +154,27 @@ object ReferenceSettingProviders {
      */
     fun asSingleEntity(spec: TargetSpec): TargetSpec =
         spec.copy(limit = 1)
+
+    /**
+     * 向き役割かを返します。向き参照先はFacingSpec.targetに保存します。
+     */
+    private fun isFacingRole(role: CommandSettingRole?): Boolean =
+        role == CommandSettingRole.DESTINATION_FACING ||
+            role == CommandSettingRole.TEMPORARY_LOCATION_FACING
+
+    /**
+     * 表示・選択用の参照先を返します。向き役割では向き参照先を見ます。
+     */
+    private fun currentTargetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? =
+        if (isFacingRole(role)) CommandSettingsModel.embeddedTargetSpec(node, role)
+        else CommandSettingsModel.targetSpec(node, role)
+
+    /**
+     * 対象分類の完了状態を返します。向き役割では向き参照先の完全性を見ます。
+     */
+    private fun isTargetConfigured(node: CommandNode, role: CommandSettingRole?): Boolean =
+        if (isFacingRole(role)) isSingleEntityConfigured(CommandSettingsModel.embeddedTargetSpec(node, role))
+        else CommandSettingsModel.isFieldConfigured(node, "target", role)
 
     private fun formatDistance(minimum: Double?, maximum: Double?): String? {
         if (minimum == null && maximum == null) return null
