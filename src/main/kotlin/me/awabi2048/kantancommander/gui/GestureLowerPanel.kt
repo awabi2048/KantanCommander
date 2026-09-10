@@ -134,6 +134,8 @@ class GestureLowerPanel(
             GestureLowerMode.TEST_CONFIRM -> buildTestConfirmationNew(state, player, child = true)
             GestureLowerMode.TEST_STATUS -> buildTestStatusNew(state, player)
             GestureLowerMode.TEST_RESULT -> buildTestResultNew(state, player)
+            // issue #28: ID候補一覧専用の子画面です。設定木の選択経路とは分離します。
+            GestureLowerMode.RESOURCE_PICKER -> buildResourcePicker(state, player)
         }
     }
 
@@ -144,6 +146,148 @@ class GestureLowerPanel(
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
         suppressHighlight: Boolean = false,
     ): GestureGuiView = buildSettingChoicesChildNew(state, player, attention, suppressHighlight)
+
+    /**
+     * issue #28 のID候補一覧子画面です。
+     *
+     * 親の設定画面へ大量候補を置かず、正方形の小型アイコンを縦横に並べて
+     * 選択します。一覧選択とDialog入力は同じ保存値への別経路であり、
+     * 既存のテキスト入力によるID直接指定は残します。
+     */
+    private fun buildResourcePicker(state: GestureEditorState, player: Player): GestureGuiView {
+        val frame = contentFrame(GestureGuiPanel())
+        val nodes = mutableListOf<GestureGuiNode>()
+        val context = state.settingContext
+        val fieldKey = state.resourcePickerFieldKey
+        val node = context?.let { plugin.scripts.load(it.scriptId)?.graph?.nodes?.get(it.nodeId) }
+        val kind = fieldKey?.let(ResourcePicker::kindForFieldKey)
+        if (context == null || node == null || fieldKey == null || kind == null) {
+            DeclarativeSettings.hintSection(nodes, frame, Component.text("候補を表示できません"), x = 0.2, y = 0.12, id = "resource-hint")
+            DeclarativeSettings.backSection(nodes, frame, Component.text("戻る"), Bukkit.createBlockData(Material.BROWN_CONCRETE), 0.2, CHILD_BACK_WIDTH)
+            return finishResourcePicker(nodes)
+        }
+        val ids = CommandDialogSpecs.registeredIds(fieldKey)
+        val pageCount = maxOf(ResourcePicker.pageCount(ids.size), 1)
+        val page = state.resourcePickerPage.coerceIn(0, pageCount - 1)
+        val currentRaw = CommandDialogSpecs.normalize(fieldKey, node.string(fieldKey))
+        val fieldLabel = state.settingFieldKey
+            ?.let { key -> CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == key }?.label }
+            ?.let { KcI18n.text(player, it) } ?: fieldKey
+        DeclarativeSettings.valueRowsSection(
+            nodes,
+            frame,
+            rows = listOf(SettingsValueRow("resource-title", fieldLabel, "${page + 1} / $pageCount", RESOURCE_TITLE_Y)),
+            labelX = -0.08,
+            valueX = 0.52,
+        )
+        val cards = ResourcePicker.pageItems(ids, page).mapIndexed { index, id ->
+            val selected = CommandDialogSpecs.normalize(fieldKey, id) == currentRaw ||
+                id == node.string(fieldKey)
+            val col = index % ResourcePicker.COLUMNS
+            val row = index / ResourcePicker.COLUMNS
+            me.awabi2048.kantancommander.gui.declarative.ResourcePickerCard(
+                elementId = "lower-resource-pick:$id",
+                icon = ItemStack(ResourcePickerIcons.resolve(kind, id)),
+                background = Bukkit.createBlockData(
+                    if (selected) Material.CYAN_TERRACOTTA else Material.GRAY_CONCRETE,
+                ),
+                outline = if (selected) {
+                    GestureSettingVisualPolicy.nonTabOutlineMaterial(true)?.let { Bukkit.createBlockData(it) }
+                } else null,
+                cx = RESOURCE_GRID_LEFT_X + col * RESOURCE_GRID_PITCH_X,
+                cy = RESOURCE_GRID_TOP_Y - row * RESOURCE_GRID_PITCH_Y,
+                w = RESOURCE_CELL_W,
+                h = RESOURCE_CELL_H,
+                hover = multiLineHover(
+                    listOf(ResourcePicker.displayName(kind, id), id),
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
+                ),
+                visualIndex = index,
+            )
+        }
+        DeclarativeSettings.resourcePickerSection(nodes, frame, cards)
+        if (pageCount > 1) {
+            DeclarativeSettings.pagerSection(
+                nodes,
+                frame,
+                idPrefix = "resource-picker",
+                elementPrefix = "lower-resource-page",
+                page = page,
+                pageCount = pageCount,
+                centerX = RESOURCE_CENTER_X,
+                centerY = RESOURCE_PAGER_Y,
+                arrowBackgrounds = listOf(page - 1, page + 1).map { targetPage ->
+                    Bukkit.createBlockData(
+                        if (targetPage in 0 until pageCount) Material.CYAN_CONCRETE
+                        else DisabledGuiVisualPolicy.material,
+                    )
+                },
+                arrowGlyphs = listOf("◀", "▶").mapIndexed { arrowIndex, glyph ->
+                    val targetPage = if (arrowIndex == 0) page - 1 else page + 1
+                    Component.text(glyph).color(
+                        if (targetPage in 0 until pageCount) NamedTextColor.WHITE else NamedTextColor.GRAY,
+                    )
+                },
+                status = Component.text("${page + 1} / $pageCount"),
+            )
+        }
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-resource-input",
+                label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER)),
+                background = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                cx = RESOURCE_BUTTON_LEFT_X,
+                cy = RESOURCE_BUTTON_Y,
+                w = RESOURCE_BUTTON_W,
+                h = SETTING_INPUT_HEIGHT,
+                labelSize = 0.0048,
+                labelWidth = 120,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = singleLineHover(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER),
+                    x = HOVER_SLOT_X,
+                    y = HOVER_SLOT_Y,
+                ),
+                visualTag = "lower-resource-input",
+            ),
+        )
+        DeclarativeSettings.actionCardSection(
+            nodes,
+            frame,
+            SettingsActionCard(
+                elementId = "lower-resource-back",
+                label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                background = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                cx = RESOURCE_BUTTON_RIGHT_X,
+                cy = RESOURCE_BUTTON_Y,
+                w = RESOURCE_BUTTON_W,
+                h = SETTING_INPUT_HEIGHT,
+                labelSize = 0.0048,
+                labelWidth = 120,
+                gestures = GestureGuiClickPolicy.CLICK,
+                guard = null,
+                hover = null,
+                visualTag = "lower-resource-back",
+            ),
+        )
+        return finishResourcePicker(nodes)
+    }
+
+    /** 候補子画面の宣言区画を解決・変換し、既存の画面定義へ載せます。 */
+    private fun finishResourcePicker(nodes: List<GestureGuiNode>): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            DeclarativeSettings.document(nodes),
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander][ResourcePicker] $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.RESOURCE_PICKER, compiled.elements, compiled.visuals)
+    }
 
     /**
      * 設定候補子画面の宣言実装です。旧 `buildSettingChoices(child = true)` と同じ
@@ -1295,6 +1439,34 @@ class GestureLowerPanel(
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
             } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER
             val editTextColor = if (heldMainHandAvailable) NamedTextColor.GOLD else NamedTextColor.GRAY
+            // issue #28: ID候補を持つ項目は、一覧選択とDialog入力の2経路を並べます。
+            // 一覧選択の文言はDialogの候補表示と共有し、新規キーを増やしません。
+            val pickerKind = ResourcePicker.kindForFieldKey(field.key)
+            if (!heldMainHandSetting && pickerKind != null) {
+                DeclarativeSettings.actionCardSection(
+                    nodes,
+                    frame,
+                    SettingsActionCard(
+                        elementId = "lower-resource-open:${field.key}",
+                        label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS), NamedTextColor.GOLD),
+                        background = Bukkit.createBlockData(Material.CYAN_TERRACOTTA),
+                        cx = -0.02,
+                        cy = inputCenterY,
+                        w = 0.56,
+                        h = SETTING_INPUT_HEIGHT,
+                        labelSize = 0.0048,
+                        labelWidth = 92,
+                        gestures = GestureGuiClickPolicy.CLICK,
+                        guard = null,
+                        hover = singleLineHover(
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
+                            x = HOVER_SLOT_X,
+                            y = HOVER_SLOT_Y,
+                        ),
+                        visualTag = "lower-resource-open",
+                    ),
+                )
+            }
             DeclarativeSettings.actionCardSection(
                 nodes,
                 frame,
@@ -1304,9 +1476,9 @@ class GestureLowerPanel(
                     background = Bukkit.createBlockData(
                         if (heldMainHandAvailable) Material.CYAN_TERRACOTTA else DisabledGuiVisualPolicy.material,
                     ),
-                    cx = 0.28,
+                    cx = if (!heldMainHandSetting && pickerKind != null) 0.58 else 0.28,
                     cy = inputCenterY,
-                    w = 1.2,
+                    w = if (!heldMainHandSetting && pickerKind != null) 0.56 else 1.2,
                     h = SETTING_INPUT_HEIGHT,
                     labelSize = 0.0055,
                     labelWidth = 180,
@@ -4212,6 +4384,21 @@ class GestureLowerPanel(
         // GestureTargetChoiceLayoutPolicyで前後2スロットずつへまとめます。
         const val POSITION_TARGET_CHOICE_HEIGHT = 0.15
         const val POSITION_TARGET_CHOICE_Y = -0.25
+        // issue #28: 候補一覧子画面の配置です。主要領域を一覧に使い、
+        // 下部にページャーと「IDを入力」「戻る」を常設します。
+        const val RESOURCE_TITLE_Y = 0.36
+        const val RESOURCE_GRID_LEFT_X = -0.45
+        const val RESOURCE_GRID_PITCH_X = 0.185
+        const val RESOURCE_GRID_TOP_Y = 0.24
+        const val RESOURCE_GRID_PITCH_Y = 0.14
+        const val RESOURCE_CELL_W = 0.17
+        const val RESOURCE_CELL_H = 0.12
+        const val RESOURCE_CENTER_X = 0.20
+        const val RESOURCE_PAGER_Y = -0.20
+        const val RESOURCE_BUTTON_Y = -0.34
+        const val RESOURCE_BUTTON_W = 0.55
+        const val RESOURCE_BUTTON_LEFT_X = -0.075
+        const val RESOURCE_BUTTON_RIGHT_X = 0.475
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
