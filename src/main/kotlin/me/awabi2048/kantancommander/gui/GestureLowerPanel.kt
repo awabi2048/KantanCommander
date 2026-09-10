@@ -327,22 +327,21 @@ class GestureLowerPanel(
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = field.value(node).render(player)
         // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
-        val choices = settingTreeNodes(
-            node,
-            context,
-            screen,
-            fieldKey,
-            player,
-            attentionFields,
-            inChild = true,
-            detailVisited = state.detailVisitedKeys.contains(
-                PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+        val choices = applyPathSelectionExclusive(
+            settingTreeNodes(
+                node,
+                context,
+                screen,
+                fieldKey,
+                player,
+                attentionFields,
+                inChild = true,
+                detailVisited = state.detailVisitedKeys.contains(
+                    PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+                ),
             ),
-        ).map { choice ->
-            if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
-                choice.copy(selected = true)
-            } else choice
-        }
+            state.settingTreePath?.nodeIds?.lastOrNull(),
+        )
         val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
         DeclarativeSettings.descriptionSection(
             nodes,
@@ -497,21 +496,21 @@ class GestureLowerPanel(
         }
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = field.value(node).render(player)
-        val choices = settingTreeNodes(
-            node,
-            context,
-            screen,
-            fieldKey,
-            player,
-            attentionFields,
-            detailVisited = state.detailVisitedKeys.contains(
-                PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+        // 経路末尾の選択は同階層へ排他的に適用し、保存値由来との二重選択を防ぎます。
+        val choices = applyPathSelectionExclusive(
+            settingTreeNodes(
+                node,
+                context,
+                screen,
+                fieldKey,
+                player,
+                attentionFields,
+                detailVisited = state.detailVisitedKeys.contains(
+                    PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+                ),
             ),
-        ).map { choice ->
-            if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
-                choice.copy(selected = true)
-            } else choice
-        }
+            state.settingTreePath?.nodeIds?.lastOrNull(),
+        )
         val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
         val warning = attentionWarning(player, node, fieldKey, attentionFields)
         val detailHint = selectedDetail
@@ -1145,21 +1144,21 @@ class GestureLowerPanel(
         val checkboxPresentation = SettingSpec.presentationFor(node, field.key, descriptor) ==
             GesturePresentation.CHECKBOX
         val settingChoices = if (checkboxPresentation) emptyList() else settingScreen?.let { screen ->
-            settingTreeNodes(
-                node,
-                settingContext,
-                screen,
-                field.key,
-                player,
-                attentionFields,
-                detailVisited = state.detailVisitedKeys.contains(
-                    PresetSelectionDisplay.detailVisitKey(field.key, settingContext.role),
+            // 経路末尾の選択は同階層へ排他的に適用し、保存値由来との二重選択を防ぎます。
+            applyPathSelectionExclusive(
+                settingTreeNodes(
+                    node,
+                    settingContext,
+                    screen,
+                    field.key,
+                    player,
+                    attentionFields,
+                    detailVisited = state.detailVisitedKeys.contains(
+                        PresetSelectionDisplay.detailVisitKey(field.key, settingContext.role),
+                    ),
                 ),
-            ).map { choice ->
-                if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
-                    choice.copy(selected = true)
-                } else choice
-            }
+                state.settingTreePath?.nodeIds?.lastOrNull(),
+            )
         }.orEmpty()
         val selectedDetail = settingChoices.firstOrNull { it.selected && it.hasChildren }
         val warning = attentionWarning(player, node, field.key, attentionFields)

@@ -162,6 +162,25 @@ internal fun settingSelectionAction(
         GestureSettingSelectionAction.STAY_ON_FRAME
     }
 
+/**
+ * 経路末尾の選択を同階層へ排他的に適用します。
+ *
+ * 経路が現在の候補一覧を指す場合、その1件だけを選択表示にし、
+ * 保存値由来の他候補の選択表示を抑止します。経路が一覧外（子画面の
+ * 詳細ID等）を指す場合や空の場合は何も変えず、保存値表示を維持します。
+ * これにより、詳細カードの初回クリック直後にプリセットと詳細が
+ * 二重選択表示になることを防ぎます。
+ */
+internal fun applyPathSelectionExclusive(
+    choices: List<GestureSettingTreeNode>,
+    pathLastNodeId: String?,
+): List<GestureSettingTreeNode> {
+    if (pathLastNodeId == null || choices.none { it.id == pathLastNodeId }) return choices
+    return choices.map { choice ->
+        choice.copy(selected = choice.id == pathLastNodeId)
+    }
+}
+
 /** 詳細子画面をまたぐための設定木上の1フレームです。 */
 data class GestureSettingFrame(
     val context: CommandSettingContext,
