@@ -101,6 +101,7 @@ import org.bukkit.potion.PotionEffect
 import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
 import kotlin.math.roundToInt
+import me.awabi2048.kantancommander.gui.setting.SettingSelectionEngine
 
 /**
  * ジェスチャーエディターの状態。プレイヤー単位で保持され、操作のたびに更新されます。
@@ -6049,11 +6050,21 @@ class GestureSequenceEditor(
                     return
                 }
                 // 向き複写の導線です。注視と同じく単一体参照へ帰着し、共用の対象子画面へ進みます。
-                // 下段の複写カードから遷移し、分類選択・詳細条件は注視と同一規則です。
+                // 遷移条件は回数ではなく選択状態での再クリックです。未選択時の初回は
+                // 複写を選択して留まり、選択状態でのクリックで対象子画面へ進みます。
                 if (group == "facing-copy") {
                     val facingRole = settingContext.role ?: return
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     rememberSettingNode(encoded)
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
+                    if (SettingSelectionEngine.decideFacingCopy(wasSelected, current?.kind) is SettingSelectionEngine.Next.EnterChild) {
+                        pushSettingFrame(
+                            player,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
+                            encoded,
+                        )
+                        return
+                    }
                     if (current?.kind != FacingKind.COPY_ORIENTATION) {
                         if (!updateSettingNode(
                                 player,
@@ -6070,11 +6081,7 @@ class GestureSequenceEditor(
                                 )
                             }) return
                     }
-                    pushSettingFrame(
-                        player,
-                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
-                        encoded,
-                    )
+                    showSettingScreen()
                     return
                 }
                 // issue #29: 内包対象プリセットは向き仕様の対象部だけを書き換えます。

@@ -136,6 +136,25 @@ class GenericSettingProvidersTest {
     }
 
     @Test
+    fun `facing copy advances only on reselect while selected`() {
+        // 未選択時の初回は留まります（座標→複写の直接遷移を防ぎます）。
+        assertTrue(
+            SettingSelectionEngine.decideFacingCopy(false, FacingKind.COORDINATES) is SettingSelectionEngine.Next.Stay,
+        )
+        assertTrue(
+            SettingSelectionEngine.decideFacingCopy(false, null) is SettingSelectionEngine.Next.Stay,
+        )
+        // 選択状態での再クリックだけが進みます。開き直し直後の保存済み選択も含みます。
+        assertTrue(
+            SettingSelectionEngine.decideFacingCopy(true, FacingKind.COPY_ORIENTATION) is SettingSelectionEngine.Next.EnterChild,
+        )
+        // 別種別の選択表示が残る状態では進みません。
+        assertTrue(
+            SettingSelectionEngine.decideFacingCopy(true, FacingKind.COORDINATES) is SettingSelectionEngine.Next.Stay,
+        )
+    }
+
+    @Test
     fun `duplicate visual tag with different elements does not diagnose`() {
         val nodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
         val frame = contentFrame(panel)

@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.gui.setting
 
 import me.awabi2048.kantancommander.gui.GestureSettingSelectionAction
 import me.awabi2048.kantancommander.gui.settingSelectionAction
+import me.awabi2048.kantancommander.model.FacingKind
 
 /**
  * 「選択→必要ならもう一段設定へ」の汎用遷移エンジンです。
@@ -43,4 +44,18 @@ object SettingSelectionEngine {
      */
     fun shouldEnterChild(wasSelected: Boolean, hasChildren: Boolean): Boolean =
         decide(wasSelected, hasChildren) is Next.EnterChild
+
+    /**
+     * 向き複写カードの遷移判定を返します。
+     *
+     * 条件は回数ではなく選択状態での再クリックです。未選択時の初回は複写を
+     * 選択して留まり、既に複写が選択済みの場合だけ対象子画面へ進みます。
+     * 開き直し直後に複写が保存済みの場合の初回クリックも遷移に含みます。
+     *
+     * @param wasSelected クリック時点で複写カードが既に選択状態か。
+     * @param currentKind クリック時点の保存済み向き種別。
+     */
+    fun decideFacingCopy(wasSelected: Boolean, currentKind: FacingKind?): Next =
+        if (wasSelected && currentKind == FacingKind.COPY_ORIENTATION) Next.EnterChild
+        else Next.Stay
 }
