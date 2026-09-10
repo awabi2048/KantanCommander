@@ -2929,7 +2929,11 @@ class GestureSequenceEditor(
             if (settingChildOpen(ownerId)) {
                 api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
             }
+            // TEXT項目は専用画面を持たないためルートは開始しないが、候補一覧など
+            // 設定文脈を要する操作のため対象情報は残す。残った子画面の経路は親へ戻す。
             clearSettingState()
+            state.settingContext = CommandSettingContext(state.scriptId, node.id, descriptor.role)
+            state.settingFieldKey = field.key
             state.lowerMode = GestureLowerMode.SETTINGS
         } else {
             startSettingRoute(

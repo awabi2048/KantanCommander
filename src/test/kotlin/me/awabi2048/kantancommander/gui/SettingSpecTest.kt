@@ -19,27 +19,33 @@ class SettingSpecTest {
     private fun node(type: CommandType) = type.newNode()
 
     @Test
-    fun `volume pitch intensity derive ranges from dialog specs`() {
-        val volume = SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "volume")
+    fun `numeric ranges stay on dialog specs while slider stays disabled`() {
+        // Slider操作は経路から外しているため、範囲は検証の正本として残します。
+        val volume = requireNotNull(CommandDialogSpecs.field(node(CommandType.PLAY_SOUND), "volume")).numericRange
         assertNotNull(volume)
         assertEquals(0.0, volume!!.min)
         assertEquals(34.0, volume.max)
 
-        val pitch = SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "pitch")
+        val pitch = requireNotNull(CommandDialogSpecs.field(node(CommandType.PLAY_SOUND), "pitch")).numericRange
         assertNotNull(pitch)
         assertEquals(0.5, pitch!!.min)
         assertEquals(2.0, pitch.max)
 
-        val intensity = SettingSpec.sliderSpecFor(node(CommandType.CAMERA_SHAKE), "intensity")
+        val intensity = requireNotNull(CommandDialogSpecs.field(node(CommandType.CAMERA_SHAKE), "intensity")).numericRange
         assertNotNull(intensity)
         assertEquals(0.1, intensity!!.min)
         assertEquals(4.0, intensity.max)
+
+        // 操作経路のSlider導出は無効化されています。
+        assertNull(SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "volume"))
+        assertNull(SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "pitch"))
+        assertNull(SettingSpec.sliderSpecFor(node(CommandType.CAMERA_SHAKE), "intensity"))
     }
 
     @Test
-    fun `slider ranges stay within dialog validation`() {
-        // Sliderの操作域は検証範囲の内側であり、生成値は検証を必ず通過します。
-        // 上限の定まらない数量系はSlider対象外のため含めません。
+    fun `bounded numerics fall back to dialog input`() {
+        // Slider無効化中は、有界数値を含む全項目がテキスト入力になります。
+        // 検証仕様自体は残り、入力値は検証を通過します。
         val cases = listOf(
             CommandType.PLAY_SOUND to "volume",
             CommandType.PLAY_SOUND to "pitch",
@@ -56,23 +62,14 @@ class SettingSpecTest {
         )
         cases.forEach { (type, fieldKey) ->
             val host = node(type)
-            val slider = SettingSpec.sliderSpecFor(host, fieldKey)
-            assertNotNull(slider, "$type.$fieldKey")
+            assertNull(SettingSpec.sliderSpecFor(host, fieldKey), "$type.$fieldKey")
             val dialog = CommandDialogSpecs.field(host, fieldKey)
             assertNotNull(dialog, "$type.$fieldKey")
-            slider!!
-            // 既定値は保存モデルの既定値と一致します。
-            assertEquals(type.defaults[fieldKey], slider.defaultValue, "$type.$fieldKey")
-            // 両端と既定値は検証を通過します（整数欄は整数表示へ整形します）。
-            listOf(
-                SliderValuePolicy.format(slider, slider.min),
-                SliderValuePolicy.format(slider, slider.max),
-                slider.defaultValue,
-            ).forEach { raw ->
-                assertNull(dialog!!.validateInput(raw), "$type.$fieldKey <- $raw")
-            }
-            // 刻みで進めた値も検証を通過します。
-            assertNull(dialog!!.validateInput(SliderValuePolicy.stepBy(slider, slider.defaultValue, 1)), "$type.$fieldKey")
+            assertEquals(
+                GesturePresentation.INPUT_DIALOG,
+                SettingSpec.presentationFor(host, fieldKey, CommandSettingsModel.descriptor(host, fieldKey)),
+                "$type.$fieldKey",
+            )
         }
     }
 
@@ -94,8 +91,9 @@ class SettingSpecTest {
     }
 
     @Test
-    fun `slider clamps rounds and formats without float drift`() {
-        val pitch = SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "pitch")!!
+    fun `slider policy clamps rounds and formats without float drift`() {
+        // 数値操作の純粋仕様はSlider復活時の資産として固定します。
+        val pitch = SliderSpec(min = 0.5, max = 2.0, step = 0.1, integer = false, defaultValue = "1.0")
         // 上限を超えた値は丸めず上限へ寄せます。
         assertEquals("2", SliderValuePolicy.format(pitch, 99.0))
         // 下限を下回った値は下限へ寄せます。
@@ -103,7 +101,7 @@ class SettingSpecTest {
         // 刻みへ丸めます（0.5 + 0.1 * n）。
         assertEquals("1", SliderValuePolicy.format(pitch, 1.04))
         // 整数項目は小数表示にしません。
-        val level = SettingSpec.sliderSpecFor(node(CommandType.APPLY_EFFECT), "level")!!
+        val level = SliderSpec(min = 1.0, max = 255.0, step = 1.0, integer = true, defaultValue = "1")
         assertTrue(level.integer)
         assertEquals("3", SliderValuePolicy.format(level, 2.6))
         // 1刻みの増減が保存文字列になります。
@@ -112,8 +110,8 @@ class SettingSpecTest {
     }
 
     @Test
-    fun `slider rejects non finite and falls back to default`() {
-        val volume = SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "volume")!!
+    fun `slider policy rejects non finite and falls back to default`() {
+        val volume = SliderSpec(min = 0.0, max = 34.0, step = 1.0, integer = false, defaultValue = "1.0")
         assertEquals("1", SliderValuePolicy.format(volume, Double.NaN))
         assertEquals("1", SliderValuePolicy.parse(volume, null).toString().take(1))
         assertEquals("1", SliderValuePolicy.format(volume, SliderValuePolicy.parse(volume, "not-a-number")))
@@ -134,11 +132,12 @@ class SettingSpecTest {
         assertFalse(SettingSpec.isCheckbox(CommandType.PLAY_SOUND, "volume"))
 
         val sound = CommandType.PLAY_SOUND.newNode()
+        // Slider無効化中は数値項目もテキスト入力になります。
         assertEquals(
-            GesturePresentation.SLIDER,
+            GesturePresentation.INPUT_DIALOG,
             SettingSpec.presentationFor(sound, "volume", CommandSettingsModel.descriptor(sound, "volume")),
         )
-        // テンプレート参照を含む数値はSliderへ載せません。
+        // テンプレート参照を含む数値もDialogで編集します。
         sound.params["volume"] = "\${score}"
         assertEquals(
             GesturePresentation.INPUT_DIALOG,
@@ -166,7 +165,8 @@ class SettingSpecTest {
 
     @Test
     fun `bar segments resolve to stepped preview values`() {
-        val volume = SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "volume")!!
+        // 区画解決の純粋仕様はSlider復活時の資産として固定します。
+        val volume = SliderSpec(min = 0.0, max = 34.0, step = 1.0, integer = false, defaultValue = "1.0")
         // 12区画の両端は範囲内へ収まり、刻みへ丸められます。
         assertEquals("1", SliderValuePolicy.valueForSegment(volume, 0))
         assertEquals("33", SliderValuePolicy.valueForSegment(volume, 11))
@@ -174,7 +174,7 @@ class SettingSpecTest {
         assertEquals(SliderValuePolicy.valueForSegment(volume, 0), SliderValuePolicy.valueForSegment(volume, -5))
         assertEquals(SliderValuePolicy.valueForSegment(volume, 11), SliderValuePolicy.valueForSegment(volume, 99))
         // 整数欄は整数表示になります。
-        val level = SettingSpec.sliderSpecFor(node(CommandType.APPLY_EFFECT), "level")!!
+        val level = SliderSpec(min = 1.0, max = 255.0, step = 1.0, integer = true, defaultValue = "1")
         assertEquals("12", SliderValuePolicy.valueForSegment(level, 0))
         // 区画値は検証を通過します。
         val dialog = CommandDialogSpecs.field(node(CommandType.PLAY_SOUND), "volume")!!

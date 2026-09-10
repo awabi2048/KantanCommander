@@ -130,26 +130,14 @@ object SettingSpec {
     /**
      * Sliderで段階操作する有界数値項目です。
      *
+     * 現在Slider操作は経路から外しているため空集合とし、全数値項目を
+     * Dialog入力で編集します。Sliderを復活させる場合はここへ行を追加します。
      * ここでは「どの項目にSliderを置くか」（UX判断）だけを保持し、
      * 範囲・刻み・既定値は `CommandDialogSpecs` の共有正本から導出します。
-     * 上限の定まらない数量（give個数・繰返し回数）は載せず、テキスト入力にします。
      * 検証範囲の変更は自動でSliderへ反映され、手作業の同期は不要です。
      * 時間系のtick整合は保存時検証に残し、刻みは整合済みの代表刻みです。
      */
-    private val SLIDER_FIELDS: Set<Pair<CommandType, String>> = setOf(
-        CommandType.PLAY_SOUND to "volume",
-        CommandType.PLAY_SOUND to "pitch",
-        CommandType.CAMERA_SHAKE to "intensity",
-        CommandType.CAMERA_SHAKE to "seconds",
-        CommandType.APPLY_EFFECT to "level",
-        CommandType.APPLY_EFFECT to "seconds",
-        CommandType.WAIT to "seconds",
-        CommandType.DISPLAY_TEXT to "staySeconds",
-        CommandType.DISPLAY_TEXT to "fadeInSeconds",
-        CommandType.DISPLAY_TEXT to "fadeOutSeconds",
-        CommandType.FIREWORK_LAUNCH to "burstHeight",
-        CommandType.PARTICLE to "particleDensity",
-    )
+    private val SLIDER_FIELDS: Set<Pair<CommandType, String>> = emptySet()
 
     /**
      * Slider仕様を共有正本から導出します。

@@ -62,10 +62,10 @@ internal object CommandDialogSpecs {
     /**
      * issue #18 の数値範囲・刻みの共有正本です。
      *
-     * 検証とSlider操作で同じ値を参照し、手作業の同期を不要にします。
+     * 現在Slider操作は経路から外しているため、検証の正本として使います。
+     * Slider復活時はここから段階操作の範囲・刻みを導出します。
      * `step` は段階操作の刻みであり、検証の合否には使いません
      * （tick整合等の検証固有規則は `validate` 側に残します）。
-     * Sliderの生成値は `min + k*step` のため、検証を必ず通過します。
      */
     data class NumericRange(
         val min: Double,
@@ -94,7 +94,7 @@ internal object CommandDialogSpecs {
         val format: InputFormat = InputFormat.ANY_STRING,
         /** 形式・範囲を入力本文へ表示する説明キーです。 */
         val formatHintKey: LocalizationKey<String>? = null,
-        /** 数値欄の範囲・刻みです。検証とSlider操作の共有正本であり、検証側が正とします。 */
+        /** 数値欄の範囲・刻みです。検証の正本であり、検証側が正とします。 */
         val numericRange: NumericRange? = null,
     ) {
         /** GUI固有の空欄スキップを廃止し、必須／任意の契約をここで一元適用します。 */
@@ -1278,8 +1278,8 @@ internal object CommandDialogSpecs {
             else -> null
         }
         val positiveInteger = fieldKey in setOf("count", "level", "seconds")
-        // issue #18: 有界数値の範囲・刻みは共有正本です。検証とSlider操作で同じ値を参照します。
-        // 上限の定まらない数量系（個数・レベル・秒数）はSlider対象にせず、
+        // issue #18: 有界数値の範囲・刻みは共有正本です。検証の正本として使います。
+        // 上限の定まらない数量系（個数・レベル・秒数）は範囲を持たず、
         // テキスト入力のまま正の整数検証だけを適用します。
         val numericRange = when (fieldKey) {
             "volume" -> NumericRange(0.0, 34.0, step = 1.0)
@@ -1399,8 +1399,8 @@ internal object CommandDialogSpecs {
     /**
      * 正の整数を受け付ける仕様を、数量・整数秒数・上限で共有します。
      *
-     * 上限の定まらない数量はSlider対象にせず、テキスト入力のまま検証だけを
-     * 適用します。有界の整数は [integerRange] を使います。
+     * 上限の定まらない数量はテキスト入力のまま検証だけを適用します。
+     * 有界の整数は [integerRange] を使います。
      */
     private fun positiveInteger(
         labelKey: LocalizationKey<String>,

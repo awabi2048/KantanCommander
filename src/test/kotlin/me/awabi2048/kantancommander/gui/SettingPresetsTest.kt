@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -47,7 +48,7 @@ class SettingPresetsTest {
     }
 
     @Test
-    fun `myworld spawn preset defaults to member and legacy maps to member`() {
+    fun `myworld spawn preset matches both spawn kinds`() {
         val preset = SettingPresets.positionSpecFor(SettingPresets.PositionPreset.MYWORLD_SPAWN)
         assertEquals(PositionKind.MYWORLD_SPAWN, preset.kind)
         assertEquals(MyworldSpawnKind.MEMBER, preset.myworldSpawn)
@@ -57,9 +58,33 @@ class SettingPresetsTest {
         val legacy = PositionSpec(PositionKind.MYWORLD_SPAWN)
         assertEquals(SettingPresets.PositionPreset.MYWORLD_SPAWN, SettingPresets.matchPositionPreset(legacy))
 
+        // ゲスト用もプリセットに一致させ、子画面で種別を切り替えます。
+        // 再クリックでメンバー用へ上書きしないための照合です。
         val guest = PositionSpec(PositionKind.MYWORLD_SPAWN, myworldSpawn = MyworldSpawnKind.GUEST)
-        // ゲスト用はメンバー用プリセットの選択済み表示にしません。
-        assertNull(SettingPresets.matchPositionPreset(guest))
+        assertEquals(SettingPresets.PositionPreset.MYWORLD_SPAWN, SettingPresets.matchPositionPreset(guest))
+
+        val facingGuest = FacingSpec(FacingKind.MYWORLD_SPAWN, myworldSpawn = MyworldSpawnKind.GUEST)
+        assertEquals(SettingPresets.FacingPreset.MYWORLD_SPAWN, SettingPresets.matchFacingPreset(facingGuest))
+    }
+
+    @Test
+    fun `changed sort orders leave template matching`() {
+        // 並び順の変更は詳細設定のため、テンプレート一致から外れます。
+        val furthest = TargetSpec(TargetKind.NEAREST_PLAYER, sort = TargetSort.FURTHEST)
+        assertNull(SettingPresets.matchTargetPreset(furthest))
+        val random = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0, sort = TargetSort.RANDOM)
+        assertNull(SettingPresets.matchTargetPreset(random))
+        // 既定の最寄り順は引き続き一致します。
+        assertEquals(
+            SettingPresets.TargetPreset.NEAREST_PLAYER,
+            SettingPresets.matchTargetPreset(TargetSpec(TargetKind.NEAREST_PLAYER)),
+        )
+        assertEquals(
+            SettingPresets.TargetPreset.NEARBY_PLAYERS,
+            SettingPresets.matchTargetPreset(
+                TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0),
+            ),
+        )
     }
 
     @Test

@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 
 /**
@@ -71,17 +72,29 @@ object SettingPresets {
         }
     }
 
-    /** 付近系プリセットの形状です。距離以外の絞り込みがあれば正規内容から外れます。 */
+    /**
+     * 付近系プリセットの形状です。距離以外の絞り込みがあれば正規内容から外れます。
+     *
+     * 並び順の変更も詳細設定のため、既定の最寄り順以外は一致させません。
+     * 最大距離だけはプリセットの既定値として持ち、変更後も再クリックで
+     * 距離編集へ戻すため形状に含めます。
+     */
     private fun isNearbyPresetShape(spec: TargetSpec): Boolean =
         spec.entityType == null && spec.minimumDistance == null &&
-            spec.limit == null && spec.gameMode == null && spec.tag == null &&
+            spec.limit == null && spec.sort == TargetSort.NEAREST &&
+            spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
             spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null
 
-    /** 絞り込みなしの形状です。何らかの条件があれば正規内容から外れます。 */
+    /**
+     * 絞り込みなしの形状です。何らかの条件があれば正規内容から外れます。
+     *
+     * 並び順の変更も詳細設定のため、既定の最寄り順以外は一致させません。
+     */
     private fun isBareShape(spec: TargetSpec): Boolean =
         spec.entityType == null && spec.minimumDistance == null && spec.maximumDistance == null &&
-            spec.limit == null && spec.gameMode == null && spec.tag == null &&
+            spec.limit == null && spec.sort == TargetSort.NEAREST &&
+            spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
             spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null
 
@@ -105,8 +118,10 @@ object SettingPresets {
     /**
      * 位置設定がプリセットの正規内容と一致する場合だけプリセットを返します。
      *
-     * 詳細設定で正規内容から外れた場合はnullを返します。旧来の単一MYWORLD_SPAWN
-     * 相当（種別未設定）はメンバー用スポーンとして互換移行します。
+     * 詳細設定で正規内容から外れた場合はnullを返します。MyWorldスポーンは
+     * メンバー用・ゲスト用のどちらの種別でもプリセットに一致させ、子画面で
+     * 種別を切り替えます。旧来の単一MYWORLD_SPAWN相当（種別未設定）は
+     * メンバー用スポーンとして互換移行します。
      */
     fun matchPositionPreset(spec: PositionSpec?): PositionPreset? {
         if (spec == null) return null
@@ -117,10 +132,7 @@ object SettingPresets {
                 TargetPreset.NEARBY_PLAYERS -> PositionPreset.NEARBY_PLAYERS
                 else -> null
             }
-            PositionKind.MYWORLD_SPAWN -> {
-                val spawn = spec.myworldSpawn ?: MyworldSpawnKind.MEMBER
-                PositionPreset.MYWORLD_SPAWN.takeIf { spawn == MyworldSpawnKind.MEMBER }
-            }
+            PositionKind.MYWORLD_SPAWN -> PositionPreset.MYWORLD_SPAWN
             PositionKind.COORDINATES -> PositionPreset.COORDINATES.takeIf {
                 spec.target == null && spec.tempName == null
             }
@@ -144,7 +156,8 @@ object SettingPresets {
      * 向き設定がプリセットの正規内容と一致する場合だけプリセットを返します。
      *
      * 既存の「現在の向き」（CAPTURED）は内部表現として残しますが、新規プリセットの
-     * 選択済み表示にはしません。
+     * 選択済み表示にはしません。MyWorldスポーンはメンバー用・ゲスト用の
+     * どちらの種別でもプリセットに一致させます。
      */
     fun matchFacingPreset(spec: FacingSpec?): FacingPreset? {
         if (spec == null) return null
@@ -152,10 +165,7 @@ object SettingPresets {
             FacingKind.TARGET -> FacingPreset.NEAREST_PLAYER.takeIf {
                 matchTargetPreset(spec.target) == TargetPreset.NEAREST_PLAYER
             }
-            FacingKind.MYWORLD_SPAWN -> {
-                val spawn = spec.myworldSpawn ?: MyworldSpawnKind.MEMBER
-                FacingPreset.MYWORLD_SPAWN.takeIf { spawn == MyworldSpawnKind.MEMBER }
-            }
+            FacingKind.MYWORLD_SPAWN -> FacingPreset.MYWORLD_SPAWN
             FacingKind.COORDINATES -> FacingPreset.COORDINATES
             FacingKind.ROTATION -> FacingPreset.NUMERIC
             else -> null
