@@ -1377,7 +1377,7 @@ class GestureLowerPanel(
         // Dialog入力カードを出さず、親画面で直接操作できる操作面を置きます。
         // 検証・既定値の正本は CommandDialogSpecs 側に残します。
         val presentation = SettingSpec.presentationFor(node, field.key, descriptor)
-        val sliderSpec = SettingSpec.sliderSpecFor(node.type, field.key)
+        val sliderSpec = SettingSpec.sliderSpecFor(node, field.key)
             ?.takeIf { presentation == GesturePresentation.SLIDER }
         val isCheckboxPresentation = presentation == GesturePresentation.CHECKBOX &&
             (SettingSpec.isCheckbox(node.type, field.key) ||

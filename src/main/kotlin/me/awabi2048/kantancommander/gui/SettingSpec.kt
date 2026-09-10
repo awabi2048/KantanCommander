@@ -2,8 +2,6 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.FireworkSettings
-import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.TargetKind
 import kotlin.math.roundToLong
 
@@ -115,46 +113,49 @@ object SettingSpec {
     /**
      * Sliderで段階操作する有界数値項目です。
      *
-     * 範囲は `CommandDialogSpecs` の検証範囲内へ収め、範囲外の任意精度値は
-     * Dialogへ委譲します。時間系のtick整合は保存時検証に残し、Sliderは
-     * 整合済みの代表刻みだけを扱います。
+     * ここでは「どの項目にSliderを置くか」（UX判断）だけを保持し、
+     * 範囲・刻み・既定値は `CommandDialogSpecs` の共有正本から導出します。
+     * 検証範囲の変更は自動でSliderへ反映され、手作業の同期は不要です。
+     * 時間系のtick整合は保存時検証に残し、刻みは整合済みの代表刻みです。
      */
-    fun sliderSpecFor(type: CommandType, fieldKey: String): SliderSpec? = when (type to fieldKey) {
-        CommandType.PLAY_SOUND to "volume" ->
-            SliderSpec(min = 0.0, max = 34.0, step = 1.0, integer = false, defaultValue = "1.0")
-        CommandType.PLAY_SOUND to "pitch" ->
-            SliderSpec(min = 0.5, max = 2.0, step = 0.1, integer = false, defaultValue = "1.0")
-        CommandType.CAMERA_SHAKE to "intensity" ->
-            SliderSpec(min = 0.1, max = 4.0, step = 0.1, integer = false, defaultValue = "1.0")
-        CommandType.APPLY_EFFECT to "level" ->
-            SliderSpec(min = 1.0, max = 10.0, step = 1.0, integer = true, defaultValue = "1")
-        CommandType.GIVE_ITEM to "count" ->
-            SliderSpec(min = 1.0, max = 64.0, step = 1.0, integer = true, defaultValue = "1")
-        CommandType.FOR_START to "count" ->
-            SliderSpec(min = 1.0, max = 32.0, step = 1.0, integer = true, defaultValue = "1")
-        CommandType.WAIT to "seconds" ->
-            SliderSpec(min = 1.0, max = 60.0, step = 1.0, integer = false, defaultValue = "1")
-        CommandType.DISPLAY_TEXT to "staySeconds" ->
-            SliderSpec(min = 1.0, max = 30.0, step = 1.0, integer = false, defaultValue = "3")
-        CommandType.DISPLAY_TEXT to "fadeInSeconds" ->
-            SliderSpec(min = 0.0, max = 10.0, step = 1.0, integer = false, defaultValue = "1")
-        CommandType.DISPLAY_TEXT to "fadeOutSeconds" ->
-            SliderSpec(min = 0.0, max = 10.0, step = 1.0, integer = false, defaultValue = "1")
-        CommandType.APPLY_EFFECT to "seconds" ->
-            SliderSpec(min = 1.0, max = 60.0, step = 1.0, integer = true, defaultValue = "30")
-        CommandType.CAMERA_SHAKE to "seconds" ->
-            SliderSpec(min = 1.0, max = 10.0, step = 1.0, integer = false, defaultValue = "5")
-        CommandType.FIREWORK_LAUNCH to "burstHeight" ->
-            SliderSpec(
-                min = FireworkSettings.HEIGHT_MIN,
-                max = FireworkSettings.HEIGHT_MAX,
-                step = 5.0,
-                integer = false,
-                defaultValue = FireworkSettings.HEIGHT_DEFAULT.toString(),
-            )
-        CommandType.PARTICLE to "particleDensity" ->
-            SliderSpec(min = 0.1, max = 2.0, step = 0.1, integer = false, defaultValue = "0.5")
-        else -> null
+    private val SLIDER_FIELDS: Set<Pair<CommandType, String>> = setOf(
+        CommandType.PLAY_SOUND to "volume",
+        CommandType.PLAY_SOUND to "pitch",
+        CommandType.CAMERA_SHAKE to "intensity",
+        CommandType.CAMERA_SHAKE to "seconds",
+        CommandType.APPLY_EFFECT to "level",
+        CommandType.APPLY_EFFECT to "seconds",
+        CommandType.GIVE_ITEM to "count",
+        CommandType.FOR_START to "count",
+        CommandType.WAIT to "seconds",
+        CommandType.DISPLAY_TEXT to "staySeconds",
+        CommandType.DISPLAY_TEXT to "fadeInSeconds",
+        CommandType.DISPLAY_TEXT to "fadeOutSeconds",
+        CommandType.FIREWORK_LAUNCH to "burstHeight",
+        CommandType.PARTICLE to "particleDensity",
+    )
+
+    /**
+     * Slider仕様を共有正本から導出します。
+     *
+     * 範囲・刻みは `CommandDialogSpecs` の `NumericRange`、既定値は
+     * `CommandType.defaults` を正とします。範囲外の任意精度値は
+     * Dialogへ委譲するため、ここでは扱いません。
+     */
+    fun sliderSpecFor(node: CommandNode, fieldKey: String): SliderSpec? {
+        if ((node.type to fieldKey) !in SLIDER_FIELDS) return null
+        val range = CommandDialogSpecs.field(node, fieldKey)?.numericRange ?: return null
+        // 下限値そのものを拒否する範囲では、刻み1つ分を操作下限とします。
+        val min = if (range.exclusiveMin) range.min + range.step else range.min
+        val default = node.type.defaults[fieldKey]?.takeIf(String::isNotBlank)
+            ?: if (range.integer) min.roundToLong().toString() else min.toString()
+        return SliderSpec(
+            min = if (range.integer) min.roundToLong().toDouble() else min,
+            max = if (range.integer) range.max.roundToLong().toDouble() else range.max,
+            step = range.step,
+            integer = range.integer,
+            defaultValue = default,
+        )
     }
 
     /** 指定項目がCheckbox対象かを返します。 */
@@ -171,7 +172,7 @@ object SettingSpec {
      */
     fun presentationFor(node: CommandNode, fieldKey: String, descriptor: CommandSettingDescriptor): GesturePresentation {
         // テンプレート参照を含む数値はSliderへ載せず、Dialogで編集します。
-        val slider = sliderSpecFor(node.type, fieldKey)
+        val slider = sliderSpecFor(node, fieldKey)
         if (slider != null && !SliderValuePolicy.isTemplateReference(node.params[fieldKey])) {
             return GesturePresentation.SLIDER
         }
@@ -248,24 +249,4 @@ object RuntimeDependentPolicy {
      */
     fun canHide(node: CommandNode, targetKind: TargetKind?): Boolean =
         !isRuntimeDependentTarget(targetKind)
-}
-
-/**
- * 図形数値のSlider範囲です。形状別の検証範囲と共有します。
- *
- * params上の図形数値キー（radius／height／turns／step／axis等）は形状に
- * よって意味が変わるため、個別表ではなく範囲解決関数として扱います。
- */
-object GeometrySliderPolicy {
-    /** 図形数値キーのSlider範囲を返します。未知キーはnullです。 */
-    fun sliderSpecFor(key: String): SliderSpec? = when (key) {
-        ParticleGeometry.PARAM_RADIUS -> SliderSpec(0.5, ParticleGeometry.MAX_RADIUS, 0.5, false, "3.0")
-        ParticleGeometry.PARAM_HEIGHT -> SliderSpec(1.0, ParticleGeometry.MAX_HEIGHT, 1.0, false, "5.0")
-        ParticleGeometry.PARAM_TURNS -> SliderSpec(ParticleGeometry.MIN_TURNS, ParticleGeometry.MAX_TURNS, 0.25, false, "3.0")
-        ParticleGeometry.PARAM_STEP -> SliderSpec(ParticleGeometry.MIN_STEP, ParticleGeometry.MAX_STEP, 0.1, false, "0.5")
-        ParticleGeometry.PARAM_AXIS_YAW -> SliderSpec(-180.0, 180.0, 5.0, false, "0.0")
-        ParticleGeometry.PARAM_AXIS_PITCH -> SliderSpec(-90.0, 90.0, 5.0, false, "0.0")
-        ParticleGeometry.PARAM_ROTATION -> SliderSpec(ParticleGeometry.MIN_ANGLE, ParticleGeometry.MAX_ANGLE, 5.0, false, "0.0")
-        else -> null
-    }
 }

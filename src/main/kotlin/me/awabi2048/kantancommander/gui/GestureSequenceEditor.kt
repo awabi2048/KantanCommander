@@ -3772,7 +3772,7 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(settingContext.scriptId) ?: return
         observedRevision = script.revision
         val node = script.graph.nodes[settingContext.nodeId] ?: return
-        val spec = SettingSpec.sliderSpecFor(node.type, fieldKey) ?: return
+        val spec = SettingSpec.sliderSpecFor(node, fieldKey) ?: return
         // テンプレート参照値はSliderで編集しません。Dialog側へ委譲します。
         if (SliderValuePolicy.isTemplateReference(node.params[fieldKey])) return
         val next = SliderValuePolicy.stepBy(spec, node.params[fieldKey], increment)
