@@ -294,6 +294,26 @@ class VanillaDatapackExporter(
             if (node.summonPositionSpec?.kind == PositionKind.TARGET) {
                 errors += "${script.id}/${node.id}: 召喚の対象位置指定は完全バニラ出力に未対応です"
             }
+            // issue #29: 対象由来位置・向きはバニラで同等の意味を表現できないため、
+            // 別の位置へ黙って読み替えず明示的な検証エラーとします。
+            // 実行位置も同じ制約であり、出力時だけ異なる意味になりません。
+            // テレポート先のdestinationSpecは旧来の対象移動経路のため除外します。
+            val embeddedTargets = listOfNotNull(
+                node.conditionPositionSpec?.takeIf { it.kind == PositionKind.TARGET },
+                node.blockPositionSpec?.takeIf { it.kind == PositionKind.TARGET },
+                node.blockFromSpec?.takeIf { it.kind == PositionKind.TARGET },
+                node.blockToSpec?.takeIf { it.kind == PositionKind.TARGET },
+                node.executionPositionSpec?.takeIf { it.kind == PositionKind.TARGET },
+                node.temporaryLocationPositionSpec?.takeIf { it.kind == PositionKind.TARGET },
+            )
+            if (embeddedTargets.isNotEmpty()) {
+                errors += "${script.id}/${node.id}: 対象由来の位置指定は完全バニラ出力に未対応です"
+            }
+            if (node.destinationFacingSpec?.kind == FacingKind.TARGET ||
+                node.temporaryLocationFacingSpec?.kind == FacingKind.TARGET
+            ) {
+                errors += "${script.id}/${node.id}: 対象由来の向き指定は完全バニラ出力に未対応です"
+            }
             validateFacing(script, node, node.destinationFacingSpec, errors)
             if (listOfNotNull(
                     node.targetSpec,
@@ -2087,6 +2107,10 @@ class VanillaDatapackExporter(
                 .append(":particlePosition=").append(node.particlePositionSpec)
                 .append(":particleEndPosition=").append(node.particleEndPositionSpec)
                 .append(":fireworkPosition=").append(node.fireworkPositionSpec)
+                .append(":summonPosition=").append(node.summonPositionSpec)
+                .append(":blockPosition=").append(node.blockPositionSpec)
+                .append(":blockFrom=").append(node.blockFromSpec)
+                .append(":blockTo=").append(node.blockToSpec)
                 .append(":executionPosition=").append(node.executionPositionSpec)
             node.snapshot?.let {
                 append(":snapshot={").append(graphFingerprint(it)).append('}')

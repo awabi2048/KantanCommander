@@ -989,25 +989,30 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val tag = resolveText(node.string("tags"), session) ?: return false
                 if (tag.isNotBlank() && !CommandValueRules.isTag(tag)) return false
                 // 召喚位置が指定されていればそちらを優先し、未設定時はコンテキスト位置（effectiveOrigin）を使用します。
-                val summonOrigin = node.summonPositionSpec?.let { resolvePosition(it, session, effectiveContext) ?: return false } ?: effectiveOrigin
-                val spawn = summonOrigin.clone()
-                effectiveContext?.facing?.let { applyFacing(spawn, it, effectiveContext, session) }
-                val entity = summonOrigin.world.spawnEntity(spawn, type)
-                if (tag.isNotBlank()) entity.addScoreboardTag(tag)
-                val rawCustomName = node.string("customName")
-                val customName = resolveText(rawCustomName, session)
-                    ?: return false.also { entity.remove() }
-                if (customName.isNotEmpty()) {
-                    entity.customName(legacyText(customName))
-                    entity.isCustomNameVisible = true
-                }
-                try {
-                    plugin.summonedEntities.register(entity, session.rootId)
-                } catch (failure: Throwable) {
-                    // 台帳へ登録できない召喚体をワールドへ残すと、制限をすり抜けた
-                    // 孤児Entityになります。登録と実体生成を一組として扱います。
-                    entity.remove()
-                    throw failure
+                // issue #29: 対象内包位置は各位置へ実行します。空集合は実行対象なしの成功です。
+                // 対象外種別の未解決は従来どおり失敗にします。
+                val summonOrigins = actionOrigins(node.summonPositionSpec, session, effectiveContext, effectiveOrigin)
+                    ?: return false
+                summonOrigins.forEach { summonOrigin ->
+                    val spawn = summonOrigin.clone()
+                    effectiveContext?.facing?.let { applyFacing(spawn, it, effectiveContext, session) }
+                    val entity = summonOrigin.world.spawnEntity(spawn, type)
+                    if (tag.isNotBlank()) entity.addScoreboardTag(tag)
+                    val rawCustomName = node.string("customName")
+                    val customName = resolveText(rawCustomName, session)
+                        ?: return false.also { entity.remove() }
+                    if (customName.isNotEmpty()) {
+                        entity.customName(legacyText(customName))
+                        entity.isCustomNameVisible = true
+                    }
+                    try {
+                        plugin.summonedEntities.register(entity, session.rootId)
+                    } catch (failure: Throwable) {
+                        // 台帳へ登録できない召喚体をワールドへ残すと、制限をすり抜けた
+                        // 孤児Entityになります。登録と実体生成を一組として扱います。
+                        entity.remove()
+                        throw failure
+                    }
                 }
                 true
             }
@@ -1098,8 +1103,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     // 「起動ワールドの全プレイヤーへ確実に届ける」挙動を維持します。
                     receivers.forEach { it.playSound(it.location, sound, SoundCategory.MASTER, volume, pitch) }
                 } else {
-                    val source = node.soundPositionSpec?.let { resolvePosition(it, session, context) } ?: effectiveOrigin
-                    receivers.forEach { it.playSound(source, sound, SoundCategory.MASTER, volume, pitch) }
+                    // issue #29: 対象内包位置は各位置へ実行します。
+                    val sources = actionOrigins(node.soundPositionSpec, session, context, effectiveOrigin)
+                        ?: return false
+                    sources.forEach { source ->
+                        receivers.forEach { it.playSound(source, sound, SoundCategory.MASTER, volume, pitch) }
+                    }
                 }
                 return true
             }
@@ -1159,10 +1168,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         targets: List<Entity>,
     ): Boolean {
         val particle = ParticleSettings.particle(node) ?: return false
-        val origin = node.particlePositionSpec
-            ?.let { resolvePosition(it, session, context) ?: return false }
-            ?: effectiveOrigin
-        val receivers = if (node.targetSpec == null) origin.world.players else targets.filterIsInstance<Player>()
+        // issue #29: 対象内包位置は各位置へ実行します。
+        val origins = actionOrigins(node.particlePositionSpec, session, context, effectiveOrigin) ?: return false
+        val receivers = if (node.targetSpec == null) effectiveOrigin.world.players else targets.filterIsInstance<Player>()
         val data = if (ParticleSettings.requiresData(particle)) {
             ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
                 .getOrNull() ?: return false
@@ -1171,7 +1179,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             // 実行を止めません。検証側も同じく対象外にしています。
             ParticleSettings.ParticleDataSpec.None
         }
-        val bukkitData = data.toBukkitData(origin)
+        val bukkitData = data.toBukkitData(effectiveOrigin)
         if (ParticleSettings.requiresData(particle) && bukkitData == null) return false
 
         return when (ParticleGeometry.displayMode(node)) {
@@ -1185,29 +1193,36 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val speed = resolveNumber(node.string(ParticleSettings.PARAM_SPEED, "0.0"), session)
                     ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
                 val count = resolvePositiveInt(node.string(ParticleSettings.PARAM_COUNT, "1"), session) ?: return false
-                if (!plugin.particleQuota.tryAcquire(origin.world.uid, count)) {
+                // issue #29: 全位置分のquotaを事前予約し、部分表示を残しません。
+                if (origins.isNotEmpty() &&
+                    !plugin.particleQuota.tryAcquire(effectiveOrigin.world.uid, count * origins.size)
+                ) {
                     throw ParticleQuotaRejected()
                 }
                 // receiverへ明示対象を渡すことで、「実行位置周囲」ではなく
                 // 「表示中心と同じワールドの全員または指定対象」という仕様を残します。
-                origin.world.spawnParticle(
-                    particle,
-                    receivers,
-                    null,
-                    origin.x,
-                    origin.y,
-                    origin.z,
-                    count,
-                    deltaX,
-                    deltaY,
-                    deltaZ,
-                    speed,
-                    bukkitData,
-                    true,
-                )
+                origins.forEach { origin ->
+                    origin.world.spawnParticle(
+                        particle,
+                        receivers,
+                        null,
+                        origin.x,
+                        origin.y,
+                        origin.z,
+                        count,
+                        deltaX,
+                        deltaY,
+                        deltaZ,
+                        speed,
+                        bukkitData,
+                        true,
+                    )
+                }
                 true
             }
-            ParticleDisplayMode.GEOMETRY -> executeGeometryParticle(node, session, context, origin, receivers, particle, bukkitData)
+            ParticleDisplayMode.GEOMETRY -> origins.all { origin ->
+                executeGeometryParticle(node, session, context, origin, receivers, particle, bukkitData)
+            }
         }
     }
 
@@ -1303,23 +1318,41 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             session,
         )?.takeIf(Double::isFinite) ?: return false
         val stack = resolveFireworkStack(node) ?: return false
-        val launchBase = node.fireworkPositionSpec
-            ?.let { resolvePosition(it, session, context) ?: return false }
-            ?: effectiveOrigin
+        // issue #29: 対象内包位置は各位置へ実行します。
+        val launchBases = actionOrigins(node.fireworkPositionSpec, session, context, effectiveOrigin)
+            ?: return false
         // 制御ブロック位置（未設定を含む）は固体内部のため、そのまま召喚すると
         // 初tickで接触起爆します。装置上端を発射口として1ブロック上げます。
         // 明示座標は利用者指定のままバニラ通りに扱います。
-        val launchAt = launchBase.clone().apply {
-            val kind = node.fireworkPositionSpec?.kind
-            if (kind == null || kind == PositionKind.DISK) add(0.0, 1.0, 0.0)
+        val explicitKind = node.fireworkPositionSpec?.kind
+        launchBases.forEach { launchBase ->
+            val launchAt = launchBase.clone().apply {
+                if (explicitKind == null || explicitKind == PositionKind.DISK) add(0.0, 1.0, 0.0)
+            }
+            launchFireworkRocket(session, node, stack, height, launchAt)
         }
+        return true
+    }
+
+    /**
+     * issue #29 の花火1発分の打上げです。位置集合の各位置から呼び出します。
+     *
+     * 高さ0は演出なしの即時破裂です。
+     */
+    private fun launchFireworkRocket(
+        session: ExecutionSession,
+        node: CommandNode,
+        stack: org.bukkit.inventory.ItemStack,
+        height: Double,
+        launchAt: org.bukkit.Location,
+    ) {
         // 高さ0は演出なしの即時破裂です。
         if (height <= 0.0) {
             val instant = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)
             instant.setItem(stack)
             instant.setShotAtAngle(false)
             instant.detonate()
-            return true
+            return
         }
         val rocket = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)
         rocket.setItem(stack)
@@ -1341,7 +1374,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         schedule(session, FireworkSettings.detonationTicks(height).toLong()) {
             detonateAtTarget(rocket, target)
         }
-        return true
     }
 
     /**
@@ -1467,14 +1499,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } ?: return false
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
-                // issue #26: 未設定時はコマンド実行位置を既定値とします。
-                val location = commandPositionOrExecution(node.blockPositionSpec, session, context) ?: return false
-                val world = location.world ?: return false
-                if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
-                    // 拡張コマンドブロックの位置は、setblockでも常に変更を拒否します。
-                    return false
+                // issue #26 の既定値（実行位置）＋issue #29 の各位置へ実行します。
+                // どちらもなければ従来どおり失敗にします。
+                val effective = node.blockPositionSpec ?: context?.position ?: return false
+                val resolved = resolvePositions(effective, session, context)
+                if (resolved.isEmpty() && effective.kind != PositionKind.TARGET) return false
+                resolved.forEach { location ->
+                    val world = location.world ?: return false
+                    if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
+                        // 拡張コマンドブロックの位置は、setblockでも常に変更を拒否します。
+                        return false
+                    }
+                    location.block.setType(material, false)
                 }
-                location.block.setType(material, false)
                 true
             }
             BlockOperationMode.FILL -> {
@@ -1581,21 +1618,28 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
             ConditionKind.BLOCK_STATE -> {
-                val conditionPosition = node.conditionPositionSpec
-                val location = when {
-                    conditionPosition != null ->
-                        resolvePosition(conditionPosition, session, context) ?: return ConditionEvaluation.UNRESOLVED
-                    context?.position != null ->
-                        resolvePosition(context.position, session, context) ?: return ConditionEvaluation.UNRESOLVED
-                    else -> session.origin
-                }
                 val expected = CommandValueRules.material(node.string("block"))
                     ?: return ConditionEvaluation.INVALID
-                if (location.world == session.origin.world && location.block.type == expected) {
-                    ConditionEvaluation.TRUE
-                } else {
-                    ConditionEvaluation.FALSE
+                // issue #29: 複数位置はANY評価です。どこか1か所でTRUEなら全体をTRUE、
+                // 全位置FALSE・空集合はFALSEとします。対象外種別の未解決は従来どおり
+                // UNRESOLVEDにします。
+                val candidates = node.conditionPositionSpec?.let { spec ->
+                    val resolved = resolvePositions(spec, session, context)
+                    if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
+                        return ConditionEvaluation.UNRESOLVED
+                    }
+                    resolved
+                } ?: context?.position?.let { spec ->
+                    val resolved = resolvePositions(spec, session, context)
+                    if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
+                        return ConditionEvaluation.UNRESOLVED
+                    }
+                    resolved
+                } ?: listOf(session.origin)
+                val matched = candidates.any { location ->
+                    location.world == session.origin.world && location.block.type == expected
                 }
+                if (matched) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
             ConditionKind.CONTROL_BLOCK_STATE -> {
                 // 制御ブロック自身の現在状態を判定します。複数項目はポリシー側でAND評価し、
@@ -1968,11 +2012,73 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         // TARGETはテレポート先などのコマンド固有設定で解決するため、通常の
         // 実行位置へ渡された場合は静的検証と同じく未解決として扱います。
+        // issue #29 の対象内包位置は resolvePositions 側で集合解決します。
         PositionKind.TARGET -> null
         PositionKind.MYWORLD_SPAWN -> {
             if (spec.hasNonAbsoluteSemantics()) return null
-            session.origin.world.spawnLocation
+            myworldSpawnLocation(session, spec.myworldSpawn)
         }
+    }
+
+    /**
+     * issue #29 のMyWorldスポーン解決です。
+     *
+     * Bukkitの通常world spawnではなく、MyWorldManagerが保持する該当スポーン位置を
+     * 参照します。旧来の単一種別はメンバー用として扱います。MWM無効時や未設定時は
+     * 従来どおりworld spawnへ落とします。
+     */
+    private fun myworldSpawnLocation(
+        session: ExecutionSession,
+        kind: me.awabi2048.kantancommander.model.MyworldSpawnKind?,
+    ): Location {
+        val spawnKind = kind ?: me.awabi2048.kantancommander.model.MyworldSpawnKind.MEMBER
+        if (plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) {
+            val stored = runCatching {
+                val data = MyWorldManagerApi.getWorldRepository()?.findByWorldName(session.origin.world.name)
+                when (spawnKind) {
+                    me.awabi2048.kantancommander.model.MyworldSpawnKind.MEMBER -> data?.spawnPosMember
+                    me.awabi2048.kantancommander.model.MyworldSpawnKind.GUEST -> data?.spawnPosGuest
+                }
+            }.getOrNull()
+            if (stored != null && stored.world?.uid == session.origin.world.uid) return stored.clone()
+        }
+        return session.origin.world.spawnLocation
+    }
+
+    /**
+     * issue #29 の実行用位置集合です。
+     *
+     * 未設定時は既定位置の1件、対象内包位置は0..N件（空集合あり）、
+     * 対象外種別の未解決はnull（呼び出し側で従来どおり失敗）です。
+     */
+    private fun actionOrigins(
+        spec: PositionSpec?,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        fallback: Location,
+    ): List<Location>? {
+        if (spec == null) return listOf(fallback)
+        val resolved = resolvePositions(spec, session, context)
+        if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) return null
+        return resolved
+    }
+
+    /**
+     * issue #29 の位置集合解決です。
+     *
+     * 対象内包位置（TARGET）は選択エンティティそれぞれの位置へ0..N件解決し、
+     * それ以外は単一解決の0..1件です。各コマンド側で重複実装しません。
+     */
+    private fun resolvePositions(
+        spec: PositionSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): List<Location> {
+        if (spec.kind == PositionKind.TARGET) {
+            val target = spec.target ?: return emptyList()
+            return resolveTargetSpecs(target, session, context).map { it.location.clone() }
+        }
+        return resolvePosition(spec, session, context)?.let { listOf(it) } ?: emptyList()
     }
 
     /**
@@ -2157,9 +2263,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 ) ?: return
             }
             FacingKind.TARGET -> {
-                val location = context?.target
-                    ?.let { resolveTargetSpec(it, session, context) }
-                    ?.location ?: return
+                // issue #29: 内包する対象指定を優先し、なければ従来の実行状態対象を使います。
+                val location = facing.target?.let { resolveTargetSpec(it, session, context) }?.location
+                    ?: context?.target?.let { resolveTargetSpec(it, session, context) }?.location
+                    ?: return
                 faceLocation(destination, location)
             }
             FacingKind.COORDINATES -> faceLocation(
@@ -2178,7 +2285,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ?.location ?: return
                 faceLocation(destination, Location(destination.world, temp.x, temp.y, temp.z))
             }
-            FacingKind.MYWORLD_SPAWN -> faceLocation(destination, session.origin.world.spawnLocation)
+            FacingKind.MYWORLD_SPAWN -> faceLocation(destination, myworldSpawnLocation(session, facing.myworldSpawn))
         }
     }
 

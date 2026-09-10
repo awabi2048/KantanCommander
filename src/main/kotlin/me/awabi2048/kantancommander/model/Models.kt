@@ -299,8 +299,20 @@ data class TargetSpec(
  */
 enum class PositionKind {
     CAPTURED, DISK, MYWORLD_SPAWN, COORDINATES, TEMPORARY,
-    /** テレポート先など、コマンド固有の「対象エンティティ位置」です。 */
+    /** issue #29 の対象エンティティ位置です。内包する対象指定の各位置へ0..N件解決します。 */
     TARGET,
+}
+
+/**
+ * issue #29 のMyWorldスポーン種別です。
+ *
+ * 旧来の単一 MYWORLD_SPAWN 相当はメンバー用スポーンとして互換移行します。
+ * 実行時はBukkitの通常world spawnではなく、MyWorldManagerが保持する
+ * 該当スポーン位置を参照します。
+ */
+enum class MyworldSpawnKind {
+    MEMBER,
+    GUEST,
 }
 
 /**
@@ -390,6 +402,16 @@ data class PositionSpec(
     val semanticsZ: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
     val semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
     val semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    /**
+     * issue #29 のMyWorldスポーン種別です。kind=MYWORLD_SPAWN のときだけ有効です。
+     * 未設定（旧データ）はメンバー用スポーンとして互換移行します。
+     */
+    val myworldSpawn: MyworldSpawnKind? = null,
+    /**
+     * issue #29 の対象内包指定です。kind=TARGET のときだけ有効であり、
+     * 選択されたエンティティそれぞれの位置へ0..N件解決します。
+     */
+    val target: TargetSpec? = null,
 ) {
     /** 座標・角度のいずれかに絶対以外の指定があるかを返します。 */
     fun hasNonAbsoluteSemantics(): Boolean =
@@ -482,7 +504,7 @@ data class RegionSpec(
 
 enum class FacingKind {
     CAPTURED, COORDINATES, MYWORLD_SPAWN, ROTATION, TEMPORARY,
-    /** テレポート先など、コマンド固有の「対象エンティティ方向」です。 */
+    /** issue #29 の対象エンティティ方向です。内包する対象指定と同じ経路で扱います。 */
     TARGET,
 }
 data class FacingSpec(
@@ -501,6 +523,16 @@ data class FacingSpec(
      */
     val semanticsYaw: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
     val semanticsPitch: CoordinateSemantics = CoordinateSemantics.ABSOLUTE,
+    /**
+     * issue #29 のMyWorldスポーン種別です。kind=MYWORLD_SPAWN のときだけ有効です。
+     * 未設定（旧データ）はメンバー用スポーンとして互換移行します。
+     */
+    val myworldSpawn: MyworldSpawnKind? = null,
+    /**
+     * issue #29 の対象内包指定です。kind=TARGET のときだけ有効であり、
+     * 最寄りプレイヤー等のプリセットと詳細なエンティティ指定を同じ経路で扱います。
+     */
+    val target: TargetSpec? = null,
 ) {
     /** 向きのいずれかに絶対以外の指定があるかを返します。 */
     fun hasNonAbsoluteSemantics(): Boolean =

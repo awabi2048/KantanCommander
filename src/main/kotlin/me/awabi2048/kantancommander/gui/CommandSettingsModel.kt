@@ -1167,6 +1167,7 @@ object CommandSettingsModel {
                 CommandSettingRole.PARTICLE_END -> isPositionSpecConfigured(node.particleEndPositionSpec)
                 CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
                 CommandSettingRole.FIREWORK_POSITION -> isPositionSpecConfigured(node.fireworkPositionSpec)
+                CommandSettingRole.EXECUTION_POSITION -> isPositionSpecConfigured(node.executionPositionSpec)
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> isPositionSpecConfigured(node.temporaryLocationPositionSpec)
                 else -> false
             }

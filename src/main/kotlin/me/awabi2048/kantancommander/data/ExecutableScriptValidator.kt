@@ -370,6 +370,8 @@ object ExecutableScriptValidator {
         node.temporaryLocationPositionSpec?.let {
             validatePosition(it, path, node, errors, temporaryDefinitions)
         }
+        validateEmbeddedPositionTargets(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        validateSinglePositionTargets(node, path, errors)
         node.destinationFacingSpec?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationFacingSpec?.let {
             validateFacing(it, path, node, errors, temporaryDefinitions)
@@ -1019,6 +1021,64 @@ object ExecutableScriptValidator {
         if (spec.kind == PositionKind.CAPTURED && (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)) {
             errors += nodeError(node, path, emptySet(), "捕捉した向きが未設定または有限値ではありません")
         }
+    }
+
+    /**
+     * issue #29: 位置・向きに内包された対象指定を、通常の対象検証へ通します。
+     *
+     * 対象内包なし（旧データ）は検証対象外であり、互換性を維持します。
+     */
+    private fun validateEmbeddedPositionTargets(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        insideForBody: Boolean,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        listOfNotNull(
+            node.destinationSpec?.target,
+            node.conditionPositionSpec?.target,
+            node.blockPositionSpec?.target,
+            node.blockFromSpec?.target,
+            node.blockToSpec?.target,
+            node.soundPositionSpec?.target,
+            node.particlePositionSpec?.target,
+            node.particleEndPositionSpec?.target,
+            node.fireworkPositionSpec?.target,
+            node.summonPositionSpec?.target,
+            node.executionPositionSpec?.target,
+            node.temporaryLocationPositionSpec?.target,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        }
+        listOfNotNull(
+            node.destinationFacingSpec?.target,
+            node.temporaryLocationFacingSpec?.target,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        }
+    }
+
+    /**
+     * issue #29: 単一限定の役割に対象由来位置が選ばれていないか検証します。
+     *
+     * 複数位置の対応関係が別途必要になる位置（fill始点終点・図形の対応位置・
+     * LOCATION一時変数そのもの）は、GUIでも無効化します。テレポート先の
+     * destinationSpecは旧来の対象移動経路（destinationTargetSpec併用）のため除外します。
+     */
+    private fun validateSinglePositionTargets(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        listOfNotNull(
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.particleEndPositionSpec,
+            node.temporaryLocationPositionSpec,
+        ).filter { it.kind == PositionKind.TARGET }
+            .forEach { errors += nodeError(node, path, setOf("position"), "この位置に対象由来の複数位置は指定できません") }
     }
 
     /**
