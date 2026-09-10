@@ -5480,13 +5480,23 @@ class GestureSequenceEditor(
                         }) showSettingScreen()
                     return
                 }
-                // 詳細設定は選択のみ行い、再クリックで現行の絞込子画面へ進みます。
-                // 未設定時は保存せず留まり、設定済み時はプリセット相当を明示値へ
-                // 変換保存してから遷移します。来歴付きのため無変更の間は
-                // プリセット選択表示が残ります。
+                // 詳細設定は初回クリックで選択のみ行い、選択済みの再クリックで
+                // 現行の絞込子画面へ進みます。未設定時は保存せず留まります。
+                // 設定済み時はプリセット相当を明示値へ変換保存します。来歴付きの
+                // ため無変更の間はプリセット選択表示が残ります。
                 if (group == "target-detail") {
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val current = readBranchTarget(node)
                     rememberSettingNode(encoded)
+                    if (!wasSelected) {
+                        if (current != null) {
+                            if (!updateSettingNode(player, settingContext) {
+                                    writeConvertedTarget(it, SettingPresets.expandPresetToDetail(current))
+                                }) return
+                        }
+                        showSettingScreen()
+                        return
+                    }
                     if (current == null) {
                         showSettingScreen()
                         return
