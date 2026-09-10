@@ -34,6 +34,8 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.FoldedGraphs
+import me.awabi2048.kantancommander.data.GraphValidator
+import me.awabi2048.kantancommander.data.IncrementalValidationPolicy
 import me.awabi2048.kantancommander.execution.ExecutionFinishStatus
 import me.awabi2048.kantancommander.execution.ExecutionNodeFinished
 import me.awabi2048.kantancommander.execution.ExecutionResult
@@ -450,6 +452,23 @@ class GestureSequenceEditor(
      * まとめて破棄し、削除済みUUIDへ後続入力が届かないようにします。
      */
     internal fun refreshFromStore() {
+        refreshFromStore(exceptRevisionAlreadyRendered = true)
+    }
+
+    /**
+     * 保存通知による再同期です。
+     *
+     * issue #15 の差分同期として、自身の保存直後に届くbroadcastでは
+     * 直接描画済みの同一世代を作り直しません。選択欠落がある場合だけ
+     * 作り直し、他editorの stale 世代は従来どおり全量更新します。
+     * presence等のephemeral状態はここで触らず、内容更新だけを扱います。
+     *
+     * [changedNodeIds] には保存前後で変わったノードID集合を渡し、
+     * 他editorの変更で古くなった一時previewを破棄します。Dialog系の
+     * 外部変更時の入力無効化と対になる扱いです。nullの場合は差分不明
+     * として破棄しません。
+     */
+    internal fun refreshFromStore(exceptRevisionAlreadyRendered: Boolean = true, changedNodeIds: Set<UUID>? = null) {
         val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
         val current = plugin.scripts.load(state.scriptId) ?: return
         val previousRevision = observedRevision
@@ -460,11 +479,34 @@ class GestureSequenceEditor(
             invalidateInputs()
         }
         observedRevision = current.revision
+        // 他editorの変更で古くなった一時previewは保存値へ戻せず残留するため破棄します。
+        // 自身の確定直後はconsume済みのため何も起きません。
+        if (!changedNodeIds.isNullOrEmpty()) {
+            changedNodeIds.forEach(previewStore::removeNode)
+        }
         val selectedNodeMissing = state.selectedNodeId?.let { it !in current.graph.nodes } == true
         val confirmedNodeMissing = state.confirmNodeId?.let { it !in current.graph.nodes } == true
         val settingNodeMissing = state.settingContext?.nodeId?.let { it !in current.graph.nodes } == true
+        val insertionMissing = state.pendingInsertion?.let { target ->
+            (target.sourceId != null && target.sourceId !in current.graph.nodes) ||
+                (target.mergeConditionId != null && target.mergeConditionId !in current.graph.nodes)
+        } == true
+        val hasMissingSelection = selectedNodeMissing || confirmedNodeMissing || settingNodeMissing || insertionMissing
+        // 自身の直接描画とbroadcastの二重描画を抑止します。外部変更で世代が
+        // 進んだ場合や選択欠落がある場合は抑止せず、整合性を優先します。
+        if (exceptRevisionAlreadyRendered && !hasMissingSelection &&
+            previousRevision != null && previousRevision == current.revision &&
+            lastDirectRenderedRevision == current.revision
+        ) {
+            return
+        }
         if (selectedNodeMissing || confirmedNodeMissing || settingNodeMissing) {
             invalidateInputs()
+            // 削除済みノードの一時previewは保存値へ戻せないため破棄します。
+            // 削除済みUUIDへ後続のpreview確定が届かないようにします。
+            state.selectedNodeId?.let(previewStore::removeNode)
+            state.confirmNodeId?.let(previewStore::removeNode)
+            state.settingContext?.nodeId?.let(previewStore::removeNode)
             state.selectedNodeId = null
             state.confirmNodeId = null
             state.pendingInsertion = null
@@ -490,8 +532,38 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
             }
         }
-        updateUpper(owner)
-        updateLower(owner)
+        // issue #15 の上部抑止です。上部は種別・接続・未設定色・選択だけを表示し
+        // 値そのものを表示しないため、要点が同じ間は下部だけを作り直します。
+        // テスト表示・挿入preview・追加点選択の途中は抑止せず、整合性を優先します。
+        val skipUpper = !hasMissingSelection &&
+            state.testExecution == null &&
+            state.pendingInsertion == null &&
+            state.selectedInsertionCandidatePoint == null &&
+            state.selectedAddPoint == null &&
+            lastUpperStructureSignature != null &&
+            GraphStructureFingerprint.fingerprint(current.graph) == lastUpperStructureSignature &&
+            currentIncompleteForSkip(current) == lastUpperIncomplete &&
+            state.selectedNodeId == lastUpperSelection
+        if (skipUpper) {
+            updateLower(owner)
+        } else {
+            updateUpper(owner)
+            updateLower(owner)
+        }
+    }
+
+    /**
+     * 上部抑止の比較用に、現在の未設定集合を求めます。
+     *
+     * [resolveUpperGraph] と同じ対応付け規則を使い、表示上の差の有無だけを
+     * 判定します。検証結果自体は世代cacheを使い回します。
+     */
+    private fun currentIncompleteForSkip(script: DiskScript): Set<java.util.UUID> = buildSet {
+        validatedErrors(script).forEach { error ->
+            error.nodeId?.let { nodeId ->
+                FoldedGraphs.outermostWrapperId(script.graph, nodeId)?.let(::add)
+            }
+        }
     }
 
     /** Facadeが終了通知を新しいエディターへ誤適用しないよう、現在のIDを照合します。 */
@@ -595,7 +667,42 @@ class GestureSequenceEditor(
 
     fun updateUpper(player: Player): Boolean {
         val owner = ownerPlayerFor(player)
-        return updateScreen(owner, buildUpperViewport(owner), RenderTarget.UPPER)
+        val updated = updateScreen(owner, buildUpperViewport(owner), RenderTarget.UPPER)
+        // 直接描画とbroadcastの二重描画を抑止するため、描画済み世代を記録します。
+        // 他editorのstale判定には使わず、このeditorの同一世代再描画抑止にだけ使います。
+        if (updated) lastDirectRenderedRevision = observedRevision
+        return updated
+    }
+
+    /**
+     * 保存成功後の上部更新です。表示内容が変わらない場合は作り直しません。
+     *
+     * issue #15 の部分再構築として、上部が種別・接続・未設定色・選択だけを
+     * 表示することを利用し、前回描画時の要点と一致すれば抑止します。
+     * 下部は値表示のため呼び出し側で必ず更新します。
+     *
+     * 適用条件は保存成功経路だけにします。以下を変える経路では使わず、
+     * [updateUpper] で無条件に作り直します。
+     * - 選択・原点・ズーム・固定（表示要点の追跡対象外）
+     * - テスト状態・挿入preview・追加点選択（毎tick変化し得る一時表示）
+     *
+     * 戻り値は上部が最新であることを表します。抑止時も最新のためtrueを返し、
+     * 描画失敗時は [updateUpper] の結果をそのまま返します。
+     */
+    private fun updateUpperIfNeeded(player: Player): Boolean {
+        val current = plugin.scripts.load(state.scriptId) ?: return updateUpper(player)
+        if (state.testExecution != null) return updateUpper(player)
+        if (state.pendingInsertion != null ||
+            state.selectedInsertionCandidatePoint != null ||
+            state.selectedAddPoint != null
+        ) {
+            return updateUpper(player)
+        }
+        val signature = lastUpperStructureSignature ?: return updateUpper(player)
+        if (GraphStructureFingerprint.fingerprint(current.graph) != signature) return updateUpper(player)
+        if (currentIncompleteForSkip(current) != lastUpperIncomplete) return updateUpper(player)
+        if (state.selectedNodeId != lastUpperSelection) return updateUpper(player)
+        return true
     }
 
     fun updateLower(player: Player): Boolean {
@@ -642,16 +749,138 @@ class GestureSequenceEditor(
     private var validationCacheKey: Pair<java.util.UUID, Long>? = null
     private var validationCacheErrors: List<me.awabi2048.kantancommander.data.ScriptValidationError> = emptyList()
 
+    /**
+     * issue #15 の差分更新基盤です。値変更だけの保存で全量レイアウトを
+     * 繰り返さないよう、構造署名単位で配置結果を使い回します。
+     * 無効化条件は構造署名の変化に一元化し、設定上限の変更時だけ破棄します。
+     */
+    private val layoutCache = GraphLayoutCache()
+
+    /**
+     * 構造検証エラーの署名単位キャッシュです。値変更だけでは構造由来の
+     * エラーは変わらないため、世代が進んでも構造署名が同じ間は再利用します。
+     * 項目検証の全量走査は [validatedErrors] 側に残し、ここでは構造部分の
+     * 再計算抑止だけを担当します。
+     */
+    private var structuralValidationCacheKey: String? = null
+    private var structuralValidationErrors: List<me.awabi2048.kantancommander.data.GraphStructuralError> = emptyList()
+
+    /**
+     * 変数定義付きのテスト可否検証のTTLキャッシュです。
+     *
+     * 世代管理の対象外（ワールド変数の変更ではscript revisionが進まない）のため
+     * 世代cacheにはせず、短い鮮度で再計算を抑止します。上部再構築ごとの
+     * 全量検証＋MyWorld参照を間引き、ボタン表示のちらつきなく保ちます。
+     * 無効化条件はキー（script＋世代）の変化・TTL超過・セッション終了に一元化します。
+     */
+    private val testValidationCache =
+        TtlCache<Pair<java.util.UUID, Long>, List<me.awabi2048.kantancommander.data.ScriptValidationError>>(
+            ttlMillis = 1500L,
+        )
+
+    /**
+     * Slider等の連続previewを永続保存へ直結させない一時保管場所です。
+     * session-localに保持し、commit時にだけrevisionを進めます。
+     * 他editorへの共有は低頻度・明示channelに限定します。
+     */
+    private val previewStore = TransientPreviewStore()
+    private var lastPreviewBroadcastAtMillis: Long = 0L
+
+    /**
+     * 自身の保存直後に届くbroadcast再描画を抑止する世代記録です。
+     * 保存成功経路は直接描画済みのため、同一世代のbroadcastでは
+     * 選択欠落がない限り再構築しません。他editorの stale 世代には影響しません。
+     */
+    private var lastDirectRenderedRevision: Long? = null
+
+    /**
+     * issue #15 の上部抑止判定に使う、前回描画時の表示内容の要点です。
+     *
+     * 上部のノード表示は種別・接続・未設定色・選択だけに依存し、値そのものを
+     * 表示しないため、署名・未設定集合・選択が同じ間は作り直しません。
+     * テスト表示・挿入preview中は記録せず、抑止判定から外します。
+     */
+    private var lastUpperStructureSignature: String? = null
+    private var lastUpperIncomplete: Set<java.util.UUID> = emptySet()
+    private var lastUpperSelection: java.util.UUID? = null
+
     /** 世代キャッシュ付きの実行前検証です。変数定義付きの検証には使いません。 */
     private fun validatedErrors(
         script: me.awabi2048.kantancommander.model.DiskScript,
+        baseline: Boolean = true,
     ): List<me.awabi2048.kantancommander.data.ScriptValidationError> {
         val key = script.id to script.revision
         if (validationCacheKey != key) {
+            // issue #15 の増分検証として、値変更だけの世代進行では前回結果から
+            // 変更ノード分だけを再検証します。全量が必要な場合は従来どおりです。
+            val incremental = if (baseline) tryIncrementalValidation(script) else null
+            if (incremental != null) {
+                validationCacheErrors = incremental
+                // 構造不変のため署名cacheは有効なままです。構造署名の一致は
+                // 増分側の分類で保証されています。
+            } else {
+                validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+                // 世代が進んでも構造署名が同じ間は構造エラーを再利用できるよう、
+                // 構造部分だけを署名単位で保持します。無効化条件は署名変化に一元化します。
+                val signature = GraphStructureFingerprint.fingerprint(script.graph)
+                if (structuralValidationCacheKey != signature) {
+                    structuralValidationCacheKey = signature
+                    structuralValidationErrors = GraphValidator.validateStructured(script.graph, plugin.graphLimits())
+                }
+            }
             validationCacheKey = key
-            validationCacheErrors = ExecutableScriptValidator.validate(script, plugin.graphLimits())
+            // テストsnapshotは正本の基準にせず、永続世代の検証基準だけを保持します。
+            if (baseline) {
+                lastValidatedScriptId = script.id
+                lastValidatedGraph = script.graph
+            }
         }
         return validationCacheErrors
+    }
+
+    /**
+     * 増分検証の前回基準です。テストsnapshotの混入を防ぐため、
+     * 永続世代の検証時にだけ保持します。終了時に破棄します。
+     */
+    private var lastValidatedScriptId: java.util.UUID? = null
+    private var lastValidatedGraph: me.awabi2048.kantancommander.model.CommandGraph? = null
+
+    /**
+     * 前回検証結果からの増分更新を試みます。
+     *
+     * 全量が必要な場合は null を返し、呼び出し側は従来の全量検証を使います。
+     * 同一世代の再検証は呼び出し側の世代cacheで弾かれるため、ここでは
+     * 世代進行後の差分だけを扱います。
+     */
+    private fun tryIncrementalValidation(
+        script: me.awabi2048.kantancommander.model.DiskScript,
+    ): List<me.awabi2048.kantancommander.data.ScriptValidationError>? {
+        val previousGraph = lastValidatedGraph ?: return null
+        if (lastValidatedScriptId != script.id) return null
+        return me.awabi2048.kantancommander.data.IncrementalValidator.refresh(
+            previousGraph = previousGraph,
+            previousErrors = validationCacheErrors,
+            script = script,
+            limits = plugin.graphLimits(),
+            variableDefinitions = null,
+        )
+    }
+
+    /**
+     * 構造署名単位で再利用できる構造エラーを返します。
+     *
+     * 値変更だけの保存では世代が進んでも署名が変わらないため再計算しません。
+     * 構造署名が変わった場合だけ再検証し、無効化条件を一箇所へ集約します。
+     * 現段階では [validatedErrors] 側の世代cacheを維持しつつ構造cacheを暖め、
+     * 将来の項目検証の増分化への接続点を残します。
+     */
+    internal fun structuralErrors(graph: me.awabi2048.kantancommander.model.CommandGraph): List<me.awabi2048.kantancommander.data.GraphStructuralError> {
+        val signature = GraphStructureFingerprint.fingerprint(graph)
+        if (structuralValidationCacheKey != signature) {
+            structuralValidationCacheKey = signature
+            structuralValidationErrors = GraphValidator.validateStructured(graph, plugin.graphLimits())
+        }
+        return structuralValidationErrors
     }
 
     /**
@@ -825,11 +1054,16 @@ class GestureSequenceEditor(
                 ),
             )
         }
-        return ExecutableScriptValidator.validate(
-            script,
-            plugin.graphLimits(),
-            plugin.variables.definitions(worldData.uuid),
-        )
+        // 配置・ワールドの存在確認は安価なため毎回行い、高価な全量検証だけを
+        // 短い鮮度で使い回します。ワールド変数の変更は最大TTLだけ遅れて
+        // ボタン表示へ反映されますが、実行開始時の成否表示には影響しません。
+        return testValidationCache.getOrCompute(script.id to script.revision) {
+            ExecutableScriptValidator.validate(
+                script,
+                plugin.graphLimits(),
+                plugin.variables.definitions(worldData.uuid),
+            )
+        }
     }
 
     /**
@@ -872,6 +1106,9 @@ class GestureSequenceEditor(
     /** テスト確認子画面を開きます。グラフの固定は「確定」クリック時に行います。 */
     private fun openTestConfirmation(player: Player) {
         if (!canStartTest() || state.testExecution != null) return
+        // テストsnapshotは保存済み正本から作るため、未確定の一時previewは
+        // 持ち込まず破棄します。確定値だけがテスト対象になります。
+        previewStore.cancel()
         val current = plugin.scripts.load(state.scriptId) ?: return
         val ownerId = ownerIdFor(player)
         // テスト開始前に子画面を閉じるため、完了後は必ず通常のエディター親画面へ
@@ -1111,6 +1348,8 @@ class GestureSequenceEditor(
         testRefreshTask = null
         testObserver?.cancelPendingWait()
         testObserver = null
+        // テスト前後で一時previewを持ち越さず、保存値との不整合を残しません。
+        previewStore.cancel()
         state.testExecution = null
         state.lowerMode = test.originalLowerMode
         onTestStateChanged()
@@ -1175,6 +1414,8 @@ class GestureSequenceEditor(
         testRefreshTask = null
         testObserver?.cancelPendingWait()
         testObserver = null
+        // テスト前後で一時previewを持ち越さず、保存値との不整合を残しません。
+        previewStore.cancel()
         updateUpper(player)
         updateLower(player)
     }
@@ -1465,6 +1706,32 @@ class GestureSequenceEditor(
         testRefreshTask = null
         // 古いセッションの再試行が新セッションの画面を上書きしないよう、終了時に必ず破棄します。
         cancelRenderRetry()
+        // issue #15 のlifecycle保証です。表示・一時値・署名cacheを残留させず、
+        // open／close・disconnectの繰返しでも leak しないようにします。
+        // 実行本体の継続有無とは独立に、画面専用の観測参照だけを破棄します。
+        testObserver?.cancelPendingWait()
+        testObserver = null
+        state.testExecution = null
+        previewStore.cancel()
+        lastPreviewBroadcastAtMillis = 0L
+        pendingSoundDialogValues.clear()
+        validationCacheKey = null
+        validationCacheErrors = emptyList()
+        structuralValidationCacheKey = null
+        structuralValidationErrors = emptyList()
+        lastValidatedScriptId = null
+        lastValidatedGraph = null
+        testValidationCache.clear()
+        iconTemplateCache.clear()
+        litRedstoneLampData = null
+        litCopperBulbData = null
+        lastUpperStructureSignature = null
+        lastUpperIncomplete = emptySet()
+        lastUpperSelection = null
+        lastDirectRenderedRevision = null
+        lastGraphShadowSignature = ""
+        layoutFailureNoticeSent = false
+        layoutFailureDuringCurrentRender = false
         if (sessionId != null) {
             runCatching { onSessionClosed(this, ownerId, sessionId) }
                 .onFailure { failure ->
@@ -1476,6 +1743,88 @@ class GestureSequenceEditor(
         gestureSessionId = null
         sessionOwnerId = null
         observedRevision = null
+    }
+
+    /**
+     * issue #15 と #18 の共有契約である preview／commit の編集側入口です。
+     *
+     * preview値は保存・検証・revisionへ触れず、下部表示の更新にだけ使います。
+     * commit時に [updateSettingNode] と同じ保存境界を通し、cancel時は保存値へ戻します。
+     * 他editorへの共有が必要な場合は [maybeBroadcastPreview] で間引いて送ります。
+     */
+    internal fun beginFieldPreview(player: Player, revisionBase: Long? = null) {
+        previewStore.begin(revisionBase ?: observedRevision)
+    }
+
+    internal fun updateFieldPreview(player: Player, nodeId: java.util.UUID, fieldKey: String, previewValue: String?) {
+        if (previewStore.revisionBase == null) previewStore.begin(observedRevision)
+        previewStore.update(nodeId, fieldKey, previewValue)
+        updateLower(player)
+        maybeBroadcastPreview(player)
+    }
+
+    internal fun previewValue(nodeId: java.util.UUID, fieldKey: String): String? =
+        previewStore.current(nodeId, fieldKey)
+
+    internal fun hasFieldPreview(): Boolean = previewStore.hasPreview
+
+    /**
+     * issue #15 と #18 の共有契約であるpreview確定の編集側入口です。
+     *
+     * [apply] には (nodeId, fieldKey) から保存境界への適用だけを実装します。
+     * 取出し・失敗時復元・結果集約は [commitPreviews] に任せ、確定成功分は
+     * [apply] 側の保存境界（[updateSettingNode] 等）でrevisionを進めます。
+     * 描画は [apply] 側で行い、ここでは行いません。
+     */
+    internal fun commitFieldPreviews(apply: (FieldPreviewKey, String?) -> Boolean): PreviewCommitResult =
+        commitPreviews(previewStore, apply)
+
+    internal fun cancelFieldPreview(player: Player) {
+        if (!previewStore.hasPreview) return
+        previewStore.cancel()
+        updateLower(player)
+    }
+
+    /**
+     * previewを破棄して保存値へ戻します。ワールド移動・中断時の残留防止に使います。
+     *
+     * 保存は行わず、下部表示だけを作り直します。
+     */
+    internal fun discardFieldPreview(player: Player) {
+        cancelFieldPreview(player)
+    }
+
+    /**
+     * 低頻度の共有previewを必要に応じて送ります。
+     *
+     * 常時全送信は行わず、最終値のcommitだけを正本へ反映します。
+     * 共有表示自体は将来の#13 presence拡張で利用し、ここでは要点の配布に留めます。
+     */
+    internal fun maybeBroadcastPreview(player: Player) {
+        if (!previewStore.hasPreview) return
+        val now = System.currentTimeMillis()
+        if (!previewStore.shouldSharePreview(now, lastPreviewBroadcastAtMillis)) return
+        lastPreviewBroadcastAtMillis = now
+        val summary = SharedPreviewSummary(
+            scriptId = state.scriptId,
+            revisionBase = previewStore.revisionBase,
+            previews = previewStore.snapshot(),
+            updatedAtMillis = now,
+        )
+        plugin.gestureEditor.broadcastPreview(summary, this)
+    }
+
+    /**
+     * 他editorからの共有previewを受け取ります。
+     *
+     * 正本・revision・検証へは触れず、表示上の要点としてのみ扱います。
+     * 現段階では受信を破棄せず保持し、将来の共有表示へ接続できるようにします。
+     */
+    internal fun receiveSharedPreview(summary: SharedPreviewSummary) {
+        if (summary.scriptId != state.scriptId) return
+        if (summary.previews.isEmpty()) return
+        // 現段階では保存値への適用も再描画の強制も行いません。
+        // 低頻度channelの疎通確認と将来の共有表示への接続点を残すことが目的です。
     }
 
     /**
@@ -1510,6 +1859,43 @@ class GestureSequenceEditor(
     /** 共有の表示素材を返します。変更せずに表示専用として用います。 */
     private fun blockDataOf(material: Material): BlockData =
         blockDataCache.getOrPut(material) { Bukkit.createBlockData(material) }
+
+    /**
+     * 点灯状態が固定の表示素材です。無条件の共有欄へは入れず用途別に保持します。
+     *
+     * 生成後に点灯切替えを行わない固定表示だけを対象にし、描画側も読取りだけに
+     * 用います。テストボタンの状態表示はこの3通りに固定されています。
+     * GUI更新はメインスレッドからのみ行います。
+     */
+    private var litRedstoneLampData: BlockData? = null
+    private var litCopperBulbData: BlockData? = null
+
+    /** 点灯済みレッドストーンランプの共有表示素材を返します。 */
+    private fun litRedstoneLampData(): BlockData =
+        litRedstoneLampData ?: Bukkit.createBlockData(Material.REDSTONE_LAMP).also {
+            if (it is org.bukkit.block.data.Lightable) it.isLit = true
+            litRedstoneLampData = it
+        }
+
+    /** 点灯済み銅電球の共有表示素材を返します。 */
+    private fun litCopperBulbData(): BlockData =
+        litCopperBulbData ?: Bukkit.createBlockData(Material.COPPER_BULB).also {
+            if (it is org.bukkit.block.data.Lightable) it.isLit = true
+            litCopperBulbData = it
+        }
+
+    /**
+     * ノード種別ごとのアイコン雛形です。毎回の生成を避けるため保持します。
+     *
+     * 雛形自体は変更せず、描画へ渡す際に複写します。種別は有限であり、
+     * 折り畳み装飾の有無を合わせても数十件に収まります。
+     * GUI更新はメインスレッドからのみ行います。
+     */
+    private val iconTemplateCache = mutableMapOf<Pair<CommandType, Boolean>, ItemStack>()
+
+    /** 表示用のノードアイコンを返します。雛形の複写であり呼び出し側で変更できます。 */
+    private fun cachedIconStack(node: CommandNode, folded: Boolean): ItemStack =
+        iconTemplateCache.getOrPut(node.type to folded) { foldedIconStack(node, folded) }.clone()
 
     /** shadow検証の直近の差分署名です。同一差分の連投を抑えます。 */
     private var lastGraphShadowSignature: String = ""
@@ -1615,7 +2001,7 @@ class GestureSequenceEditor(
                         visuals.add(GestureGuiVisual.Item(
                             visualId = "node-icon-${node.id}",
                             x = cx, y = cy,
-                            item = foldedIconStack(node, isFoldedFor || isFoldedIf),
+                            item = cachedIconStack(node, isFoldedFor || isFoldedIf),
                             scale = frame.iconScale,
                             // 選択表現は背面セルだけに付け、アイコン自体は常に同じ前景レイヤーへ置きます。
                             layer = GestureEditorLayout.ICON_LAYER,
@@ -1967,8 +2353,16 @@ class GestureSequenceEditor(
         val script = test?.snapshot?.takeIf { testActive } ?: plugin.scripts.load(state.scriptId)
         if (script == null) return UpperGraphInput.Empty
         if (!testActive) observedRevision = script.revision
+        // 値変更だけの保存では構造署名が変わらないため、前回の配置を使い回します。
+        // 挿入previewやテスト表示は別グラフのため cache 対象外にします。
+        // 無効化条件は構造署名の変化へ一元化し、設定上限の変更時だけ破棄します。
         val persistedLayout = runCatching {
-            GraphLayoutEngine.layout(script.graph)
+            if (testActive) {
+                GraphLayoutEngine.layout(script.graph)
+            } else {
+                val signature = GraphStructureFingerprint.fingerprint(script.graph)
+                layoutCache.getOrCompute(signature) { GraphLayoutEngine.layout(script.graph) }
+            }
         }
             .getOrElse { failure ->
                 reportLayoutFailure(
@@ -2017,7 +2411,9 @@ class GestureSequenceEditor(
         // 検証結果は構造化エラー（nodeId/fieldKeys）として受けるため、表示文字列の
         // パス解析は行いません。snapshot・内部グラフ内のエラーは外側の対応ノードへ
         // 対応付けるため、存在しないノードIDは自然に除外されます。
-        val validationErrors = validatedErrors(script)
+        // テストsnapshotは正本の検証基準に混ぜず、永続世代のときだけ
+        // 増分検証の基準にします。
+        val validationErrors = validatedErrors(script, baseline = !testActive)
         val incompleteNodeIds = buildSet {
             validationErrors.forEach { error ->
                 error.nodeId?.let { nodeId ->
@@ -2025,6 +2421,13 @@ class GestureSequenceEditor(
                     FoldedGraphs.outermostWrapperId(script.graph, nodeId)?.let(::add)
                 }
             }
+        }
+        // 上部抑止の判定要点を記録します。テスト表示・挿入preview中は
+        // 毎tick変化し得るため記録せず、抑止判定から外します。
+        if (!testActive && insertionPreview == null) {
+            lastUpperStructureSignature = GraphStructureFingerprint.fingerprint(script.graph)
+            lastUpperIncomplete = incompleteNodeIds
+            lastUpperSelection = state.selectedNodeId
         }
         return UpperGraphInput.Ready(
             UpperGraphData(
@@ -2213,8 +2616,7 @@ class GestureSequenceEditor(
         )
         when {
             test?.phase == GestureTestPhase.RUNNING -> {
-                val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
-                if (lamp is org.bukkit.block.data.Lightable) lamp.isLit = true
+                val lamp = litRedstoneLampData()
                 chrome += SettingsActionCard(
                     elementId = "test-execution",
                     label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
@@ -2239,7 +2641,7 @@ class GestureSequenceEditor(
             state.testExecution == null && !testActive -> {
                 val reason = testUnavailableReason(player)
                 if (reason == null) {
-                    val lamp = Bukkit.createBlockData(Material.REDSTONE_LAMP)
+                    val lamp = blockDataOf(Material.REDSTONE_LAMP)
                     chrome += SettingsActionCard(
                         elementId = "test-execution",
                         label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TEST_EXECUTION_GLYPH)),
@@ -2261,8 +2663,7 @@ class GestureSequenceEditor(
                         visualTag = "test-execution",
                     )
                 } else {
-                    val bulb = Bukkit.createBlockData(Material.COPPER_BULB)
-                    if (bulb is org.bukkit.block.data.Lightable) bulb.isLit = true
+                    val bulb = litCopperBulbData()
                     chrome += SettingsActionCard(
                         elementId = "test-execution",
                         // 無言操作面のため文言表示は作りません（旧実装どおり）。
@@ -2641,7 +3042,7 @@ class GestureSequenceEditor(
                 if (updated == null) {
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                 } else {
-                    updateUpper(player)
+                    updateUpperIfNeeded(player)
                     updateLower(player)
                     null
                 }
@@ -3210,7 +3611,7 @@ class GestureSequenceEditor(
             clearSettingState()
             GestureLowerMode.SETTINGS
         }
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -3253,7 +3654,7 @@ class GestureSequenceEditor(
             clearSettingState()
             GestureLowerMode.SETTINGS
         }
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -3293,7 +3694,7 @@ class GestureSequenceEditor(
             clearSettingState()
             GestureLowerMode.SETTINGS
         }
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -3326,7 +3727,9 @@ class GestureSequenceEditor(
             )
         }.getOrDefault(false)
         if (!saved) return false
-        updateUpper(player)
+        // 約50箇所のfield編集が通る共通 funnel です。値変更だけでは
+        // 上部の表示内容が変わらないため、要点一致時は下部だけ更新します。
+        updateUpperIfNeeded(player)
         updateLower(player)
         return true
     }
@@ -3385,7 +3788,7 @@ class GestureSequenceEditor(
             }
             val error = result(minimumValue, maximumValue)
             if (error != null) return@showInputDialog error
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -3431,7 +3834,7 @@ class GestureSequenceEditor(
         showTextInputDialog(player, spec, initial, suggestionParameter = suggestionParameter) { raw ->
             val error = result(raw)
             if (error != null) return@showTextInputDialog error
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -3550,7 +3953,7 @@ class GestureSequenceEditor(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
                 )
             }
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -3599,7 +4002,7 @@ class GestureSequenceEditor(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
                 )
             }
-            updateUpper(player)
+            updateUpperIfNeeded(player)
             updateLower(player)
             null
         }
@@ -5468,7 +5871,7 @@ class GestureSequenceEditor(
                 if (reordered != true) return
                 // 入れ替え後も同じノードを選択し続け、設定パネルの対象を失わせません。
                 state.selectedNodeId = nodeId
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
             }
             context.elementId.startsWith("node:") -> {
@@ -5911,7 +6314,7 @@ class GestureSequenceEditor(
                 state.selectedAddPoint = null
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
                 // 新規追加時も既存ノード選択時と同じ初期表示経路を通し、
                 // 「タブだけ選択されて詳細が空」の状態を作りません。
@@ -5993,7 +6396,7 @@ class GestureSequenceEditor(
                 state.selectedNodeId = duplicated.id
                 state.lowerMode = GestureLowerMode.SETTINGS
                 state.settingsTab = 0
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
                 openSettingsTab(player, 0)
             }
@@ -6054,6 +6457,8 @@ class GestureSequenceEditor(
                 }
                 // 削除確認を開いただけでは鳴らさず、保存成功後に削除音を再生します。
                 player.playSound(player.location, Sound.BLOCK_BAMBOO_HIT, 1.0f, 1.0f)
+                // 削除済みノードの一時previewは保存値へ戻せず残留するため破棄します。
+                previewStore.removeNode(nodeId)
                 val settingChildWasOpen = settingChildOpen(ownerId)
                 state.confirmNodeId = null
                 state.confirmKind = GestureConfirmKind.DELETE
@@ -6065,7 +6470,7 @@ class GestureSequenceEditor(
                 state.lowerMode = GestureLowerMode.SETTINGS
                 api.closeChild(ownerId, lowerPanel.CONFIRM_SCREEN_ID)
                 if (settingChildWasOpen) api.closeChild(ownerId, lowerPanel.SETTING_CHILD_SCREEN_ID)
-                updateUpper(player)
+                updateUpperIfNeeded(player)
                 updateLower(player)
             }
             context.elementId == "confirm-cancel" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -6177,7 +6582,7 @@ class GestureSequenceEditor(
         }
         if (swapped != true) return
         state.selectedNodeId = nodeId
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
     /**
@@ -6207,7 +6612,7 @@ class GestureSequenceEditor(
         if (folded != true) return
         state.selectedNodeId = nodeId
         player.playSound(player.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -6238,7 +6643,7 @@ class GestureSequenceEditor(
         if (folded != true) return
         state.selectedNodeId = nodeId
         player.playSound(player.location, Sound.BLOCK_BARREL_CLOSE, 1.0f, 1.0f)
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 
@@ -6269,7 +6674,7 @@ class GestureSequenceEditor(
         if (unfolded != true) return
         state.selectedNodeId = nodeId
         player.playSound(player.location, Sound.BLOCK_BARREL_OPEN, 1.0f, 1.0f)
-        updateUpper(player)
+        updateUpperIfNeeded(player)
         updateLower(player)
     }
 

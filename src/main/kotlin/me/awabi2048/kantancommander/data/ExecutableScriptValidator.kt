@@ -100,19 +100,7 @@ object ExecutableScriptValidator {
         // MyWorld での preflight 検証です。phase はこの切替えで確定します。
         val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
         val errors = mutableListOf<ScriptValidationError>()
-        if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
-            errors += ScriptValidationError(
-                "root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません",
-                code = ErrorCode.TIMER_CONFLICT, phase = phase,
-            )
-        }
-        if (script.timer.enabled && !CommandValueRules.isTimerSeconds(script.timer.intervalSeconds)) {
-            errors += ScriptValidationError(
-                "root", null, setOf("timer"),
-                "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
-                code = ErrorCode.TIMER_RANGE, phase = phase,
-            )
-        }
+        errors += validateScriptRoot(script, phase)
         validateGraph(
             script.graph,
             "root",
@@ -125,6 +113,80 @@ object ExecutableScriptValidator {
         // 個別項目検証は当面 code 既定のままのため、phase だけここで正規化します。
         // 構造由来の PERSISTED_STRUCTURAL は維持し、それ以外の PREFLIGHT 既定値を
         // 未配置編集時は EDIT_TIME へ寄せます。code 細分化は後続作業で行います。
+        if (phase == ValidationPhase.EDIT_TIME) {
+            for (index in errors.indices) {
+                val current = errors[index]
+                if (current.phase == ValidationPhase.PREFLIGHT) {
+                    errors[index] = current.copy(phase = ValidationPhase.EDIT_TIME)
+                }
+            }
+        }
+        return errors
+    }
+
+    /**
+     * プログラム全体設定（タイマー等）の検証です。
+     *
+     * グラフ内容に依存しないため、全量検証と増分検証で共有します。
+     * 増分側で再計算しても安価であり、staleの温床にしません。
+     */
+    internal fun validateScriptRoot(
+        script: DiskScript,
+        phase: ValidationPhase,
+    ): List<ScriptValidationError> = buildList {
+        if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
+            this += ScriptValidationError(
+                "root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません",
+                code = ErrorCode.TIMER_CONFLICT, phase = phase,
+            )
+        }
+        if (script.timer.enabled && !CommandValueRules.isTimerSeconds(script.timer.intervalSeconds)) {
+            this += ScriptValidationError(
+                "root", null, setOf("timer"),
+                "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
+                code = ErrorCode.TIMER_RANGE, phase = phase,
+            )
+        }
+    }
+
+    /**
+     * 単一ノードの項目検証です。
+     *
+     * issue #15 の増分検証入口であり、全量走査なしに指定ノードの
+     * エラーだけを求めます。呼び出し側と同じ展開・到達・一時変数条件で
+     * 既存の [validateNode] を実行するため、全量検証の該当部分と一致します。
+     * snapshot／foldedGraph内部の再帰は行いません。内部の差分は
+     * [me.awabi2048.kantancommander.data.IncrementalValidator] 側で
+     * 外側IDへ対応付けて個別に検証します。
+     * 存在しないIDでは空を返し、欠落自体の判定は全量側に任せます。
+     */
+    internal fun validateNodeLocal(
+        graph: CommandGraph,
+        nodeId: UUID,
+        limits: GraphLimits = GraphLimits(),
+        variableDefinitions: Map<String, WorldVariableValue>? = null,
+    ): List<ScriptValidationError> {
+        val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
+        val errors = mutableListOf<ScriptValidationError>()
+        // 全量側と同じく折り畳みは展開した一時グラフで検証します。
+        // 内部IDは折り畳み時に元のIDのまま退避するため付け替えは不要です。
+        val effective = if (graph.nodes.values.any(FoldedGraphs::isFolded)) {
+            runCatching { FoldedGraphs.expand(graph, limits.maximumBranchDepth) }.getOrElse { return errors }
+        } else {
+            graph
+        }
+        val node = effective.nodes[nodeId] ?: return errors
+        val temporaryAvailability = analyzeTemporaryAvailability(effective)
+        validateNode(
+            node,
+            "root/${node.id}",
+            errors,
+            variableDefinitions,
+            isInsideForBody(effective, node.id),
+            temporaryAvailability[node.id] ?: emptyMap(),
+            phase,
+        )
+        // 全量側と同じく未配置編集時は phase を寄せます。
         if (phase == ValidationPhase.EDIT_TIME) {
             for (index in errors.indices) {
                 val current = errors[index]

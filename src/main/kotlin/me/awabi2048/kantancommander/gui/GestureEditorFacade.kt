@@ -58,11 +58,42 @@ class GestureEditorFacade(
 
     /** 保存通知を同じプログラムを開いている全エディターへ配布します。 */
     internal fun refreshForScript(scriptId: UUID) {
-        sessions.values
-            .filter { it.isEditingScript(scriptId) }
-            .toList()
-            .forEach { it.refreshFromStore() }
+        refreshForScript(scriptId, except = null)
     }
+
+    /**
+     * issue #15 の差分同期入口です。
+     *
+     * 内容更新とpresence等のephemeral状態を分離し、ここでは内容更新だけを扱います。
+     * [except] で指定した編集者は直接描画済みのため配布対象外にでき、
+     * 自身の保存直後の二重描画を抑止します。[changedNodeIds] には保存前後で
+     * 変わったノードID集合を渡し、各editorで stale な一時previewの破棄対象に
+     * します。nullの場合は差分不明として従来どおり全量扱いします。
+     * 既存呼び出しは全量配布のまま動作します。
+     */
+    internal fun refreshForScript(scriptId: UUID, except: GestureSequenceEditor? = null, changedNodeIds: Set<UUID>? = null) {
+        sessions.values
+            .filter { it.isEditingScript(scriptId) && it !== except }
+            .toList()
+            .forEach { it.refreshFromStore(changedNodeIds = changedNodeIds) }
+    }
+
+    /**
+     * 低頻度の共有previewを配布します。
+     *
+     * revisionは進めず、正本・検証へも触れません。常時全送信は行わず、
+     * 呼び出し側の間引き判定を通過した要点だけが届きます。
+     */
+    internal fun broadcastPreview(summary: SharedPreviewSummary, originator: GestureSequenceEditor? = null) {
+        sessions.values
+            .filter { it.isEditingScript(summary.scriptId) && it !== originator }
+            .toList()
+            .forEach { it.receiveSharedPreview(summary) }
+    }
+
+    /** 指定scriptを開いている編集者がいるかを、同期要否判定に使います。 */
+    internal fun hasOpenEditorForScript(scriptId: UUID): Boolean =
+        sessions.values.any { it.isEditingScript(scriptId) }
 
     /**
      * 手持ち変化を編集中の下部表示へ反映します。
@@ -73,6 +104,16 @@ class GestureEditorFacade(
      */
     internal fun refreshLowerIfOpen(player: Player) {
         sessions[player.uniqueId]?.updateLower(player)
+    }
+
+    /**
+     * ワールド移動時などに一時previewだけを破棄します。
+     *
+     * セッション自体は継続し、保存値との不整合だけを解消します。
+     * 該当editorが無い場合は何もしません。
+     */
+    internal fun discardPreview(player: Player) {
+        sessions[player.uniqueId]?.discardFieldPreview(player)
     }
 
     fun open(player: Player, scriptId: UUID) {

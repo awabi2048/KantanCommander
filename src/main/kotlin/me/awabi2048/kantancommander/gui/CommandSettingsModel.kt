@@ -1300,7 +1300,8 @@ object CommandSettingsModel {
         } ?: return false
         afterSave(script)
         refreshDisplays(plugin, script.id)
-        plugin.gestureEditor.refreshForScript(script.id)
+        // プログラム名・タイマーはノードを変更しないため差分は空集合です。
+        plugin.gestureEditor.refreshForScript(script.id, changedNodeIds = emptySet())
         return true
     }
 
@@ -1312,17 +1313,33 @@ object CommandSettingsModel {
         expectedRevision: Long? = null,
         change: (CommandGraph) -> T?,
     ): T? {
+        // 配布時の破棄対象にする変更ノード集合です。保存確定後にだけ使います。
+        var changedNodeIds: Set<UUID>? = null
         val updated = plugin.scripts.update(scriptId, editorId, expectedRevision) { script ->
-            val candidateGraph = script.graph.deepCopy()
+            val before = script.graph
+            val beforeSignature = GraphStructureFingerprint.fingerprint(before)
+            val candidateGraph = before.deepCopy()
             val result = change(candidateGraph) ?: return@update null
             // 描画セルの衝突・幅・高さ検証を保存前に必ず通し、両GUIの経路編集で
             // 「保存後にだけ描画不能になる」差を作りません。
-            GraphLayoutEngine.layout(candidateGraph)
+            // issue #15 の差分化として、接続構造が変わらない値変更では配置計算を
+            // 省略します。署名が同じ間は配置が変わらないため検証の意味がなく、
+            // 構造変更時だけ全量レイアウトします。
+            if (EditorRenderPlanner.needsPreSaveLayout(beforeSignature, GraphStructureFingerprint.fingerprint(candidateGraph))) {
+                GraphLayoutEngine.layout(candidateGraph)
+            }
+            // 開いているeditorがいるときだけ差分を特定します。誰も開いていない
+            // 保存では配布自体が空振りのため、差分計算のコストをかけません。
+            changedNodeIds = if (plugin.gestureEditor.hasOpenEditorForScript(scriptId)) {
+                GraphChangeClassifier.changedNodeIds(before, candidateGraph)
+            } else {
+                null
+            }
             script.graph = candidateGraph
             result
         } ?: return null
         refreshDisplays(plugin, scriptId)
-        plugin.gestureEditor.refreshForScript(scriptId)
+        plugin.gestureEditor.refreshForScript(scriptId, changedNodeIds = changedNodeIds)
         return updated
     }
 
