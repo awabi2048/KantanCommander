@@ -60,6 +60,20 @@ object SettingSelectionEngine {
         else Next.Stay
 
     /**
+     * 向き注視カードの遷移判定を返します。
+     *
+     * 条件は回数ではなく選択状態での再クリックです。未選択時の初回は注視を
+     * 選択して留まり、既に注視が選択済みの場合だけ対象子画面へ進みます。
+     * 開き直し直後に注視が保存済みの場合の初回クリックも遷移に含みます。
+     *
+     * @param wasSelected クリック時点で注視カードが既に選択状態か。
+     * @param currentKind クリック時点の保存済み向き種別。
+     */
+    fun decideFacingEntity(wasSelected: Boolean, currentKind: FacingKind?): Next =
+        if (wasSelected && currentKind == FacingKind.TARGET) Next.EnterChild
+        else Next.Stay
+
+    /**
      * 移動先実体参照カードの遷移判定を返します。
      *
      * 条件は回数ではなく選択状態での再クリックです。未選択時の初回は実体参照を

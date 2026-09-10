@@ -155,6 +155,25 @@ class GenericSettingProvidersTest {
     }
 
     @Test
+    fun `facing entity advances only on reselect while selected`() {
+        // 未選択時の初回は留まります。
+        assertTrue(
+            SettingSelectionEngine.decideFacingEntity(false, FacingKind.TARGET) is SettingSelectionEngine.Next.Stay,
+        )
+        assertTrue(
+            SettingSelectionEngine.decideFacingEntity(false, null) is SettingSelectionEngine.Next.Stay,
+        )
+        // 選択状態での再クリックだけが進みます。開き直し直後の保存済み選択も含みます。
+        assertTrue(
+            SettingSelectionEngine.decideFacingEntity(true, FacingKind.TARGET) is SettingSelectionEngine.Next.EnterChild,
+        )
+        // 別種別の選択表示が残る状態では進みません。
+        assertTrue(
+            SettingSelectionEngine.decideFacingEntity(true, FacingKind.COORDINATES) is SettingSelectionEngine.Next.Stay,
+        )
+    }
+
+    @Test
     fun `position entity advances only on reselect while selected`() {
         // 未選択時の初回は留まります（座標→実体参照の直接遷移を防ぎます）。
         assertTrue(

@@ -6028,13 +6028,22 @@ class GestureSequenceEditor(
                         }) showSettingScreen()
                     return
                 }
-                // エンティティ向きの導線です。対象由来でなければ最寄り
-                // プレイヤーの既定値を保存し、共用の対象子画面へ進みます。
-                // 子画面では既定値が現在値として正しく表示されます。
+                // エンティティ向きの導線です。遷移条件は回数ではなく選択状態での
+                // 再クリックです。未選択時の初回は注視を選択して留まり、
+                // 選択状態でのクリックで共用の対象子画面へ進みます。
                 if (group == "facing-entity") {
                     val facingRole = settingContext.role ?: return
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     rememberSettingNode(encoded)
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
+                    if (SettingSelectionEngine.decideFacingEntity(wasSelected, current?.kind) is SettingSelectionEngine.Next.EnterChild) {
+                        pushSettingFrame(
+                            player,
+                            GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
+                            encoded,
+                        )
+                        return
+                    }
                     if (current?.kind != FacingKind.TARGET) {
                         if (!updateSettingNode(
                                 player,
@@ -6051,11 +6060,7 @@ class GestureSequenceEditor(
                                 )
                             }) return
                     }
-                    pushSettingFrame(
-                        player,
-                        GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET),
-                        encoded,
-                    )
+                    showSettingScreen()
                     return
                 }
                 // 向き複写の導線です。注視と同じく単一体参照へ帰着し、共用の対象子画面へ進みます。
