@@ -372,6 +372,7 @@ object ExecutableScriptValidator {
         }
         validateEmbeddedPositionTargets(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
         validateSinglePositionTargets(node, path, errors)
+        validateBareTargetPositions(node, path, errors)
         node.destinationFacingSpec?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationFacingSpec?.let {
             validateFacing(it, path, node, errors, temporaryDefinitions)
@@ -1068,8 +1069,7 @@ object ExecutableScriptValidator {
      * 先頭1件へ解決するため許可します。テレポート先のdestinationSpecは
      * 旧来の対象移動経路（destinationTargetSpec併用）のため除外します。
      */
-    private fun validateSinglePositionTargets(
-        node: CommandNode,
+    private fun validateSinglePositionTargets(        node: CommandNode,
         path: String,
         errors: MutableList<ScriptValidationError>,
     ) {
@@ -1091,6 +1091,34 @@ object ExecutableScriptValidator {
         ) {
             errors += nodeError(node, path, setOf("executionPosition"), "範囲指定の既定値に複数位置は指定できません")
         }
+    }
+
+    /**
+     * issue #29: 対象指定のない対象由来位置を検証します。
+     *
+     * 内包対象のないTARGET種別は解決不能な旧データであり、黙って
+     * 空集合扱いにせず明示エラーとします。テレポート先のdestinationSpecと
+     * 向きの旧来形式（実行状態対象）は従来経路のため除外します。
+     */
+    private fun validateBareTargetPositions(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        listOfNotNull(
+            node.conditionPositionSpec,
+            node.blockPositionSpec,
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.soundPositionSpec,
+            node.particlePositionSpec,
+            node.particleEndPositionSpec,
+            node.fireworkPositionSpec,
+            node.summonPositionSpec,
+            node.executionPositionSpec,
+            node.temporaryLocationPositionSpec,
+        ).filter { it.kind == PositionKind.TARGET && it.target == null }
+            .forEach { errors += nodeError(node, path, setOf("position"), "対象由来位置に対象の指定がありません") }
     }
 
     /**

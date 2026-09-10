@@ -568,7 +568,7 @@ class ExecutableScriptValidatorTest {
     fun `single only positions reject embedded targets`() {
         val script = DiskScript(name = "single-target-position", owner = UUID.randomUUID())
         val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
-            params["operation"] = BlockOperationMode.FILL.name
+            params["operation"] = BlockOperationMode.FILL.value
             params["block"] = "minecraft:stone"
             blockFromSpec = PositionSpec(
                 PositionKind.TARGET,
@@ -589,7 +589,7 @@ class ExecutableScriptValidatorTest {
     fun `single only positions allow statically single embedded targets`() {
         val script = DiskScript(name = "single-static-target-position", owner = UUID.randomUUID())
         val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
-            params["operation"] = BlockOperationMode.FILL.name
+            params["operation"] = BlockOperationMode.FILL.value
             params["block"] = "minecraft:stone"
             blockFromSpec = PositionSpec(
                 PositionKind.TARGET,

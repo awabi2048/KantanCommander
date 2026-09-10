@@ -191,7 +191,7 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `removed shared target position is rejected for sound and summon`() {
+    fun `bare target positions without embedded targets are rejected`() {
         val store = ScriptStore(temp.resolve("removed-target-position"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "removed target position")
         GraphEditor.append(script.graph, CommandType.PLAY_SOUND).apply {
@@ -207,8 +207,79 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Failure::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
         )
-        assertTrue(failure.errors.any { it.contains("効果音の対象位置指定") })
-        assertTrue(failure.errors.any { it.contains("召喚の対象位置指定") })
+        assertTrue(failure.errors.any { it.contains("対象の指定がありません") })
+    }
+
+    @Test
+    fun `entity derived positions export with execute at wrapping`() {
+        val store = ScriptStore(temp.resolve("entity-derived-position"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "entity derived position")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:pig"
+            summonPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+        }
+        GraphEditor.append(script.graph, CommandType.PLAY_SOUND).apply {
+            params["sound"] = "minecraft:block.note_block.harp"
+            soundPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0),
+            )
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        // 召喚・効果音とも対象位置で実行され、実行時の各位置実行と一致する。
+        assertTrue(body.contains("execute at @a[") && body.contains("summon minecraft:pig ~ ~ ~"))
+        assertTrue(body.contains("playsound minecraft:block.note_block.harp"))
+    }
+
+    @Test
+    fun `statically single embedded targets export for single only roles`() {
+        val store = ScriptStore(temp.resolve("single-embedded-target"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "single embedded target")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.value
+            params["block"] = "minecraft:stone"
+            blockFromSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+            blockToSpec = PositionSpec(PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("execute at @a[") && body.contains("fill ~ ~ ~"))
+    }
+
+    @Test
+    fun `multi capable embedded targets are rejected for single only roles`() {
+        val store = ScriptStore(temp.resolve("multi-embedded-target"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "multi embedded target")
+        GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.value
+            params["block"] = "minecraft:stone"
+            blockFromSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEARBY_PLAYERS),
+            )
+            blockToSpec = PositionSpec(PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0)
+        }
+
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        assertTrue(failure.errors.any { it.contains("複数位置は指定できません") })
     }
 
     @Test
