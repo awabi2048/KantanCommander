@@ -155,4 +155,29 @@ class SettingPresetsTest {
         assertFalse(TargetSpec(TargetKind.NEAREST_PLAYER, limit = 3).isStaticallySingle())
         assertTrue(TargetSpec(TargetKind.NEAREST_PLAYER, limit = 1).isStaticallySingle())
     }
+
+    @Test
+    fun `destination presets share the parent screen definitions`() {
+        // 最寄り・付近は対象指定へ照合し、それ以外は位置指定へ委ねます。
+        assertEquals(
+            SettingPresets.PositionPreset.NEAREST_PLAYER,
+            SettingPresets.matchDestinationPreset(TargetSpec(TargetKind.NEAREST_PLAYER), null),
+        )
+        assertEquals(
+            SettingPresets.PositionPreset.NEARBY_PLAYERS,
+            SettingPresets.matchDestinationPreset(
+                TargetSpec(TargetKind.NEARBY_PLAYERS, maximumDistance = 5.0),
+                null,
+            ),
+        )
+        assertEquals(
+            SettingPresets.PositionPreset.CONTROL_BLOCK,
+            SettingPresets.matchDestinationPreset(null, PositionSpec(PositionKind.DISK)),
+        )
+        // 詳細な対象指定はプリセット選択表示にしません。
+        assertNull(
+            SettingPresets.matchDestinationPreset(TargetSpec(TargetKind.ALL_PLAYERS), null),
+        )
+        assertNull(SettingPresets.matchDestinationPreset(null, null))
+    }
 }

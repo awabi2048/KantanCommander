@@ -433,13 +433,13 @@ object CommandSettingsModel {
         CommandType.DISK_CALL,
     )
 
-    /** issue #26 の実行位置フィールドです。既存の汎用位置文言を再利用します。 */
+    /** issue #26 の実行位置フィールドです。作用位置と区別できる専用文言を使います。 */
     private fun executionPositionField(): EditorField = EditorField(
         key = "executionPosition",
-        label = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+        label = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXECUTION_POSITION,
         material = org.bukkit.Material.COMPASS,
-        descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-        actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+        descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EXECUTION_POSITION,
+        actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EXECUTION_POSITION,
         value = { node -> node.executionPositionSpec?.kind?.let { kind ->
             // 表示キーは CommandEditMenu.displayPosition と同じ既存キーを使い、
             // 新規言語キーを増やしません。
@@ -536,19 +536,9 @@ object CommandSettingsModel {
      * 解決し、タブ単位で常に同じ警告を表示します。
      */
     fun incompleteWarningKey(node: CommandNode, fieldKey: String): LocalizationKey<String> {
-        // issue #26: 実行位置タブの注意表示です。位置系の既存警告を再利用し、
-        // 新規言語キー追加なしで注意タブへ投影します。
+        // issue #26: 実行位置タブの注意表示です。専用警告キーを使います。
         if (fieldKey == "executionPosition") {
-            return when (node.type) {
-                CommandType.TELEPORT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DESTINATION
-                CommandType.SUMMON_ENTITY,
-                CommandType.FIREWORK_LAUNCH -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SUMMON_POSITION
-                CommandType.PLAY_SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SOUND_TARGET_POSITION
-                CommandType.BLOCK_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
-                CommandType.CONDITION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_CONDITION
-                CommandType.DISK_CALL -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
-                else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
-            }
+            return KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EXECUTION_POSITION
         }
         return when (node.type) {
             CommandType.TELEPORT -> when (fieldKey) {

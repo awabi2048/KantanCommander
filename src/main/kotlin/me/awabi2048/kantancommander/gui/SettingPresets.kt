@@ -164,6 +164,24 @@ object SettingPresets {
 
     /** 旧来の単一MYWORLD_SPAWN相当をメンバー用として解決します。 */
     fun myworldSpawnOrMember(kind: MyworldSpawnKind?): MyworldSpawnKind = kind ?: MyworldSpawnKind.MEMBER
+
+    /**
+     * issue #29: テレポート先のプリセット照合です。
+     *
+     * 移動先は対象指定と位置指定の二重保持のため、対象側の最寄り・付近だけを
+     * プリセットとして照合し、それ以外は位置側の照合へ委ねます。
+     * 詳細な対象指定はエンティティ導線の選択表示に任せます。
+     */
+    fun matchDestinationPreset(target: TargetSpec?, position: PositionSpec?): PositionPreset? {
+        target?.let { matchTargetPreset(it)?.let { matched ->
+            return when (matched) {
+                TargetPreset.NEAREST_PLAYER -> PositionPreset.NEAREST_PLAYER
+                TargetPreset.NEARBY_PLAYERS -> PositionPreset.NEARBY_PLAYERS
+                else -> null
+            }
+        } }
+        return matchPositionPreset(position)
+    }
 }
 
 /**

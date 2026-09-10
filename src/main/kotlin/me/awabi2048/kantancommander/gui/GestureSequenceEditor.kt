@@ -5570,16 +5570,22 @@ class GestureSequenceEditor(
                 }
                 // issue #29: 位置プリセットは1クリックで正規仕様へ設定します。
                 // 付近系・座標系は選択済みの再クリックで詳細を開きます。
+                // 移動先の最寄り・付近は対象指定へ保存します（二重保持の正規化は
+                // 共通setterが担います）。
                 if (group == "position-preset") {
                     val preset = runCatching { SettingPresets.PositionPreset.valueOf(value) }.getOrNull() ?: return
-                    if ((preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
+                    val isDestinationEntityPreset = settingContext.role == CommandSettingRole.DESTINATION &&
+                        (preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
+                            preset == SettingPresets.PositionPreset.NEARBY_PLAYERS)
+                    if (!isDestinationEntityPreset &&
+                        (preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
                             preset == SettingPresets.PositionPreset.NEARBY_PLAYERS
                             ) &&
                         !CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(settingContext.role)
                     ) {
                         return
                     }
-                    if (!CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
+                    if (!isDestinationEntityPreset && !CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
                             node,
                             settingContext.role,
                             presetPositionKind(preset),
@@ -5587,11 +5593,48 @@ class GestureSequenceEditor(
                     ) {
                         return
                     }
-                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
-                    val matched = SettingPresets.matchPositionPreset(current) == preset
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                     rememberSettingNode(encoded)
+                    if (isDestinationEntityPreset) {
+                        val targetPreset = if (preset == SettingPresets.PositionPreset.NEARBY_PLAYERS) {
+                            SettingPresets.TargetPreset.NEARBY_PLAYERS
+                        } else {
+                            SettingPresets.TargetPreset.NEAREST_PLAYER
+                        }
+                        val currentTarget = CommandSettingsModel.targetSpec(node, settingContext.role)
+                        val matchedTarget = SettingPresets.matchTargetPreset(currentTarget) == targetPreset
+                        if ((matchedTarget || wasSelected) && targetPreset == SettingPresets.TargetPreset.NEARBY_PLAYERS) {
+                            beginSettingDistanceInput(
+                                player,
+                                currentTarget?.minimumDistance,
+                                currentTarget?.maximumDistance,
+                            ) { minimum, maximum ->
+                                if (!updateSettingNode(player, settingContext) {
+                                        val latest = CommandSettingsModel.targetSpec(it, settingContext.role)
+                                            ?: SettingPresets.targetSpecFor(targetPreset)
+                                        CommandSettingsModel.setTargetSpec(
+                                            it,
+                                            settingContext.role,
+                                            latest.copy(minimumDistance = minimum, maximumDistance = maximum),
+                                        )
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else null
+                            }
+                            return
+                        }
+                        if (updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setTargetSpec(
+                                    it,
+                                    settingContext.role,
+                                    SettingPresets.targetSpecFor(targetPreset),
+                                )
+                            }) showSettingScreen()
+                        return
+                    }
+                    val current = CommandSettingsModel.positionSpec(node, settingContext.role)
+                    val matched = SettingPresets.matchPositionPreset(current) == preset
                     if ((matched || wasSelected) && preset == SettingPresets.PositionPreset.NEARBY_PLAYERS) {
                         openEmbeddedTargetDistanceDialog(
                             player,
