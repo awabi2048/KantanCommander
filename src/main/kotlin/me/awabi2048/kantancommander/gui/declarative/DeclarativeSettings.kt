@@ -233,12 +233,9 @@ object DeclarativeSettings {
             )
         }
         executionTab?.let { tab ->
-            val width = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, tab.selected)
-            val cx = GestureSettingVisualPolicy.selectedTabCenterX(
-                GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-                GestureLowerPanel.SETTINGS_TAB_WIDTH,
-                tab.selected,
-            )
+            // 実行位置行は幅を広げるアニメーションを行わず、選択色・ホバー・注意表示だけを残します。
+            val width = GestureLowerPanel.SETTINGS_TAB_WIDTH
+            val cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X
             nodes += GestureGuiBlock(
                 blockData = tab.background,
                 width = GestureGuiSizeSpec.Fixed(width),

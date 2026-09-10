@@ -5360,6 +5360,41 @@ class GestureSequenceEditor(
         }
 
         /**
+         * 一時変数名の二段階入力を集約します。
+         *
+         * 対象・位置・向きの一時変数入力は「初回＝方式選択、再クリック＝変数名入力」の
+         * 同一契約です。分散実装すると選択記憶・検証・再表示の扱いがずれます。
+         * 読取は現在の変数名、保存は方式選択と変数名確定の2動作だけを受けます。
+         */
+        fun editTemporaryVariableName(
+            encodedChoice: String,
+            currentName: String?,
+            isTemporaryMode: Boolean,
+            saveMode: () -> Boolean,
+            saveName: (String) -> Boolean,
+        ) {
+            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encodedChoice)
+            rememberSettingNode(encodedChoice)
+            if (!wasSelected || !isTemporaryMode) {
+                if (!saveMode()) return
+                showSettingScreen()
+                return
+            }
+            beginSettingInput(
+                player,
+                CommandDialogSpecs.variableName,
+                currentName.orEmpty(),
+            ) { raw ->
+                if (!saveName(raw.trim())) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                } else {
+                    showSettingScreen()
+                    null
+                }
+            }
+        }
+
+        /**
          * 対象の簡略分類を保存し、必要なら距離・種類などの詳細へ進みます。
          * 移動先の「他のエンティティ」も同じ処理を使うため、インライン選択と
          * 通常の対象設定画面で細分類の保存規則が分岐しないようにします。
@@ -5370,44 +5405,32 @@ class GestureSequenceEditor(
             if (runCatching { TargetCategory.valueOf(categoryValue) }.getOrNull() != TargetCategory.TEMPORARY) return
             val role = settingContext.role
             val current = CommandSettingsModel.targetSpec(node, role)
-            val currentKind = current?.kind
-            val encodedCategory = "target:$categoryValue"
-            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encodedCategory)
-            if (!wasSelected || currentKind != TargetKind.TEMPORARY) {
-                // 一時変数は通常の選択肢と同じく、1回目は方式の選択だけにします。
-                // 値未入力のTargetSpecを設定済み扱いにしないため、明示的に
-                // configuredFieldsを空集合へ指定します。
-                if (!updateSettingNode(
+            // 一時変数は通常の選択肢と同じく、1回目は方式の選択だけにします。
+            // 値未入力のTargetSpecを設定済み扱いにしないため、明示的に
+            // configuredFieldsを空集合へ指定します。
+            editTemporaryVariableName(
+                encodedChoice = "target:$categoryValue",
+                currentName = current?.takeIf { it.kind == TargetKind.TEMPORARY }?.tempName,
+                isTemporaryMode = current?.kind == TargetKind.TEMPORARY,
+                saveMode = {
+                    updateSettingNode(
                         player,
                         settingContext.copy(role = role),
                         configuredFields = emptySet(),
                     ) {
                         CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
-                    }) return
-                rememberSettingNode(encodedCategory)
-                showSettingScreen()
-                return
-            }
-            // 二回目のクリックで初めて一時変数名を入力します。入力完了まで
-            // 未設定のまま保持し、途中状態を「設定済み」と表示しません。
-            beginSettingInput(
-                player,
-                CommandDialogSpecs.variableName,
-                current.takeIf { it.kind == TargetKind.TEMPORARY }?.tempName.orEmpty(),
-            ) { raw ->
-                if (!updateSettingNode(player, settingContext.copy(role = role)) {
+                    }
+                },
+                saveName = { name ->
+                    updateSettingNode(player, settingContext.copy(role = role)) {
                         CommandSettingsModel.setTargetSpec(
                             it,
                             role,
-                            TargetSpec(TargetKind.TEMPORARY, tempName = raw.trim()),
+                            TargetSpec(TargetKind.TEMPORARY, tempName = name),
                         )
-                    }) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                } else {
-                    showSettingScreen()
-                    null
-                }
-            }
+                    }
+                },
+            )
             return
         }
 
@@ -5842,14 +5865,14 @@ class GestureSequenceEditor(
                         }) showSettingScreen()
                     return
                 }
-                // エンティティ由来位置の導線です。初回は最寄りプレイヤーで
-                // 設定し、再クリックで共用の対象子画面へ進みます。
+                // エンティティ由来位置の導線です。対象由来でなければ最寄り
+                // プレイヤーの既定値を保存し、共用の対象子画面へ進みます。
+                // 子画面では既定値が現在値として正しく表示されます。
                 // 単一限定でも導線自体は開き、複数になり得る候補だけを子画面で無効化します。
                 if (group == "position-entity") {
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     rememberSettingNode(encoded)
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
-                    if (!wasSelected || current?.kind != PositionKind.TARGET) {
+                    if (current?.kind != PositionKind.TARGET) {
                         if (!updateSettingNode(
                                 player,
                                 settingContext,
@@ -5864,8 +5887,6 @@ class GestureSequenceEditor(
                                     ),
                                 )
                             }) return
-                        showSettingScreen()
-                        return
                     }
                     pushSettingFrame(
                         player,
@@ -5950,11 +5971,15 @@ class GestureSequenceEditor(
                 }
                 if (kind == PositionKind.TEMPORARY) {
                     val current = CommandSettingsModel.positionSpec(node, settingContext.role)
-                    if (!wasSelected || current?.kind != PositionKind.TEMPORARY) {
-                        // 一時変数は1回目を方式選択、2回目を変数名入力とします。
-                        // 保存するSpecは入力前の未完成状態なので、設定済み項目として
-                        // マークしないことを明示します。
-                        if (!updateSettingNode(
+                    // 一時変数は1回目を方式選択、2回目を変数名入力とします。
+                    // 保存するSpecは入力前の未完成状態なので、設定済み項目として
+                    // マークしないことを明示します。
+                    editTemporaryVariableName(
+                        encodedChoice = encoded,
+                        currentName = current?.takeIf { it.kind == PositionKind.TEMPORARY }?.tempName,
+                        isTemporaryMode = current?.kind == PositionKind.TEMPORARY,
+                        saveMode = {
+                            updateSettingNode(
                                 player,
                                 settingContext,
                                 configuredFields = emptySet(),
@@ -5964,28 +5989,18 @@ class GestureSequenceEditor(
                                     settingContext.role,
                                     PositionSpec(PositionKind.TEMPORARY),
                                 )
-                            }) return
-                        showSettingScreen()
-                        return
-                    }
-                    beginSettingInput(
-                        player,
-                        CommandDialogSpecs.variableName,
-                        current.takeIf { it.kind == PositionKind.TEMPORARY }?.tempName.orEmpty(),
-                    ) { raw ->
-                        if (!updateSettingNode(player, settingContext) {
+                            }
+                        },
+                        saveName = { name ->
+                            updateSettingNode(player, settingContext) {
                                 CommandSettingsModel.setPositionSpec(
                                     it,
                                     settingContext.role,
-                                    PositionSpec(PositionKind.TEMPORARY, tempName = raw.trim()),
+                                    PositionSpec(PositionKind.TEMPORARY, tempName = name),
                                 )
-                            }) {
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        } else {
-                            showSettingScreen()
-                            null
-                        }
-                    }
+                            }
+                        },
+                    )
                     return
                 }
                 if (kind == PositionKind.COORDINATES) {
@@ -6123,14 +6138,14 @@ class GestureSequenceEditor(
                         }) showSettingScreen()
                     return
                 }
-                // エンティティ向きの導線です。初回は最寄りプレイヤーで設定し、
-                // 再クリックで共用の対象子画面へ進みます。
+                // エンティティ向きの導線です。対象由来でなければ最寄り
+                // プレイヤーの既定値を保存し、共用の対象子画面へ進みます。
+                // 子画面では既定値が現在値として正しく表示されます。
                 if (group == "facing-entity") {
                     val facingRole = settingContext.role ?: return
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     rememberSettingNode(encoded)
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
-                    if (!wasSelected || current?.kind != FacingKind.TARGET) {
+                    if (current?.kind != FacingKind.TARGET) {
                         if (!updateSettingNode(
                                 player,
                                 settingContext,
@@ -6145,8 +6160,6 @@ class GestureSequenceEditor(
                                     facingRole,
                                 )
                             }) return
-                        showSettingScreen()
-                        return
                     }
                     pushSettingFrame(
                         player,
@@ -6209,11 +6222,14 @@ class GestureSequenceEditor(
                 if (kind == FacingKind.TEMPORARY) {
                     val current = CommandSettingsModel.facingSpec(node, facingRole)
                     val encodedFacing = "facing:${kind.name}"
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encodedFacing)
-                    if (!wasSelected || current?.kind != FacingKind.TEMPORARY) {
-                        // 他の設定値と同じく、最初のクリックでは方式だけを選びます。
-                        // 変数名がまだないため、configuredFieldsは空集合のままにします。
-                        if (!updateSettingNode(
+                    // 他の設定値と同じく、最初のクリックでは方式だけを選びます。
+                    // 変数名がまだないため、configuredFieldsは空集合のままにします。
+                    editTemporaryVariableName(
+                        encodedChoice = encodedFacing,
+                        currentName = current?.takeIf { it.kind == FacingKind.TEMPORARY }?.tempName,
+                        isTemporaryMode = current?.kind == FacingKind.TEMPORARY,
+                        saveMode = {
+                            updateSettingNode(
                                 player,
                                 settingContext,
                                 configuredFields = emptySet(),
@@ -6223,29 +6239,18 @@ class GestureSequenceEditor(
                                     FacingSpec(FacingKind.TEMPORARY),
                                     facingRole,
                                 )
-                            }) return
-                        rememberSettingNode(encodedFacing)
-                        showSettingScreen()
-                        return
-                    }
-                    beginSettingInput(
-                        player,
-                        CommandDialogSpecs.variableName,
-                        current.takeIf { it.kind == FacingKind.TEMPORARY }?.tempName.orEmpty(),
-                    ) { raw ->
-                        if (!updateSettingNode(player, settingContext) {
+                            }
+                        },
+                        saveName = { name ->
+                            updateSettingNode(player, settingContext) {
                                 CommandSettingsModel.setFacingSpec(
                                     it,
-                                    FacingSpec(FacingKind.TEMPORARY, tempName = raw.trim()),
+                                    FacingSpec(FacingKind.TEMPORARY, tempName = name),
                                     facingRole,
                                 )
-                            }) {
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        } else {
-                            showSettingScreen()
-                            null
-                        }
-                    }
+                            }
+                        },
+                    )
                     return
                 }
                 if (kind == FacingKind.COORDINATES) {
