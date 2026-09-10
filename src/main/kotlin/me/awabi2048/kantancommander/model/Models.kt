@@ -521,6 +521,86 @@ enum class ConditionKind(val key: LocalizationKey<String>) {
     CONTROL_BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
 }
 
+/**
+ * issue #27: 条件分岐の判定対象です。
+ *
+ * 従来の `ConditionKind` は「何を判定するか」と「どの対象について判定するか」が
+ * 一つの種類に混在していました（例: `PLAYER_STATE`）。GUI では利用者が
+ * 「判定対象 → 対象に応じた条件」の順に設定できるよう、この5区分へ置き換えます。
+ * `プレイヤー` と `その他エンティティ` は UI 上区別しますが、条件評価上はいずれも
+ * Entity 系として同じ基本ルール（一致対象が1件以上存在すれば成立・絞り込みはAND）を用います。
+ * 保存互換のため `ConditionKind` は読み取り用に残し、新規保存は `subject` 欄へ記録します。
+ * `TARGET_EXISTS` は新規 GUI の独立カテゴリとして再露出させません。
+ */
+enum class ConditionSubject(val key: LocalizationKey<String>) {
+    PLAYER(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
+    OTHER_ENTITY(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE),
+    BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
+    VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
+    CONTROL_BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
+}
+
+/** プレイヤー系の対象種別かどうかを返します。旧 `TARGET_EXISTS` の表示振分けに使います。 */
+fun TargetKind.isPlayerKind(): Boolean = when (this) {
+    TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS,
+    TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER,
+    -> true
+    TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES,
+    TargetKind.FIXED_ENTITY, TargetKind.TEMPORARY,
+    -> false
+}
+
+/** 旧 `ConditionKind` に対応する判定対象を返します。 */
+fun ConditionKind.toSubject(targetSpec: TargetSpec? = null): ConditionSubject = when (this) {
+    ConditionKind.PLAYER_STATE -> ConditionSubject.PLAYER
+    ConditionKind.VARIABLE_STATE -> ConditionSubject.VARIABLE
+    ConditionKind.BLOCK_STATE -> ConditionSubject.BLOCK
+    ConditionKind.CONTROL_BLOCK_STATE -> ConditionSubject.CONTROL_BLOCK
+    // 旧 `TARGET_EXISTS` は対象種別に応じて振り分けます。対象未設定は中立なその他扱いです。
+    ConditionKind.TARGET_EXISTS ->
+        if (targetSpec?.kind?.isPlayerKind() == true) ConditionSubject.PLAYER
+        else ConditionSubject.OTHER_ENTITY
+}
+
+/** 旧形式の読み取り・出力と整合させるための対応 `ConditionKind` を返します。 */
+fun ConditionSubject.legacyKind(): ConditionKind = when (this) {
+    ConditionSubject.PLAYER -> ConditionKind.PLAYER_STATE
+    ConditionSubject.OTHER_ENTITY -> ConditionKind.TARGET_EXISTS
+    ConditionSubject.BLOCK -> ConditionKind.BLOCK_STATE
+    ConditionSubject.VARIABLE -> ConditionKind.VARIABLE_STATE
+    ConditionSubject.CONTROL_BLOCK -> ConditionKind.CONTROL_BLOCK_STATE
+}
+
+/**
+ * ノードの判定対象を返します。
+ *
+ * - `params["subject"]` があればそれを優先します（新規保存形式）。
+ * - 無ければ旧 `params["kind"]` から対象種別を推定する表示用 adapter です（保存は書き換えません）。
+ * - どちらも不正・未設定の場合は既定のその他エンティティ（旧既定 `TARGET_EXISTS` 相当）です。
+ */
+fun CommandNode.conditionSubject(): ConditionSubject {
+    val rawSubject = params["subject"]?.takeIf(String::isNotBlank)
+    if (rawSubject != null) {
+        runCatching { ConditionSubject.valueOf(rawSubject) }.getOrNull()?.let { return it }
+    }
+    val legacy = runCatching { ConditionKind.valueOf(string("kind")) }.getOrNull()
+    return legacy?.toSubject(targetSpec) ?: ConditionSubject.OTHER_ENTITY
+}
+
+/**
+ * 判定対象を設定します。
+ *
+ * 新規 `subject` 欄へ記録すると同時に、旧形式の読み取り・出力（検証・実行・export の
+ * `kind` 分岐）と整合するよう旧対応 `kind` も合わせて書き換えます。対象固有の詳細欄
+ * （sneaking/item/variable/operator/value/block 等）は削除せず保持します。評価・検証側で
+ * 現在の判定対象に関係ない欄は無視するため、対象切替えでの入力消失を防ぎます。
+ */
+fun CommandNode.setConditionSubject(subject: ConditionSubject) {
+    params["subject"] = subject.name
+    params["kind"] = subject.legacyKind().name
+    markConfigured("subject", "kind")
+}
+
 /** 制御ブロックの状態条件として選択できる判定項目です。 */
 enum class ControlBlockStateKind(val key: LocalizationKey<String>) {
     REDSTONE_INPUT(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT),

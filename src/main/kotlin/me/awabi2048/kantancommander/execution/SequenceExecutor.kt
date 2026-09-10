@@ -10,6 +10,8 @@ import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateConditionPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -1527,30 +1529,40 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec?,
     ): ConditionEvaluation {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-            ?: return ConditionEvaluation.INVALID
-        return when (kind) {
-            ConditionKind.TARGET_EXISTS -> {
-                if (resolveTarget(context, node.targetSpec, session) != null) {
+        // issue #27: 判定対象ベースで分岐します。旧 `kind` のみの保存は
+        // `conditionSubject()` の表示用 adapter が対象種別へ振り分けるため、
+        // 実行側で旧 enum を直接分岐しません。`TARGET_EXISTS` は独立分岐にしません。
+        val subject = node.conditionSubject()
+        // 旧 `TARGET_EXISTS` が対象種別からプレイヤーへ振り分けられた場合、旧保存に残った
+        // 絞り込み欄（sneaking/item）は当時の GUI で表示されず検証もされなかった残存値のため、
+        // 存在判定に留めて無視します。新規プレイヤー条件と旧 `PLAYER_STATE` は絞り込みを適用します。
+        val legacyKind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+        val hasExplicitSubject = node.params["subject"]?.takeIf(String::isNotBlank)
+            ?.let { runCatching { ConditionSubject.valueOf(it) }.getOrNull() } != null
+        val applyPlayerFilters = hasExplicitSubject || legacyKind == ConditionKind.PLAYER_STATE
+        return when (subject) {
+            // Entity 系は設定条件に一致する対象が1件以上存在すれば成立します。
+            // 任意の1件だけを選んで判定せず、絞り込み条件は原則ANDで評価します。
+            ConditionSubject.OTHER_ENTITY -> {
+                if (resolveTargets(context, node.targetSpec, session).isNotEmpty()) {
                     ConditionEvaluation.TRUE
                 } else {
                     ConditionEvaluation.FALSE
                 }
             }
-            ConditionKind.PLAYER_STATE -> {
-                val target = resolveTarget(context, node.targetSpec, session)
-                val player = target as? Player ?: return ConditionEvaluation.FALSE
-                val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
-                val sneakingMatches = sneaking == null || player.isSneaking == sneaking
-                val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.ITEM }
-                val item = refTemp?.item ?: node.string("item")
-                val itemData = refTemp?.itemData ?: node.string("itemData")
-                val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
-                if (sneakingMatches && itemMatches) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
+            ConditionSubject.PLAYER -> {
+                val players = resolveTargets(context, node.targetSpec, session).filterIsInstance<Player>()
+                if (players.isEmpty()) {
+                    ConditionEvaluation.FALSE
+                } else if (!applyPlayerFilters) {
+                    ConditionEvaluation.TRUE
+                } else if (players.any { matchesPlayerCondition(node, session, it) }) {
+                    ConditionEvaluation.TRUE
+                } else {
+                    ConditionEvaluation.FALSE
+                }
             }
-            ConditionKind.VARIABLE_STATE -> {
+            ConditionSubject.VARIABLE -> {
                 val value = plugin.variables.get(session.worldId, node.string("variable"))
                     ?: return ConditionEvaluation.UNRESOLVED
                 // 非 NUMBER 変数との数値比較は正常 false ではなく型不一致として分離します。
@@ -1564,7 +1576,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val applicable = compareVariable(value, comparisonValue, operator)
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
-            ConditionKind.BLOCK_STATE -> {
+            ConditionSubject.BLOCK -> {
                 val conditionPosition = node.conditionPositionSpec
                 val location = when {
                     conditionPosition != null ->
@@ -1581,7 +1593,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ConditionEvaluation.FALSE
                 }
             }
-            ConditionKind.CONTROL_BLOCK_STATE -> {
+            ConditionSubject.CONTROL_BLOCK -> {
                 // 制御ブロック自身の現在状態を判定します。複数項目はポリシー側でAND評価し、
                 // 外側の反転指定は既存の条件実行共通処理へ任せます。
                 if (
@@ -1595,9 +1607,31 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ConditionEvaluation.FALSE
                 }
             }
-            // 将来の ConditionKind 追加時に false 継続へ黙って畳まないための受け皿です。
+            // 将来の判定対象追加時に false 継続へ黙って畳まないための受け皿です。
             else -> ConditionEvaluation.INVALID
         }
+    }
+
+    /**
+     * issue #27: 単一プレイヤーに対する絞り込み条件（スニーク状態・所持アイテム）をAND評価します。
+     *
+     * 未設定欄は不問として扱い、設定済み欄をすべて満たす場合だけ true です。
+     * 呼び出し側が複数候補へ `any` 適用し、存在判定 semantics を実現します。
+     */
+    private fun matchesPlayerCondition(
+        node: CommandNode,
+        session: ExecutionSession,
+        player: Player,
+    ): Boolean {
+        val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
+        val sneakingMatches = sneaking == null || player.isSneaking == sneaking
+        val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
+            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+            ?.takeIf { it.type == TemporaryVariableType.ITEM }
+        val item = refTemp?.item ?: node.string("item")
+        val itemData = refTemp?.itemData ?: node.string("itemData")
+        val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
+        return sneakingMatches && itemMatches
     }
 
     private fun executeVariable(

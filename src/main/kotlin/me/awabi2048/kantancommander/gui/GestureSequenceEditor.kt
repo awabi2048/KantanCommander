@@ -56,6 +56,10 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
+import me.awabi2048.kantancommander.model.toSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
@@ -5462,9 +5466,13 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.CONDITION_KIND -> {
                 if (group != "condition-kind") return
-                val kind = runCatching { ConditionKind.valueOf(value) }.getOrNull() ?: return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "kind", kind.name)
+                // issue #27: 判定対象ベースで保存します。旧 `kind` 形式のIDも読み取りますが、
+                // 旧 `TARGET_EXISTS` はノードの対象種別から振り分けた判定対象へ寄せます。
+                if (updateSettingNode(player, settingContext) { node ->
+                        val subject = runCatching { ConditionSubject.valueOf(value) }.getOrNull()
+                            ?: runCatching { ConditionKind.valueOf(value) }.getOrNull()?.toSubject(node.targetSpec)
+                            ?: return@updateSettingNode
+                        node.setConditionSubject(subject)
                     }) showSettingScreen()
             }
             GestureSettingScreen.CONDITION_DETAIL -> {

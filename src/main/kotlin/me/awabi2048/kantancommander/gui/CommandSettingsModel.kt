@@ -10,6 +10,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.toSubject
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
@@ -806,6 +807,16 @@ object CommandSettingsModel {
             node.clearConfigured(key)
         } else {
             node.markConfigured(key)
+        }
+        // issue #27: 条件の旧 `kind` 欄への直接書き込みも、判定対象欄へ同期します。
+        // 両GUI共通の保存境界であるここで寄せないと、新規 `subject` 欄と旧 `kind` 欄が
+        // 食い違い、検証（対象ベース）と出力（種類鏡像）が別条件を指します。
+        // 旧 `TARGET_EXISTS` は対象種別に応じて振り分けます。
+        if ((node.type == CommandType.CONDITION || node.type == CommandType.FOLDED_IF) && key == "kind") {
+            runCatching { ConditionKind.valueOf(value) }.getOrNull()?.let { kind ->
+                node.params["subject"] = kind.toSubject(node.targetSpec).name
+                node.markConfigured("subject")
+            }
         }
         if (node.type == CommandType.PARTICLE && key == ParticleSettings.PARAM_PARTICLE) {
             normalizeParticleData(node)
