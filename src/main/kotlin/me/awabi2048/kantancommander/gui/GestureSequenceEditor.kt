@@ -3849,6 +3849,9 @@ class GestureSequenceEditor(
         candidateValues: List<String> = emptyList(),
         onSubmit: (String) -> String?,
     ) {
+        // issue #31: 候補選択は即時保存せず、入力欄全体を選択IDで置き換えて
+        // 確定待ちに戻します。複数クエリ入力からの選択も単一IDへの置換とし、
+        // validationと保存は「確定」押下時の既存処理に一任します。
         val candidateButtons = candidateValues.take(12).map { candidate ->
                 MenuDialogButton(
                     Component.text(candidate),
@@ -3859,20 +3862,15 @@ class GestureSequenceEditor(
                             if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
                             return@MenuDialogHandler MenuActionResult.Ignored
                         }
-                        val value = CommandDialogSpecs.normalize(suggestionParameter.orEmpty(), candidate)
-                        val validationError = spec.validateInput(value)
-                        if (validationError != null) {
-                            return@MenuDialogHandler MenuActionResult.Rejected(
-                                validationComponent(KcI18n.text(player, validationError)),
-                            )
-                        }
-                        val error = runCatching { onSubmit(value) }
-                            .getOrElse { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT) }
-                        if (error != null) {
-                            MenuActionResult.Rejected(validationComponent(error))
-                        } else {
-                            MenuActionResult.Success(MenuUpdate.Close)
-                        }
+                        showTextInputDialog(
+                            player = player,
+                            spec = spec,
+                            initial = candidate,
+                            suggestionParameter = suggestionParameter,
+                            candidateValues = emptyList(),
+                            onSubmit = onSubmit,
+                        )
+                        MenuActionResult.Success(MenuUpdate.None)
                     },
                 )
         }
@@ -3891,7 +3889,7 @@ class GestureSequenceEditor(
                         spec = spec,
                         initial = query,
                         suggestionParameter = suggestionParameter,
-                        candidateValues = CommandDialogSpecs.suggestions(suggestionParameter, query),
+                        candidateValues = CommandDialogSpecs.suggestionsFromInput(suggestionParameter, query),
                         onSubmit = onSubmit,
                     )
                     MenuActionResult.Success(MenuUpdate.None)
@@ -4649,7 +4647,7 @@ class GestureSequenceEditor(
                     player,
                     context,
                     node,
-                    soundCandidates = CommandDialogSpecs.suggestions("sound", query),
+                    soundCandidates = CommandDialogSpecs.suggestionsFromInput("sound", query),
                 )
                 MenuActionResult.Success(MenuUpdate.None)
             },
