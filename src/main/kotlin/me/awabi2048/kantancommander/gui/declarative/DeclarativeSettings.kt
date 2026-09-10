@@ -337,6 +337,10 @@ object DeclarativeSettings {
     /**
      * 設定候補・対象分類カードを配置します。
      * 無効な候補は操作面なしの消費面にし、ホバーは維持します。
+     *
+     * 文言ノードのIDは要素ID由来とし、visualTag/visualIndexの連番に依存しません。
+     * 同一文書へ候補列を複数回追加しても重複診断にならないための全体最適です。
+     * 初回表示時のstale状態で同一visualIndexが再利用されても、要素IDが異なれば衝突しません。
      */
     fun choiceCardsSection(
         nodes: MutableList<GestureGuiNode>,
@@ -369,7 +373,7 @@ object DeclarativeSettings {
                 size = card.labelSize,
                 lineWidth = card.labelWidth,
                 alignment = GestureGuiTextAlignment.CENTER,
-                id = "${card.visualTag}-label-${card.visualIndex}",
+                id = "${card.elementId}-label",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
                 absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
@@ -476,12 +480,15 @@ object DeclarativeSettings {
     }
 
     private fun appendActionCard(nodes: MutableList<GestureGuiNode>, frame: ContentFrame, card: SettingsActionCard) {
+        // 背景と文言のIDは要素ID由来とし、同一visualTagの再利用による重複診断を防ぎます。
+        // 要素なし（無効ページャ等）はvisualTag由来のままですが、呼び出し側でtargetPage等を含めて一意化しています。
+        val baseId = card.elementId ?: "${card.visualTag}-bg"
         nodes += GestureGuiBlock(
             blockData = card.background,
             width = GestureGuiSizeSpec.Fixed(card.w),
             height = GestureGuiSizeSpec.Fixed(card.h),
             outline = card.outline?.let { GestureGuiOutline(it) },
-            id = card.elementId ?: "${card.visualTag}-bg",
+            id = baseId,
             actionId = card.elementId,
             acceptedGestures = card.gestures,
             consumeInput = card.consume,
@@ -495,7 +502,7 @@ object DeclarativeSettings {
                 size = card.labelSize,
                 lineWidth = card.labelWidth,
                 alignment = GestureGuiTextAlignment.CENTER,
-                id = "${card.visualTag}-label",
+                id = "$baseId-label",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
                 absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
