@@ -1423,15 +1423,24 @@ internal object CommandDialogSpecs {
     fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect", ParticleSettings.PARAM_PARTICLE)
 
     /**
+     * issue #28: Registry由来の全候補IDです。
+     *
+     * 検索ランキングを持たず、Dialogの候補検索とGesture Resource Pickerの
+     * 双方から利用する共通境界です。サーバーなしでは空列を返します。
+     */
+    fun registeredIds(fieldKey: String): List<String> = registeredValues(fieldKey)
+
+    /**
      * 入力中の文字列に近い登録IDを最大12件返します。
      * Paperの入力画面はキー入力ごとのコールバックを提供しないため、呼び出し側は
      * 「候補を表示」ボタン押下時の最新値を渡します。完全一致→前方一致→
      * 部分一致→編集距離の順で安定ソートし、空欄では候補を返しません。
+     * ランキングは [registeredIds] の取得と分離しています。
      */
     fun suggestions(fieldKey: String, query: String, limit: Int = 12): List<String> {
         val normalized = query.trim().lowercase()
         if (normalized.isEmpty() || !supportsSuggestions(fieldKey)) return emptyList()
-        val values = registeredValues(fieldKey)
+        val values = registeredIds(fieldKey)
         return values.asSequence()
             .map { value ->
                 val candidate = value.lowercase()

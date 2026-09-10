@@ -111,6 +111,23 @@ data class SettingsActionCard(
     val consume: Boolean = false,
 )
 
+/** ID候補一覧の1セルです。ID文字列は常時表示せず、ホバーで示します。 */
+data class ResourcePickerCard(
+    /** 要素 ID 全文です（例 lower-resource-pick:minecraft:cow）。 */
+    val elementId: String,
+    val icon: ItemStack?,
+    val background: BlockData,
+    /** 現在選択中の候補の外周枠です。ない場合は枠なしです。 */
+    val outline: BlockData?,
+    val cx: Double,
+    val cy: Double,
+    val w: Double,
+    val h: Double,
+    /** 表示名とNamespaced IDの解決値をそのまま渡します。 */
+    val hover: GestureGuiHoverText?,
+    val visualIndex: Int,
+)
+
 /** プログラム全体設定カード1件です。背景・図柄・2行文言・操作面を同じ矩形で表します。 */
 data class ScriptSettingCard(
     /**
@@ -384,6 +401,43 @@ object DeclarativeSettings {
         card: SettingsActionCard,
     ) {
         appendActionCard(nodes, frame, card)
+    }
+
+    /**
+     * issue #28 のID候補グリッドを配置します。
+     *
+     * 各セルは Block＋Item＋GestureGuiElement の基本構成です。
+     * ID文字列は常時表示せず、ホバーで表示名とNamespaced IDを示します。
+     */
+    fun resourcePickerSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        cards: List<ResourcePickerCard>,
+    ) {
+        cards.forEach { card ->
+            nodes += GestureGuiBlock(
+                blockData = card.background,
+                width = GestureGuiSizeSpec.Fixed(card.w),
+                height = GestureGuiSizeSpec.Fixed(card.h),
+                outline = card.outline?.let { GestureGuiOutline(it) },
+                id = card.elementId,
+                actionId = card.elementId,
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                hover = card.hover?.let(::hoverSpecOf),
+                absolute = placed(frame, card.cx, card.cy, card.w, card.h),
+            )
+            card.icon?.let { icon ->
+                val iconSize = minOf(card.w, card.h) * 0.62
+                nodes += GestureGuiItem(
+                    item = icon,
+                    scale = iconSize,
+                    width = GestureGuiSizeSpec.Fixed(iconSize),
+                    height = GestureGuiSizeSpec.Fixed(iconSize),
+                    id = "${card.elementId}-icon",
+                    absolute = placed(frame, card.cx, card.cy + 0.005, iconSize, iconSize),
+                )
+            }
+        }
     }
 
     /**
