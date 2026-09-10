@@ -486,11 +486,7 @@ object CommandSettingsModel {
      * 表示専用の意味型へ閉じ込め、各画面が独自の文字列フォーマットを持たないようにします。
      */
     fun gestureVisibleFields(node: CommandNode): List<EditorField> =
-        visibleFields(node).filterNot { field ->
-            // 移動先の向きは移動先ハブで編集するため、向きタブを出しません。
-            // 保存値・検証・実行・出力はそのまま残します。
-            node.type == CommandType.TELEPORT && field.key == "destinationFacing"
-        }.map { field ->
+        visibleFields(node).map { field ->
             if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)

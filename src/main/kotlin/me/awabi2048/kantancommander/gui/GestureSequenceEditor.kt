@@ -5455,14 +5455,6 @@ class GestureSequenceEditor(
                         CommandSettingsModel.setTargetSpec(target, settingContext.role, cleared)
                     }
                 }
-                // 変換保存だけは来歴を維持します。絞込画面の一切の保存は来歴を消します。
-                fun writeConvertedTarget(target: CommandNode, spec: TargetSpec) {
-                    if (embeddedTarget) {
-                        CommandSettingsModel.setEmbeddedTargetSpec(target, settingContext.role, spec)
-                    } else {
-                        CommandSettingsModel.setTargetSpec(target, settingContext.role, spec)
-                    }
-                }
                 if (group == "target-preset") {
                     val preset = runCatching { SettingPresets.TargetPreset.valueOf(value) }.getOrNull() ?: return
                     val current = readBranchTarget(node)
@@ -5505,18 +5497,13 @@ class GestureSequenceEditor(
                 }
                 // 詳細設定は初回クリックで選択のみ行い、選択済みの再クリックで
                 // 現行の絞込子画面へ進みます。未設定時は保存せず留まります。
-                // 設定済み時はプリセット相当を明示値へ変換保存します。来歴付きの
-                // ため無変更の間はプリセット選択表示が残ります。
+                // プリセットからの引き継ぎは行わず、現在の保存値をそのまま
+                // 初期表示します。絞込画面の保存で来歴は消えます。
                 if (group == "target-detail") {
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val current = readBranchTarget(node)
                     rememberSettingNode(encoded)
                     if (!wasSelected) {
-                        if (current != null) {
-                            if (!updateSettingNode(player, settingContext) {
-                                    writeConvertedTarget(it, SettingPresets.expandPresetToDetail(current))
-                                }) return
-                        }
                         showSettingScreen()
                         return
                     }
@@ -5524,9 +5511,6 @@ class GestureSequenceEditor(
                         showSettingScreen()
                         return
                     }
-                    if (!updateSettingNode(player, settingContext) {
-                            writeConvertedTarget(it, SettingPresets.expandPresetToDetail(current))
-                        }) return
                     pushSettingFrame(
                         player,
                         GestureSettingFrame(settingContext, fieldKey, GestureSettingScreen.TARGET_FILTERS),
@@ -5696,10 +5680,12 @@ class GestureSequenceEditor(
                 // 移動先は位置設定・対象設定へ帰着させる4項目ハブです。
                 if (settingContext.role == CommandSettingRole.DESTINATION && group == "destination-face") {
                     val facingRole = CommandSettingRole.DESTINATION_FACING
+                    // 選択記憶より先に記録すると初回が選択済み扱いになるため、
+                    // 選択判定を先に行います。
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     rememberSettingNode(encoded)
                     when (value) {
                         "position" -> {
-                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                             val current = CommandSettingsModel.positionSpec(node, CommandSettingRole.DESTINATION)
                             if (!wasSelected || current == null || current.kind == PositionKind.TEMPORARY) {
                                 if (!updateSettingNode(player, settingContext) {
@@ -5720,7 +5706,6 @@ class GestureSequenceEditor(
                             return
                         }
                         "entity" -> {
-                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                             val currentTarget = CommandSettingsModel.targetSpec(node, CommandSettingRole.DESTINATION)
                             if (!wasSelected || currentTarget == null) {
                                 if (!updateSettingNode(
@@ -5745,7 +5730,6 @@ class GestureSequenceEditor(
                             return
                         }
                         "angle" -> {
-                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                             val currentFacing = CommandSettingsModel.facingSpec(node, facingRole)
                             if (!wasSelected || currentFacing?.kind != FacingKind.ROTATION) {
                                 if (!updateSettingNode(
@@ -5789,7 +5773,6 @@ class GestureSequenceEditor(
                             return
                         }
                         "temporary" -> {
-                            val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                             if (!wasSelected) {
                                 showSettingScreen()
                                 return
