@@ -751,9 +751,9 @@ class GestureSequenceEditor(
                 GestureLowerMode.WORLD_VARIABLES -> lowerPanel.buildWorldVariablesChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_TYPE -> lowerPanel.buildWorldVariableTypeChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> lowerPanel.buildWorldVariableDeleteConfirmationChild(state, owner)
-                else -> lowerPanel.build(state, owner, attention)
+                else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
             }
-            else -> lowerPanel.build(state, owner, attention)
+            else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
         }
     }
 
@@ -3756,11 +3756,11 @@ class GestureSequenceEditor(
     /**
      * issue #18 のSlider段階操作です。
      *
-     * [-][+]の離散操作で1刻みずつ確定します。上下限・step丸め・浮動小数誤差は
-     * [SliderValuePolicy]へ集約し、保存前検証は [CommandDialogSpecs] の共通仕様へ
-     * 通します。検証に通らない値は保存せず、表示だけを維持します。
+     * [-][+]の離散操作で1刻みずつ仮値を進めます。保存・revision進行は行わず、
+     * [updateFieldPreview] へ送って表示と間引き共有だけを行います。
+     * 確定は［確定］、破棄は［取消］が担います。
      */
-    private fun handleSliderAction(context: GestureGuiActionContext, player: Player) {
+    private fun handleSliderStep(context: GestureGuiActionContext, player: Player) {
         val increment = when {
             context.elementId.startsWith("lower-slider-inc:") -> 1
             context.elementId.startsWith("lower-slider-dec:") -> -1
@@ -3772,15 +3772,62 @@ class GestureSequenceEditor(
         val script = plugin.scripts.load(settingContext.scriptId) ?: return
         observedRevision = script.revision
         val node = script.graph.nodes[settingContext.nodeId] ?: return
+        if (settingContext.nodeId != state.selectedNodeId) return
         val spec = SettingSpec.sliderSpecFor(node, fieldKey) ?: return
         // テンプレート参照値はSliderで編集しません。Dialog側へ委譲します。
         if (SliderValuePolicy.isTemplateReference(node.params[fieldKey])) return
-        val next = SliderValuePolicy.stepBy(spec, node.params[fieldKey], increment)
-        // 共通検証を通し、制約差異を生ませません。
-        val dialogSpec = CommandDialogSpecs.field(node, fieldKey)
-        if (dialogSpec != null && dialogSpec.validateInput(next) != null) return
-        updateSettingNode(player, settingContext) {
-            CommandSettingsModel.setParameter(it, fieldKey, next)
+        val base = previewValue(node.id, fieldKey) ?: node.params[fieldKey]
+        val next = SliderValuePolicy.stepBy(spec, base, increment)
+        updateFieldPreview(player, node.id, fieldKey, next)
+    }
+
+    /**
+     * issue #18 のSliderバー上クリックです。
+     *
+     * クリックされた区画の中央値を仮値とします。保存・revision進行は行いません。
+     */
+    private fun handleSliderBar(context: GestureGuiActionContext, player: Player) {
+        // lower-slider-bar:<fieldKey>:<index> の形式です。fieldKey自体に
+        // コロンは含まれないため、末尾区画をindexとして分離します。
+        val rest = context.elementId.removePrefix("lower-slider-bar:")
+        val separator = rest.lastIndexOf(':')
+        if (separator < 0) return
+        val fieldKey = rest.substring(0, separator)
+        val index = rest.substring(separator + 1).toIntOrNull() ?: return
+        if (fieldKey.isBlank()) return
+        val settingContext = state.settingContext ?: return
+        val script = plugin.scripts.load(settingContext.scriptId) ?: return
+        observedRevision = script.revision
+        val node = script.graph.nodes[settingContext.nodeId] ?: return
+        if (settingContext.nodeId != state.selectedNodeId) return
+        val spec = SettingSpec.sliderSpecFor(node, fieldKey) ?: return
+        if (SliderValuePolicy.isTemplateReference(node.params[fieldKey])) return
+        updateFieldPreview(player, node.id, fieldKey, SliderValuePolicy.valueForSegment(spec, index))
+    }
+
+    /**
+     * issue #18 のSlider確定です。
+     *
+     * 仮値を共通検証へ通し、[updateSettingNode] と同じ保存境界で確定します。
+     * 失敗分は保存されず、仮値へ戻ります。
+     */
+    private fun handleSliderCommit(context: GestureGuiActionContext, player: Player) {
+        val fieldKey = context.elementId.removePrefix("lower-slider-commit:")
+        if (fieldKey.isBlank()) return
+        val settingContext = state.settingContext ?: return
+        commitFieldPreviews { key, value ->
+            if (key.fieldKey != fieldKey || value == null) return@commitFieldPreviews false
+            if (settingContext.nodeId != key.nodeId) return@commitFieldPreviews false
+            val script = plugin.scripts.load(settingContext.scriptId) ?: return@commitFieldPreviews false
+            val node = script.graph.nodes[key.nodeId] ?: return@commitFieldPreviews false
+            val normalized = CommandDialogSpecs.normalize(key.fieldKey, value)
+            val dialogSpec = CommandDialogSpecs.field(node, key.fieldKey)
+            if (dialogSpec != null && dialogSpec.validateInput(normalized) != null) {
+                return@commitFieldPreviews false
+            }
+            updateSettingNode(player, settingContext, configuredFields = setOf(key.fieldKey)) {
+                CommandSettingsModel.setParameter(it, key.fieldKey, normalized)
+            }
         }
     }
 
@@ -6723,11 +6770,32 @@ class GestureSequenceEditor(
                 val index = context.elementId.removePrefix("lower-tab:").toIntOrNull() ?: return
                 openSettingsTab(player, index)
             }
-            // issue #18: Slider／Checkboxの直接操作です。検証の正本は
-            // CommandDialogSpecs側に残し、ここでは刻み・反転と保存だけを扱います。
+            // issue #18: Sliderのバー上クリック・段階操作です。検証の正本は
+            // CommandDialogSpecs側に残し、ここでは仮値更新だけを扱います。
+            // 保存・revision進行は［確定］だけが行います。
             (context.elementId.startsWith("lower-slider-dec:") || context.elementId.startsWith("lower-slider-inc:")) &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                handleSliderAction(context, player)
+                handleSliderStep(context, player)
+            }
+            context.elementId.startsWith("lower-slider-bar:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                handleSliderBar(context, player)
+            }
+            context.elementId.startsWith("lower-slider-commit:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                handleSliderCommit(context, player)
+            }
+            context.elementId.startsWith("lower-slider-cancel:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                cancelFieldPreview(player)
+            }
+            context.elementId.startsWith("lower-slider-input:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val fieldKey = context.elementId.removePrefix("lower-slider-input:")
+                if (fieldKey.isBlank()) return
+                // Dialog入力へ移る前に仮値を破棄し、保存値との二重表示を防ぎます。
+                discardFieldPreview(player)
+                beginSelectedFieldEdit(player, fieldKey)
             }
             context.elementId.startsWith("lower-toggle:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {

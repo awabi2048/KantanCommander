@@ -114,9 +114,11 @@ class GestureLowerPanel(
         player: Player,
         attention: GestureAttentionState = GestureAttentionState.EMPTY,
         suppressHighlight: Boolean = false,
+        // issue #18: Slider操作中の仮値です。保存値ではなく表示だけに使います。
+        fieldPreviews: Map<FieldPreviewKey, String?> = emptyMap(),
     ): GestureGuiView {
         return when (state.lowerMode) {
-            GestureLowerMode.SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
+            GestureLowerMode.SETTINGS -> buildSettings(state, player, attention, suppressHighlight, fieldPreviews)
             GestureLowerMode.PICKER -> buildPickerNew(state, player)
             GestureLowerMode.SETTING_CHOICES -> buildSettingChoicesParentNew(
                 state,
@@ -1014,7 +1016,8 @@ class GestureLowerPanel(
         player: Player,
         attention: GestureAttentionState,
         suppressHighlight: Boolean = false,
-    ): GestureGuiView = buildSettingsNew(state, player, attention, suppressHighlight)
+        fieldPreviews: Map<FieldPreviewKey, String?> = emptyMap(),
+    ): GestureGuiView = buildSettingsNew(state, player, attention, suppressHighlight, fieldPreviews)
 
     /**
      * SETTINGS の宣言実装です。旧実装と同じ算出・文言・座標・要素 ID・ガード・ホバーを用い、
@@ -1026,6 +1029,7 @@ class GestureLowerPanel(
         player: Player,
         attention: GestureAttentionState,
         suppressHighlight: Boolean = false,
+        fieldPreviews: Map<FieldPreviewKey, String?> = emptyMap(),
     ): GestureGuiView {
         val script = plugin.scripts.load(state.scriptId)
         val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
@@ -1187,7 +1191,7 @@ class GestureLowerPanel(
         destinationTarget?.let {
             appendDestinationChoiceCards(nodes, frame, it.children, field.key, player, suppressHighlight)
         }
-        appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight)
+        appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight, fieldPreviews)
         return finishSettings(nodes)
     }
 
@@ -1351,6 +1355,7 @@ class GestureLowerPanel(
         descriptor: CommandSettingDescriptor,
         inputCenterY: Double,
         suppressHighlight: Boolean = false,
+        fieldPreviews: Map<FieldPreviewKey, String?> = emptyMap(),
     ) {
         val typedValueSourceSetting =
             CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
@@ -1384,7 +1389,17 @@ class GestureLowerPanel(
                 descriptor.editor == CommandSettingEditor.ENTITY_OVERWRITE ||
                 descriptor.editor == CommandSettingEditor.CONDITION_INVERSION)
         if (sliderSpec != null) {
-            appendSliderCards(nodes, frame, node, field.key, sliderSpec, inputCenterY, suppressHighlight)
+            appendSliderCards(
+                nodes,
+                frame,
+                node,
+                field.key,
+                sliderSpec,
+                inputCenterY,
+                suppressHighlight,
+                fieldPreviews[FieldPreviewKey(node.id, field.key)],
+                player,
+            )
         }
         if (isCheckboxPresentation) {
             appendCheckboxCard(nodes, frame, node, field.key, inputCenterY, suppressHighlight)
@@ -1584,10 +1599,11 @@ class GestureLowerPanel(
     /**
      * issue #18 のSlider操作面です。
      *
-     * Gesture GUIに適した離散操作として [-][+] ボタンを置き、1クリックで
-     * 値を確定します。連続ドラッグのpreview／commit分離は、離散確定のため
-     * 保存直結で等価になります。範囲外・任意精度値はDialog側へ委譲し、
-     * ここでは範囲内刻みだけを扱います。
+     * バー上クリック形式で連続操作します。真のドラッグはDisplayEntity上で
+     * できないため、区画クリックで代替します。クリックは仮値（プレビュー）の
+     * 更新に留め、正本保存・revision進行は［確定］だけが行います。［取消］は
+     * 保存値へ戻します。他editorへの共有は間引きます。範囲外・任意精度値は
+     * ［入力］のDialogへ委譲し、ここでは範囲内刻みだけを扱います。
      */
     private fun appendSliderCards(
         nodes: MutableList<GestureGuiNode>,
@@ -1597,55 +1613,116 @@ class GestureLowerPanel(
         spec: SliderSpec,
         inputCenterY: Double,
         suppressHighlight: Boolean = false,
+        previewRaw: String? = null,
+        player: Player,
     ) {
-        val current = SliderValuePolicy.format(spec, SliderValuePolicy.parse(spec, node.params[fieldKey]))
-        val rangeHover = singleLineHover(
-            "範囲 ${SliderValuePolicy.format(spec, spec.min)}〜${SliderValuePolicy.format(spec, spec.max)}／刻み ${if (spec.integer) spec.step.toLong().toString() else spec.step.toString()}／現在値 $current",
-            x = HOVER_SLOT_X,
-            y = HOVER_SLOT_Y,
+        val saved = SliderValuePolicy.format(spec, SliderValuePolicy.parse(spec, node.params[fieldKey]))
+        val preview = previewRaw?.takeIf(String::isNotBlank)?.let {
+            SliderValuePolicy.format(spec, SliderValuePolicy.parse(spec, it))
+        }
+        val effective = preview ?: saved
+        val effectiveValue = SliderValuePolicy.parse(spec, effective)
+        val savedValue = SliderValuePolicy.parse(spec, saved)
+        val hoverText = if (preview != null && preview != saved) {
+            "範囲 ${SliderValuePolicy.format(spec, spec.min)}〜${SliderValuePolicy.format(spec, spec.max)}／現在値 $saved → 仮値 $preview"
+        } else {
+            "範囲 ${SliderValuePolicy.format(spec, spec.min)}〜${SliderValuePolicy.format(spec, spec.max)}／刻み ${if (spec.integer) spec.step.toLong().toString() else spec.step.toString()}／現在値 $saved"
+        }
+        val barY = inputCenterY - 0.14
+        val segments = SettingSpec.SLIDER_SEGMENTS
+        val segW = 0.095
+        val segH = 0.10
+        repeat(segments) { index ->
+            val centerValue = spec.min + (spec.max - spec.min) * (index + 0.5) / segments
+            val filled = centerValue <= effectiveValue + 1e-9
+            val holdsSaved = preview != null && preview != saved &&
+                centerValue <= savedValue + 1e-9 &&
+                spec.min + (spec.max - spec.min) * (index + 1.0) / segments > savedValue + 1e-9
+            DeclarativeSettings.actionCardSection(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-slider-bar:$fieldKey:$index",
+                    label = null,
+                    background = Bukkit.createBlockData(
+                        if (filled) Material.CYAN_CONCRETE else Material.GRAY_CONCRETE,
+                    ),
+                    cx = -0.32 + segW / 2.0 + index * 0.10,
+                    cy = barY,
+                    w = segW,
+                    h = segH,
+                    labelSize = 0.005,
+                    labelWidth = 20,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = null,
+                    hover = singleLineHover(hoverText, x = HOVER_SLOT_X, y = HOVER_SLOT_Y),
+                    visualTag = "lower-slider-bar",
+                    outline = if (suppressHighlight || !holdsSaved) null
+                    else GestureSettingVisualPolicy.nonTabOutlineMaterial(true)?.let { Bukkit.createBlockData(it) },
+                ),
+            )
+        }
+        sliderControlCard(
+            nodes, frame, "lower-slider-dec:$fieldKey", "−", Material.GRAY_CONCRETE,
+            cx = -0.23, cy = inputCenterY, w = 0.18, hoverText, suppressHighlight,
         )
-        val buttonH = SETTING_INPUT_HEIGHT
-        val buttonW = 0.22
+        sliderControlCard(
+            nodes, frame, "lower-slider-inc:$fieldKey", "＋", Material.GRAY_CONCRETE,
+            cx = -0.05, cy = inputCenterY, w = 0.18, hoverText, suppressHighlight,
+        )
+        sliderControlCard(
+            nodes, frame, "lower-slider-commit:$fieldKey",
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
+            if (preview != null && preview != saved) Material.LIME_CONCRETE else DisabledGuiVisualPolicy.material,
+            cx = 0.19, cy = inputCenterY, w = 0.26, hoverText, suppressHighlight,
+        )
+        sliderControlCard(
+            nodes, frame, "lower-slider-cancel:$fieldKey",
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
+            if (preview != null && preview != saved) Material.ORANGE_CONCRETE else DisabledGuiVisualPolicy.material,
+            cx = 0.47, cy = inputCenterY, w = 0.26, hoverText, suppressHighlight,
+        )
+        sliderControlCard(
+            nodes, frame, "lower-slider-input:$fieldKey",
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
+            Material.CYAN_CONCRETE,
+            cx = 0.75, cy = inputCenterY, w = 0.26,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER),
+            suppressHighlight,
+        )
+    }
+
+    /** Slider操作列の小操作面です。背景・文言・ホバーの定型だけを扱います。 */
+    private fun sliderControlCard(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        elementId: String,
+        label: String,
+        background: Material,
+        cx: Double,
+        cy: Double,
+        w: Double,
+        hoverText: String,
+        suppressHighlight: Boolean,
+    ) {
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
             SettingsActionCard(
-                elementId = "lower-slider-dec:$fieldKey",
-                label = Component.text("−"),
-                background = Bukkit.createBlockData(Material.GRAY_CONCRETE),
-                cx = -0.18,
-                cy = inputCenterY,
-                w = buttonW,
-                h = buttonH,
-                labelSize = 0.008,
-                labelWidth = 40,
+                elementId = elementId,
+                label = Component.text(label),
+                background = Bukkit.createBlockData(background),
+                cx = cx,
+                cy = cy,
+                w = w,
+                h = 0.12,
+                labelSize = 0.005,
+                labelWidth = 60,
                 gestures = GestureGuiClickPolicy.CLICK,
                 guard = null,
-                hover = rangeHover,
-                visualTag = "lower-slider-dec",
-                outline = if (suppressHighlight) null
-                else GestureSettingVisualPolicy.nonTabOutlineMaterial(false)?.let { Bukkit.createBlockData(it) },
-            ),
-        )
-        DeclarativeSettings.actionCardSection(
-            nodes,
-            frame,
-            SettingsActionCard(
-                elementId = "lower-slider-inc:$fieldKey",
-                label = Component.text("＋"),
-                background = Bukkit.createBlockData(Material.CYAN_CONCRETE),
-                cx = 0.74,
-                cy = inputCenterY,
-                w = buttonW,
-                h = buttonH,
-                labelSize = 0.008,
-                labelWidth = 40,
-                gestures = GestureGuiClickPolicy.CLICK,
-                guard = null,
-                hover = rangeHover,
-                visualTag = "lower-slider-inc",
-                outline = if (suppressHighlight) null
-                else GestureSettingVisualPolicy.nonTabOutlineMaterial(false)?.let { Bukkit.createBlockData(it) },
+                hover = singleLineHover(hoverText, x = HOVER_SLOT_X, y = HOVER_SLOT_Y),
+                visualTag = elementId.substringBefore(":"),
+                outline = null,
             ),
         )
     }

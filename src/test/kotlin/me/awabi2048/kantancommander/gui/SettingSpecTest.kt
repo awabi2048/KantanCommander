@@ -149,6 +149,25 @@ class SettingSpecTest {
     }
 
     @Test
+    fun `bar segments resolve to stepped preview values`() {
+        val volume = SettingSpec.sliderSpecFor(node(CommandType.PLAY_SOUND), "volume")!!
+        // 12区画の両端は範囲内へ収まり、刻みへ丸められます。
+        assertEquals("1", SliderValuePolicy.valueForSegment(volume, 0))
+        assertEquals("33", SliderValuePolicy.valueForSegment(volume, 11))
+        // 範囲外区画は端へ寄せます。
+        assertEquals(SliderValuePolicy.valueForSegment(volume, 0), SliderValuePolicy.valueForSegment(volume, -5))
+        assertEquals(SliderValuePolicy.valueForSegment(volume, 11), SliderValuePolicy.valueForSegment(volume, 99))
+        // 整数欄は整数表示になります。
+        val level = SettingSpec.sliderSpecFor(node(CommandType.APPLY_EFFECT), "level")!!
+        assertEquals("12", SliderValuePolicy.valueForSegment(level, 0))
+        // 区画値は検証を通過します。
+        val dialog = CommandDialogSpecs.field(node(CommandType.PLAY_SOUND), "volume")!!
+        (0 until SettingSpec.SLIDER_SEGMENTS).forEach { index ->
+            assertNull(dialog.validateInput(SliderValuePolicy.valueForSegment(volume, index)), "segment $index")
+        }
+    }
+
+    @Test
     fun `runtime dependent targets stay visible`() {
         assertTrue(RuntimeDependentPolicy.isRuntimeDependentTarget(TargetKind.TEMPORARY))
         assertTrue(RuntimeDependentPolicy.isRuntimeDependentTarget(TargetKind.NEAREST_ENTITY))

@@ -88,6 +88,20 @@ object SliderValuePolicy {
     fun stepBy(spec: SliderSpec, currentRaw: String?, steps: Int): String =
         format(spec, parse(spec, currentRaw) + steps * spec.step)
 
+    /**
+     * issue #18: バー上クリック位置の仮値を求めます。
+     *
+     * バーを `segments` 等分し、クリックされた区画の中央値を刻みへ丸めます。
+     * DisplayEntity上で真のドラッグはできないため、区画クリックで連続操作を代替します。
+     */
+    fun valueForSegment(spec: SliderSpec, index: Int, segments: Int = SettingSpec.SLIDER_SEGMENTS): String {
+        require(segments > 0) { "区画数が不正です: $segments" }
+        val clamped = index.coerceIn(0, segments - 1)
+        val span = spec.max - spec.min
+        val raw = if (span <= 0.0) spec.min else spec.min + span * (clamped + 0.5) / segments
+        return format(spec, raw)
+    }
+
     /** テンプレート参照を含む値はSliderで扱いません。 */
     fun isTemplateReference(raw: String?): Boolean {
         if (raw.isNullOrBlank()) return false
@@ -99,11 +113,14 @@ object SliderValuePolicy {
 /**
  * 設定項目ごとの値仕様と表示振り分けです。
  *
- * 新規設定を追加する場合はこの表へ行を追加し、`CommandDialogSpecs` の
- * 検証範囲と矛盾しない範囲・刻みを設定します。全項目の一括移行ではなく、
- * この表が新規設定の従うべき規則の正本になります。
+ * 新規設定にSliderを置く場合は `SLIDER_FIELDS` へ行を追加します。
+ * 範囲・刻み・既定値は `CommandDialogSpecs` の共有正本から導出するため、
+ * ここでの手作業の同期は不要です。
  */
 object SettingSpec {
+    /** Sliderバーの区画数です。表示と値解決で共有します。 */
+    const val SLIDER_SEGMENTS = 12
+
     /** Checkboxで直接切り替える二値項目です。 */
     private val CHECKBOX_FIELDS: Set<Pair<CommandType, String>> = setOf(
         CommandType.ENTITY_ACTION to "overwrite",
