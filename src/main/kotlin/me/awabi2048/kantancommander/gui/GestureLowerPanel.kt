@@ -3570,7 +3570,9 @@ class GestureLowerPanel(
                     bottomAligned = true,
                 ),
             )
-            if (includeTemporary && !embedded) {
+            // 移動先では従来どおり一時変数対象を出さず、内包役割でも出しません。
+            // 内包TEMPORARY対象の実行経路が未整備のため出しません。
+            if (includeTemporary && !embedded && context.role != CommandSettingRole.DESTINATION) {
                 add(
                     SettingChoice(
                         id = "target:${TargetCategory.TEMPORARY.name}",
@@ -3642,67 +3644,9 @@ class GestureLowerPanel(
      * 対象由来位置を無効化し、理由を表示します。
      */
     private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false): List<SettingChoice> {
-        val destination = context.role == CommandSettingRole.DESTINATION
+        // 移動先も位置画面と表示・文言・導線が完全同一です。保存先だけが
+        // 移動先用に振り分けられます（受付側で対応します）。
         val current = CommandSettingsModel.positionSpec(node, context.role)
-        if (destination) {
-            // 移動先は位置設定・対象設定へ帰着させる4項目ハブです。
-            // プリセット・詳細設定の区別はなく、上3項目は上揃え、
-            // 一時変数は詳細扱いで下揃えにします。
-            val target = CommandSettingsModel.targetSpec(node, context.role)
-            val facing = CommandSettingsModel.facingSpec(node, CommandSettingRole.DESTINATION_FACING)
-            val topEntries = listOf(
-                SettingChoice(
-                    id = "destination-face:position",
-                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_SPECIFIC),
-                    selected = current != null && current.kind != PositionKind.TEMPORARY,
-                ),
-                SettingChoice(
-                    id = "destination-face:entity",
-                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_ENTITY),
-                    selected = target != null,
-                ),
-                SettingChoice(
-                    id = "destination-face:angle",
-                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_ANGLE),
-                    selected = facing?.kind == FacingKind.ROTATION,
-                ),
-            )
-            val temporarySelected = current?.kind == PositionKind.TEMPORARY ||
-                facing?.kind == FacingKind.TEMPORARY
-            return topEntries + listOf(
-                SettingChoice(
-                    id = "destination-face:temporary",
-                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE),
-                    selected = temporarySelected,
-                    bottomAligned = true,
-                ),
-            )
-        }
-        // 子画面では位置専用の選択肢に絞り、対象由来と一時変数は親ハブへ残します。
-        if (destination && inChild) {
-            return listOf(
-                SettingPresets.PositionPreset.CONTROL_BLOCK to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION,
-                SettingPresets.PositionPreset.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
-                SettingPresets.PositionPreset.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES,
-            ).map { (preset, label) ->
-                SettingChoice(
-                    id = "position-preset:${preset.name}",
-                    label = KcI18n.text(player, label),
-                    selected = SettingPresets.matchPositionPreset(current) == preset,
-                    enabled = CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
-                        node,
-                        context.role,
-                        presetKind(preset),
-                    ),
-                    disabledHoverText = if (preset == SettingPresets.PositionPreset.CONTROL_BLOCK) {
-                        CommandSettingAvailabilityPolicy.CONTROL_BLOCK_POSITION_DISABLED_HOVER
-                    } else null,
-                    children = if (preset == SettingPresets.PositionPreset.MYWORLD_SPAWN) {
-                        myworldSpawnChoices(current?.myworldSpawn, player)
-                    } else emptyList(),
-                )
-            }
-        }
         val matchedPreset = SettingPresets.matchPositionPreset(current)
         val presets = listOf(
             SettingPresets.PositionPreset.CONTROL_BLOCK to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION,
@@ -3821,7 +3765,7 @@ class GestureLowerPanel(
      * issue #29 の向き親画面です。
      *
      * 頻用する4プリセットを先頭に直接提示し、汎用設定（一時変数・
-     * エンティティ指定）は下部導線へ残します。既存の「現在の向き」は
+     * エンティティ指定）は下揃えの詳細導線へ残します。既存の「現在の向き」は
      * 内部表現として残しますが、新規プリセットには表示しません。
      * 旧データで設定済みの場合だけ従来選択肢として表示します。
      */
@@ -3858,12 +3802,14 @@ class GestureLowerPanel(
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
                 selected = current?.kind == FacingKind.TARGET && matchedPreset == null,
                 children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset", context.role),
+                bottomAligned = true,
             ),
         )) + listOf(
             SettingChoice(
                 id = "facing:${FacingKind.TEMPORARY.name}",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE),
                 selected = current?.kind == FacingKind.TEMPORARY,
+                bottomAligned = true,
             ),
         )
     }
