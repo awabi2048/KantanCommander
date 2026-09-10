@@ -563,4 +563,62 @@ class ExecutableScriptValidatorTest {
             },
         )
     }
+
+    @Test
+    fun `single only positions reject embedded targets`() {
+        val script = DiskScript(name = "single-target-position", owner = UUID.randomUUID())
+        val block = GraphEditor.append(script.graph, CommandType.BLOCK_OPERATION).apply {
+            params["operation"] = BlockOperationMode.FILL.name
+            params["block"] = "minecraft:stone"
+            blockFromSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEARBY_PLAYERS),
+            )
+            blockToSpec = PositionSpec(PositionKind.COORDINATES, x = 0.0, y = 64.0, z = 0.0)
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == block.id && it.message.contains("複数位置は指定できません")
+            },
+            "fillの始点に対象由来位置は使えない",
+        )
+    }
+
+    @Test
+    fun `embedded targets in multi positions are validated`() {
+        val script = DiskScript(name = "embedded-target", owner = UUID.randomUUID())
+        val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:zombie"
+            summonPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.TEMPORARY, tempName = "!!!"),
+            )
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any { it.nodeId == summon.id },
+            "内包対象の不正な一時変数名は検証で検出する",
+        )
+    }
+
+    @Test
+    fun `execution position accepts entity set resolution`() {
+        val script = DiskScript(name = "execution-position-target", owner = UUID.randomUUID())
+        val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:zombie"
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            executionPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+        }
+
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none {
+                it.nodeId == summon.id && it.message.contains("複数位置は指定できません")
+            },
+            "実行位置の対象由来は単一制約の対象外",
+        )
+    }
 }

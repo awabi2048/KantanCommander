@@ -38,6 +38,7 @@ import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
+import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -179,7 +180,8 @@ class GestureLowerPanel(
         }
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = field.value(node).render(player)
-        val choices = settingTreeNodes(node, context, screen, fieldKey, player, attentionFields).map { choice ->
+        // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
+        val choices = settingTreeNodes(node, context, screen, fieldKey, player, attentionFields, inChild = true).map { choice ->
             if (state.settingTreePath?.nodeIds?.lastOrNull() == choice.id) {
                 choice.copy(selected = true)
             } else choice
@@ -2433,6 +2435,40 @@ class GestureLowerPanel(
                 else -> null
             }
         }
+        // issue #29: プリセットの説明は既存の種別説明を再利用し、新規キーを増やしません。
+        choice.id.startsWith("target-preset:") || choice.id.startsWith("position-entity-preset:") ||
+            choice.id.startsWith("facing-entity-preset:") -> when (choice.id.substringAfterLast(":")) {
+            "NEARBY_PLAYERS", "MYWORLD_PLAYERS", "NEAREST_PLAYER" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_PLAYER_TARGET)
+            else ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ENTITY_TARGET)
+        }
+        choice.id.startsWith("position-preset:") -> when (choice.id.substringAfterLast(":")) {
+            "CONTROL_BLOCK" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_CONTROL_BLOCK)
+            "NEAREST_PLAYER", "NEARBY_PLAYERS" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TARGET)
+            "MYWORLD_SPAWN" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_MYWORLD_SPAWN)
+            else ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_COORDINATES)
+        }
+        choice.id == "position-entity" ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_TARGET)
+        choice.id.startsWith("facing-preset:") -> when (choice.id.substringAfterLast(":")) {
+            "NEAREST_PLAYER" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_TARGET)
+            "MYWORLD_SPAWN" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_MYWORLD_SPAWN)
+            "COORDINATES" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_COORDINATES)
+            else ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_ROTATION)
+        }
+        choice.id == "facing-entity" ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_FACING_TARGET)
+        choice.id.startsWith("myworld-spawn:") ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_POSITION_MYWORLD_SPAWN)
         else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_DEFAULT)
     }
 
@@ -2596,7 +2632,9 @@ class GestureLowerPanel(
         fieldKey: String,
         player: Player,
         attentionFields: Set<String> = emptySet(),
-    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player)
+        // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
+        inChild: Boolean = false,
+    ): List<GestureSettingTreeNode> = rawSettingTreeNodes(node, context, screen, fieldKey, player, inChild)
         .map { decorateSettingChoice(node, context, fieldKey, it, attentionFields) }
 
     private fun rawSettingTreeNodes(
@@ -2605,9 +2643,10 @@ class GestureLowerPanel(
         screen: GestureSettingScreen,
         fieldKey: String,
         player: Player,
+        inChild: Boolean = false,
     ): List<GestureSettingTreeNode> = when (screen) {
-            GestureSettingScreen.TARGET -> targetChoices(node, context, player)
-        GestureSettingScreen.POSITION -> positionChoices(node, context, player).map { choice ->
+        GestureSettingScreen.TARGET -> targetChoices(node, context, player)
+        GestureSettingScreen.POSITION -> positionChoices(node, context, player, inChild).map { choice ->
             if (choice.id == "position:${PositionKind.TARGET.name}" && context.role == CommandSettingRole.DESTINATION) {
                 // 移動先のインライン選択は、実体の分類（プレイヤー／プレイヤー以外）だけを
                 // 選ぶ画面契約です。一時変数は通常の対象設定経路に残し、この選択肢へ混在させません。
@@ -2746,10 +2785,16 @@ class GestureLowerPanel(
         fieldKey: String,
         role: CommandSettingRole?,
     ): Set<String> = when {
-        choiceId.startsWith("target:") || choiceId.startsWith("kind:") || choiceId.startsWith("filter:") ->
+        choiceId.startsWith("target:") || choiceId.startsWith("target-preset:") ||
+            choiceId.startsWith("kind:") || choiceId.startsWith("filter:") ->
             setOfNotNull(role?.tabFieldKey ?: "target")
-        choiceId.startsWith("position:") -> setOfNotNull(role?.tabFieldKey ?: "position")
-        choiceId.startsWith("facing:") -> setOfNotNull(role?.tabFieldKey ?: "facing")
+        choiceId.startsWith("position:") || choiceId.startsWith("position-preset:") ||
+            choiceId == "position-entity" || choiceId.startsWith("position-entity-preset:") ||
+            choiceId.startsWith("myworld-spawn:") ->
+            setOfNotNull(role?.tabFieldKey ?: "position")
+        choiceId.startsWith("facing:") || choiceId.startsWith("facing-preset:") ||
+            choiceId == "facing-entity" || choiceId.startsWith("facing-entity-preset:") ->
+            setOfNotNull(role?.tabFieldKey ?: "facing")
         choiceId == "condition-kind" -> setOf("kind")
         choiceId.startsWith("condition-") -> setOf("condition")
         choiceId.startsWith("block:") -> setOf("operation")
@@ -2783,6 +2828,31 @@ class GestureLowerPanel(
     ): Boolean {
         val id = choice.id
         return when {
+            id.startsWith("target-preset:") -> choice.selected &&
+                SettingPresets.matchTargetPreset(CommandSettingsModel.targetSpec(node, context.role))?.name ==
+                id.removePrefix("target-preset:") &&
+                CommandSettingsModel.isFieldConfigured(node, "target", context.role)
+            id.startsWith("position-preset:") -> choice.selected &&
+                SettingPresets.matchPositionPreset(CommandSettingsModel.positionSpec(node, context.role))?.name ==
+                id.removePrefix("position-preset:") &&
+                CommandSettingsModel.positionSpec(node, context.role) != null
+            id.startsWith("facing-preset:") -> choice.selected &&
+                SettingPresets.matchFacingPreset(CommandSettingsModel.facingSpec(node, context.role))?.name ==
+                id.removePrefix("facing-preset:") &&
+                CommandSettingsModel.facingSpec(node, context.role) != null
+            id.startsWith("position-entity-preset:") -> choice.selected &&
+                SettingPresets.matchTargetPreset(CommandSettingsModel.positionSpec(node, context.role)?.target)?.name ==
+                id.removePrefix("position-entity-preset:") &&
+                CommandSettingsModel.positionSpec(node, context.role) != null
+            id.startsWith("facing-entity-preset:") -> choice.selected &&
+                SettingPresets.matchTargetPreset(CommandSettingsModel.facingSpec(node, context.role)?.target)?.name ==
+                id.removePrefix("facing-entity-preset:") &&
+                CommandSettingsModel.facingSpec(node, context.role) != null
+            id == "position-entity" -> choice.selected &&
+                CommandSettingsModel.positionSpec(node, context.role)?.kind == PositionKind.TARGET
+            id == "facing-entity" -> choice.selected &&
+                CommandSettingsModel.facingSpec(node, context.role)?.kind == FacingKind.TARGET
+            id.startsWith("myworld-spawn:") -> choice.selected
             id.startsWith("target:") -> choice.selected &&
                 CommandSettingsModel.targetCategory(CommandSettingsModel.targetSpec(node, context.role)?.kind) ==
                 targetCategoryFromChoice(id) &&
@@ -3183,25 +3253,48 @@ class GestureLowerPanel(
         ).joinToString(" / ")
     }
 
-    /** 対象種別を木の親ノードとして表示し、詳細条件を子ノードへぶら下げます。 */
+    /**
+     * issue #29 の対象親画面です。
+     *
+     * 頻用する4プリセットを先頭に直接提示し、従来の汎用設定（一時変数・
+     * カテゴリ分類と詳細フィルター）は下部導線へ残します。プリセット選択時は
+     * 以前の詳細フィルター等を引き継がず正規化し、詳細で外れた場合は
+     * 選択済み表示にしません。
+     */
     private fun targetChoices(
         node: CommandNode,
         context: CommandSettingContext,
         player: Player,
         includeTemporary: Boolean = true,
     ): List<SettingChoice> {
-        val current = CommandSettingsModel.targetSpec(node, context.role)?.kind
-        val choices = buildList {
+        val current = CommandSettingsModel.targetSpec(node, context.role)
+        val presets = listOf(
+            SettingPresets.TargetPreset.NEARBY_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS,
+            SettingPresets.TargetPreset.MYWORLD_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL_PLAYERS,
+            SettingPresets.TargetPreset.NEAREST_PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
+            SettingPresets.TargetPreset.NEARBY_ENTITIES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES,
+        ).map { (preset, label) ->
+            SettingChoice(
+                id = "target-preset:${preset.name}",
+                label = KcI18n.text(player, label),
+                selected = SettingPresets.matchTargetPreset(current) == preset &&
+                    CommandSettingsModel.isFieldConfigured(node, "target", context.role),
+            )
+        }
+        val categories = buildList {
             add(TargetCategory.PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER)
             add(TargetCategory.NON_PLAYER_ENTITY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY)
             if (includeTemporary) {
                 add(TargetCategory.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE)
             }
         }
-        return choices.map { (category, label) ->
-            val selected = CommandSettingsModel.targetCategoryMatches(current, category) &&
-                CommandSettingsModel.isFieldConfigured(node, "target", context.role)
-            val effectiveKind = if (selected) current else CommandSettingsModel.defaultTargetKind(category)
+        val currentKind = current?.kind
+        val detailed = categories.map { (category, label) ->
+            val selected = CommandSettingsModel.targetCategoryMatches(currentKind, category) &&
+                CommandSettingsModel.isFieldConfigured(node, "target", context.role) &&
+                SettingPresets.matchTargetPreset(current) == null
+            val effectiveKind = if (selected && currentKind != null) currentKind
+            else CommandSettingsModel.defaultTargetKind(category)
             SettingChoice(
                 id = "target:${category.name}",
                 label = KcI18n.text(player, label),
@@ -3211,6 +3304,7 @@ class GestureLowerPanel(
                 } else emptyList(),
             )
         }
+        return presets + detailed
     }
 
     /**
@@ -3340,49 +3434,186 @@ class GestureLowerPanel(
         return filterChoices
     }
 
-    private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
+    /**
+     * issue #29 の位置親画面です。
+     *
+     * 頻用する5プリセットを先頭に直接提示し、汎用設定（一時変数・
+     * エンティティ由来位置）は下部導線へ残します。単一限定の役割では
+     * 対象由来位置を無効化し、理由を表示します。
+     */
+    private fun positionChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false): List<SettingChoice> {
         val destination = context.role == CommandSettingRole.DESTINATION
-        val current = CommandSettingsModel.positionKind(node, context.role)
-        val choices = if (destination) {
-            listOf(
+        val current = CommandSettingsModel.positionSpec(node, context.role)
+        if (destination) {
+            val choices = listOf(
                 PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES_SET,
                 PositionKind.TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_OTHER_ENTITY,
                 PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
             )
-        } else {
-            listOf(
-                PositionKind.DISK to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION,
-                PositionKind.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
-                PositionKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES,
-                PositionKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE,
+            return choices.map { (kind, label) ->
+                SettingChoice(
+                    id = "position:${kind.name}",
+                    label = KcI18n.text(player, label),
+                    selected = current?.kind == kind,
+                    enabled = CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(node, context.role, kind),
+                    disabledHoverText = if (kind == PositionKind.DISK) {
+                        CommandSettingAvailabilityPolicy.CONTROL_BLOCK_POSITION_DISABLED_HOVER
+                    } else null,
+                )
+            }
+        }
+        val matchedPreset = SettingPresets.matchPositionPreset(current)
+        val presets = listOf(
+            SettingPresets.PositionPreset.CONTROL_BLOCK to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION,
+            SettingPresets.PositionPreset.NEAREST_PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
+            SettingPresets.PositionPreset.NEARBY_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS,
+            SettingPresets.PositionPreset.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
+            SettingPresets.PositionPreset.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES,
+        ).map { (preset, label) ->
+            val isMultiPreset = preset == SettingPresets.PositionPreset.NEAREST_PLAYER ||
+                preset == SettingPresets.PositionPreset.NEARBY_PLAYERS
+            val multiEnabled = !isMultiPreset ||
+                CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(context.role)
+            SettingChoice(
+                id = "position-preset:${preset.name}",
+                label = KcI18n.text(player, label),
+                selected = matchedPreset == preset,
+                enabled = multiEnabled &&
+                    CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
+                        node,
+                        context.role,
+                        presetKind(preset),
+                    ),
+                disabledHoverText = when {
+                    !multiEnabled -> CommandSettingAvailabilityPolicy.MULTI_POSITION_DISABLED_HOVER
+                    preset == SettingPresets.PositionPreset.CONTROL_BLOCK -> CommandSettingAvailabilityPolicy.CONTROL_BLOCK_POSITION_DISABLED_HOVER
+                    else -> null
+                },
+                children = if (preset == SettingPresets.PositionPreset.MYWORLD_SPAWN) {
+                    myworldSpawnChoices(current?.myworldSpawn, player)
+                } else emptyList(),
             )
         }
-        return choices.map { (kind, label) ->
+        val entityEnabled = CommandSettingAvailabilityPolicy.isEmbeddedTargetPositionEnabled(context.role)
+        val entityEntry = SettingChoice(
+            id = "position-entity",
+            label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION),
+            selected = current?.kind == PositionKind.TARGET && matchedPreset == null,
+            enabled = entityEnabled,
+            disabledHoverText = if (entityEnabled) null
+            else CommandSettingAvailabilityPolicy.MULTI_POSITION_DISABLED_HOVER,
+            children = embeddedTargetPresetChoices(current?.target, player, "position-entity-preset"),
+        )
+        // 子画面では導線自体を隠し、内包プリセットの選択に集中させます。
+        val bottomEntries = (if (inChild) emptyList() else listOf(entityEntry)) + listOf(
             SettingChoice(
-                id = "position:${kind.name}",
+                id = "position:${PositionKind.TEMPORARY.name}",
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE),
+                selected = current?.kind == PositionKind.TEMPORARY,
+            ),
+        )
+        return presets + bottomEntries
+    }
+
+    /** プリセットが表す位置種別です。選択可否の既存判定へ渡します。 */
+    private fun presetKind(preset: SettingPresets.PositionPreset): PositionKind = when (preset) {
+        SettingPresets.PositionPreset.CONTROL_BLOCK -> PositionKind.DISK
+        SettingPresets.PositionPreset.NEAREST_PLAYER,
+        SettingPresets.PositionPreset.NEARBY_PLAYERS,
+        -> PositionKind.TARGET
+        SettingPresets.PositionPreset.MYWORLD_SPAWN -> PositionKind.MYWORLD_SPAWN
+        SettingPresets.PositionPreset.COORDINATES -> PositionKind.COORDINATES
+    }
+
+    /** issue #29 のスポーン種別2択です。旧単一種別はメンバー用として表示します。 */
+    private fun myworldSpawnChoices(
+        current: me.awabi2048.kantancommander.model.MyworldSpawnKind?,
+        player: Player,
+    ): List<SettingChoice> {
+        val resolved = current ?: me.awabi2048.kantancommander.model.MyworldSpawnKind.MEMBER
+        return listOf(
+            me.awabi2048.kantancommander.model.MyworldSpawnKind.MEMBER to
+                com.awabi2048.ccsystem.api.localization.generated.MyworldGuiSettingsKeys.GUI_SETTINGS_SPAWN_TYPE_MEMBER,
+            me.awabi2048.kantancommander.model.MyworldSpawnKind.GUEST to
+                com.awabi2048.ccsystem.api.localization.generated.MyworldGuiSettingsKeys.GUI_SETTINGS_SPAWN_TYPE_GUEST,
+        ).map { (kind, label) ->
+            SettingChoice(
+                id = "myworld-spawn:${kind.name}",
                 label = KcI18n.text(player, label),
-                selected = current == kind,
-                enabled = CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(node, context.role, kind),
-                disabledHoverText = if (kind == PositionKind.DISK) {
-                    CommandSettingAvailabilityPolicy.CONTROL_BLOCK_POSITION_DISABLED_HOVER
-                } else null,
+                selected = resolved == kind,
             )
         }
     }
 
-    private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player): List<SettingChoice> {
-        val current = CommandSettingsModel.facingSpec(node, context.role)?.kind
-        val choices = buildList {
-            add(FacingKind.CAPTURED to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_FACING)
-            if (context.role == CommandSettingRole.DESTINATION_FACING) {
-                add(FacingKind.TARGET to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET)
-            }
-            add(FacingKind.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COORDINATES)
-            add(FacingKind.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN)
-            add(FacingKind.ROTATION to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC)
-            add(FacingKind.TEMPORARY to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE)
+    private fun embeddedTargetPresetChoices(
+        current: TargetSpec?,
+        player: Player,
+        prefix: String,
+    ): List<SettingChoice> {
+        val matched = SettingPresets.matchTargetPreset(current)
+        return listOf(
+            SettingPresets.TargetPreset.NEARBY_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_PLAYERS,
+            SettingPresets.TargetPreset.MYWORLD_PLAYERS to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ALL_PLAYERS,
+            SettingPresets.TargetPreset.NEAREST_PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
+            SettingPresets.TargetPreset.NEARBY_ENTITIES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES,
+        ).map { (preset, label) ->
+            SettingChoice(
+                id = "$prefix:${preset.name}",
+                label = KcI18n.text(player, label),
+                selected = matched == preset,
+            )
         }
-        return choices.map { (kind, label) -> SettingChoice("facing:${kind.name}", KcI18n.text(player, label), current == kind) }
+    }
+
+    /**
+     * issue #29 の向き親画面です。
+     *
+     * 頻用する4プリセットを先頭に直接提示し、汎用設定（一時変数・
+     * エンティティ指定）は下部導線へ残します。既存の「現在の向き」は
+     * 内部表現として残しますが、新規プリセットには表示しません。
+     * 旧データで設定済みの場合だけ従来選択肢として表示します。
+     */
+    private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false): List<SettingChoice> {
+        val current = CommandSettingsModel.facingSpec(node, context.role)
+        val matchedPreset = SettingPresets.matchFacingPreset(current)
+        val presets = listOf(
+            SettingPresets.FacingPreset.NEAREST_PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
+            SettingPresets.FacingPreset.MYWORLD_SPAWN to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN,
+            SettingPresets.FacingPreset.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COORDINATES,
+            SettingPresets.FacingPreset.NUMERIC to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC,
+        ).map { (preset, label) ->
+            SettingChoice(
+                id = "facing-preset:${preset.name}",
+                label = KcI18n.text(player, label),
+                selected = matchedPreset == preset,
+                children = if (preset == SettingPresets.FacingPreset.MYWORLD_SPAWN) {
+                    myworldSpawnChoices(current?.myworldSpawn, player)
+                } else emptyList(),
+            )
+        }
+        val legacy = if (current?.kind == FacingKind.CAPTURED) {
+            listOf(
+                SettingChoice(
+                    id = "facing:${FacingKind.CAPTURED.name}",
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CURRENT_FACING),
+                    selected = true,
+                ),
+            )
+        } else emptyList()
+        return presets + legacy + (if (inChild) emptyList() else listOf(
+            SettingChoice(
+                id = "facing-entity",
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
+                selected = current?.kind == FacingKind.TARGET && matchedPreset == null,
+                children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset"),
+            ),
+        )) + listOf(
+            SettingChoice(
+                id = "facing:${FacingKind.TEMPORARY.name}",
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE),
+                selected = current?.kind == FacingKind.TEMPORARY,
+            ),
+        )
     }
 
     private fun conditionKindChoices(node: CommandNode, player: Player): List<SettingChoice> =
