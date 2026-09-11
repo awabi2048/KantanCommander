@@ -7,7 +7,6 @@ import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
-import me.awabi2048.kantancommander.model.normalizeConditionSubjects
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
 import java.math.BigDecimal
@@ -172,8 +171,6 @@ class ScriptStore(
     private fun saveLocked(script: DiskScript, editorId: UUID?) {
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) { "unsupported script format" }
         require(script.revision >= 0L) { "unsupported negative script revision" }
-        // issue #27: 保存前に条件を単一正本へ正規化し、旧 `kind` 欄の残存を書き出しません。
-        script.graph.normalizeConditionSubjects()
         val validation = validateRecursively(script.graph)
         require(validation.isEmpty()) { validation.joinToString("; ") }
         // 旧listedフラグを一覧の正本として再出力しないよう、保存境界で必ず
@@ -467,10 +464,8 @@ class ScriptStore(
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) {
             "移行後のプログラムディスク形式が不正です: ${script.formatVersion}"
         }
-        // issue #27: 旧 `kind` のみの条件保存を判定対象へ正規化します。
-        // 以後の読込・検証・実行・表示・出力は `subject` だけを参照します。
-        // 未知・欠落の `kind` はここでは落とさず、検証層の未設定扱いに委ねます。
-        script.graph.normalizeConditionSubjects()
+        // issue #27: 条件の判定対象は `subject` 欄が単一正本です。旧 `kind` 欄の
+        // 変換は行わず、旧値は未設定として検証層で拒否します。
         // 構造そのものの違反は破損データとして隔離する。
         val structuralViolations = validateRecursively(script.graph, UNBOUNDED_LIMITS)
         require(structuralViolations.isEmpty()) { structuralViolations.joinToString("; ") }

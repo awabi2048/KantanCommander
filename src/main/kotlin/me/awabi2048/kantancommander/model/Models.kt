@@ -513,24 +513,13 @@ internal data class ExecutionContextSpec(
     fun hasAnySetting(): Boolean = executor != null || target != null || position != null || facing != null
 }
 
-enum class ConditionKind(val key: LocalizationKey<String>) {
-    TARGET_EXISTS(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS),
-    PLAYER_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
-    VARIABLE_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
-    BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
-    CONTROL_BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
-}
-
 /**
  * issue #27: 条件分岐の判定対象です。条件の読込・検証・実行・表示・出力の単一正本です。
  *
- * 旧 `ConditionKind` は「何を判定するか」と「どの対象について判定するか」が
- * 一つの種類に混在していました（例: `PLAYER_STATE`）。GUI では利用者が
- * 「判定対象 → 対象に応じた条件」の順に設定できるよう、この5区分へ置き換えます。
+ * 旧 `kind` 分類（`TARGET_EXISTS`／`PLAYER_STATE` 等）は廃止し、この5区分へ置き換えます。
  * `プレイヤー` と `その他エンティティ` は UI 上区別しますが、条件評価上はいずれも
  * Entity 系として同じ基本ルール（一致対象が1件以上存在すれば成立・絞り込みはAND）を用います。
- * 旧 `ConditionKind` は読込時正規化の入口だけに残し、保存・分岐の正本にしません。
- * `TARGET_EXISTS` は GUI の独立カテゴリとして再露出させません。
+ * 旧 `kind` 保存の変換処理は残さず、旧値は未設定として検証層で拒否します。
  */
 enum class ConditionSubject(val key: LocalizationKey<String>) {
     PLAYER(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
@@ -540,48 +529,20 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
     CONTROL_BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
 }
 
-/** プレイヤー系の対象種別かどうかを返します。旧 `TARGET_EXISTS` の読込時振分けに使います。 */
-fun TargetKind.isPlayerKind(): Boolean = when (this) {
-    TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS,
-    TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER,
-    -> true
-    TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES,
-    TargetKind.FIXED_ENTITY, TargetKind.TEMPORARY,
-    -> false
-}
-
-/**
- * 旧 `ConditionKind` に対応する判定対象を返します。
- *
- * 読込時正規化の境界だけで使います。実行・検証・表示・出力の分岐には使わず、
- * 正規化後は `ConditionSubject` だけを参照します。
- */
-fun ConditionKind.toSubject(targetSpec: TargetSpec? = null): ConditionSubject = when (this) {
-    ConditionKind.PLAYER_STATE -> ConditionSubject.PLAYER
-    ConditionKind.VARIABLE_STATE -> ConditionSubject.VARIABLE
-    ConditionKind.BLOCK_STATE -> ConditionSubject.BLOCK
-    ConditionKind.CONTROL_BLOCK_STATE -> ConditionSubject.CONTROL_BLOCK
-    // 旧 `TARGET_EXISTS` は対象種別に応じて振り分けます。対象未設定は中立なその他扱いです。
-    ConditionKind.TARGET_EXISTS ->
-        if (targetSpec?.kind?.isPlayerKind() == true) ConditionSubject.PLAYER
-        else ConditionSubject.OTHER_ENTITY
-}
-
 /**
  * ノードの判定対象を返します。条件の単一正本である `params["subject"]` だけを読みます。
  *
  * 未設定・不正値は null とし、旧 `kind` への推測フォールバックは行いません。
- * 旧保存の読込は保存境界の正規化（`CommandGraph.normalizeConditionSubjects`）が担い、
- * ここでは正規化済みの対象だけを扱います。null は検証層で未設定として拒否し、
- * 実行層では評価失敗として停止します。
+ * null は検証層で未設定として拒否し、実行層では評価失敗として停止します。
  */
 fun CommandNode.conditionSubject(): ConditionSubject? =
     params["subject"]?.takeIf(String::isNotBlank)
         ?.let { runCatching { ConditionSubject.valueOf(it) }.getOrNull() }
 
 /**
- * 判定対象を設定します。`subject` 欄だけを書き換え、旧 `kind` 欄は残しません。
+ * 判定対象を設定します。`subject` 欄だけを書き換えます。
  *
+ * 残存する旧 `kind` 欄があれば除去し、単一正本にします。
  * 対象固有の詳細欄（sneaking/item/variable/operator/value/block 等）は削除せず保持します。
  * 評価・検証側で現在の判定対象に関係ない欄は無視するため、対象切替えでの入力消失を防ぎます。
  */
@@ -590,34 +551,6 @@ fun CommandNode.setConditionSubject(subject: ConditionSubject) {
     params.remove("kind")
     markConfigured("subject")
     clearConfigured("kind")
-}
-
-/**
- * グラフ内の条件ノードを単一正本へ正規化します。
- *
- * 保存境界（読込直後・保存直前）で呼び出し、旧 `kind` のみの保存を判定対象へ移します。
- * 未知・欠落の `kind` はここでは落とさず、検証層の未設定扱いに委ねます。
- * 正規化後は `kind` 欄を除去し、二重保存を残しません。
- * snapshot・foldedGraph の内部グラフも再帰的に正規化します。
- */
-fun CommandGraph.normalizeConditionSubjects() {
-    nodes.values.forEach { node ->
-        if (node.type == CommandType.CONDITION || node.type == CommandType.FOLDED_IF) {
-            val current = node.conditionSubject()
-            if (current == null) {
-                val legacy = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-                if (legacy != null) {
-                    node.params["subject"] = legacy.toSubject(node.targetSpec).name
-                    node.markConfigured("subject")
-                }
-            }
-            // 単一正本化：残存 `kind` 欄とその明示設定記録を除去します。
-            node.clearConfigured("kind")
-            node.params.remove("kind")
-        }
-        node.snapshot?.normalizeConditionSubjects()
-        node.foldedGraph?.normalizeConditionSubjects()
-    }
 }
 
 /** 制御ブロックの状態条件として選択できる判定項目です。 */

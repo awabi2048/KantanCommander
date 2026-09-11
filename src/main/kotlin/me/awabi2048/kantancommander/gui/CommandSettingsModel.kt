@@ -156,7 +156,7 @@ object CommandSettingsModel {
     /**
      * GUIで設定元を選べる通常コマンドの値だけを列挙します。
      *
-     * CONDITIONのitem/blockは同名の保存欄を使いますが、BLOCK_STATEは実行側が
+     * CONDITIONのitem/blockは同名の保存欄を使いますが、ブロック判定は実行側が
      * blockTempRefを解決せず、条件詳細も独立した値入力画面です。そのため、ここへ
      * 含めるのは実行処理・バニラ出力・既存UIが同じ意味を共有する4つの通常値です。
      */
