@@ -55,7 +55,9 @@ import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
@@ -2944,7 +2946,7 @@ class GestureSequenceEditor(
         if (field.key == "item" && (
                 node.type == CommandType.GIVE_ITEM ||
                     (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
+                    (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.PLAYER) ||
                     node.type == CommandType.TEMP_SET
                 )) {
             clearSettingState()
@@ -3131,7 +3133,7 @@ class GestureSequenceEditor(
         if (fieldKey == "item" && (
                 node.type == CommandType.GIVE_ITEM ||
                     (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name) ||
+                    (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.PLAYER) ||
                     node.type == CommandType.TEMP_SET
                 )) {
             applyHeldItem(player, context)
@@ -3139,7 +3141,7 @@ class GestureSequenceEditor(
         }
         if (fieldKey == "block" && (
                 node.type == CommandType.BLOCK_OPERATION ||
-                    (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                    (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.BLOCK) ||
                     (node.type == CommandType.TEMP_SET &&
                         TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
                 )) {
@@ -6271,9 +6273,11 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.CONDITION_KIND -> {
                 if (group != "condition-kind") return
-                val kind = runCatching { ConditionKind.valueOf(value) }.getOrNull() ?: return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "kind", kind.name)
+                // issue #27: 判定対象ベースで保存します。単一正本の `subject` 欄だけを扱い、
+                // 旧 `kind` 形式のIDは受け付けません。
+                val subject = runCatching { ConditionSubject.valueOf(value) }.getOrNull() ?: return
+                if (updateSettingNode(player, settingContext) { node ->
+                        node.setConditionSubject(subject)
                     }) showSettingScreen()
             }
             GestureSettingScreen.CONDITION_DETAIL -> {

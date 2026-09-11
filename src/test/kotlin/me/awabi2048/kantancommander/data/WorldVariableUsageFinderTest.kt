@@ -3,7 +3,7 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import java.util.UUID
@@ -25,7 +25,7 @@ class WorldVariableUsageFinderTest {
         )
         val condition = node(
             CommandType.CONDITION,
-            "kind" to ConditionKind.VARIABLE_STATE.name,
+            "subject" to ConditionSubject.VARIABLE.name,
             "variable" to "counter",
         )
         val script = script("program", graph(display, variable, condition))

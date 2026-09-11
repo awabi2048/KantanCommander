@@ -2,10 +2,11 @@ package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.conditionSubject
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.Locale
@@ -156,12 +157,12 @@ internal object WorldVariableReferenceScanner {
                 node.params.values.forEach { raw ->
                     VariableTemplate.references(raw).forEach(::add)
                 }
-                // VARIABLEの対象名とVARIABLE_STATEの比較対象は、${name}ではなく
+                // VARIABLEの対象名と変数判定の比較対象は、${name}ではなく
                 // 構造化された名前欄なので、テンプレート走査とは別に明示します。
                 if (node.type == CommandType.VARIABLE) add(node.string("name"))
                 if (
                     node.type == CommandType.CONDITION &&
-                    node.string("kind").equals(ConditionKind.VARIABLE_STATE.name, ignoreCase = true)
+                    node.conditionSubject() == ConditionSubject.VARIABLE
                 ) {
                     add(node.string("variable"))
                 }

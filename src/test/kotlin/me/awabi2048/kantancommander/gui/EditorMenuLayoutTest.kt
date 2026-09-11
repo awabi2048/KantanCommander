@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
@@ -34,7 +36,7 @@ class EditorMenuLayoutTest {
             params["action"] = "equip"
             params["slot"] = "OFF_HAND"
         }
-        val condition = CommandType.CONDITION.newNode().apply { params["kind"] = "PLAYER_STATE" }
+        val condition = CommandType.CONDITION.newNode().apply { setConditionSubject(ConditionSubject.PLAYER) }
         val variable = CommandType.VARIABLE.newNode().apply { params["value"] = "\${CURRENT_LOOP_COUNT}" }
         val loop = CommandType.FOR_START.newNode().apply { params["count"] = "3" }
 

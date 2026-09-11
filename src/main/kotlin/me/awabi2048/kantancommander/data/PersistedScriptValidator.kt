@@ -4,6 +4,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.MyworldSpawnKind
@@ -68,6 +69,19 @@ object PersistedScriptValidator {
         requireUuid(node, "id", path, errors)
         requireEnum(node, "type", path, enumNames<CommandType>(), errors)
         requireStringMap(node, "params", path, errors)
+        // issue #27: 条件の判定対象は単一正本の `subject` 欄です。存在する場合だけ
+        // enum値を検証し、不正値は破損として隔離します。欠落（旧保存・編集中）は許容し、
+        // 読込時正規化と実行前検証に委ねます。
+        if (node["type"]?.asString == "CONDITION" || node["type"]?.asString == "FOLDED_IF") {
+            node["params"]?.takeIf { it.isJsonObject }?.asJsonObject?.get("subject")?.let { raw ->
+                if (!raw.isJsonNull &&
+                    (!raw.isJsonPrimitive || !raw.asJsonPrimitive.isString ||
+                        raw.asString !in enumNames<ConditionSubject>())
+                ) {
+                    errors += "$path/params/subject: 未対応のenum値です"
+                }
+            }
+        }
         optionalStringArray(node, "configuredFields", path, errors)
         listOf("next", "trueNext", "falseNext", "pairedNodeId").forEach {
             optionalUuid(node, it, path, errors)

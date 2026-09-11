@@ -464,6 +464,8 @@ class ScriptStore(
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) {
             "移行後のプログラムディスク形式が不正です: ${script.formatVersion}"
         }
+        // issue #27: 条件の判定対象は `subject` 欄が単一正本です。旧 `kind` 欄の
+        // 変換は行わず、旧値は未設定として検証層で拒否します。
         // 構造そのものの違反は破損データとして隔離する。
         val structuralViolations = validateRecursively(script.graph, UNBOUNDED_LIMITS)
         require(structuralViolations.isEmpty()) { structuralViolations.joinToString("; ") }

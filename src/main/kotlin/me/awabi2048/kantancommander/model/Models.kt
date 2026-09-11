@@ -586,12 +586,44 @@ internal data class ExecutionContextSpec(
     fun hasAnySetting(): Boolean = executor != null || target != null || position != null || facing != null
 }
 
-enum class ConditionKind(val key: LocalizationKey<String>) {
-    TARGET_EXISTS(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_TARGET_EXISTS),
-    PLAYER_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
-    VARIABLE_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
-    BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
-    CONTROL_BLOCK_STATE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
+/**
+ * issue #27: 条件分岐の判定対象です。条件の読込・検証・実行・表示・出力の単一正本です。
+ *
+ * 旧 `kind` 分類（`TARGET_EXISTS`／`PLAYER_STATE` 等）は廃止し、この5区分へ置き換えます。
+ * `プレイヤー` と `その他エンティティ` は UI 上区別しますが、条件評価上はいずれも
+ * Entity 系として同じ基本ルール（一致対象が1件以上存在すれば成立・絞り込みはAND）を用います。
+ * 旧 `kind` 保存の変換処理は残さず、旧値は未設定として検証層で拒否します。
+ */
+enum class ConditionSubject(val key: LocalizationKey<String>) {
+    PLAYER(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
+    OTHER_ENTITY(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_ENTITY_STATE),
+    BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
+    VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
+    CONTROL_BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
+}
+
+/**
+ * ノードの判定対象を返します。条件の単一正本である `params["subject"]` だけを読みます。
+ *
+ * 未設定・不正値は null とし、旧 `kind` への推測フォールバックは行いません。
+ * null は検証層で未設定として拒否し、実行層では評価失敗として停止します。
+ */
+fun CommandNode.conditionSubject(): ConditionSubject? =
+    params["subject"]?.takeIf(String::isNotBlank)
+        ?.let { runCatching { ConditionSubject.valueOf(it) }.getOrNull() }
+
+/**
+ * 判定対象を設定します。`subject` 欄だけを書き換えます。
+ *
+ * 残存する旧 `kind` 欄があれば除去し、単一正本にします。
+ * 対象固有の詳細欄（sneaking/item/variable/operator/value/block 等）は削除せず保持します。
+ * 評価・検証側で現在の判定対象に関係ない欄は無視するため、対象切替えでの入力消失を防ぎます。
+ */
+fun CommandNode.setConditionSubject(subject: ConditionSubject) {
+    params["subject"] = subject.name
+    params.remove("kind")
+    markConfigured("subject")
+    clearConfigured("kind")
 }
 
 /** 制御ブロックの状態条件として選択できる判定項目です。 */
@@ -766,7 +798,8 @@ enum class CommandType(
     )),
     ENTITY_DELETE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONDITION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
-        "kind" to ConditionKind.TARGET_EXISTS.name,
+        // issue #27: 条件の単一正本は判定対象欄です。旧 `kind` 欄は保存しません。
+        "subject" to ConditionSubject.OTHER_ENTITY.name,
         "inverted" to "false",
         "sneaking" to "",
         "item" to "",
@@ -815,7 +848,8 @@ enum class CommandType(
      * 新規追加はできず、CONDITIONの折り畳み操作だけで生成します。
      */
     FOLDED_IF(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
-        "kind" to ConditionKind.TARGET_EXISTS.name,
+        // issue #27: 折り畳み外側は先頭 CONDITION の写しのため、判定対象欄も同じ既定値にします。
+        "subject" to ConditionSubject.OTHER_ENTITY.name,
         "inverted" to "false",
         "sneaking" to "",
         "item" to "",

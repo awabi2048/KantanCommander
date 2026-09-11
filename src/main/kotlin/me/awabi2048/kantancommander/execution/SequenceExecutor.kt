@@ -9,7 +9,8 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateConditionPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -1665,31 +1666,34 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         // issue #26・#29: 有効な実行起点集合です。null の場合は従来の単一起点解決を使います。
         executionOrigins: List<Location>? = null,
     ): ConditionEvaluation {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-            ?: return ConditionEvaluation.INVALID
-        // 和集合が与えられた場合は起点ごとの解決結果を使い回し、重複解決しません。
+        // issue #27: 判定対象ベースで分岐します。条件の単一正本は `subject` 欄であり、
+        // 旧 `kind` へのフォールバックは行いません。旧保存の読込は保存境界の正規化が担います。
+        // 未設定・不正な判定対象は評価失敗として停止し、FALSE 分岐へ畳みません。
+        val subject = node.conditionSubject() ?: return ConditionEvaluation.INVALID
+        // issue #26・#29: 和集合が与えられた場合は起点ごとの解決結果を使い回し、重複解決しません。
         val targets = unionTargets ?: resolveTargets(context, node.targetSpec, session)
-        return when (kind) {
-            ConditionKind.TARGET_EXISTS -> {
+        return when (subject) {
+            // Entity 系は設定条件に一致する対象が1件以上存在すれば成立します。
+            // 任意の1件だけを選んで判定せず、絞り込み条件は原則ANDで評価します。
+            ConditionSubject.OTHER_ENTITY -> {
                 if (targets.isNotEmpty()) {
                     ConditionEvaluation.TRUE
                 } else {
                     ConditionEvaluation.FALSE
                 }
             }
-            ConditionKind.PLAYER_STATE -> {
-                val player = targets.firstOrNull() as? Player ?: return ConditionEvaluation.FALSE
-                val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
-                val sneakingMatches = sneaking == null || player.isSneaking == sneaking
-                val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.ITEM }
-                val item = refTemp?.item ?: node.string("item")
-                val itemData = refTemp?.itemData ?: node.string("itemData")
-                val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
-                if (sneakingMatches && itemMatches) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
+            ConditionSubject.PLAYER -> {
+                // issue #27×#26・#29: 先頭1件でなく対象和集合からPlayerを絞りANY評価します。
+                val players = targets.filterIsInstance<Player>()
+                if (players.isEmpty()) {
+                    ConditionEvaluation.FALSE
+                } else if (players.any { matchesPlayerCondition(node, session, it) }) {
+                    ConditionEvaluation.TRUE
+                } else {
+                    ConditionEvaluation.FALSE
+                }
             }
-            ConditionKind.VARIABLE_STATE -> {
+            ConditionSubject.VARIABLE -> {
                 val value = plugin.variables.get(session.worldId, node.string("variable"))
                     ?: return ConditionEvaluation.UNRESOLVED
                 // 非 NUMBER 変数との数値比較は正常 false ではなく型不一致として分離します。
@@ -1703,7 +1707,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val applicable = compareVariable(value, comparisonValue, operator)
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
-            ConditionKind.BLOCK_STATE -> {
+            // issue #27×#26・#29: 判定対象名はBLOCKへ置換し、複数位置ANY評価と実行起点集合を維持します。
+            // #27単独の単一位置解決へは戻しません。
+            ConditionSubject.BLOCK -> {
                 val expected = CommandValueRules.material(node.string("block"))
                     ?: return ConditionEvaluation.INVALID
                 // issue #29: 複数位置はANY評価です。どこか1か所でTRUEなら全体をTRUE、
@@ -1727,7 +1733,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
                 if (matched) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
-            ConditionKind.CONTROL_BLOCK_STATE -> {
+            ConditionSubject.CONTROL_BLOCK -> {
                 // 制御ブロック自身の現在状態を判定します。複数項目はポリシー側でAND評価し、
                 // 外側の反転指定は既存の条件実行共通処理へ任せます。
                 if (
@@ -1741,9 +1747,31 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ConditionEvaluation.FALSE
                 }
             }
-            // ConditionKind が網羅列挙のため else は置きません。将来の対象追加時は
-            // コンパイルエラーで検出します（#27 の冗長else除去と同一方針）。
+            // when は網羅列挙のため else を置きません。将来の判定対象追加時は
+            // コンパイルエラーで検出します（冗長else除去と同一方針）。
         }
+    }
+
+    /**
+     * issue #27: 単一プレイヤーに対する絞り込み条件（スニーク状態・所持アイテム）をAND評価します。
+     *
+     * 未設定欄は不問として扱い、設定済み欄をすべて満たす場合だけ true です。
+     * 呼び出し側が複数候補へ `any` 適用し、存在判定 semantics を実現します。
+     */
+    private fun matchesPlayerCondition(
+        node: CommandNode,
+        session: ExecutionSession,
+        player: Player,
+    ): Boolean {
+        val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
+        val sneakingMatches = sneaking == null || player.isSneaking == sneaking
+        val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
+            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+            ?.takeIf { it.type == TemporaryVariableType.ITEM }
+        val item = refTemp?.item ?: node.string("item")
+        val itemData = refTemp?.itemData ?: node.string("itemData")
+        val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
+        return sneakingMatches && itemMatches
     }
 
     private fun executeVariable(

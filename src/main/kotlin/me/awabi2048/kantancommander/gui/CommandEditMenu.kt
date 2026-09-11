@@ -24,7 +24,7 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
@@ -2969,8 +2969,8 @@ object EditorMenuLayout {
         )
         CommandType.CONDITION -> listOf(
             field("inverted", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INVERTED, Material.REDSTONE_TORCH) { displayConditionInversion(it.boolean("inverted")) },
-            field("kind", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_KIND, Material.COMPARATOR) { displayCondition(it.string("kind")) },
-            field("condition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_VALUE, Material.TARGET) { displayCondition(it.string("kind")) },
+            field("kind", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_KIND, Material.COMPARATOR) { displayCondition(it) },
+            field("condition", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_VALUE, Material.TARGET) { displayCondition(it) },
         )
         CommandType.DISK_CALL -> listOf(
             field("diskId", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK, Material.MUSIC_DISC_13),
@@ -3266,7 +3266,8 @@ private fun displayFacing(kind: FacingKind) = DisplayValue.Localized(when (kind)
     FacingKind.ROTATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMERIC
 })
 
-private fun displayCondition(value: String) = runCatching { ConditionKind.valueOf(value) }.getOrNull()
+/** 条件の判定対象を表示します。旧インベントリGUIは表示専用であり、編集はGesture側で行います。 */
+private fun displayCondition(node: CommandNode) = node.conditionSubject()
     ?.let { DisplayValue.Localized(it.key) } ?: displayUnset()
 
 private fun displayVariableType(value: String) = runCatching { VariableType.valueOf(value) }.getOrNull()?.let {

@@ -6,7 +6,8 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.DiskScript
@@ -1275,16 +1276,19 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, WorldVariableValue>?,
         temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
     ) {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        if (kind == null) {
-            errors += nodeError(node, path, setOf("kind"), "条件の種類が未設定です")
+        // issue #27: 判定対象ベースで検証します。条件の単一正本は `subject` 欄であり、
+        // 旧 `kind` へのフォールバックは行いません。旧保存の読込は保存境界の正規化が担います。
+        // 未設定・不正な判定対象は「判定対象」タブ（kind）の未設定として拒否します。
+        val subject = node.conditionSubject()
+        if (subject == null) {
+            errors += nodeError(node, path, setOf("kind"), "判定対象が未設定です")
             return
         }
-        when (kind) {
-            ConditionKind.TARGET_EXISTS -> if (node.targetSpec == null) {
+        when (subject) {
+            ConditionSubject.OTHER_ENTITY -> if (node.targetSpec == null) {
                 errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
             }
-            ConditionKind.PLAYER_STATE -> {
+            ConditionSubject.PLAYER -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("condition"), "対象プレイヤーが未設定です")
                 if (node.params["sneaking"]?.isNotBlank() == true && node.params["sneaking"]?.toBooleanStrictOrNull() == null) {
                     errors += nodeError(node, path, setOf("condition"), "スニーク状態の設定が不正です")
@@ -1294,7 +1298,7 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("condition"), "所持アイテムが不正です")
                 }
             }
-            ConditionKind.VARIABLE_STATE -> {
+            ConditionSubject.VARIABLE -> {
                 if (!CommandValueRules.isVariableName(node.string("variable"))) {
                     errors += nodeError(node, path, setOf("condition"), "評価する変数名が不正です")
                 } else checkDefinition(node.string("variable"), VariableType.NUMBER, variableDefinitions, node, path, setOf("condition"), errors)
@@ -1303,13 +1307,13 @@ object ExecutableScriptValidator {
                 }
                 validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
             }
-            ConditionKind.BLOCK_STATE -> {
+            ConditionSubject.BLOCK -> {
                 if (CommandValueRules.material(node.string("block")) == null) {
                     errors += nodeError(node, path, setOf("condition"), "判定するブロックが未設定です")
                 }
                 // 判定位置が未設定の場合は、実行元の制御ブロック位置を使います。
             }
-            ConditionKind.CONTROL_BLOCK_STATE -> {
+            ConditionSubject.CONTROL_BLOCK -> {
                 if (node.selectedControlBlockStates().isEmpty()) {
                     errors += nodeError(node, path, setOf("condition"), "制御ブロックの状態が未設定です")
                 }

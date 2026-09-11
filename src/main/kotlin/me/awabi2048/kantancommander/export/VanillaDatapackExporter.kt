@@ -9,7 +9,8 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
@@ -414,13 +415,14 @@ class VanillaDatapackExporter(
         errors: MutableList<String>,
         worldVariableTypes: Map<String, VariableType>,
     ) {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        if (kind == null) {
-            errors += "${script.id}/${node.id}: 不明な条件の種類です"
+        // issue #27: 判定対象ベースで検証します。単一正本は `subject` 欄です。
+        val subject = node.conditionSubject()
+        if (subject == null) {
+            errors += "${script.id}/${node.id}: 不明な判定対象です"
             return
         }
-        when (kind) {
-            ConditionKind.VARIABLE_STATE -> {
+        when (subject) {
+            ConditionSubject.VARIABLE -> {
                 val variable = node.string("variable")
                 if (variable.isBlank()) {
                     errors += "${script.id}/${node.id}: ワールド内変数名がありません"
@@ -448,13 +450,13 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
                 }
             }
-            ConditionKind.PLAYER_STATE -> {
+            ConditionSubject.PLAYER -> {
                 val itemData = node.string("itemData")
                 if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
                     errors += "${script.id}/${node.id}: アイテムデータ付き所持判定は完全バニラ出力に未対応です"
                 }
             }
-            ConditionKind.CONTROL_BLOCK_STATE ->
+            ConditionSubject.CONTROL_BLOCK ->
                 errors += "${script.id}/${node.id}: 制御ブロックの状態条件は完全バニラ出力に未対応です"
             else -> Unit
         }
@@ -468,7 +470,7 @@ class VanillaDatapackExporter(
         fun annotate(current: CommandGraph) {
             current.nodes.values.forEach { node ->
                 if (node.type == CommandType.CONDITION &&
-                    node.string("kind") == ConditionKind.VARIABLE_STATE.name
+                    node.conditionSubject() == ConditionSubject.VARIABLE
                 ) {
                     val name = node.string("variable")
                     val type = worldVariableTypes[name]
@@ -1549,11 +1551,13 @@ class VanillaDatapackExporter(
         }
     }
 
+    // issue #27: 判定対象ベースで述語を生成します。未設定・不正な判定対象は
+    // 検証で拒否済みのため、ここでは明示的に停止します。
     private fun predicate(node: CommandNode): String = when (
-        ConditionKind.valueOf(node.string("kind", ConditionKind.TARGET_EXISTS.name))
+        node.conditionSubject()
     ) {
-        ConditionKind.TARGET_EXISTS -> "entity ${conditionTarget(node)}"
-        ConditionKind.PLAYER_STATE -> {
+        ConditionSubject.OTHER_ENTITY -> "entity ${conditionTarget(node)}"
+        ConditionSubject.PLAYER -> {
             val nbt = buildList {
                 when (node.string("sneaking").toBooleanStrictOrNull()) {
                     true -> add("Pose:\\\"CROUCHING\\\"")
@@ -1568,7 +1572,7 @@ class VanillaDatapackExporter(
             if (nbt.isEmpty()) "entity $target"
             else "entity ${appendSelectorArguments(target, "nbt={${nbt.joinToString(",")}}")}"
         }
-        ConditionKind.VARIABLE_STATE -> {
+        ConditionSubject.VARIABLE -> {
             val holder = conditionCountHolder(node)
             val raw = node.string("value")
             val value = raw.toDoubleOrNull()?.let(::scaledScore)
@@ -1579,16 +1583,18 @@ class VanillaDatapackExporter(
                 "score $holder kc_runtime $operator ${conditionValueHolder(node)} kc_runtime"
             }
         }
-        ConditionKind.BLOCK_STATE ->
+        ConditionSubject.BLOCK ->
             "block ~ ~ ~ ${node.string("block", "minecraft:air")}"
         // 制御ブロック状態はプラグインの実行元ブロックを参照する条件であり、
         // 完全バニラ出力へ誤変換できないため、検証で拒否したうえでここでも明示的に止めます。
-        ConditionKind.CONTROL_BLOCK_STATE ->
+        ConditionSubject.CONTROL_BLOCK ->
             error("制御ブロックの状態条件は完全バニラ出力に未対応です")
+        // 未設定・不正な判定対象は検証で拒否済みのため、述語生成へ進めません。
+        null -> error("判定対象が未設定です")
     }
 
     private fun conditionPreparation(node: CommandNode, graph: CommandGraph): String? =
-        if (ConditionKind.valueOf(node.string("kind")) == ConditionKind.VARIABLE_STATE) {
+        if (node.conditionSubject() == ConditionSubject.VARIABLE) {
             buildList {
                 add(
                     "execute store result score ${conditionCountHolder(node)} kc_runtime run data get storage " +
@@ -1635,7 +1641,7 @@ class VanillaDatapackExporter(
         "#ct_${node.id.toString().replace("-", "")}"
 
     private fun conditionNeedsInversion(node: CommandNode): Boolean =
-        node.string("kind") == ConditionKind.VARIABLE_STATE.name && node.string("operator") == "!="
+        node.conditionSubject() == ConditionSubject.VARIABLE && node.string("operator") == "!="
 
     private fun comparisonOperator(node: CommandNode): String =
         node.string("operator").takeUnless { it == "!=" } ?: "=="
@@ -1992,10 +1998,10 @@ class VanillaDatapackExporter(
         node: CommandNode,
         context: ExecutionContextSpec?,
     ): TemporaryEntityReference? {
-        // CONDITIONの条件対象として実際に効くTARGET_EXISTS／PLAYER_STATEだけを
+        // CONDITIONの条件対象として実際に効くプレイヤー／その他存在判定だけを
         // 対象にし、変数・ブロック条件の無関係な内部対象状態で分岐を変えません。
-        val conditionKind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        if (conditionKind !in setOf(ConditionKind.TARGET_EXISTS, ConditionKind.PLAYER_STATE)) return null
+        val subject = node.conditionSubject()
+        if (subject != ConditionSubject.OTHER_ENTITY && subject != ConditionSubject.PLAYER) return null
         val explicitTarget = node.targetSpec
         val spec = explicitTarget ?: context?.target ?: context?.executor ?: return null
         if (spec.kind != TargetKind.TEMPORARY) return null

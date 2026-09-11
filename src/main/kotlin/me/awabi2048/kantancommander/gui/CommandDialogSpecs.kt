@@ -6,6 +6,7 @@ import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCl
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
@@ -1124,7 +1125,7 @@ internal object CommandDialogSpecs {
             }
         }
         if (node.type == CommandType.CONDITION && fieldKey == "value" &&
-            node.string("kind") == me.awabi2048.kantancommander.model.ConditionKind.VARIABLE_STATE.name
+            node.conditionSubject() == me.awabi2048.kantancommander.model.ConditionSubject.VARIABLE
         ) {
             return conditionNumberValue
         }

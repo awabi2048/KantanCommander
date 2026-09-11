@@ -2,7 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -627,10 +628,11 @@ class CommandSettingsModelTest {
         CommandSettingsModel.setParameter(action, "action", "ride")
         assertTrue(CommandSettingsModel.isFieldConfigured(action, "action"))
 
+        // issue #27: 条件の単一正本は subject 欄です。旧 kind 欄は使用しません。
         val condition = CommandType.CONDITION.newNode()
-        assertFalse(CommandSettingsModel.isFieldConfigured(condition, "kind"))
-        CommandSettingsModel.setParameter(condition, "kind", ConditionKind.TARGET_EXISTS.name)
-        assertTrue(CommandSettingsModel.isFieldConfigured(condition, "kind"))
+        assertFalse(CommandSettingsModel.isFieldConfigured(condition, "subject"))
+        condition.setConditionSubject(ConditionSubject.OTHER_ENTITY)
+        assertTrue(CommandSettingsModel.isFieldConfigured(condition, "subject"))
 
         val display = CommandType.DISPLAY_TEXT.newNode()
         assertFalse(CommandSettingsModel.isFieldConfigured(display, "mode"))
