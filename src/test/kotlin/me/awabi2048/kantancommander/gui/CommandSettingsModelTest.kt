@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -616,6 +617,34 @@ class CommandSettingsModelTest {
         // 単一参照では上限数を除外します。
         assertFalse(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = true).contains("limit"))
         assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = false).contains("limit"))
+    }
+
+    @Test
+    fun `fresh single choice fields are unconfigured until explicitly set`() {
+        // 初期時点では全項目を未設定とします。既定値との一致だけでは設定済みにしません。
+        val action = CommandType.ENTITY_ACTION.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(action, "action"))
+        CommandSettingsModel.setParameter(action, "action", "ride")
+        assertTrue(CommandSettingsModel.isFieldConfigured(action, "action"))
+
+        val condition = CommandType.CONDITION.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(condition, "kind"))
+        CommandSettingsModel.setParameter(condition, "kind", ConditionKind.TARGET_EXISTS.name)
+        assertTrue(CommandSettingsModel.isFieldConfigured(condition, "kind"))
+
+        val display = CommandType.DISPLAY_TEXT.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(display, "mode"))
+        CommandSettingsModel.setParameter(display, "mode", "tellraw")
+        assertTrue(CommandSettingsModel.isFieldConfigured(display, "mode"))
+
+        val block = CommandType.BLOCK_OPERATION.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(block, "operation"))
+        CommandSettingsModel.setParameter(block, "operation", "setblock")
+        assertTrue(CommandSettingsModel.isFieldConfigured(block, "operation"))
+
+        // 空値の保存は未設定へ戻します。
+        CommandSettingsModel.setParameter(action, "action", "")
+        assertFalse(CommandSettingsModel.isFieldConfigured(action, "action"))
     }
 
 }

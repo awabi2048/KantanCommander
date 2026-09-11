@@ -5876,7 +5876,8 @@ class GestureSequenceEditor(
                     if (state.settingRoute.size > 1) popSettingFrame(player) else showSettingScreen()
                     return
                 }
-                // issue #29: スポーン種別の2択です。子画面からの選択は親へ戻します。
+                // issue #29: スポーン種別の2択です。選択後は子画面内で表示だけを
+                // 切り替え、画面を閉じません。子画面を閉じる導線は戻る操作です。
                 if (group == "myworld-spawn") {
                     val spawn = runCatching { MyworldSpawnKind.valueOf(value) }.getOrNull() ?: return
                     rememberSettingNode(encoded)
@@ -5890,7 +5891,7 @@ class GestureSequenceEditor(
                                 current.copy(kind = PositionKind.MYWORLD_SPAWN, myworldSpawn = spawn),
                             )
                         }) return
-                    if (state.settingRoute.size > 1) popSettingFrame(player) else showSettingScreen()
+                    showSettingScreen()
                     return
                 }
                 if (group != "position") return
