@@ -3179,14 +3179,11 @@ class GestureLowerPanel(
                         SettingPresets.matchPositionPreset(CommandSettingsModel.positionSpec(node, context.role))?.name
                     } == id.removePrefix("position-preset:")
                     ) &&
-                (
-                    CommandSettingsModel.positionSpec(node, context.role) != null ||
-                        CommandSettingsModel.targetSpec(node, context.role) != null
-                    )
+                positionChoiceComplete(node, context.role)
             id.startsWith("facing-preset:") -> choice.selected &&
                 SettingPresets.matchFacingPreset(CommandSettingsModel.facingSpec(node, context.role))?.name ==
                 id.removePrefix("facing-preset:") &&
-                CommandSettingsModel.facingSpec(node, context.role) != null
+                CommandSettingsModel.isFacingSpecComplete(CommandSettingsModel.facingSpec(node, context.role))
             id.startsWith("position-entity-preset:") -> choice.selected &&
                 SettingPresets.matchTargetPreset(CommandSettingsModel.positionSpec(node, context.role)?.target)?.name ==
                 id.removePrefix("position-entity-preset:") &&
@@ -3196,9 +3193,14 @@ class GestureLowerPanel(
                 id.removePrefix("facing-entity-preset:") &&
                 CommandSettingsModel.facingSpec(node, context.role) != null
             id == "position-entity" -> choice.selected &&
-                CommandSettingsModel.positionSpec(node, context.role)?.kind == PositionKind.TARGET
+                CommandSettingsModel.positionSpec(node, context.role)?.kind == PositionKind.TARGET &&
+                positionChoiceComplete(node, context.role)
             id == "facing-entity" -> choice.selected &&
-                CommandSettingsModel.facingSpec(node, context.role)?.kind == FacingKind.TARGET
+                CommandSettingsModel.facingSpec(node, context.role)?.kind == FacingKind.TARGET &&
+                CommandSettingsModel.isFacingSpecComplete(CommandSettingsModel.facingSpec(node, context.role))
+            id == "facing-copy" -> choice.selected &&
+                CommandSettingsModel.facingSpec(node, context.role)?.kind == FacingKind.COPY_ORIENTATION &&
+                CommandSettingsModel.isFacingSpecComplete(CommandSettingsModel.facingSpec(node, context.role))
             id.startsWith("myworld-spawn:") -> choice.selected
             id.startsWith("target:") -> choice.selected &&
                 CommandSettingsModel.targetCategory(CommandSettingsModel.targetSpec(node, context.role)?.kind) ==
@@ -3771,7 +3773,7 @@ class GestureLowerPanel(
                 label = KcI18n.text(player, label),
                 selected = PresetSelectionDisplay.isPresetSelected(
                     matchedPreset == preset,
-                    true,
+                    positionChoiceComplete(node, context.role),
                     detailVisited,
                 ),
                 enabled = multiEnabled &&
@@ -3795,7 +3797,8 @@ class GestureLowerPanel(
         val entityEntry = SettingChoice(
             id = "position-entity",
             label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_ENTITY_POSITION),
-            selected = current?.kind == PositionKind.TARGET && (matchedPreset == null || detailVisited),
+            selected = current?.kind == PositionKind.TARGET && (matchedPreset == null || detailVisited) &&
+                positionChoiceComplete(node, context.role),
             // 再クリックで共用の対象子画面へ進むため、子選択肢は持たせない。
             // 単一限定でも導線自体は開く。
             enabled = true,
@@ -3807,11 +3810,27 @@ class GestureLowerPanel(
             SettingChoice(
                 id = "position:${PositionKind.TEMPORARY.name}",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_TEMPORARY),
-                selected = current?.kind == PositionKind.TEMPORARY,
+                selected = current?.kind == PositionKind.TEMPORARY &&
+                    CommandSettingsModel.isPositionSpecComplete(current),
                 bottomAligned = true,
             ),
         )
         return presets + bottomEntries
+    }
+
+    /**
+     * 位置選択の表示用完全性です。
+     *
+     * 座標・一時変数は必須値の有無を要求します。移動先など対象指定に保存される
+     * 場合は対象側の設定済みで判定します。選択表示されていても未完了の項目は
+     * 未完了扱いにします。
+     */
+    private fun positionChoiceComplete(node: CommandNode, role: CommandSettingRole?): Boolean {
+        val spec = CommandSettingsModel.positionSpec(node, role)
+        if (spec != null) return CommandSettingsModel.isPositionSpecComplete(spec)
+        return if (role == CommandSettingRole.DESTINATION) {
+            CommandSettingsModel.isTargetSpecConfigured(CommandSettingsModel.targetSpec(node, role))
+        } else false
     }
 
     /** プリセットが表す位置種別です。選択可否の既存判定へ渡します。 */
@@ -3882,6 +3901,8 @@ class GestureLowerPanel(
     private fun facingChoices(node: CommandNode, context: CommandSettingContext, player: Player, inChild: Boolean = false, detailVisited: Boolean = false): List<SettingChoice> {
         val current = CommandSettingsModel.facingSpec(node, context.role)
         val matchedPreset = SettingPresets.matchFacingPreset(current)
+        // 追加入力が必要な選択は、選択表示でも必須値が揃うまで未完了とします。
+        val complete = CommandSettingsModel.isFacingSpecComplete(current)
         val presets = listOf(
             SettingPresets.FacingPreset.NEAREST_PLAYER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_PLAYER,
             SettingPresets.FacingPreset.COORDINATES to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COORDINATES,
@@ -3892,7 +3913,7 @@ class GestureLowerPanel(
                 label = KcI18n.text(player, label),
                 selected = PresetSelectionDisplay.isPresetSelected(
                     matchedPreset == preset,
-                    true,
+                    complete,
                     detailVisited,
                 ),
             )
@@ -3902,7 +3923,7 @@ class GestureLowerPanel(
             SettingChoice(
                 id = "facing-entity",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
-                selected = current?.kind == FacingKind.TARGET && (matchedPreset == null || detailVisited),
+                selected = current?.kind == FacingKind.TARGET && (matchedPreset == null || detailVisited) && complete,
                 children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset", context.role),
             ),
         )
@@ -3910,7 +3931,7 @@ class GestureLowerPanel(
             SettingChoice(
                 id = "facing-copy",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COPY_ORIENTATION),
-                selected = current?.kind == FacingKind.COPY_ORIENTATION,
+                selected = current?.kind == FacingKind.COPY_ORIENTATION && complete,
                 children = embeddedTargetPresetChoices(current?.target, player, "facing-copy-preset", context.role),
                 bottomAligned = true,
             ),
@@ -3918,7 +3939,7 @@ class GestureLowerPanel(
             SettingChoice(
                 id = "facing:${FacingKind.TEMPORARY.name}",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE),
-                selected = current?.kind == FacingKind.TEMPORARY,
+                selected = current?.kind == FacingKind.TEMPORARY && complete,
                 bottomAligned = true,
             ),
         )

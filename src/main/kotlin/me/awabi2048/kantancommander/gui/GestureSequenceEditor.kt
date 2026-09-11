@@ -1993,7 +1993,7 @@ class GestureSequenceEditor(
                         val glowColor = if (testActive) null else if (isSelected) Color.YELLOW.asARGB() else null
                         val statusLine = when {
                             incomplete -> Component.text(
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_NODE_INCOMPLETE),
                                 NamedTextColor.RED,
                             )
                             else -> null

@@ -647,4 +647,27 @@ class CommandSettingsModelTest {
         assertFalse(CommandSettingsModel.isFieldConfigured(action, "action"))
     }
 
+    @Test
+    fun `incomplete specs are not complete for display`() {
+        // 座標は必須値が揃うまで未完了とします。
+        assertFalse(CommandSettingsModel.isPositionSpecComplete(PositionSpec(PositionKind.COORDINATES)))
+        assertTrue(
+            CommandSettingsModel.isPositionSpecComplete(PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)),
+        )
+        assertFalse(CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.ROTATION)))
+        assertTrue(
+            CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.ROTATION, yaw = 0f, pitch = 0f)),
+        )
+        // 一時変数は変数名がなければ未完了とします。
+        assertFalse(CommandSettingsModel.isPositionSpecComplete(PositionSpec(PositionKind.TEMPORARY)))
+        assertFalse(CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.TEMPORARY)))
+        // 注視・複写は参照先の設定済みで判定します。
+        assertFalse(CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.TARGET)))
+        assertTrue(
+            CommandSettingsModel.isFacingSpecComplete(
+                FacingSpec(FacingKind.TARGET, target = TargetSpec(TargetKind.NEAREST_PLAYER)),
+            ),
+        )
+    }
+
 }

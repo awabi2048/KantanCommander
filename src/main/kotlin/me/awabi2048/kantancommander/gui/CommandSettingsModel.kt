@@ -1378,7 +1378,7 @@ object CommandSettingsModel {
             }
 
     /** 固定エンティティだけは、種別を選んだだけでは実行対象が確定しません。 */
-    private fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {
+    internal fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {
         TargetKind.FIXED_ENTITY -> spec.fixedEntityId != null
         TargetKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
@@ -1403,6 +1403,22 @@ object CommandSettingsModel {
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
         FacingKind.TARGET, FacingKind.COPY_ORIENTATION -> isTargetSpecConfigured(spec.target)
     }
+
+    /**
+     * 位置設定の表示・選択用完全性を返します。
+     *
+     * 座標・一時変数は必須値の有無を要求し、対象由来は参照先の設定済みで判定します。
+     * 選択表示されていても未完了の項目は未完了扱いにします。
+     */
+    internal fun isPositionSpecComplete(spec: PositionSpec?): Boolean =
+        isPositionSpecConfigured(spec) && (spec?.kind != PositionKind.TARGET || isTargetSpecConfigured(spec.target))
+
+    /**
+     * 向き設定の表示・選択用完全性を返します。
+     *
+     * 座標・角度・一時変数は必須値の有無を要求し、注視・複写は参照先の設定済みで判定します。
+     */
+    internal fun isFacingSpecComplete(spec: FacingSpec?): Boolean = isFacingSpecConfigured(spec)
 
     fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
         VariableOperation.entries
