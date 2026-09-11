@@ -27,6 +27,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyChoice
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
@@ -334,6 +335,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         // issue #32: 設定項目は対象から確定できる種類で絞った一覧から選びます。
+                        // 項目選択後は種類別の値編集へ進みます（項目選択→値設定の2段階）。
                         if (field == EntityDataSchema.PARAM_PROPERTY && node.type == CommandType.ENTITY_OPERATION) {
                             return@MenuActionHandler MenuActionResult.Success(
                                 MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_PROPERTY_ID)),
@@ -597,14 +599,32 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val property = context.payload["property"]
                             ?.takeIf { EntityDataSchema.definition(it) != null }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val definition = requireNotNull(EntityDataSchema.definition(property))
+                        val previous = node(context.route)?.string(EntityDataSchema.PARAM_PROPERTY)
                         if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_PROPERTY, property)
+                                // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
+                                if (previous != null && previous != property) {
+                                    CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, "")
+                                }
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
                             )
                         }
-                        MenuActionResult.Success(MenuUpdate.Back)
+                        // 項目選択→値設定の2段階フローです。値の種類別に編集へ進みます。
+                        when (definition.valueKind) {
+                            EntityPropertyValueKind.ENUM, EntityPropertyValueKind.BOOLEAN ->
+                                MenuActionResult.Success(
+                                    MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_PROPERTY_VALUE_ID)),
+                                )
+                            EntityPropertyValueKind.TEXT -> {
+                                val fresh = node(context.route)
+                                    ?: return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
+                                showFieldForm(context.player, context.route, EntityDataSchema.PARAM_VALUE, fresh)
+                                MenuActionResult.Success(MenuUpdate.None)
+                            }
+                        }
                     },
                 ),
             )
@@ -622,7 +642,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val current = node(context.route)
                             ?.let { EntityDataSchema.definition(it.string(EntityDataSchema.PARAM_PROPERTY)) }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (current.enumChoices.none { it.id == choice }) {
+                        // 真偽値はON／OFF選択、有限候補は名称選択、文字列は選択適用しません。
+                        val valid = when (current.valueKind) {
+                            EntityPropertyValueKind.BOOLEAN -> choice == "true" || choice == "false"
+                            EntityPropertyValueKind.ENUM -> current.enumChoices.any { it.id == choice }
+                            EntityPropertyValueKind.TEXT -> false
+                        }
+                        if (!valid) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
                         if (!updateNode(context.player, context.route) {
@@ -1375,14 +1401,30 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #32: 有限候補の設定値一覧です。
+     * issue #32: 有限候補・真偽値の設定値一覧です。
      *
      * 内部IDと表示名の対応はスキーマ側で管理し、内部数値を直接入力させません。
-     * 真偽値・文字列はこの画面を使わず、切替・入力画面で編集します。
+     * 文字列はこの画面を使わず、入力画面で編集します。
      */
     private fun renderEntityPropertyValues(player: Player, route: MenuRoute): InventoryMenuView {
         val definition = node(route)?.let { EntityDataSchema.definition(it.string(EntityDataSchema.PARAM_PROPERTY)) }
-        val options = definition?.enumChoices.orEmpty()
+        val valueKind = definition?.valueKind
+        val booleanChoices = listOf(
+            EntityPropertyChoice(
+                "true",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED,
+            ),
+            EntityPropertyChoice(
+                "false",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
+            ),
+        )
+        val enumChoices: List<EntityPropertyChoice> =
+            definition?.enumChoices ?: emptyList()
+        val options: List<EntityPropertyChoice> =
+            if (valueKind == EntityPropertyValueKind.BOOLEAN) booleanChoices
+            else if (valueKind == EntityPropertyValueKind.ENUM) enumChoices
+            else emptyList()
         val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
         val elements = options.mapIndexed { index, choice ->
             choiceElement(

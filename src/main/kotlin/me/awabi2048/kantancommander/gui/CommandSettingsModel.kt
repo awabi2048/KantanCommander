@@ -387,11 +387,12 @@ object CommandSettingsModel {
                         )
                     }
                 }
+                // 設定値は項目選択後に種類別の編集へ進むため、親タブ列には出しません。
+                // 項目選択→値設定の2段階フローにします。
                 "data" -> fields.filter {
                     it.key in setOf(
                         "target", "operation",
                         EntityDataSchema.PARAM_PROPERTY,
-                        EntityDataSchema.PARAM_VALUE,
                     )
                 }
                 else -> fields.filter { it.key in setOf("target", "operation") }

@@ -6480,9 +6480,46 @@ class GestureSequenceEditor(
             }
             GestureSettingScreen.ENTITY_PROPERTY -> {
                 if (group != "property" || EntityDataSchema.definition(value) == null) return
+                val definition = requireNotNull(EntityDataSchema.definition(value))
+                val previous = node.string(EntityDataSchema.PARAM_PROPERTY)
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_PROPERTY, value)
-                    }) showSettingScreen()
+                        // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
+                        if (previous != value) {
+                            CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, "")
+                        }
+                    }) {
+                    // 項目選択→値設定の2段階フローです。値の種類別に編集へ進みます。
+                    when (definition.valueKind) {
+                        EntityPropertyValueKind.ENUM, EntityPropertyValueKind.BOOLEAN -> {
+                            startSettingRoute(GestureSettingFrame(
+                                settingContext,
+                                EntityDataSchema.PARAM_VALUE,
+                                GestureSettingScreen.ENTITY_PROPERTY_VALUE,
+                            ))
+                            state.lowerMode = GestureLowerMode.SETTINGS
+                            updateLower(player)
+                        }
+                        EntityPropertyValueKind.TEXT -> {
+                            beginSettingInput(
+                                player,
+                                requireNotNull(CommandDialogSpecs.field(node, EntityDataSchema.PARAM_VALUE)),
+                                node.string(EntityDataSchema.PARAM_VALUE, ""),
+                            ) { raw ->
+                                val normalized = CommandDialogSpecs.normalize(EntityDataSchema.PARAM_VALUE, raw)
+                                val spec = requireNotNull(CommandDialogSpecs.field(node, EntityDataSchema.PARAM_VALUE))
+                                val validationError = spec.validateInput(normalized)
+                                if (validationError != null) {
+                                    KcI18n.text(player, validationError)
+                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityDataSchema.PARAM_VALUE)) {
+                                        CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, normalized)
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else null
+                            }
+                        }
+                    }
+                } else showSettingScreen()
             }
             GestureSettingScreen.ENTITY_PROPERTY_VALUE -> {
                 if (group != "propertyValue") return

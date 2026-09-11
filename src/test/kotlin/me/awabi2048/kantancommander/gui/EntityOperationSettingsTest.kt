@@ -67,11 +67,11 @@ class EntityOperationSettingsTest {
             ),
             keys(remove),
         )
+        // 設定値は項目選択後に種類別の編集へ進むため、親タブ列には出しません。
         assertEquals(
             listOf(
                 "target", "operation",
                 EntityDataSchema.PARAM_PROPERTY,
-                EntityDataSchema.PARAM_VALUE,
                 "executionPosition",
             ),
             keys(operationNode("data")),
