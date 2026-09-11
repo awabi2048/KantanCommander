@@ -21,6 +21,7 @@ import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
@@ -117,6 +118,7 @@ enum class CommandSettingEditor {
     ENTITY_MODIFIER_OPERATION,
     ENTITY_PROPERTY,
     ENTITY_PROPERTY_VALUE,
+    PLACE_DESTINATION,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
@@ -175,10 +177,7 @@ object CommandSettingsModel {
         return when (fieldKey) {
             "item" -> when (node.type) {
                 CommandType.GIVE_ITEM -> TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
-                CommandType.ENTITY_ACTION ->
-                    if (node.string("action", "ride") == "equip") {
-                        TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
-                    } else null
+                CommandType.PLACE_ITEM -> TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
                 else -> null
             }
             "block" -> if (node.type == CommandType.BLOCK_OPERATION) {
@@ -350,12 +349,8 @@ object CommandSettingsModel {
                 "ride" -> fields.filter { it.key in setOf("target", "action", "other") }
                 "dismount" -> fields.filter { it.key in setOf("target", "action") }
                 "motion" -> fields.filter { it.key in setOf("target", "action", "motionX", "motionY", "motionZ") }
-                // 旧equipは #21 の移行先が決まるまで読み込み互換を維持します。
-                // 新規GUIの選択肢には出さず、保存済み値の編集入口だけを残します。
-                // itemDataはメインハンドの実物から内部保存する値であり、利用者が
-                // 別途編集する設定ではありません。表示すると実物選択と手入力の
-                // 二重入口が生まれ、装備内容の正本が分岐します。
-                "equip" -> fields.filter { it.key in setOf("target", "action", "slot", "item", "overwrite") }
+                // 旧equipは#21のPLACE_ITEMへ移行済みのため許可リストから外します。
+                // 旧tagは#32のENTITY_OPERATIONへ移行済みのため許可リストから外します。
                 else -> fields.filter { it.key in setOf("target", "action") }
             }
             // issue #32: エンティティ操作の操作ごとに許可リストを明示します。
@@ -400,6 +395,22 @@ object CommandSettingsModel {
                     )
                 }
                 else -> fields.filter { it.key in setOf("target", "operation") }
+            }
+            // 配置先で要求する対象が変わります。エンティティ系は対象欄、
+            // ブロックコンテナ系は配置位置欄を使い、もう一方は出しません。
+            // 額縁は内容固定のためスロット欄を出さず、既定値で確定します。
+            node.type == CommandType.PLACE_ITEM -> {
+                val destination = PlaceItemDestination.from(node.string("destination"))
+                val allowed = buildSet {
+                    if (destination == null || destination.requiresEntityTarget) add("target")
+                    add("destination")
+                    if (destination != PlaceItemDestination.ITEM_FRAME) add("slot")
+                    add("item")
+                    add("count")
+                    add("overwrite")
+                    if (destination == null || destination.requiresBlockPosition) add("position")
+                }
+                fields.filter { it.key in allowed }
             }
             node.type == CommandType.DISPLAY_TEXT -> {
                 val withoutUnusedSubtitle = if (node.string("mode", "tellraw") == "title") {
@@ -471,6 +482,7 @@ object CommandSettingsModel {
     fun supportsExecutionPosition(type: CommandType): Boolean = type in setOf(
         CommandType.TELEPORT,
         CommandType.GIVE_ITEM,
+        CommandType.PLACE_ITEM,
         CommandType.ENTITY_ACTION,
         CommandType.ENTITY_OPERATION,
         CommandType.DISPLAY_TEXT,
@@ -610,9 +622,6 @@ object CommandSettingsModel {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "action" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ACTION
                 "other" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OTHER
-                "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_SLOT
-                "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_ITEM
-                "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
                 "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
                 "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
                 "motionX", "motionY", "motionZ" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MOTION
@@ -630,6 +639,16 @@ object CommandSettingsModel {
                 EntityAttributeSupport.PARAM_MODIFIER_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
                 EntityDataSchema.PARAM_PROPERTY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY
                 EntityDataSchema.PARAM_VALUE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY_VALUE
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.PLACE_ITEM -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "destination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_DESTINATION
+                "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_SLOT
+                "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_ITEM
+                "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_COUNT
+                "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
+                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.DISPLAY_TEXT -> when (fieldKey) {
@@ -821,9 +840,7 @@ object CommandSettingsModel {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
             "action" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_ACTION)
             "other" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.SECONDARY_TARGET)
-            "slot" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_EQUIPMENT_SLOT)
-            "overwrite" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OVERWRITE)
-            "tagOperation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_TAG_OPERATION)
+            // 旧tag欄はENTITY_OPERATIONへ移行済みのため出しません。
             else -> text()
         }
         CommandType.ENTITY_OPERATION -> when (fieldKey) {
@@ -846,6 +863,19 @@ object CommandSettingsModel {
                 if (kind == EntityPropertyValueKind.TEXT) text()
                 else CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY_VALUE)
             }
+            else -> text()
+        }
+        // 配置スロットは配置先で編集経路が変わります。装備は既存の装備選択、
+        // 数値スロットは汎用テキスト入力（表示は1始まり・保存は0始まり）、
+        // 額縁は固定のため欄自体を出しません。
+        CommandType.PLACE_ITEM -> when (fieldKey) {
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            "destination" -> CommandSettingDescriptor(CommandSettingEditor.PLACE_DESTINATION)
+            "slot" -> if (PlaceItemDestination.from(node.string("destination")) == PlaceItemDestination.EQUIPMENT) {
+                CommandSettingDescriptor(CommandSettingEditor.ENTITY_EQUIPMENT_SLOT)
+            } else text()
+            "overwrite" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OVERWRITE)
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_POSITION)
             else -> text()
         }
         CommandType.DISPLAY_TEXT -> when (fieldKey) {

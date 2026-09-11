@@ -32,6 +32,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
@@ -133,22 +134,11 @@ class VanillaDatapackExporter(
                 }
                 CommandType.ENTITY_ACTION -> when (node.string("action")) {
                     "ride", "dismount" -> Unit
-                    "equip" -> {
-                        val item = node.string("item")
-                        if (node.itemTempRef.isNullOrBlank() &&
-                            (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
-                        ) {
-                            errors += "${script.id}/${node.id}: バニラに存在しない装備アイテムです: $item"
-                        }
-                        val itemData = node.string("itemData")
-                        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
-                            errors += "${script.id}/${node.id}: 保存された装備ItemStackメタデータは完全バニラ出力に未対応です"
-                        }
-                    }
                     // 動き設定は単一バニラコマンドへ正確に変換できないため、
                     // 不正確な変換を行わず未対応として明示します。
                     "motion" -> errors += "${script.id}/${node.id}: 動き設定はバニラ出力に未対応です"
-                    // tagはENTITY_OPERATIONへ移行済みのため、ここでは扱いません。
+                    // 旧equipはPLACE_ITEM、旧tagはENTITY_OPERATIONへ移行済みのため、
+                    // ここでは扱いません。
                     else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
                 CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
@@ -163,6 +153,7 @@ class VanillaDatapackExporter(
                     "data" -> errors += "${script.id}/${node.id}: データ編集はバニラ出力に未対応です"
                     else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
+                CommandType.PLACE_ITEM -> validatePlaceItemExport(script, node, errors)
                 CommandType.PARTICLE -> {
                     val particle = ParticleSettings.particle(node)
                     if (particle == null) {
@@ -1312,8 +1303,7 @@ class VanillaDatapackExporter(
             node.string("count", "1")
         CommandType.ENTITY_ACTION -> when (node.string("action")) {
             "dismount" -> "ride ${effectiveTarget(node)} dismount"
-            "equip" -> "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with " +
-                (node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") } ?: node.string("item"))
+            // 旧equipの出力はPLACE_ITEMへ移行済みのためここでは扱いません。
             // tagはENTITY_OPERATIONへ移行済みのため、ここでは扱いません。
             // motionは単一バニラコマンドへ正確に変換できないため出力しません（事前検査で未対応を明示します）。
             "ride" -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
@@ -1325,6 +1315,8 @@ class VanillaDatapackExporter(
             // データ編集はバニラの等価表現へ正確に変換できないため出力しません（事前検査で未対応を明示します）。
             else -> null
         }
+        // issue #21: PLACE_ITEMの出力を統合します。等価性の詳細はF1対応を参照します。
+        CommandType.PLACE_ITEM -> placeItemCommand(node)
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
             "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
             "subtitle" -> "title ${effectiveTarget(node)} subtitle {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
@@ -1557,13 +1549,94 @@ class VanillaDatapackExporter(
         val setup: List<String>,
     )
 
-    private fun equipmentSlot(slot: String) = when (slot) {
-        "OFF_HAND" -> "weapon.offhand"
-        "HEAD" -> "armor.head"
-        "CHEST" -> "armor.chest"
-        "LEGS" -> "armor.legs"
-        "FEET" -> "armor.feet"
-        else -> "weapon.mainhand"
+    /**
+     * 「アイテムを配置する」(PLACE_ITEM) をバニラ `/item replace` へ変換します。
+     *
+     * 配置先のバニラ slot 記法は PlaceItemDestination が一元管理し、ここでは
+     * 対象・位置・アイテム・個数の埋め込みだけを行います。個数の変数参照は
+     * macro 層で展開されるため、生の保存値をそのまま出力します。上限の丸めは
+     * 実行側と同じ規則に従いますが、スタック上限は素材ごとに変わり出力時に
+     * 確定できないため、検証で弾けない範囲は生のまま出します（検証の説明参照）。
+     * 上書き禁止時は空スロット条件を前置した等価出力にします。実行側の成功は
+     * 「1件以上適用」であり、条件付き出力と `store success` 包みの組合せで
+     * 再現します。等価な空き検査を作れない配置先は事前検査で拒否するため、
+     * ここへは到達させません。
+     */
+    private fun placeItemCommand(node: CommandNode): String {
+        val destination = PlaceItemDestination.from(node.string("destination"))
+            ?: error("unknown place item destination")
+        val slot = PlaceItemDestination.vanillaSlot(destination, node.string("slot"))
+            ?: error("unknown place item slot")
+        val item = node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") }
+            ?: node.string("item")
+        val count = node.string("count", "1")
+        if (node.boolean("overwrite")) {
+            if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+                val anchor = blockAnchor(node.blockPositionSpec ?: error("structured block position is missing"))
+                return "${anchor.prefix}item replace block ${anchor.coordinates} $slot with $item $count"
+            }
+            return "item replace entity ${effectiveTarget(node)} $slot with $item $count"
+        }
+        // 上書き禁止時は空き検査を前置します。検査パスの不存在は空と等価です。
+        // 対象が複数でも `as` で1件ずつ検査するため、実行側の適用件数と一致します。
+        val guard = PlaceItemDestination.emptyCheckNbtPath(destination, node.string("slot"))
+            ?: error("overwrite=false place item destination is not supported")
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            val anchor = blockAnchor(node.blockPositionSpec ?: error("structured block position is missing"))
+            return "execute unless data block ${anchor.coordinates} $guard run " +
+                "${anchor.prefix}item replace block ${anchor.coordinates} $slot with $item $count"
+        }
+        return "execute as ${effectiveTarget(node)} unless data entity @s $guard run " +
+            "item replace entity @s $slot with $item $count"
+    }
+
+    /**
+     * PLACE_ITEM の完全バニラ出力可否を検証します。
+     *
+     * GIVE_ITEM と同じく minecraft 名前空間・ItemStack メタデータを検査し、
+     * 配置先とスロットの組合せ・ブロック位置の表現可否を加えます。
+     * 個数は実行側がスタック上限へ寄せます。素材ごとの上限は出力時に確定
+     * できないため、全素材の上限を超えるリテラル個数（64超）だけを誤出力
+     * として拒否し、それ以外は生のまま出します。上限の低い素材への多量配置
+     * と変数個数の範囲外値は、実データパック検証で等価性を確認します。
+     * 上書き禁止時は等価な空き検査を作れる配置先だけを通し、作れない配置先
+     * （装備先など対象種別でNBT構造が変わる場合）は誤った等価出力を出さず
+     * 明示拒否します。警告だけで別意味のコマンドは出力しません。
+     */
+    private fun validatePlaceItemExport(script: DiskScript, node: CommandNode, errors: MutableList<String>) {
+        val item = node.string("item")
+        if (node.itemTempRef.isNullOrBlank() &&
+            (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
+        ) {
+            errors += "${script.id}/${node.id}: バニラに存在しない配置アイテムです: $item"
+        }
+        val itemData = node.string("itemData")
+        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
+            errors += "${script.id}/${node.id}: 保存された配置ItemStackメタデータは完全バニラ出力に未対応です"
+        }
+        val destination = PlaceItemDestination.from(node.string("destination"))
+        if (destination == null) {
+            errors += "${script.id}/${node.id}: 不明な配置先です"
+            return
+        }
+        if (!PlaceItemDestination.isValidSlot(destination, node.string("slot"))) {
+            errors += "${script.id}/${node.id}: 配置先に適用できないスロットです"
+        }
+        // 全素材のスタック上限（64）を超えるリテラル個数は、実行側の寄せと
+        // 食い違う誤出力になるため拒否します。変数・一時参照の個数は実行時に
+        // 解決されるため、ここでは弾きません。
+        val literalCount = node.string("count", "1").toIntOrNull()
+        if (literalCount != null && literalCount > 64) {
+            errors += "${script.id}/${node.id}: 配置個数が多すぎます"
+        }
+        if (!node.boolean("overwrite") &&
+            PlaceItemDestination.emptyCheckNbtPath(destination, node.string("slot")) == null
+        ) {
+            errors += "${script.id}/${node.id}: 上書き禁止の配置先は完全バニラ出力に未対応です"
+        }
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            validatePosition(script, node, node.blockPositionSpec, errors)
+        }
     }
 
     /**
@@ -2217,6 +2290,7 @@ class VanillaDatapackExporter(
             CommandType.PARTICLE -> node.particlePositionSpec
             CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
             CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
+            CommandType.PLACE_ITEM -> node.blockPositionSpec
             else -> null
         }?.takeIf { it.kind == PositionKind.TARGET } ?: return null
         return spec.target?.takeIf { it.kind != TargetKind.TEMPORARY }
@@ -2261,6 +2335,7 @@ class VanillaDatapackExporter(
                 CommandType.PARTICLE -> node.particlePositionSpec
                 CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
                 CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
+                CommandType.PLACE_ITEM -> node.blockPositionSpec
                 CommandType.TELEPORT -> node.destinationSpec
                 else -> null
             }?.kind,

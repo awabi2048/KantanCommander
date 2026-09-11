@@ -73,6 +73,7 @@ import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
@@ -281,6 +282,7 @@ enum class GestureSettingScreen {
     ENTITY_MODIFIER_OPERATION,
     ENTITY_PROPERTY,
     ENTITY_PROPERTY_VALUE,
+    PLACE_DESTINATION,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
@@ -2953,7 +2955,8 @@ class GestureSequenceEditor(
         // 「メインハンドから設定」ボタンへ限定します。
         if (field.key == "item" && (
                 node.type == CommandType.GIVE_ITEM ||
-                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+                    // 旧ENTITY_ACTION-equipの実物選択はPLACE_ITEMへ移行済みのため外します。
+                    node.type == CommandType.PLACE_ITEM ||
                     (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.PLAYER) ||
                     node.type == CommandType.TEMP_SET
                 )) {
@@ -3072,6 +3075,34 @@ class GestureSequenceEditor(
             }
             return
         }
+        if (fieldKey == "slot" && node.type == CommandType.PLACE_ITEM) {
+            // 数値スロットは GUI 表示 (1始まり) で受け付け、保存形式 (0始まり) へ
+            // 変換します。装備は選択画面、額縁は固定のためここへは到達しません。
+            // 仕様と検証は CommandDialogSpecs.placeSlot へ一元化します。
+            val destination = PlaceItemDestination.from(node.string("destination")) ?: return
+            val spec = CommandDialogSpecs.placeSlot(node) ?: return
+            beginSettingInput(
+                player,
+                spec,
+                PlaceItemDestination.toDisplay(destination, node.string("slot")),
+            ) { raw ->
+                val value = CommandDialogSpecs.normalize("slot", raw)
+                val validationError = spec.validateInput(value)
+                if (validationError != null) {
+                    KcI18n.text(player, validationError)
+                } else {
+                    val saved = PlaceItemDestination.fromDisplay(destination, value)
+                    if (saved == null) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT)
+                    } else if (!updateSettingNode(player, context, configuredFields = setOf("slot")) {
+                            CommandSettingsModel.setParameter(it, "slot", saved)
+                        }) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else null
+                }
+            }
+            return
+        }
         if (fieldKey == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
             applyHeldFirework(player, context)
             return
@@ -3140,7 +3171,8 @@ class GestureSequenceEditor(
     ): Boolean {
         if (fieldKey == "item" && (
                 node.type == CommandType.GIVE_ITEM ||
-                    (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+                    // 旧ENTITY_ACTION-equipの実物適用はPLACE_ITEMへ移行済みのため外します。
+                    node.type == CommandType.PLACE_ITEM ||
                     (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.PLAYER) ||
                     node.type == CommandType.TEMP_SET
                 )) {
@@ -6391,7 +6423,7 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_ACTION -> {
-                // 旧equip／tagは新規選択肢に出さず、保存済み値の編集入口だけを残します。
+                // 旧equipはPLACE_ITEM、旧tagはENTITY_OPERATIONへ移行済みのため受け付けません。
                 if (group != "action" || value !in setOf("ride", "dismount", "motion")) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "action", value)
@@ -6444,6 +6476,15 @@ class GestureSequenceEditor(
                 if (!valid) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, value)
+                    }) showSettingScreen()
+            }
+            // 配置先の切替えで要求対象が変わるため、スロットは既定値へ戻して
+            // 不正な組合せを残しません。額縁は内容固定のためスロット欄を隠します。
+            GestureSettingScreen.PLACE_DESTINATION -> {
+                val destination = PlaceItemDestination.from(value)?.takeIf { group == "placeDestination" } ?: return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "destination", destination.paramValue)
+                        CommandSettingsModel.setParameter(it, "slot", PlaceItemDestination.defaultSlot(destination))
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> {

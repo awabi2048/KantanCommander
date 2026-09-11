@@ -11,10 +11,12 @@ import java.util.UUID
 import java.util.logging.Logger
 
 /**
- * issue #32 のv13→v14移行テストです。
+ * 統合保存版v15の移行テストです。
  *
- * 旧ENTITY_ACTION／tagは新ENTITY_OPERATION／tagへ変換し、
- * ride／dismount／equipは保存形式を変えずに読み込みます。
+ * v13の旧ENTITY_ACTION／tagは新ENTITY_OPERATION／tagへ変換します。
+ * v14は形式番号の付け替えのみ行い、内容は変えません。
+ * 旧ENTITY_ACTION／ride／dismountは保存形式を変えずに読み込みます。
+ * 旧equip・旧kindは変換せず、検証層で移行漏れ・未設定として拒否します。
  * v12以前は従来どおり非対応として隔離します。
  */
 class EntityMigrationTest {
@@ -72,11 +74,55 @@ class EntityMigrationTest {
         assertEquals("tag", migrated.string("operation", ""))
         assertEquals("add", migrated.string("tagOperation", ""))
         assertEquals("kc_test", migrated.string("tag", ""))
-        assertEquals(14, loaded.formatVersion)
+        assertEquals(15, loaded.formatVersion)
+    }
+
+    @Test
+    fun `v14 entity operation loads with version bump only`() {
+        val dir = temp.resolve("v14-operation").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 14,
+              "id": "$scriptId",
+              "name": "migration",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 0,
+              "listed": false,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": false, "intervalSeconds": 1.0},
+              "graph": {
+                "entryNodeId": "$nodeId",
+                "nodes": {
+                  "$nodeId": {
+                    "id": "$nodeId",
+                    "type": "ENTITY_OPERATION",
+                    "params": {"operation": "tag", "tagOperation": "add", "tag": "kc_test"}
+                  }
+                }
+              },
+              "revision": 0,
+              "contentModified": false
+            }
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.ENTITY_OPERATION, migrated.type)
+        assertEquals("tag", migrated.string("operation", ""))
+        assertEquals("kc_test", migrated.string("tag", ""))
+        assertEquals(15, loaded.formatVersion)
     }
 
     @Test
     fun `v13 ride dismount and equip keep their shape`() {
+        // 読み込み時は形状を保ちます。旧equipの実行可否は実行前検証が
+        // 移行漏れとして拒否します（自動でPLACE_ITEMへ変換しません）。
         val dir = temp.resolve("v13-keep").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val rideId = UUID.randomUUID()

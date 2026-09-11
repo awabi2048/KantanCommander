@@ -52,6 +52,7 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.hasDiskContent
@@ -1378,7 +1379,8 @@ class GestureLowerPanel(
         val typedValueSourceSetting =
             CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
         val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
-            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+            // 旧ENTITY_ACTION-equipの実物選択はPLACE_ITEMへ移行済みのため外します。
+            node.type == CommandType.PLACE_ITEM ||
             (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.PLAYER))
         val heldBlockSetting = field.key == "block" && (
             node.type == CommandType.BLOCK_OPERATION ||
@@ -2660,6 +2662,9 @@ class GestureLowerPanel(
                 else -> null
             }
         }
+        choice.id.startsWith("placeDestination:") -> suffixKeyDescription(player, choice.id, "placeDestination:") { suffix ->
+            PlaceItemDestination.from(suffix)?.labelKey
+        }
         choice.id.startsWith("equipmentSlot:") -> suffixKeyDescription(player, choice.id, "equipmentSlot:") { suffix ->
             when (suffix) {
                 "HAND" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND
@@ -3142,6 +3147,8 @@ class GestureLowerPanel(
         choiceId.startsWith("modifierOperation:") -> setOf(EntityAttributeSupport.PARAM_MODIFIER_OPERATION)
         choiceId.startsWith("propertyValue:") -> setOf(EntityDataSchema.PARAM_VALUE)
         choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
+        // issue #21: 配置先の選択肢は配置先欄へ投影します。
+        choiceId.startsWith("placeDestination:") -> setOf("destination")
         choiceId.startsWith("equipmentSlot:") -> setOf("slot")
         choiceId.startsWith("overwrite:") -> setOf("overwrite")
         choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
@@ -3276,6 +3283,9 @@ class GestureLowerPanel(
             id.startsWith("equipmentSlot:") -> choice.selected &&
                 node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
                 CommandSettingsModel.isFieldConfigured(node, "slot")
+            id.startsWith("placeDestination:") -> choice.selected &&
+                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == id.removePrefix("placeDestination:") &&
+                CommandSettingsModel.isFieldConfigured(node, "destination")
             id.startsWith("overwrite:") -> choice.selected &&
                 node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean() &&
                 CommandSettingsModel.isFieldConfigured(node, "overwrite")
@@ -3473,6 +3483,13 @@ class GestureLowerPanel(
                 }
                 else -> emptyList()
             }
+        }
+        GestureSettingScreen.PLACE_DESTINATION -> PlaceItemDestination.entries.map { destination ->
+            SettingChoice(
+                "placeDestination:${destination.paramValue}",
+                KcI18n.text(player, destination.labelKey),
+                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue,
+            )
         }
         GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
             "HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND,

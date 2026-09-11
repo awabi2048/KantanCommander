@@ -159,7 +159,7 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalString(spec, "tempName", path, errors)
-        // v13形式では成分ごとの意味付けを必須とします。旧データは形式番号で隔離するため、
+        // 現行形式では成分ごとの意味付けを必須とします。旧データは形式番号で隔離するため、
         // ここでの欠落は現行形式の破損として扱います。
         listOf("semanticsX", "semanticsY", "semanticsZ", "semanticsYaw", "semanticsPitch").forEach {
             requireEnum(spec, it, path, enumNames<CoordinateSemantics>(), errors)

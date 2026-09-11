@@ -70,14 +70,16 @@ class EntityOperationValidationTest {
     }
 
     @Test
-    fun `legacy equip under entity action stays readable`() {
+    fun `legacy equip under entity action is rejected with migration message`() {
+        // #21統合で旧equipの読み込み互換を終了し、PLACE_ITEMへの移行漏れとして拒否します。
         val script = actionScriptWith {
             it.params["action"] = "equip"
             it.params["slot"] = "HAND"
             it.params["item"] = "minecraft:stone"
             it.params["overwrite"] = "false"
         }
-        assertTrue(ExecutableScriptValidator.validate(script).isEmpty())
+        val errors = ExecutableScriptValidator.validate(script)
+        assertTrue(errors.any { it.fieldKeys == setOf("action") && it.message.contains("アイテムを配置する") })
     }
 
     @Test

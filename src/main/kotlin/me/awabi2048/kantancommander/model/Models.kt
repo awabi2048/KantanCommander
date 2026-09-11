@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 14
+const val STRUCTURED_FORMAT_VERSION = 15
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -742,14 +742,18 @@ enum class CommandType(
 ) {
     TELEPORT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT_DESCRIPTION, Material.ENDER_PEARL, emptyMap()),
     GIVE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM_DESCRIPTION, Material.CHEST, mapOf("count" to "1")),
-    ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf(
-        "action" to "ride",
-        "slot" to "HAND",
+    PLACE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLACE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLACE_ITEM_DESCRIPTION, Material.ITEM_FRAME, mapOf(
+        "destination" to PlaceItemDestination.EQUIPMENT.paramValue,
+        "slot" to PlaceItemDestination.defaultSlot(PlaceItemDestination.EQUIPMENT),
         "item" to "",
         "itemData" to "",
+        "count" to "1",
         "overwrite" to "false",
-        "tagOperation" to "add",
-        "tag" to "",
+    )),
+    // ENTITY_ACTIONは即時的な移動・関係変化（ride／dismount／motion）に限定します。
+    // 旧tagはENTITY_OPERATION、旧equipはPLACE_ITEMへ移行済みのため既定値に含めません。
+    ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf(
+        "action" to "ride",
         "motionX" to "0.0",
         "motionY" to "0.0",
         "motionZ" to "0.0",
@@ -760,7 +764,7 @@ enum class CommandType(
      * 旧ENTITY_ACTIONに同居していたtagを移行し、attribute操作と型付きデータ編集を
      * 担います。即時的な移動・関係変化（ride／dismount／motion）はENTITY_ACTIONに残し、
      * Entity自身の状態・データ変更はこちらへ分離します。
-     * 旧equipは #21 の移行先が決まるまでENTITY_ACTION側で読み込み互換を維持します。
+     * 旧equipは #21 のPLACE_ITEMへの移行完了に伴いENTITY_ACTION側の互換を終了します。
      */
     ENTITY_OPERATION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_OPERATION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_OPERATION_DESCRIPTION, Material.NAME_TAG, mapOf(
         "operation" to "tag",

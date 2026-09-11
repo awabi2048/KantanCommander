@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.model
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Test
 
@@ -29,15 +30,17 @@ class ModelsTest {
     }
 
     @Test
-    fun `entity action keeps legacy defaults and gains motion components`() {
+    fun `entity action keeps only ride motion defaults`() {
+        // ENTITY_ACTIONはride/dismount/motionに限定します。旧equip欄は
+        // PLACE_ITEM、旧tag欄はENTITY_OPERATIONへ移行済みのため既定値に含めません。
         val node = CommandType.ENTITY_ACTION.newNode()
         assertEquals("ride", node.string("action", ""))
         assertEquals("0.0", node.string("motionX", ""))
         assertEquals("0.0", node.string("motionY", ""))
         assertEquals("0.0", node.string("motionZ", ""))
-        // 旧equip／tagの既定値は読み込み互換のため維持します。
-        assertEquals("HAND", node.string("slot", ""))
-        assertEquals("add", node.string("tagOperation", ""))
+        assertFalse(node.params.containsKey("slot"))
+        assertFalse(node.params.containsKey("tagOperation"))
+        assertFalse(node.params.containsKey("tag"))
     }
 
     @Test

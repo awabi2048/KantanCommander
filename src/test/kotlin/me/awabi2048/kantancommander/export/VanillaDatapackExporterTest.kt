@@ -41,9 +41,12 @@ class VanillaDatapackExporterTest {
                             node.destinationSpec = PositionSpec(PositionKind.DISK)
                         }
                     }
-                    CommandType.GIVE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
+                    CommandType.GIVE_ITEM, CommandType.PLACE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
                         if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
                         if (node.type == CommandType.GIVE_ITEM && node.string("item").isBlank()) {
+                            node.params["item"] = "minecraft:stone"
+                        }
+                        if (node.type == CommandType.PLACE_ITEM && node.string("item").isBlank()) {
                             node.params["item"] = "minecraft:stone"
                         }
                         if (node.type == CommandType.ENTITY_ACTION &&
@@ -104,10 +107,13 @@ class VanillaDatapackExporterTest {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             params["effect"] = "minecraft:speed"
         }
-        GraphEditor.append(script.graph, CommandType.ENTITY_ACTION).apply {
-            params["action"] = "equip"
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+            params["destination"] = "EQUIPMENT"
+            params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
+            // 装備先の上書き禁止は等価出力不可のため、ここでは上書き許可で検証します。
+            params["overwrite"] = "true"
         }
         GraphEditor.append(script.graph, CommandType.CAMERA_SHAKE).targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
 
@@ -472,6 +478,137 @@ class VanillaDatapackExporterTest {
         val body = result.functions.values.joinToString("\n")
         assertTrue(body.contains("setblock 1.0 2.0 3.0 minecraft:stone"))
         assertTrue(body.contains("kill @e["))
+    }
+
+    @Test
+    fun `place item lowers every destination to the item replace syntax`() {
+        val store = ScriptStore(temp.resolve("place-commands"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "place commands")
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["destination"] = "PLAYER_HOTBAR"
+            params["slot"] = "8"
+            params["item"] = "minecraft:stone"
+            params["count"] = "3"
+        }
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+            params["destination"] = "ITEM_FRAME"
+            params["slot"] = "CONTENTS"
+            params["item"] = "minecraft:stone"
+        }
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            params["destination"] = "BLOCK_CONTAINER"
+            params["slot"] = "0"
+            params["item"] = "minecraft:stone"
+            blockPositionSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("item replace entity") && body.contains("hotbar.8"))
+        assertTrue(body.contains("with minecraft:stone 3"))
+        assertTrue(body.contains("contents with minecraft:stone"))
+        assertTrue(body.contains("item replace block 1.0 2.0 3.0 container.0 with minecraft:stone"))
+    }
+
+    @Test
+    fun `place item with an inapplicable slot fails preflight`() {
+        val store = ScriptStore(temp.resolve("place-invalid"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "invalid place")
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["destination"] = "PLAYER_HOTBAR"
+            params["slot"] = "HAND"
+            params["item"] = "minecraft:stone"
+        }
+        store.save(script)
+        assertInstanceOf(
+            ExportResult.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
+    }
+
+    @Test
+    fun `place item with overwrite false guards empty slots`() {
+        // F1: 上書き禁止は空スロット条件付きの等価出力にします。
+        val store = ScriptStore(temp.resolve("place-no-overwrite"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "no overwrite place")
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["destination"] = "PLAYER_HOTBAR"
+            params["slot"] = "8"
+            params["item"] = "minecraft:stone"
+            params["overwrite"] = "false"
+        }
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+            params["destination"] = "ITEM_FRAME"
+            params["slot"] = "CONTENTS"
+            params["item"] = "minecraft:stone"
+            params["overwrite"] = "false"
+        }
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            params["destination"] = "BLOCK_CONTAINER"
+            params["slot"] = "0"
+            params["item"] = "minecraft:stone"
+            params["overwrite"] = "false"
+            blockPositionSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("execute as @a[") && body.contains("unless data entity @s Inventory[{Slot:8b}]"))
+        assertTrue(body.contains("unless data entity @s Item"))
+        assertTrue(body.contains("execute unless data block 1.0 2.0 3.0 Items[{Slot:0b}]"))
+    }
+
+    @Test
+    fun `place item with overwrite false on equipment fails preflight`() {
+        // F1: 装備先は対象種別でNBT構造が変わり等価な空き検査を作れないため、
+        // 警告だけで別意味のコマンドを出さず明示拒否します。
+        val store = ScriptStore(temp.resolve("place-equip-no-overwrite"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "equip no overwrite")
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["destination"] = "EQUIPMENT"
+            params["slot"] = "HAND"
+            params["item"] = "minecraft:stone"
+            params["overwrite"] = "false"
+        }
+
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        assertTrue(failure.errors.any { it.contains("上書き禁止") })
+    }
+
+    @Test
+    fun `place item with overwrite true keeps direct replace`() {
+        val store = ScriptStore(temp.resolve("place-overwrite"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "overwrite place")
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["destination"] = "EQUIPMENT"
+            params["slot"] = "HAND"
+            params["item"] = "minecraft:stone"
+            params["overwrite"] = "true"
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("item replace entity"))
+        assertTrue(!body.contains("unless data entity @s"))
     }
 
     @Test

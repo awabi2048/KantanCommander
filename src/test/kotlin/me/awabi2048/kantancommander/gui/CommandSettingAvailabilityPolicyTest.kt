@@ -69,6 +69,26 @@ class CommandSettingAvailabilityPolicyTest {
         )
     }
 
+    @Test
+    fun `アイテム配置のコンテナ位置では制御ブロック位置を選択できません`() {
+        val node = CommandNode(type = CommandType.PLACE_ITEM)
+
+        assertFalse(
+            CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
+                node,
+                CommandSettingRole.BLOCK_POSITION,
+                PositionKind.DISK,
+            )
+        )
+        assertTrue(
+            CommandSettingAvailabilityPolicy.isPositionChoiceEnabled(
+                node,
+                CommandSettingRole.BLOCK_POSITION,
+                PositionKind.COORDINATES,
+            )
+        )
+    }
+
     private fun blockOperationNode(mode: BlockOperationMode) = CommandNode(
         type = CommandType.BLOCK_OPERATION,
         params = linkedMapOf("operation" to mode.value),
