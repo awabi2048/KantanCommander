@@ -1741,8 +1741,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ConditionEvaluation.FALSE
                 }
             }
-            // 将来の ConditionKind 追加時に false 継続へ黙って畳まないための受け皿です。
-            else -> ConditionEvaluation.INVALID
+            // ConditionKind が網羅列挙のため else は置きません。将来の対象追加時は
+            // コンパイルエラーで検出します（#27 の冗長else除去と同一方針）。
         }
     }
 
