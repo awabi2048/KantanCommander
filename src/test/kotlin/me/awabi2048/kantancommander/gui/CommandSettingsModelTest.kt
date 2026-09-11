@@ -590,7 +590,7 @@ class CommandSettingsModelTest {
     @Test
     fun `particle detail input follows the selected kind inside the particle tab`() {
         val node = CommandType.PARTICLE.newNode()
-        // 詳細データ欄は独立タブを持たず、「パーティクル」タブのダイアログに統合します。
+        // 詳細チE�Eタ欁E�E独立タブを持たず、「パーチE��クル」タブ�Eダイアログに統合します、E
         assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
         assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "particle" })
 
@@ -599,6 +599,25 @@ class CommandSettingsModelTest {
         assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "particle"))
         assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particle" })
+    }
+
+    @Test
+    fun `nearby kinds expose only distance filters`() {
+        // 周囲系の詳細設定項目は最大距離だけとします。
+        assertEquals(
+            listOf("distance"),
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_PLAYERS),
+        )
+        assertEquals(
+            listOf("distance"),
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_ENTITIES),
+        )
+        // 非周囲系は従来どおり種別適用に従います。
+        val nearest = CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER)
+        assertTrue(nearest.containsAll(listOf("distance", "sort", "tag", "name")))
+        // 単一参照では上限数を除外します。
+        assertFalse(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = true).contains("limit"))
+        assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = false).contains("limit"))
     }
 
 }

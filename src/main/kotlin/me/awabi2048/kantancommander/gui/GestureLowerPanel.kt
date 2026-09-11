@@ -329,22 +329,36 @@ class GestureLowerPanel(
         }
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = field.value(node).render(player)
-        // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
-        val choices = applyPathSelectionExclusive(
-            settingTreeNodes(
-                node,
-                context,
-                screen,
-                fieldKey,
-                player,
-                attentionFields,
-                inChild = true,
-                detailVisited = state.detailVisitedKeys.contains(
-                    PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+        val pathLast = state.settingTreePath?.nodeIds?.lastOrNull()
+        // スポーン種別の子画面では移動先選択の再掲ではなく、メンバー／ゲストの2択を示します。
+        val choices = if (screen == GestureSettingScreen.POSITION &&
+            pathLast == "position-preset:${SettingPresets.PositionPreset.MYWORLD_SPAWN.name}"
+        ) {
+            applyPathSelectionExclusive(
+                myworldSpawnChoices(
+                    CommandSettingsModel.positionSpec(node, context.role)?.myworldSpawn,
+                    player,
                 ),
-            ),
-            state.settingTreePath?.nodeIds?.lastOrNull(),
-        )
+                pathLast,
+            )
+        } else {
+            // issue #29: 子画面ではエンティティ導線の再入場を隠し、往復ループを作りません。
+            applyPathSelectionExclusive(
+                settingTreeNodes(
+                    node,
+                    context,
+                    screen,
+                    fieldKey,
+                    player,
+                    attentionFields,
+                    inChild = true,
+                    detailVisited = state.detailVisitedKeys.contains(
+                        PresetSelectionDisplay.detailVisitKey(fieldKey, context.role),
+                    ),
+                ),
+                pathLast,
+            )
+        }
         val selectedDetail = choices.firstOrNull { it.selected && it.hasChildren }
         DeclarativeSettings.descriptionSection(
             nodes,
@@ -3750,8 +3764,8 @@ class GestureLowerPanel(
         }
         // Targetの上位画面で旧細分類（最も近い／全員／固定エンティティ等）は
         // 3カテゴリへ統一して削除しました。ここでは詳細条件だけを残し、削除済み
-        // の選択肢を詳細画面へ再掲しないようにします。距離・上限数・名前等の既存
-        // の詳細設定は変更しません。
+        // の選択肢を詳細画面へ再掲しないようにします。周囲系は最大距離だけを
+        // 設定項目とし、他の絞り込みは提示しません。
         val filterChoices = listOf(
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
@@ -3762,7 +3776,7 @@ class GestureLowerPanel(
             "tag" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG,
             "name" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
         )
-            .filter { (id, _) -> CommandSettingsModel.targetFilterApplies(spec.kind, id) }
+            .filter { (id, _) -> id in CommandSettingsModel.visibleTargetFilterIds(spec.kind) }
             .map { (id, label) -> SettingChoice("filter:$id", labeled(player, label, value(id))) }
         return filterChoices
     }
@@ -3815,6 +3829,8 @@ class GestureLowerPanel(
                 } else emptyList(),
             )
         }
+        // 移動先では利用不可の候補を赤背景で残さず、一覧から隠します。
+        .filter { choice -> choice.enabled || context.role != CommandSettingRole.DESTINATION }
         val entityEntry = SettingChoice(
             id = "position-entity",
             label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_ENTITY_POSITION),
@@ -3921,14 +3937,16 @@ class GestureLowerPanel(
                 ),
             )
         }
-        return presets + (if (inChild) emptyList() else listOf(
+        // 注視は上段末尾に置き、上下4:2の配置にします。
+        val upperEntity = if (inChild) emptyList() else listOf(
             SettingChoice(
                 id = "facing-entity",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_TARGET),
                 selected = current?.kind == FacingKind.TARGET && (matchedPreset == null || detailVisited),
                 children = embeddedTargetPresetChoices(current?.target, player, "facing-entity-preset", context.role),
-                bottomAligned = true,
             ),
+        )
+        return presets + upperEntity + listOf(
             SettingChoice(
                 id = "facing-copy",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FACE_COPY_ORIENTATION),
@@ -3936,7 +3954,7 @@ class GestureLowerPanel(
                 children = embeddedTargetPresetChoices(current?.target, player, "facing-copy-preset", context.role),
                 bottomAligned = true,
             ),
-        )) + listOf(
+        ) + listOf(
             SettingChoice(
                 id = "facing:${FacingKind.TEMPORARY.name}",
                 label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE),

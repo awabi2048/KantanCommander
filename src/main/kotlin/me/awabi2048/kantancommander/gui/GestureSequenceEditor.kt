@@ -3942,10 +3942,17 @@ class GestureSequenceEditor(
      * 共通入力仕様（CommandDialogSpecs）に沿った単一テキスト入力です。
      * プロンプト・maxLength・検証をインベントリGUIと同一に保ちます。
      */
+    /**
+     * 対象距離をDialogで入力します。空欄はその側の指定解除とします。
+     *
+     * 周囲系では最大距離だけを設定項目とするため、[maximumOnly] のときは
+     * 最小値欄を出さず、入室時の最小値をそのまま引き継ぎます。
+     */
     private fun beginSettingDistanceInput(
         player: Player,
         minimum: Double?,
         maximum: Double?,
+        maximumOnly: Boolean = false,
         result: (Double?, Double?) -> String?,
     ) {
         val spec = requireNotNull(CommandDialogSpecs.targetFilter("distance"))
@@ -3956,30 +3963,36 @@ class GestureSequenceEditor(
         showInputDialog(
             player = player,
             body = CommandDialogSpecs.body(player, spec),
-            inputs = listOf(
-                CommandDialogSpecs.input(
-                    player = player,
-                    id = "minimum",
-                    initial = format(minimum),
-                    spec = spec,
-                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
-                ),
-                CommandDialogSpecs.input(
-                    player = player,
-                    id = "maximum",
-                    initial = format(maximum),
-                    spec = spec,
-                    label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE),
-                ),
-            ),
+            inputs = buildList {
+                if (!maximumOnly) {
+                    add(
+                        CommandDialogSpecs.input(
+                            player = player,
+                            id = "minimum",
+                            initial = format(minimum),
+                            spec = spec,
+                            label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE),
+                        ),
+                    )
+                }
+                add(
+                    CommandDialogSpecs.input(
+                        player = player,
+                        id = "maximum",
+                        initial = format(maximum),
+                        spec = spec,
+                        label = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MAXIMUM_DISTANCE),
+                    ),
+                )
+            },
         ) { response ->
-            val minimumRaw = response.textValue("minimum").trim().takeIf(String::isNotEmpty)
+            val minimumRaw = if (maximumOnly) null else response.textValue("minimum").trim().takeIf(String::isNotEmpty)
             val maximumRaw = response.textValue("maximum").trim().takeIf(String::isNotEmpty)
             val validationError = listOfNotNull(minimumRaw, maximumRaw)
                 .mapNotNull(spec::validateInput)
                 .firstOrNull()
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
-            val minimumValue = minimumRaw?.let(CommandDialogSpecs::finiteDouble)
+            val minimumValue = minimumRaw?.let(CommandDialogSpecs::finiteDouble) ?: minimum.takeIf { maximumOnly }
             val maximumValue = maximumRaw?.let(CommandDialogSpecs::finiteDouble)
             if ((minimumRaw != null && minimumValue == null) || (maximumRaw != null && maximumValue == null)) {
                 return@showInputDialog KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISTANCE_INVALID)
@@ -5196,6 +5209,7 @@ class GestureSequenceEditor(
      *
      * 位置・向きに内包する対象指定と、役割直下の対象指定を同じ入力仕様で扱い、
      * 保存先だけを isFacing で切り替えます。ダイアログには現在の距離を初期表示します。
+     * 周囲系では最大距離だけを入力欄とします。
      */
     private fun openEmbeddedTargetDistanceDialog(
         player: Player,
@@ -5203,11 +5217,13 @@ class GestureSequenceEditor(
         fieldKey: String,
         currentTarget: TargetSpec?,
         isFacing: Boolean,
+        maximumOnly: Boolean = false,
     ) {
         beginSettingDistanceInput(
             player,
             currentTarget?.minimumDistance,
             currentTarget?.maximumDistance,
+            maximumOnly = maximumOnly,
         ) { minimum, maximum ->
             val facingRole = settingContext.role
             if (isFacing && facingRole == null) {
@@ -5456,6 +5472,7 @@ class GestureSequenceEditor(
                             player,
                             current?.minimumDistance,
                             current?.maximumDistance,
+                            maximumOnly = true,
                         ) { minimum, maximum ->
                             if (!updateSettingNode(player, settingContext) {
                                     val latest = readBranchTarget(it)
@@ -5566,6 +5583,8 @@ class GestureSequenceEditor(
                                 player,
                                 current.minimumDistance,
                                 current.maximumDistance,
+                                // 周囲系の詳細設定項目は最大距離だけとします。
+                                maximumOnly = CommandSettingsModel.isNearbyKind(current.kind),
                             ) { minimum, maximum ->
                                 if (!updateSettingNode(player, settingContext) {
                                         val latest = readFilterTarget(it)
@@ -5701,6 +5720,7 @@ class GestureSequenceEditor(
                                 player,
                                 currentTarget?.minimumDistance,
                                 currentTarget?.maximumDistance,
+                                maximumOnly = true,
                             ) { minimum, maximum ->
                                 if (!updateSettingNode(player, settingContext) {
                                         val latest = CommandSettingsModel.targetSpec(it, settingContext.role)
@@ -5736,6 +5756,7 @@ class GestureSequenceEditor(
                             fieldKey,
                             current?.target,
                             isFacing = false,
+                            maximumOnly = true,
                         )
                         return
                     }
