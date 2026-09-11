@@ -114,19 +114,25 @@ object EntityAttributeSupport {
         return true
     }
 
-    /** modifierを追加します。同キーの既存modifierは置き換えます。 */
+    /**
+     * modifierを追加します。
+     *
+     * バニラの `attribute ... modifier add` と等価にするため、同キーの
+     * modifierが既に存在する場合は置き換えず失敗とします。実行と出力の
+     * 同一意味を保つための契約であり、呼び出し側は失敗として数えます。
+     */
     fun addModifier(instance: AttributeInstance, key: NamespacedKey, amount: Double, operation: AttributeModifier.Operation): Boolean {
         if (!amount.isFinite()) return false
+        if (runCatching { instance.getModifier(key) }.getOrNull() != null) return false
         return runCatching {
-            runCatching { instance.removeModifier(key) }
             instance.addModifier(AttributeModifier(key, amount, operation))
             true
         }.getOrDefault(false)
     }
 
     /**
-     * modifierを削除します。存在しないmodifierの削除は「非適用」とし、
-     * 設定エラーにはしません。
+     * modifierを削除します。存在しないmodifierの削除は偽を返し、
+     * 呼び出し側が失敗として数えます（バニラの `modifier remove` と等価）。
      */
     fun removeModifier(instance: AttributeInstance, key: NamespacedKey): Boolean {
         val existing = runCatching { instance.getModifier(key) }.getOrNull() ?: return false

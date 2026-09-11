@@ -837,8 +837,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             if (session.lastDetail.isNullOrBlank()) session.lastDetail = immediateDetail(node.type)
             ImmediateExecutionResult.SUCCESS
         } else {
+            // 全件非適用・全件失敗時も件数と理由を残します。件数接尾辞は
+            // 部分適用があるときだけ付き、全件適用時と同様の表示にはなりません。
+            // lastPartialを設定する操作以外には影響しません。
             if (session.lastDetail.isNullOrBlank()) {
-                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）"
+                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）" +
+                    partialDetailSuffix(session.actor, session.lastPartial)
             }
             session.lastFailureReason = session.lastFailureReason ?: ErrorCode.COMMAND_FAILED.code
             session.lastFailureCode = session.lastFailureCode ?: ErrorCode.COMMAND_FAILED
@@ -855,7 +859,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val reason = failure.message?.takeIf(String::isNotBlank) ?: failure::class.simpleName ?: "command_failed"
         session.lastFailureReason = reason
         session.lastFailureCode = ErrorCode.fromLegacyReason(reason)
-        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）"
+        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）" +
+            partialDetailSuffix(session.actor, session.lastPartial)
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
         ImmediateExecutionResult.FAILED
     }
@@ -977,9 +982,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             // issue #32 の「エンティティを操作」です。Entity自身の状態・データを変更します。
             //
-            // 混合対象では対応する対象にだけ適用し、適用数・非適用数・失敗数を
-            // テスト実行の詳細へ残します（#6のPARTIAL_APPLY方針）。
-            // 1件も適用できなかった場合は失敗とし、設定自体の不正と区別します。
+            // 混合対象では対応する対象にだけ適用し、件数は構造化結果へ残します
+            // （#6のPARTIAL_APPLY方針、レビューF4対応）。表示への変換は共通の
+            // 成功・失敗処理が行い、1件も適用できなかった場合は失敗とします。
+            // modifierの追加・削除はバニラの同名操作と等価です。
             CommandType.ENTITY_OPERATION -> {
                 if (targets.isEmpty()) return false
                 when (node.string("operation", "tag")) {
@@ -1209,12 +1215,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
                     val key = EntityAttributeSupport.modifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))
                         ?: return@forEach run { failed++ }
-                    // 存在しないmodifierの削除は非適用であり、失敗にはしません。
-                    if (!EntityAttributeSupport.removeModifier(instance, key)) {
-                        nonApplicable++
-                        return@forEach
-                    }
-                    true
+                    // 削除対象の不在は失敗とします（バニラの `modifier remove` と等価）。
+                    // 対象自体がattributeを持たない場合だけが非適用です。
+                    EntityAttributeSupport.removeModifier(instance, key)
                 }
                 else -> false
             }
