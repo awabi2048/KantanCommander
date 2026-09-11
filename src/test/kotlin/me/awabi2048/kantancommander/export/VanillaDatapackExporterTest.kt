@@ -4,6 +4,7 @@ import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.FacingKind
@@ -51,12 +52,10 @@ class VanillaDatapackExporterTest {
                         }
                     }
                     CommandType.CONDITION -> {
-                        val kind = runCatching {
-                            me.awabi2048.kantancommander.model.ConditionKind.valueOf(node.string("kind"))
-                        }.getOrNull()
-                        if (kind in setOf(
-                                me.awabi2048.kantancommander.model.ConditionKind.TARGET_EXISTS,
-                                me.awabi2048.kantancommander.model.ConditionKind.PLAYER_STATE,
+                        val subject = node.conditionSubject()
+                        if (subject in setOf(
+                                me.awabi2048.kantancommander.model.ConditionSubject.OTHER_ENTITY,
+                                me.awabi2048.kantancommander.model.ConditionSubject.PLAYER,
                             ) && node.targetSpec == null
                         ) {
                             node.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
@@ -728,7 +727,7 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "not-equal")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params.putAll(
-            mapOf("kind" to "VARIABLE_STATE", "variable" to "value", "operator" to "!=", "value" to "4")
+            mapOf("subject" to "VARIABLE", "variable" to "value", "operator" to "!=", "value" to "4")
         )
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT).targetSpec =
             TargetSpec(TargetKind.NEAREST_PLAYER)
@@ -763,7 +762,7 @@ class VanillaDatapackExporterTest {
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params.putAll(
             mapOf(
-                "kind" to "VARIABLE_STATE",
+                "subject" to "VARIABLE",
                 "variable" to "enabled",
                 "operator" to "==",
                 "value" to "true",
@@ -783,7 +782,7 @@ class VanillaDatapackExporterTest {
         val unresolved = store.create(UUID.randomUUID(), "unresolved")
         GraphEditor.append(unresolved.graph, CommandType.CONDITION).params.putAll(
             mapOf(
-                "kind" to "VARIABLE_STATE",
+                "subject" to "VARIABLE",
                 "variable" to "missing",
                 "operator" to "==",
                 "value" to "1",
@@ -914,7 +913,7 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "item-count")
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
         condition.params.putAll(
-            mapOf("kind" to "PLAYER_STATE", "sneaking" to "true", "item" to "minecraft:stone")
+            mapOf("subject" to "PLAYER", "sneaking" to "true", "item" to "minecraft:stone")
         )
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.TRUE, CommandType.DISPLAY_TEXT)
         GraphEditor.insert(script.graph, condition.id, GraphEditor.Edge.FALSE, CommandType.DISPLAY_TEXT)
@@ -1172,7 +1171,7 @@ class VanillaDatapackExporterTest {
             val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
             condition.params.putAll(
                 mapOf(
-                    "kind" to "VARIABLE_STATE",
+                    "subject" to "VARIABLE",
                     "variable" to "counter",
                     "operator" to ">",
                     "value" to value,

@@ -33,7 +33,6 @@ import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
@@ -1208,10 +1207,10 @@ class GestureLowerPanel(
             CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
         val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
             (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
-            (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
+            (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.PLAYER))
         val heldBlockSetting = field.key == "block" && (
             node.type == CommandType.BLOCK_OPERATION ||
-                (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.BLOCK_STATE.name) ||
+                (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.BLOCK) ||
                 (node.type == CommandType.TEMP_SET &&
                     TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
             )
@@ -2316,41 +2315,27 @@ class GestureLowerPanel(
 
     /**
      * issue #27: 判定対象の選択肢ID（condition-kind:<SUBJECT>）から、対象ごとの説明へ解決します。
-     * 旧 `condition-kind:<KIND>` 形式のIDも読み取りますが、旧 `TARGET_EXISTS` は
-     * その他存在判定の説明へ寄せ、新規 GUI へ独立カテゴリとして再露出させません。
+     * 単一正本の `subject` 欄だけを扱い、旧 `kind` 形式のIDは受け付けません。
      */
     private fun conditionKindDescription(player: Player, choiceId: String): String? {
-        val raw = choiceId.removePrefix("condition-kind:")
-        runCatching { ConditionSubject.valueOf(raw) }.getOrNull()?.let { subject ->
-            return KcI18n.text(
-                player,
-                when (subject) {
-                    ConditionSubject.PLAYER ->
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_ENTITY_STATE
-                    ConditionSubject.OTHER_ENTITY ->
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS
-                    ConditionSubject.VARIABLE ->
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
-                    ConditionSubject.BLOCK ->
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE
-                    ConditionSubject.CONTROL_BLOCK ->
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_CONTROL_BLOCK_STATE
-                },
-            )
-        }
-        return when (runCatching { ConditionKind.valueOf(raw) }.getOrNull()) {
-            ConditionKind.TARGET_EXISTS ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS)
-            ConditionKind.PLAYER_STATE ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_ENTITY_STATE)
-            ConditionKind.VARIABLE_STATE ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE)
-            ConditionKind.BLOCK_STATE ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE)
-            ConditionKind.CONTROL_BLOCK_STATE ->
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_CONTROL_BLOCK_STATE)
-            null -> null
-        }
+        val subject = runCatching {
+            ConditionSubject.valueOf(choiceId.removePrefix("condition-kind:"))
+        }.getOrNull() ?: return null
+        return KcI18n.text(
+            player,
+            when (subject) {
+                ConditionSubject.PLAYER ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_ENTITY_STATE
+                ConditionSubject.OTHER_ENTITY ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS
+                ConditionSubject.VARIABLE ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
+                ConditionSubject.BLOCK ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE
+                ConditionSubject.CONTROL_BLOCK ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_CONTROL_BLOCK_STATE
+            },
+        )
     }
 
     /** 条件詳細の選択肢IDから、項目ごとの説明へ解決します。 */
@@ -3288,8 +3273,8 @@ class GestureLowerPanel(
 
     private fun conditionDetailChoices(node: CommandNode, player: Player): List<SettingChoice> {
         // issue #27: 選択した判定対象に応じて詳細欄を切り替えます。
-        // 旧 `kind` のみの保存は `conditionSubject()` が振り分けるため、旧 enum を直接分岐しません。
-        val subject = node.conditionSubject()
+        // 未設定・不正な判定対象は詳細欄を出さず、判定対象タブでの選択を促します。
+        val subject = node.conditionSubject() ?: return emptyList()
         fun label(key: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>, value: String?): String =
             labeled(player, key, value)
         return when (subject) {

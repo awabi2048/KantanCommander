@@ -522,15 +522,15 @@ enum class ConditionKind(val key: LocalizationKey<String>) {
 }
 
 /**
- * issue #27: 条件分岐の判定対象です。
+ * issue #27: 条件分岐の判定対象です。条件の読込・検証・実行・表示・出力の単一正本です。
  *
- * 従来の `ConditionKind` は「何を判定するか」と「どの対象について判定するか」が
+ * 旧 `ConditionKind` は「何を判定するか」と「どの対象について判定するか」が
  * 一つの種類に混在していました（例: `PLAYER_STATE`）。GUI では利用者が
  * 「判定対象 → 対象に応じた条件」の順に設定できるよう、この5区分へ置き換えます。
  * `プレイヤー` と `その他エンティティ` は UI 上区別しますが、条件評価上はいずれも
  * Entity 系として同じ基本ルール（一致対象が1件以上存在すれば成立・絞り込みはAND）を用います。
- * 保存互換のため `ConditionKind` は読み取り用に残し、新規保存は `subject` 欄へ記録します。
- * `TARGET_EXISTS` は新規 GUI の独立カテゴリとして再露出させません。
+ * 旧 `ConditionKind` は読込時正規化の入口だけに残し、保存・分岐の正本にしません。
+ * `TARGET_EXISTS` は GUI の独立カテゴリとして再露出させません。
  */
 enum class ConditionSubject(val key: LocalizationKey<String>) {
     PLAYER(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
@@ -540,7 +540,7 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
     CONTROL_BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
 }
 
-/** プレイヤー系の対象種別かどうかを返します。旧 `TARGET_EXISTS` の表示振分けに使います。 */
+/** プレイヤー系の対象種別かどうかを返します。旧 `TARGET_EXISTS` の読込時振分けに使います。 */
 fun TargetKind.isPlayerKind(): Boolean = when (this) {
     TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS,
     TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER,
@@ -550,7 +550,12 @@ fun TargetKind.isPlayerKind(): Boolean = when (this) {
     -> false
 }
 
-/** 旧 `ConditionKind` に対応する判定対象を返します。 */
+/**
+ * 旧 `ConditionKind` に対応する判定対象を返します。
+ *
+ * 読込時正規化の境界だけで使います。実行・検証・表示・出力の分岐には使わず、
+ * 正規化後は `ConditionSubject` だけを参照します。
+ */
 fun ConditionKind.toSubject(targetSpec: TargetSpec? = null): ConditionSubject = when (this) {
     ConditionKind.PLAYER_STATE -> ConditionSubject.PLAYER
     ConditionKind.VARIABLE_STATE -> ConditionSubject.VARIABLE
@@ -562,43 +567,57 @@ fun ConditionKind.toSubject(targetSpec: TargetSpec? = null): ConditionSubject = 
         else ConditionSubject.OTHER_ENTITY
 }
 
-/** 旧形式の読み取り・出力と整合させるための対応 `ConditionKind` を返します。 */
-fun ConditionSubject.legacyKind(): ConditionKind = when (this) {
-    ConditionSubject.PLAYER -> ConditionKind.PLAYER_STATE
-    ConditionSubject.OTHER_ENTITY -> ConditionKind.TARGET_EXISTS
-    ConditionSubject.BLOCK -> ConditionKind.BLOCK_STATE
-    ConditionSubject.VARIABLE -> ConditionKind.VARIABLE_STATE
-    ConditionSubject.CONTROL_BLOCK -> ConditionKind.CONTROL_BLOCK_STATE
-}
-
 /**
- * ノードの判定対象を返します。
+ * ノードの判定対象を返します。条件の単一正本である `params["subject"]` だけを読みます。
  *
- * - `params["subject"]` があればそれを優先します（新規保存形式）。
- * - 無ければ旧 `params["kind"]` から対象種別を推定する表示用 adapter です（保存は書き換えません）。
- * - どちらも不正・未設定の場合は既定のその他エンティティ（旧既定 `TARGET_EXISTS` 相当）です。
+ * 未設定・不正値は null とし、旧 `kind` への推測フォールバックは行いません。
+ * 旧保存の読込は保存境界の正規化（`CommandGraph.normalizeConditionSubjects`）が担い、
+ * ここでは正規化済みの対象だけを扱います。null は検証層で未設定として拒否し、
+ * 実行層では評価失敗として停止します。
  */
-fun CommandNode.conditionSubject(): ConditionSubject {
-    val rawSubject = params["subject"]?.takeIf(String::isNotBlank)
-    if (rawSubject != null) {
-        runCatching { ConditionSubject.valueOf(rawSubject) }.getOrNull()?.let { return it }
-    }
-    val legacy = runCatching { ConditionKind.valueOf(string("kind")) }.getOrNull()
-    return legacy?.toSubject(targetSpec) ?: ConditionSubject.OTHER_ENTITY
-}
+fun CommandNode.conditionSubject(): ConditionSubject? =
+    params["subject"]?.takeIf(String::isNotBlank)
+        ?.let { runCatching { ConditionSubject.valueOf(it) }.getOrNull() }
 
 /**
- * 判定対象を設定します。
+ * 判定対象を設定します。`subject` 欄だけを書き換え、旧 `kind` 欄は残しません。
  *
- * 新規 `subject` 欄へ記録すると同時に、旧形式の読み取り・出力（検証・実行・export の
- * `kind` 分岐）と整合するよう旧対応 `kind` も合わせて書き換えます。対象固有の詳細欄
- * （sneaking/item/variable/operator/value/block 等）は削除せず保持します。評価・検証側で
- * 現在の判定対象に関係ない欄は無視するため、対象切替えでの入力消失を防ぎます。
+ * 対象固有の詳細欄（sneaking/item/variable/operator/value/block 等）は削除せず保持します。
+ * 評価・検証側で現在の判定対象に関係ない欄は無視するため、対象切替えでの入力消失を防ぎます。
  */
 fun CommandNode.setConditionSubject(subject: ConditionSubject) {
     params["subject"] = subject.name
-    params["kind"] = subject.legacyKind().name
-    markConfigured("subject", "kind")
+    params.remove("kind")
+    markConfigured("subject")
+    clearConfigured("kind")
+}
+
+/**
+ * グラフ内の条件ノードを単一正本へ正規化します。
+ *
+ * 保存境界（読込直後・保存直前）で呼び出し、旧 `kind` のみの保存を判定対象へ移します。
+ * 未知・欠落の `kind` はここでは落とさず、検証層の未設定扱いに委ねます。
+ * 正規化後は `kind` 欄を除去し、二重保存を残しません。
+ * snapshot・foldedGraph の内部グラフも再帰的に正規化します。
+ */
+fun CommandGraph.normalizeConditionSubjects() {
+    nodes.values.forEach { node ->
+        if (node.type == CommandType.CONDITION || node.type == CommandType.FOLDED_IF) {
+            val current = node.conditionSubject()
+            if (current == null) {
+                val legacy = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+                if (legacy != null) {
+                    node.params["subject"] = legacy.toSubject(node.targetSpec).name
+                    node.markConfigured("subject")
+                }
+            }
+            // 単一正本化：残存 `kind` 欄とその明示設定記録を除去します。
+            node.clearConfigured("kind")
+            node.params.remove("kind")
+        }
+        node.snapshot?.normalizeConditionSubjects()
+        node.foldedGraph?.normalizeConditionSubjects()
+    }
 }
 
 /** 制御ブロックの状態条件として選択できる判定項目です。 */
@@ -773,7 +792,8 @@ enum class CommandType(
     )),
     ENTITY_DELETE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONDITION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
-        "kind" to ConditionKind.TARGET_EXISTS.name,
+        // issue #27: 条件の単一正本は判定対象欄です。旧 `kind` 欄は保存しません。
+        "subject" to ConditionSubject.OTHER_ENTITY.name,
         "inverted" to "false",
         "sneaking" to "",
         "item" to "",
@@ -822,7 +842,8 @@ enum class CommandType(
      * 新規追加はできず、CONDITIONの折り畳み操作だけで生成します。
      */
     FOLDED_IF(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
-        "kind" to ConditionKind.TARGET_EXISTS.name,
+        // issue #27: 折り畳み外側は先頭 CONDITION の写しのため、判定対象欄も同じ既定値にします。
+        "subject" to ConditionSubject.OTHER_ENTITY.name,
         "inverted" to "false",
         "sneaking" to "",
         "item" to "",

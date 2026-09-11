@@ -9,7 +9,6 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
-import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateConditionPolicy
@@ -1529,17 +1528,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec?,
     ): ConditionEvaluation {
-        // issue #27: 判定対象ベースで分岐します。旧 `kind` のみの保存は
-        // `conditionSubject()` の表示用 adapter が対象種別へ振り分けるため、
-        // 実行側で旧 enum を直接分岐しません。`TARGET_EXISTS` は独立分岐にしません。
-        val subject = node.conditionSubject()
-        // 旧 `TARGET_EXISTS` が対象種別からプレイヤーへ振り分けられた場合、旧保存に残った
-        // 絞り込み欄（sneaking/item）は当時の GUI で表示されず検証もされなかった残存値のため、
-        // 存在判定に留めて無視します。新規プレイヤー条件と旧 `PLAYER_STATE` は絞り込みを適用します。
-        val legacyKind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        val hasExplicitSubject = node.params["subject"]?.takeIf(String::isNotBlank)
-            ?.let { runCatching { ConditionSubject.valueOf(it) }.getOrNull() } != null
-        val applyPlayerFilters = hasExplicitSubject || legacyKind == ConditionKind.PLAYER_STATE
+        // issue #27: 判定対象ベースで分岐します。条件の単一正本は `subject` 欄であり、
+        // 旧 `kind` へのフォールバックは行いません。旧保存の読込は保存境界の正規化が担います。
+        // 未設定・不正な判定対象は評価失敗として停止し、FALSE 分岐へ畳みません。
+        val subject = node.conditionSubject() ?: return ConditionEvaluation.INVALID
         return when (subject) {
             // Entity 系は設定条件に一致する対象が1件以上存在すれば成立します。
             // 任意の1件だけを選んで判定せず、絞り込み条件は原則ANDで評価します。
@@ -1554,8 +1546,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val players = resolveTargets(context, node.targetSpec, session).filterIsInstance<Player>()
                 if (players.isEmpty()) {
                     ConditionEvaluation.FALSE
-                } else if (!applyPlayerFilters) {
-                    ConditionEvaluation.TRUE
                 } else if (players.any { matchesPlayerCondition(node, session, it) }) {
                     ConditionEvaluation.TRUE
                 } else {

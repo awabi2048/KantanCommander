@@ -1,7 +1,7 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TemporaryVariableType
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -97,15 +97,15 @@ class IncrementalValidatorTest {
     }
 
     @Test
-    fun `condition kind change matches full validation`() {
+    fun `condition subject change matches full validation`() {
         val previous = DiskScript(name = "condition", owner = UUID.randomUUID())
         val condition = GraphEditor.append(previous.graph, CommandType.CONDITION)
-        condition.params["kind"] = ConditionKind.TARGET_EXISTS.name
+        condition.params["subject"] = ConditionSubject.OTHER_ENTITY.name
         val mutated = DiskScript(name = "condition", owner = previous.owner).copy(
             id = previous.id,
             graph = previous.graph.deepCopy(),
         )
-        mutated.graph.nodes.getValue(condition.id).params["kind"] = ConditionKind.PLAYER_STATE.name
+        mutated.graph.nodes.getValue(condition.id).params["subject"] = ConditionSubject.PLAYER.name
 
         assertEquivalent(previous, mutated)
     }

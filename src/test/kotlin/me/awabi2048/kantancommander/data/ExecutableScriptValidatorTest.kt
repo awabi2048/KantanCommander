@@ -1,7 +1,7 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -42,7 +42,7 @@ class ExecutableScriptValidatorTest {
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
         val diskCall = GraphEditor.append(script.graph, CommandType.DISK_CALL)
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
-        condition.params["kind"] = me.awabi2048.kantancommander.model.ConditionKind.TARGET_EXISTS.name
+        condition.params["subject"] = me.awabi2048.kantancommander.model.ConditionSubject.OTHER_ENTITY.name
 
         val errors = ExecutableScriptValidator.validate(script)
 
@@ -68,7 +68,7 @@ class ExecutableScriptValidatorTest {
     fun `control block state condition requires at least one selected state`() {
         val script = DiskScript(name = "control-state", owner = UUID.randomUUID())
         val condition = GraphEditor.append(script.graph, CommandType.CONDITION).apply {
-            params["kind"] = ConditionKind.CONTROL_BLOCK_STATE.name
+            params["subject"] = ConditionSubject.CONTROL_BLOCK.name
         }
 
         assertTrue(

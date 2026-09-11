@@ -6,7 +6,6 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
-import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
@@ -1143,17 +1142,15 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, WorldVariableValue>?,
         temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
     ) {
-        // issue #27: 判定対象ベースで検証します。旧 `kind` のみの保存は
-        // `conditionSubject()` が対象種別へ振り分けるため、検証側で旧 enum を直接分岐しません。
-        // 旧 `TARGET_EXISTS` は独立分岐にせず、その他存在判定として扱います。
-        val legacyKind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        val hasExplicitSubject = node.params["subject"]?.takeIf(String::isNotBlank)
-            ?.let { runCatching { ConditionSubject.valueOf(it) }.getOrNull() } != null
-        if (!hasExplicitSubject && legacyKind == null) {
-            errors += nodeError(node, path, setOf("kind"), "条件の種類が未設定です")
+        // issue #27: 判定対象ベースで検証します。条件の単一正本は `subject` 欄であり、
+        // 旧 `kind` へのフォールバックは行いません。旧保存の読込は保存境界の正規化が担います。
+        // 未設定・不正な判定対象は「判定対象」タブ（kind）の未設定として拒否します。
+        val subject = node.conditionSubject()
+        if (subject == null) {
+            errors += nodeError(node, path, setOf("kind"), "判定対象が未設定です")
             return
         }
-        when (node.conditionSubject()) {
+        when (subject) {
             ConditionSubject.OTHER_ENTITY -> if (node.targetSpec == null) {
                 errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
             }

@@ -4,6 +4,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.collapsedForStarts
 import me.awabi2048.kantancommander.model.collapsedConditions
 import me.awabi2048.kantancommander.model.hasDiskContent
@@ -32,6 +33,61 @@ import java.util.logging.LogRecord
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
+
+    @Test
+    fun `legacy kind-only condition is normalized to subject on load and stays single-sourced`() {
+        // issue #27: 旧 `kind` のみの保存は読込時に判定対象へ移し、`kind` 欄を残さない。
+        val dir = temp.resolve("condition-subject").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val conditionId = UUID.randomUUID()
+        val mergeId = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 13,
+              "id": "$scriptId",
+              "name": "legacy-condition",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 0,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": false, "intervalSeconds": 1.0},
+              "graph": {
+                "entryNodeId": "$conditionId",
+                "nodes": {
+                  "$conditionId": {
+                    "id": "$conditionId",
+                    "type": "CONDITION",
+                    "params": {"kind": "TARGET_EXISTS", "inverted": "false"},
+                    "targetSpec": {"kind": "NEARBY_PLAYERS", "sort": "NEAREST"},
+                    "pairedNodeId": "$mergeId",
+                    "trueNext": "$mergeId"
+                  },
+                  "$mergeId": {
+                    "id": "$mergeId",
+                    "type": "MERGE",
+                    "params": {},
+                    "pairedNodeId": "$conditionId"
+                  }
+                }
+              },
+              "revision": 0
+            }
+            """.trimIndent()
+        )
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val node = loaded.graph.nodes.getValue(conditionId)
+        // プレイヤー系対象の旧存在判定はプレイヤーへ振り分けられる。
+        assertEquals(ConditionSubject.PLAYER.name, node.params["subject"])
+        assertFalse(node.params.containsKey("kind"))
+
+        // 保存・再読込でも単一正本を維持する。
+        store.save(loaded)
+        val reloaded = ScriptStore(dir, Logger.getAnonymousLogger())
+        val resaved = requireNotNull(reloaded.load(scriptId)).graph.nodes.getValue(conditionId)
+        assertEquals(ConditionSubject.PLAYER.name, resaved.params["subject"])
+        assertFalse(resaved.params.containsKey("kind"))
+    }
 
     @Test
     fun `structured script round trips and placement copy is independent`() {
