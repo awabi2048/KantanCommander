@@ -390,6 +390,23 @@ class CommandSettingsModelTest {
     }
 
     @Test
+    fun `gesture column tabs fit within six for every place destination`() {
+        // 実行位置タブは固定行へ抽出するため、上限検査の対象外にします。
+        // PLACE_ITEM=7で設定画面が開かなくなった不具合の回帰試験です。
+        fun columnKeys(destination: String?): List<String> {
+            val node = CommandType.PLACE_ITEM.newNode()
+            if (destination == null) node.params.remove("destination") else node.params["destination"] = destination
+            return CommandSettingsModel.gestureVisibleFields(node)
+                .map { it.key }
+                .filter { it != "executionPosition" }
+        }
+        for (destination in listOf("EQUIPMENT", "PLAYER_HOTBAR", "PLAYER_INVENTORY", "ITEM_FRAME", "BLOCK_CONTAINER")) {
+            assertTrue(columnKeys(destination).size <= 6, destination)
+        }
+        assertTrue(columnKeys(null).size <= 6, "null destination")
+    }
+
+    @Test
     fun `descriptor maps structured fields to shared editors`() {
         val condition = CommandSettingsModel.descriptor(CommandNode(type = CommandType.CONDITION), "condition")
         assertEquals(CommandSettingEditor.CONDITION_DETAIL, condition.editor)

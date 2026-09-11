@@ -1110,8 +1110,11 @@ class GestureLowerPanel(
         val attentionFields = attention.fieldKeysByNode[node.id].orEmpty()
         val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
             ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
-        check(fields.size <= SETTINGS_TAB_MAX) {
-            "設定タブは${SETTINGS_TAB_MAX}個以内で定義してください: ${node.type}=${fields.size}"
+        // 実行位置タブはタブ列から抽出して固定行へ置くため、上限検査の対象外にします。
+        // 通常タブ列だけが6枠の物理配置を共有します。
+        val columnTabCount = fields.count { it.key != EXECUTION_POSITION_FIELD_KEY }
+        check(columnTabCount <= SETTINGS_TAB_MAX) {
+            "設定タブは${SETTINGS_TAB_MAX}個以内で定義してください: ${node.type}=$columnTabCount"
         }
         DeclarativeSettings.tabsSection(
             nodes,
@@ -2313,159 +2316,6 @@ class GestureLowerPanel(
             DisabledChoiceVisualPolicy.material
         }
 
-    /**
-     * 設定タブと固定操作を親の設定画面で描画します。
-     * 詳細子画面へ進んでも親の表示は背面に残るため、子画面側へ同じナビゲーションを
-     * 複製して操作領域を混在させません。
-     */
-    private fun addSettingsNavigation(
-        state: GestureEditorState,
-        player: Player,
-        node: CommandNode,
-        visuals: MutableList<GestureGuiVisual>,
-        elements: MutableList<GestureGuiElement>,
-        attentionFields: Set<String> = emptySet(),
-        suppressHighlight: Boolean = false,
-        canDuplicate: Boolean,
-    ) {
-        val fields = CommandSettingsModel.gestureVisibleFields(node)
-        if (fields.isEmpty()) {
-            // 設定選択子画面から親のナビゲーションを再構成する場合も、制御ノードの
-            // 削除ボタンだけは欠落させません。通常の設定タブがないことと、ノードを
-            // 削除できないことは別の状態です。
-            addNodeActions(player, visuals, elements, canDuplicate)
-            return
-        }
-        val activeField = state.settingFieldKey?.let { key -> fields.indexOfFirst { it.key == key } }
-            ?.takeIf { it >= 0 } ?: state.settingsTab.coerceIn(0, fields.lastIndex)
-        check(fields.size <= SETTINGS_TAB_MAX) {
-            "設定タブは${SETTINGS_TAB_MAX}個以内で定義してください: ${node.type}=${fields.size}"
-        }
-        fields.forEachIndexed { index, field ->
-            val cy = SETTINGS_TAB_TOP_Y - index * SETTINGS_TAB_PITCH
-            val on = index == activeField
-            val attention = field.key in attentionFields
-            // タブの選択状態は縁取りではなく右へ幅15%伸ばし、選択中タブの背景はシアンの
-            // テラコッタで示します。テキスト位置は維持し、背景とヒットボックスだけ拡張します。
-            // 未完了警告はタブテキストの§cです。
-            val tabSelected = on && !suppressHighlight
-            val tabWidth = GestureSettingVisualPolicy.selectedTabWidth(SETTINGS_TAB_WIDTH, tabSelected)
-            val tabCx = GestureSettingVisualPolicy.selectedTabCenterX(SETTINGS_TAB_CENTER_X, SETTINGS_TAB_WIDTH, tabSelected)
-            addBlock(
-                visuals,
-                "tab-bg-$index",
-                tabCx,
-                cy,
-                tabWidth,
-                SETTINGS_TAB_HEIGHT,
-                GestureSettingVisualPolicy.tabMaterial(tabSelected),
-                4,
-            )
-            val tabLabel = fieldTabLabel(player, node, field)
-            val tabTextColor = GestureSettingVisualPolicy.tabTextColor(attention)
-            addText(visuals, "tab-$index", SETTINGS_TAB_CENTER_X, cy - 0.02, 0.0055, 90,
-                if (tabTextColor == null) Component.text(tabLabel) else Component.text(tabLabel, tabTextColor))
-            elements.add(GestureGuiElement(
-                elementId = "lower-tab:$index",
-                bounds = rect(tabCx, cy, tabWidth, SETTINGS_TAB_HEIGHT),
-                acceptedGestures = GestureGuiClickPolicy.CLICK,
-                targetVisualId = "tab-bg-$index",
-                // 要確認タブは色だけでなく状態名も示します。ホバー中は操作説明欄を
-                // 置き換えて警告を表示し、どのタブが未完了かを文面で伝えます。
-                hoverText = if (attention) {
-                    attentionWarningHover(player, node, field.key)
-                } else null,
-            ))
-        }
-
-
-        addNodeActions(player, visuals, elements, canDuplicate)
-    }
-
-    /** ノード選択中の固定操作を、表示可否と配置の契約ごとまとめて描画します。 */
-    private fun addNodeActions(
-        player: Player,
-        visuals: MutableList<GestureGuiVisual>,
-        elements: MutableList<GestureGuiElement>,
-        canDuplicate: Boolean,
-    ) {
-        if (canDuplicate) addDuplicateAction(player, visuals, elements)
-        addDeleteAction(player, visuals, elements)
-    }
-
-    /** 選択中ノードの直後へ同じ設定のコマンドを挿入する操作です。 */
-    private fun addDuplicateAction(
-        player: Player,
-        visuals: MutableList<GestureGuiVisual>,
-        elements: MutableList<GestureGuiElement>,
-    ) {
-        val duplicateY = SETTINGS_TAB_EXECUTION_Y
-        addBlock(
-            visuals,
-            "duplicate-bg",
-            SETTINGS_TAB_CENTER_X,
-            duplicateY,
-            SETTINGS_TAB_WIDTH,
-            SETTINGS_TAB_HEIGHT,
-            Material.CYAN_CONCRETE,
-            4,
-        )
-        addText(
-            visuals,
-            "duplicate-label",
-            SETTINGS_TAB_CENTER_X,
-            duplicateY,
-            0.0049,
-            90,
-            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DUPLICATE)),
-        )
-        elements.add(GestureGuiElement(
-            elementId = "lower-duplicate",
-            bounds = rect(SETTINGS_TAB_CENTER_X, duplicateY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            targetVisualId = "duplicate-bg",
-        ))
-    }
-
-    /**
-     * 設定値の有無に依存しない、ノード削除の固定操作です。
-     *
-     * 表示位置・要素ID・クリック契約を通常の設定画面と共有し、入力側の
-     * `lower-delete`から既存の削除確認／保存失敗フィードバックへ接続します。
-     */
-    private fun addDeleteAction(
-        player: Player,
-        visuals: MutableList<GestureGuiVisual>,
-        elements: MutableList<GestureGuiElement>,
-    ) {
-        val deleteY = SETTINGS_TAB_ACTION_Y
-        addBlock(
-            visuals,
-            "delete-bg",
-            SETTINGS_TAB_CENTER_X,
-            deleteY,
-            SETTINGS_TAB_WIDTH,
-            SETTINGS_TAB_HEIGHT,
-            Material.RED_CONCRETE,
-            4,
-        )
-        addText(
-            visuals,
-            "delete-label",
-            SETTINGS_TAB_CENTER_X,
-            deleteY,
-            0.0049,
-            90,
-            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DELETE)),
-        )
-        elements.add(GestureGuiElement(
-            elementId = "lower-delete",
-            bounds = rect(SETTINGS_TAB_CENTER_X, deleteY, SETTINGS_TAB_WIDTH, SETTINGS_TAB_HEIGHT),
-            acceptedGestures = GestureGuiClickPolicy.CLICK,
-            targetVisualId = "delete-bg",
-        ))
-    }
-
     /** 表示時間はグループ名をタブへ、表示継続時間は内部の現在値ラベルへ分離します。 */
     internal fun fieldTabLabel(player: Player, node: CommandNode, field: EditorField): String =
         if (node.type == CommandType.DISPLAY_TEXT && field.key == "staySeconds") {
@@ -3145,6 +2995,8 @@ class GestureLowerPanel(
         choiceId.startsWith("entityOperation:") -> setOf("operation")
         choiceId.startsWith("attributeOperation:") -> setOf(EntityAttributeSupport.PARAM_OPERATION)
         choiceId.startsWith("modifierOperation:") -> setOf(EntityAttributeSupport.PARAM_MODIFIER_OPERATION)
+        // modifier追加時の量入力行は量欄へ投影します（量タブを出さない代替経路）。
+        choiceId.startsWith("modifierAmount:") -> setOf(EntityAttributeSupport.PARAM_AMOUNT)
         choiceId.startsWith("propertyValue:") -> setOf(EntityDataSchema.PARAM_VALUE)
         choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
         // issue #21: 配置先の選択肢は配置先欄へ投影します。
@@ -3449,7 +3301,15 @@ class GestureLowerPanel(
                 EntityAttributeSupport.MODIFIER_ADD_NUMBER,
             )
             SettingChoice("modifierOperation:$operation", KcI18n.text(player, label), current == operation)
-        }
+        } + listOf(
+            // modifier追加時は量タブを出さないため、この画面から量入力を開きます。
+            // 通常タブ列の上限（6件）に収めるためです。現在値は入力欄に初期表示します。
+            SettingChoice(
+                "modifierAmount:edit",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_AMOUNT),
+                false,
+            ),
+        )
         // issue #32: 設定項目は対象から確定できる種類で絞ります。
         // 種類不明時は汎用項目だけを提示し、固有設定を広げません（#10）。
         GestureSettingScreen.ENTITY_PROPERTY -> {
@@ -4617,7 +4477,10 @@ class GestureLowerPanel(
         const val SETTING_DETAIL_INPUT_GAP = 0.02
         // 6項目を同一画面へ収めるため、旧ページャーの4項目制限を廃止します。
         // タブの高さ0.10に対してピッチ0.11を確保し、意図された0.01の余白を維持します。
+        // 上限は通常タブ列だけに適用し、固定行へ抽出する実行位置タブは数えません。
         const val SETTINGS_TAB_MAX = 6
+        /** 固定行へ抽出する実行位置タブのフィールドキーです。上限検査から除外します。 */
+        const val EXECUTION_POSITION_FIELD_KEY = "executionPosition"
         const val SETTINGS_TAB_CENTER_X = -0.7975
         const val SETTINGS_TAB_WIDTH = 0.47
         const val SETTINGS_TAB_TOP_Y = 0.38

@@ -6447,6 +6447,27 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_MODIFIER_OPERATION -> {
+                // modifier追加時は量タブを出さないため、この画面の量入力行から
+                // 量Dialogを開きます。通常タブ列の上限（6件）に収めるためです。
+                if (group == "modifierAmount") {
+                    beginSettingInput(
+                        player,
+                        requireNotNull(CommandDialogSpecs.field(node, EntityAttributeSupport.PARAM_AMOUNT)),
+                        node.string(EntityAttributeSupport.PARAM_AMOUNT, "0.0"),
+                    ) { raw ->
+                        val value = CommandDialogSpecs.normalize(EntityAttributeSupport.PARAM_AMOUNT, raw)
+                        val spec = requireNotNull(CommandDialogSpecs.field(node, EntityAttributeSupport.PARAM_AMOUNT))
+                        val validationError = spec.validateInput(value)
+                        if (validationError != null) {
+                            KcI18n.text(player, validationError)
+                        } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityAttributeSupport.PARAM_AMOUNT)) {
+                                CommandSettingsModel.setParameter(it, EntityAttributeSupport.PARAM_AMOUNT, value)
+                            }) {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                        } else null
+                    }
+                    return
+                }
                 val allowed = setOf(
                     EntityAttributeSupport.MODIFIER_ADD_NUMBER,
                     EntityAttributeSupport.MODIFIER_MULTIPLY_BASE,

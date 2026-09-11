@@ -84,6 +84,35 @@ class EntityOperationSettingsTest {
     }
 
     @Test
+    fun `gesture column tabs fit within six for every operation`() {
+        // 実行位置タブは固定行へ抽出するため、上限検査の対象外にします。
+        // modifier追加の8タブで設定画面が開かなくなる潜在不具合の回帰試験です。
+        // 量は演算選択画面の行から編集するため、量タブは出しません。
+        fun columnKeys(operation: String, attributeOperation: String): List<String> {
+            val node = operationNode(operation).apply {
+                params[EntityAttributeSupport.PARAM_OPERATION] = attributeOperation
+            }
+            return CommandSettingsModel.gestureVisibleFields(node)
+                .map { it.key }
+                .filter { it != "executionPosition" }
+        }
+        assertTrue(columnKeys("tag", EntityAttributeSupport.OPERATION_BASE_VALUE).size <= 6, "tag")
+        assertTrue(columnKeys("attribute", EntityAttributeSupport.OPERATION_BASE_VALUE).size <= 6, "base")
+        assertTrue(columnKeys("attribute", EntityAttributeSupport.OPERATION_MODIFIER_ADD).size <= 6, "add")
+        assertTrue(columnKeys("attribute", EntityAttributeSupport.OPERATION_MODIFIER_REMOVE).size <= 6, "remove")
+        assertTrue(columnKeys("data", EntityAttributeSupport.OPERATION_BASE_VALUE).size <= 6, "data")
+        val add = operationNode("attribute").apply {
+            params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_ADD
+        }
+        assertTrue(
+            CommandSettingsModel.gestureVisibleFields(add).none {
+                it.key == EntityAttributeSupport.PARAM_AMOUNT
+            },
+            "modifier add hides the amount tab",
+        )
+    }
+
+    @Test
     fun `descriptor maps entity operation fields to shared editors`() {
         val node = operationNode("attribute")
         assertEquals(

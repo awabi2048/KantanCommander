@@ -399,6 +399,8 @@ object CommandSettingsModel {
             // 配置先で要求する対象が変わります。エンティティ系は対象欄、
             // ブロックコンテナ系は配置位置欄を使い、もう一方は出しません。
             // 額縁は内容固定のためスロット欄を出さず、既定値で確定します。
+            // 配置先不明時は位置欄を出さず、配置先の確定を先に促します。
+            // 不明時に両方出すと通常タブ列の上限（6件）を超えるためです。
             node.type == CommandType.PLACE_ITEM -> {
                 val destination = PlaceItemDestination.from(node.string("destination"))
                 val allowed = buildSet {
@@ -408,7 +410,7 @@ object CommandSettingsModel {
                     add("item")
                     add("count")
                     add("overwrite")
-                    if (destination == null || destination.requiresBlockPosition) add("position")
+                    if (destination != null && destination.requiresBlockPosition) add("position")
                 }
                 fields.filter { it.key in allowed }
             }
@@ -551,7 +553,18 @@ object CommandSettingsModel {
      * 表示専用の意味型へ閉じ込め、各画面が独自の文字列フォーマットを持たないようにします。
      */
     fun gestureVisibleFields(node: CommandNode): List<EditorField> =
-        visibleFields(node).map { field ->
+        visibleFields(node).filter { field ->
+            // modifier追加時は量を演算選択画面の行から編集するため、量タブを出しません。
+            // Gestureの通常タブ列の上限（6件）に収めるためです。Inventory GUIには
+            // 上限がないため、visibleFields側（量タブ）は残します。
+            !(node.type == CommandType.ENTITY_OPERATION &&
+                node.string("operation", "tag") == "attribute" &&
+                node.string(
+                    EntityAttributeSupport.PARAM_OPERATION,
+                    EntityAttributeSupport.OPERATION_BASE_VALUE,
+                ) == EntityAttributeSupport.OPERATION_MODIFIER_ADD &&
+                field.key == EntityAttributeSupport.PARAM_AMOUNT)
+        }.map { field ->
             if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)
