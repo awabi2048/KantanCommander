@@ -1607,8 +1607,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ConditionEvaluation.FALSE
                 }
             }
-            // 将来の判定対象追加時に false 継続へ黙って畳まないための受け皿です。
-            else -> ConditionEvaluation.INVALID
+            // 判定対象の追加時はこの when が非網羅でコンパイルエラーとなり、
+            // false 継続への黙殺を防ぎます。
         }
     }
 
