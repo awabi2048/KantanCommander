@@ -1514,6 +1514,35 @@ internal object CommandDialogSpecs {
      */
     fun registeredIds(fieldKey: String): List<String> = registeredValues(fieldKey)
 
+    /** 複数クエリ検索で一度に扱うクエリ数の上限です。多すぎる再検索を抑えます。 */
+    const val MAX_SUGGESTION_QUERIES = 8
+
+    /** 候補表示の総数上限です。単一・複数クエリいずれもこの値を維持します。 */
+    const val MAX_SUGGESTIONS = 12
+
+    /** 複数クエリ入力の区切り文字です。空白類・`,`・`、`を区切りとして扱います。 */
+    private val SUGGESTION_QUERY_DELIMITERS = Regex("[,、\\s\\u3000]+")
+
+    /**
+     * issue #31: 「候補を表示」押下時の入力文字列を複数クエリへ分解します。
+     *
+     * 空要素は除外し、大小無視で重複を除去して [MAX_SUGGESTION_QUERIES] 件で
+     * 打ち切ります。保存値の仕様には触れず、検索専用の入力構文として扱います。
+     */
+    fun parseSuggestionQueries(input: String, maxQueries: Int = MAX_SUGGESTION_QUERIES): List<String> {
+        if (maxQueries <= 0) return emptyList()
+        val seenKeys = LinkedHashSet<String>()
+        val queries = ArrayList<String>()
+        for (raw in input.split(SUGGESTION_QUERY_DELIMITERS)) {
+            val query = raw.trim()
+            if (query.isEmpty()) continue
+            if (!seenKeys.add(query.lowercase())) continue
+            queries.add(query)
+            if (queries.size >= maxQueries) break
+        }
+        return queries
+    }
+
     /**
      * 入力中の文字列に近い登録IDを最大12件返します。
      * Paperの入力画面はキー入力ごとのコールバックを提供しないため、呼び出し側は
@@ -1521,27 +1550,88 @@ internal object CommandDialogSpecs {
      * 部分一致→編集距離の順で安定ソートし、空欄では候補を返しません。
      * ランキングは [registeredIds] の取得と分離しています。
      */
-    fun suggestions(fieldKey: String, query: String, limit: Int = 12): List<String> {
-        val normalized = query.trim().lowercase()
-        if (normalized.isEmpty() || !supportsSuggestions(fieldKey)) return emptyList()
+    fun suggestions(fieldKey: String, query: String, limit: Int = MAX_SUGGESTIONS): List<String> =
+        suggestionsFromInput(fieldKey, query, limit)
+
+    /**
+     * issue #31: 「候補を表示」押下時の入力文字列を複数クエリとしてOR検索します。
+     *
+     * 各クエリ内部では単一クエリと同一の一致度順ランキングを維持し、クエリ間の
+     * 結果はラウンドロビンで統合します。先頭クエリだけで候補枠を使い切らず、
+     * 同一IDの重複表示も除去します。候補一覧の取得は1回にまとめます。
+     */
+    fun suggestionsFromInput(fieldKey: String, input: String, limit: Int = MAX_SUGGESTIONS): List<String> =
+        suggestions(fieldKey, parseSuggestionQueries(input), limit)
+
+    /**
+     * issue #31: 複数クエリをOR条件で検索し、最大[limit]件へ統合します。
+     *
+     * 候補一覧の取得は1回だけ行い、各クエリのランキングへ使い回します。
+     */
+    fun suggestions(fieldKey: String, queries: List<String>, limit: Int = MAX_SUGGESTIONS): List<String> {
+        if (!supportsSuggestions(fieldKey)) return emptyList()
+        val normalized = queries.map { it.trim().lowercase() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+            .take(MAX_SUGGESTION_QUERIES)
+        if (normalized.isEmpty()) return emptyList()
         val values = registeredIds(fieldKey)
-        return values.asSequence()
+        if (values.isEmpty()) return emptyList()
+        val perQuery = normalized.map { rankCandidates(values, it) }
+        return mergeSuggestionRounds(perQuery, limit.coerceAtLeast(0))
+    }
+
+    /**
+     * 単一クエリに対する一致度順ランキングです。
+     *
+     * 完全一致→前方一致→部分一致→編集距離の順で安定ソートします。
+     * Registry取得を含まない純粋処理のため、サーバーなしの単体テストから直接検証できます。
+     */
+    internal fun rankCandidates(values: List<String>, normalizedQuery: String): List<String> =
+        values.asSequence()
             .map { value ->
                 val candidate = value.lowercase()
                 val rank = when {
-                    candidate == normalized -> 0
-                    candidate.startsWith(normalized) -> 1
-                    candidate.contains(normalized) -> 2
+                    candidate == normalizedQuery -> 0
+                    candidate.startsWith(normalizedQuery) -> 1
+                    candidate.contains(normalizedQuery) -> 2
                     else -> 3
                 }
-                Triple(rank, levenshtein(candidate, normalized), value)
+                Triple(rank, levenshtein(candidate, normalizedQuery), value)
             }
             .sortedWith(compareBy<Triple<Int, Int, String>> { it.first }
                 .thenBy { it.second }
                 .thenBy { it.third })
-            .take(limit.coerceAtLeast(0))
             .map { it.third }
             .toList()
+
+    /**
+     * 複数クエリのランキング結果をラウンドロビンで統合します。
+     *
+     * `A1 A2 ...` `B1 B2 ...` を `A1 B1 A2 B2 ...` の順に束ね、同一IDの
+     * 重複を除去して [limit] 件で打ち切ります。先頭クエリへの偏りを防ぎます。
+     */
+    internal fun mergeSuggestionRounds(ranked: List<List<String>>, limit: Int): List<String> {
+        if (limit <= 0) return emptyList()
+        val merged = LinkedHashSet<String>()
+        val indices = IntArray(ranked.size)
+        var progressed = true
+        while (merged.size < limit && progressed) {
+            progressed = false
+            for (i in ranked.indices) {
+                if (merged.size >= limit) break
+                val candidates = ranked[i]
+                var index = indices[i]
+                while (index < candidates.size && candidates[index] in merged) index++
+                if (index < candidates.size) {
+                    merged.add(candidates[index])
+                    index++
+                    progressed = true
+                }
+                indices[i] = index
+            }
+        }
+        return merged.take(limit)
     }
 
     private fun registeredFieldId(fieldKey: String, raw: String): Boolean = when (fieldKey) {
