@@ -38,9 +38,12 @@ class VanillaDatapackExporterTest {
                             node.destinationSpec = PositionSpec(PositionKind.DISK)
                         }
                     }
-                    CommandType.GIVE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
+                    CommandType.GIVE_ITEM, CommandType.PLACE_ITEM, CommandType.ENTITY_ACTION, CommandType.DISPLAY_TEXT -> {
                         if (node.targetSpec == null) node.targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
                         if (node.type == CommandType.GIVE_ITEM && node.string("item").isBlank()) {
+                            node.params["item"] = "minecraft:stone"
+                        }
+                        if (node.type == CommandType.PLACE_ITEM && node.string("item").isBlank()) {
                             node.params["item"] = "minecraft:stone"
                         }
                         if (node.type == CommandType.ENTITY_ACTION &&
@@ -103,9 +106,10 @@ class VanillaDatapackExporterTest {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             params["effect"] = "minecraft:speed"
         }
-        GraphEditor.append(script.graph, CommandType.ENTITY_ACTION).apply {
-            params["action"] = "equip"
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+            params["destination"] = "EQUIPMENT"
+            params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
         }
         GraphEditor.append(script.graph, CommandType.CAMERA_SHAKE).targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
@@ -470,6 +474,58 @@ class VanillaDatapackExporterTest {
         val body = result.functions.values.joinToString("\n")
         assertTrue(body.contains("setblock 1.0 2.0 3.0 minecraft:stone"))
         assertTrue(body.contains("kill @e["))
+    }
+
+    @Test
+    fun `place item lowers every destination to the item replace syntax`() {
+        val store = ScriptStore(temp.resolve("place-commands"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "place commands")
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["destination"] = "PLAYER_HOTBAR"
+            params["slot"] = "8"
+            params["item"] = "minecraft:stone"
+            params["count"] = "3"
+        }
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+            params["destination"] = "ITEM_FRAME"
+            params["slot"] = "CONTENTS"
+            params["item"] = "minecraft:stone"
+        }
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            params["destination"] = "BLOCK_CONTAINER"
+            params["slot"] = "0"
+            params["item"] = "minecraft:stone"
+            blockPositionSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("item replace entity") && body.contains("hotbar.8"))
+        assertTrue(body.contains("with minecraft:stone 3"))
+        assertTrue(body.contains("contents with minecraft:stone"))
+        assertTrue(body.contains("item replace block 1.0 2.0 3.0 container.0 with minecraft:stone"))
+    }
+
+    @Test
+    fun `place item with an inapplicable slot fails preflight`() {
+        val store = ScriptStore(temp.resolve("place-invalid"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "invalid place")
+        GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            params["destination"] = "PLAYER_HOTBAR"
+            params["slot"] = "HAND"
+            params["item"] = "minecraft:stone"
+        }
+        store.save(script)
+        assertInstanceOf(
+            ExportResult.Failure::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
+        )
     }
 
     @Test

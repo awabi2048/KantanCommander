@@ -124,6 +124,7 @@ object SettingSpec {
     /** Checkboxで直接切り替える二値項目です。 */
     private val CHECKBOX_FIELDS: Set<Pair<CommandType, String>> = setOf(
         CommandType.ENTITY_ACTION to "overwrite",
+        CommandType.PLACE_ITEM to "overwrite",
         CommandType.CONDITION to "inverted",
     )
 
@@ -193,6 +194,7 @@ object SettingSpec {
             CommandSettingEditor.CONDITION_DETAIL,
             CommandSettingEditor.DISPLAY_MODE,
             CommandSettingEditor.ENTITY_ACTION,
+            CommandSettingEditor.PLACE_DESTINATION,
             CommandSettingEditor.ENTITY_EQUIPMENT_SLOT,
             CommandSettingEditor.ENTITY_TAG_OPERATION,
             CommandSettingEditor.VARIABLE_TYPE,

@@ -19,6 +19,7 @@ import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
@@ -55,7 +56,6 @@ internal object CommandDialogSpecs {
         MATERIAL_ID,
         VARIABLE_NAME,
         TAG,
-        EQUIPMENT_SLOT,
         NUMERIC_EXPRESSION,
     }
 
@@ -1128,6 +1128,7 @@ internal object CommandDialogSpecs {
         ) {
             return conditionNumberValue
         }
+        if (node.type == CommandType.PLACE_ITEM && fieldKey == "slot") return placeSlot(node)
         return when (node.type) {
             CommandType.BLOCK_OPERATION -> if (fieldKey == "block") placementBlock else field(fieldKey)
             CommandType.WAIT -> if (fieldKey == "seconds") {
@@ -1162,6 +1163,34 @@ internal object CommandDialogSpecs {
             } else field(fieldKey)
             else -> field(fieldKey)
         }
+    }
+
+    /**
+     * 「アイテムを配置する」の数値スロット入力仕様です。
+     *
+     * 保存形式 (0始まり) ではなく GUI 表示 (1始まり) で受け付け、保存側で
+     * 変換します。装備は選択画面、額縁は固定値のため Dialog を開きません。
+     * 配置先ごとの表示範囲だけを検証し、保存形式の正当性は検証側が担います。
+     */
+    fun placeSlot(node: CommandNode): Spec? {
+        val destination = PlaceItemDestination.from(node.string("destination")) ?: return null
+        val displayRange = when (destination) {
+            PlaceItemDestination.PLAYER_HOTBAR -> 1..9
+            PlaceItemDestination.PLAYER_INVENTORY -> 1..27
+            PlaceItemDestination.BLOCK_CONTAINER -> 1..54
+            PlaceItemDestination.EQUIPMENT, PlaceItemDestination.ITEM_FRAME -> return null
+        }
+        return Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_SLOT,
+            16,
+            validate = { raw ->
+                if (raw.trim().toIntOrNull()?.takeIf { it in displayRange } == null) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                } else null
+            },
+            required = true,
+            format = InputFormat.NUMBER,
+        )
     }
 
     /**
@@ -1241,7 +1270,6 @@ internal object CommandDialogSpecs {
             "volume" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VOLUME
             "pitch" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PITCH
             "intensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_INTENSITY
-            "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT
             "shakeType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SHAKE_TYPE
             else -> return null
         }
@@ -1258,7 +1286,6 @@ internal object CommandDialogSpecs {
             "level" -> InputFormat.INTEGER
             "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds" -> InputFormat.TIME
             "volume", "pitch", "intensity" -> InputFormat.NUMBER
-            "slot" -> InputFormat.EQUIPMENT_SLOT
             else -> InputFormat.ANY_STRING
         }
         val formatHintKey = when (fieldKey) {
@@ -1273,7 +1300,6 @@ internal object CommandDialogSpecs {
             "level" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_LEVEL_BODY
             "seconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SECONDS_BODY
             "intensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_INTENSITY_BODY
-            "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_EQUIPMENT_SLOT_BODY
             "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_COUNT_BODY
             else -> null
         }
@@ -1289,7 +1315,7 @@ internal object CommandDialogSpecs {
         }
         val required = fieldKey in setOf(
             "block", "entity", "sound", "effect", "count", "level", "seconds",
-            "volume", "pitch", "intensity", "shakeType", "slot", "tag",
+            "volume", "pitch", "intensity", "shakeType", "tag",
             "fadeInSeconds", "staySeconds", "fadeOutSeconds",
         )
         return Spec(labelKey, maxLength, validate = { raw ->
@@ -1303,8 +1329,6 @@ internal object CommandDialogSpecs {
                 fieldKey in setOf("tags", "tag") && VariableTemplate.references(raw).isEmpty() &&
                     !CommandValueRules.isTag(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
-                fieldKey == "slot" && !CommandValueRules.isEquipmentSlot(raw) ->
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 numericRange != null && fieldKey in setOf("volume", "pitch", "intensity") &&
                     !isNumericTemplate(raw) &&
                     !CommandValueRules.isFiniteDoubleIn(raw, numericRange.min..numericRange.max) ->

@@ -19,7 +19,6 @@ object CommandValueRules {
     // 数字始まりを許すと、式の数値リテラルと区別できず、GUI・実行・出力で
     // 同じ名前を解釈できなくなります。
     private val TAG_PATTERN = Regex("[A-Za-z0-9_.:+-]{1,64}")
-    private val EQUIPMENT_SLOTS = setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET")
 
     /**
      * ワールド内変数のSTRING値に許す最大文字数です。
@@ -74,8 +73,6 @@ object CommandValueRules {
     fun isTemporaryName(raw: String): Boolean = SystemVariableNames.isUserName(raw)
 
     fun isTag(raw: String): Boolean = TAG_PATTERN.matches(raw)
-
-    fun isEquipmentSlot(raw: String): Boolean = raw in EQUIPMENT_SLOTS
 
     fun isFiniteDoubleIn(raw: String, range: ClosedFloatingPointRange<Double>): Boolean =
         parseFiniteDouble(raw)?.let { it in range } == true

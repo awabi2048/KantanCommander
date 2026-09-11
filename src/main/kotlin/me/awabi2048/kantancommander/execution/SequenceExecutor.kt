@@ -44,6 +44,7 @@ import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import com.awabi2048.ccsystem.CCSystem
@@ -54,8 +55,10 @@ import org.bukkit.NamespacedKey
 import org.bukkit.Registry
 import org.bukkit.SoundCategory
 import org.bukkit.entity.Entity
+import org.bukkit.entity.ItemFrame
 import org.bukkit.entity.LivingEntity
 import org.bukkit.entity.Player
+import org.bukkit.inventory.InventoryHolder
 import org.bukkit.inventory.ItemStack
 import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
@@ -645,6 +648,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun immediateDetail(type: CommandType): String = when (type) {
         CommandType.TELEPORT -> "対象を指定位置へテレポートした"
         CommandType.GIVE_ITEM -> "対象へアイテムを付与した"
+        CommandType.PLACE_ITEM -> "対象へアイテムを配置した"
         CommandType.ENTITY_ACTION -> "対象へエンティティ操作を行った"
         CommandType.DISPLAY_TEXT -> "対象へテキストを表示した"
         CommandType.SUMMON_ENTITY -> "エンティティを召喚した"
@@ -925,32 +929,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         targets.all(vehicle::addPassenger)
                     }
                     "dismount" -> targets.all(Entity::leaveVehicle)
-                    "equip" -> {
-                        val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-                            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                            ?.takeIf { it.type == TemporaryVariableType.ITEM }
-                        val material = if (refTemp != null) {
-                            CommandValueRules.material(refTemp.item.orEmpty(), allowAir = false)
-                        } else {
-                            CommandValueRules.material(node.string("item"), allowAir = false)
-                        } ?: return false
-                        val template = if (refTemp != null) {
-                            refTemp.itemData?.takeIf(String::isNotBlank)?.let(ItemStackCodec::decode)
-                                ?: ItemStack(material)
-                        } else {
-                            ItemStackCodec.decode(node.string("itemData")) ?: ItemStack(material)
-                        }
-                        val slot = runCatching { EquipmentSlot.valueOf(node.string("slot")) }.getOrNull() ?: return false
-                        val overwrite = node.boolean("overwrite")
-                        val applicable = targets.filterIsInstance<LivingEntity>().mapNotNull { it.equipment }
-                        if (applicable.isEmpty()) return false
-                        applicable.forEach { equipment ->
-                            if (overwrite || equipment.getItem(slot).type.isAir) {
-                                equipment.setItem(slot, template.clone())
-                            }
-                        }
-                        true
-                    }
                     "tag" -> {
                         val tag = resolveText(node.string("tag"), session) ?: return false
                         // タグは単一値としてそのまま扱います。カンマを分割したり、
@@ -970,6 +948,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     else -> false
                 }
             }
+            CommandType.PLACE_ITEM -> executePlaceItem(node, session, effectiveContext, targets, origins, attempts)
             CommandType.DISPLAY_TEXT -> {
                 val players = targets.filterIsInstance<Player>()
                 if (players.isEmpty()) return false
@@ -1558,6 +1537,111 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): Location? {
         spec?.let { return resolveSinglePosition(it, session, context) }
         return origins.singleOrNull()
+    }
+
+    /**
+     * 「アイテムを配置する」(PLACE_ITEM) を実行します。
+     *
+     * バニラ `/item replace entity|block` に相当し、配置先の capability に応じて
+     * adapter を解決します。EntityType の分岐を増やさず、対象ごとの適用可否で
+     * 判定します。`from` によるスロット間コピーは持たず、配置アイテムと個数の
+     * 変数指定で代替します。
+     *
+     * 個数に設定時上限はなく、実行時に maxStackSize を超える分は上限量へ寄せます。
+     * エンティティ系は対応対象が1件でもあれば成功、ブロック系は各位置を独立に
+     * 試行します。
+     */
+    private fun executePlaceItem(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        targets: List<Entity>,
+        origins: List<Location>,
+        attempts: MultiAttemptRecorder,
+    ): Boolean {
+        // 一時変数参照があれば最優先します。リテラルとの併記は検証で拒否します。
+        val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
+            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+            ?.takeIf { it.type == TemporaryVariableType.ITEM }
+        val material = if (refTemp != null) {
+            CommandValueRules.material(refTemp.item.orEmpty(), allowAir = false)
+        } else {
+            CommandValueRules.material(node.string("item"), allowAir = false)
+        } ?: return false
+        val template = if (refTemp != null) {
+            refTemp.itemData?.takeIf(String::isNotBlank)?.let(ItemStackCodec::decode)
+                ?: ItemStack(material)
+        } else {
+            ItemStackCodec.decode(node.string("itemData")) ?: ItemStack(material)
+        }
+        val count = resolvePositiveInt(node.string("count"), session) ?: return false
+        // 検証時に上限を設けないため、スタック上限を超える要求は上限量へ寄せます。
+        val stack = template.clone()
+        stack.amount = minOf(count, stack.maxStackSize)
+        val destination = PlaceItemDestination.from(node.string("destination")) ?: return false
+        val slot = node.string("slot")
+        if (!PlaceItemDestination.isValidSlot(destination, slot)) return false
+        val overwrite = node.boolean("overwrite")
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            val index = slot.toIntOrNull() ?: return false
+            // コマンド固有位置がなければ起点集合を使い、各位置を独立に試行します。
+            val locations = node.blockPositionSpec?.let {
+                actionOrigins(it, session, context) ?: return false
+            } ?: origins
+            locations.forEach { location ->
+                attempts.record(runCatching {
+                    val world = location.world ?: error("world is unavailable")
+                    if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
+                        // 拡張コマンドブロックの位置は、配置先としても常に変更を拒否します。
+                        error("placement is protected")
+                    }
+                    val inventory = (location.block.state as? InventoryHolder)?.inventory
+                        ?: error("block is not a container")
+                    if (index !in 0 until inventory.size) error("container slot is out of range")
+                    if (overwrite || isEmptyStack(inventory.getItem(index))) {
+                        inventory.setItem(index, stack.clone())
+                    }
+                }.isSuccess)
+            }
+            return attempts.overall
+        }
+        if (targets.isEmpty()) return false
+        var applied = 0
+        targets.forEach { target ->
+            val placed = when (destination) {
+                PlaceItemDestination.EQUIPMENT -> {
+                    val bukkitSlot = runCatching { EquipmentSlot.valueOf(slot) }.getOrNull()
+                    val equipment = (target as? LivingEntity)?.equipment
+                    if (bukkitSlot == null || equipment == null) false
+                    else if (overwrite || isEmptyStack(equipment.getItem(bukkitSlot))) {
+                        equipment.setItem(bukkitSlot, stack.clone())
+                        true
+                    } else false
+                }
+                PlaceItemDestination.PLAYER_HOTBAR, PlaceItemDestination.PLAYER_INVENTORY -> {
+                    val player = target as? Player
+                    val bukkitSlot = PlaceItemDestination.bukkitPlayerSlot(destination, slot)
+                    if (player == null || bukkitSlot == null) false
+                    else if (overwrite || isEmptyStack(player.inventory.getItem(bukkitSlot))) {
+                        player.inventory.setItem(bukkitSlot, stack.clone())
+                        true
+                    } else false
+                }
+                PlaceItemDestination.ITEM_FRAME -> {
+                    // GlowItemFrame は ItemFrame を継承するため、同じ経路で扱います。
+                    // 回転等の表示設定はこの操作の対象外です。
+                    val frame = target as? ItemFrame
+                    if (frame == null) false
+                    else if (overwrite || isEmptyStack(frame.item)) {
+                        frame.setItem(stack.clone())
+                        true
+                    } else false
+                }
+                PlaceItemDestination.BLOCK_CONTAINER -> false
+            }
+            if (placed) applied++
+        }
+        return applied > 0
     }
 
     private fun executeBlockOperation(
@@ -2597,6 +2681,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (value != kotlin.math.floor(value) || value <= 0.0 || value > Int.MAX_VALUE.toDouble()) return null
         return value.toInt()
     }
+
+    /** overwrite=false の配置可否を、空スロット判定で統一します。 */
+    private fun isEmptyStack(stack: ItemStack?): Boolean = stack == null || stack.type.isAir
 
     /** プレイヤー状態の所持判定は、メインハンド由来のItemStack情報も尊重します。 */
     private fun playerHasItem(player: Player, itemId: String, itemData: String): Boolean {

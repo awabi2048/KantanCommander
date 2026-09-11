@@ -48,6 +48,7 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.hasDiskContent
@@ -1343,7 +1344,7 @@ class GestureLowerPanel(
         val typedValueSourceSetting =
             CommandSettingsModel.supportsTemporaryValueReference(node, field.key)
         val heldItemSetting = field.key == "item" && (node.type == CommandType.GIVE_ITEM ||
-            (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") ||
+            node.type == CommandType.PLACE_ITEM ||
             (node.type == CommandType.CONDITION && node.string("kind") == ConditionKind.PLAYER_STATE.name))
         val heldBlockSetting = field.key == "block" && (
             node.type == CommandType.BLOCK_OPERATION ||
@@ -2621,6 +2622,9 @@ class GestureLowerPanel(
                 else -> null
             }
         }
+        choice.id.startsWith("placeDestination:") -> suffixKeyDescription(player, choice.id, "placeDestination:") { suffix ->
+            PlaceItemDestination.from(suffix)?.labelKey
+        }
         choice.id.startsWith("equipmentSlot:") -> suffixKeyDescription(player, choice.id, "equipmentSlot:") { suffix ->
             when (suffix) {
                 "HAND" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND
@@ -3073,6 +3077,7 @@ class GestureLowerPanel(
         choiceId.startsWith("block:") -> setOf("operation")
         choiceId.startsWith("display:") -> setOf("mode")
         choiceId.startsWith("action:") -> setOf("action")
+        choiceId.startsWith("placeDestination:") -> setOf("destination")
         choiceId.startsWith("equipmentSlot:") -> setOf("slot")
         choiceId.startsWith("overwrite:") -> setOf("overwrite")
         choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
@@ -3205,6 +3210,9 @@ class GestureLowerPanel(
             id.startsWith("equipmentSlot:") -> choice.selected &&
                 node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
                 CommandSettingsModel.isFieldConfigured(node, "slot")
+            id.startsWith("placeDestination:") -> choice.selected &&
+                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == id.removePrefix("placeDestination:") &&
+                CommandSettingsModel.isFieldConfigured(node, "destination")
             id.startsWith("overwrite:") -> choice.selected &&
                 node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean() &&
                 CommandSettingsModel.isFieldConfigured(node, "overwrite")
@@ -3325,9 +3333,15 @@ class GestureLowerPanel(
         GestureSettingScreen.ENTITY_ACTION -> listOf(
             SettingChoice("action:ride", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE), node.string("action", "ride") == "ride"),
             SettingChoice("action:dismount", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT), node.string("action", "ride") == "dismount"),
-            SettingChoice("action:equip", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIP), node.string("action", "ride") == "equip"),
             SettingChoice("action:tag", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET_TAG), node.string("action", "ride") == "tag"),
         )
+        GestureSettingScreen.PLACE_DESTINATION -> PlaceItemDestination.entries.map { destination ->
+            SettingChoice(
+                "placeDestination:${destination.paramValue}",
+                KcI18n.text(player, destination.labelKey),
+                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue,
+            )
+        }
         GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
             "HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND,
             "OFF_HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND,

@@ -373,6 +373,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             "$target → $destination"
         }
         CommandType.GIVE_ITEM -> "${node.string("item")} ×${node.string("count", "1")}"
+        CommandType.PLACE_ITEM -> "${node.string("item")} ×${node.string("count", "1")}"
         CommandType.DISPLAY_TEXT -> node.string("text").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.WAIT -> "${node.string("seconds", "1")}秒"
         CommandType.CONDITION -> runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()

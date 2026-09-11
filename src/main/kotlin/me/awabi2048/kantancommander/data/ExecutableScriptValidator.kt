@@ -21,6 +21,7 @@ import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
@@ -399,6 +400,7 @@ object ExecutableScriptValidator {
                 validatePositiveIntegerInput(node.string("count"), variableDefinitions, node, path, setOf("count"), errors, temporaryDefinitions)
             }
             CommandType.ENTITY_ACTION -> validateEntityAction(node, path, errors, temporaryDefinitions)
+            CommandType.PLACE_ITEM -> validatePlaceItem(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.DISPLAY_TEXT -> validateDisplayText(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.WAIT -> validateWait(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.SUMMON_ENTITY -> {
@@ -835,17 +837,6 @@ object ExecutableScriptValidator {
                 errors += nodeError(node, path, setOf("other"), "乗り物となる対象が未設定です")
             }
             "dismount" -> Unit
-            "equip" -> {
-                if (!CommandValueRules.isEquipmentSlot(node.string("slot"))) {
-                    errors += nodeError(node, path, setOf("slot"), "装備するスロットが不正です")
-                }
-                if (node.itemTempRef.isNullOrBlank() && CommandValueRules.material(node.string("item"), allowAir = false) == null) {
-                    errors += nodeError(node, path, setOf("item"), "装備アイテムが未設定です")
-                }
-                if (node.params["overwrite"]?.toBooleanStrictOrNull() == null) {
-                    errors += nodeError(node, path, setOf("overwrite"), "上書き設定が不正です")
-                }
-            }
             "tag" -> {
                 if (node.string("tagOperation", "add") !in setOf("add", "remove")) {
                     errors += nodeError(node, path, setOf("tagOperation"), "タグ操作が不正です")
@@ -861,6 +852,44 @@ object ExecutableScriptValidator {
                 }
             }
             else -> errors += nodeError(node, path, setOf("action"), "不明なエンティティ操作です")
+        }
+    }
+
+    /**
+     * 「アイテムを配置する」(PLACE_ITEM) を検証します。
+     *
+     * 配置先ごとに要求する対象が異なります。エンティティ系は TargetSpec、
+     * ブロックコンテナ系は blockPositionSpec を必須にし、もう一方は要求しません。
+     * スロットは配置先ごとの保存形式で検証し、個数は正整数として変数参照ごと
+     * 受け付けます。上限は設けず、実行時に maxStackSize へ寄せます。
+     */
+    private fun validatePlaceItem(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        val destination = PlaceItemDestination.from(node.string("destination"))
+        if (destination == null) {
+            errors += nodeError(node, path, setOf("destination"), "配置先が不正です")
+            return
+        }
+        if (destination.requiresEntityTarget && node.targetSpec == null) {
+            errors += nodeError(node, path, setOf("target"), "対象が未設定です")
+        }
+        if (destination.requiresBlockPosition && node.blockPositionSpec == null) {
+            errors += nodeError(node, path, setOf("position"), "配置位置が未設定です")
+        }
+        if (!PlaceItemDestination.isValidSlot(destination, node.string("slot"))) {
+            errors += nodeError(node, path, setOf("slot"), "配置スロットが不正です")
+        }
+        if (node.itemTempRef.isNullOrBlank() && CommandValueRules.material(node.string("item"), allowAir = false) == null) {
+            errors += nodeError(node, path, setOf("item"), "配置アイテムが未設定です")
+        }
+        validatePositiveIntegerInput(node.string("count"), variableDefinitions, node, path, setOf("count"), errors, temporaryDefinitions)
+        if (node.params["overwrite"]?.toBooleanStrictOrNull() == null) {
+            errors += nodeError(node, path, setOf("overwrite"), "上書き設定が不正です")
         }
     }
 

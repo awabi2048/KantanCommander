@@ -30,6 +30,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
@@ -131,21 +132,10 @@ class VanillaDatapackExporter(
                 }
                 CommandType.ENTITY_ACTION -> when (node.string("action")) {
                     "ride", "dismount" -> Unit
-                    "equip" -> {
-                        val item = node.string("item")
-                        if (node.itemTempRef.isNullOrBlank() &&
-                            (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
-                        ) {
-                            errors += "${script.id}/${node.id}: バニラに存在しない装備アイテムです: $item"
-                        }
-                        val itemData = node.string("itemData")
-                        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
-                            errors += "${script.id}/${node.id}: 保存された装備ItemStackメタデータは完全バニラ出力に未対応です"
-                        }
-                    }
                     "tag" -> Unit
                     else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
+                CommandType.PLACE_ITEM -> validatePlaceItemExport(script, node, errors)
                 CommandType.PARTICLE -> {
                     val particle = ParticleSettings.particle(node)
                     if (particle == null) {
@@ -1293,12 +1283,11 @@ class VanillaDatapackExporter(
             "${node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") } ?: node.string("item")} " +
             node.string("count", "1")
         CommandType.ENTITY_ACTION -> when (node.string("action")) {
-            "dismount" -> "ride ${effectiveTarget(node)} dismount"
-            "equip" -> "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with " +
-                (node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") } ?: node.string("item"))
-            "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
-            else -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
-        }
+                    "dismount" -> "ride ${effectiveTarget(node)} dismount"
+                    "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
+                    else -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
+                }
+                CommandType.PLACE_ITEM -> placeItemCommand(node)
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
             "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
             "subtitle" -> "title ${effectiveTarget(node)} subtitle {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
@@ -1531,13 +1520,57 @@ class VanillaDatapackExporter(
         val setup: List<String>,
     )
 
-    private fun equipmentSlot(slot: String) = when (slot) {
-        "OFF_HAND" -> "weapon.offhand"
-        "HEAD" -> "armor.head"
-        "CHEST" -> "armor.chest"
-        "LEGS" -> "armor.legs"
-        "FEET" -> "armor.feet"
-        else -> "weapon.mainhand"
+    /**
+     * 「アイテムを配置する」(PLACE_ITEM) をバニラ `/item replace` へ変換します。
+     *
+     * 配置先のバニラ slot 記法は PlaceItemDestination が一元管理し、ここでは
+     * 対象・位置・アイテム・個数の埋め込みだけを行います。個数の変数参照は
+     * macro 層で展開されるため、生の保存値をそのまま出力します。上書き可否は
+     * バニラに等価表現がなく、出力上の特別扱いはしません。
+     */
+    private fun placeItemCommand(node: CommandNode): String {
+        val destination = PlaceItemDestination.from(node.string("destination"))
+            ?: error("unknown place item destination")
+        val slot = PlaceItemDestination.vanillaSlot(destination, node.string("slot"))
+            ?: error("unknown place item slot")
+        val item = node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") }
+            ?: node.string("item")
+        val count = node.string("count", "1")
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            val anchor = blockAnchor(node.blockPositionSpec ?: error("structured block position is missing"))
+            return "${anchor.prefix}item replace block ${anchor.coordinates} $slot with $item $count"
+        }
+        return "item replace entity ${effectiveTarget(node)} $slot with $item $count"
+    }
+
+    /**
+     * PLACE_ITEM の完全バニラ出力可否を検証します。
+     *
+     * GIVE_ITEM と同じく minecraft 名前空間・ItemStack メタデータを検査し、
+     * 配置先とスロットの組合せ・ブロック位置の表現可否を加えます。
+     */
+    private fun validatePlaceItemExport(script: DiskScript, node: CommandNode, errors: MutableList<String>) {
+        val item = node.string("item")
+        if (node.itemTempRef.isNullOrBlank() &&
+            (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
+        ) {
+            errors += "${script.id}/${node.id}: バニラに存在しない配置アイテムです: $item"
+        }
+        val itemData = node.string("itemData")
+        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
+            errors += "${script.id}/${node.id}: 保存された配置ItemStackメタデータは完全バニラ出力に未対応です"
+        }
+        val destination = PlaceItemDestination.from(node.string("destination"))
+        if (destination == null) {
+            errors += "${script.id}/${node.id}: 不明な配置先です"
+            return
+        }
+        if (!PlaceItemDestination.isValidSlot(destination, node.string("slot"))) {
+            errors += "${script.id}/${node.id}: 配置先に適用できないスロットです"
+        }
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            validatePosition(script, node, node.blockPositionSpec, errors)
+        }
     }
 
     private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
@@ -2151,6 +2184,7 @@ class VanillaDatapackExporter(
             CommandType.PARTICLE -> node.particlePositionSpec
             CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
             CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
+            CommandType.PLACE_ITEM -> node.blockPositionSpec
             else -> null
         }?.takeIf { it.kind == PositionKind.TARGET } ?: return null
         return spec.target?.takeIf { it.kind != TargetKind.TEMPORARY }
@@ -2195,6 +2229,7 @@ class VanillaDatapackExporter(
                 CommandType.PARTICLE -> node.particlePositionSpec
                 CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
                 CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
+                CommandType.PLACE_ITEM -> node.blockPositionSpec
                 CommandType.TELEPORT -> node.destinationSpec
                 else -> null
             }?.kind,

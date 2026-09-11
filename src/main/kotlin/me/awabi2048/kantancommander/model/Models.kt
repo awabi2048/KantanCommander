@@ -710,12 +710,16 @@ enum class CommandType(
 ) {
     TELEPORT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT_DESCRIPTION, Material.ENDER_PEARL, emptyMap()),
     GIVE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM_DESCRIPTION, Material.CHEST, mapOf("count" to "1")),
-    ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf(
-        "action" to "ride",
-        "slot" to "HAND",
+    PLACE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLACE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLACE_ITEM_DESCRIPTION, Material.ITEM_FRAME, mapOf(
+        "destination" to PlaceItemDestination.EQUIPMENT.paramValue,
+        "slot" to PlaceItemDestination.defaultSlot(PlaceItemDestination.EQUIPMENT),
         "item" to "",
         "itemData" to "",
+        "count" to "1",
         "overwrite" to "false",
+    )),
+    ENTITY_ACTION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_ACTION_DESCRIPTION, Material.SADDLE, mapOf(
+        "action" to "ride",
         "tagOperation" to "add",
         "tag" to "",
     )),

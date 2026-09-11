@@ -547,14 +547,9 @@ class ScriptStore(
             val node = nodes[nodeId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
             when (node["type"]?.asString) {
-                "EQUIP_ITEM" -> {
-                    node.addProperty("type", "ENTITY_ACTION")
-                    params?.addProperty("action", "equip")
-                    params?.addProperty("slot", params["slot"]?.asString ?: "HAND")
-                    params?.addProperty("item", params["item"]?.asString ?: "")
-                    params?.addProperty("itemData", params["itemData"]?.asString ?: "")
-                    params?.addProperty("overwrite", "false")
-                }
+                // EQUIP_ITEM 分岐は ENTITY_ACTION/equip の廃止に伴い削除しました。
+                // 旧形式自体が読み込み時に隔離されるため、ここで新形式への
+                // 読替えは行いません。
                 "ENTITY_STATE" -> migrateLegacyEntityState(node, params, graph)
                 "ITEM_POSSESSION" -> {
                     node.addProperty("type", "CONDITION")

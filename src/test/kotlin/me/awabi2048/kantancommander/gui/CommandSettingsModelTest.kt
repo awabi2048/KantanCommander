@@ -353,8 +353,38 @@ class CommandSettingsModelTest {
 
         assertEquals(listOf("target", "action", "other", "executionPosition"), keys("ride"))
         assertEquals(listOf("target", "action", "executionPosition"), keys("dismount"))
-        assertEquals(listOf("target", "action", "slot", "item", "overwrite", "executionPosition"), keys("equip"))
+        // equipは廃止し、独立した「アイテムを配置する」へ移しました。
+        // 旧保存値が残っても装備欄へは展開せず、基本欄へ畳みます。
+        assertEquals(listOf("target", "action", "executionPosition"), keys("equip"))
         assertEquals(listOf("target", "action", "tagOperation", "tag", "executionPosition"), keys("tag"))
+    }
+
+    @Test
+    fun `place item fields follow the selected destination`() {
+        val node = CommandType.PLACE_ITEM.newNode()
+        fun keys(destination: String): List<String> {
+            node.params["destination"] = destination
+            return CommandSettingsModel.visibleFields(node).map { it.key }
+        }
+
+        // エンティティ系は対象欄、ブロック系は配置位置欄を使い分けます。
+        // 額縁は内容固定のためスロット欄を出しません。
+        assertEquals(
+            listOf("target", "destination", "slot", "item", "count", "overwrite", "executionPosition"),
+            keys("EQUIPMENT"),
+        )
+        assertEquals(
+            listOf("target", "destination", "slot", "item", "count", "overwrite", "executionPosition"),
+            keys("PLAYER_HOTBAR"),
+        )
+        assertEquals(
+            listOf("target", "destination", "item", "count", "overwrite", "executionPosition"),
+            keys("ITEM_FRAME"),
+        )
+        assertEquals(
+            listOf("destination", "slot", "item", "count", "overwrite", "position", "executionPosition"),
+            keys("BLOCK_CONTAINER"),
+        )
     }
 
     @Test
@@ -484,7 +514,7 @@ class CommandSettingsModelTest {
     fun `all executable composite value fields share the source selector`() {
         val cases = listOf(
             CommandType.GIVE_ITEM.newNode() to "item",
-            CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "equip" } to "item",
+            CommandType.PLACE_ITEM.newNode() to "item",
             CommandType.BLOCK_OPERATION.newNode() to "block",
             CommandType.PLAY_SOUND.newNode() to "sound",
             CommandType.APPLY_EFFECT.newNode() to "effect",

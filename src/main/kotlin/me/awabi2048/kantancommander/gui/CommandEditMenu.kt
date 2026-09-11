@@ -34,6 +34,7 @@ import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
@@ -240,7 +241,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                         }
                         if (field == "item" && (node.type == CommandType.GIVE_ITEM ||
-                                (node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip"))) {
+                                node.type == CommandType.PLACE_ITEM)) {
                             // 付与アイテムはインベントリ内の実物をクリックして選択する
                             // 旧方式へ戻します（インベントリGUIの標準選択導線）。
                             val scriptId = scriptId(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -267,20 +268,32 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                     "action",
                                     when (it.string("action", "ride")) {
                                         "ride" -> "dismount"
-                                        "dismount" -> "equip"
-                                        "equip" -> "tag"
+                                        "dismount" -> "tag"
                                         else -> "ride"
                                     },
                                 )
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
-                        if (field == "slot" && node.type == CommandType.ENTITY_ACTION && node.string("action", "ride") == "equip") {
+                        // 配置スロットは配置先で入力経路が変わります。装備は既存の
+                        // 装備選択、数値スロットは1始まり表示の数値入力を使います。
+                        // 額縁は固定のため欄自体を出さず、ここへは到達しません。
+                        if (field == "destination" && node.type == CommandType.PLACE_ITEM) {
                             return@MenuActionHandler MenuActionResult.Success(
-                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_EQUIPMENT_SLOT_ID)),
+                                MenuUpdate.Navigate(choiceRoute(context.route, PLACE_DESTINATION_ID)),
                             )
                         }
-                        if (field == "overwrite" && node.type == CommandType.ENTITY_ACTION) {
+                        if (field == "slot" && node.type == CommandType.PLACE_ITEM) {
+                            val destination = PlaceItemDestination.from(node.string("destination"))
+                            if (destination == PlaceItemDestination.EQUIPMENT) {
+                                return@MenuActionHandler MenuActionResult.Success(
+                                    MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_EQUIPMENT_SLOT_ID)),
+                                )
+                            }
+                            showPlaceSlotForm(context.player, context.route, node)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        if (field == "overwrite" && (node.type == CommandType.ENTITY_ACTION || node.type == CommandType.PLACE_ITEM)) {
                             if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -384,10 +397,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             showFieldForm(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
-                        if (node.type == CommandType.BLOCK_OPERATION &&
+                        if ((node.type == CommandType.BLOCK_OPERATION ||
+                                (node.type == CommandType.PLACE_ITEM &&
+                                    PlaceItemDestination.from(node.string("destination")) == PlaceItemDestination.BLOCK_CONTAINER)) &&
                             (field == "position" || field == "from" || field == "to")
                         ) {
-                            // ブロック操作の配置位置・範囲は座標の数値入力で指定します。
+                            // ブロック操作とアイテム配置の配置位置・範囲は座標の数値入力で指定します。
                             openBlockPositionForm(context.player, context.route, field)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -465,6 +480,31 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, "slot", slot)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                PLACE_DESTINATION_ID,
+                renderer = { renderPlaceDestinations(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val destination = PlaceItemDestination.from(context.payload["destination"])
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                // 配置先の切替えで要求対象が変わるため、スロットは
+                                // 既定値へ戻して不正な組合せを残しません。
+                                CommandSettingsModel.setParameter(it, "destination", destination.paramValue)
+                                CommandSettingsModel.setParameter(it, "slot", PlaceItemDestination.defaultSlot(destination))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
@@ -1093,6 +1133,39 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
+    /**
+     * 配置先の選択肢を描画します。
+     *
+     * 5つの配置先は対象の能力ごとに分かれ、実行時に適用可否を判定します。
+     * 選択肢の文言は配置先 adapter の表示キーへ一元化します。
+     */
+    private fun renderPlaceDestinations(player: Player): InventoryMenuView {
+        val options = listOf(
+            Triple(PlaceItemDestination.EQUIPMENT, Material.ARMOR_STAND, PlaceItemDestination.EQUIPMENT.labelKey),
+            Triple(PlaceItemDestination.PLAYER_HOTBAR, Material.BLAZE_POWDER, PlaceItemDestination.PLAYER_HOTBAR.labelKey),
+            Triple(PlaceItemDestination.PLAYER_INVENTORY, Material.CHEST, PlaceItemDestination.PLAYER_INVENTORY.labelKey),
+            Triple(PlaceItemDestination.ITEM_FRAME, Material.ITEM_FRAME, PlaceItemDestination.ITEM_FRAME.labelKey),
+            Triple(PlaceItemDestination.BLOCK_CONTAINER, Material.BARREL, PlaceItemDestination.BLOCK_CONTAINER.labelKey),
+        )
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                KcI18n.text(player, option.third),
+                "select",
+                mapOf("destination" to option.first.paramValue),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_DESTINATION)),
+            elements,
+        )
+    }
+
     private fun renderEquipmentSlots(player: Player): InventoryMenuView {
         val options = listOf(
             Triple("HAND", Material.ARMOR_STAND, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND),
@@ -1437,6 +1510,39 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ),
                         )
                     }
+                }
+            },
+        )
+    }
+
+    /**
+     * 数値スロットの入力画面です。
+     *
+     * 保存形式 (0始まり) ではなく GUI 表示 (1始まり) で受け付け、保存時に
+     * 変換します。装備・額縁は選択・固定のためここへは到達しません。
+     * 仕様と検証は CommandDialogSpecs.placeSlot へ一元化します。
+     */
+    private fun showPlaceSlotForm(player: Player, route: MenuRoute, node: CommandNode) {
+        val destination = PlaceItemDestination.from(node.string("destination")) ?: return
+        val spec = CommandDialogSpecs.placeSlot(node) ?: return
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "field-slot",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = listOf(
+                FormTextField(
+                    "slot",
+                    KcI18n.text(player, spec.labelKey),
+                    PlaceItemDestination.toDisplay(destination, node.string("slot")),
+                    spec = spec,
+                ),
+            ),
+            save = { values ->
+                val saved = PlaceItemDestination.fromDisplay(destination, values.getValue("slot"))
+                    ?: return@showTextForm false
+                updateNode(player, route) {
+                    CommandSettingsModel.setParameter(it, "slot", saved)
                 }
             },
         )
@@ -2329,6 +2435,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val PICKER_ID = "command_type"
         private const val SETTINGS_ID = "command_settings"
         private const val ENTITY_EQUIPMENT_SLOT_ID = "entity_equipment_slot"
+        private const val PLACE_DESTINATION_ID = "place_destination"
         private const val DISPLAY_MODE_ID = "display_mode"
         private const val BLOCK_OPERATION_ID = "block_operation"
         private const val DELETE_ID = "delete_command"
@@ -2647,6 +2754,49 @@ object EditorMenuLayout {
             ) { displayTypedValue(it, "item") },
             field("count", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT, Material.DIAMOND),
         )
+        CommandType.PLACE_ITEM -> listOf(
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PLACE_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PLACE_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field(
+                "destination",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_DESTINATION,
+                Material.HOPPER,
+            ) { displayPlaceDestination(it.string("destination", PlaceItemDestination.EQUIPMENT.paramValue)) },
+            field("slot", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_SLOT, Material.ARMOR_STAND) {
+                displayPlaceSlot(it)
+            },
+            field(
+                "item",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_ITEM,
+                Material.CHEST,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PLACE_ITEM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PLACE_ITEM,
+            ) { displayTypedValue(it, "item") },
+            field("count", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_COUNT, Material.DIAMOND),
+            field(
+                "overwrite",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE,
+                Material.LIME_DYE,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OVERWRITE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OVERWRITE,
+            ) {
+                displayBoolean(it.boolean("overwrite"))
+            },
+            field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PLACE_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PLACE_POSITION,
+            ) {
+                it.blockPositionSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+        )
         CommandType.ENTITY_ACTION -> listOf(
             field(
                 "target",
@@ -2658,25 +2808,6 @@ object EditorMenuLayout {
             field("action", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION, Material.SADDLE) { displayEntityAction(it.string("action", "ride")) },
             field("other", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OTHER, Material.ANVIL) {
                 it.secondaryTargetSpec?.kind?.let(::displayTarget) ?: displayUnset()
-            },
-            field("slot", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_SLOT, Material.ARMOR_STAND) {
-                displayEquipmentSlot(it.string("slot", "HAND"))
-            },
-            field(
-                "item",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_ITEM,
-                Material.CHEST,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EQUIP_ITEM,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EQUIP_ITEM,
-            ) { displayTypedValue(it, "item") },
-            field(
-                "overwrite",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE,
-                Material.LIME_DYE,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OVERWRITE,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OVERWRITE,
-            ) {
-                displayBoolean(it.boolean("overwrite"))
             },
             field(
                 "tagOperation",
@@ -3313,11 +3444,29 @@ private fun displayVariableValue(value: String) = when (value) {
 private fun displayEntityAction(value: String) = DisplayValue.Localized(
     when (value) {
         "dismount" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT
-        "equip" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIP
         "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET_TAG
         else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE
     },
 )
+
+/**
+ * 配置先を表示します。不明値は未設定として扱い、保存値の正本は検証側に残します。
+ */
+private fun displayPlaceDestination(value: String): DisplayValue =
+    PlaceItemDestination.from(value)?.let { DisplayValue.Localized(it.labelKey) } ?: displayUnset()
+
+/**
+ * 配置スロットを表示します。数値スロットは GUI 表示 (1始まり) へ変換し、
+ * 保存形式 (0始まり) をそのまま見せません。装備は既存の装備表示へ委ねます。
+ */
+private fun displayPlaceSlot(node: CommandNode): DisplayValue {
+    val destination = PlaceItemDestination.from(node.string("destination")) ?: return displayUnset()
+    val slot = node.string("slot")
+    if (!PlaceItemDestination.isValidSlot(destination, slot)) return displayUnset()
+    if (destination == PlaceItemDestination.EQUIPMENT) return displayEquipmentSlot(slot)
+    if (destination == PlaceItemDestination.ITEM_FRAME) return DisplayValue.Localized(destination.labelKey)
+    return DisplayValue.Literal(PlaceItemDestination.toDisplay(destination, slot))
+}
 
 private fun displayBlockOperation(value: String) = DisplayValue.Localized(
     if (value == "fill") {
