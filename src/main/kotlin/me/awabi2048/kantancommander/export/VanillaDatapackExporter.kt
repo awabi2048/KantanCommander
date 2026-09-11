@@ -12,6 +12,7 @@ import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -144,7 +145,22 @@ class VanillaDatapackExporter(
                             errors += "${script.id}/${node.id}: 保存された装備ItemStackメタデータは完全バニラ出力に未対応です"
                         }
                     }
+                    // 動き設定は単一バニラコマンドへ正確に変換できないため、
+                    // 不正確な変換を行わず未対応として明示します。
+                    "motion" -> errors += "${script.id}/${node.id}: 動き設定はバニラ出力に未対応です"
+                    // tagはENTITY_OPERATIONへ移行済みのため、ここでは扱いません。
+                    else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
+                }
+                CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
                     "tag" -> Unit
+                    "attribute" -> {
+                        if (!EntityAttributeSupport.isAttributeId(node.string(EntityAttributeSupport.PARAM_ATTRIBUTE))) {
+                            errors += "${script.id}/${node.id}: バニラに存在しないattributeです"
+                        }
+                    }
+                    // 型付きデータ編集はバニラの等価表現へ正確に変換できないため、
+                    // 不正確な変換を行わず未対応として明示します。
+                    "data" -> errors += "${script.id}/${node.id}: データ編集はバニラ出力に未対応です"
                     else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
                 CommandType.PARTICLE -> {
@@ -1298,8 +1314,16 @@ class VanillaDatapackExporter(
             "dismount" -> "ride ${effectiveTarget(node)} dismount"
             "equip" -> "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with " +
                 (node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") } ?: node.string("item"))
+            // tagはENTITY_OPERATIONへ移行済みのため、ここでは扱いません。
+            // motionは単一バニラコマンドへ正確に変換できないため出力しません（事前検査で未対応を明示します）。
+            "ride" -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
+            else -> null
+        }
+        CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
             "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
-            else -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
+            "attribute" -> attributeCommand(node)
+            // データ編集はバニラの等価表現へ正確に変換できないため出力しません（事前検査で未対応を明示します）。
+            else -> null
         }
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
             "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
@@ -1540,6 +1564,42 @@ class VanillaDatapackExporter(
         "LEGS" -> "armor.legs"
         "FEET" -> "armor.feet"
         else -> "weapon.mainhand"
+    }
+
+    /**
+     * issue #32 のattribute操作をバニラのattributeコマンドへ変換します。
+     *
+     * 演算子の対応は[EntityAttributeSupport.vanillaModifierOperation]が正本であり、
+     * 不正確な変換は行いません。対応付け不能な値は事前検査で未対応として扱い、
+     * ここへは到達させません。
+     */
+    private fun attributeCommand(node: CommandNode): String? {
+        val attribute = node.string(EntityAttributeSupport.PARAM_ATTRIBUTE).takeIf(String::isNotBlank)
+            ?: return null
+        val target = effectiveTarget(node)
+        return when (node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)) {
+            EntityAttributeSupport.OPERATION_BASE_VALUE -> {
+                val value = node.string(EntityAttributeSupport.PARAM_AMOUNT).takeIf(String::isNotBlank)
+                    ?: return null
+                "attribute $target $attribute base set $value"
+            }
+            EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
+                val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
+                    ?: return null
+                val amount = node.string(EntityAttributeSupport.PARAM_AMOUNT).takeIf(String::isNotBlank)
+                    ?: return null
+                val operation = EntityAttributeSupport.vanillaModifierOperation(
+                    node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION),
+                ) ?: return null
+                "attribute $target $attribute modifier add $key $amount $operation"
+            }
+            EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
+                val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
+                    ?: return null
+                "attribute $target $attribute modifier remove $key"
+            }
+            else -> null
+        }
     }
 
     private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {

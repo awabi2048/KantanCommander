@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 13
+const val STRUCTURED_FORMAT_VERSION = 14
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -750,6 +750,29 @@ enum class CommandType(
         "overwrite" to "false",
         "tagOperation" to "add",
         "tag" to "",
+        "motionX" to "0.0",
+        "motionY" to "0.0",
+        "motionZ" to "0.0",
+    )),
+    /**
+     * issue #32 の「エンティティを操作」です。
+     *
+     * 旧ENTITY_ACTIONに同居していたtagを移行し、attribute操作と型付きデータ編集を
+     * 担います。即時的な移動・関係変化（ride／dismount／motion）はENTITY_ACTIONに残し、
+     * Entity自身の状態・データ変更はこちらへ分離します。
+     * 旧equipは #21 の移行先が決まるまでENTITY_ACTION側で読み込み互換を維持します。
+     */
+    ENTITY_OPERATION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_OPERATION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_OPERATION_DESCRIPTION, Material.NAME_TAG, mapOf(
+        "operation" to "tag",
+        "tagOperation" to "add",
+        "tag" to "",
+        EntityAttributeSupport.PARAM_ATTRIBUTE to "",
+        EntityAttributeSupport.PARAM_OPERATION to EntityAttributeSupport.OPERATION_BASE_VALUE,
+        EntityAttributeSupport.PARAM_MODIFIER_KEY to "",
+        EntityAttributeSupport.PARAM_AMOUNT to "0.0",
+        EntityAttributeSupport.PARAM_MODIFIER_OPERATION to EntityAttributeSupport.MODIFIER_ADD_NUMBER,
+        EntityDataSchema.PARAM_PROPERTY to "",
+        EntityDataSchema.PARAM_VALUE to "",
     )),
     DISPLAY_TEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT_DESCRIPTION, Material.WRITABLE_BOOK, mapOf(
         "mode" to "tellraw", "text" to "", "subtitle" to "", "fadeInSeconds" to "1", "staySeconds" to "3", "fadeOutSeconds" to "1"

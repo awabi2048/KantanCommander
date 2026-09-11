@@ -178,6 +178,7 @@ class KantanStandaloneExportContributor(
             "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
             "tagOperation", "soundScope", "soundOperation", "soundCategory", "particleDisplayMode",
             "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
+            "attributeOperation", "modifierOperation", "property",
         )
     }
 }

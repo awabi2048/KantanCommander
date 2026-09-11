@@ -29,6 +29,9 @@ import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValue
 import me.awabi2048.kantancommander.model.clampMinecraftPitch
 import me.awabi2048.kantancommander.model.wrapMinecraftYaw
 import me.awabi2048.kantancommander.model.PositionKind
@@ -48,6 +51,9 @@ import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.error.PartialApplicability
+import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
@@ -64,6 +70,7 @@ import java.util.logging.Level
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.inventory.EquipmentSlot
+import org.bukkit.util.Vector
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 
 /** テスト実行の終了理由です。手動停止は失敗と区別して表示します。 */
@@ -388,6 +395,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         }
         session.lastDetail = null
+        session.lastPartial = null
         session.lastExpandedParams = emptyMap()
         session.lastPositionText = null
         session.lastFailureReason = null
@@ -647,6 +655,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         CommandType.TELEPORT -> "対象を指定位置へテレポートした"
         CommandType.GIVE_ITEM -> "対象へアイテムを付与した"
         CommandType.ENTITY_ACTION -> "対象へエンティティ操作を行った"
+        CommandType.ENTITY_OPERATION -> "対象のエンティティデータを変更した"
         CommandType.DISPLAY_TEXT -> "対象へテキストを表示した"
         CommandType.SUMMON_ENTITY -> "エンティティを召喚した"
         CommandType.PLAY_SOUND -> "サウンドを再生した"
@@ -829,8 +838,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             if (session.lastDetail.isNullOrBlank()) session.lastDetail = immediateDetail(node.type)
             ImmediateExecutionResult.SUCCESS
         } else {
+            // 全件非適用・全件失敗時も件数と理由を残します。件数接尾辞は
+            // 部分適用があるときだけ付き、全件適用時と同様の表示にはなりません。
+            // lastPartialを設定する操作以外には影響しません。
             if (session.lastDetail.isNullOrBlank()) {
-                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）"
+                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）" +
+                    partialDetailSuffix(session.actor, session.lastPartial)
             }
             session.lastFailureReason = session.lastFailureReason ?: ErrorCode.COMMAND_FAILED.code
             session.lastFailureCode = session.lastFailureCode ?: ErrorCode.COMMAND_FAILED
@@ -847,7 +860,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val reason = failure.message?.takeIf(String::isNotBlank) ?: failure::class.simpleName ?: "command_failed"
         session.lastFailureReason = reason
         session.lastFailureCode = ErrorCode.fromLegacyReason(reason)
-        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）"
+        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）" +
+            partialDetailSuffix(session.actor, session.lastPartial)
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
         ImmediateExecutionResult.FAILED
     }
@@ -926,6 +940,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         targets.all(vehicle::addPassenger)
                     }
                     "dismount" -> targets.all(Entity::leaveVehicle)
+                    // 動き設定は現在速度を指定値へ設定する意味です。Bukkit／Paper APIの
+                    // velocityとして扱い、生NBTは経由しません。将来の加算modeとは混在させません。
+                    "motion" -> {
+                        val x = CommandValueRules.parseFiniteDouble(node.string("motionX")) ?: return false
+                        val y = CommandValueRules.parseFiniteDouble(node.string("motionY")) ?: return false
+                        val z = CommandValueRules.parseFiniteDouble(node.string("motionZ")) ?: return false
+                        val velocity = Vector(x, y, z)
+                        targets.forEach { it.velocity = velocity.clone() }
+                        true
+                    }
                     "equip" -> {
                         val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
                             ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
@@ -952,6 +976,20 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         }
                         true
                     }
+                    // tagはissue #32でENTITY_OPERATIONへ移行しました。
+                    // 保存データはv13→v14移行で変換済みのため、ここでは扱いません。
+                    else -> false
+                }
+            }
+            // issue #32 の「エンティティを操作」です。Entity自身の状態・データを変更します。
+            //
+            // 混合対象では対応する対象にだけ適用し、件数は構造化結果へ残します
+            // （#6のPARTIAL_APPLY方針、レビューF4対応）。表示への変換は共通の
+            // 成功・失敗処理が行い、1件も適用できなかった場合は失敗とします。
+            // modifierの追加・削除はバニラの同名操作と等価です。
+            CommandType.ENTITY_OPERATION -> {
+                if (targets.isEmpty()) return false
+                when (node.string("operation", "tag")) {
                     "tag" -> {
                         val tag = resolveText(node.string("tag"), session) ?: return false
                         // タグは単一値としてそのまま扱います。カンマを分割したり、
@@ -968,6 +1006,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                             else -> false
                         }
                     }
+                    "attribute" -> executeEntityAttribute(node, session, targets)
+                    "data" -> executeEntityData(node, session, targets)
                     else -> false
                 }
             }
@@ -1101,7 +1141,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (success) {
             session.previousContext = effectiveContext
             val content = executionContent(node, targets, effectiveOrigin, session)
-            session.lastDetail = content.head
+            // issue #32 のレビューF4対応：部分適用の件数は構造化結果から
+            // 中央で表示へ変換します。操作側で詳細文字列を直接書かないことで、
+            // 成功時の共通表示生成で件数が失われないようにします。
+            session.lastDetail = content.head + partialDetailSuffix(session.actor, session.lastPartial)
             session.lastExpandedParams = content.expandedParams
             session.lastPositionText = content.positionText
             // issue #29: 複数位置の一部失敗は件数で記録します。
@@ -1110,6 +1153,149 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
         }
         success
+    }
+
+    /**
+     * issue #32 のレビューF4対応：部分適用件数の表示変換です。
+     *
+     * 件数の有無判定は [PartialApplicability.displayVars] が担い、ここでは
+     * 型付き言語キーへの解決だけを行います。実行者のlocaleで解決し、
+     * テスト実行表示の詳細行へ残します。全件適用時は空文字を返します。
+     */
+    private fun partialDetailSuffix(actor: Player?, partial: PartialApplicability?): String {
+        val vars = partial?.displayVars() ?: return ""
+        return KcI18n.text(
+            actor,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_PARTIAL_APPLY,
+            vars,
+        )
+    }
+
+    /**
+     * issue #32 のattribute操作を実行します。
+     *
+     * 対象がattributeを持つかはcapabilityとして判定し、対応しない対象は
+     * 非適用として数えます。基本値の設定・modifierの追加・削除を型付きで扱い、
+     * 曖昧な「デフォルトへ戻す」は用意しません。
+     * 適用数が0件の場合は失敗とし、設定値自体の不正とも区別します。
+     */
+    private fun executeEntityAttribute(
+        node: CommandNode,
+        session: ExecutionSession,
+        targets: List<Entity>,
+    ): Boolean {
+        val attribute = EntityAttributeSupport.resolve(node.string(EntityAttributeSupport.PARAM_ATTRIBUTE))
+            ?: return false
+        val operation = node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)
+        if (!EntityAttributeSupport.isOperation(operation)) return false
+        var applied = 0
+        var nonApplicable = 0
+        var failed = 0
+        targets.forEach { target ->
+            val instance = EntityAttributeSupport.instanceOf(target, attribute)
+            if (instance == null) {
+                nonApplicable++
+                return@forEach
+            }
+            val success = when (operation) {
+                EntityAttributeSupport.OPERATION_BASE_VALUE -> {
+                    val value = CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT))
+                        ?: return@forEach run { failed++ }
+                    EntityAttributeSupport.setBaseValue(instance, value)
+                }
+                EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
+                    val key = EntityAttributeSupport.modifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))
+                        ?: return@forEach run { failed++ }
+                    val amount = CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT))
+                        ?: return@forEach run { failed++ }
+                    val modifierOperation = EntityAttributeSupport.modifierOperation(
+                        node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION),
+                    ) ?: return@forEach run { failed++ }
+                    EntityAttributeSupport.addModifier(instance, key, amount, modifierOperation)
+                }
+                EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
+                    val key = EntityAttributeSupport.modifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))
+                        ?: return@forEach run { failed++ }
+                    // 削除対象の不在は失敗とします（バニラの `modifier remove` と等価）。
+                    // 対象自体がattributeを持たない場合だけが非適用です。
+                    EntityAttributeSupport.removeModifier(instance, key)
+                }
+                else -> false
+            }
+            if (success) applied++ else failed++
+        }
+        // issue #32 のレビューF4対応：件数は構造化結果として保持し、
+        // 詳細文字列への変換は共通成功処理へ委ねます。
+        session.lastPartial = PartialApplicability(
+            appliedCount = applied,
+            nonApplicableCount = nonApplicable,
+            failedCount = failed,
+        )
+        return applied > 0
+    }
+
+    /**
+     * issue #32 の型付きデータ編集（#10スキーマ）を実行します。
+     *
+     * 任意NBTではなくスキーマ定義の項目だけを適用し、対応しない対象は
+     * 非適用として数えます。表示名は召喚時と同じ描画規則で適用します。
+     */
+    private fun executeEntityData(
+        node: CommandNode,
+        session: ExecutionSession,
+        targets: List<Entity>,
+    ): Boolean {
+        val propertyId = node.string(EntityDataSchema.PARAM_PROPERTY)
+        val definition = EntityDataSchema.definition(propertyId) ?: return false
+        val raw = node.string(EntityDataSchema.PARAM_VALUE)
+        val parsed = EntityDataSchema.parse(propertyId, raw) ?: return false
+        // 表示名はテンプレート参照を解決します。解決不能は失敗とします。
+        val resolvedText = if (parsed is EntityPropertyValue.TextValue) {
+            resolveText(parsed.text, session) ?: return false
+        } else null
+        var applied = 0
+        var nonApplicable = 0
+        var failed = 0
+        targets.forEach { target ->
+            if (!EntityDataSchema.supports(target, propertyId)) {
+                nonApplicable++
+                return@forEach
+            }
+            val success = when (parsed) {
+                is EntityPropertyValue.BooleanValue ->
+                    EntityDataSchema.applyBoolean(target, propertyId, parsed.value)
+                is EntityPropertyValue.EnumValue ->
+                    EntityDataSchema.applyEnum(target, propertyId, parsed.choiceId)
+                is EntityPropertyValue.TextValue -> applyCustomName(target, propertyId, resolvedText.orEmpty())
+            }
+            if (success) applied++ else failed++
+        }
+        // issue #32 のレビューF4対応：件数は構造化結果として保持し、
+        // 詳細文字列への変換は共通成功処理へ委ねます。
+        session.lastPartial = PartialApplicability(
+            appliedCount = applied,
+            nonApplicableCount = nonApplicable,
+            failedCount = failed,
+        )
+        return applied > 0
+    }
+
+    /**
+     * 表示名を適用します。召喚時の表示名と同じ規則であり、空欄は表示名の
+     * 消去として扱います。TEXT種別の項目は現行では表示名だけです。
+     */
+    private fun applyCustomName(target: Entity, propertyId: String, text: String): Boolean {
+        if (propertyId != EntityDataSchema.PROPERTY_CUSTOM_NAME) return false
+        return runCatching {
+            if (text.isBlank()) {
+                target.customName(null)
+                target.isCustomNameVisible = false
+            } else {
+                target.customName(legacyText(text))
+                target.isCustomNameVisible = true
+            }
+            true
+        }.getOrDefault(false)
     }
 
     /**
@@ -2728,6 +2914,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var failedNodeId: UUID? = null,
         var failureReason: String? = null,
         var lastDetail: String? = null,
+        /**
+         * issue #32 のレビューF4対応：部分適用の構造化結果です。
+         *
+         * 件数表示は共通成功処理が型付き言語キーへ変換します。各操作が
+         * 詳細文字列を直接書くと成功時に上書きで失われるため、計数だけを
+         * 保持し、表示への変換責務を持ちません。
+         */
+        var lastPartial: PartialApplicability? = null,
         var lastExpandedParams: Map<String, String> = emptyMap(),
         var lastPositionText: String? = null,
         var lastFailureReason: String? = null,

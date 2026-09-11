@@ -355,8 +355,10 @@ class CommandSettingsModelTest {
 
         assertEquals(listOf("target", "action", "other", "executionPosition"), keys("ride"))
         assertEquals(listOf("target", "action", "executionPosition"), keys("dismount"))
+        assertEquals(listOf("target", "action", "motionX", "motionY", "motionZ", "executionPosition"), keys("motion"))
         assertEquals(listOf("target", "action", "slot", "item", "overwrite", "executionPosition"), keys("equip"))
-        assertEquals(listOf("target", "action", "tagOperation", "tag", "executionPosition"), keys("tag"))
+        // tagはENTITY_OPERATIONへ移行したため、旧ENTITY_ACTION側には表示しません。
+        assertEquals(listOf("target", "action", "executionPosition"), keys("tag"))
     }
 
     @Test
