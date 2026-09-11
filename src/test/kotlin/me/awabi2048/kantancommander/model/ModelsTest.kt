@@ -27,4 +27,27 @@ class ModelsTest {
         assertNotSame(graph.nodes[node.id]?.secondaryTargetSpec, copy.nodes[node.id]?.secondaryTargetSpec)
         assertEquals(graph.nodes[node.id]?.secondaryTargetSpec, copy.nodes[node.id]?.secondaryTargetSpec)
     }
+
+    @Test
+    fun `entity action keeps legacy defaults and gains motion components`() {
+        val node = CommandType.ENTITY_ACTION.newNode()
+        assertEquals("ride", node.string("action", ""))
+        assertEquals("0.0", node.string("motionX", ""))
+        assertEquals("0.0", node.string("motionY", ""))
+        assertEquals("0.0", node.string("motionZ", ""))
+        // 旧equip／tagの既定値は読み込み互換のため維持します。
+        assertEquals("HAND", node.string("slot", ""))
+        assertEquals("add", node.string("tagOperation", ""))
+    }
+
+    @Test
+    fun `entity operation starts with tag operation defaults`() {
+        val node = CommandType.ENTITY_OPERATION.newNode()
+        assertEquals("tag", node.string("operation", ""))
+        assertEquals("add", node.string("tagOperation", ""))
+        assertEquals(EntityAttributeSupport.OPERATION_BASE_VALUE, node.string(EntityAttributeSupport.PARAM_OPERATION, ""))
+        assertEquals(EntityAttributeSupport.MODIFIER_ADD_NUMBER, node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION, ""))
+        assertEquals("0.0", node.string(EntityAttributeSupport.PARAM_AMOUNT, ""))
+        assertEquals("", node.string(EntityDataSchema.PARAM_PROPERTY, "unset"))
+    }
 }

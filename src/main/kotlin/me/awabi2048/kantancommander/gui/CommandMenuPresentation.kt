@@ -55,6 +55,7 @@ internal object CommandPresentationPolicy {
         CommandType.TELEPORT,
         CommandType.GIVE_ITEM,
         CommandType.ENTITY_ACTION,
+        CommandType.ENTITY_OPERATION,
         CommandType.DISPLAY_TEXT,
         CommandType.SUMMON_ENTITY,
         CommandType.PLAY_SOUND,

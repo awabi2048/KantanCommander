@@ -13,6 +13,9 @@ import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
@@ -110,6 +113,11 @@ enum class CommandSettingEditor {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
+    ENTITY_OPERATION,
+    ENTITY_ATTRIBUTE_OPERATION,
+    ENTITY_MODIFIER_OPERATION,
+    ENTITY_PROPERTY,
+    ENTITY_PROPERTY_VALUE,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
@@ -342,12 +350,57 @@ object CommandSettingsModel {
                 // 追加した詳細項目が無関係な操作へ漏れ続けるためです。
                 "ride" -> fields.filter { it.key in setOf("target", "action", "other") }
                 "dismount" -> fields.filter { it.key in setOf("target", "action") }
+                "motion" -> fields.filter { it.key in setOf("target", "action", "motionX", "motionY", "motionZ") }
+                // 旧equipは #21 の移行先が決まるまで読み込み互換を維持します。
+                // 新規GUIの選択肢には出さず、保存済み値の編集入口だけを残します。
                 // itemDataはメインハンドの実物から内部保存する値であり、利用者が
                 // 別途編集する設定ではありません。表示すると実物選択と手入力の
                 // 二重入口が生まれ、装備内容の正本が分岐します。
                 "equip" -> fields.filter { it.key in setOf("target", "action", "slot", "item", "overwrite") }
-                "tag" -> fields.filter { it.key in setOf("target", "action", "tagOperation", "tag") }
                 else -> fields.filter { it.key in setOf("target", "action") }
+            }
+            // issue #32: エンティティ操作の操作ごとに許可リストを明示します。
+            node.type == CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
+                "tag" -> fields.filter { it.key in setOf("target", "operation", "tagOperation", "tag") }
+                "attribute" -> when (node.string(
+                    EntityAttributeSupport.PARAM_OPERATION,
+                    EntityAttributeSupport.OPERATION_BASE_VALUE,
+                )) {
+                    EntityAttributeSupport.OPERATION_MODIFIER_ADD -> fields.filter {
+                        it.key in setOf(
+                            "target", "operation",
+                            EntityAttributeSupport.PARAM_ATTRIBUTE,
+                            EntityAttributeSupport.PARAM_OPERATION,
+                            EntityAttributeSupport.PARAM_MODIFIER_KEY,
+                            EntityAttributeSupport.PARAM_AMOUNT,
+                            EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
+                        )
+                    }
+                    EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> fields.filter {
+                        it.key in setOf(
+                            "target", "operation",
+                            EntityAttributeSupport.PARAM_ATTRIBUTE,
+                            EntityAttributeSupport.PARAM_OPERATION,
+                            EntityAttributeSupport.PARAM_MODIFIER_KEY,
+                        )
+                    }
+                    else -> fields.filter {
+                        it.key in setOf(
+                            "target", "operation",
+                            EntityAttributeSupport.PARAM_ATTRIBUTE,
+                            EntityAttributeSupport.PARAM_OPERATION,
+                            EntityAttributeSupport.PARAM_AMOUNT,
+                        )
+                    }
+                }
+                "data" -> fields.filter {
+                    it.key in setOf(
+                        "target", "operation",
+                        EntityDataSchema.PARAM_PROPERTY,
+                        EntityDataSchema.PARAM_VALUE,
+                    )
+                }
+                else -> fields.filter { it.key in setOf("target", "operation") }
             }
             node.type == CommandType.DISPLAY_TEXT -> {
                 val withoutUnusedSubtitle = if (node.string("mode", "tellraw") == "title") {
@@ -420,6 +473,7 @@ object CommandSettingsModel {
         CommandType.TELEPORT,
         CommandType.GIVE_ITEM,
         CommandType.ENTITY_ACTION,
+        CommandType.ENTITY_OPERATION,
         CommandType.DISPLAY_TEXT,
         CommandType.SUMMON_ENTITY,
         CommandType.PLAY_SOUND,
@@ -562,6 +616,21 @@ object CommandSettingsModel {
                 "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
                 "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
                 "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
+                "motionX", "motionY", "motionZ" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MOTION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.ENTITY_OPERATION -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
+                "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
+                EntityAttributeSupport.PARAM_ATTRIBUTE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ATTRIBUTE
+                EntityAttributeSupport.PARAM_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                EntityAttributeSupport.PARAM_MODIFIER_KEY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODIFIER_KEY
+                EntityAttributeSupport.PARAM_AMOUNT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODIFIER_AMOUNT
+                EntityAttributeSupport.PARAM_MODIFIER_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                EntityDataSchema.PARAM_PROPERTY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY
+                EntityDataSchema.PARAM_VALUE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.DISPLAY_TEXT -> when (fieldKey) {
@@ -756,6 +825,28 @@ object CommandSettingsModel {
             "slot" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_EQUIPMENT_SLOT)
             "overwrite" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OVERWRITE)
             "tagOperation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_TAG_OPERATION)
+            else -> text()
+        }
+        CommandType.ENTITY_OPERATION -> when (fieldKey) {
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            "operation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OPERATION)
+            "tagOperation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_TAG_OPERATION)
+            EntityAttributeSupport.PARAM_ATTRIBUTE -> text()
+            EntityAttributeSupport.PARAM_OPERATION ->
+                CommandSettingDescriptor(CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION)
+            EntityAttributeSupport.PARAM_MODIFIER_KEY -> text()
+            EntityAttributeSupport.PARAM_AMOUNT -> text()
+            EntityAttributeSupport.PARAM_MODIFIER_OPERATION ->
+                CommandSettingDescriptor(CommandSettingEditor.ENTITY_MODIFIER_OPERATION)
+            EntityDataSchema.PARAM_PROPERTY -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY)
+            // issue #32: 設定値の編集経路は項目の型で振り分けます。
+            // 文字列はDialog直結（TEXT）のため子画面を持たず、
+            // 真偽値・有限候補は専用画面で編集します。
+            EntityDataSchema.PARAM_VALUE -> {
+                val kind = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))?.valueKind
+                if (kind == EntityPropertyValueKind.TEXT) text()
+                else CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY_VALUE)
+            }
             else -> text()
         }
         CommandType.DISPLAY_TEXT -> when (fieldKey) {

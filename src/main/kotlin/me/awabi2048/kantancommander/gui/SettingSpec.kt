@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.TargetKind
 import kotlin.math.roundToLong
 
@@ -181,6 +183,15 @@ object SettingSpec {
             return GesturePresentation.SLIDER
         }
         if (isCheckbox(node.type, fieldKey)) return GesturePresentation.CHECKBOX
+        // issue #32: データ設定値の操作は項目の型で振り分けます。
+        // 真偽値はCheckbox直接切替、有限候補は選択木、文字列はDialog入力です（#10・#18）。
+        if (descriptor.editor == CommandSettingEditor.ENTITY_PROPERTY_VALUE) {
+            return when (EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))?.valueKind) {
+                EntityPropertyValueKind.BOOLEAN -> GesturePresentation.CHECKBOX
+                EntityPropertyValueKind.ENUM -> GesturePresentation.CHOICE
+                else -> GesturePresentation.INPUT_DIALOG
+            }
+        }
         return when (descriptor.editor) {
             CommandSettingEditor.TEXT -> GesturePresentation.INPUT_DIALOG
             CommandSettingEditor.ENTITY_OVERWRITE -> GesturePresentation.CHECKBOX
@@ -193,6 +204,10 @@ object SettingSpec {
             CommandSettingEditor.CONDITION_DETAIL,
             CommandSettingEditor.DISPLAY_MODE,
             CommandSettingEditor.ENTITY_ACTION,
+            CommandSettingEditor.ENTITY_OPERATION,
+            CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION,
+            CommandSettingEditor.ENTITY_MODIFIER_OPERATION,
+            CommandSettingEditor.ENTITY_PROPERTY,
             CommandSettingEditor.ENTITY_EQUIPMENT_SLOT,
             CommandSettingEditor.ENTITY_TAG_OPERATION,
             CommandSettingEditor.VARIABLE_TYPE,

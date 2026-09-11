@@ -35,6 +35,9 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
@@ -1370,7 +1373,10 @@ class GestureLowerPanel(
         val isCheckboxPresentation = presentation == GesturePresentation.CHECKBOX &&
             (SettingSpec.isCheckbox(node.type, field.key) ||
                 descriptor.editor == CommandSettingEditor.ENTITY_OVERWRITE ||
-                descriptor.editor == CommandSettingEditor.CONDITION_INVERSION)
+                descriptor.editor == CommandSettingEditor.CONDITION_INVERSION ||
+                (descriptor.editor == CommandSettingEditor.ENTITY_PROPERTY_VALUE &&
+                    EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))?.valueKind ==
+                    EntityPropertyValueKind.BOOLEAN))
         if (sliderSpec != null) {
             appendSliderCards(
                 nodes,
@@ -2618,6 +2624,7 @@ class GestureLowerPanel(
             when (suffix) {
                 "ride" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ACTION_RIDE
                 "dismount" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ACTION_DISMOUNT
+                "motion" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_ACTION_MOTION
                 else -> null
             }
         }
@@ -3073,6 +3080,13 @@ class GestureLowerPanel(
         choiceId.startsWith("block:") -> setOf("operation")
         choiceId.startsWith("display:") -> setOf("mode")
         choiceId.startsWith("action:") -> setOf("action")
+        // issue #32: エンティティ操作の選択肢は変数操作と接頭辞を分け、
+        // 変数操作の説明解決へ混ざらないようにします。
+        choiceId.startsWith("entityOperation:") -> setOf("operation")
+        choiceId.startsWith("attributeOperation:") -> setOf(EntityAttributeSupport.PARAM_OPERATION)
+        choiceId.startsWith("modifierOperation:") -> setOf(EntityAttributeSupport.PARAM_MODIFIER_OPERATION)
+        choiceId.startsWith("propertyValue:") -> setOf(EntityDataSchema.PARAM_VALUE)
+        choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
         choiceId.startsWith("equipmentSlot:") -> setOf("slot")
         choiceId.startsWith("overwrite:") -> setOf("overwrite")
         choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
@@ -3325,9 +3339,82 @@ class GestureLowerPanel(
         GestureSettingScreen.ENTITY_ACTION -> listOf(
             SettingChoice("action:ride", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RIDE), node.string("action", "ride") == "ride"),
             SettingChoice("action:dismount", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DISMOUNT), node.string("action", "ride") == "dismount"),
-            SettingChoice("action:equip", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIP), node.string("action", "ride") == "equip"),
-            SettingChoice("action:tag", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET_TAG), node.string("action", "ride") == "tag"),
+            // 旧equip／tagは新規選択肢に出さず、保存済み値の編集入口だけを残します（#21・#32）。
+            SettingChoice("action:motion", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MOTION), node.string("action", "ride") == "motion"),
         )
+        GestureSettingScreen.ENTITY_OPERATION -> listOf(
+            SettingChoice("entityOperation:tag", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET_TAG), node.string("operation", "tag") == "tag"),
+            SettingChoice("entityOperation:attribute", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_OPERATION), node.string("operation", "tag") == "attribute"),
+            SettingChoice("entityOperation:data", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EDIT_DATA), node.string("operation", "tag") == "data"),
+        )
+        GestureSettingScreen.ENTITY_ATTRIBUTE_OPERATION -> listOf(
+            Triple(
+                EntityAttributeSupport.OPERATION_BASE_VALUE,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_BASE_VALUE,
+                "attributeOperation",
+            ),
+            Triple(
+                EntityAttributeSupport.OPERATION_MODIFIER_ADD,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_MODIFIER_ADD,
+                "attributeOperation",
+            ),
+            Triple(
+                EntityAttributeSupport.OPERATION_MODIFIER_REMOVE,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_MODIFIER_REMOVE,
+                "attributeOperation",
+            ),
+        ).map { (operation, label, group) ->
+            val current = node.string(
+                EntityAttributeSupport.PARAM_OPERATION,
+                EntityAttributeSupport.OPERATION_BASE_VALUE,
+            )
+            SettingChoice("$group:$operation", KcI18n.text(player, label), current == operation)
+        }
+        GestureSettingScreen.ENTITY_MODIFIER_OPERATION -> listOf(
+            EntityAttributeSupport.MODIFIER_ADD_NUMBER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_ADD_NUMBER,
+            EntityAttributeSupport.MODIFIER_MULTIPLY_BASE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_MULTIPLY_BASE,
+            EntityAttributeSupport.MODIFIER_MULTIPLY_TOTAL to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_MULTIPLY_TOTAL,
+        ).map { (operation, label) ->
+            val current = node.string(
+                EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
+                EntityAttributeSupport.MODIFIER_ADD_NUMBER,
+            )
+            SettingChoice("modifierOperation:$operation", KcI18n.text(player, label), current == operation)
+        }
+        // issue #32: 設定項目は対象から確定できる種類で絞ります。
+        // 種類不明時は汎用項目だけを提示し、固有設定を広げません（#10）。
+        GestureSettingScreen.ENTITY_PROPERTY -> {
+            val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
+            EntityDataSchema.propertiesFor(knownType).map { definition ->
+                SettingChoice(
+                    "property:${definition.id}",
+                    KcI18n.text(player, definition.optionKey),
+                    node.string(EntityDataSchema.PARAM_PROPERTY) == definition.id,
+                )
+            }
+        }
+        // issue #32: 真偽値はON／OFF選択とCheckbox直接切替を併用し（#18）、
+        // 有限候補は名称選択、文字列はDialog入力（親画面の入力カード）を使います。
+        GestureSettingScreen.ENTITY_PROPERTY_VALUE -> {
+            val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
+            when (definition?.valueKind) {
+                EntityPropertyValueKind.BOOLEAN -> {
+                    val current = node.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull() ?: false
+                    listOf(
+                        SettingChoice("propertyValue:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED), current),
+                        SettingChoice("propertyValue:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED), !current),
+                    )
+                }
+                EntityPropertyValueKind.ENUM -> definition.enumChoices.map { choice ->
+                    SettingChoice(
+                        "propertyValue:${choice.id}",
+                        KcI18n.text(player, choice.optionKey),
+                        node.string(EntityDataSchema.PARAM_VALUE) == choice.id,
+                    )
+                }
+                else -> emptyList()
+            }
+        }
         GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
             "HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_HAND,
             "OFF_HAND" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND,
@@ -4478,6 +4565,11 @@ class GestureLowerPanel(
             "particleDensity", "burstHeight",
             "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name",
             "condition", "variable", "value", "block", "sneaking",
+            "motionX", "motionY", "motionZ",
+            EntityAttributeSupport.PARAM_ATTRIBUTE,
+            EntityAttributeSupport.PARAM_MODIFIER_KEY,
+            EntityAttributeSupport.PARAM_AMOUNT,
+            EntityDataSchema.PARAM_VALUE,
         )
     }
 }

@@ -7,6 +7,9 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.TemporaryTemplate
@@ -1056,6 +1059,24 @@ internal object CommandDialogSpecs {
         node: CommandNode,
         fieldKey: String,
     ): Spec? {
+        // issue #32: 動き設定の成分は有限数値のDialog入力です。
+        // Sliderは使わず（#10の方針）、範囲制限も設けません。
+        if (node.type == CommandType.ENTITY_ACTION && fieldKey in setOf("motionX", "motionY", "motionZ")) {
+            return motionComponent(fieldKey)
+        }
+        // issue #32: エンティティ操作の入力仕様です。
+        // 真偽値・有限候補はDialogを使わずCheckbox／選択木で編集するため、
+        // ここではID・数値・文字列の明示入力だけを定義します（#18）。
+        if (node.type == CommandType.ENTITY_OPERATION) {
+            return when (fieldKey) {
+                "tag" -> field("tag")
+                EntityAttributeSupport.PARAM_ATTRIBUTE -> entityAttributeId
+                EntityAttributeSupport.PARAM_MODIFIER_KEY -> attributeModifierKey
+                EntityAttributeSupport.PARAM_AMOUNT -> attributeModifierAmount
+                EntityDataSchema.PARAM_VALUE -> entityPropertyValue(node)
+                else -> field(fieldKey)
+            }
+        }
         if (node.type == CommandType.PARTICLE) {
             return when (fieldKey) {
                 ParticleSettings.PARAM_PARTICLE -> Spec(
@@ -1195,6 +1216,88 @@ internal object CommandDialogSpecs {
             } else null
         },
     )
+
+    /**
+     * issue #32: 動き設定の成分入力です。
+     *
+     * 有限数値だけを要求し、範囲制限は設けません。Sliderは使わず（#10の方針）、
+     * 検証の正本は保存前検証とこの仕様で共有します。
+     */
+    private fun motionComponent(fieldKey: String): Spec {
+        val labelKey = when (fieldKey) {
+            "motionY" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Y
+            "motionZ" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Z
+            else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_X
+        }
+        return Spec(
+            labelKey,
+            16,
+            validate = { raw ->
+                if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID
+                } else null
+            },
+            required = true,
+            format = InputFormat.NUMBER,
+        )
+    }
+
+    /** issue #32: 操作するattributeのID入力です。実在確認は検証側と共有します。 */
+    private val entityAttributeId = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ATTRIBUTE,
+        64,
+        validate = { raw ->
+            if (!EntityAttributeSupport.isAttributeId(raw)) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = true,
+        format = InputFormat.RESOURCE_ID,
+    )
+
+    /** issue #32: modifier識別キーの入力です。NamespacedKey構文を要求します。 */
+    private val attributeModifierKey = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_KEY,
+        64,
+        validate = { raw ->
+            if (!EntityAttributeSupport.isModifierKey(raw)) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = true,
+        format = InputFormat.RESOURCE_ID,
+    )
+
+    /** issue #32: 基本値・modifier量の数値入力です。有限数値を要求します。 */
+    private val attributeModifierAmount = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_AMOUNT,
+        16,
+        validate = { raw ->
+            if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+    )
+
+    /**
+     * issue #32: データ設定値の入力です。
+     *
+     * 真偽値・有限候補はDialogを使わずCheckbox／選択木で編集するため、
+     * ここでは文字列項目（表示名）だけを定義します。空欄は表示名の消去であり、
+     * 必須にはしません。テンプレート参照は召喚時の表示名と同じ規則で許可します。
+     */
+    private fun entityPropertyValue(node: CommandNode): Spec? {
+        val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
+            ?: return null
+        if (definition.valueKind != EntityPropertyValueKind.TEXT) return null
+        return Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE,
+            512,
+            format = InputFormat.ANY_STRING,
+        )
+    }
 
     /**
      * フィールド入力系（インベントリGUIとジェスチャーGUIで共有）。

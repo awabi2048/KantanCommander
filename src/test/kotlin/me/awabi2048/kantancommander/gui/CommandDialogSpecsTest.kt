@@ -321,6 +321,86 @@ class CommandDialogSpecsTest {
     }
 
     @Test
+    fun `motion components require finite numbers`() {
+        val node = CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "motion" }
+        val motionX = requireNotNull(CommandDialogSpecs.field(node, "motionX"))
+        val motionY = requireNotNull(CommandDialogSpecs.field(node, "motionY"))
+        val motionZ = requireNotNull(CommandDialogSpecs.field(node, "motionZ"))
+
+        assertNull(motionX.validate("1.5"))
+        assertNull(motionY.validate("-2.0"))
+        assertNull(motionZ.validate("0.0"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID,
+            motionX.validate("NaN"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID,
+            motionY.validate("oops"),
+        )
+        assertEquals(CommandDialogSpecs.InputFormat.NUMBER, motionX.format)
+    }
+
+    @Test
+    fun `entity operation ids and amounts share validation`() {
+        val node = CommandType.ENTITY_OPERATION.newNode().apply { params["operation"] = "attribute" }
+        val attribute = requireNotNull(
+            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityAttributeSupport.PARAM_ATTRIBUTE),
+        )
+        val modifierKey = requireNotNull(
+            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityAttributeSupport.PARAM_MODIFIER_KEY),
+        )
+        val amount = requireNotNull(
+            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityAttributeSupport.PARAM_AMOUNT),
+        )
+
+        assertNull(attribute.validate("minecraft:max_health"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            attribute.validate("not a key"),
+        )
+        assertNull(modifierKey.validate("kantan:boost"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            modifierKey.validate("not a key"),
+        )
+        assertNull(amount.validate("0.1"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_GEOMETRY_NUMBER_INVALID,
+            amount.validate("infinite"),
+        )
+    }
+
+    @Test
+    fun `property value dialog exists only for text properties`() {
+        val text = CommandType.ENTITY_OPERATION.newNode().apply {
+            params["operation"] = "data"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_PROPERTY] = "custom_name"
+        }
+        val boolean = CommandType.ENTITY_OPERATION.newNode().apply {
+            params["operation"] = "data"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_PROPERTY] = "gravity"
+        }
+        val unknown = CommandType.ENTITY_OPERATION.newNode().apply {
+            params["operation"] = "data"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_PROPERTY] = "nope"
+        }
+
+        val textSpec = requireNotNull(
+            CommandDialogSpecs.field(text, me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_VALUE),
+        )
+        assertNull(textSpec.validate("hello"))
+        assertNull(
+            CommandDialogSpecs.field(boolean, me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_VALUE),
+            "真偽値はCheckboxで編集するためDialog仕様を持ちません",
+        )
+        assertNull(
+            CommandDialogSpecs.field(unknown, me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_VALUE),
+            "未知項目のDialog仕様は持ちません",
+        )
+    }
+
+    @Test
     fun `coordinate notation accepts absolute relative and local`() {
         assertEquals(
             CoordinateSemantics.ABSOLUTE to 5.0,

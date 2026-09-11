@@ -198,6 +198,11 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.CONDITION_DETAIL -> GestureSettingScreen.CONDITION_DETAIL
     CommandSettingEditor.DISPLAY_MODE -> GestureSettingScreen.DISPLAY_MODE
     CommandSettingEditor.ENTITY_ACTION -> GestureSettingScreen.ENTITY_ACTION
+    CommandSettingEditor.ENTITY_OPERATION -> GestureSettingScreen.ENTITY_OPERATION
+    CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION -> GestureSettingScreen.ENTITY_ATTRIBUTE_OPERATION
+    CommandSettingEditor.ENTITY_MODIFIER_OPERATION -> GestureSettingScreen.ENTITY_MODIFIER_OPERATION
+    CommandSettingEditor.ENTITY_PROPERTY -> GestureSettingScreen.ENTITY_PROPERTY
+    CommandSettingEditor.ENTITY_PROPERTY_VALUE -> GestureSettingScreen.ENTITY_PROPERTY_VALUE
     CommandSettingEditor.ENTITY_EQUIPMENT_SLOT -> GestureSettingScreen.ENTITY_EQUIPMENT_SLOT
     CommandSettingEditor.ENTITY_OVERWRITE -> GestureSettingScreen.ENTITY_OVERWRITE
     CommandSettingEditor.ENTITY_TAG_OPERATION -> GestureSettingScreen.ENTITY_TAG_OPERATION

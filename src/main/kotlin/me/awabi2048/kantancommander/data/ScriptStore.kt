@@ -441,19 +441,22 @@ class ScriptStore(
             ?.asString
             ?.toIntOrNull()
             ?: error("formatVersionがありません、または整数ではありません")
-        // issue #4 のスレッド指示により旧データは読み込み不可とします。
-        // 現行形式のみ受け付け、それ以外は非対応形式として隔離します。
+        // issue #4 のスレッド指示により、v12以前の旧データは読み込み不可とします。
+        // 現行形式と直前形式だけを受け付け、それ以外は非対応形式として隔離します。
         // 旧形式の移行連鎖は保持せず、黙って別意味へ変換しません。
-        val migrated = if (sourceVersion == STRUCTURED_FORMAT_VERSION) {
-            source
-        } else {
-            quarantine(
-                file,
-                QuarantineKind.INCOMPATIBLE,
-                "formatVersion=$sourceVersion",
-                fileTag = "v$sourceVersion",
-            )
-            return null
+        // ただし issue #32 の責務分離に伴うv13→v14の移行だけは明示的に行います。
+        val migrated = when (sourceVersion) {
+            STRUCTURED_FORMAT_VERSION -> source
+            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV13ToV14(source)
+            else -> {
+                quarantine(
+                    file,
+                    QuarantineKind.INCOMPATIBLE,
+                    "formatVersion=$sourceVersion",
+                    fileTag = "v$sourceVersion",
+                )
+                return null
+            }
         }
         val schemaViolations = PersistedScriptValidator.validate(migrated)
         require(schemaViolations.isEmpty()) {
@@ -530,6 +533,42 @@ class ScriptStore(
         migrated.remove("collapsedConditionIds")
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
         return migrated
+    }
+
+    /**
+     * issue #32 の責務分離に伴い、v13の旧ENTITY_ACTIONをv14へ移行します。
+     *
+     * - 旧 `ENTITY_ACTION / tag` → 新 `ENTITY_OPERATION / tag`（tagOperation／tagを引き継ぎます）。
+     * - 旧 `ENTITY_ACTION / ride／dismount` → 変更なし（保存形式を変えません）。
+     * - 旧 `ENTITY_ACTION / equip` → 変更なし（#21 の移行先が決まるまで読み込み互換を維持し、
+     *   新GUIの責務分離を壊さない移行手順とします）。
+     * - 不明な操作値は変換せず、検証側で不正として扱います。
+     *
+     * グラフ内のsnapshot／foldedGraphへ退避した副グラフも同じ規則で移行します。
+     */
+    private fun migrateStructuredV13ToV14(source: JsonObject): JsonObject {
+        val migrated = source.deepCopy()
+        migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        migrateEntityActionGraph(migrated["graph"]?.asJsonObject)
+        return migrated
+    }
+
+    private fun migrateEntityActionGraph(graph: JsonObject?) {
+        val nodes = graph?.get("nodes")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
+        val nodeIds = nodes.entrySet().map { it.key }.toList()
+        nodeIds.forEach { nodeId ->
+            val node = nodes[nodeId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
+            if (node["type"]?.asString == "ENTITY_ACTION" &&
+                params?.get("action")?.takeIf { it.isJsonPrimitive }?.asString == "tag"
+            ) {
+                node.addProperty("type", "ENTITY_OPERATION")
+                params.addProperty("operation", "tag")
+                params.remove("action")
+            }
+            migrateEntityActionGraph(node["snapshot"]?.asJsonObject)
+            migrateEntityActionGraph(node["foldedGraph"]?.asJsonObject)
+        }
     }
 
     /** v7のコマンド・型モデルを現行形式へ意味変換します。 */

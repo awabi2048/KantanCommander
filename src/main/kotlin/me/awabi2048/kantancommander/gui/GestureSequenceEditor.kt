@@ -62,6 +62,9 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -271,6 +274,11 @@ enum class GestureSettingScreen {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
+    ENTITY_OPERATION,
+    ENTITY_ATTRIBUTE_OPERATION,
+    ENTITY_MODIFIER_OPERATION,
+    ENTITY_PROPERTY,
+    ENTITY_PROPERTY_VALUE,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
@@ -6359,9 +6367,59 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_ACTION -> {
-                if (group != "action" || value !in setOf("ride", "dismount", "equip", "tag")) return
+                // 旧equip／tagは新規選択肢に出さず、保存済み値の編集入口だけを残します。
+                if (group != "action" || value !in setOf("ride", "dismount", "motion")) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "action", value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.ENTITY_OPERATION -> {
+                if (group != "entityOperation" || value !in setOf("tag", "attribute", "data")) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "operation", value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.ENTITY_ATTRIBUTE_OPERATION -> {
+                val allowed = setOf(
+                    EntityAttributeSupport.OPERATION_BASE_VALUE,
+                    EntityAttributeSupport.OPERATION_MODIFIER_ADD,
+                    EntityAttributeSupport.OPERATION_MODIFIER_REMOVE,
+                )
+                if (group != "attributeOperation" || value !in allowed) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, EntityAttributeSupport.PARAM_OPERATION, value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.ENTITY_MODIFIER_OPERATION -> {
+                val allowed = setOf(
+                    EntityAttributeSupport.MODIFIER_ADD_NUMBER,
+                    EntityAttributeSupport.MODIFIER_MULTIPLY_BASE,
+                    EntityAttributeSupport.MODIFIER_MULTIPLY_TOTAL,
+                )
+                if (group != "modifierOperation" || value !in allowed) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, EntityAttributeSupport.PARAM_MODIFIER_OPERATION, value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.ENTITY_PROPERTY -> {
+                if (group != "property" || EntityDataSchema.definition(value) == null) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_PROPERTY, value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.ENTITY_PROPERTY_VALUE -> {
+                if (group != "propertyValue") return
+                val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
+                    ?: return
+                // 文字列はDialog入力だけを受け付け、選択適用はしません。
+                val valid = when (definition.valueKind) {
+                    EntityPropertyValueKind.BOOLEAN -> value == "true" || value == "false"
+                    EntityPropertyValueKind.ENUM -> definition.enumChoices.any { it.id == value }
+                    EntityPropertyValueKind.TEXT -> false
+                }
+                if (!valid) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, value)
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> {
