@@ -21,7 +21,7 @@ class EntityMigrationTest {
     @TempDir
     lateinit var temp: File
 
-    private fun writeRaw(dir: File, scriptId: UUID, version: Int, nodes: String) {
+    private fun writeRaw(dir: File, scriptId: UUID, version: Int, entryNodeId: UUID, nodes: String) {
         dir.resolve("$scriptId.json").writeText(
             """
             {
@@ -34,6 +34,7 @@ class EntityMigrationTest {
               "activation": "NEEDS_REDSTONE",
               "timer": {"enabled": false, "intervalSeconds": 1.0},
               "graph": {
+                "entryNodeId": "$entryNodeId",
                 "nodes": {
                   $nodes
                 }
@@ -46,11 +47,12 @@ class EntityMigrationTest {
         )
     }
 
-    private fun entityActionNode(nodeId: UUID, action: String, extra: String = ""): String {
+    private fun entityActionNode(nodeId: UUID, action: String, extra: String = "", next: UUID? = null): String {
+        val nextField = if (next == null) "" else ",\n          \"next\": \"$next\""
         return """
         "$nodeId": {
           "id": "$nodeId",
-          "type": "ENTITY_ACTION",
+          "type": "ENTITY_ACTION"$nextField,
           "params": {"action": "$action", "tagOperation": "add", "tag": "kc_test"$extra}
         }
         """.trimIndent()
@@ -61,7 +63,7 @@ class EntityMigrationTest {
         val dir = temp.resolve("v13-tag").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
-        writeRaw(dir, scriptId, 13, entityActionNode(nodeId, "tag"))
+        writeRaw(dir, scriptId, 13, nodeId, entityActionNode(nodeId, "tag"))
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val loaded = requireNotNull(store.load(scriptId))
@@ -83,8 +85,9 @@ class EntityMigrationTest {
             dir,
             scriptId,
             13,
+            rideId,
             """
-            ${entityActionNode(rideId, "ride")},
+            ${entityActionNode(rideId, "ride", next = equipId)},
             ${entityActionNode(equipId, "equip", ", \"slot\": \"HAND\", \"item\": \"minecraft:stone\", \"overwrite\": \"false\"")}
             """.trimIndent(),
         )
@@ -104,7 +107,7 @@ class EntityMigrationTest {
         val dir = temp.resolve("v12").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
-        writeRaw(dir, scriptId, 12, entityActionNode(nodeId, "tag"))
+        writeRaw(dir, scriptId, 12, nodeId, entityActionNode(nodeId, "tag"))
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         assertNull(store.load(scriptId))

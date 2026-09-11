@@ -48,6 +48,8 @@ class ModelsTest {
         assertEquals(EntityAttributeSupport.OPERATION_BASE_VALUE, node.string(EntityAttributeSupport.PARAM_OPERATION, ""))
         assertEquals(EntityAttributeSupport.MODIFIER_ADD_NUMBER, node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION, ""))
         assertEquals("0.0", node.string(EntityAttributeSupport.PARAM_AMOUNT, ""))
-        assertEquals("", node.string(EntityDataSchema.PARAM_PROPERTY, "unset"))
+        // 未選択の設定項目は空保存値であり、表示側の既定値解決で未設定として扱います。
+        assertEquals("", node.params[EntityDataSchema.PARAM_PROPERTY])
+        assertEquals("unset", node.string(EntityDataSchema.PARAM_PROPERTY, "unset"))
     }
 }
