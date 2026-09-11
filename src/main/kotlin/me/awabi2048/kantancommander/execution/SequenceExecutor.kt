@@ -50,6 +50,9 @@ import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.error.PartialApplicability
+import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
@@ -391,6 +394,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         }
         session.lastDetail = null
+        session.lastPartial = null
         session.lastExpandedParams = emptyMap()
         session.lastPositionText = null
         session.lastFailureReason = null
@@ -1130,7 +1134,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (success) {
             session.previousContext = effectiveContext
             val content = executionContent(node, targets, effectiveOrigin, session)
-            session.lastDetail = content.head
+            // issue #32 のレビューF4対応：部分適用の件数は構造化結果から
+            // 中央で表示へ変換します。操作側で詳細文字列を直接書かないことで、
+            // 成功時の共通表示生成で件数が失われないようにします。
+            session.lastDetail = content.head + partialDetailSuffix(session.actor, session.lastPartial)
             session.lastExpandedParams = content.expandedParams
             session.lastPositionText = content.positionText
             // issue #29: 複数位置の一部失敗は件数で記録します。
@@ -1139,6 +1146,22 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
         }
         success
+    }
+
+    /**
+     * issue #32 のレビューF4対応：部分適用件数の表示変換です。
+     *
+     * 件数の有無判定は [PartialApplicability.displayVars] が担い、ここでは
+     * 型付き言語キーへの解決だけを行います。実行者のlocaleで解決し、
+     * テスト実行表示の詳細行へ残します。全件適用時は空文字を返します。
+     */
+    private fun partialDetailSuffix(actor: Player?, partial: PartialApplicability?): String {
+        val vars = partial?.displayVars() ?: return ""
+        return KcI18n.text(
+            actor,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_PARTIAL_APPLY,
+            vars,
+        )
     }
 
     /**
@@ -1197,9 +1220,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             if (success) applied++ else failed++
         }
-        // issue #6: 適用数・非適用数・失敗数をテスト実行の詳細へ残します。
-        session.lastDetail = "attributeを${applied}件に適用" +
-            if (nonApplicable > 0 || failed > 0) "（非対応${nonApplicable}件、失敗${failed}件）" else ""
+        // issue #32 のレビューF4対応：件数は構造化結果として保持し、
+        // 詳細文字列への変換は共通成功処理へ委ねます。
+        session.lastPartial = PartialApplicability(
+            appliedCount = applied,
+            nonApplicableCount = nonApplicable,
+            failedCount = failed,
+        )
         return applied > 0
     }
 
@@ -1239,9 +1266,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             if (success) applied++ else failed++
         }
-        // issue #6: 適用数・非適用数・失敗数をテスト実行の詳細へ残します。
-        session.lastDetail = "データを${applied}件に適用" +
-            if (nonApplicable > 0 || failed > 0) "（非対応${nonApplicable}件、失敗${failed}件）" else ""
+        // issue #32 のレビューF4対応：件数は構造化結果として保持し、
+        // 詳細文字列への変換は共通成功処理へ委ねます。
+        session.lastPartial = PartialApplicability(
+            appliedCount = applied,
+            nonApplicableCount = nonApplicable,
+            failedCount = failed,
+        )
         return applied > 0
     }
 
@@ -2852,6 +2883,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var failedNodeId: UUID? = null,
         var failureReason: String? = null,
         var lastDetail: String? = null,
+        /**
+         * issue #32 のレビューF4対応：部分適用の構造化結果です。
+         *
+         * 件数表示は共通成功処理が型付き言語キーへ変換します。各操作が
+         * 詳細文字列を直接書くと成功時に上書きで失われるため、計数だけを
+         * 保持し、表示への変換責務を持ちません。
+         */
+        var lastPartial: PartialApplicability? = null,
         var lastExpandedParams: Map<String, String> = emptyMap(),
         var lastPositionText: String? = null,
         var lastFailureReason: String? = null,

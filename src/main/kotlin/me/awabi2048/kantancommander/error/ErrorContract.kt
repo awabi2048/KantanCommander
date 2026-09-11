@@ -153,6 +153,21 @@ data class PartialApplicability(
     }
 
     val totalCount: Int get() = appliedCount + nonApplicableCount + failedCount
+
+    /**
+     * issue #32 のレビューF4対応：表示変換への入力です。
+     *
+     * 全件適用の正常系では件数表示を付けず、非対応・失敗が混ざる部分適用の
+     * ときだけ置換変数を返します。locale解決と言語キーへの変換は表示責務
+     * （実行詳細の生成側）が行い、ここでは件数の有無だけを判定します。
+     */
+    fun displayVars(): Map<String, Any>? =
+        if (nonApplicableCount == 0 && failedCount == 0) null
+        else mapOf(
+            "applied" to appliedCount,
+            "nonApplicable" to nonApplicableCount,
+            "failed" to failedCount,
+        )
 }
 
 /**
