@@ -62,6 +62,19 @@ class SuggestionQueriesTest {
     }
 
     @Test
+    fun `fullwidth spaces split input into queries`() {
+        // レビュー§7の必須ケース。全角空白（U+3000）は \s だけでは拾えないため明示します。
+        assertEquals(
+            listOf("flame", "smoke", "bubble"),
+            CommandDialogSpecs.parseSuggestionQueries("flame　smoke　bubble"),
+        )
+        assertEquals(
+            listOf("flame", "smoke", "bubble"),
+            CommandDialogSpecs.parseSuggestionQueries("flame,　smoke 、bubble"),
+        )
+    }
+
+    @Test
     fun `empty fragments are ignored`() {
         assertEquals(
             listOf("flame", "smoke", "bubble"),
