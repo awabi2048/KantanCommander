@@ -1736,9 +1736,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 判定します。`from` によるスロット間コピーは持たず、配置アイテムと個数の
      * 変数指定で代替します。
      *
-     * 個数に設定時上限はなく、実行時に maxStackSize を超える分は上限量へ寄せます。
-     * エンティティ系は対応対象が1件でもあれば成功、ブロック系は各位置を独立に
-     * 試行します。
+     * 個数は素材のスタック上限以下でなければ失敗とします。黙って寄せると
+     * バニラ出力の失敗と食い違うためです。
+     * 成功定義は全配置先で「1件以上適用なら成功」に統一します。
      */
     private fun executePlaceItem(
         node: CommandNode,
@@ -1764,9 +1764,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ItemStackCodec.decode(node.string("itemData")) ?: ItemStack(material)
         }
         val count = resolvePositiveInt(node.string("count"), session) ?: return false
-        // 検証時に上限を設けないため、スタック上限を超える要求は上限量へ寄せます。
+        // 個数は素材のスタック上限以下でなければ失敗とします。黙って寄せると
+        // バニラ出力の失敗と食い違うためです（出力も上限超過で失敗します）。
+        // リテラル超過は検証層でも早期エラーにします。変数・一時参照の超過は
+        // 実行時にここで失敗し、出力側も実行時に失敗するため等価です。
         val stack = template.clone()
-        stack.amount = minOf(count, stack.maxStackSize)
+        if (count > stack.maxStackSize) return false
+        stack.amount = count
         val destination = PlaceItemDestination.from(node.string("destination")) ?: return false
         val slot = node.string("slot")
         if (!PlaceItemDestination.isValidSlot(destination, slot)) return false

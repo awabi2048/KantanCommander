@@ -1553,10 +1553,9 @@ class VanillaDatapackExporter(
      * 「アイテムを配置する」(PLACE_ITEM) をバニラ `/item replace` へ変換します。
      *
      * 配置先のバニラ slot 記法は PlaceItemDestination が一元管理し、ここでは
-     * 対象・位置・アイテム・個数の埋め込みだけを行います。個数の変数参照は
-     * macro 層で展開されるため、生の保存値をそのまま出力します。上限の丸めは
-     * 実行側と同じ規則に従いますが、スタック上限は素材ごとに変わり出力時に
-     * 確定できないため、検証で弾けない範囲は生のまま出します（検証の説明参照）。
+     * 対象・位置・アイテム・個数の埋め込みだけを行います。個数は生の保存値を
+     * そのまま出力します。スタック上限を超える個数は実行・出力ともに失敗する
+     * ため等価であり、上限が解決できるリテラル超過は事前検査で拒否します。
      * 上書き禁止時は空スロット条件を前置した等価出力にします。実行側の成功は
      * 「1件以上適用」であり、条件付き出力と `store success` 包みの組合せで
      * 再現します。等価な空き検査を作れない配置先は事前検査で拒否するため、
@@ -1595,10 +1594,10 @@ class VanillaDatapackExporter(
      *
      * GIVE_ITEM と同じく minecraft 名前空間・ItemStack メタデータを検査し、
      * 配置先とスロットの組合せ・ブロック位置の表現可否を加えます。
-     * 個数は実行側がスタック上限へ寄せます。素材ごとの上限は出力時に確定
-     * できないため、全素材の上限を超えるリテラル個数（64超）だけを誤出力
-     * として拒否し、それ以外は生のまま出します。上限の低い素材への多量配置
-     * と変数個数の範囲外値は、実データパック検証で等価性を確認します。
+     * 個数は素材のスタック上限以下でなければ、実行・出力ともに失敗するため、
+     * 上限が解決できる場合にリテラル超過を誤出力として拒否します。上限が
+     * 解決できない場合（サーバーなし試験など）と変数・一時参照の個数は、
+     * 実行時の失敗に委ねます。
      * 上書き禁止時は等価な空き検査を作れる配置先だけを通し、作れない配置先
      * （装備先など対象種別でNBT構造が変わる場合）は誤った等価出力を出さず
      * 明示拒否します。警告だけで別意味のコマンドは出力しません。
@@ -1622,12 +1621,13 @@ class VanillaDatapackExporter(
         if (!PlaceItemDestination.isValidSlot(destination, node.string("slot"))) {
             errors += "${script.id}/${node.id}: 配置先に適用できないスロットです"
         }
-        // 全素材のスタック上限（64）を超えるリテラル個数は、実行側の寄せと
-        // 食い違う誤出力になるため拒否します。変数・一時参照の個数は実行時に
-        // 解決されるため、ここでは弾きません。
-        val literalCount = node.string("count", "1").toIntOrNull()
-        if (literalCount != null && literalCount > 64) {
-            errors += "${script.id}/${node.id}: 配置個数が多すぎます"
+        // 素材のスタック上限を超えるリテラル個数は、実行・出力ともに失敗する
+        // 誤出力になるため、上限が解決できる場合に拒否します。
+        val material = if (!node.itemTempRef.isNullOrBlank()) null
+        else CommandValueRules.material(node.string("item"), allowAir = false)
+        val max = material?.let(PlaceItemDestination::materialMaxStackSize)
+        if (max != null && PlaceItemDestination.countExceedsMax(node.string("count", "1"), max)) {
+            errors += "${script.id}/${node.id}: 配置個数がスタック上限を超えています"
         }
         if (!node.boolean("overwrite") &&
             PlaceItemDestination.emptyCheckNbtPath(destination, node.string("slot")) == null
@@ -1645,6 +1645,9 @@ class VanillaDatapackExporter(
      * 演算子の対応は[EntityAttributeSupport.vanillaModifierOperation]が正本であり、
      * 不正確な変換は行いません。対応付け不能な値は事前検査で未対応として扱い、
      * ここへは到達させません。
+     * バニラのattributeは単一対象専用のため、対象ごとに `execute as … run` へ
+     * 展開します。複数対象セレクターをそのまま渡すと無効になるためです。
+     * 外側の `store success` 包みと組で、実行側の「1件以上適用」と一致します。
      */
     private fun attributeCommand(node: CommandNode): String? {
         val attribute = node.string(EntityAttributeSupport.PARAM_ATTRIBUTE).takeIf(String::isNotBlank)
@@ -1654,7 +1657,7 @@ class VanillaDatapackExporter(
             EntityAttributeSupport.OPERATION_BASE_VALUE -> {
                 val value = node.string(EntityAttributeSupport.PARAM_AMOUNT).takeIf(String::isNotBlank)
                     ?: return null
-                "attribute $target $attribute base set $value"
+                "execute as $target run attribute @s $attribute base set $value"
             }
             EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
                 val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
@@ -1664,12 +1667,12 @@ class VanillaDatapackExporter(
                 val operation = EntityAttributeSupport.vanillaModifierOperation(
                     node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION),
                 ) ?: return null
-                "attribute $target $attribute modifier add $key $amount $operation"
+                "execute as $target run attribute @s $attribute modifier add $key $amount $operation"
             }
             EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
                 val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
                     ?: return null
-                "attribute $target $attribute modifier remove $key"
+                "execute as $target run attribute @s $attribute modifier remove $key"
             }
             else -> null
         }

@@ -90,6 +90,20 @@ class PlaceItemDestinationTest {
     }
 
     @Test
+    fun `count exceeds max only for literal integers over the limit`() {
+        // 剣相当の上限1素材への2個指定など、実行・出力ともに失敗する組合せを検出します。
+        assertTrue(PlaceItemDestination.countExceedsMax("2", 1))
+        assertTrue(PlaceItemDestination.countExceedsMax("65", 64))
+        assertFalse(PlaceItemDestination.countExceedsMax("1", 1))
+        assertFalse(PlaceItemDestination.countExceedsMax("64", 64))
+        assertFalse(PlaceItemDestination.countExceedsMax("3", 64))
+        // 変数・一時参照は実行時に解決されるため、静的には超過扱いにしません。
+        assertFalse(PlaceItemDestination.countExceedsMax("\${count}", 1))
+        assertFalse(PlaceItemDestination.countExceedsMax("%{count}%", 1))
+        assertFalse(PlaceItemDestination.countExceedsMax("abc", 1))
+    }
+
+    @Test
     fun `destinations declare their required target kind`() {
         assertTrue(PlaceItemDestination.EQUIPMENT.requiresEntityTarget)
         assertTrue(PlaceItemDestination.PLAYER_HOTBAR.requiresEntityTarget)

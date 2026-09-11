@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.model
 
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import org.bukkit.Material
 
 /**
  * 「アイテムを配置する」(PLACE_ITEM) の配置先です。
@@ -132,6 +133,28 @@ enum class PlaceItemDestination(
             PLAYER_INVENTORY -> slot.toIntOrNull()?.takeIf { it in INVENTORY_RANGE }?.let { "Inventory[{Slot:${it + 9}b}]" }
             EQUIPMENT -> null
         }
+
+        /**
+         * 配置個数が素材のスタック上限を超えるかを返します。
+         *
+         * リテラル整数だけを判定し、変数・一時参照混じりは false とします
+         * （実行時に解決されるため、静的には保証も否定もできません）。
+         * 上限値の解決は呼び出し側が行い、解決不能時（サーバーなし試験など）は
+         * 検査を飛ばします。
+         */
+        fun countExceedsMax(rawCount: String, maxStackSize: Int): Boolean {
+            val parsed = rawCount.toIntOrNull() ?: return false
+            return parsed > maxStackSize
+        }
+
+        /**
+         * 素材のスタック上限を返します。解決不能時は null を返します。
+         *
+         * 現行Paperでは上限がレジストリ参照のため、サーバーなし試験では
+         * 解決できません。呼び出し側は null を検査飛ばしとして扱います。
+         */
+        fun materialMaxStackSize(material: Material): Int? =
+            runCatching { material.maxStackSize }.getOrNull()
 
         /**
          * Player インベントリ操作用の Bukkit スロット番号へ変換します。

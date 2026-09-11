@@ -58,7 +58,8 @@ class EntityOperationExportTest {
     }
 
     @Test
-    fun `attribute base value lowers to attribute command`() {
+    fun `attribute base value lowers to per target attribute command`() {
+        // attributeは単一対象専用のため、対象ごとに execute as … run へ展開します。
         val (_, exporter) = exporter()
         val script = operationScript {
             it.params["operation"] = "attribute"
@@ -71,7 +72,27 @@ class EntityOperationExportTest {
             exporter.compileForStandalone(script),
         )
         val body = result.functions.values.joinToString("\n")
-        assertTrue(body.contains("attribute ") && body.contains("minecraft:max_health") && body.contains("base set 20.0"))
+        assertTrue(body.contains("execute as @a[") && body.contains("attribute @s minecraft:max_health base set 20.0"))
+    }
+
+    @Test
+    fun `attribute operation expands multi targets per entity`() {
+        // 複数対象セレクターをそのまま渡すと無効になるため、as で1件ずつ実行します。
+        val (store, exporter) = exporter()
+        val script = store.create(UUID.randomUUID(), "entity-operation-multi")
+        GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+            targetSpec = TargetSpec(TargetKind.NEARBY_PLAYERS)
+            params["operation"] = "attribute"
+            params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:max_health"
+            params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_BASE_VALUE
+            params[EntityAttributeSupport.PARAM_AMOUNT] = "20.0"
+        }
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            exporter.compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("execute as @a[") && body.contains("attribute @s minecraft:max_health base set 20.0"))
     }
 
     @Test
