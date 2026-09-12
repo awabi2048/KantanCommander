@@ -157,6 +157,16 @@ enum class PlaceItemDestination(
             runCatching { material.maxStackSize }.getOrNull()
 
         /**
+         * 配置スタックに適用する上限を返します。
+         *
+         * 実行側と同じ優先順位（保存済みitemDataの上限があればそれを、
+         * なければ素材の標準上限を用いる）で選びます。両方なければ null を
+         * 返し、呼び出し側は検査を飛ばします。
+         */
+        fun effectiveStackMax(itemDataMax: Int?, materialMax: Int?): Int? =
+            itemDataMax ?: materialMax
+
+        /**
          * Player インベントリ操作用の Bukkit スロット番号へ変換します。
          *
          * ホットバーは 0..8 をそのまま、メインインベントリは storage 域 9..35 へ

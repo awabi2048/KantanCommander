@@ -104,6 +104,16 @@ class PlaceItemDestinationTest {
     }
 
     @Test
+    fun `effective stack max prefers saved item data over material default`() {
+        // 標準上限1の素材に独自上限64を設定したカスタムアイテムなど、
+        // 保存済み上限があればそれを用います。
+        assertEquals(64, PlaceItemDestination.effectiveStackMax(64, 1))
+        assertEquals(1, PlaceItemDestination.effectiveStackMax(1, 64))
+        assertEquals(64, PlaceItemDestination.effectiveStackMax(null, 64))
+        assertNull(PlaceItemDestination.effectiveStackMax(null, null))
+    }
+
+    @Test
     fun `destinations declare their required target kind`() {
         assertTrue(PlaceItemDestination.EQUIPMENT.requiresEntityTarget)
         assertTrue(PlaceItemDestination.PLAYER_HOTBAR.requiresEntityTarget)

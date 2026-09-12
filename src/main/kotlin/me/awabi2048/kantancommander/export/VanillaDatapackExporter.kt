@@ -1594,10 +1594,11 @@ class VanillaDatapackExporter(
      *
      * GIVE_ITEM と同じく minecraft 名前空間・ItemStack メタデータを検査し、
      * 配置先とスロットの組合せ・ブロック位置の表現可否を加えます。
-     * 個数は素材のスタック上限以下でなければ、実行・出力ともに失敗するため、
-     * 上限が解決できる場合にリテラル超過を誤出力として拒否します。上限が
-     * 解決できない場合（サーバーなし試験など）と変数・一時参照の個数は、
-     * 実行時の失敗に委ねます。
+     * 個数は配置スタックの上限以下でなければ、実行・出力ともに失敗するため、
+     * 上限が解決できる場合にリテラル超過を誤出力として拒否します。上限は
+     * 保存済みitemDataの独自上限があればそれを、なければ素材の標準上限を
+     * 用います。上限が解決できない場合（サーバーなし試験など）と変数・
+     * 一時参照の個数は、実行時の失敗に委ねます。
      * 上書き禁止時は等価な空き検査を作れる配置先だけを通し、作れない配置先
      * （装備先など対象種別でNBT構造が変わる場合）は誤った等価出力を出さず
      * 明示拒否します。警告だけで別意味のコマンドは出力しません。
@@ -1610,7 +1611,12 @@ class VanillaDatapackExporter(
             errors += "${script.id}/${node.id}: バニラに存在しない配置アイテムです: $item"
         }
         val itemData = node.string("itemData")
-        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
+        // 保存済みスタックは1回だけ復元し、メタ検査と上限解決に使い回します。
+        // 上限・メタの取得失敗は検査飛ばし・未対応として扱い、例外にしません。
+        val decodedData = itemData.takeIf { it.isNotBlank() }?.let(ItemStackCodec::decode)
+        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() &&
+            decodedData?.let { runCatching { it.hasItemMeta() }.getOrNull() } != false
+        ) {
             errors += "${script.id}/${node.id}: 保存された配置ItemStackメタデータは完全バニラ出力に未対応です"
         }
         val destination = PlaceItemDestination.from(node.string("destination"))
@@ -1621,11 +1627,17 @@ class VanillaDatapackExporter(
         if (!PlaceItemDestination.isValidSlot(destination, node.string("slot"))) {
             errors += "${script.id}/${node.id}: 配置先に適用できないスロットです"
         }
-        // 素材のスタック上限を超えるリテラル個数は、実行・出力ともに失敗する
-        // 誤出力になるため、上限が解決できる場合に拒否します。
+        // 配置スタックの上限（保存済みitemDataの独自上限があればそれを、
+        // なければ素材の標準上限）を超えるリテラル個数は、実行・出力ともに
+        // 失敗する誤出力になるため、上限が解決できる場合に拒否します。
+        // 一時変数アイテムは内容が確定しないため飛ばします。
+        val itemDataMax = decodedData?.let { runCatching { it.maxStackSize }.getOrNull() }
         val material = if (!node.itemTempRef.isNullOrBlank()) null
         else CommandValueRules.material(node.string("item"), allowAir = false)
-        val max = material?.let(PlaceItemDestination::materialMaxStackSize)
+        val max = PlaceItemDestination.effectiveStackMax(
+            itemDataMax,
+            material?.let(PlaceItemDestination::materialMaxStackSize),
+        )
         if (max != null && PlaceItemDestination.countExceedsMax(node.string("count", "1"), max)) {
             errors += "${script.id}/${node.id}: 配置個数がスタック上限を超えています"
         }

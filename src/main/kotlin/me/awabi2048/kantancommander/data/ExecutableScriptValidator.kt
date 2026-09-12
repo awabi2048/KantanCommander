@@ -46,6 +46,7 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.error.ErrorSeverity
 import me.awabi2048.kantancommander.error.ExecutionError
@@ -1003,7 +1004,8 @@ object ExecutableScriptValidator {
      * 配置先ごとに要求する対象が異なります。エンティティ系は TargetSpec、
      * ブロックコンテナ系は blockPositionSpec を必須にし、もう一方は要求しません。
      * スロットは配置先ごとの保存形式で検証し、個数は正整数として変数参照ごと
-     * 受け付けます。素材のスタック上限を超えるリテラル個数は、上限が解決できる
+     * 受け付けます。配置スタックの上限（保存済みitemDataの独自上限があれば
+     * それを、なければ素材の標準上限）を超えるリテラル個数は、上限が解決できる
      * 場合に早期エラーにします（上限超過は実行・出力ともに失敗するため）。
      * 変数・一時参照の個数と上限が解決できない場合（サーバーなし試験など）は
      * 実行時の失敗に委ねます。
@@ -1042,9 +1044,11 @@ object ExecutableScriptValidator {
     /**
      * 配置個数のスタック上限超過を、解決できる範囲で早期エラーにします。
      *
-     * リテラル個数かつ素材・上限の両方が確定したときだけ判定し、それ以外
-     * （変数・一時参照、上限が解決できないサーバーなし試験）は実行時の失敗に
-     * 委ねます。実行も出力も上限超過で失敗するため等価です。
+     * 実行側と同じ優先順位（保存済みitemDataの上限があればそれを、なければ
+     * 素材の標準上限）で上限を解決します。リテラル個数かつ上限が確定した
+     * ときだけ判定し、それ以外（変数・一時参照、上限が解決できない
+     * サーバーなし試験）は実行時の失敗に委ねます。実行も出力も上限超過で
+     * 失敗するため等価です。
      */
     private fun validatePlaceItemCountLimit(
         node: CommandNode,
@@ -1055,10 +1059,16 @@ object ExecutableScriptValidator {
     ) {
         val raw = node.string("count", "1")
         if (deferNumericValidation(raw, variableDefinitions, temporaryDefinitions)) return
-        // 一時変数アイテムは素材が確定しないため、上限検査を飛ばします。
-        val material = if (!node.itemTempRef.isNullOrBlank()) null
-        else CommandValueRules.material(node.string("item"), allowAir = false)
-        val max = material?.let(PlaceItemDestination::materialMaxStackSize) ?: return
+        // 一時変数アイテムは内容が確定しないため、上限検査を飛ばします。
+        if (!node.itemTempRef.isNullOrBlank()) return
+        val itemDataMax = node.string("itemData").takeIf { it.isNotBlank() }?.let { encoded ->
+            runCatching { ItemStackCodec.decode(encoded)?.maxStackSize }.getOrNull()
+        }
+        val material = CommandValueRules.material(node.string("item"), allowAir = false)
+        val max = PlaceItemDestination.effectiveStackMax(
+            itemDataMax,
+            material?.let(PlaceItemDestination::materialMaxStackSize),
+        ) ?: return
         if (PlaceItemDestination.countExceedsMax(raw, max)) {
             errors += nodeError(node, path, setOf("count"), "配置個数がスタック上限を超えています")
         }
