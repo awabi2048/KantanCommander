@@ -20,6 +20,7 @@ import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.ExecutionVariables
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.normalizedTemporaryName
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -513,24 +514,33 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.DISK_CALL -> {
                 val callerContext = session.context
                 val callerPrevious = session.previousContext
-                // 一時変数は呼出先へ引き継がず、復帰時に復元します（隔離）。
-                // EXECUTION scope の定義表も同じ境界で隔離します。
-                val callerTemporaries = session.executionVariables.snapshot()
-                session.executionVariables.clear()
-                // 実行状態はDISK_CALLの境界を越えて共有しません。現在はGUIから
-                // コンテキストを生成しませんが、内部呼出し元が保持している実行状態
-                // を呼出先の処理へ渡す境界として、この保存・復元を残します。
-                session.context = effectiveContext(session)
                 runDiskCall(node, session, depth) { success ->
                     session.context = callerContext
                     session.previousContext = callerPrevious
-                    session.executionVariables.restore(callerTemporaries)
                     session.lastDetail = if (success) "ディスク呼び出しに成功した" else "ディスク呼び出しに失敗した"
                     next(
                         node.next,
                         if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
                     )
                 }
+            }
+            // issue #8: 残りのノードを打ち切って呼出元へ戻ります。値は
+            // 呼び出し枠へ預け、DISK_CALL 境界で受け渡します。実行チェーンが
+            // 線形のため、done への直接完了で残りを実行しません。
+            CommandType.RETURN_VALUE -> {
+                val value = resolveReturnValue(node, session) ?: run {
+                    session.lastDetail = "戻り値の解決に失敗した"
+                    session.lastFailureReason = ErrorCode.VARIABLE_UNSET.code
+                    session.lastFailureCode = ErrorCode.VARIABLE_UNSET
+                    next(node.next, NodeExecutionOutcome.FAILED)
+                    return
+                }
+                val frame = session.callFrames.lastOrNull()
+                if (frame != null) frame.pendingReturn = value
+                session.returnValue = value
+                session.returnRequested = true
+                session.lastDetail = "値を返した"
+                done(true)
             }
             CommandType.TEMP_SET -> {
                 val success = executeTemporary(node, session)
@@ -830,15 +840,175 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         )
     }
 
+    /**
+     * issue #8 のディスク呼び出しを実行します。
+     *
+     * 呼び出しごとに呼び出し枠を作り、呼出元のEXECUTION変数表を退避します。
+     * 引数は被呼出側の開始時点で定義済みのEXECUTION変数として渡します。
+     * WORLD／ENTITY のstoreは複製しません。復帰時は枠を戻し、戻り値があれば
+     * 受取変数へ設定します。循環呼出しは深さ上限の前に検出して失敗します。
+     */
     private fun runDiskCall(node: CommandNode, session: ExecutionSession, depth: Int, done: (Boolean) -> Unit) {
         if (!ExecutionSemantics.withinCallDepth(depth, session.maxDepth)) {
             plugin.logger.warning("[KantanCommander] disk-call-depth root=${session.rootId} node=${node.id} depth=$depth max=${session.maxDepth}")
             return done(false)
         }
         val snapshot = node.snapshot ?: return done(false)
+        val diskId = node.string("diskId").takeIf(String::isNotBlank)
+            ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
+        // 循環呼出しは深さ上限の前に検出します。diskId のない旧ノードは深さ制限に委ねます。
+        if (diskId != null && session.callFrames.any { it.diskId == diskId }) {
+            plugin.logger.warning("[KantanCommander] disk-call-circular root=${session.rootId} node=${node.id} disk=$diskId")
+            session.lastDetail = "循環呼出しのため実行できなかった"
+            session.lastFailureReason = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH.code
+            session.lastFailureCode = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
+            return done(false)
+        }
+        val declared = node.declaredArguments()
+        // 引数を解決します。変数指定があれば呼出元の値を使い、なければリテラルを型で解釈します。
+        val arguments = linkedMapOf<String, TypedValue>()
+        for (argument in declared) {
+            val value = resolveCallArgument(node, argument, session) ?: run {
+                session.lastDetail = "引数 ${argument.name} の解決に失敗した"
+                session.lastFailureReason = ErrorCode.VARIABLE_UNSET.code
+                session.lastFailureCode = ErrorCode.VARIABLE_UNSET
+                return done(false)
+            }
+            arguments[argument.name] = value
+        }
+        val frame = ExecutionCallFrame(
+            scriptId = session.rootId,
+            nodeId = node.id,
+            diskId = diskId,
+            callerVariables = session.executionVariables.snapshot(),
+            callerLoops = session.loops.map { it.copy() },
+            callerLoopCount = session.currentLoopCount,
+            returnScope = node.string("returnScope").takeIf(String::isNotBlank)
+                ?.let(VariableScope::parse),
+            returnName = node.string("returnName"),
+        )
+        session.callFrames.add(frame)
+        session.executionVariables.clear()
+        session.loops.clear()
+        session.currentLoopCount = null
+        // 引数は被呼出側の開始時点で定義済みのEXECUTION変数として渡します。
+        // 呼出元の一時変数は暗黙共有しません。
+        arguments.forEach { (name, value) -> session.executionVariables.set(name, value) }
+        // 実行状態はDISK_CALLの境界を越えて共有しません。現在はGUIから
+        // コンテキストを生成しませんが、内部呼出し元が保持している実行状態
+        // を呼出先の処理へ渡す境界として、この保存・復元を残します。
+        session.context = effectiveContext(session)
         val synthetic = DiskScript(name = "snapshot", owner = session.actor?.uniqueId ?: UUID(0, 0), graph = snapshot)
-        runGraph(synthetic, snapshot, session, depth + 1, done)
+        runGraph(synthetic, snapshot, session, depth + 1) { success ->
+            val popped = if (session.callFrames.isNotEmpty()) {
+                session.callFrames.removeLast()
+            } else null
+            // 復帰時は呼出元の変数表・ループ状態へ戻します。
+            if (popped != null) {
+                session.executionVariables.restore(popped.callerVariables)
+                session.loops.clear()
+                session.loops.addAll(popped.callerLoops)
+                session.currentLoopCount = popped.callerLoopCount
+            }
+            val pending = popped?.pendingReturn
+            if (pending != null) {
+                // 「値を返す」で中断された場合、残りを実行せず受取変数へ設定します。
+                // 受取指定がなければ値を破棄します。型不一致は保存層の型安定で失敗します。
+                val delivered = runCatching {
+                    val targetScope = popped.returnScope
+                    val targetName = popped.returnName
+                    if (targetScope != null && targetName.isNotBlank()) {
+                        when (targetScope) {
+                            VariableScope.EXECUTION -> session.executionVariables.set(targetName, pending)
+                            VariableScope.WORLD -> WorldVariableAdapter(plugin.variables, session.worldId).set(targetName, pending)
+                            VariableScope.ENTITY -> return@runCatching false
+                        }
+                    }
+                    true
+                }.getOrDefault(false)
+                session.returnRequested = false
+                session.returnValue = null
+                session.lastDetail = if (delivered) "値を返した" else session.lastDetail
+                done(delivered && success)
+            } else {
+                done(success)
+            }
+        }
     }
+
+    /**
+     * issue #8 の呼出引数を解決します。
+     *
+     * 変数指定（`argvar_<name>`）があれば呼出元のEXECUTION変数を使い、なければ
+     * リテラル（`arg_<name>`）を宣言型で解釈します。両方指定は検証で拒否済み
+     * ですが、防御的に変数指定を優先します。失敗は null です。
+     */
+    private fun resolveCallArgument(
+        node: CommandNode,
+        argument: me.awabi2048.kantancommander.model.DiskArgument,
+        session: ExecutionSession,
+    ): TypedValue? = runCatching {
+        val variable = node.string("argvar_${argument.name}").takeIf(String::isNotBlank)
+        if (variable != null) {
+            val value = session.executionVariables.get(
+                me.awabi2048.kantancommander.model.TemporaryTemplate.normalized(variable),
+            ) ?: error("argument variable is missing")
+            if (value.type != argument.type) error("argument type mismatch")
+            return value
+        }
+        val raw = node.string("arg_${argument.name}").takeIf(String::isNotBlank) ?: error("argument is missing")
+        when (argument.type) {
+            ValueType.NUMBER -> TypedValue(argument.type, numberValue = resolveNumber(raw, session) ?: error("number is invalid"))
+            ValueType.STRING -> TypedValue(argument.type, stringValue = resolveText(raw, session) ?: error("string is invalid"))
+            ValueType.BOOLEAN -> TypedValue(
+                argument.type,
+                booleanValue = resolveText(raw, session)?.trim()?.lowercase()?.let {
+                    if (it == "true") true else if (it == "false") false else null
+                } ?: error("boolean is invalid"),
+            )
+            ValueType.LOCATION,
+            ValueType.VECTOR,
+            ValueType.ITEM,
+            ValueType.BLOCK,
+            ValueType.ENTITY,
+            ValueType.SOUND,
+            ValueType.EFFECT,
+            -> error("complex arguments require a variable")
+        }
+    }.getOrNull()
+
+    /**
+     * issue #8 の戻り値を解決します。
+     *
+     * source 指定があれば sourceScope の変数、なければ value 欄のリテラルを
+     * 値型推論で解決します。失敗は null です。
+     */
+    private fun resolveReturnValue(node: CommandNode, session: ExecutionSession): TypedValue? = runCatching {
+        val source = node.string("source").takeIf(String::isNotBlank)
+        if (source != null) {
+            val scope = VariableScope.parse(node.string("sourceScope")) ?: VariableScope.EXECUTION
+            when (scope) {
+                VariableScope.EXECUTION -> session.executionVariables.get(
+                    me.awabi2048.kantancommander.model.TemporaryTemplate.normalized(source),
+                ) ?: error("return variable is missing")
+                VariableScope.WORLD -> plugin.variables.get(session.worldId, source) ?: error("return variable is missing")
+                VariableScope.ENTITY -> error("entity return is unsupported")
+            }
+        } else {
+            val raw = node.string("value")
+            when (me.awabi2048.kantancommander.model.inferLiteralType(raw)) {
+                ValueType.NUMBER -> TypedValue(ValueType.NUMBER, numberValue = resolveNumber(raw, session) ?: error("number is invalid"))
+                ValueType.STRING -> TypedValue(ValueType.STRING, stringValue = resolveText(raw, session) ?: error("string is invalid"))
+                ValueType.BOOLEAN -> TypedValue(
+                    ValueType.BOOLEAN,
+                    booleanValue = resolveText(raw, session)?.trim()?.lowercase()?.let {
+                        if (it == "true") true else if (it == "false") false else null
+                    } ?: error("boolean is invalid"),
+                )
+                else -> error("unsupported literal type")
+            }
+        }
+    }.getOrNull()
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): ImmediateExecutionResult = try {
         if (executeImmediateBoolean(node, session)) {
@@ -2074,6 +2244,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val applicable = compareVariable(value, comparisonValue, operator)
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
+            // issue #5: 型付き条件比較です。左辺の変数・演算子・右辺のリテラルで
+            // 比較します。正常な不一致と解決失敗・型不一致を区別します。
+            ConditionSubject.VALUE -> evaluateValueComparison(node, session)
             // issue #27×#26・#29: 判定対象名はBLOCKへ置換し、複数位置ANY評価と実行起点集合を維持します。
             // #27単独の単一位置解決へは戻しません。
             ConditionSubject.BLOCK -> {
@@ -2117,6 +2290,71 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             // when は網羅列挙のため else を置きません。将来の判定対象追加時は
             // コンパイルエラーで検出します（冗長else除去と同一方針）。
         }
+    }
+
+    /**
+     * issue #5 の型付き条件比較を評価します。
+     *
+     * 左辺は EXECUTION／WORLD scope の変数、右辺は型に応じたリテラルです。
+     * ENTITY scope の左辺は対象文脈を必要とするため未対応（INVALID）とし、
+     * 後続で対象付き評価へ拡張します。解決失敗は UNRESOLVED、型外の演算子・
+     * 未対応型の組み合わせは INVALID とし、正常な不一致（FALSE）へ畳みません。
+     */
+    private fun evaluateValueComparison(
+        node: CommandNode,
+        session: ExecutionSession,
+    ): ConditionEvaluation {
+        val scopeRaw = node.string("leftScope").ifBlank { VariableScope.WORLD.name }
+        val scope = VariableScope.parse(scopeRaw) ?: return ConditionEvaluation.INVALID
+        if (scope == VariableScope.ENTITY) return ConditionEvaluation.INVALID
+        val leftName = node.string("leftName")
+        if (!CommandValueRules.isVariableName(leftName)) return ConditionEvaluation.INVALID
+        val left: TypedValue = when (scope) {
+            VariableScope.WORLD -> plugin.variables.get(session.worldId, leftName)
+                ?: return ConditionEvaluation.UNRESOLVED
+            VariableScope.EXECUTION -> session.executionVariables.get(
+                me.awabi2048.kantancommander.model.TemporaryTemplate.normalized(leftName),
+            ) ?: return ConditionEvaluation.UNRESOLVED
+            VariableScope.ENTITY -> return ConditionEvaluation.INVALID
+        }
+        val operator = node.string("operator", "==")
+        if (operator !in me.awabi2048.kantancommander.model.ConditionComparison.ALL) {
+            return ConditionEvaluation.INVALID
+        }
+        val right = resolveComparisonRight(node.string("right"), left.type, session)
+            ?: return ConditionEvaluation.UNRESOLVED
+        val applicable = me.awabi2048.kantancommander.model.ConditionComparison.compare(left, operator, right)
+            ?: return ConditionEvaluation.INVALID
+        return if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
+    }
+
+    /**
+     * 比較右辺のリテラルを左辺の型で解決します。
+     *
+     * スカラーはテンプレート参照を含められます。ENTITY は UUID 文字列を受け付けます。
+     * 未対応型・解決失敗は null です。
+     */
+    private fun resolveComparisonRight(
+        raw: String,
+        type: ValueType,
+        session: ExecutionSession,
+    ): TypedValue? = when (type) {
+        ValueType.NUMBER -> resolveNumber(raw, session)?.let { TypedValue(type, numberValue = it) }
+        ValueType.STRING -> resolveText(raw, session)?.let { TypedValue(type, stringValue = it) }
+        ValueType.BOOLEAN -> resolveText(raw, session)
+            ?.trim()?.lowercase()
+            ?.let { if (it == "true") true else if (it == "false") false else null }
+            ?.let { TypedValue(type, booleanValue = it) }
+        ValueType.ENTITY -> raw.trim().takeIf(String::isNotBlank)?.let {
+            runCatching { TypedValue(type, entityId = java.util.UUID.fromString(it)) }.getOrNull()
+        }
+        ValueType.LOCATION,
+        ValueType.VECTOR,
+        ValueType.ITEM,
+        ValueType.BLOCK,
+        ValueType.SOUND,
+        ValueType.EFFECT,
+        -> null
     }
 
     /**
@@ -2173,8 +2411,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (scope == VariableScope.ENTITY) {
             return executeEntityVariable(node, session, operation)
         }
-        val store: VariableStore = when (scope) {
-            VariableScope.EXECUTION -> session.executionVariables
+        val store: VariableStore = when (scope) {            VariableScope.EXECUTION -> session.executionVariables
             VariableScope.WORLD -> WorldVariableAdapter(plugin.variables, session.worldId)
             VariableScope.ENTITY -> return false
         }
@@ -3358,10 +3595,41 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var currentLoopCount: Long? = null,
         /** EXECUTION scope の実行内保持域です。実行終了時に破棄し、DISK_CALL越境では隔離します。 */
         val executionVariables: ExecutionVariables = ExecutionVariables(),
+        /**
+         * issue #8 の呼び出し枠の積み上げです。
+         *
+         * DISK_CALL のたびに呼出元の変数表・戻り先情報を積み、復帰時に戻します。
+         * WORLD／ENTITY のstoreは複製しません。WAITによる中断をまたいでも
+         * 維持されるため、復帰後の復元が崩れません。
+         */
+        val callFrames: MutableList<ExecutionCallFrame> = mutableListOf(),
+        /** 「値を返す」で中断が要求された場合に真になります。 */
+        var returnRequested: Boolean = false,
+        /** 中断時に呼出元へ渡す戻り値です。 */
+        var returnValue: TypedValue? = null,
     ) {
         val isActive: Boolean get() = !cancelled && !finished
         val scheduledTasks: MutableSet<BukkitTask> = linkedSetOf()
     }
+
+    /**
+     * issue #8 の呼び出し枠です。
+     *
+     * callerVariables は呼出元のEXECUTION変数表の複写であり、復帰時に戻します。
+     * pendingReturn に値がある枠へ戻った場合、その呼出しの戻り値として
+     * 受け渡します。returnScope／returnName が空の場合は値を破棄します。
+     */
+    private data class ExecutionCallFrame(
+        val scriptId: UUID,
+        val nodeId: UUID,
+        val diskId: UUID?,
+        val callerVariables: Map<String, TypedValue>,
+        val callerLoops: List<LoopFrame>,
+        val callerLoopCount: Long?,
+        val returnScope: VariableScope?,
+        val returnName: String,
+        var pendingReturn: TypedValue? = null,
+    )
 
     private data class LoopFrame(
         val startId: UUID,

@@ -3498,6 +3498,12 @@ object EditorMenuLayout {
         CommandType.DISK_CALL -> listOf(
             field("diskId", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK, Material.MUSIC_DISC_13),
         )
+        // issue #8: 「値を返す」は変数由来またはリテラル値のどちらかを返します。
+        // 検証層と同じく source 指定時は変数、空欄時は value 欄のリテラルを採用します。
+        CommandType.RETURN_VALUE -> listOf(
+            field("source", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SOURCE, Material.NAME_TAG),
+            field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
+        )
         CommandType.VARIABLE -> listOf(
             field("scope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE, Material.ENDER_EYE) { displayVariableScope(it.string("scope")) },
             field("operation", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.REDSTONE) { displayVariableOperation(it.string("operation")) },

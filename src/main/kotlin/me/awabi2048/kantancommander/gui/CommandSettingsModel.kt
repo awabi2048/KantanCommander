@@ -825,6 +825,12 @@ object CommandSettingsModel {
                 "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
                 else -> undefinedWarningKey(node, fieldKey)
             }
+            // issue #8: 「値を返す」は変数由来またはリテラル値のどちらかを返します。
+            CommandType.RETURN_VALUE -> when (fieldKey) {
+                "sourceScope", "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                else -> undefinedWarningKey(node, fieldKey)
+            }
             CommandType.VARIABLE -> when (fieldKey) {
                 "operation", "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
@@ -1038,6 +1044,8 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.DISK_CALL -> text()
+        // issue #8: 「値を返す」の入力は汎用テキスト欄で扱い、型検査は検証層で行います。
+        CommandType.RETURN_VALUE -> text()
         CommandType.BLOCK_OPERATION -> when (fieldKey) {
             "operation" -> CommandSettingDescriptor(CommandSettingEditor.BLOCK_OPERATION)
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_POSITION)

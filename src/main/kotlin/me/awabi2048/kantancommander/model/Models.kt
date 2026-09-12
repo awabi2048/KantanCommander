@@ -53,7 +53,95 @@ data class DiskScript(
      * 誤って「内容あり」と扱いません。旧JSONには存在しないためfalseで復元します。
      */
     var contentModified: Boolean = false,
+    /**
+     * issue #8 の関数引数定義です。
+     *
+     * ディスクとして取り出した時点で外部から呼び出せる関数として扱い、引数は
+     * 呼び出し先の実行開始時点で定義済みのEXECUTION変数になります。別途の
+     * 公開設定は作りません。旧JSONには存在しないため空で復元します。
+     * 引数はすべて必須とし、optional／default値は初期実装に含めません。
+     */
+    var arguments: List<DiskArgument> = emptyList(),
 )
+
+/**
+ * issue #8 の関数引数定義です。
+ *
+ * name は EXECUTION変数名、type は値型です。呼び出し側は全引数に対応する値を
+ * 設定します。
+ */
+data class DiskArgument(
+    val name: String = "",
+    val type: ValueType = ValueType.NUMBER,
+)
+
+/**
+ * issue #8 の返り値型の推論です。
+ *
+ * ディスク内の「値を返す」ノードのうち、型を確定できる最初のものの型で
+ * 返り値型を固定します。値を返すノードがすべて削除された場合や、型を確定
+ * できない場合は固定を解除（null）します。保存状態を持たず、グラフから
+ * そのつど導出するため、stale な固定が残りません。
+ *
+ * 変数由来の戻り値は variableTypes 解決で型を確定します。解決できない場合は
+ * 次の候補へ進みます。呼び出し側の受取検査は確定できる場合だけ行い、
+ * 実行時の型安定で担保します。
+ */
+fun DiskScript.inferredReturnType(variableTypes: (String) -> ValueType? = { null }): ValueType? =
+    graph.inferredReturnType(variableTypes)
+
+/**
+ * issue #8 の返り値型の推論（グラフ版）です。
+ *
+ * 検証層では取り出し時点の独立複写（snapshot＝CommandGraph）だけを持つため、
+ * DiskScript を再構築せずに型を導出します。走査順序と確定規則は DiskScript 版と同一です。
+ */
+fun CommandGraph.inferredReturnType(variableTypes: (String) -> ValueType? = { null }): ValueType? {
+    for (node in nodes.values) {
+        if (node.type != CommandType.RETURN_VALUE) continue
+        val source = node.string("source").takeIf(String::isNotBlank)
+        if (source != null) {
+            val resolved = variableTypes(source) ?: continue
+            return resolved
+        }
+        return inferLiteralType(node.string("value"))
+    }
+    return null
+}
+
+/**
+ * issue #8 の「値を返す」ノードの値型を推論します。
+ *
+ * 変数由来の場合は呼び出し側の定義表で解決するため、ここではリテラルの
+ * 推論だけを行います。真偽値リテラル・数値リテラル以外は文字列とします。
+ */
+fun inferLiteralType(raw: String): ValueType {
+    val normalized = raw.trim().lowercase()
+    if (normalized == "true" || normalized == "false") return ValueType.BOOLEAN
+    if (raw.trim().toDoubleOrNull()?.isFinite() == true) return ValueType.NUMBER
+    return ValueType.STRING
+}
+
+/**
+ * issue #8 の呼出側が保持する被呼出側の引数宣言です。
+ *
+ * snapshot と同じく取り出し時点の独立複写であり、被呼出側の編集で黙って
+ * 変わりません。形式は `name:TYPE` のカンマ区切りです。検証層で live の
+ * 定義との差分（引数名変更・削除）を検出します。
+ */
+fun CommandNode.declaredArguments(): List<DiskArgument> {
+    val raw = params["declaredArgs"]?.takeIf(String::isNotBlank) ?: return emptyList()
+    return raw.split(',').mapNotNull { entry ->
+        val name = entry.substringBefore(':').trim()
+        val type = ValueType.parse(entry.substringAfter(':', "")) ?: return@mapNotNull null
+        if (!CommandValueRules.isVariableName(name)) return@mapNotNull null
+        DiskArgument(name, type)
+    }
+}
+
+/** 引数宣言を保存形式へ符号化します。 */
+fun encodeDeclaredArguments(arguments: List<DiskArgument>): String =
+    arguments.joinToString(",") { "${it.name}:${it.type.name}" }
 
 /** 配置されたかんたんコマンダー制御ブロックからディスクへ出力できる内容があるかを判定します。 */
 fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotEmpty()
@@ -600,6 +688,13 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
     BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
     CONTROL_BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
+    /**
+     * issue #5 の型付き条件比較です。
+     *
+     * 左辺（変数）・演算子・右辺（リテラル）の共通モデルで比較します。既存5区分の
+     * 専用predicateは残し、新しい値型・property・Regionへの拡張点にします。
+     */
+    VALUE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VALUE_STATE),
 }
 
 /**
@@ -822,8 +917,25 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
+        // issue #5: 型付き条件比較（VALUE）の左辺・右辺です。旧ノードにない場合は
+        // WORLD scope・空欄として読み替え、検証層で未設定として拒否します。
+        "leftScope" to VariableScope.WORLD.name,
+        "leftName" to "",
+        "right" to "",
     )),
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
+    /**
+     * issue #8 の「値を返す」制御コマンドです。
+     *
+     * 実行時に残りのノードを打ち切って呼出元へ戻り、値を返します。source が
+     * 空欄の場合は value 欄のリテラルを返し、指定がある場合は sourceScope の
+     * 変数を返します。
+     */
+    RETURN_VALUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_RETURN_VALUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_RETURN_VALUE_DESCRIPTION, Material.TARGET, mapOf(
+        "sourceScope" to VariableScope.EXECUTION.name,
+        "source" to "",
+        "value" to "",
+    )),
     /**
      * #2 の共通変数操作コマンドです。
      *

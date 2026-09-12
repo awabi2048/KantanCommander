@@ -5368,6 +5368,8 @@ class GestureSequenceEditor(
     private fun specSaveKey(encoded: String): String = when (encoded) {
         "condition-variable" -> "variable"
         "condition-value" -> "value"
+        "condition-left" -> "leftName"
+        "condition-right" -> "right"
         "condition-block" -> "block"
         "condition-item" -> "item"
         "condition-item-data" -> "itemData"
@@ -6406,13 +6408,31 @@ class GestureSequenceEditor(
                             }) updateLower(player)
                     }
                     "condition-operator" -> {
-                        val operators = listOf("==", "!=", ">", ">=", "<", "<=")
+                        val operators = if (node.conditionSubject() == ConditionSubject.VALUE) {
+                            // #5: 型付き比較では contains を含む7演算子から循環します。
+                            // 型への適用可否は検証層で確認します。
+                            listOf("==", "!=", ">", ">=", "<", "<=", "contains")
+                        } else {
+                            listOf("==", "!=", ">", ">=", "<", "<=")
+                        }
                         if (updateSettingNode(player, settingContext) {
                                 val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                                 CommandSettingsModel.setParameter(it, "operator", operators[(current + 1) % operators.size])
                             }) updateLower(player)
                     }
-                    "condition-variable", "condition-value", "condition-block", "condition-item" -> {
+                    "condition-left-scope" -> {
+                        if (updateSettingNode(player, settingContext) {
+                                val next = if (it.string("leftScope", VariableScope.WORLD.name) == VariableScope.WORLD.name) {
+                                    VariableScope.EXECUTION.name
+                                } else {
+                                    VariableScope.WORLD.name
+                                }
+                                CommandSettingsModel.setParameter(it, "leftScope", next)
+                            }) updateLower(player)
+                    }
+                    "condition-variable", "condition-value", "condition-block", "condition-item",
+                    "condition-left", "condition-right",
+                    -> {
                         if (encoded == "condition-item") {
                             applyHeldItem(player, settingContext)
                             updateLower(player)
@@ -6425,7 +6445,9 @@ class GestureSequenceEditor(
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = when (encoded) {
                             "condition-variable" -> CommandDialogSpecs.variableName
+                            "condition-left" -> CommandDialogSpecs.variableName
                             "condition-value" -> CommandDialogSpecs.conditionValueSpec(node)
+                            "condition-right" -> CommandDialogSpecs.conditionValueSpec(node)
                             else -> return
                         }
                         val saveKey = specSaveKey(encoded)

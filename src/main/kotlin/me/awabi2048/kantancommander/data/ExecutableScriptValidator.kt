@@ -46,6 +46,8 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.inferredReturnType
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.error.ErrorSeverity
@@ -154,6 +156,22 @@ object ExecutableScriptValidator {
                 code = ErrorCode.TIMER_RANGE, phase = phase,
             )
         }
+        // issue #8: 関数引数の重複・不正名を拒否します。型は enum のため保存時に確定します。
+        val argumentNames = script.arguments.map { it.name }
+        if (argumentNames.size != argumentNames.toSet().size) {
+            this += ScriptValidationError(
+                "root", null, setOf("disk"), "引数名が重複しています",
+                code = ErrorCode.CONFIG_INVALID, phase = phase,
+            )
+        }
+        argumentNames.forEach { name ->
+            if (!CommandValueRules.isVariableName(name)) {
+                this += ScriptValidationError(
+                    "root", null, setOf("disk"), "引数名が不正です: $name",
+                    code = ErrorCode.CONFIG_INVALID, phase = phase,
+                )
+            }
+        }
     }
 
     /**
@@ -213,6 +231,8 @@ object ExecutableScriptValidator {
         limits: GraphLimits,
         variableDefinitions: Map<String, TypedValue>?,
         phase: ValidationPhase,
+        // issue #8: 呼び出し連鎖の diskId 経路です。同一ディスクの再入で循環を検出します。
+        callPath: List<UUID> = emptyList(),
     ) {
         if (!visited.add(graph)) {
             errors += ScriptValidationError(
@@ -242,6 +262,7 @@ object ExecutableScriptValidator {
         // スナップショットは別グラフとして解析することで、実行時セッションの寿命と
         // 静的検証の結果を一致させます。
         val temporaryAvailability = analyzeTemporaryAvailability(effective)
+        validateReturnConsistency(effective, path, errors, variableDefinitions)
         effective.nodes.values.forEach { node ->
             validateNode(
                 node,
@@ -252,14 +273,65 @@ object ExecutableScriptValidator {
                 temporaryAvailability[node.id] ?: emptyMap(),
                 phase,
             )
+            // #8: snapshot 内部は被呼出側のグラフとして、呼び出し連鎖に積んで検証します。
             node.snapshot?.let {
-                validateGraph(it, "$path/${node.id}/snapshot", errors, visited, limits, variableDefinitions, phase)
+                val diskId = node.string("diskId").takeIf(String::isNotBlank)
+                    ?.let { raw -> runCatching { UUID.fromString(raw) }.getOrNull() }
+                if (diskId != null && diskId in callPath) {
+                    errors += nodeError(node, "$path/${node.id}", setOf("diskId"), "循環呼出しのため実行できません")
+                } else {
+                    validateGraph(
+                        it,
+                        "$path/${node.id}/snapshot",
+                        errors,
+                        visited,
+                        limits,
+                        variableDefinitions,
+                        phase,
+                        if (diskId != null) callPath + diskId else callPath,
+                    )
+                }
             }
             node.foldedGraph?.let {
                 validateGraph(it, "$path/${node.id}/folded", errors, visited, limits, variableDefinitions, phase)
             }
         }
         visited.remove(graph)
+    }
+
+    /**
+     * issue #8 の返り値型の一貫性を検証します。
+     *
+     * グラフ内の「値を返す」ノードのうち型を確定できるものが2種以上あれば
+     * 拒否します。最初に確定した型が固定であり、最後の削除で解除されることは
+     * グラフ走査の結果として自然に表れます。
+     */
+    private fun validateReturnConsistency(
+        graph: CommandGraph,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, TypedValue>?,
+    ) {
+        val known = linkedMapOf<UUID, ValueType>()
+        graph.nodes.values.forEach { node ->
+            if (node.type != CommandType.RETURN_VALUE) return@forEach
+            val source = node.string("source").takeIf(String::isNotBlank)
+            val type = if (source != null) {
+                // WORLD 定義で確定できる場合だけ比べます。EXECUTION 由来は
+                // フロー依存のため実行時の型安定に委ねます。
+                variableDefinitions?.get(source)?.type ?: return@forEach
+            } else {
+                me.awabi2048.kantancommander.model.inferLiteralType(node.string("value"))
+            }
+            known[node.id] = type
+        }
+        val fixed = known.values.firstOrNull() ?: return
+        known.forEach { (nodeId, type) ->
+            if (type != fixed) {
+                val node = graph.nodes[nodeId] ?: return@forEach
+                errors += nodeError(node, "$path/$nodeId", setOf("source"), "戻り値の型が一致しません")
+            }
+        }
     }
 
     /**
@@ -466,9 +538,8 @@ object ExecutableScriptValidator {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
             }
             CommandType.CONDITION -> validateCondition(node, path, errors, variableDefinitions, temporaryDefinitions)
-            CommandType.DISK_CALL -> if (node.snapshot == null) {
-                errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
-            }
+            CommandType.DISK_CALL -> validateDiskCall(node, path, errors, variableDefinitions, temporaryDefinitions)
+            CommandType.RETURN_VALUE -> validateReturnValue(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
             CommandType.TEMP_SET -> validateTemporary(node, path, errors, temporaryDefinitions)
             CommandType.FOR_START -> validateFor(node, path, errors, variableDefinitions, temporaryDefinitions)
@@ -1560,6 +1631,11 @@ object ExecutableScriptValidator {
                 }
                 validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
             }
+            // issue #5: 型付き条件比較です。左辺の変数・演算子・右辺のリテラルを検証し、
+            // 正常な不一致と解決失敗・型不一致を区別できる形にします。
+            ConditionSubject.VALUE -> {
+                validateValueComparison(node, path, errors, variableDefinitions, temporaryDefinitions)
+            }
             ConditionSubject.BLOCK -> {
                 if (CommandValueRules.material(node.string("block")) == null) {
                     errors += nodeError(node, path, setOf("condition"), "判定するブロックが未設定です")
@@ -1571,6 +1647,63 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("condition"), "制御ブロックの状態が未設定です")
                 }
             }
+        }
+    }
+
+    /**
+     * issue #5 の型付き条件比較を検証します。
+     *
+     * 左辺は EXECUTION／WORLD scope の変数、右辺は型に応じたリテラルです。
+     * ENTITY scope の左辺は対象文脈を必要とするため未対応として拒否します。
+     * 定義型が確定している場合は演算子の適用可否まで確認し、未確定の場合は
+     * 形状検証だけを行って実行時へ委ねます。
+     */
+    private fun validateValueComparison(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, TypedValue>?,
+        temporaryDefinitions: Map<String, ValueType>?,
+    ) {
+        val scopeRaw = node.string("leftScope").ifBlank { VariableScope.WORLD.name }
+        val scope = VariableScope.parse(scopeRaw)
+        if (scope == null) {
+            errors += nodeError(node, path, setOf("condition"), "比較左辺の範囲が不正です")
+            return
+        }
+        if (scope == VariableScope.ENTITY) {
+            errors += nodeError(node, path, setOf("condition"), "エンティティ変数の条件は未対応です")
+            return
+        }
+        val leftName = node.string("leftName")
+        if (!CommandValueRules.isVariableName(leftName)) {
+            errors += nodeError(node, path, setOf("condition"), "比較する変数名が不正です")
+            return
+        }
+        val operator = node.string("operator")
+        if (operator !in me.awabi2048.kantancommander.model.ConditionComparison.ALL) {
+            errors += nodeError(node, path, setOf("condition"), "比較の方法が不正です")
+            return
+        }
+        if (node.string("right").isBlank()) {
+            errors += nodeError(node, path, setOf("condition"), "比較値が未設定です")
+            return
+        }
+        // 定義型が確定している場合だけ、演算子の適用可否を確認します。
+        val definedType: ValueType? = when (scope) {
+            VariableScope.WORLD -> variableDefinitions?.get(leftName)?.type
+            VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(leftName))
+            VariableScope.ENTITY -> null
+        }
+        val hasTables = variableDefinitions != null || temporaryDefinitions != null
+        if (hasTables && definedType == null) {
+            errors += nodeError(node, path, setOf("condition"), "比較する変数が未定義です: $leftName")
+            return
+        }
+        if (definedType != null &&
+            operator !in me.awabi2048.kantancommander.model.ConditionComparison.operatorsFor(definedType)
+        ) {
+            errors += nodeError(node, path, setOf("condition"), "変数の型に使えない比較方法です: $operator")
         }
     }
 
@@ -1737,6 +1870,175 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("randomMin"), "乱数の最小値は最大値を超えられません")
                 }
             }
+        }
+    }
+
+    /**
+     * issue #8 のディスク呼び出しを検証します。
+     *
+     * 取り出し時点の独立複写（snapshot＋引数宣言）を正本とし、live定義との
+     * 差分検出は取り出し操作側で行います。ここでは自己完結性を検証します。
+     * 循環呼出しはグラフ再帰の diskId 経路で検出します。
+     */
+    private fun validateDiskCall(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, TypedValue>?,
+        temporaryDefinitions: Map<String, ValueType>?,
+    ) {
+        if (node.snapshot == null) {
+            errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
+            return
+        }
+        // 引数宣言の厳密な解釈です。不正な項目があれば拒否します。
+        val rawDeclared = node.string("declaredArgs")
+        val declared = node.declaredArguments()
+        if (rawDeclared.isNotBlank()) {
+            val entries = rawDeclared.split(',').map(String::trim).filter(String::isNotBlank)
+            if (declared.size != entries.size) {
+                errors += nodeError(node, path, setOf("diskId"), "引数宣言が不正です")
+                return
+            }
+        }
+        // 宣言された全引数に対応する値を要求します。リテラルと変数の両方指定は拒否します。
+        declared.forEach { argument ->
+            val literal = node.string("arg_${argument.name}").takeIf(String::isNotBlank)
+            val variable = node.string("argvar_${argument.name}").takeIf(String::isNotBlank)
+            if (literal == null && variable == null) {
+                errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} が未設定です")
+                return@forEach
+            }
+            if (literal != null && variable != null) {
+                errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} は値と変数の両方を指定できません")
+                return@forEach
+            }
+            if (variable != null) {
+                if (!CommandValueRules.isVariableName(variable)) {
+                    errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の変数名が不正です")
+                    return@forEach
+                }
+                // 呼出元EXECUTION変数の定義を確認します。未確定の場合は実行時へ委ねます。
+                if (temporaryDefinitions != null) {
+                    val actual = temporaryDefinitions[TemporaryTemplate.normalized(variable)]
+                    if (actual == null) {
+                        errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の変数が未定義です: $variable")
+                    } else if (actual != argument.type) {
+                        errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の型が一致しません")
+                    }
+                }
+            } else {
+                validateCallArgumentLiteral(node, path, errors, argument, literal.orEmpty())
+            }
+        }
+        // 戻り値の受取検査は確定できる場合だけ行い、実行時の型安定で担保します。
+        val returnName = node.string("returnName")
+        if (returnName.isNotBlank()) {
+            if (!CommandValueRules.isVariableName(returnName)) {
+                errors += nodeError(node, path, setOf("diskId"), "戻り先の変数名が不正です")
+                return
+            }
+            val returnScopeRaw = node.string("returnScope").ifBlank { VariableScope.EXECUTION.name }
+            val returnScope = VariableScope.parse(returnScopeRaw)
+            if (returnScope == null || returnScope == VariableScope.ENTITY) {
+                errors += nodeError(node, path, setOf("diskId"), "戻り先の範囲が不正です")
+                return
+            }
+            val receiverType: ValueType? = when (returnScope) {
+                VariableScope.WORLD -> variableDefinitions?.get(returnName)?.type
+                VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(returnName))
+                VariableScope.ENTITY -> null
+            }
+            val hasTables = variableDefinitions != null || temporaryDefinitions != null
+            if (hasTables && receiverType == null) {
+                errors += nodeError(node, path, setOf("diskId"), "戻り先の変数が未定義です: $returnName")
+                return
+            }
+            val calleeReturn = node.snapshot?.let { snapshot ->
+                snapshot.inferredReturnType { name ->
+                    variableDefinitions?.get(name)?.type
+                }
+            }
+            if (receiverType != null && calleeReturn != null && receiverType != calleeReturn) {
+                errors += nodeError(node, path, setOf("diskId"), "戻り値の型が一致しません")
+            }
+        }
+    }
+
+    /** 数値欄でも単一のワールド変数・一時変数を実行時に数値化できるようにします。 */
+    private fun isNumericTemplate(raw: String): Boolean =
+        VariableTemplate.isSingleReference(raw) || TemporaryTemplate.isSingleReference(raw)
+
+    /** 呼出引数のリテラルを宣言型で検証します。複合型は変数指定を要求します。 */
+    private fun validateCallArgumentLiteral(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        argument: me.awabi2048.kantancommander.model.DiskArgument,
+        raw: String,
+    ) {
+        when (argument.type) {
+            ValueType.NUMBER -> {
+                if (!isNumericTemplate(raw) && CommandValueRules.parseFiniteDouble(raw) == null) {
+                    errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の数値が不正です")
+                }
+            }            ValueType.STRING -> {
+                if (VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)) {
+                    errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} の文字列が不正です")
+                }
+            }
+            ValueType.BOOLEAN -> {
+                val normalized = raw.trim().lowercase()
+                val template = VariableTemplate.references(raw).isNotEmpty() || TemporaryTemplate.references(raw).isNotEmpty()
+                if ((normalized != "true" && normalized != "false" && !template) ||
+                    VariableTemplate.hasMalformedReference(raw) || TemporaryTemplate.hasMalformedReference(raw)
+                ) {
+                    errors += nodeError(node, path, setOf("diskId"), "引数 ${argument.name} は true／false で指定します")
+                }
+            }
+            ValueType.LOCATION,
+            ValueType.VECTOR,
+            ValueType.ITEM,
+            ValueType.BLOCK,
+            ValueType.ENTITY,
+            ValueType.SOUND,
+            ValueType.EFFECT,
+            -> errors += nodeError(node, path, setOf("diskId"), "複合型の引数 ${argument.name} は変数で指定します")
+        }
+    }
+
+    /**
+     * issue #8 の「値を返す」を検証します。
+     *
+     * 変数由来は定義の存在を確認し、リテラルは常に受理します。返り値型の
+     * 一貫性（全RETURNの確定型の一致）はグラフ単位で別途検証します。
+     */
+    private fun validateReturnValue(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, TypedValue>?,
+        temporaryDefinitions: Map<String, ValueType>?,
+    ) {
+        val source = node.string("source").takeIf(String::isNotBlank) ?: return
+        if (!CommandValueRules.isVariableName(source)) {
+            errors += nodeError(node, path, setOf("source"), "戻り元の変数名が不正です")
+            return
+        }
+        val scopeRaw = node.string("sourceScope").ifBlank { VariableScope.EXECUTION.name }
+        val scope = VariableScope.parse(scopeRaw)
+        if (scope == null || scope == VariableScope.ENTITY) {
+            errors += nodeError(node, path, setOf("source"), "戻り元の範囲が不正です")
+            return
+        }
+        val defined: ValueType? = when (scope) {
+            VariableScope.WORLD -> variableDefinitions?.get(source)?.type
+            VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(source))
+            VariableScope.ENTITY -> null
+        }
+        val hasTables = variableDefinitions != null || temporaryDefinitions != null
+        if (hasTables && defined == null) {
+            errors += nodeError(node, path, setOf("source"), "戻り元の変数が未定義です: $source")
         }
     }
 

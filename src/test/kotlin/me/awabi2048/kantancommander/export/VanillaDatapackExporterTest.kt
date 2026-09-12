@@ -1541,8 +1541,7 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `power and trigonometric calculations are rejected for vanilla export`() {
-        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+    fun `power and trigonometric calculations are rejected for vanilla export`() {        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
 
         fun calculationScript(name: String, expression: String): me.awabi2048.kantancommander.model.DiskScript {
@@ -1577,6 +1576,54 @@ class VanillaDatapackExporterTest {
             ),
         )
         assertTrue(trig.errors.any { it.contains("べき乗・三角関数") })
+    }
+
+    @Test
+    fun `typed value comparison lowers world numbers like variable conditions`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "value-subject")
+        val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+        condition.params.putAll(
+            mapOf(
+                "subject" to "VALUE",
+                "leftScope" to "WORLD",
+                "leftName" to "counter",
+                "operator" to ">=",
+                "right" to "10",
+            )
+        )
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
+                script,
+                mapOf("counter" to ValueType.NUMBER),
+            ),
+        )
+        val body = success.functions.values.joinToString("\n")
+        assertTrue(body.contains("score "), body)
+
+        // 非数値の型付き比較は明示エラーになります。
+        val store2 = ScriptStore(temp.resolve("scripts2"), Logger.getAnonymousLogger())
+        val script2 = store2.create(UUID.randomUUID(), "value-string")
+        val condition2 = GraphEditor.append(script2.graph, CommandType.CONDITION)
+        condition2.params.putAll(
+            mapOf(
+                "subject" to "VALUE",
+                "leftScope" to "WORLD",
+                "leftName" to "label",
+                "operator" to "==",
+                "right" to "a",
+            )
+        )
+        val failure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            VanillaDatapackExporter(store2, temp.resolve("exports2")).compileForStandalone(
+                script2,
+                mapOf("label" to ValueType.STRING),
+            ),
+        )
+        assertTrue(failure.errors.any { it.contains("数値型以外") })
     }
 
     @Test

@@ -468,6 +468,14 @@ class ScriptStore(
         }
         val script = gson.fromJson(migrated, DiskScript::class.java)
             ?: error("保存データをプログラムディスクへ復元できません")
+        // issue #8: 旧JSONには arguments 欄が存在しません。Kotlinの非null境界は
+        // Gsonのリフレクション復元では保証されないため、欠落時は空へ正規化します。
+        // 要素の型・enum不正は PersistedScriptValidator で隔離済みのため、
+        // ここでは欠落だけを扱い、意味の再解釈は行いません。
+        @Suppress("SENSELESS_COMPARISON")
+        if (script.arguments == null) {
+            script.arguments = emptyList()
+        }
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) {
             "移行後のプログラムディスク形式が不正です: ${script.formatVersion}"
         }
@@ -514,6 +522,8 @@ class ScriptStore(
     private fun migrateStructuredV15ToV16(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        // issue #8: 旧JSONにない関数引数定義は空として移行し、欠落のまま復元しません。
+        if (!migrated.has("arguments")) migrated.add("arguments", JsonArray())
         migrateParticleGraph(migrated["graph"]?.asJsonObject)
         return migrated
     }
@@ -527,6 +537,8 @@ class ScriptStore(
     private fun migrateStructuredV14ToV16(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        // issue #8: 旧JSONにない関数引数定義は空として移行し、欠落のまま復元しません。
+        if (!migrated.has("arguments")) migrated.add("arguments", JsonArray())
         migrateParticleGraph(migrated["graph"]?.asJsonObject)
         return migrated
     }

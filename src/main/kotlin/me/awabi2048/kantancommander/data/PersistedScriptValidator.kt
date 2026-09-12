@@ -11,6 +11,7 @@ import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
+import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
 
 /**
@@ -43,6 +44,7 @@ object PersistedScriptValidator {
         optionalBoolean(root, "listed", path, errors)
         optionalInteger(root, "revision", path, errors)
         optionalBoolean(root, "contentModified", path, errors)
+        optionalDiskArguments(root, path, errors)
         optionalUuidArray(root, "collapsedForStartIds", path, errors)
         optionalUuidArray(root, "collapsedConditionIds", path, errors)
         return errors
@@ -325,6 +327,33 @@ object PersistedScriptValidator {
             if (!value.isJsonPrimitive || !value.asJsonPrimitive.isString) {
                 errors += "$path/$field/$index: 文字列ではありません"
             }
+        }
+    }
+
+    /**
+     * issue #8 の関数引数定義を検証します。
+     *
+     * 旧JSONには存在しないため欠落・nullは許容し、読込時に空へ正規化します。
+     * 存在する場合は配列要素ごとに名前と値型を確認し、不正値は破損として隔離します。
+     * 変数名の書式自体は検証層（ExecutableScriptValidator）の責務とし、
+     * ここでは保存データの型・enum整合性だけを扱います。
+     */
+    private fun optionalDiskArguments(parent: JsonObject, path: String, errors: MutableList<String>) {
+        val raw = parent["arguments"] ?: return
+        if (raw.isJsonNull) return
+        if (!raw.isJsonArray) {
+            errors += "$path/arguments: 配列ではありません"
+            return
+        }
+        raw.asJsonArray.forEachIndexed { index, value ->
+            val itemPath = "$path/arguments/$index"
+            val item = value.asObjectOrNull()
+            if (item == null) {
+                errors += "$itemPath: オブジェクトではありません"
+                return@forEachIndexed
+            }
+            requireString(item, "name", itemPath, errors)
+            requireEnum(item, "type", itemPath, enumNames<ValueType>(), errors)
         }
     }
 

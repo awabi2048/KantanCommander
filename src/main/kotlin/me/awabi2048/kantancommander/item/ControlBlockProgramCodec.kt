@@ -33,7 +33,15 @@ internal object ControlBlockProgramCodec {
             GZIPInputStream(ByteArrayInputStream(compressed)).use { gzip ->
                 val json = readAtMost(gzip, MAX_DECODED_LENGTH)
                     ?: return@runCatching null
-                gson.fromJson(json.toString(Charsets.UTF_8), DiskScript::class.java)
+                val script = gson.fromJson(json.toString(Charsets.UTF_8), DiskScript::class.java)
+                    ?: return@runCatching null
+                // issue #8: #8以前に符号化されたアイテムには arguments 欄がありません。
+                // Gsonの復元ではKotlinの非null境界が保証されないため、欠落時は空へ正規化します。
+                @Suppress("SENSELESS_COMPARISON")
+                if (script.arguments == null) {
+                    script.arguments = emptyList()
+                }
+                script
             }
         }.getOrNull()
     }

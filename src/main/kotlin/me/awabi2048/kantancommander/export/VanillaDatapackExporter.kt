@@ -497,6 +497,41 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
                 }
             }
+            // issue #5: 型付き条件比較はワールド変数の数値比較だけを出力します。
+            // それ以外の型・範囲はJava実行が正本であり、バニラには同等概念がありません。
+            ConditionSubject.VALUE -> {
+                val scope = node.string("leftScope").ifBlank { VariableScope.WORLD.name }
+                if (scope != VariableScope.WORLD.name) {
+                    errors += "${script.id}/${node.id}: 実行内変数の条件は完全バニラ出力に未対応です"
+                    return@validateCondition
+                }
+                val leftName = node.string("leftName")
+                if (leftName.isBlank()) {
+                    errors += "${script.id}/${node.id}: 比較する変数名がありません"
+                }
+                if (worldValueTypes[leftName] != ValueType.NUMBER) {
+                    errors += "${script.id}/${node.id}: 数値型以外の変数条件は完全バニラ出力に未対応です"
+                }
+                if (node.string("operator") !in setOf(">", ">=", "<", "<=", "==", "!=")) {
+                    errors += "${script.id}/${node.id}: 変数比較方法が不正です"
+                }
+                val raw = node.string("right")
+                val parsed = raw.toDoubleOrNull()
+                val reference = VariableTemplate.references(raw).singleOrNull()
+                if (reference == null && parsed == null) {
+                    errors += "${script.id}/${node.id}: バニラ出力の比較値は数値または単一の変数参照で指定してください: $raw"
+                } else if (reference == null && scaledScore(parsed!!) == null) {
+                    errors += "${script.id}/${node.id}: 比較値がバニラの固定小数点範囲外です: $raw"
+                } else if (reference != null && SystemVariableNames.isSystemName(reference) &&
+                    enclosingFor(script.graph, node.id) == null
+                ) {
+                    errors += "${script.id}/${node.id}: システム変数はfor本体内でのみ参照できます"
+                } else if (reference != null && !SystemVariableNames.isSystemName(reference) &&
+                    worldValueTypes[reference] != ValueType.NUMBER
+                ) {
+                    errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
+                }
+            }
             ConditionSubject.PLAYER -> {
                 val itemData = node.string("itemData")
                 if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
@@ -520,6 +555,21 @@ class VanillaDatapackExporter(
                     node.conditionSubject() == ConditionSubject.VARIABLE
                 ) {
                     val name = node.string("variable")
+                    val type = worldValueTypes[name]
+                    if (type == null) {
+                        errors += "${node.id}: ワールド内変数の型を一意に解決できません: $name"
+                    } else if (type != ValueType.NUMBER) {
+                        errors += "${node.id}: 文字列変数の条件は完全バニラ出力に未対応です: $name"
+                    } else {
+                        node.params[EXPORT_VARIABLE_TYPE] = type.name
+                    }
+                }
+                // #5: 型付き比較のワールド変数・数値条件も同じ注釈を付けます。
+                if (node.type == CommandType.CONDITION &&
+                    node.conditionSubject() == ConditionSubject.VALUE &&
+                    node.string("leftScope").ifBlank { VariableScope.WORLD.name } == VariableScope.WORLD.name
+                ) {
+                    val name = node.string("leftName")
                     val type = worldValueTypes[name]
                     if (type == null) {
                         errors += "${node.id}: ワールド内変数の型を一意に解決できません: $name"
@@ -1467,6 +1517,8 @@ class VanillaDatapackExporter(
         CommandType.BLOCK_OPERATION -> blockOperationCommand(node)
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
         CommandType.DISK_CALL -> null
+        // issue #8: 「値を返す」は呼出構造の制御であり、単体のバニラ命令へ変換しません。
+        CommandType.RETURN_VALUE -> null
         CommandType.VARIABLE -> lowerVariable(node, graph)
         // TEMP_SETはcompileGraph側で専用関数へ展開します。ここへ到達させると
         // 複数命令のLOCATION/ENTITY定義が1命令として扱われるため、防御的に無出力とします。
@@ -1862,6 +1914,19 @@ class VanillaDatapackExporter(
                 "score $holder kc_runtime $operator ${conditionValueHolder(node)} kc_runtime"
             }
         }
+        // issue #5: 型付き比較のうちワールド変数の数値比較だけを出力します。
+        // 検証で数値型・基本演算子を確認済みのため、変数条件と同じloweringを使います。
+        ConditionSubject.VALUE -> {
+            val holder = conditionCountHolder(node)
+            val raw = node.string("right")
+            val value = raw.toDoubleOrNull()?.let(::scaledScore)
+            val operator = comparisonOperator(node)
+            if (value != null) {
+                "score $holder kc_runtime matches ${scoreRange(operator, value)}"
+            } else {
+                "score $holder kc_runtime $operator ${conditionValueHolder(node)} kc_runtime"
+            }
+        }
         ConditionSubject.BLOCK ->
             "block ~ ~ ~ ${node.string("block", "minecraft:air")}"
         // 制御ブロック状態はプラグインの実行元ブロックを参照する条件であり、
@@ -1872,18 +1937,27 @@ class VanillaDatapackExporter(
         null -> error("判定対象が未設定です")
     }
 
-    private fun conditionPreparation(node: CommandNode, graph: CommandGraph): String? =
-        if (node.conditionSubject() == ConditionSubject.VARIABLE) {
-            buildList {
-                add(
-                    "execute store result score ${conditionCountHolder(node)} kc_runtime run data get storage " +
-                        "kantan:variables ${VanillaStorageNames.variablePath(node.string("variable"), temporary = false)} $FIXED_POINT_SCALE",
-                )
-                val raw = node.string("value")
-                val staticValue = raw.toDoubleOrNull()?.let(::scaledScore)
-                if (staticValue != null) {
-                    add("scoreboard players set ${conditionValueHolder(node)} kc_runtime $staticValue")
-                } else {
+    private fun conditionPreparation(node: CommandNode, graph: CommandGraph): String? {
+        // #5: 型付き比較のワールド変数・数値条件は変数条件と同じ準備を使います。
+        // 検証で数値型・基本演算子を確認済みです。
+        val subject = node.conditionSubject()
+        if (subject != ConditionSubject.VARIABLE && subject != ConditionSubject.VALUE) return null
+        // VALUE は WORLD scope の数値比較だけが出力対象です。
+        if (subject == ConditionSubject.VALUE && node.string("leftScope").ifBlank { VariableScope.WORLD.name } != VariableScope.WORLD.name) {
+            return null
+        }
+        // #5: 左辺・右辺の欄名だけが異なります。本文は変数条件と共有します。
+        val leftName = if (subject == ConditionSubject.VALUE) node.string("leftName") else node.string("variable")
+        val raw = if (subject == ConditionSubject.VALUE) node.string("right") else node.string("value")
+        return buildList {
+            add(
+                "execute store result score ${conditionCountHolder(node)} kc_runtime run data get storage " +
+                    "kantan:variables ${VanillaStorageNames.variablePath(leftName, temporary = false)} $FIXED_POINT_SCALE",
+            )
+            val staticValue = raw.toDoubleOrNull()?.let(::scaledScore)
+            if (staticValue != null) {
+                add("scoreboard players set ${conditionValueHolder(node)} kc_runtime $staticValue")
+            } else {
                     VariableTemplate.references(raw).singleOrNull()?.let { reference ->
                         if (SystemVariableNames.isSystemName(reference)) {
                             val loop = enclosingFor(graph, node.id)
@@ -1908,7 +1982,7 @@ class VanillaDatapackExporter(
                     }
                 }
             }.joinToString("\n")
-        } else null
+    }
 
     private fun conditionCountHolder(node: CommandNode) =
         "#c_${node.id.toString().replace("-", "")}"
@@ -1920,7 +1994,8 @@ class VanillaDatapackExporter(
         "#ct_${node.id.toString().replace("-", "")}"
 
     private fun conditionNeedsInversion(node: CommandNode): Boolean =
-        node.conditionSubject() == ConditionSubject.VARIABLE && node.string("operator") == "!="
+        (node.conditionSubject() == ConditionSubject.VARIABLE || node.conditionSubject() == ConditionSubject.VALUE) &&
+            node.string("operator") == "!="
 
     private fun comparisonOperator(node: CommandNode): String =
         node.string("operator").takeUnless { it == "!=" } ?: "=="

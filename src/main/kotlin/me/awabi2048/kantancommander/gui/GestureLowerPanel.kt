@@ -2767,6 +2767,10 @@ class GestureLowerPanel(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS
                 ConditionSubject.VARIABLE ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
+                // #5: 型付き比較は変数条件の説明を共用します。左辺・演算子・右辺の
+                // 意味は詳細項目の説明で補います。
+                ConditionSubject.VALUE ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
                 ConditionSubject.BLOCK ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE
                 ConditionSubject.CONTROL_BLOCK ->
@@ -2784,6 +2788,13 @@ class GestureLowerPanel(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_STATE)
             "condition-variable" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VARIABLE)
+            // #5: 左辺・右辺は変数名・比較値の説明を共用し、範囲は対象範囲の説明を共用します。
+            "condition-left" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VARIABLE)
+            "condition-right" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VALUE)
+            "condition-left-scope" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_SCOPE)
             "condition-scope" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_SCOPE)
             "condition-operator" ->
@@ -4092,6 +4103,24 @@ class GestureLowerPanel(
                 SettingChoice("condition-variable", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("variable"))),
                 SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, node.string("operator", "=="))),
                 SettingChoice("condition-value", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("value", "0"))),
+            )
+            // issue #5: 型付き条件比較は左辺（範囲＋変数）・演算子・右辺で構成します。
+            // 簡単な条件プリセット（既存5区分）はそのまま残し、詳細比較はこの
+            // 判定対象を選んだ場合の高度設定として展開します。
+            ConditionSubject.VALUE -> listOf(
+                SettingChoice(
+                    "condition-left-scope",
+                    label(
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE,
+                        when (node.string("leftScope").ifBlank { VariableScope.WORLD.name }) {
+                            VariableScope.EXECUTION.name -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
+                            else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
+                        },
+                    ),
+                ),
+                SettingChoice("condition-left", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("leftName"))),
+                SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, node.string("operator", "=="))),
+                SettingChoice("condition-right", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("right"))),
             )
             ConditionSubject.BLOCK -> listOf(
                 SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION), node.conditionPositionSpec != null),
