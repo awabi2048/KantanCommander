@@ -1270,6 +1270,10 @@ class GestureLowerPanel(
                 centerX = SETTING_TOGGLE_CENTER_X,
                 centerY = SETTING_CHOICE_BOTTOM_Y,
                 fixedLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE_PLACE),
+                // 下段共通スロットはボタンの内側と重なるため、ボタン上端の外側へ移します。
+                // 上段の配置先5択（最下行の下端-0.19）とも重なりません。
+                hoverX = SETTING_TOGGLE_CENTER_X,
+                hoverY = SETTING_CHOICE_BOTTOM_Y + SETTING_INPUT_HEIGHT / 2.0 + HOVER_BUTTON_GAP,
             )
         }
         return finishSettings(nodes)
@@ -1831,6 +1835,10 @@ class GestureLowerPanel(
         // 「上書きして配置する ON」の形式にするため呼び出し側で渡します。
         // 既定のままでは従来どおりON／OFFのみを表示します。
         fixedLabel: String? = null,
+        // ホバー文の表示位置です。既定は画面下段の共通スロットですが、
+        // ボタンと重なる配置では呼び出し側でボタン外（上など）へ移します。
+        hoverX: Double = HOVER_SLOT_X,
+        hoverY: Double = HOVER_SLOT_Y,
     ) {
         val checked = node.boolean(fieldKey)
         val labelText = checkboxToggleLabel(fixedLabel, checked)
@@ -1853,8 +1861,8 @@ class GestureLowerPanel(
                 guard = null,
                 hover = singleLineHover(
                     "$labelText（クリックで${if (checked) "OFF" else "ON"}）",
-                    x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
+                    x = hoverX,
+                    y = hoverY,
                 ),
                 visualTag = "lower-toggle",
                 outline = if (suppressHighlight) null
