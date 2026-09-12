@@ -6501,13 +6501,26 @@ class GestureSequenceEditor(
                             updateLower(player)
                         }
                         EntityPropertyValueKind.TEXT -> {
+                            // 保存前のnode参照では項目が古いままになり、入力仕様が
+                            // 解決できず例外になるため、保存後のノードを再取得します。
+                            val fresh = plugin.scripts.load(settingContext.scriptId)
+                                ?.graph?.nodes?.get(settingContext.nodeId)
+                                ?: return
                             beginSettingInput(
                                 player,
-                                requireNotNull(CommandDialogSpecs.field(node, EntityDataSchema.PARAM_VALUE)),
-                                node.string(EntityDataSchema.PARAM_VALUE, ""),
+                                requireNotNull(CommandDialogSpecs.field(fresh, EntityDataSchema.PARAM_VALUE)),
+                                fresh.string(EntityDataSchema.PARAM_VALUE, ""),
                             ) { raw ->
                                 val normalized = CommandDialogSpecs.normalize(EntityDataSchema.PARAM_VALUE, raw)
-                                val spec = requireNotNull(CommandDialogSpecs.field(node, EntityDataSchema.PARAM_VALUE))
+                                // 入力確定時にも取り直します。Dialog表示中に項目が
+                                // 変わっていた場合は例外にせず保存失敗として扱います。
+                                val current = plugin.scripts.load(settingContext.scriptId)
+                                    ?.graph?.nodes?.get(settingContext.nodeId)
+                                val spec = current?.let { CommandDialogSpecs.field(it, EntityDataSchema.PARAM_VALUE) }
+                                    ?: return@beginSettingInput KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                                    )
                                 val validationError = spec.validateInput(normalized)
                                 if (validationError != null) {
                                     KcI18n.text(player, validationError)
