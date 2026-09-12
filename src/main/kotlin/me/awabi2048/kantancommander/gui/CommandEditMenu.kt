@@ -35,7 +35,6 @@ import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
@@ -435,18 +434,30 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             showSoundSettingForm(context.player, context.route, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
-                        if (field == "particleDisplay" && node.type == CommandType.PARTICLE) {
+                        if (field == "particleDisplay" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY)) {
                             return@MenuActionHandler MenuActionResult.Success(
                                 MenuUpdate.Navigate(choiceRoute(context.route, PARTICLE_DISPLAY_ID))
                             )
                         }
-                        if (field == "particle" && node.type == CommandType.PARTICLE) {
+                        if (field == "particle" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY)) {
                             showParticleForm(context.player, context.route, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
-                        if (field == "geometrySettings" && node.type == CommandType.PARTICLE) {
+                        // #30: 図形の設定は二段階です。未選択時は図形選択へ、選択済みは
+                        // その図形固有の詳細設定（形状変更＋数値）へ進みます。
+                        if (field == "geometrySettings" && node.type == CommandType.PARTICLE_GEOMETRY) {
+                            val target = if (ParticleGeometry.shape(node) == ParticleShape.POINT_SCATTER) {
+                                choiceRoute(context.route, PARTICLE_SHAPE_ID)
+                            } else {
+                                choiceRoute(context.route, GEOMETRY_SETTINGS_ID)
+                            }
                             return@MenuActionHandler MenuActionResult.Success(
-                                MenuUpdate.Navigate(choiceRoute(context.route, GEOMETRY_SETTINGS_ID))
+                                MenuUpdate.Navigate(target)
+                            )
+                        }
+                        if (field == "geometryEnd" && node.type == CommandType.PARTICLE_GEOMETRY) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(genericPositionRoute(context.route, "particle_end"))
                             )
                         }
                         if (field == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
@@ -510,8 +521,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "other" && node.type == CommandType.ENTITY_ACTION ->
                                 targetRoute(context.route, "secondary_target")
                             // issue #29: 効果音・パーティクル・召喚の位置は汎用プリセット画面へ進みます。
+                            // #30: 図形の中心・始点も同じ表示位置画面を使います。
                             field == "soundPosition" -> genericPositionRoute(context.route, "sound_position")
-                            field == "position" && node.type == CommandType.PARTICLE ->
+                            field == "position" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) ->
                                 genericPositionRoute(context.route, "particle_position")
                             field == "summonPosition" -> genericPositionRoute(context.route, "summon_position")
                             else -> null
@@ -908,19 +920,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "target" to MenuActionHandler { context ->
                         MenuActionResult.Success(MenuUpdate.Navigate(targetRoute(context.route, "node_target")))
                     },
-                    "mode" to MenuActionHandler { context ->
-                        val mode = context.payload["mode"]
-                            ?.let { runCatching { ParticleDisplayMode.valueOf(it) }.getOrNull() }
-                            ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_DISPLAY_MODE, mode.name)
-                            }) {
-                            return@MenuActionHandler MenuActionResult.Rejected(
-                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
-                            )
-                        }
-                        MenuActionResult.Success(MenuUpdate.Back)
-                    },
                 ),
             )
         )
@@ -938,9 +937,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         showGeometryForm(context.player, context.route, node)
                         MenuActionResult.Success(MenuUpdate.None)
-                    },
-                    "end" to MenuActionHandler { context ->
-                        MenuActionResult.Success(MenuUpdate.Navigate(genericPositionRoute(context.route, "particle_end")))
                     },
                 ),
             )
@@ -2459,10 +2455,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return current?.kind == PositionKind.TARGET && matched == null
     }
 
+    /**
+     * 表示対象（particleDisplay）の設定画面です。
+     *
+     * #30で表示方式の選択は廃止し、対象指定だけを扱います。コマンド選択そのものが
+     * 通常表示／図形表示の選択を兼ねるため、ここで方式を切り替えません。
+     */
     private fun renderParticleDisplay(player: Player, route: MenuRoute): InventoryMenuView {
-        val node = node(route)
-        val mode = node?.let(ParticleGeometry::displayMode) ?: ParticleDisplayMode.POINT
-        val layout = ChoiceMenuLayoutPolicy.layout(3)
+        val layout = ChoiceMenuLayoutPolicy.layout(1)
         val elements = listOf(
             choiceElement(
                 player,
@@ -2470,28 +2470,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 Material.PLAYER_HEAD,
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 "target",
-            ),
-            choiceElement(
-                player,
-                layout.itemSlots[1],
-                Material.SNOWBALL,
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT),
-                "mode",
-                payload = mapOf("mode" to ParticleDisplayMode.POINT.name),
-                dataValue = if (mode == ParticleDisplayMode.POINT) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
-                } else null,
-            ),
-            choiceElement(
-                player,
-                layout.itemSlots[2],
-                Material.FILLED_MAP,
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY),
-                "mode",
-                payload = mapOf("mode" to ParticleDisplayMode.GEOMETRY.name),
-                dataValue = if (mode == ParticleDisplayMode.GEOMETRY) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
-                } else null,
             ),
         ).toMutableList()
         elements += backElement(player, layout.backSlot)
@@ -2502,42 +2480,33 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
+    /**
+     * 図形固有の詳細設定画面です。
+     *
+     * #30の二段階目の画面であり、選択済み形状の変更とその形状の数値を扱います。
+     * 終点・対角点は表示位置（geometryEnd）へ分離したため、ここでは扱いません。
+     */
     private fun renderGeometrySettings(player: Player, route: MenuRoute): InventoryMenuView {
         val node = node(route)
         val shape = node?.let(ParticleGeometry::shape) ?: ParticleShape.POINT_SCATTER
-        val showEnd = shape == ParticleShape.LINE || shape == ParticleShape.BOX
-        val buttons = buildList {
-            add("shape")
-            add("numbers")
-            if (showEnd) add("end")
-        }
-        val layout = ChoiceMenuLayoutPolicy.layout(buttons.size)
-        val elements = buttons.mapIndexed { index, button ->
-            when (button) {
-                "shape" -> choiceElement(
-                    player,
-                    layout.itemSlots[index],
-                    Material.FILLED_MAP,
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS),
-                    "shape",
-                    dataValue = KcI18n.text(player, geometryShapeKey(shape)),
-                )
-                "numbers" -> choiceElement(
-                    player,
-                    layout.itemSlots[index],
-                    Material.PAPER,
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS),
-                    "numbers",
-                )
-                else -> choiceElement(
-                    player,
-                    layout.itemSlots[index],
-                    Material.COMPASS,
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION),
-                    "end",
-                )
-            }
-        }.toMutableList()
+        val layout = ChoiceMenuLayoutPolicy.layout(2)
+        val elements = listOf(
+            choiceElement(
+                player,
+                layout.itemSlots[0],
+                Material.FILLED_MAP,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS),
+                "shape",
+                dataValue = KcI18n.text(player, geometryShapeKey(shape)),
+            ),
+            choiceElement(
+                player,
+                layout.itemSlots[1],
+                Material.PAPER,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS),
+                "numbers",
+            ),
+        ).toMutableList()
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,
@@ -2932,27 +2901,19 @@ sealed interface DisplayValue {
         }
     }
 
-    /** パーティクルの対象と表示方式を、一つの設定欄で現在値として表示します。 */
+    /**
+     * パーティクルの表示対象を、一つの設定欄で現在値として表示します。
+     *
+     * #30で表示方式の選択は廃止しました。対象指定だけを扱います。
+     */
     data class ParticleDisplay(
         val targetKind: TargetKind?,
-        val mode: ParticleDisplayMode,
     ) : DisplayValue {
         override fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 targetKind?.let { displayTarget(it).render(player) }
                     ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
-            ),
-            TimingRow(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY),
-                KcI18n.text(
-                    player,
-                    if (mode == ParticleDisplayMode.GEOMETRY) {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY
-                    } else {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT
-                    },
-                ),
             ),
         )
     }
@@ -3322,19 +3283,9 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_SCOPE,
             ) { displaySoundScope(it.string("soundScope", "POSITION")) },
         )
+        // #30: 両コマンドともタブ順を「種類 → 表示設定 → 表示位置 → 表示対象」に統一します。
+        // 種類（particle）と表示対象（particleDisplay）は共有し、表示設定の中身だけが型固有です。
         CommandType.PARTICLE -> listOf(
-            field(
-                "particleDisplay",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY,
-                Material.ENDER_EYE,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
-            ) {
-                DisplayValue.ParticleDisplay(
-                    targetKind = it.targetSpec?.kind,
-                    mode = ParticleGeometry.displayMode(it),
-                )
-            },
             field(
                 ParticleSettings.PARAM_PARTICLE,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
@@ -3342,13 +3293,6 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE,
             ) { displayParticle(it) },
-            field(
-                "position",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
-                Material.COMPASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
-            ) { it.particlePositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
             field(
                 "particleParameters",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS,
@@ -3365,6 +3309,33 @@ object EditorMenuLayout {
                 )
             },
             field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.particlePositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "particleDisplay",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY,
+                Material.ENDER_EYE,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) {
+                DisplayValue.ParticleDisplay(
+                    targetKind = it.targetSpec?.kind,
+                )
+            },
+        )
+        CommandType.PARTICLE_GEOMETRY -> listOf(
+            field(
+                ParticleSettings.PARAM_PARTICLE,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
+                Material.FIREWORK_STAR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE,
+            ) { displayParticle(it) },
+            field(
                 "geometrySettings",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS,
                 Material.FILLED_MAP,
@@ -3378,6 +3349,31 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE_PARAMETERS,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE_PARAMETERS,
             ),
+            field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.particlePositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "geometryEnd",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.particleEndPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "particleDisplay",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY,
+                Material.ENDER_EYE,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) {
+                DisplayValue.ParticleDisplay(
+                    targetKind = it.targetSpec?.kind,
+                )
+            },
         )
         CommandType.FIREWORK_LAUNCH -> listOf(
             field(

@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 15
+const val STRUCTURED_FORMAT_VERSION = 16
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -797,8 +797,20 @@ enum class CommandType(
         "particleSpeed" to "0.0",
         "particleCount" to "1",
         "particleData" to "",
-        "particleDisplayMode" to ParticleDisplayMode.POINT.name,
-        "particleShape" to ParticleShape.POINT_SCATTER.name,
+    )),
+    /**
+     * #30で分離した「図形を表示する」コマンドです。
+     *
+     * 既存PARTICLEのPOINT／散布設定（個数・速度・XYZ散布）は持たず、図形の
+     * 形状・密度・形状数値だけを持ちます。表示位置は中心・始点用の
+     * particlePositionSpecと終点・対角点用のparticleEndPositionSpecを使い、
+     * 半径・角度・回転等の形状値はparams側の図形設定で扱います。
+     * バニラ出力は非対応とし、検証層で明示エラーにします。
+     */
+    PARTICLE_GEOMETRY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_GEOMETRY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_GEOMETRY_DESCRIPTION, Material.FILLED_MAP, mapOf(
+        "particle" to "FLAME",
+        "particleData" to "",
+        "particleShape" to ParticleShape.LINE.name,
         "particleDensity" to "0.5",
         "geometryRadius" to "3.0",
         "geometryHeight" to "3.0",

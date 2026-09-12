@@ -107,12 +107,12 @@ class ParticleGeometryTest {
     }
 
     @Test
-    fun `shape and display mode parse with legacy fallback`() {
+    fun `shape parses with legacy fallback`() {
+        // #30: 表示方式のenumは廃止し、形状の解釈だけを残します。
+        // 旧POINT／GEOMETRYの読み分けは保存移行（ScriptStore）が担います。
         assertEquals(ParticleShape.LINE, ParticleShape.parse("LINE"))
         assertEquals(ParticleShape.POINT_SCATTER, ParticleShape.parse("unknown"))
         assertEquals(ParticleShape.POINT_SCATTER, ParticleShape.parse(null))
-        assertEquals(ParticleDisplayMode.GEOMETRY, ParticleDisplayMode.parse("GEOMETRY"))
-        assertEquals(ParticleDisplayMode.POINT, ParticleDisplayMode.parse(null))
         assertNotNull(SoundOperation.parse("STOP"))
         assertEquals(SoundOperation.PLAY, SoundOperation.parse(null))
     }

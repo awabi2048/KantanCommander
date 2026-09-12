@@ -439,17 +439,19 @@ class ScriptStore(
             ?.asString
             ?.toIntOrNull()
             ?: error("formatVersionがありません、または整数ではありません")
-        // issue #4 の方針により、現行15と直前2世代（14・13）だけを受け付け、
+        // issue #4 の方針により、現行16と直前2世代（15・14）だけを受け付け、
         // それ以外は非対応形式として隔離します。旧形式の移行連鎖は保持せず、
         // 黙って別意味へ変換しません。
-        // v14→v15は形式番号の付け替えのみ行います（#32の責務分離はv14で完了済み）。
-        // v13→v15は旧ENTITY_ACTION／tagのENTITY_OPERATIONへの変換に加え番号を付け替えます。
+        // v15→v16は#30のパーティクル／図形分離（旧POINT→PARTICLE、旧GEOMETRY→
+        // PARTICLE_GEOMETRY、particleDisplayModeの除去）を行います。
+        // v14→v16はv15相当の内容として同じ粒子移行を適用します（v14→v15は番号付け替えのみ）。
+        // v13以前（旧ENTITY_ACTION／tag移行を含む）は今回の受付対象外として隔離します。
         // 旧kind条件・旧equipは変換せず、検証層で未設定・移行漏れとして拒否します（#27・#21方針）。
         // 同じ番号を異なる保存形式に再利用しません。
         val migrated = when (sourceVersion) {
             STRUCTURED_FORMAT_VERSION -> source
-            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV14ToV15(source)
-            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV13ToV15(source)
+            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV15ToV16(source)
+            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV14ToV16(source)
             else -> {
                 quarantine(
                     file,
@@ -498,57 +500,71 @@ class ScriptStore(
     }
 
     /**
-     * v14をv15へ移行します。形式番号の付け替えだけを行います。
+     * v15をv16へ移行します。#30のパーティクル／図形分離を行います。
      *
-     * #32の責務分離（旧tag→ENTITY_OPERATION）はv14で完了済みのため、
-     * グラフ内容には触れません。旧kind条件・旧equipは変換せず、
-     * 検証層で未設定・移行漏れとして拒否します。
+     * - 旧 `PARTICLE / particleDisplayMode=POINT`（欠落時もPOINT扱い）→ 新 `PARTICLE`。
+     *   図形系キー（particleShape／particleDensity／geometry*）を除去し、
+     *   `particleDisplayMode` を除去します。散布系・種類系の値は保持します。
+     * - 旧 `PARTICLE / particleDisplayMode=GEOMETRY` → 新 `PARTICLE_GEOMETRY`。
+     *   散布系キー（particleDelta*／particleSpeed／particleCount）を除去し、
+     *   `particleDisplayMode` を除去します。図形系・種類系の値は保持します。
+     *
+     * グラフ内のsnapshot／foldedGraphへ退避した副グラフも同じ規則で移行します。
      */
-    private fun migrateStructuredV14ToV15(source: JsonObject): JsonObject {
+    private fun migrateStructuredV15ToV16(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
+        migrateParticleGraph(migrated["graph"]?.asJsonObject)
         return migrated
     }
 
     /**
-     * v13をv15へ直接移行します。v14を経由する連鎖は残しません。
+     * v14をv16へ直接移行します。v15を経由する連鎖は残しません。
      *
-     * - 旧 `ENTITY_ACTION / tag` → 新 `ENTITY_OPERATION / tag`（tagOperation／tagを引き継ぎます）。
-     * - 旧 `ENTITY_ACTION / ride／dismount` → 変更なし（保存形式を変えません）。
-     * - 旧 `ENTITY_ACTION / equip` → 変更なし（自動でPLACE_ITEMへ変換せず、
-     *   検証層で移行漏れとして拒否します）。
-     * - 旧 `kind` 条件 → 変更なし（subjectへの推測変換を行わず、
-     *   検証層で未設定として拒否します）。
-     * - 不明な操作値は変換せず、検証側で不正として扱います。
-     *
-     * グラフ内のsnapshot／foldedGraphへ退避した副グラフも同じ規則で移行します。
+     * v14→v15は形式番号の付け替えのみ（#32の責務分離はv14で完了済み）のため、
+     * 粒子移行（v15→v16相当）をそのまま適用します。
      */
-    private fun migrateStructuredV13ToV15(source: JsonObject): JsonObject {
+    private fun migrateStructuredV14ToV16(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
-        migrateEntityActionGraph(migrated["graph"]?.asJsonObject)
+        migrateParticleGraph(migrated["graph"]?.asJsonObject)
         return migrated
     }
 
-    private fun migrateEntityActionGraph(graph: JsonObject?) {
+    /**
+     * #30の粒子移行をグラフ全体へ適用します。
+     *
+     * 旧 `PARTICLE` ノードの `particleDisplayMode`（大文字・前後空白を無視、欠落時は
+     * POINT扱い）を読み分け、GEOMETRYだけを `PARTICLE_GEOMETRY` へ変換します。
+     * POINT側は型を変えず、両者とも旧modeキーを除去します。設定値は保持が原則で、
+     * 型固有でない側のキーだけを除去します（POINT→図形系除去、GEOMETRY→散布系除去）。
+     */
+    private fun migrateParticleGraph(graph: JsonObject?) {
         val nodes = graph?.get("nodes")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
         val nodeIds = nodes.entrySet().map { it.key }.toList()
         nodeIds.forEach { nodeId ->
             val node = nodes[nodeId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
-            if (node["type"]?.asString == "ENTITY_ACTION" &&
-                params?.get("action")?.takeIf { it.isJsonPrimitive }?.asString == "tag"
-            ) {
-                node.addProperty("type", "ENTITY_OPERATION")
-                params.addProperty("operation", "tag")
-                params.remove("action")
+            if (node["type"]?.asString == "PARTICLE" && params != null) {
+                val mode = params["particleDisplayMode"]
+                    ?.takeIf { it.isJsonPrimitive }
+                    ?.asString
+                    ?.trim()
+                    ?.uppercase()
+                if (mode == "GEOMETRY") {
+                    node.addProperty("type", "PARTICLE_GEOMETRY")
+                    PARTICLE_SCATTER_KEYS.forEach(params::remove)
+                } else {
+                    PARTICLE_GEOMETRY_KEYS.forEach(params::remove)
+                }
+                params.remove("particleDisplayMode")
             }
-            migrateEntityActionGraph(node["snapshot"]?.asJsonObject)
-            migrateEntityActionGraph(node["foldedGraph"]?.asJsonObject)
+            migrateParticleGraph(node["snapshot"]?.asJsonObject)
+            migrateParticleGraph(node["foldedGraph"]?.asJsonObject)
         }
     }
 
-    // v7以前の移行処理は削除しました。現行15と直前2世代（14・13）以外は
+    // v13以前の移行処理（旧ENTITY_ACTION／tag等）は削除しました。現行16と直前2世代（15・14）以外は
     // 読み込み時に隔離するため、到達不能な移行連鎖を残しません。
 
     private fun quarantine(
@@ -645,6 +661,39 @@ class ScriptStore(
     private companion object {
         /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
         private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
+
+        /**
+         * #30移行で除去する散布系キーです。旧GEOMETRY→新PARTICLE_GEOMETRY時に除去します。
+         *
+         * 種類系（particle／particleData）は両型で共有するため除去しません。
+         */
+        private val PARTICLE_SCATTER_KEYS = setOf(
+            "particleDeltaX",
+            "particleDeltaY",
+            "particleDeltaZ",
+            "particleSpeed",
+            "particleCount",
+        )
+
+        /**
+         * #30移行で除去する図形系キーです。旧POINT→新PARTICLE時に除去します。
+         *
+         * 種類系（particle／particleData）は両型で共有するため除去しません。
+         */
+        private val PARTICLE_GEOMETRY_KEYS = setOf(
+            "particleShape",
+            "particleDensity",
+            "geometryRadius",
+            "geometryHeight",
+            "geometryTurns",
+            "geometryStartAngle",
+            "geometryEndAngle",
+            "geometryRotation",
+            "geometryAxisYaw",
+            "geometryAxisPitch",
+            "geometryStep",
+            "geometryWireframe",
+        )
 
         private fun layoutCellLimit(limits: GraphLimits): Long {
             val width = limits.maximumMapWidth.toLong().coerceAtLeast(1L)

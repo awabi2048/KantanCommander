@@ -45,7 +45,6 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.FireworkSettings
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
@@ -1075,6 +1074,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             CommandType.PLAY_SOUND -> executeSound(node, session, effectiveContext, effectiveOrigin, targets, origins, attempts)
             CommandType.PARTICLE -> executeParticle(node, session, effectiveContext, effectiveOrigin, targets, origins, attempts)
+            CommandType.PARTICLE_GEOMETRY -> executeParticleGeometry(node, session, effectiveContext, effectiveOrigin, targets, origins, attempts)
             CommandType.FIREWORK_LAUNCH -> executeFirework(node, session, effectiveContext, effectiveOrigin, origins, attempts)
             CommandType.APPLY_EFFECT -> {
                 val refTemp = node.effectTempRef?.takeIf(String::isNotBlank)
@@ -1369,8 +1369,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * Particleの送信は、対象プレイヤー指定がなければ表示中心と同じワールドの
-     * 全プレイヤーへ1回のパケット送信で届けます。
+     * 通常表示（PARTICLE）を実行します。
+     *
+     * #19の回帰対象として散布（delta／speed／count）送信を維持します。
+     * 粒子種類・詳細データ・表示対象の解決は図形表示と共通です。
      * issue #29: 各位置を独立に試行し、1件でも成功すれば全体成功とします。
      */
     private fun executeParticle(
@@ -1382,79 +1384,115 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         origins: List<Location>,
         attempts: MultiAttemptRecorder,
     ): Boolean {
-        val particle = ParticleSettings.particle(node) ?: return false
+        val resolved = resolveParticleKind(node, effectiveOrigin, targets) ?: return false
         // issue #29: コマンド固有位置があればそちらを優先し、なければ実行起点集合を使います。
+        // 通常表示は複数位置を許可し、各位置で同じパーティクルを表示します。
         val centers = node.particlePositionSpec?.let {
             actionOrigins(it, session, context) ?: return false
         } ?: origins
+        val deltaX = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_X, "0.0"), session)
+            ?.takeIf(Double::isFinite) ?: return false
+        val deltaY = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Y, "0.0"), session)
+            ?.takeIf(Double::isFinite) ?: return false
+        val deltaZ = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Z, "0.0"), session)
+            ?.takeIf(Double::isFinite) ?: return false
+        val speed = resolveNumber(node.string(ParticleSettings.PARAM_SPEED, "0.0"), session)
+            ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
+        val count = resolvePositiveInt(node.string(ParticleSettings.PARAM_COUNT, "1"), session) ?: return false
+        // 上限超過は失敗ではなくスキップ扱いのため、全位置分を事前予約し、
+        // 不足時は送信せずスキップします。送信時の個別失敗は記録します。
+        if (centers.isNotEmpty() &&
+            !plugin.particleQuota.tryAcquire(effectiveOrigin.world.uid, count * centers.size)
+        ) {
+            throw ParticleQuotaRejected()
+        }
+        // receiverへ明示対象を渡すことで、「実行位置周囲」ではなく
+        // 「表示中心と同じワールドの全員または指定対象」という仕様を残します。
+        centers.forEach { origin ->
+            attempts.record(runCatching {
+                origin.world.spawnParticle(
+                    resolved.particle,
+                    resolved.receivers,
+                    null,
+                    origin.x,
+                    origin.y,
+                    origin.z,
+                    count,
+                    deltaX,
+                    deltaY,
+                    deltaZ,
+                    speed,
+                    resolved.bukkitData,
+                    true,
+                )
+            }.isSuccess)
+        }
+        return attempts.overall
+    }
+
+    /**
+     * 図形表示（PARTICLE_GEOMETRY）を実行します。
+     *
+     * ParticleGeometryで点列を生成し、各生成点を共通送信処理で表示します。
+     * 図形を構成する位置は原則として単一位置として扱います（#29）。
+     */
+    private fun executeParticleGeometry(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        effectiveOrigin: Location,
+        targets: List<Entity>,
+        origins: List<Location>,
+        attempts: MultiAttemptRecorder,
+    ): Boolean {
+        val resolved = resolveParticleKind(node, effectiveOrigin, targets) ?: return false
+        val centers = node.particlePositionSpec?.let {
+            actionOrigins(it, session, context) ?: return false
+        } ?: origins
+        centers.forEach { origin ->
+            attempts.record(
+                runCatching {
+                    executeGeometryParticle(node, session, context, origin, resolved.receivers, resolved.particle, resolved.bukkitData)
+                }.getOrElse { failure ->
+                    // 上限超過はスキップ扱いを維持し、他は失敗として記録します。
+                    if (failure is ParticleQuotaRejected) throw failure
+                    false
+                },
+            )
+        }
+        return attempts.overall
+    }
+
+    /**
+     * 粒子種類・詳細データ・表示対象の共通解決です。通常表示と図形表示で共有します。
+     *
+     * Particleの送信は、対象プレイヤー指定がなければ表示中心と同じワールドの
+     * 全プレイヤーへ1回のパケット送信で届けます。
+     */
+    private data class ResolvedParticle(
+        val particle: org.bukkit.Particle,
+        val receivers: List<Player>,
+        val bukkitData: Any?,
+    )
+
+    private fun resolveParticleKind(
+        node: CommandNode,
+        effectiveOrigin: Location,
+        targets: List<Entity>,
+    ): ResolvedParticle? {
+        val particle = ParticleSettings.particle(node) ?: return null
         val receivers = if (node.targetSpec == null) effectiveOrigin.world.players else targets.filterIsInstance<Player>()
         val data = if (ParticleSettings.requiresData(particle)) {
             ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
-                .getOrNull() ?: return false
+                .getOrNull() ?: return null
         } else {
             // 詳細データを必要としない種類は保存値を無視し、旧保存の残存値で
             // 実行を止めません。検証側も同じく対象外にしています。
             ParticleSettings.ParticleDataSpec.None
         }
         val bukkitData = data.toBukkitData(effectiveOrigin)
-        if (ParticleSettings.requiresData(particle) && bukkitData == null) return false
-
-        return when (ParticleGeometry.displayMode(node)) {
-            ParticleDisplayMode.POINT -> {
-                val deltaX = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_X, "0.0"), session)
-                    ?.takeIf(Double::isFinite) ?: return false
-                val deltaY = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Y, "0.0"), session)
-                    ?.takeIf(Double::isFinite) ?: return false
-                val deltaZ = resolveNumber(node.string(ParticleSettings.PARAM_DELTA_Z, "0.0"), session)
-                    ?.takeIf(Double::isFinite) ?: return false
-                val speed = resolveNumber(node.string(ParticleSettings.PARAM_SPEED, "0.0"), session)
-                    ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
-                val count = resolvePositiveInt(node.string(ParticleSettings.PARAM_COUNT, "1"), session) ?: return false
-                // 上限超過は失敗ではなくスキップ扱いのため、全位置分を事前予約し、
-                // 不足時は送信せずスキップします。送信時の個別失敗は記録します。
-                if (centers.isNotEmpty() &&
-                    !plugin.particleQuota.tryAcquire(effectiveOrigin.world.uid, count * centers.size)
-                ) {
-                    throw ParticleQuotaRejected()
-                }
-                // receiverへ明示対象を渡すことで、「実行位置周囲」ではなく
-                // 「表示中心と同じワールドの全員または指定対象」という仕様を残します。
-                centers.forEach { origin ->
-                    attempts.record(runCatching {
-                        origin.world.spawnParticle(
-                            particle,
-                            receivers,
-                            null,
-                            origin.x,
-                            origin.y,
-                            origin.z,
-                            count,
-                            deltaX,
-                            deltaY,
-                            deltaZ,
-                            speed,
-                            bukkitData,
-                            true,
-                        )
-                    }.isSuccess)
-                }
-                attempts.overall
-            }
-            ParticleDisplayMode.GEOMETRY -> {
-                centers.forEach { origin ->
-                    attempts.record(
-                        runCatching {
-                            executeGeometryParticle(node, session, context, origin, receivers, particle, bukkitData)
-                        }.getOrElse { failure ->
-                            // 上限超過はスキップ扱いを維持し、他は失敗として記録します。
-                            if (failure is ParticleQuotaRejected) throw failure
-                            false
-                        },
-                    )
-                }
-                attempts.overall
-            }
-        }
+        if (ParticleSettings.requiresData(particle) && bukkitData == null) return null
+        return ResolvedParticle(particle, receivers, bukkitData)
     }
 
     /**

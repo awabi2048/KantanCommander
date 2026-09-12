@@ -3,7 +3,6 @@ package me.awabi2048.kantancommander.export
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -77,10 +76,10 @@ class EffectsExportTest {
 
     @Test
     fun `geometry display is rejected for vanilla export`() {
+        // #30: 図形表示は独立したPARTICLE_GEOMETRY型で明示エラーにします。
         val store = ScriptStore(temp.resolve("geometry"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "geometry")
-        GraphEditor.append(script.graph, CommandType.PARTICLE).apply {
-            params["particleDisplayMode"] = ParticleDisplayMode.GEOMETRY.name
+        GraphEditor.append(script.graph, CommandType.PARTICLE_GEOMETRY).apply {
             params["particleShape"] = ParticleShape.CIRCLE.name
             params["particleDensity"] = "0.5"
             params["geometryRadius"] = "3.0"

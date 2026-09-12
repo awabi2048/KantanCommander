@@ -22,7 +22,6 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.PlaceItemDestination
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.SoundOperation
@@ -443,15 +442,16 @@ object CommandSettingsModel {
                 }
                 fields.filter { it.key in allowed }
             }
-            // パーティクルは表示方式（点／図形）を先頭タブで切り替えます。
-            // 点表示は従来の散布設定を維持し、図形表示は形状と密度へ組み替えます。
+            // #30: 通常表示と図形表示は別CommandTypeです。両者ともタブ順を
+            // 「種類 → 表示設定 → 表示位置 → 表示対象」に統一します。
+            // 種類（particle）と表示対象（particleDisplay）は共有し、
+            // 表示設定の中身だけが型固有です（通常=散布、図形=形状＋密度）。
             node.type == CommandType.PARTICLE -> {
-                val mode = ParticleGeometry.displayMode(node)
-                val allowed = if (mode == ParticleDisplayMode.GEOMETRY) {
-                    setOf("particleDisplay", "particle", "geometrySettings", "particleDensity")
-                } else {
-                    setOf("particleDisplay", "particle", "position", "particleParameters")
-                }
+                val allowed = setOf("particle", "particleParameters", "position", "particleDisplay")
+                fields.filter { it.key in allowed }
+            }
+            node.type == CommandType.PARTICLE_GEOMETRY -> {
+                val allowed = setOf("particle", "geometrySettings", "particleDensity", "position", "particleDisplay")
                 fields.filter { it.key in allowed }
             }
             node.type == CommandType.VARIABLE -> {
@@ -493,6 +493,7 @@ object CommandSettingsModel {
         CommandType.SUMMON_ENTITY,
         CommandType.PLAY_SOUND,
         CommandType.PARTICLE,
+        CommandType.PARTICLE_GEOMETRY,
         CommandType.FIREWORK_LAUNCH,
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
@@ -543,6 +544,11 @@ object CommandSettingsModel {
                 temporaryValueSource(node, "effect") != CommandValueSource.TEMPORARY
 
         CommandType.PARTICLE -> true
+
+        // #30: 図形の終点・対角点は線・直方体でのみ意味を持つため、それ以外の形状では隠します。
+        CommandType.PARTICLE_GEOMETRY ->
+            fieldKey != "geometryEnd" || ParticleGeometry.shape(node) == ParticleShape.LINE ||
+                ParticleGeometry.shape(node) == ParticleShape.BOX
 
         else -> true
     }
@@ -696,8 +702,14 @@ object CommandSettingsModel {
                 "particleDisplay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DISPLAY
                 "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
                 "particleParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.PARTICLE_GEOMETRY -> when (fieldKey) {
+                "particleDisplay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DISPLAY
+                "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
                 "geometrySettings" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GEOMETRY_SETTINGS
                 "particleDensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
+                "geometryEnd" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GEOMETRY_SETTINGS
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.FIREWORK_LAUNCH -> when (fieldKey) {
@@ -803,10 +815,11 @@ object CommandSettingsModel {
                 -> "particleParameters"
                 ParticleSettings.PARAM_DATA -> "particle"
                 "target" -> "particleDisplay"
-                // 図形表示では中心位置タブを出さず、図形設定内で編集します。
-                "position" -> if (ParticleGeometry.displayMode(node) ==
-                    ParticleDisplayMode.GEOMETRY
-                ) "geometrySettings" else "position"
+                else -> validationFieldKey
+            }
+            CommandType.PARTICLE_GEOMETRY -> when (validationFieldKey) {
+                ParticleSettings.PARAM_DATA -> "particle"
+                "target" -> "particleDisplay"
                 else -> validationFieldKey
             }
             CommandType.CONDITION -> when (validationFieldKey) {
@@ -918,6 +931,12 @@ object CommandSettingsModel {
         CommandType.PARTICLE -> when (fieldKey) {
             "particleDisplay" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_DISPLAY)
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
+            else -> text()
+        }
+        CommandType.PARTICLE_GEOMETRY -> when (fieldKey) {
+            "particleDisplay" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_DISPLAY)
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
+            "geometryEnd" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_END)
             "geometrySettings" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_GEOMETRY)
             else -> text()
         }
@@ -1042,6 +1061,8 @@ object CommandSettingsModel {
      *
      * 他形状の残存値は表示・検証・実行へ漏らさないため、完了判定の対象外に
      * します。形状未選択（POINT_SCATTER）の図形表示は未完了として扱います。
+     * 終点・対角点は表示位置（geometryEnd）として独立に判定するため、
+     * ここには含めません。
      */
     private fun isGeometryConfigured(node: CommandNode): Boolean {
         val geometry = ParticleGeometry
@@ -1066,13 +1087,7 @@ object CommandSettingsModel {
                 (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
         }
         val shapeConfigured = node.params[geometry.PARAM_SHAPE]?.isNotBlank() == true
-        val endConfigured = when (shape) {
-            ParticleShape.LINE,
-            ParticleShape.BOX,
-            -> isPositionSpecConfigured(node.particleEndPositionSpec)
-            else -> false
-        }
-        return shapeConfigured || numbersConfigured || endConfigured
+        return shapeConfigured || numbersConfigured
     }
 
     /** 複数の文字列パラメータを同じ明示設定契約で保存します。 */
@@ -1390,6 +1405,8 @@ object CommandSettingsModel {
             "soundPosition" -> isPositionSpecConfigured(node.soundPositionSpec)
             "particlePosition" -> isPositionSpecConfigured(node.particlePositionSpec)
             "particleEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
+            // #30: 図形の終点・対角点は表示位置として独立タブで編集します。
+            "geometryEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
             "executionPosition" -> isPositionSpecConfigured(node.executionPositionSpec)
@@ -1419,14 +1436,9 @@ object CommandSettingsModel {
                             (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
                     }
             }
-            // 表示設定は、対象か表示方式の明示選択があれば設定済みです。
-            // 既定値のままでは完了扱いにしません。
-            "particleDisplay" -> isTargetSpecConfigured(node.targetSpec) ||
-                node.params[ParticleGeometry.PARAM_DISPLAY_MODE]
-                    ?.takeIf(String::isNotBlank)?.let {
-                        it != CommandType.PARTICLE.defaults[ParticleGeometry.PARAM_DISPLAY_MODE] ||
-                            node.isExplicitlyConfigured(ParticleGeometry.PARAM_DISPLAY_MODE)
-                    } == true
+            // 表示対象は、対象の指定があれば設定済みです。
+            // #30で表示方式の選択は廃止し、対象指定だけを扱います。
+            "particleDisplay" -> isTargetSpecConfigured(node.targetSpec)
             // パーティクル種類と詳細データは同じタブで編集します。
             // 既定値のままでは完了扱いにしません。
             "particle" -> {

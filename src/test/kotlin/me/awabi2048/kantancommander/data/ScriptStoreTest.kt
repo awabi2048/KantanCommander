@@ -38,6 +38,7 @@ class ScriptStoreTest {
     fun `legacy kind-only condition loads without conversion and fails validation`() {
         // issue #27: 旧 `kind` のみの保存は変換せず読み込み、判定対象の未設定として
         // 検証層で拒否します。後方互換の変換処理は残しません。
+        // v16受付（16・15・14）の範囲内で検証するため、形式番号は14を使います。
         val dir = temp.resolve("condition-subject").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val conditionId = UUID.randomUUID()
@@ -45,7 +46,7 @@ class ScriptStoreTest {
         dir.resolve("$scriptId.json").writeText(
             """
             {
-              "formatVersion": 13,
+              "formatVersion": 14,
               "id": "$scriptId",
               "name": "legacy-condition",
               "owner": "${UUID.randomUUID()}",

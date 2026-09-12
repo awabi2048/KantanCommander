@@ -19,7 +19,6 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.NumericExpression
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleShape

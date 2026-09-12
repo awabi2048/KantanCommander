@@ -30,8 +30,6 @@ import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
-import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
@@ -168,9 +166,10 @@ class VanillaDatapackExporter(
                             errors += "${script.id}/${node.id}: ItemStackの詳細データは完全バニラ出力に未対応です"
                         }
                     }
-                    if (ParticleGeometry.displayMode(node) == ParticleDisplayMode.GEOMETRY) {
-                        errors += "${script.id}/${node.id}: 図形表示は完全バニラ出力に未対応です"
-                    }
+                }
+                // #30: 図形表示はバニラに同等概念がないため、CommandType単位で明示エラーにします。
+                CommandType.PARTICLE_GEOMETRY -> {
+                    errors += "${script.id}/${node.id}: 図形表示は完全バニラ出力に未対応です"
                 }
                 CommandType.FIREWORK_LAUNCH -> {
                     val item = node.string(FireworkSettings.PARAM_ITEM)
@@ -917,16 +916,14 @@ class VanillaDatapackExporter(
     }
 
     /**
-     * PARTICLEをvanillaの/particleへ変換します。対象selectorに@aを明示し、
+     * 通常表示（PARTICLE）をvanillaの/particleへ変換します。対象selectorに@aを明示し、
      * execute positionedで表示中心だけを移動することで、同じワールドの全プレイヤーを
      * 表示対象にします。force指定による512ブロックのvanilla距離制限は仕様として許容します。
      *
-     * 図形表示はvanillaに同等概念がないため出力できません。事前検証で拒否します。
+     * 図形表示（PARTICLE_GEOMETRY）はvanillaに同等概念がないため出力できません。
+     * 事前検証で拒否し、ここへは到達させません。
      */
     private fun particleCommand(node: CommandNode): String {
-        if (ParticleGeometry.displayMode(node) == ParticleDisplayMode.GEOMETRY) {
-            error("particle geometry is not supported in vanilla export")
-        }
         val particle = ParticleSettings.particle(node) ?: error("particle type is missing")
         val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
             .getOrElse { error("particle data is invalid") }
@@ -1326,6 +1323,8 @@ class VanillaDatapackExporter(
         CommandType.SUMMON_ENTITY -> summonCommand(node)
         CommandType.PLAY_SOUND -> soundCommand(node)
         CommandType.PARTICLE -> particleCommand(node)
+        // #30: 図形表示はバニラ出力非対応です。検証層で拒否し、ここでは無出力とします。
+        CommandType.PARTICLE_GEOMETRY -> null
         CommandType.FIREWORK_LAUNCH -> fireworkCommand(node)
         CommandType.APPLY_EFFECT ->
             "effect give ${effectiveTarget(node)} " +
@@ -2303,6 +2302,7 @@ class VanillaDatapackExporter(
             CommandType.SUMMON_ENTITY -> node.summonPositionSpec
             CommandType.PLAY_SOUND -> node.soundPositionSpec
             CommandType.PARTICLE -> node.particlePositionSpec
+            CommandType.PARTICLE_GEOMETRY -> node.particlePositionSpec
             CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
             CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
             CommandType.PLACE_ITEM -> node.blockPositionSpec
@@ -2348,6 +2348,7 @@ class VanillaDatapackExporter(
                 CommandType.SUMMON_ENTITY -> node.summonPositionSpec
                 CommandType.PLAY_SOUND -> node.soundPositionSpec
                 CommandType.PARTICLE -> node.particlePositionSpec
+                CommandType.PARTICLE_GEOMETRY -> node.particlePositionSpec
                 CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
                 CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
                 CommandType.PLACE_ITEM -> node.blockPositionSpec

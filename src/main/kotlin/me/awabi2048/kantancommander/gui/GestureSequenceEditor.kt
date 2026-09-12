@@ -70,7 +70,6 @@ import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
@@ -6635,11 +6634,6 @@ class GestureSequenceEditor(
                 }
             }
             GestureSettingScreen.PARTICLE_DISPLAY -> when {
-                group == "display" && value in setOf("POINT", "GEOMETRY") -> {
-                    if (updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_DISPLAY_MODE, value)
-                        }) showSettingScreen()
-                }
                 encoded == "particle-target" -> {
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
@@ -6676,25 +6670,6 @@ class GestureSequenceEditor(
                 }
                 encoded == "geometry-numbers" -> {
                     showGeometryNumbersDialog(player, settingContext, node)
-                }
-                encoded == "geometry-end" -> {
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
-                    when (settingSelectionAction(wasSelected, hasChildren)) {
-                        GestureSettingSelectionAction.ENTER_CHILD -> {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(
-                                    settingContext.copy(role = CommandSettingRole.PARTICLE_END),
-                                    fieldKey,
-                                    GestureSettingScreen.POSITION,
-                                ),
-                                encoded,
-                            )
-                        }
-                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                    }
                 }
             }
             GestureSettingScreen.VARIABLE_TYPE -> {

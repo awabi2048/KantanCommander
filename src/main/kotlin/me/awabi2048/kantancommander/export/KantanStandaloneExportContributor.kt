@@ -176,7 +176,7 @@ class KantanStandaloneExportContributor(
         val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
         val NON_TEXT_FIELDS = setOf(
             "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
-            "tagOperation", "soundScope", "soundOperation", "soundCategory", "particleDisplayMode",
+            "tagOperation", "soundScope", "soundOperation", "soundCategory",
             "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
             "attributeOperation", "modifierOperation", "property",
         )

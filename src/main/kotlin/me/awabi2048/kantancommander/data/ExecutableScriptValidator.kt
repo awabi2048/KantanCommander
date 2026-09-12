@@ -18,7 +18,6 @@ import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.NumericExpression
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleShape
@@ -424,6 +423,7 @@ object ExecutableScriptValidator {
             }
             CommandType.PLAY_SOUND -> validateSound(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.PARTICLE -> validateParticle(node, path, errors, variableDefinitions, temporaryDefinitions)
+            CommandType.PARTICLE_GEOMETRY -> validateParticleGeometry(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.FIREWORK_LAUNCH -> validateFirework(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.APPLY_EFFECT -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
@@ -525,12 +525,11 @@ object ExecutableScriptValidator {
     }
 
     /**
-     * PARTICLEを表示方式ごとに検証します。
+     * 通常表示（PARTICLE）を検証します。
      *
-     * 点表示（POINT）は従来の散布検証を維持し、図形表示（GEOMETRY）は形状・
-     * 密度・形状数値を検証します。粒子種類と詳細データの検証は両方式で共通です。
-     * 幾何量が確定できる場合は見積点数の上限も確認し、quota超過の常時拒否を
-     * 保存時に抑止します。
+     * #19の回帰対象として従来の散布検証を維持します。粒子種類と詳細データの
+     * 検証は図形表示と共通です。表示方式による分岐は#30で廃止し、
+     * CommandType単位で検証します。
      */
     private fun validateParticle(
         node: CommandNode,
@@ -539,13 +538,23 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, WorldVariableValue>?,
         temporaryDefinitions: Map<String, TemporaryVariableType>?,
     ) {
-        val displayRaw = node.params[ParticleGeometry.PARAM_DISPLAY_MODE]
-        if (!displayRaw.isNullOrBlank() &&
-            ParticleDisplayMode.parse(displayRaw).name != displayRaw.trim().uppercase()
-        ) {
-            errors += nodeError(node, path, setOf("particleDisplay"), "パーティクルの表示方式が不正です")
-            return
-        }
+        validateParticleKind(node, path, errors)
+        validatePointScatter(node, path, errors, variableDefinitions, temporaryDefinitions)
+    }
+
+    /**
+     * 図形表示（PARTICLE_GEOMETRY）を検証します。
+     *
+     * 粒子種類と詳細データの検証は通常表示と共通です。形状・密度・形状数値を
+     * 検証し、幾何量が確定できる場合は見積点数の上限も確認します。
+     */
+    private fun validateParticleGeometry(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>?,
+    ) {
         val shapeRaw = node.params[ParticleGeometry.PARAM_SHAPE]
         if (!shapeRaw.isNullOrBlank() &&
             ParticleShape.parse(shapeRaw).name != shapeRaw.trim().uppercase()
@@ -553,20 +562,35 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("geometrySettings"), "パーティクルの形状が不正です")
             return
         }
+        validateParticleKind(node, path, errors)
+        validateGeometry(node, path, errors, variableDefinitions, temporaryDefinitions)
+        // #30・#29: 図形を構成する位置は原則として単一位置です。通常表示の複数許可と異なり、
+        // 図形の中心・始点に対象由来の複数位置は指定できません。静的0..1は先頭1件へ解決するため許可します。
+        val start = node.particlePositionSpec
+        if (start != null && start.kind == PositionKind.TARGET && (start.target == null || start.target.isMultiCapable())) {
+            errors += nodeError(node, path, setOf("position"), "この位置に対象由来の複数位置は指定できません")
+        }
+    }
+
+    /**
+     * 粒子種類と詳細データの共通検証です。通常表示と図形表示で共有します。
+     *
+     * 詳細データを必要とする種類だけ検証します。不要な種類の残存値は表示・
+     * 実行へ漏らさないため、旧保存データの救済として対象外にします。
+     */
+    private fun validateParticleKind(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
         val particle = ParticleSettings.particle(node)
         if (particle == null) {
             errors += nodeError(node, path, setOf(ParticleSettings.PARAM_PARTICLE), "パーティクルの種類が不正です")
         } else if (ParticleSettings.requiresData(particle)) {
-            // 詳細データを必要とする種類だけ検証します。不要な種類の残存値は
-            // 表示・実行へ漏らさないため、旧保存データの救済として対象外にします。
             val data = ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
             if (data.isFailure) {
                 errors += nodeError(node, path, setOf(ParticleSettings.PARAM_DATA), "パーティクルの詳細データが不正です")
             }
-        }
-        when (ParticleGeometry.displayMode(node)) {
-            ParticleDisplayMode.POINT -> validatePointScatter(node, path, errors, variableDefinitions, temporaryDefinitions)
-            ParticleDisplayMode.GEOMETRY -> validateGeometry(node, path, errors, variableDefinitions, temporaryDefinitions)
         }
     }
 

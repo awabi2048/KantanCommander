@@ -49,7 +49,6 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.VariableTemplate
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
@@ -3454,11 +3453,9 @@ class GestureLowerPanel(
                 )
             }
         }
-        // 表示設定は、表示方式の択一と対象選択の掘り下げで構成します。
-        // 表示方式の選択表示は明示記録だけを反映し、対象設定の有無に引きずられません。
+        // 表示対象は対象選択の掘り下げだけで構成します。
+        // #30で表示方式の選択は廃止し、コマンド選択そのものが通常／図形の選択を兼ねます。
         GestureSettingScreen.PARTICLE_DISPLAY -> listOf(
-            SettingChoice("display:POINT", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT), ParticleGeometry.displayMode(node) == ParticleDisplayMode.POINT && node.isExplicitlyConfigured(ParticleGeometry.PARAM_DISPLAY_MODE)),
-            SettingChoice("display:GEOMETRY", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY), ParticleGeometry.displayMode(node) == ParticleDisplayMode.GEOMETRY && node.isExplicitlyConfigured(ParticleGeometry.PARAM_DISPLAY_MODE)),
             GestureSettingTreeNode(
                 id = "particle-target",
                 label = labeled(
@@ -3470,8 +3467,9 @@ class GestureLowerPanel(
                 children = targetChoices(node, context.copy(role = CommandSettingRole.NODE_TARGET), player),
             ),
         )
-        // 図形設定は、形状の択一・数値入力・終端位置の掘り下げで構成します。
-        // 数値入力はダイアログで開く葉であり、終端位置はLINE／BOXのときだけ提示します。
+        // 図形設定は、形状の択一と数値入力で構成します。
+        // 数値入力はダイアログで開く葉であり、選択形状の数値だけを扱います。
+        // 終点・対角点は表示位置（geometryEnd）へ分離したため、ここでは扱いません。
         GestureSettingScreen.PARTICLE_GEOMETRY -> buildList {
             addAll(
                 listOf(
@@ -3513,22 +3511,6 @@ class GestureLowerPanel(
                     selected = false,
                 ),
             )
-            val shape = ParticleGeometry.shape(node)
-            if (shape == ParticleShape.LINE || shape == ParticleShape.BOX) {
-                add(
-                    GestureSettingTreeNode(
-                        id = "geometry-end",
-                        label = labeled(
-                            player,
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
-                            CommandSettingsModel.positionKind(node, CommandSettingRole.PARTICLE_END)
-                                ?.let { positionKindLabel(player, it) },
-                        ),
-                        selected = CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.PARTICLE_END),
-                        children = positionChoices(node, context.copy(role = CommandSettingRole.PARTICLE_END), player),
-                    ),
-                )
-            }
         }
         GestureSettingScreen.VARIABLE_TYPE -> if (node.type == CommandType.TEMP_SET) {
             TemporaryVariableType.entries.map { type ->
