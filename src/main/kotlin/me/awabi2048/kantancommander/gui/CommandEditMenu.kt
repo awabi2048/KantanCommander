@@ -1350,15 +1350,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }.toMutableList()
         node(route)?.let { current ->
             val overwritten = current.boolean("overwrite")
+            // Nameは新規固定ラベルのみにし、現在値（有効／無効）はLoreのデータ行へ分離します。
+            val overwritePlaceLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE_PLACE)
             elements += KcGui.menuEntry(
                 player = player,
                 slot = PLACE_OVERWRITE_TOGGLE_SLOT,
                 material = Material.LIME_DYE,
-                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE),
+                name = overwritePlaceLabel,
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OVERWRITE),
                 data = listOf(GuiMenuEntryData(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE),
+                    overwritePlaceLabel,
                     displayBoolean(overwritten).render(player),
                 )),
                 actions = listOf(GuiMenuActionIntent.AnyClick(

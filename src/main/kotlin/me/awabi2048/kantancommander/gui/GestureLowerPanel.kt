@@ -89,6 +89,18 @@ import kotlin.math.sqrt
 private typealias SettingChoice = GestureSettingTreeNode
 
 /**
+ * 二値トグルの表示文言を組み立てます。
+ *
+ * 固定ラベルがある場合は「固定ラベル 状態」、ない場合は状態のみにします。
+ * 状態リテラルは現行トグル表示と同一のON／OFFを使い、`< >` 等の装飾記号は
+ * 言語キーへ含めず表示側の結合に留めます。
+ */
+internal fun checkboxToggleLabel(fixedLabel: String?, checked: Boolean): String {
+    val state = if (checked) "ON" else "OFF"
+    return if (fixedLabel.isNullOrBlank()) state else "$fixedLabel $state"
+}
+
+/**
  * ジェスチャーエディターの下部パネルのビュー生成を担います。
  *
  * - SETTINGS: 左タブ列＝設定フィールド、右詳細＝現在値＋説明。設定木の直下は親画面で編集
@@ -1257,6 +1269,7 @@ class GestureLowerPanel(
                 nodes, frame, node, "overwrite", inputCenterY, suppressHighlight,
                 centerX = SETTING_TOGGLE_CENTER_X,
                 centerY = SETTING_CHOICE_BOTTOM_Y,
+                fixedLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE_PLACE),
             )
         }
         return finishSettings(nodes)
@@ -1814,14 +1827,19 @@ class GestureLowerPanel(
         // トグルのように下端中央へ置く場合は呼び出し側で上書きします。
         centerX: Double = SETTING_TOGGLE_CENTER_X,
         centerY: Double? = null,
+        // 固定ラベル部（状態を含まない文言）です。配置先タブの上書きトグルでは
+        // 「上書きして配置する ON」の形式にするため呼び出し側で渡します。
+        // 既定のままでは従来どおりON／OFFのみを表示します。
+        fixedLabel: String? = null,
     ) {
         val checked = node.boolean(fieldKey)
+        val labelText = checkboxToggleLabel(fixedLabel, checked)
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
             SettingsActionCard(
                 elementId = "lower-toggle:$fieldKey",
-                label = Component.text(if (checked) "ON" else "OFF"),
+                label = Component.text(labelText),
                 background = Bukkit.createBlockData(
                     if (checked) Material.LIME_CONCRETE else Material.GRAY_CONCRETE,
                 ),
@@ -1834,7 +1852,7 @@ class GestureLowerPanel(
                 gestures = GestureGuiClickPolicy.CLICK,
                 guard = null,
                 hover = singleLineHover(
-                    if (checked) "ON（クリックでOFF）" else "OFF（クリックでON）",
+                    "$labelText（クリックで${if (checked) "OFF" else "ON"}）",
                     x = HOVER_SLOT_X,
                     y = HOVER_SLOT_Y,
                 ),
