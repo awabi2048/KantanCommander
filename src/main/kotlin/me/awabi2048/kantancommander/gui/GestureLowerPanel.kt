@@ -89,6 +89,18 @@ import kotlin.math.sqrt
 private typealias SettingChoice = GestureSettingTreeNode
 
 /**
+ * 二値トグルの表示文言を組み立てます。
+ *
+ * 固定ラベルがある場合は「固定ラベル 状態」、ない場合は状態のみにします。
+ * 状態リテラルは現行トグル表示と同一のON／OFFを使い、`< >` 等の装飾記号は
+ * 言語キーへ含めず表示側の結合に留めます。
+ */
+internal fun checkboxToggleLabel(fixedLabel: String?, checked: Boolean): String {
+    val state = if (checked) "ON" else "OFF"
+    return if (fixedLabel.isNullOrBlank()) state else "$fixedLabel $state"
+}
+
+/**
  * ジェスチャーエディターの下部パネルのビュー生成を担います。
  *
  * - SETTINGS: 左タブ列＝設定フィールド、右詳細＝現在値＋説明。設定木の直下は親画面で編集
@@ -1249,6 +1261,21 @@ class GestureLowerPanel(
             )
         }
         appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight, fieldPreviews)
+        // 「アイテムを配置」の上書き設定は独立タブを持たず、配置先タブの
+        // 中央下揃えトグルで編集します。配置先5択（上揃え）とは行を共有せず、
+        // 下端基準の中央配置に置くため項目数の増減で位置がずれません。
+        if (node.type == CommandType.PLACE_ITEM && field.key == "destination") {
+            appendCheckboxCard(
+                nodes, frame, node, "overwrite", inputCenterY, suppressHighlight,
+                centerX = SETTING_TOGGLE_CENTER_X,
+                centerY = SETTING_CHOICE_BOTTOM_Y,
+                fixedLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE_PLACE),
+                // 下段共通スロットはボタンの内側と重なるため、ボタン上端の外側へ移します。
+                // 上段の配置先5択（最下行の下端-0.19）とも重なりません。
+                hoverX = SETTING_TOGGLE_CENTER_X,
+                hoverY = SETTING_CHOICE_BOTTOM_Y + SETTING_INPUT_HEIGHT / 2.0 + HOVER_BUTTON_GAP,
+            )
+        }
         return finishSettings(nodes)
     }
 
@@ -1791,6 +1818,7 @@ class GestureLowerPanel(
      * issue #18 のCheckbox操作面です。
      *
      * 二値設定を1クリックで切り替え、checked／uncheckedを色で区別します。
+     * トグルは選択とは別概念のため、選択表示の縁取りは付けません。
      * nullable三値はここへ載せず、別表現に委譲します。
      */
     private fun appendCheckboxCard(
@@ -1800,19 +1828,32 @@ class GestureLowerPanel(
         fieldKey: String,
         inputCenterY: Double,
         suppressHighlight: Boolean = false,
+        // 既定は従来どおり右ペイン中央の入力行です。配置先タブの上書き
+        // トグルのように下端中央へ置く場合は呼び出し側で上書きします。
+        centerX: Double = SETTING_TOGGLE_CENTER_X,
+        centerY: Double? = null,
+        // 固定ラベル部（状態を含まない文言）です。配置先タブの上書きトグルでは
+        // 「上書きして配置する ON」の形式にするため呼び出し側で渡します。
+        // 既定のままでは従来どおりON／OFFのみを表示します。
+        fixedLabel: String? = null,
+        // ホバー文の表示位置です。既定は画面下段の共通スロットですが、
+        // ボタンと重なる配置では呼び出し側でボタン外（上など）へ移します。
+        hoverX: Double = HOVER_SLOT_X,
+        hoverY: Double = HOVER_SLOT_Y,
     ) {
         val checked = node.boolean(fieldKey)
+        val labelText = checkboxToggleLabel(fixedLabel, checked)
         DeclarativeSettings.actionCardSection(
             nodes,
             frame,
             SettingsActionCard(
                 elementId = "lower-toggle:$fieldKey",
-                label = Component.text(if (checked) "ON" else "OFF"),
+                label = Component.text(labelText),
                 background = Bukkit.createBlockData(
                     if (checked) Material.LIME_CONCRETE else Material.GRAY_CONCRETE,
                 ),
-                cx = 0.28,
-                cy = inputCenterY,
+                cx = centerX,
+                cy = centerY ?: inputCenterY,
                 w = 1.2,
                 h = SETTING_INPUT_HEIGHT,
                 labelSize = 0.006,
@@ -1820,13 +1861,14 @@ class GestureLowerPanel(
                 gestures = GestureGuiClickPolicy.CLICK,
                 guard = null,
                 hover = singleLineHover(
-                    if (checked) "ON（クリックでOFF）" else "OFF（クリックでON）",
-                    x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
+                    "$labelText（クリックで${if (checked) "OFF" else "ON"}）",
+                    x = hoverX,
+                    y = hoverY,
                 ),
                 visualTag = "lower-toggle",
-                outline = if (suppressHighlight) null
-                else GestureSettingVisualPolicy.nonTabOutlineMaterial(checked)?.let { Bukkit.createBlockData(it) },
+                // トグルのON／OFFは選択状態ではないため、選択表示の縁取りは付けません。
+                // 状態の区別は背景色（LIME／GRAY）に限定します。
+                outline = null,
             ),
         )
     }
@@ -4505,6 +4547,9 @@ class GestureLowerPanel(
         // 下揃え項目（詳細設定・一時変数参照等）の最下行です。上からの5行目に相当し、
         // 下端基準のため上位項目数の増減で位置がずれません。
         const val SETTING_CHOICE_BOTTOM_Y = -0.36
+        // 二値トグル（Checkbox直接切替え）の水平中央です。右ペインの
+        // 2列中央（-0.10と0.67の中点）に相当し、単独配置で中央下揃えになります。
+        const val SETTING_TOGGLE_CENTER_X = 0.28
         // 子画面は親の右ペイン座標を再利用せず、子画面全体を論理領域として使います。
         const val CHILD_CHOICE_WIDTH = 0.92
         const val CHILD_CHOICE_TOP_Y = 0.08
