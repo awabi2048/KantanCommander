@@ -667,9 +667,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             InventoryMenuDefinition(
                 SequenceEditorMenu.OWNER,
                 PLACE_DESTINATION_ID,
-                renderer = { renderPlaceDestinations(it.player) },
+                renderer = { renderPlaceDestinations(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
+                    "toggleOverwrite" to MenuActionHandler { context ->
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        // 配置先画面に留まり、上書き表示だけを更新します。
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
                     "select" to MenuActionHandler { context ->
                         val destination = PlaceItemDestination.from(context.payload["destination"])
                             ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -1312,7 +1323,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
      * 5つの配置先は対象の能力ごとに分かれ、実行時に適用可否を判定します。
      * 選択肢の文言は配置先 adapter の表示キーへ一元化します。
      */
-    private fun renderPlaceDestinations(player: Player): InventoryMenuView {
+    /**
+     * 配置先の5択に加え、上書き設定の単一トグルを中央下段へ置きます。
+     *
+     * 上書き設定は独立タブを持たず、この画面で完結します。Nameは固定ラベルの
+     * みにし、現在値（有効／無効）はLoreのデータ行へ分離します。
+     */
+    private fun renderPlaceDestinations(player: Player, route: MenuRoute): InventoryMenuView {
         val options = listOf(
             Triple(PlaceItemDestination.EQUIPMENT, Material.ARMOR_STAND, PlaceItemDestination.EQUIPMENT.labelKey),
             Triple(PlaceItemDestination.PLAYER_HOTBAR, Material.BLAZE_POWDER, PlaceItemDestination.PLAYER_HOTBAR.labelKey),
@@ -1331,6 +1348,25 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 mapOf("destination" to option.first.paramValue),
             )
         }.toMutableList()
+        node(route)?.let { current ->
+            val overwritten = current.boolean("overwrite")
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = PLACE_OVERWRITE_TOGGLE_SLOT,
+                material = Material.LIME_DYE,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OVERWRITE),
+                data = listOf(GuiMenuEntryData(
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE),
+                    displayBoolean(overwritten).render(player),
+                )),
+                actions = listOf(GuiMenuActionIntent.AnyClick(
+                    actionId = "toggleOverwrite",
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OVERWRITE),
+                )),
+            )
+        }
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,
@@ -2693,6 +2729,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val ENTITY_PROPERTY_ID = "entity_property"
         private const val ENTITY_PROPERTY_VALUE_ID = "entity_property_value"
         private const val PLACE_DESTINATION_ID = "place_destination"
+        // 配置先画面の下段中央（45枠の下段中央）へ置く上書きトグル枠です。
+        // 戻る枠（36）と配置先5択（19〜23）と重なりません。
+        private const val PLACE_OVERWRITE_TOGGLE_SLOT = 40
         private const val DISPLAY_MODE_ID = "display_mode"
         private const val BLOCK_OPERATION_ID = "block_operation"
         private const val DELETE_ID = "delete_command"

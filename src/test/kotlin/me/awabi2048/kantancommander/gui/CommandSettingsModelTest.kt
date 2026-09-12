@@ -371,28 +371,39 @@ class CommandSettingsModelTest {
 
         // エンティティ系は対象欄、ブロック系は配置位置欄を使い分けます。
         // 額縁は内容固定のためスロット欄を出しません。
+        // 上書き設定は独立タブを持たず、配置先タブの中央下トグルで編集します。
         assertEquals(
-            listOf("target", "destination", "slot", "item", "count", "overwrite", "executionPosition"),
+            listOf("target", "destination", "slot", "item", "count", "executionPosition"),
             keys("EQUIPMENT"),
         )
         assertEquals(
-            listOf("target", "destination", "slot", "item", "count", "overwrite", "executionPosition"),
+            listOf("target", "destination", "slot", "item", "count", "executionPosition"),
             keys("PLAYER_HOTBAR"),
         )
         assertEquals(
-            listOf("target", "destination", "item", "count", "overwrite", "executionPosition"),
+            listOf("target", "destination", "item", "count", "executionPosition"),
             keys("ITEM_FRAME"),
         )
         assertEquals(
-            listOf("destination", "slot", "item", "count", "overwrite", "position", "executionPosition"),
+            listOf("destination", "slot", "item", "count", "position", "executionPosition"),
             keys("BLOCK_CONTAINER"),
         )
     }
 
     @Test
+    fun `place item overwrite attention projects to the destination tab`() {
+        // 上書き検証の注意表示は、存在しない独立タブではなく配置先タブへ投影します。
+        val node = CommandType.PLACE_ITEM.newNode()
+        node.params["destination"] = "EQUIPMENT"
+        assertEquals("destination", CommandSettingsModel.visibleAttentionFieldKey(node, "overwrite"))
+        assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "overwrite" })
+        assertFalse(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "overwrite" })
+    }
+
+    @Test
     fun `gesture column tabs fit within six for every place destination`() {
         // 実行位置タブは固定行へ抽出するため、上限検査の対象外にします。
-        // PLACE_ITEM=7で設定画面が開かなくなった不具合の回帰試験です。
+        // 上書き独立タブの除去後は最大5件ですが、上限超過の回帰として維持します。
         fun columnKeys(destination: String?): List<String> {
             val node = CommandType.PLACE_ITEM.newNode()
             if (destination == null) node.params.remove("destination") else node.params["destination"] = destination

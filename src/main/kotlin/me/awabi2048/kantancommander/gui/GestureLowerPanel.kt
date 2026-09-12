@@ -1249,6 +1249,16 @@ class GestureLowerPanel(
             )
         }
         appendSettingsInputCards(nodes, frame, state, player, node, field, descriptor, inputCenterY, suppressHighlight, fieldPreviews)
+        // 「アイテムを配置」の上書き設定は独立タブを持たず、配置先タブの
+        // 中央下揃えトグルで編集します。配置先5択（上揃え）とは行を共有せず、
+        // 下端基準の中央配置に置くため項目数の増減で位置がずれません。
+        if (node.type == CommandType.PLACE_ITEM && field.key == "destination") {
+            appendCheckboxCard(
+                nodes, frame, node, "overwrite", inputCenterY, suppressHighlight,
+                centerX = SETTING_TOGGLE_CENTER_X,
+                centerY = SETTING_CHOICE_BOTTOM_Y,
+            )
+        }
         return finishSettings(nodes)
     }
 
@@ -1800,6 +1810,10 @@ class GestureLowerPanel(
         fieldKey: String,
         inputCenterY: Double,
         suppressHighlight: Boolean = false,
+        // 既定は従来どおり右ペイン中央の入力行です。配置先タブの上書き
+        // トグルのように下端中央へ置く場合は呼び出し側で上書きします。
+        centerX: Double = SETTING_TOGGLE_CENTER_X,
+        centerY: Double? = null,
     ) {
         val checked = node.boolean(fieldKey)
         DeclarativeSettings.actionCardSection(
@@ -1811,8 +1825,8 @@ class GestureLowerPanel(
                 background = Bukkit.createBlockData(
                     if (checked) Material.LIME_CONCRETE else Material.GRAY_CONCRETE,
                 ),
-                cx = 0.28,
-                cy = inputCenterY,
+                cx = centerX,
+                cy = centerY ?: inputCenterY,
                 w = 1.2,
                 h = SETTING_INPUT_HEIGHT,
                 labelSize = 0.006,
@@ -4505,6 +4519,9 @@ class GestureLowerPanel(
         // 下揃え項目（詳細設定・一時変数参照等）の最下行です。上からの5行目に相当し、
         // 下端基準のため上位項目数の増減で位置がずれません。
         const val SETTING_CHOICE_BOTTOM_Y = -0.36
+        // 二値トグル（Checkbox直接切替え）の水平中央です。右ペインの
+        // 2列中央（-0.10と0.67の中点）に相当し、単独配置で中央下揃えになります。
+        const val SETTING_TOGGLE_CENTER_X = 0.28
         // 子画面は親の右ペイン座標を再利用せず、子画面全体を論理領域として使います。
         const val CHILD_CHOICE_WIDTH = 0.92
         const val CHILD_CHOICE_TOP_Y = 0.08

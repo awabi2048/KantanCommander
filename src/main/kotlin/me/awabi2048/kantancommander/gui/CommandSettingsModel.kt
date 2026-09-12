@@ -402,6 +402,8 @@ object CommandSettingsModel {
             // 額縁は内容固定のためスロット欄を出さず、既定値で確定します。
             // 配置先不明時は位置欄を出さず、配置先の確定を先に促します。
             // 不明時に両方出すと通常タブ列の上限（6件）を超えるためです。
+            // 上書き設定は独立タブを持たず、配置先タブの中央下トグルで編集します。
+            // 保存・検証・実行側の params["overwrite"] は変更しません。
             node.type == CommandType.PLACE_ITEM -> {
                 val destination = PlaceItemDestination.from(node.string("destination"))
                 val allowed = buildSet {
@@ -410,7 +412,6 @@ object CommandSettingsModel {
                     if (destination != PlaceItemDestination.ITEM_FRAME) add("slot")
                     add("item")
                     add("count")
-                    add("overwrite")
                     if (destination != null && destination.requiresBlockPosition) add("position")
                 }
                 fields.filter { it.key in allowed }
@@ -810,6 +811,12 @@ object CommandSettingsModel {
             }
             CommandType.CONDITION -> when (validationFieldKey) {
                 "sneaking", "variable", "operator", "value", "block", "item", "itemData" -> "condition"
+                else -> validationFieldKey
+            }
+            // 上書き設定は配置先タブの中央下トグルで編集するため、
+            // 検証結果だけが存在しないタブを指さないようにします。
+            CommandType.PLACE_ITEM -> when (validationFieldKey) {
+                "overwrite" -> "destination"
                 else -> validationFieldKey
             }
             // 折り畳みノードの注意タブ対応付けは折り畳み前の種別と共用します。
