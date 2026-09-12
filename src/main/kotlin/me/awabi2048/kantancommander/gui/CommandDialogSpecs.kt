@@ -1070,6 +1070,19 @@ internal object CommandDialogSpecs {
         format = InputFormat.ANY_STRING,
     )
 
+    /** issue #3 の乱数範囲入力です。有限doubleを受け付けます。大小関係は検証層で確認します。 */
+    val randomBound = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        32,
+        validate = { raw ->
+            if (CommandValueRules.parseFiniteDouble(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = true,
+        format = InputFormat.NUMBER,
+    )
+
     /** 一時位置の座標入力です。数値リテラルまたは単一変数参照を受け付けます。 */
     val tempCoordinate = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
@@ -1158,6 +1171,10 @@ internal object CommandDialogSpecs {
         }
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "source" && node.type == CommandType.VARIABLE) return variableName
+        if (fieldKey == "propertySource" && node.type == CommandType.VARIABLE) return variableName
+        if ((fieldKey == "randomMin" || fieldKey == "randomMax") && node.type == CommandType.VARIABLE) {
+            return randomBound
+        }
         if (fieldKey == "value" && node.type == CommandType.VARIABLE) {
             val type = runCatching { ValueType.valueOf(node.string("type")) }
                 .getOrDefault(ValueType.NUMBER)

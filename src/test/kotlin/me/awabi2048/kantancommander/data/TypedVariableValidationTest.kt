@@ -155,6 +155,7 @@ class TypedVariableValidationTest {
 
     @Test
     fun `entity scope and invalid scope are rejected`() {
+        // #22: ENTITY scope は対象指定が必須です（未対応ではなくなりました）。
         val entity = scriptWith {
             params["scope"] = "ENTITY"
             params["name"] = "tag"
@@ -162,7 +163,7 @@ class TypedVariableValidationTest {
             params["value"] = "1"
         }
         assertTrue(
-            ExecutableScriptValidator.validate(entity).any { it.message.contains("未対応") },
+            ExecutableScriptValidator.validate(entity).any { it.message.contains("対象が未設定") },
         )
 
         val invalid = scriptWith {
@@ -247,5 +248,152 @@ class TypedVariableValidationTest {
             ExecutableScriptValidator.validate(badVector, variableDefinitions = definitions)
                 .any { it.fieldKeys == setOf("y") },
         )
+    }
+
+    @Test
+    fun `property generation requires a compatible source`() {
+        val definitions = worldDefinitions(
+            "boss" to TypedValue(ValueType.ENTITY, entityId = UUID.randomUUID()),
+            "label" to TypedValue(ValueType.STRING, stringValue = "x"),
+        )
+        val valid = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "boss_health"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = "PROPERTY"
+            params["propertySource"] = "boss"
+            params["property"] = "health"
+        }
+        assertFalse(
+            ExecutableScriptValidator.validate(valid, variableDefinitions = definitions)
+                .any { it.nodeId != null },
+        )
+
+        val unknownProperty = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "boss_health"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = "PROPERTY"
+            params["propertySource"] = "boss"
+            params["property"] = "mana"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(unknownProperty, variableDefinitions = definitions)
+                .any { it.fieldKeys == setOf("property") },
+        )
+
+        val incompatible = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "label_health"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = "PROPERTY"
+            params["propertySource"] = "label"
+            params["property"] = "health"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(incompatible, variableDefinitions = definitions)
+                .any { it.message.contains("取得できない詳細値") },
+        )
+
+        val missingSource = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "ghost_health"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = "PROPERTY"
+            params["propertySource"] = "ghost"
+            params["property"] = "health"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(missingSource, variableDefinitions = definitions)
+                .any { it.message.contains("参照元変数が未定義") },
+        )
+    }
+
+    @Test
+    fun `random generation requires a valid range and a numeric target`() {
+        val definitions = worldDefinitions(
+            "label" to TypedValue(ValueType.STRING, stringValue = "x"),
+        )
+        val valid = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "roll"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = "RANDOM"
+            params["randomMin"] = "1"
+            params["randomMax"] = "6"
+        }
+        assertFalse(
+            ExecutableScriptValidator.validate(valid, variableDefinitions = definitions)
+                .any { it.nodeId != null },
+        )
+
+        val inverted = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "roll"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["changeMode"] = "RANDOM"
+            params["randomMin"] = "6"
+            params["randomMax"] = "1"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(inverted, variableDefinitions = definitions)
+                .any { it.message.contains("最大値を超えられません") },
+        )
+
+        val nonNumeric = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "label"
+            params["operation"] = VariableOperation.CHANGE.name
+            params["changeMode"] = "RANDOM"
+            params["randomMin"] = "1"
+            params["randomMax"] = "6"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(nonNumeric, variableDefinitions = definitions)
+                .any { it.message.contains("乱数を適用できません") },
+        )
+    }
+
+    @Test
+    fun `entity operations require targets and no prior definition`() {
+        // 対象なしは拒否します。
+        val noTarget = scriptWith {
+            params["scope"] = "ENTITY"
+            params["name"] = "mark"
+            params["operation"] = VariableOperation.SET.name
+            params["type"] = ValueType.NUMBER.name
+            params["value"] = "1"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(noTarget).any { it.message.contains("対象が未設定") },
+        )
+
+        // DEFINE は不要として拒否します。
+        val define = scriptWith {
+            params["scope"] = "ENTITY"
+            params["name"] = "mark"
+            params["operation"] = VariableOperation.DEFINE.name
+            params["type"] = ValueType.NUMBER.name
+            params["value"] = "1"
+        }
+        define.graph.nodes.values.first().targetSpec = me.awabi2048.kantancommander.model.TargetSpec(
+            me.awabi2048.kantancommander.model.TargetKind.NEAREST_ENTITY,
+        )
+        assertTrue(
+            ExecutableScriptValidator.validate(define).any { it.message.contains("定義操作は不要") },
+        )
+
+        // 対象・名前・値が揃えば検証を通ります。存在確認は実行時に行います。
+        val valid = scriptWith {
+            params["scope"] = "ENTITY"
+            params["name"] = "mark"
+            params["operation"] = VariableOperation.SET.name
+            params["type"] = ValueType.NUMBER.name
+            params["value"] = "1"
+        }
+        valid.graph.nodes.values.first().targetSpec = me.awabi2048.kantancommander.model.TargetSpec(
+            me.awabi2048.kantancommander.model.TargetKind.NEAREST_ENTITY,
+        )
+        assertFalse(ExecutableScriptValidator.validate(valid).any { it.nodeId != null })
     }
 }

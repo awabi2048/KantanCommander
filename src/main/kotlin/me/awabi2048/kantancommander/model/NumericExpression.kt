@@ -1,15 +1,23 @@
 package me.awabi2048.kantancommander.model
 
+import kotlin.math.pow
+
 /**
  * VARIABLEの数値計算で共有する小さな式言語です。
  *
  * GUI・実行・バニラ出力がそれぞれ独自にsplitや優先順位処理を持つと、同じ式が
  * 保存時と実行時で別の値になるため、字句解析と構文解析をモデル層へ集約します。
  * 許可する構文は数値リテラル、`${variable_name}` 形式のワールド内変数参照、
- * `%{variable_name}%` 形式の一時変数参照、四則演算、括弧です。
+ * `%{variable_name}%` 形式の一時変数参照、四則演算、べき乗（`^`・右結合）、
+ * 6種の三角関数（`sin`／`cos`／`tan`／`asin`／`acos`／`atan`）、括弧です。
  * システム変数は `${CURRENT_LOOP_COUNT}` のように大文字で記述します。
+ *
+ * 三角関数の角度単位は度数法です。Minecraft の yaw／pitch と同じ単位に揃え、
+ * 利用者がラジアン換算を意識しないようにします。逆三角関数の戻り値も度です。
  */
 object NumericExpression {
+    /** 対応する三角関数名です。小文字で記述します。 */
+    val TRIGONOMETRIC_FUNCTIONS: Set<String> = setOf("sin", "cos", "tan", "asin", "acos", "atan")
     /**
      * パーサーの失敗理由を表示文言から分離します。
      *
@@ -55,12 +63,24 @@ object NumericExpression {
 
         /** Vanilla exporterがscoreboard演算へ写像できるよう、式を後置記法で公開します。 */
         internal fun postfix(): List<PostfixToken> = buildList { root.appendPostfix(this) }
+
+        /**
+         * 後置記法がバニラscoreboardへ写像可能かを返します。
+         *
+         * 四則演算と単項マイナスだけが対象であり、べき乗・三角関数はバニラに
+         * 同等概念がないため出力側で明示エラーにします。
+         */
+        internal fun isVanillaLowerable(): Boolean {
+            val tokens = runCatching { postfix() }.getOrNull() ?: return false
+            return tokens.none { it is PostfixToken.Function || (it is PostfixToken.Operator && it.value == '^') }
+        }
     }
 
     internal sealed interface PostfixToken {
         data class Literal(val value: Double) : PostfixToken
         data class Reference(val name: String, val temporary: Boolean = false) : PostfixToken
         data class Operator(val value: Char) : PostfixToken
+        data class Function(val name: String) : PostfixToken
     }
 
     fun parse(raw: String): ParseResult {
@@ -86,10 +106,12 @@ object NumericExpression {
     private sealed interface Token {
         data class Number(val value: Double) : Token
         data class Name(val value: String, val temporary: Boolean = false) : Token
+        data class Function(val name: String) : Token
         data object Plus : Token
         data object Minus : Token
         data object Multiply : Token
         data object Divide : Token
+        data object Power : Token
         data object LeftParen : Token
         data object RightParen : Token
         data object End : Token
@@ -139,22 +161,46 @@ object NumericExpression {
             }
         }
 
-        private fun parseUnary(): Expr = when (peek()) {
-            Token.Plus -> {
+        /**
+         * べき乗を右結合で解析します。
+         *
+         * 底は単項演算を含まない一次式だけを受け、`-2^2` は `-(2^2)` と読みます。
+         * 指数側は単項演算を許可するため `2^-3` も書けます。`2^3^2` は
+         * `2^(3^2)` になります。
+         */
+        private fun parsePower(): Expr {
+            val base = parsePrimary()
+            return if (peek() == Token.Power) {
                 advance()
-                parseUnary()
+                Binary('^', base, parseUnary())
+            } else base
+        }
+
+        private fun parseUnary(): Expr {
+            val head = peek()
+            return when (head) {
+                Token.Plus -> {
+                    advance()
+                    parseUnary()
+                }
+                Token.Minus -> {
+                    advance()
+                    UnaryMinus(parseUnary())
+                }
+                else -> parsePower()
             }
-            Token.Minus -> {
-                advance()
-                UnaryMinus(parseUnary())
-            }
-            else -> parsePrimary()
         }
 
         private fun parsePrimary(): Expr {
             return when (val token = advance()) {
                 is Token.Number -> Literal(token.value)
                 is Token.Name -> Name(token.value, token.temporary)
+                is Token.Function -> {
+                    if (advance() !is Token.LeftParen) fail(ErrorCode.OPERAND_REQUIRED)
+                    FunctionCall(token.name, parseAdditive()).also {
+                        if (advance() !is Token.RightParen) fail(ErrorCode.UNCLOSED_PARENTHESIS)
+                    }
+                }
                 Token.LeftParen -> parseAdditive().also {
                     if (advance() !is Token.RightParen) fail(ErrorCode.UNCLOSED_PARENTHESIS)
                 }
@@ -189,6 +235,10 @@ object NumericExpression {
                 operand.appendPostfix(output)
                 output += PostfixToken.Operator('~')
             }
+            is FunctionCall -> {
+                argument.appendPostfix(output)
+                output += PostfixToken.Function(name)
+            }
             is Binary -> {
                 left.appendPostfix(output)
                 right.appendPostfix(output)
@@ -214,6 +264,33 @@ object NumericExpression {
         override fun temporaryReferences(): Set<String> = operand.temporaryReferences()
     }
 
+    /**
+     * 三角関数呼び出しです。角度単位は度数法に固定します。
+     *
+     * `sin`／`cos`／`tan` は度をラジアンへ変換して評価し、`asin`／`acos`／
+     * `atan` の戻り値は度で返します。定義域外（例: `asin(2)`）や非有限結果は
+     * null（解決失敗）として扱い、ゼロ除算と同じ契約にします。
+     */
+    private data class FunctionCall(val name: String, val argument: Expr) : Expr {
+        override fun evaluate(resolve: (String, Boolean) -> Double?): Double? {
+            val value = argument.evaluate(resolve) ?: return null
+            if (!value.isFinite()) return null
+            return when (name) {
+                "sin" -> kotlin.math.sin(Math.toRadians(value))
+                "cos" -> kotlin.math.cos(Math.toRadians(value))
+                "tan" -> kotlin.math.tan(Math.toRadians(value))
+                "asin" -> Math.toDegrees(kotlin.math.asin(value))
+                "acos" -> Math.toDegrees(kotlin.math.acos(value))
+                "atan" -> Math.toDegrees(kotlin.math.atan(value))
+                else -> null
+            }?.takeIf(Double::isFinite)
+        }
+
+        override fun references(): Set<String> = argument.references()
+
+        override fun temporaryReferences(): Set<String> = argument.temporaryReferences()
+    }
+
     private data class Binary(val operator: Char, val left: Expr, val right: Expr) : Expr {
         override fun evaluate(resolve: (String, Boolean) -> Double?): Double? {
             val lhs = left.evaluate(resolve) ?: return null
@@ -223,6 +300,7 @@ object NumericExpression {
                 '-' -> lhs - rhs
                 '*' -> lhs * rhs
                 '/' -> if (rhs == 0.0) null else lhs / rhs
+                '^' -> lhs.pow(rhs)
                 else -> null
             }?.takeIf(Double::isFinite)
         }
@@ -255,6 +333,10 @@ object NumericExpression {
                     result += Token.Divide
                     index++
                 }
+                '^' -> {
+                    result += Token.Power
+                    index++
+                }
                 '(' -> {
                     result += Token.LeftParen
                     index++
@@ -272,6 +354,13 @@ object NumericExpression {
                             result += Token.Number(number)
                             index = numberEnd
                         } else {
+                            val functionEnd = scanFunctionName(source, index)
+                            if (functionEnd != null) {
+                                val name = source.substring(index, functionEnd).lowercase()
+                                result += Token.Function(name)
+                                index = functionEnd
+                                continue
+                            }
                             val nameEnd = scanName(source, index)
                             val tempEnd = if (nameEnd == null) scanTemporaryName(source, index) else null
                             if (nameEnd == null && tempEnd == null) {
@@ -303,8 +392,25 @@ object NumericExpression {
         return result
     }
 
-    private fun scanNumber(source: String, start: Int): Int? {
-        val suffix = source.substring(start).takeIf {
+    /**
+     * 三角関数名の終端位置を返します。
+     *
+     * 英字の連続が `(` に続く場合だけ関数として扱い、対応表にない名前は
+     * 関数にしません（後段で文字不正として失敗します）。`${...}`／`%{...}%`
+     * 参照と衝突しないよう、`$`／`%` 開始はここでは扱いません。
+     */
+    private fun scanFunctionName(source: String, start: Int): Int? {
+        if (!source[start].isLetter()) return null
+        var end = start
+        while (end < source.length && source[end].isLetter()) end++
+        if (end == start) return null
+        val name = source.substring(start, end).lowercase()
+        if (name !in TRIGONOMETRIC_FUNCTIONS) return null
+        if (source.getOrNull(end) != '(') return null
+        return end
+    }
+
+    private fun scanNumber(source: String, start: Int): Int? {        val suffix = source.substring(start).takeIf {
             it.startsWith('.') || it.firstOrNull()?.isDigit() == true
         } ?: return null
         val match = Regex("(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?").find(suffix)

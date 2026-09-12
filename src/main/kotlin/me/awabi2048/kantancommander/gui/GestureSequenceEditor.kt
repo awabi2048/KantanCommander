@@ -287,6 +287,7 @@ enum class GestureSettingScreen {
     ENTITY_TAG_OPERATION,
     VARIABLE_SCOPE,
     VARIABLE_NAME,
+    VARIABLE_PROPERTY,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
@@ -6753,6 +6754,14 @@ class GestureSequenceEditor(
                         } else null
                     }
                 }
+            }
+            // #3: 詳細値は参照元の型で取得できる候補から選択します。
+            GestureSettingScreen.VARIABLE_PROPERTY -> {
+                if (group != "property") return
+                if (me.awabi2048.kantancommander.model.ValueProperties.definition(value) == null) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "property", value)
+                    }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
                 if (group != "changeMode") return

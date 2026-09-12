@@ -47,6 +47,7 @@ import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.variableScope
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.ParticleGeometry
@@ -2257,6 +2258,20 @@ class GestureLowerPanel(
 
 
 
+    /**
+     * issue #3 の参照元変数の定義型を解決します。
+     *
+     * WORLD scope は永続定義表から確定します。EXECUTION scope はフロー解析の
+     * 定義表を画面側で持たないため未確定（null）とし、全候補を提示します。
+     * 不適合の選択は検証層で拒否します。
+     */
+    private fun resolvePropertySourceType(node: CommandNode, context: CommandSettingContext): ValueType? {
+        val source = node.string("propertySource").takeIf(String::isNotBlank) ?: return null
+        if (node.variableScope() != VariableScope.WORLD) return null
+        val worldId = variableWorldIdFor(context.scriptId) ?: return null
+        return plugin.variables.definitions(worldId)[source]?.type
+    }
+
     /** 変数の型名を、ノード設定と同じ表示キーで解決します。 */
     private fun variableTypeName(player: Player, type: ValueType): String = KcI18n.text(
         player,
@@ -3596,7 +3611,10 @@ class GestureLowerPanel(
         GestureSettingScreen.VARIABLE_OPERATION -> {
             val type = runCatching { ValueType.valueOf(node.string("type", ValueType.NUMBER.name)) }
                 .getOrDefault(ValueType.NUMBER)
-            CommandSettingsModel.allowedVariableOperations(type).map { operation ->
+            // #22: ENTITY scope は事前DEFINEを要求しないため、定義操作を提示しません。
+            val operations = CommandSettingsModel.allowedVariableOperations(type)
+                .filter { node.variableScope() != VariableScope.ENTITY || it != VariableOperation.DEFINE }
+            operations.map { operation ->
                 SettingChoice(
                     "operation:${operation.name}",
                     KcI18n.text(player, operationLabel(operation)),
@@ -3605,14 +3623,38 @@ class GestureLowerPanel(
             }
         }
         GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
-            // 文字列型では計算式を適用できないため、代入のみを提供します。
-            val isString = node.string("type", ValueType.NUMBER.name) == ValueType.STRING.name
-            if (isString) {
-                listOf(SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), explicitSelected(node, fieldKey, context.role, true)))
-            } else {
-                listOf(
-                    SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), explicitSelected(node, fieldKey, context.role, node.string("changeMode", "ASSIGN") == "ASSIGN")),
-                    SettingChoice("changeMode:CALCULATE", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE), explicitSelected(node, fieldKey, context.role, node.string("changeMode", "ASSIGN") == "CALCULATE")),
+            // #3: 値生成方法は型で出し分けます。計算式と乱数はNUMBERだけ、
+            // 代入と詳細値取得は全型で提供します。
+            val type = ValueType.parse(node.string("type")) ?: ValueType.NUMBER
+            val current = node.string("changeMode", "ASSIGN")
+            fun choice(mode: VariableChangeMode, label: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>) =
+                SettingChoice(
+                    "changeMode:${mode.name}",
+                    KcI18n.text(player, label),
+                    explicitSelected(node, fieldKey, context.role, current == mode.name),
+                )
+            buildList {
+                add(choice(VariableChangeMode.ASSIGN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN))
+                if (type == ValueType.NUMBER) {
+                    add(choice(VariableChangeMode.CALCULATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE))
+                }
+                add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
+                if (type == ValueType.NUMBER) {
+                    add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                }
+            }
+        }
+        // #3: 詳細値は参照元の型で取得できる候補だけを提示します。参照元が
+        // 未確定の場合は全候補を提示し、検証層で不適合を拒否します。
+        GestureSettingScreen.VARIABLE_PROPERTY -> {
+            val candidates = resolvePropertySourceType(node, context)
+                ?.let { me.awabi2048.kantancommander.model.ValueProperties.forSource(it) }
+                ?: me.awabi2048.kantancommander.model.ValueProperties.ALL
+            candidates.map { definition ->
+                SettingChoice(
+                    "property:${definition.id}",
+                    definition.id,
+                    explicitSelected(node, fieldKey, context.role, node.string("property") == definition.id),
                 )
             }
         }

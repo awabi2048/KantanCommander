@@ -3501,6 +3501,13 @@ object EditorMenuLayout {
         CommandType.VARIABLE -> listOf(
             field("scope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE, Material.ENDER_EYE) { displayVariableScope(it.string("scope")) },
             field("operation", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.REDSTONE) { displayVariableOperation(it.string("operation")) },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG),
             field("type", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) { displayValueType(it.string("type")) },
             field("changeMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.COMPARATOR,
@@ -3509,6 +3516,34 @@ object EditorMenuLayout {
             ) { displayVariableChangeMode(it.string("changeMode", "ASSIGN")) },
             field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
             field("source", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SOURCE, Material.NAME_TAG),
+            field(
+                "propertySource",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_SOURCE,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+            ),
+            field(
+                "property",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_PROPERTY,
+                Material.TARGET,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+            ) { displayLiteral(it.string("property")) },
+            field(
+                "randomMin",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANDOM_MIN,
+                Material.COMPARATOR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+            ),
+            field(
+                "randomMax",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANDOM_MAX,
+                Material.COMPARATOR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+            ),
         ) + typedValueSubFields(
             node ?: CommandNode(type = CommandType.VARIABLE),
             ValueType.parse(node?.string("type")) ?: ValueType.NUMBER,
@@ -3883,6 +3918,8 @@ private fun displayVariableChangeMode(value: String) = runCatching { VariableCha
     DisplayValue.Localized(when (it) {
         VariableChangeMode.ASSIGN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN
         VariableChangeMode.CALCULATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE
+        VariableChangeMode.PROPERTY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY
+        VariableChangeMode.RANDOM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM
     })
 } ?: displayUnset()
 

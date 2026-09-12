@@ -1541,6 +1541,45 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `power and trigonometric calculations are rejected for vanilla export`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
+
+        fun calculationScript(name: String, expression: String): me.awabi2048.kantancommander.model.DiskScript {
+            val script = store.create(UUID.randomUUID(), name)
+            val variable = GraphEditor.append(script.graph, CommandType.VARIABLE)
+            variable.params.putAll(
+                mapOf(
+                    "name" to "counter",
+                    "type" to ValueType.NUMBER.name,
+                    "operation" to VariableOperation.CHANGE.name,
+                    "changeMode" to "CALCULATE",
+                    "value" to expression,
+                )
+            )
+            return script
+        }
+
+        val power = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                calculationScript("power", "\${counter} ^ 2"),
+                mapOf("counter" to ValueType.NUMBER),
+            ),
+        )
+        assertTrue(power.errors.any { it.contains("べき乗・三角関数") })
+
+        val trig = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                calculationScript("trig", "sin(30) + \${counter}"),
+                mapOf("counter" to ValueType.NUMBER),
+            ),
+        )
+        assertTrue(trig.errors.any { it.contains("べき乗・三角関数") })
+    }
+
+    @Test
     fun `decimal condition output rejects unsupported fixed point range`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))

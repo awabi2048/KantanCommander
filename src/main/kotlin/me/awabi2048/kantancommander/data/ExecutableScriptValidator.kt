@@ -1587,6 +1587,159 @@ object ExecutableScriptValidator {
      * - COPY: 複写元は同一scope内で定義済みであること、複写先の定義型との一致を検証します。
      * - DELETE: 定義済みのみ。存在しない名前は拒否します。
      */
+    /**
+     * issue #22 のEntity変数操作を検証します。
+     *
+     * 通常の対象形式と文字列の変数名で操作し、専用の固定選択や事前DEFINEを
+     * 要求しません。CHANGE／COPY／DELETE の存在確認は解決対象が実行時に決まる
+     * ため静的には行わず、値の形状と生成方法だけを検証します。生成方法の検証は
+     * scope 非依存の共通検証へ委ねます。
+     */
+    private fun validateEntityVariable(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        operation: VariableOperation?,
+        mode: VariableChangeMode?,
+        insideForBody: Boolean,
+        temporaryDefinitions: Map<String, ValueType>?,
+    ) {
+        if (node.targetSpec == null) {
+            errors += nodeError(node, path, setOf("target"), "対象が未設定です")
+        }
+        val name = node.string("name")
+        if (!CommandValueRules.isVariableName(name)) {
+            errors += nodeError(node, path, setOf("name"), "変数名が不正です")
+        }
+        if (operation == null) {
+            errors += nodeError(node, path, setOf("operation"), "変数操作が不正です")
+            return
+        }
+        if (operation == VariableOperation.DEFINE) {
+            errors += nodeError(node, path, setOf("operation"), "エンティティ変数に定義操作は不要です")
+            return
+        }
+        if (mode == null) {
+            errors += nodeError(node, path, setOf("changeMode"), "値の生成方法が不正です")
+            return
+        }
+        // COPY の複写元は同一Entity内の変数のため、存在確認は実行時に行います。
+        if (operation == VariableOperation.COPY) {
+            val source = node.string("source")
+            if (!CommandValueRules.isVariableName(source)) {
+                errors += nodeError(node, path, setOf("source"), "複写元変数名が不正です")
+            }
+            return
+        }
+        if (operation == VariableOperation.DELETE) return
+        // ASSIGN ではGUI上のtypeを使い、それ以外は生成結果の型を採用します。
+        val targetType = if (mode == VariableChangeMode.ASSIGN) {
+            val parsed = ValueType.parse(node.string("type"))
+            if (parsed == null) {
+                errors += nodeError(node, path, setOf("type"), "変数型が不正です")
+                return
+            }
+            parsed
+        } else null
+        validateVariableGeneration(
+            node,
+            targetType,
+            mode,
+            VariableScope.ENTITY,
+            name,
+            path,
+            errors,
+            null,
+            insideForBody,
+            temporaryDefinitions,
+        )
+    }
+
+    /**
+     * issue #3 の値生成方法を検証します。
+     *
+     * targetType は ASSIGN／CALCULATE モードの対象型です。PROPERTY／RANDOM モードでは
+     * 生成結果の型を採用するため null で呼び出します。scope は複写元・参照元の
+     * 定義表を選択するために使います。
+     */
+    private fun validateVariableGeneration(
+        node: CommandNode,
+        targetType: ValueType?,
+        mode: VariableChangeMode,
+        scope: VariableScope,
+        name: String,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, TypedValue>?,
+        insideForBody: Boolean,
+        temporaryDefinitions: Map<String, ValueType>?,
+    ) {
+        when (mode) {
+            VariableChangeMode.ASSIGN -> {
+                val type = targetType ?: return
+                validateTypedNodeValue(node, type, path, errors, variableDefinitions, temporaryDefinitions)
+            }
+            VariableChangeMode.CALCULATE -> {
+                if (targetType != null && targetType != ValueType.NUMBER) {
+                    errors += nodeError(node, path, setOf("changeMode"), "数値変数以外へ計算式を適用できません")
+                    return
+                }
+                validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody, temporaryDefinitions)
+            }
+            VariableChangeMode.PROPERTY -> {
+                val source = node.string("propertySource")
+                if (!CommandValueRules.isVariableName(source)) {
+                    errors += nodeError(node, path, setOf("propertySource"), "参照元変数名が不正です")
+                    return
+                }
+                val sourceType = when (scope) {
+                    VariableScope.WORLD -> variableDefinitions?.get(source)?.type
+                    VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(source))
+                    VariableScope.ENTITY -> null
+                }
+                val hasTables = when (scope) {
+                    // #22: ENTITY scope は定義表を持たないため、存在確認は実行時に行います。
+                    VariableScope.ENTITY -> false
+                    else -> variableDefinitions != null || temporaryDefinitions != null
+                }
+                if (hasTables && sourceType == null) {
+                    errors += nodeError(node, path, setOf("propertySource"), "参照元変数が未定義です: $source")
+                    return
+                }
+                val propertyId = node.string("property")
+                val definition = me.awabi2048.kantancommander.model.ValueProperties.definition(propertyId)
+                if (definition == null) {
+                    errors += nodeError(node, path, setOf("property"), "詳細値が不正です")
+                    return
+                }
+                if (sourceType != null && sourceType !in definition.sources) {
+                    errors += nodeError(node, path, setOf("property"), "参照元の型から取得できない詳細値です: $propertyId")
+                    return
+                }
+                if (targetType != null && sourceType != null && definition.result != targetType) {
+                    errors += nodeError(node, path, setOf("property"), "取得値の型が変数の型と一致しません: $propertyId")
+                }
+            }
+            VariableChangeMode.RANDOM -> {
+                if (targetType != null && targetType != ValueType.NUMBER) {
+                    errors += nodeError(node, path, setOf("changeMode"), "数値変数以外へ乱数を適用できません")
+                    return
+                }
+                val min = node.string("randomMin").toDoubleOrNull()?.takeIf(Double::isFinite)
+                val max = node.string("randomMax").toDoubleOrNull()?.takeIf(Double::isFinite)
+                if (min == null) {
+                    errors += nodeError(node, path, setOf("randomMin"), "乱数の最小値が不正です")
+                }
+                if (max == null) {
+                    errors += nodeError(node, path, setOf("randomMax"), "乱数の最大値が不正です")
+                }
+                if (min != null && max != null && min > max) {
+                    errors += nodeError(node, path, setOf("randomMin"), "乱数の最小値は最大値を超えられません")
+                }
+            }
+        }
+    }
+
     private fun validateVariable(
         node: CommandNode,
         path: String,
@@ -1600,15 +1753,21 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("scope"), "変数の範囲が不正です")
             return
         }
+        val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }.getOrNull()
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }.getOrNull()
+        // #22: ENTITY scope は事前DEFINEを要求しません。対象指定と名前・値の
+        // 妥当性だけを検証し、存在確認は実行時に行います。
         if (scope == VariableScope.ENTITY) {
-            errors += nodeError(node, path, setOf("scope"), "エンティティ変数は未対応です")
+            validateEntityVariable(node, path, errors, operation, mode, insideForBody, temporaryDefinitions)
             return
         }
         val name = node.string("name")
         if (!CommandValueRules.isVariableName(name)) errors += nodeError(node, path, setOf("name"), "変数名が不正です")
         val type = ValueType.parse(node.string("type"))
-        val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }.getOrNull()
-        if (type == null) errors += nodeError(node, path, setOf("type"), "変数型が不正です")
+        // PROPERTY／RANDOM モードでは生成結果の型を採用するため、GUI上のtypeは参照しません。
+        if (type == null && (mode == null || mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE)) {
+            errors += nodeError(node, path, setOf("type"), "変数型が不正です")
+        }
         if (operation == null) errors += nodeError(node, path, setOf("operation"), "変数操作が不正です")
         if (operation == null) return
         // scope ごとの定義型を解決します。WORLD は永続定義表、EXECUTION は
@@ -1625,22 +1784,44 @@ object ExecutableScriptValidator {
         }
         when (operation) {
             VariableOperation.DEFINE -> {
-                if (type == null) return
                 if (definedType(name) != null) {
                     errors += nodeError(node, path, setOf("name"), "同名の変数は既に定義されています")
                 }
-                validateTypedNodeValue(node, type, path, errors, variableDefinitions, temporaryDefinitions)
-            }
-            VariableOperation.SET -> {
-                // 定義済みの型を正とします。未定義の場合はGUI上のtypeで暗黙定義します。
-                val effective = definedType(name)
-                    ?: type
-                    ?: return
-                if (type != null && effective != type && definedType(name) != null) {
-                    errors += nodeError(node, path, setOf("type"), "変数の型が一致しません: $name")
+                if (mode == null) {
+                    errors += nodeError(node, path, setOf("changeMode"), "値の生成方法が不正です")
                     return
                 }
-                validateTypedNodeValue(node, effective, path, errors, variableDefinitions, temporaryDefinitions)
+                // PROPERTY／RANDOM モードでは生成結果の型を採用するため、GUI上の
+                // type は参照しません。ASSIGN／CALCULATE では型が必須です。
+                val effective = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
+                    type ?: run {
+                        errors += nodeError(node, path, setOf("type"), "変数型が不正です")
+                        return
+                    }
+                } else null
+                validateVariableGeneration(node, effective, mode, scope, name, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+            }
+            VariableOperation.SET -> {
+                if (mode == null) {
+                    errors += nodeError(node, path, setOf("changeMode"), "値の生成方法が不正です")
+                    return
+                }
+                // 定義済みの型を正とします。未定義の場合はGUI上のtypeで暗黙定義します。
+                // PROPERTY／RANDOM モードでは生成結果の型を採用します。
+                val defined = definedType(name)
+                val effective = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
+                    val candidate = defined ?: type
+                    if (candidate == null) {
+                        errors += nodeError(node, path, setOf("type"), "変数型が不正です")
+                        return
+                    }
+                    if (type != null && candidate != type && defined != null) {
+                        errors += nodeError(node, path, setOf("type"), "変数の型が一致しません: $name")
+                        return
+                    }
+                    candidate
+                } else null
+                validateVariableGeneration(node, effective, mode, scope, name, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
             }
             VariableOperation.CHANGE -> {
                 val defined = definedType(name)
@@ -1650,32 +1831,33 @@ object ExecutableScriptValidator {
                     }
                     return
                 }
-                val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }.getOrNull()
                 if (mode == null) {
                     errors += nodeError(node, path, setOf("changeMode"), "変数の変更内容が不正です")
                     return
                 }
-                if (defined == ValueType.STRING && mode == VariableChangeMode.CALCULATE) {
-                    errors += nodeError(node, path, setOf("changeMode"), "文字列変数へ計算式を適用できません")
+                // 定義型が確定している場合は生成結果との整合を確認します。配置前など
+                // 定義表がない場合は構文検証だけを行い、型の確定は実行時へ委ねます。
+                val effective = defined
+                if (defined != null && mode == VariableChangeMode.CALCULATE && defined != ValueType.NUMBER) {
+                    errors += nodeError(node, path, setOf("changeMode"), "数値変数以外へ計算式を適用できません")
                     return
                 }
-                if (defined == ValueType.NUMBER && mode == VariableChangeMode.CALCULATE) {
-                    validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody, temporaryDefinitions)
+                if (defined != null && mode == VariableChangeMode.RANDOM && defined != ValueType.NUMBER) {
+                    errors += nodeError(node, path, setOf("changeMode"), "数値変数以外へ乱数を適用できません")
                     return
                 }
-                val effective = defined ?: ValueType.STRING
                 if (defined == null && variableDefinitions == null && temporaryDefinitions == null) {
-                    // 配置前は対象変数の型を照会できないため、代入は文字列化して
-                    // 実行時へ渡し、計算式だけ構文検証します。
                     if (mode == VariableChangeMode.CALCULATE) {
                         validateNumericExpression(node.string("value"), name, variableDefinitions, node, path, errors, insideForBody, temporaryDefinitions)
+                    } else if (mode == VariableChangeMode.ASSIGN) {
+                        validateTypedNodeValue(node, ValueType.STRING, path, errors, variableDefinitions, temporaryDefinitions)
                     } else {
-                        validateTypedNodeValue(node, effective, path, errors, variableDefinitions, temporaryDefinitions)
+                        validateVariableGeneration(node, null, mode, scope, name, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
                     }
                     return
                 }
-                if (defined != null) {
-                    validateTypedNodeValue(node, defined, path, errors, variableDefinitions, temporaryDefinitions)
+                if (effective != null || mode == VariableChangeMode.PROPERTY || mode == VariableChangeMode.RANDOM) {
+                    validateVariableGeneration(node, effective, mode, scope, name, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
                 }
             }
             VariableOperation.COPY -> {

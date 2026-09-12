@@ -31,6 +31,7 @@ import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.variableScope
@@ -123,6 +124,7 @@ enum class CommandSettingEditor {
     ENTITY_TAG_OPERATION,
     VARIABLE_SCOPE,
     VARIABLE_NAME,
+    VARIABLE_PROPERTY,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
@@ -458,9 +460,12 @@ object CommandSettingsModel {
             }
             // #2: 操作内容ごとに必要な項目だけを表示します。scope・name・operation は
             // 常に表示し、type・changeMode・value・source は操作で切り替えます。
-            // - DEFINE: 型＋初期値。changeMode・source は不要です。
-            // - SET: 型＋値。changeMode・source は不要です。
-            // - CHANGE: 値＋changeMode（NUMBERのみ）。型は定義側を正とします。
+            // #3: 値生成方法（changeMode）は値を書き込む3操作で表示し、生成方法別の
+            // 項目（propertySource・property・randomMin・randomMax）は対応する
+            // 生成方法のときだけ表示します。
+            // - DEFINE: 型＋初期値。COPY／DELETE 用の項目は不要です。
+            // - SET: 型＋値。COPY／DELETE 用の項目は不要です。
+            // - CHANGE: 値＋changeMode。型は定義側を正とします。
             // - COPY: 複写元のみ。型・値・changeMode は不要です。
             // - DELETE: 項目なし（name だけで確定します）。
             node.type == CommandType.VARIABLE -> {
@@ -468,11 +473,15 @@ object CommandSettingsModel {
                     .getOrDefault(VariableOperation.DEFINE)
                 fields.filterNot { field ->
                     when (operation) {
-                        VariableOperation.DEFINE -> field.key == "changeMode" || field.key == "source"
-                        VariableOperation.SET -> field.key == "changeMode" || field.key == "source"
+                        VariableOperation.DEFINE -> field.key == "source"
+                        VariableOperation.SET -> field.key == "source"
                         VariableOperation.CHANGE -> field.key == "type" || field.key == "source"
-                        VariableOperation.COPY -> field.key == "type" || field.key == "changeMode" || field.key == "value"
-                        VariableOperation.DELETE -> field.key == "type" || field.key == "changeMode" || field.key == "value" || field.key == "source"
+                        VariableOperation.COPY -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
+                            field.key == "propertySource" || field.key == "property" ||
+                            field.key == "randomMin" || field.key == "randomMax"
+                        VariableOperation.DELETE -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
+                            field.key == "source" || field.key == "propertySource" || field.key == "property" ||
+                            field.key == "randomMin" || field.key == "randomMax"
                     }
                 }
             }
@@ -574,11 +583,13 @@ object CommandSettingsModel {
      * issue #2 の変数操作コマンドの項目可視性です。
      *
      * scope・operation・name は常に表示します。type・changeMode・value・source と
-     * 型別項目は操作内容と現在の型で切り替えます。保存値を変更せず表示だけを
-     * 絞るため、両GUIで同じ判定を使います。
+     * #3 の生成方法別項目は操作内容・値生成方法・現在の型で切り替えます。保存値を
+     * 変更せず表示だけを絞るため、両GUIで同じ判定を使います。
      */
     fun isVariableFieldVisible(node: CommandNode, fieldKey: String): Boolean {
         if (fieldKey in setOf("scope", "operation", "name")) return true
+        // #22: 対象は ENTITY scope でのみ表示します。
+        if (fieldKey == "target") return node.variableScope() == VariableScope.ENTITY
         val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
             .getOrDefault(VariableOperation.DEFINE)
         if (fieldKey == "source") return operation == VariableOperation.COPY
@@ -586,18 +597,29 @@ object CommandSettingsModel {
             operation == VariableOperation.SET ||
             operation == VariableOperation.CHANGE
         if (!needsValue) return false
-        if (fieldKey == "type") return operation == VariableOperation.DEFINE || operation == VariableOperation.SET
-        if (fieldKey == "changeMode") return operation == VariableOperation.CHANGE
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode", VariableChangeMode.ASSIGN.name)) }
+            .getOrDefault(VariableChangeMode.ASSIGN)
+        if (fieldKey == "type") {
+            if (operation == VariableOperation.CHANGE) return false
+            // PROPERTY／RANDOM モードでは生成結果の型を採用するため型欄を隠します。
+            return mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE
+        }
+        if (fieldKey == "changeMode") return true
+        // #3: 生成方法別の項目は対応する生成方法のときだけ表示します。
+        if (fieldKey == "propertySource" || fieldKey == "property") return mode == VariableChangeMode.PROPERTY
+        if (fieldKey == "randomMin" || fieldKey == "randomMax") return mode == VariableChangeMode.RANDOM
         val type = ValueType.parse(node.string("type")) ?: return false
         return when (fieldKey) {
-            "value" -> type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN
-            "location" -> type == ValueType.LOCATION
-            "x", "y", "z" -> type == ValueType.VECTOR
-            "item" -> type == ValueType.ITEM
-            "block" -> type == ValueType.BLOCK
-            "entity" -> type == ValueType.ENTITY
-            "sound", "soundParameters" -> type == ValueType.SOUND
-            "effect", "level", "seconds" -> type == ValueType.EFFECT
+            "value" -> (mode == VariableChangeMode.ASSIGN &&
+                (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN)) ||
+                (mode == VariableChangeMode.CALCULATE && type == ValueType.NUMBER)
+            "location" -> mode == VariableChangeMode.ASSIGN && type == ValueType.LOCATION
+            "x", "y", "z" -> mode == VariableChangeMode.ASSIGN && type == ValueType.VECTOR
+            "item" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ITEM
+            "block" -> mode == VariableChangeMode.ASSIGN && type == ValueType.BLOCK
+            "entity" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ENTITY
+            "sound", "soundParameters" -> mode == VariableChangeMode.ASSIGN && type == ValueType.SOUND
+            "effect", "level", "seconds" -> mode == VariableChangeMode.ASSIGN && type == ValueType.EFFECT
             else -> true
         }
     }
@@ -805,10 +827,14 @@ object CommandSettingsModel {
             }
             CommandType.VARIABLE -> when (fieldKey) {
                 "operation", "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
                 "scope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "propertySource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "property" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                "randomMin", "randomMax" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
                 "entityId", "sound", "soundParameters", "volume", "effect", "level", "seconds" ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
@@ -1024,6 +1050,8 @@ object CommandSettingsModel {
         } else text()
         CommandType.VARIABLE -> when (fieldKey) {
             "scope" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_SCOPE)
+            // #22: ENTITY scope の対象は通常の対象形式で選択します。
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
             // #2: WORLD scope の変数名は定義済み候補から選択し、EXECUTION scope の
             // 変数名は実行経路で有効範囲が変わるため文字列入力で指定します。
             // scope 欄のない旧ノードは WORLD として読み替えます。
@@ -1036,6 +1064,10 @@ object CommandSettingsModel {
             "operation" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_OPERATION)
             "changeMode" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_CHANGE_MODE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
+            // #3: 参照元は変数名の自由入力、詳細値は候補選択、乱数範囲は数値入力です。
+            "propertySource" -> text()
+            "property" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_PROPERTY)
+            "randomMin", "randomMax" -> text()
             "location" -> CommandSettingDescriptor(CommandSettingEditor.LOCATION, CommandSettingRole.TEMPORARY_LOCATION)
             "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
             else -> text()

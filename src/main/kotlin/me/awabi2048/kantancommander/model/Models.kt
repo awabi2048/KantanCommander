@@ -688,8 +688,18 @@ fun CommandNode.toggleControlBlockState(state: ControlBlockStateKind) {
  */
 enum class VariableOperation { DEFINE, SET, CHANGE, COPY, DELETE }
 
-/** CHANGE時に数値へ適用する詳細操作です。STRINGではASSIGNだけを許可します。 */
-enum class VariableChangeMode { CALCULATE, ASSIGN }
+/**
+ * 値を書き込む操作の値生成方法です。
+ *
+ * - ASSIGN: 値欄・型別設定のリテラル（テンプレート参照を含む）を代入します。
+ * - CALCULATE: 数値計算式を評価して代入します（NUMBERのみ）。
+ * - PROPERTY: 別変数の詳細値を型安全なadapterで取得して代入します（#3）。
+ * - RANDOM: 乱数を生成して代入します（#3、NUMBERのみ）。
+ *
+ * #2 では CHANGE（NUMBER）の詳細として導入し、#3 で DEFINE／SET の値生成へ
+ * 拡張しました。COPY／DELETE では使いません。
+ */
+enum class VariableChangeMode { CALCULATE, ASSIGN, PROPERTY, RANDOM }
 
 data class SavedLocation(
     val x: Double,
@@ -819,7 +829,9 @@ enum class CommandType(
      *
      * scope（EXECUTION／WORLD）で対象storeを切り替え、operation で操作内容を
      * 切り替えます。旧ノードに scope がない場合は WORLD として読み替えます。
-     * source は COPY 時の複写元変数名です。
+     * #3 の値生成方法は changeMode（ASSIGN／CALCULATE／PROPERTY／RANDOM）で
+     * 切り替え、PROPERTY は propertySource＋property 欄、RANDOM は
+     * randomMin／randomMax 欄を使います。source は COPY 時の複写元変数名です。
      */
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REDSTONE, mapOf(
         "scope" to VariableScope.WORLD.name,
@@ -829,6 +841,10 @@ enum class CommandType(
         "changeMode" to VariableChangeMode.ASSIGN.name,
         "value" to "0.0",
         "source" to "",
+        "propertySource" to "",
+        "property" to "",
+        "randomMin" to "1.0",
+        "randomMax" to "6.0",
     )),
     /** 一時変数を設定します。再設定は上書きとして扱います。 */
     TEMP_SET(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET_DESCRIPTION, Material.REPEATER, mapOf(

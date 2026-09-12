@@ -15,6 +15,7 @@ import me.awabi2048.kantancommander.data.GraphLimits
 import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.data.WorldVariableStore
 import me.awabi2048.kantancommander.data.WorldVariableLifecycleListener
+import me.awabi2048.kantancommander.data.EntityVariableLifecycleListener
 import me.awabi2048.kantancommander.data.WorldVariableUsageFinder
 import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
@@ -53,7 +54,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "37139b46ea4fbf6078c7dc3bc0e0068cd3530ec18806ecbb4167977e660e507d"
+    "1758b98382af1773d0bc04a202777a482da24b3d4401cad8423c4e14f565ee2f"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -61,6 +62,9 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var placements: PlacementStore
         private set
     lateinit var variables: WorldVariableStore
+        private set
+    /** issue #22 のEntity変数storeです。PDCを永続領域に使います。 */
+    lateinit var entityVariables: me.awabi2048.kantancommander.model.EntityVariableStore
         private set
     lateinit var worldVariableUsageFinder: WorldVariableUsageFinder
         private set
@@ -181,6 +185,9 @@ class KantanCommanderPlugin : JavaPlugin() {
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(itemGrantService))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
+        entityVariables = me.awabi2048.kantancommander.model.EntityVariableStore(
+            me.awabi2048.kantancommander.model.PdcEntityVariableBackend(),
+        )
         worldVariableUsageFinder = WorldVariableUsageFinder(
             placements = { placements.all() },
             scripts = { scripts.listAll() },
@@ -262,6 +269,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
+        pm.registerEvents(EntityVariableLifecycleListener(this), this)
         pm.registerEvents(summonedEntities, this)
         pm.registerEvents(FeedbackCleanupListener(this), this)
         pm.registerEvents(me.awabi2048.kantancommander.gui.GestureHeldRefreshListener(this), this)

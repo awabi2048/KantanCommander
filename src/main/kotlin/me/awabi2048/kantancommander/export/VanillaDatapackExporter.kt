@@ -259,8 +259,26 @@ class VanillaDatapackExporter(
                         node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name &&
                         type != ValueType.NUMBER
                     ) errors += "${script.id}/${node.id}: 文字列変数へ計算式を適用できません"
+                    // #3: べき乗・三角関数はバニラscoreboardに同等概念がないため明示エラーにします。
+                    if (scope == VariableScope.WORLD &&
+                        operation == VariableOperation.CHANGE &&
+                        node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name &&
+                        type == ValueType.NUMBER
+                    ) {
+                        val parsed = NumericExpression.parse(node.string("value")).expression
+                        if (parsed == null || !parsed.isVanillaLowerable()) {
+                            errors += "${script.id}/${node.id}: べき乗・三角関数を含む計算式は完全バニラ出力に未対応です"
+                        }
+                    }
                     if (operation == VariableOperation.COPY && node.string("source").isBlank()) {
                         errors += "${script.id}/${node.id}: 複写元変数名が未設定です"
+                    }
+                    // #3: 詳細値取得・乱数は実行時の解決が必要なため、バニラには
+                    // 静的な同等概念がありません。明示エラーにします。
+                    if (node.string("changeMode") == VariableChangeMode.PROPERTY.name ||
+                        node.string("changeMode") == VariableChangeMode.RANDOM.name
+                    ) {
+                        errors += "${script.id}/${node.id}: 詳細値取得・乱数は完全バニラ出力に未対応です"
                     }
                     // #2: 単体出力の初期値埋め込みとWORLD代入はスカラー3型だけに対応します。
                     // 複合型のWORLD変数はバニラstorageへ直結しないため明示エラーにします。
@@ -1200,6 +1218,9 @@ class VanillaDatapackExporter(
     private fun isExecutionAssignVariable(node: CommandNode): Boolean {
         if (node.type != CommandType.VARIABLE) return false
         if (node.variableScopeStrict() != VariableScope.EXECUTION) return false
+        // #3: 詳細値取得・乱数は検証で拒否済みのため、専用関数展開の対象外です。
+        val mode = node.string("changeMode", VariableChangeMode.ASSIGN.name)
+        if (mode == VariableChangeMode.PROPERTY.name || mode == VariableChangeMode.RANDOM.name) return false
         return when (node.string("operation", VariableOperation.DEFINE.name)) {
             VariableOperation.DEFINE.name,
             VariableOperation.SET.name,
@@ -1921,6 +1942,9 @@ class VanillaDatapackExporter(
         if (scope == VariableScope.ENTITY) return null
         val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.DEFINE.name))
         if (scope == VariableScope.EXECUTION) return lowerExecutionVariable(node, operation)
+        // #3: 詳細値取得・乱数は検証で拒否済みのため、ここへは到達しません。
+        val mode = node.string("changeMode", VariableChangeMode.ASSIGN.name)
+        if (mode == VariableChangeMode.PROPERTY.name || mode == VariableChangeMode.RANDOM.name) return null
         val name = node.string("name")
         val storagePath = VanillaStorageNames.variablePath(name, temporary = false)
         val type = ValueType.valueOf(
@@ -1982,11 +2006,10 @@ class VanillaDatapackExporter(
      * 専用関数展開へ委ね、ここでは扱いません。
      */
     private fun lowerExecutionVariable(node: CommandNode, operation: VariableOperation): String? {
-        // CHANGE＋CALCULATE は検証で拒否するため、ここへは到達しません。
+        // CHANGE＋CALCULATE・詳細値取得・乱数は検証で拒否済みのため、ここへは到達しません。
         // 防御的に null を返し、算術展開（WORLD格納）へ流さないようにします。
-        if (operation == VariableOperation.CHANGE &&
-            node.string("changeMode", VariableChangeMode.ASSIGN.name) == VariableChangeMode.CALCULATE.name
-        ) return null
+        val mode = node.string("changeMode", VariableChangeMode.ASSIGN.name)
+        if (mode != VariableChangeMode.ASSIGN.name) return null
         val destination = temporaryStoragePath(node.string("name"))
         return when (operation) {
             VariableOperation.DEFINE -> {
@@ -2065,6 +2088,9 @@ class VanillaDatapackExporter(
                     push(destination)
                 }
                 is NumericExpression.PostfixToken.Operator -> {
+                    // #3: べき乗（^）は検証で拒否済みのため、ここへは到達しません。
+                    // 防御的に失敗として扱い、不正確な変換を行いません。
+                    if (token.value == '^') return listOf("return 0")
                     if (token.value == '~') {
                         val operand = pop() ?: return listOf("return 0")
                         lines += "scoreboard players operation $operand kc_runtime *= ${prefix}_negative kc_runtime"
@@ -2089,6 +2115,8 @@ class VanillaDatapackExporter(
                         push(lhs)
                     }
                 }
+                // #3: 三角関数は検証で拒否済みのため、ここへは到達しません。
+                is NumericExpression.PostfixToken.Function -> return listOf("return 0")
             }
         }
         val result = stack.singleOrNull() ?: return listOf("return 0")

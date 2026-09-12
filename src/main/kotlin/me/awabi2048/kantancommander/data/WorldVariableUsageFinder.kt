@@ -7,6 +7,7 @@ import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.variableScope
@@ -167,6 +168,10 @@ internal object WorldVariableReferenceScanner {
                 if (node.type == CommandType.VARIABLE && node.variableScope() == VariableScope.WORLD) {
                     add(node.string("name"))
                     if (node.string("operation") == VariableOperation.COPY.name) add(node.string("source"))
+                    // #3: 詳細値の参照元も構造化された名前欄のため明示します。
+                    if (node.string("changeMode") == VariableChangeMode.PROPERTY.name) {
+                        add(node.string("propertySource"))
+                    }
                 }
                 if (
                     node.type == CommandType.CONDITION &&

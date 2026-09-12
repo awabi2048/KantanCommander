@@ -475,11 +475,11 @@ class CommandSettingsModelTest {
         }
 
         assertEquals(
-            listOf("scope", "operation", "name", "type", "value"),
+            listOf("scope", "operation", "name", "type", "changeMode", "value"),
             keysFor(VariableOperation.DEFINE),
         )
         assertEquals(
-            listOf("scope", "operation", "name", "type", "value"),
+            listOf("scope", "operation", "name", "type", "changeMode", "value"),
             keysFor(VariableOperation.SET),
         )
         assertEquals(
@@ -515,6 +515,19 @@ class CommandSettingsModelTest {
             CommandSettingEditor.VARIABLE_NAME,
             CommandSettingsModel.descriptor(legacy, "name").editor,
         )
+    }
+
+    @Test
+    fun `entity scope exposes the target tab only for entity variables`() {
+        // #22: 対象は ENTITY scope でのみ表示します。
+        val entity = CommandType.VARIABLE.newNode().apply { params["scope"] = VariableScope.ENTITY.name }
+        assertTrue(CommandSettingsModel.visibleFields(entity).map { it.key }.contains("target"))
+        assertEquals(
+            CommandSettingEditor.TARGET,
+            CommandSettingsModel.descriptor(entity, "target").editor,
+        )
+        val world = CommandType.VARIABLE.newNode().apply { params["scope"] = VariableScope.WORLD.name }
+        assertTrue(CommandSettingsModel.visibleFields(world).map { it.key }.none { it == "target" })
     }
 
     @Test

@@ -72,6 +72,8 @@ data class TypedValue(
     /** アイテム型の素材IDと実体（Base64）です。 */
     val item: String? = null,
     val itemData: String? = null,
+    /** アイテム型の個数です。未設定時は1個として扱います。 */
+    val amount: Int? = null,
     /** ブロック型の素材IDです。 */
     val block: String? = null,
     /** ENTITY型の個体IDです。実体は保持しません。 */
@@ -103,7 +105,7 @@ data class TypedValue(
         ValueType.VECTOR -> vector != null &&
             vector.x.isFinite() && vector.y.isFinite() && vector.z.isFinite() &&
             isClearExcept("vector")
-        ValueType.ITEM -> item != null && isClearExcept("item", "itemData")
+        ValueType.ITEM -> item != null && (amount == null || amount > 0) && isClearExcept("item", "itemData", "amount")
         ValueType.BLOCK -> block != null && isClearExcept("block")
         // ENTITY は定義時点で実体がなくても保持します。死亡・別ワールド・未ロードは
         // 参照時に解決不能として扱い、後続だけをスキップできるようにします。
@@ -121,6 +123,7 @@ data class TypedValue(
         if ("vector" !in kept && vector != null) return false
         if ("item" !in kept && item != null) return false
         if ("itemData" !in kept && itemData != null) return false
+        if ("amount" !in kept && amount != null) return false
         if ("block" !in kept && block != null) return false
         if ("entityId" !in kept && entityId != null) return false
         if ("sound" !in kept && sound != null) return false

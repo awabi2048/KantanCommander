@@ -25,6 +25,7 @@ import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableRead
 import me.awabi2048.kantancommander.model.VariableStore
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
@@ -71,6 +72,7 @@ import org.bukkit.inventory.ItemStack
 import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
 import java.util.logging.Level
+import kotlin.random.Random
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.inventory.EquipmentSlot
@@ -2149,69 +2151,65 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * - DEFINE: 新規定義のみ。既存名・不明な型・値の解決失敗は失敗です。
      * - SET: 値の設定。未定義名には暗黙定義として記録し、定義済みと異なる型は
      *   拒否します（定義型を正とし、GUI上のtypeを優先しません）。
-     * - CHANGE: 定義済みの変更のみ。NUMBERでは changeMode（ASSIGN／CALCULATE）
-     *   を選択します。STRING等は ASSIGN として解決します。
+     * - CHANGE: 定義済みの変更のみ。値生成方法は changeMode で切り替えます。
      * - COPY: 同一scope内の別変数へ値を複写します。複写元の型を引き継ぎ、
      *   複写先の定義型と異なる場合は失敗します。
      * - DELETE: 定義と値を削除します。存在しない場合は失敗します。
+     *
+     * #3 の値生成方法（changeMode）は値を書き込む3操作で共有します。
+     * - ASSIGN: 値欄・型別設定のリテラルを代入します。
+     * - CALCULATE: 数値計算式を評価します（NUMBERのみ）。
+     * - PROPERTY: 別変数の詳細値を型安全に取得します。
+     * - RANDOM: 乱数を生成します（NUMBERのみ）。
      */
     private fun executeVariable(
         node: CommandNode,
         session: ExecutionSession,
     ): Boolean = runCatching {
         val scope = node.variableScope()
-        if (scope == VariableScope.ENTITY) return false
+        val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.DEFINE.name))
+        // #22: ENTITY scope は対象指定が必須であり、定義表を持ちません。
+        // 通常の対象形式と文字列の変数名で操作します。
+        if (scope == VariableScope.ENTITY) {
+            return executeEntityVariable(node, session, operation)
+        }
         val store: VariableStore = when (scope) {
             VariableScope.EXECUTION -> session.executionVariables
             VariableScope.WORLD -> WorldVariableAdapter(plugin.variables, session.worldId)
             VariableScope.ENTITY -> return false
         }
         val name = node.string("name")
-        val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.DEFINE.name))
         when (operation) {
             VariableOperation.DEFINE -> {
-                val type = ValueType.parse(node.string("type")) ?: return false
+                val mode = variableChangeMode(node)
+                val type = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
+                    ValueType.parse(node.string("type")) ?: return false
+                } else null
+                if (mode == VariableChangeMode.CALCULATE && type != ValueType.NUMBER) return false
                 if (store.definition(name) != null) return false
-                val value = resolveNodeValue(type, node, session) ?: return false
+                val value = resolveVariableGeneration(node, type, mode, store::get, session) ?: return false
                 store.define(name, value)
             }
             VariableOperation.SET -> {
                 // 定義済みの型を正とします。未定義の場合はGUI上のtypeで暗黙定義します。
-                val type = store.definition(name)
-                    ?: (ValueType.parse(node.string("type")) ?: return false)
-                val value = resolveNodeValue(type, node, session) ?: return false
+                // PROPERTY／RANDOM モードでは生成結果の型を採用します。
+                val mode = variableChangeMode(node)
+                val defined = store.definition(name)
+                val type = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
+                    defined ?: (ValueType.parse(node.string("type")) ?: return false)
+                } else null
+                if (mode == VariableChangeMode.CALCULATE && type != ValueType.NUMBER) return false
+                val value = resolveVariableGeneration(node, type, mode, store::get, session) ?: return false
                 store.set(name, value)
                 true
             }
             VariableOperation.CHANGE -> {
-                val type = store.definition(name) ?: return false
-                if (type == ValueType.NUMBER &&
-                    VariableChangeMode.valueOf(node.string("changeMode", VariableChangeMode.ASSIGN.name)) ==
-                    VariableChangeMode.CALCULATE
-                ) {
-                    val expression = NumericExpression.parse(node.string("value")).expression ?: return false
-                    val result = expression.evaluate(
-                        { reference ->
-                            if (SystemVariableNames.isSystemName(reference)) {
-                                when (reference) {
-                                    SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toDouble()
-                                    else -> null
-                                }
-                            } else plugin.variables.get(session.worldId, reference)?.numberValue
-                        },
-                        { reference ->
-                            session.executionVariables.get(reference.normalizedTemporaryName())
-                                ?.takeIf { it.type == ValueType.NUMBER }
-                                ?.numberValue?.takeIf(Double::isFinite)
-                        },
-                    ) ?: return false
-                    store.set(name, TypedValue(ValueType.NUMBER, numberValue = result))
-                    true
-                } else {
-                    val value = resolveNodeValue(type, node, session) ?: return false
-                    store.set(name, value)
-                    true
-                }
+                val defined = store.definition(name) ?: return false
+                val mode = variableChangeMode(node)
+                if (mode == VariableChangeMode.CALCULATE && defined != ValueType.NUMBER) return false
+                val value = resolveVariableGeneration(node, defined, mode, store::get, session) ?: return false
+                store.set(name, value)
+                true
             }
             VariableOperation.COPY -> {
                 val source = store.get(node.string("source")) ?: return false
@@ -2221,6 +2219,175 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             VariableOperation.DELETE -> store.remove(name)
         }
     }.getOrDefault(false)
+
+    /** 値生成方法を解決します。不正値は ASSIGN として扱います。 */
+    private fun variableChangeMode(node: CommandNode): VariableChangeMode =
+        runCatching { VariableChangeMode.valueOf(node.string("changeMode", VariableChangeMode.ASSIGN.name)) }
+            .getOrDefault(VariableChangeMode.ASSIGN)
+
+    /**
+     * issue #22 のEntity変数操作を実行します。
+     *
+     * 通常の対象形式で解決したEntity群へ、文字列の変数名で操作します。事前DEFINEを
+     * 要求せず、定義表を持ちません。同名変数の型変更は後勝ちで上書きします。
+     *
+     * - SET: 全対象へ書き込みます。未定義名は暗黙に作成します。
+     * - CHANGE: 全対象に変数が存在する場合だけ書き込みます。
+     * - COPY: 対象ごとに同一Entity内の複写元から複写します。
+     * - DELETE: 全対象から削除し、1件でも削除できれば成功です。
+     * - DEFINE: 不要なため失敗します。
+     *
+     * 値生成は同一Entity内で閉じます。PROPERTY モードの参照元は対象Entity自身の
+     * 変数から読み出すため、複数Entityでも各個体が独立に解決します。
+     */
+    private fun executeEntityVariable(
+        node: CommandNode,
+        session: ExecutionSession,
+        operation: VariableOperation,
+    ): Boolean = runCatching {
+        val spec = node.targetSpec ?: return false
+        val targets = resolveTargetSpecs(spec, session, session.context)
+        if (targets.isEmpty()) return false
+        val name = node.string("name")
+        val store = plugin.entityVariables
+        when (operation) {
+            VariableOperation.DEFINE -> false
+            VariableOperation.SET -> {
+                val mode = variableChangeMode(node)
+                val type = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
+                    ValueType.parse(node.string("type")) ?: return false
+                } else null
+                if (mode == VariableChangeMode.CALCULATE && type != ValueType.NUMBER) return false
+                if (mode == VariableChangeMode.PROPERTY) {
+                    // 対象ごとに自身の参照元から取得して書き込みます。
+                    targets.forEach { target ->
+                        val value = resolveVariableGeneration(node, null, mode, { store.readSingle(listOf(target), it).asValue() }, session)
+                            ?: return false
+                        store.write(listOf(target), name, value)
+                    }
+                    true
+                } else {
+                    val value = resolveVariableGeneration(node, type, mode, { null }, session) ?: return false
+                    store.write(targets, name, value)
+                    true
+                }
+            }
+            VariableOperation.CHANGE -> {
+                // 全対象に変数が存在する場合だけ書き込みます。
+                if (targets.any { store.readSingle(listOf(it), name) !is me.awabi2048.kantancommander.model.VariableRead.Value }) {
+                    return false
+                }
+                val mode = variableChangeMode(node)
+                if (mode == VariableChangeMode.PROPERTY) {
+                    targets.forEach { target ->
+                        val value = resolveVariableGeneration(node, null, mode, { store.readSingle(listOf(target), it).asValue() }, session)
+                            ?: return false
+                        store.write(listOf(target), name, value)
+                    }
+                    true
+                } else {
+                    // ASSIGN はGUI上のtype、CALCULATE／RANDOM は生成結果の型を採用します。
+                    val type = if (mode == VariableChangeMode.ASSIGN) {
+                        ValueType.parse(node.string("type")) ?: return false
+                    } else null
+                    val value = resolveVariableGeneration(node, type, mode, { null }, session) ?: return false
+                    store.write(targets, name, value)
+                    true
+                }
+            }
+            VariableOperation.COPY -> {
+                val source = node.string("source")
+                targets.forEach { target ->
+                    val origin = store.readSingle(listOf(target), source)
+                    if (origin !is VariableRead.Value) return false
+                    store.write(listOf(target), name, origin.value)
+                }
+                true
+            }
+            VariableOperation.DELETE -> store.delete(targets, name) > 0
+        }
+    }.getOrDefault(false)
+
+    /**
+     * issue #3 の値生成を解決します。
+     *
+     * type は ASSIGN／CALCULATE モードの対象型です。PROPERTY／RANDOM モードでは
+     * 生成結果の型を採用するため null で呼び出します。sourceRead は同一scopeの
+     * 参照元読み出しであり、ENTITY scope では対象Entityごとの読み出しを渡します。
+     * 失敗は null で返します。
+     */
+    private fun resolveVariableGeneration(
+        node: CommandNode,
+        type: ValueType?,
+        mode: VariableChangeMode,
+        sourceRead: (String) -> TypedValue?,
+        session: ExecutionSession,
+    ): TypedValue? = runCatching {
+        when (mode) {
+            VariableChangeMode.ASSIGN -> {
+                val resolved = type ?: return null
+                resolveNodeValue(resolved, node, session) ?: error("value is unavailable")
+            }
+            VariableChangeMode.CALCULATE -> {
+                if (type != ValueType.NUMBER) error("calculation requires NUMBER")
+                evaluateVariableExpression(node.string("value"), session) ?: error("expression failed")
+            }
+            VariableChangeMode.PROPERTY -> {
+                val source = sourceRead(node.string("propertySource")) ?: error("property source is missing")
+                me.awabi2048.kantancommander.model.ValueProperties.resolve(
+                    source,
+                    node.string("property"),
+                ) { uuid -> plugin.server.getEntity(uuid) } ?: error("property is unavailable")
+            }
+            VariableChangeMode.RANDOM -> generateRandomValue(
+                node.string("randomMin"),
+                node.string("randomMax"),
+            ) ?: error("random range is invalid")
+        }
+    }.getOrNull()
+
+    /** 数値計算式を評価します。変数同士の参照だけを使います。 */
+    private fun evaluateVariableExpression(raw: String, session: ExecutionSession): TypedValue? {
+        val expression = NumericExpression.parse(raw).expression ?: return null
+        val result = expression.evaluate(
+            { reference ->
+                if (SystemVariableNames.isSystemName(reference)) {
+                    when (reference) {
+                        SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toDouble()
+                        else -> null
+                    }
+                } else plugin.variables.get(session.worldId, reference)?.numberValue
+            },
+            { reference ->
+                session.executionVariables.get(reference.normalizedTemporaryName())
+                    ?.takeIf { it.type == ValueType.NUMBER }
+                    ?.numberValue?.takeIf(Double::isFinite)
+            },
+        ) ?: return null
+        return TypedValue(ValueType.NUMBER, numberValue = result)
+    }
+
+    /**
+     * issue #3 の乱数を生成します。
+     *
+     * 範囲は両端を含む [min, max] です。min・max ともに整数値の場合は整数の
+     * 一様乱数を、それ以外は実数の一様乱数を返します。範囲不正・非有限値は
+     * 失敗として扱います。
+     */
+    private fun generateRandomValue(rawMin: String, rawMax: String): TypedValue? {
+        val min = rawMin.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
+        val max = rawMax.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
+        if (min > max) return null
+        val integer = min == kotlin.math.floor(min) && max == kotlin.math.floor(max)
+        val value = if (integer) {
+            val range = (max - min + 1.0).takeIf { it.isFinite() && it <= Long.MAX_VALUE.toDouble() }
+                ?: return null
+            min + Random.nextLong(range.toLong())
+        } else {
+            min + Random.nextDouble() * (max - min)
+        }.takeIf(Double::isFinite) ?: return null
+        return TypedValue(ValueType.NUMBER, numberValue = value)
+    }
 
     /**
      * WORLD scope を共通store契約へ接続します。
