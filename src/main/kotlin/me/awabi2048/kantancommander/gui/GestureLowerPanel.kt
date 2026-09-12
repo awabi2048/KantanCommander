@@ -1818,6 +1818,7 @@ class GestureLowerPanel(
      * issue #18 のCheckbox操作面です。
      *
      * 二値設定を1クリックで切り替え、checked／uncheckedを色で区別します。
+     * トグルは選択とは別概念のため、選択表示の縁取りは付けません。
      * nullable三値はここへ載せず、別表現に委譲します。
      */
     private fun appendCheckboxCard(
@@ -1865,8 +1866,9 @@ class GestureLowerPanel(
                     y = hoverY,
                 ),
                 visualTag = "lower-toggle",
-                outline = if (suppressHighlight) null
-                else GestureSettingVisualPolicy.nonTabOutlineMaterial(checked)?.let { Bukkit.createBlockData(it) },
+                // トグルのON／OFFは選択状態ではないため、選択表示の縁取りは付けません。
+                // 状態の区別は背景色（LIME／GRAY）に限定します。
+                outline = null,
             ),
         )
     }
