@@ -14,10 +14,9 @@ import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.TemporaryTemplate
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -930,47 +929,83 @@ internal object CommandDialogSpecs {
     /**
      * 一覧から編集するワールド内変数の値入力仕様です。
      *
-     * ワールド内変数は保存層でNUMBER／STRINGの型を固定するため、画面側でも
-     * 型ごとの入力境界をここへ集約します。入力欄のmaxLengthだけに依存せず、
-     * 応答を直接組み立てた場合も同じ検証を通るよう、文字列長も保存前に確認します。
+     * スカラー3型は型ごとの入力境界をここへ集約します。複合6型の値は変数操作
+     * コマンドの型別設定で編集するため、一覧Dialogでは案内のみ返します。
      */
-    fun worldVariableValue(type: VariableType): Spec = when (type) {
-        VariableType.NUMBER -> Spec(
+    fun worldVariableValue(type: ValueType): Spec? = when (type) {
+        ValueType.NUMBER -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
             32,
             validate = { raw ->
                 if (CommandValueRules.parseFiniteDouble(raw) == null) {
-                    worldVariableValueInvalid(VariableType.NUMBER)
+                    worldVariableValueInvalid(ValueType.NUMBER)
                 } else null
             },
             required = true,
             format = InputFormat.NUMBER,
         )
-        VariableType.STRING -> Spec(
+        ValueType.STRING -> Spec(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
             CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH,
             validate = { raw ->
                 if (raw.length > CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH ||
                     VariableTemplate.hasMalformedReference(raw)
                 ) {
-                    worldVariableValueInvalid(VariableType.STRING)
+                    worldVariableValueInvalid(ValueType.STRING)
                 } else null
             },
             required = false,
             format = InputFormat.ANY_STRING,
         )
+        ValueType.BOOLEAN -> Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+            8,
+            validate = { raw ->
+                if (raw.trim().lowercase() != "true" && raw.trim().lowercase() != "false") {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
+                } else null
+            },
+            required = true,
+            format = InputFormat.ANY_STRING,
+        )
+        ValueType.LOCATION,
+        ValueType.VECTOR,
+        ValueType.ITEM,
+        ValueType.BLOCK,
+        ValueType.ENTITY,
+        ValueType.SOUND,
+        ValueType.EFFECT,
+        -> null
     }
 
     /** ワールド内変数の値編集Dialogで表示する案内を、保存型ごとに解決します。 */
-    fun worldVariableValueBody(type: VariableType): LocalizationKey<String> = when (type) {
-        VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY
-        VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY
+    fun worldVariableValueBody(type: ValueType): LocalizationKey<String> = when (type) {
+        ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY
+        ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY
+        ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_BODY
+        ValueType.LOCATION,
+        ValueType.VECTOR,
+        ValueType.ITEM,
+        ValueType.BLOCK,
+        ValueType.ENTITY,
+        ValueType.SOUND,
+        ValueType.EFFECT,
+        -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_COMPLEX_BODY
     }
 
     /** 値編集の入力エラーも型別に解決し、利用者が修正方法を判断できるようにします。 */
-    fun worldVariableValueInvalid(type: VariableType): LocalizationKey<String> = when (type) {
-        VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID
-        VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID
+    fun worldVariableValueInvalid(type: ValueType): LocalizationKey<String> = when (type) {
+        ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID
+        ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID
+        ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
+        ValueType.LOCATION,
+        ValueType.VECTOR,
+        ValueType.ITEM,
+        ValueType.BLOCK,
+        ValueType.ENTITY,
+        ValueType.SOUND,
+        ValueType.EFFECT,
+        -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_COMPLEX_BODY
     }
 
     /** 符号付き整数（条件の比較値など）。 */
@@ -1018,6 +1053,20 @@ internal object CommandDialogSpecs {
             } else null
         },
         required = false,
+        format = InputFormat.ANY_STRING,
+    )
+
+    /** 一時変数 BOOLEAN の値入力です。true／false のリテラルを受け付けます。 */
+    val tempBooleanValue = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+        8,
+        validate = { raw ->
+            val normalized = raw.trim().lowercase()
+            if (normalized != "true" && normalized != "false") {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
+            } else null
+        },
+        required = true,
         format = InputFormat.ANY_STRING,
     )
 
@@ -1108,9 +1157,10 @@ internal object CommandDialogSpecs {
             return burstHeight
         }
         if (fieldKey == "name" && node.type == CommandType.VARIABLE) return variableName
+        if (fieldKey == "source" && node.type == CommandType.VARIABLE) return variableName
         if (fieldKey == "value" && node.type == CommandType.VARIABLE) {
-            val type = runCatching { VariableType.valueOf(node.string("type")) }
-                .getOrDefault(VariableType.NUMBER)
+            val type = runCatching { ValueType.valueOf(node.string("type")) }
+                .getOrDefault(ValueType.NUMBER)
             val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
                 .getOrDefault(VariableOperation.DEFINE)
             val changeMode = runCatching { VariableChangeMode.valueOf(node.string("changeMode")) }
@@ -1123,13 +1173,14 @@ internal object CommandDialogSpecs {
         }
         if (node.type == CommandType.TEMP_SET) {
             if (fieldKey == "name") return variableName
-            val tempType = TemporaryVariableType.parse(
-                node.string("tempType", TemporaryVariableType.NUMBER.name),
-            ) ?: TemporaryVariableType.NUMBER
+            val tempType = ValueType.parse(
+                node.string("tempType", ValueType.NUMBER.name),
+            ) ?: ValueType.NUMBER
             when (fieldKey) {
                 "value" -> return when (tempType) {
-                    TemporaryVariableType.NUMBER -> tempNumberValue
-                    TemporaryVariableType.STRING -> tempStringValue
+                    ValueType.NUMBER -> tempNumberValue
+                    ValueType.STRING -> tempStringValue
+                    ValueType.BOOLEAN -> tempBooleanValue
                     else -> null
                 }
                 "x", "y", "z" -> return tempCoordinate
@@ -1582,11 +1633,11 @@ internal object CommandDialogSpecs {
     }
 
     /** 変数操作の保存値を、実行時の式評価と同じ型境界で検証します。 */
-    private fun variableValue(type: VariableType?, operation: VariableOperation, changeMode: VariableChangeMode): Spec {
+    private fun variableValue(type: ValueType?, operation: VariableOperation, changeMode: VariableChangeMode): Spec {
         val base = requireNotNull(field("value"))
         val format = when {
-            type == VariableType.NUMBER && changeMode == VariableChangeMode.CALCULATE -> InputFormat.NUMERIC_EXPRESSION
-            type == VariableType.NUMBER -> InputFormat.NUMBER
+            type == ValueType.NUMBER && changeMode == VariableChangeMode.CALCULATE -> InputFormat.NUMERIC_EXPRESSION
+            type == ValueType.NUMBER -> InputFormat.NUMBER
             else -> InputFormat.ANY_STRING
         }
         return base.copy(
@@ -1602,14 +1653,23 @@ internal object CommandDialogSpecs {
                         numericExpressionValidationError(raw)
                     type == null ->
                         if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
-                    type == VariableType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
+                    type == ValueType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
                         numericExpressionValidationError(raw)
                     } else if (isNumericTemplate(raw) || CommandValueRules.parseFiniteDouble(raw) != null
                     ) {
                         null
                     } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-                    type == VariableType.STRING ->
+                    type == ValueType.STRING ->
                         if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
+                    type == ValueType.BOOLEAN -> {
+                        val normalized = raw.trim().lowercase()
+                        if (normalized == "true" || normalized == "false") null
+                        else if (VariableTemplate.hasMalformedReference(raw) ||
+                            TemporaryTemplate.hasMalformedReference(raw)
+                        ) {
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                        } else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_VALUE_BOOLEAN_INVALID
+                    }
                     else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 }
             },

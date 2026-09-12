@@ -9,8 +9,8 @@ import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.SystemVariableNames
@@ -32,7 +32,7 @@ class KantanStandaloneExportContributor(
         context.worlds.forEach { world ->
             plugin.variables.definitions(world.uuid).forEach { (name, value) ->
                 validateVariable(world.sourceWorldName, name, value)?.let(errors::add)
-                if (value.type == VariableType.NUMBER && value.numberValue?.isFinite() != true) {
+                if (value.type == ValueType.NUMBER && value.numberValue?.isFinite() != true) {
                     errors += "${world.sourceWorldName}/$name: 数値初期値は有限値で指定してください"
                 }
             }
@@ -52,7 +52,7 @@ class KantanStandaloneExportContributor(
             val world = worldsByName.getValue(placement.world)
             val namespace = world.uuid.toString().replace("-", "")
             val script = namespaceWorldVariables(sourceScript, namespace)
-            val worldVariableTypes = plugin.variables.definitions(world.uuid)
+            val worldValueTypes = plugin.variables.definitions(world.uuid)
                 .mapKeys { (name, _) -> "${namespace}_$name" }
                 .mapValues { (_, value) -> value.type }
             // 同じスクリプトを複数ワールドへ配置しても、ワールド変数を含む関数本文が衝突しない名前にする。
@@ -60,7 +60,7 @@ class KantanStandaloneExportContributor(
             when (
                 val compilation = plugin.exporter.compileForStandalone(
                     script,
-                    worldVariableTypes,
+                    worldValueTypes,
                     entryFunctionName,
                 )
             ) {
@@ -94,10 +94,21 @@ class KantanStandaloneExportContributor(
         return PreparedKantanExport(programs, variableDefinitions)
     }
 
-    private fun validateVariable(world: String, name: String, value: WorldVariableValue): String? {
+    private fun validateVariable(world: String, name: String, value: TypedValue): String? {
+        // #2: 単体出力の初期値埋め込みはスカラー3型だけに対応します。複合型は
+        // 構造がバニラstorageへ直結しないため、明示エラーにします。
         val valid = when (value.type) {
-            VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
-            VariableType.STRING -> value.stringValue != null && value.numberValue == null
+            ValueType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
+            ValueType.STRING -> value.stringValue != null && value.numberValue == null
+            ValueType.BOOLEAN -> value.booleanValue != null
+            ValueType.LOCATION,
+            ValueType.VECTOR,
+            ValueType.ITEM,
+            ValueType.BLOCK,
+            ValueType.ENTITY,
+            ValueType.SOUND,
+            ValueType.EFFECT,
+            -> return "$world/$name: 複合型の変数は単体出力に未対応です"
         }
         return if (valid) null else "$world/$name: 変数初期値が不完全または有限値ではありません"
     }
@@ -194,7 +205,7 @@ internal data class PreparedProgram(
 
 internal data class PreparedVariables(
     val namespace: String,
-    val values: Map<String, WorldVariableValue>,
+    val values: Map<String, TypedValue>,
 )
 
 internal class PreparedKantanExport(
@@ -294,10 +305,19 @@ internal class PreparedKantanExport(
     private fun timerHolder(scriptId: String) =
         "#timer_${scriptId.replace("-", "")}"
 
-    private fun initializeVariable(dimension: String, name: String, value: WorldVariableValue): String {
+    private fun initializeVariable(dimension: String, name: String, value: TypedValue): String {
         return when (value.type) {
-            VariableType.NUMBER -> storageSet(name, "${value.numberValue ?: 0.0}d")
-            VariableType.STRING -> storageSet(name, "\"${escapeNbt(value.stringValue.orEmpty())}\"")
+            ValueType.NUMBER -> storageSet(name, "${value.numberValue ?: 0.0}d")
+            ValueType.STRING -> storageSet(name, "\"${escapeNbt(value.stringValue.orEmpty())}\"")
+            ValueType.BOOLEAN -> storageSet(name, if (value.booleanValue == true) "1b" else "0b")
+            ValueType.LOCATION,
+            ValueType.VECTOR,
+            ValueType.ITEM,
+            ValueType.BLOCK,
+            ValueType.ENTITY,
+            ValueType.SOUND,
+            ValueType.EFFECT,
+            -> error("unsupported variable type for standalone export: ${value.type}")
         }
     }
 

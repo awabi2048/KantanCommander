@@ -9,8 +9,8 @@ class VariableTemplateTest {
     @Test
     fun `interpolation stringifies number and string values`() {
         val values = mapOf(
-            "count" to WorldVariableValue(VariableType.NUMBER, numberValue = 12.0),
-            "label" to WorldVariableValue(VariableType.STRING, stringValue = "hello"),
+            "count" to TypedValue(ValueType.NUMBER, numberValue = 12.0),
+            "label" to TypedValue(ValueType.STRING, stringValue = "hello"),
         )
 
         assertEquals("count=12 label=hello", VariableTemplate.interpolate("count=\${count} label=\${label}") { values[it] })
@@ -26,7 +26,7 @@ class VariableTemplateTest {
 
     @Test
     fun `number formatting removes only integral decimal suffix`() {
-        assertEquals("12", VariableTemplate.stringify(WorldVariableValue(VariableType.NUMBER, numberValue = 12.0)))
-        assertEquals("1.25", VariableTemplate.stringify(WorldVariableValue(VariableType.NUMBER, numberValue = 1.25)))
+        assertEquals("12", VariableTemplate.stringify(TypedValue(ValueType.NUMBER, numberValue = 12.0)))
+        assertEquals("1.25", VariableTemplate.stringify(TypedValue(ValueType.NUMBER, numberValue = 1.25)))
     }
 }

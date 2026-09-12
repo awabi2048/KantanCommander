@@ -26,7 +26,7 @@ object VariableTemplate {
             !hasMalformedReference(raw) &&
             raw.trim().matches(referencePattern)
 
-    fun interpolate(raw: String, resolve: (String) -> WorldVariableValue?): String? =
+    fun interpolate(raw: String, resolve: (String) -> TypedValue?): String? =
         interpolateText(raw) { name ->
             if (SystemVariableNames.isSystemName(name)) null else resolve(name)?.let(::stringify)
         }
@@ -41,9 +41,25 @@ object VariableTemplate {
         }
     }
 
-    fun stringify(value: WorldVariableValue): String = when (value.type) {
-        VariableType.NUMBER -> value.numberValue?.let(::formatNumber).orEmpty()
-        VariableType.STRING -> value.stringValue.orEmpty()
+    /**
+     * 型付き値をテキストへ変換します。
+     *
+     * NUMBER・STRING・BOOLEAN だけを埋め込み可能とし、複合6型は空文字にします。
+     * 複合値を空文字へ黙って変換して実行を続けると型エラーが成功に見えるため、
+     * 呼び出し側は事前に型を確認してください。
+     */
+    fun stringify(value: TypedValue): String = when (value.type) {
+        ValueType.NUMBER -> value.numberValue?.let(::formatNumber).orEmpty()
+        ValueType.STRING -> value.stringValue.orEmpty()
+        ValueType.BOOLEAN -> value.booleanValue?.toString().orEmpty()
+        ValueType.LOCATION,
+        ValueType.VECTOR,
+        ValueType.ITEM,
+        ValueType.BLOCK,
+        ValueType.ENTITY,
+        ValueType.SOUND,
+        ValueType.EFFECT,
+        -> ""
     }
 
     private fun formatNumber(value: Double): String =

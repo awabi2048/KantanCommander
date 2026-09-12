@@ -7,8 +7,8 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TimerSetting
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.TypedValue
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -41,8 +41,8 @@ class KantanStandaloneExportTest {
                 "mwm_export:world_a" to PreparedVariables(
                     "abc",
                     mapOf(
-                        "enabled" to WorldVariableValue(VariableType.NUMBER, numberValue = 1.0),
-                        "message" to WorldVariableValue(VariableType.STRING, stringValue = "hello"),
+                        "enabled" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
+                        "message" to TypedValue(ValueType.STRING, stringValue = "hello"),
                     ),
                 )
             ),

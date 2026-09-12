@@ -7,7 +7,7 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TypedValue
 import java.util.UUID
 
 /**
@@ -38,7 +38,7 @@ object IncrementalValidator {
         previousErrors: List<ScriptValidationError>,
         script: DiskScript,
         limits: GraphLimits = GraphLimits(),
-        variableDefinitions: Map<String, WorldVariableValue>? = null,
+        variableDefinitions: Map<String, TypedValue>? = null,
     ): List<ScriptValidationError>? {
         val change = GraphChangeClassifier.classify(previousGraph, script.graph)
         if (IncrementalValidationPolicy.requiresStructuralRevalidation(change)) return null

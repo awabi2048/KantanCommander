@@ -3,10 +3,9 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TypedValue
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -133,7 +132,7 @@ class IncrementalValidatorTest {
         val previous = DiskScript(name = "temp", owner = UUID.randomUUID())
         val first = GraphEditor.append(previous.graph, CommandType.TEMP_SET)
         first.params["name"] = "flag"
-        first.params["tempType"] = TemporaryVariableType.NUMBER.name
+        first.params["tempType"] = ValueType.NUMBER.name
         val second = GraphEditor.append(previous.graph, CommandType.WAIT)
         second.params["seconds"] = "\${flag}"
         val mutated = DiskScript(name = "temp", owner = previous.owner).copy(
@@ -170,7 +169,7 @@ class IncrementalValidatorTest {
         val start = GraphEditor.append(previous.graph, CommandType.FOR_START)
         start.params["count"] = "\${limit}"
         val definitions = mapOf(
-            "limit" to WorldVariableValue(VariableType.NUMBER, numberValue = 3.0),
+            "limit" to TypedValue(ValueType.NUMBER, numberValue = 3.0),
         )
         val mutated = DiskScript(name = "world-var", owner = previous.owner).copy(
             id = previous.id,

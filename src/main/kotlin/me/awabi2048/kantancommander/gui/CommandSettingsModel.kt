@@ -30,10 +30,10 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.variableScope
 import java.util.UUID
 
 /**
@@ -121,6 +121,8 @@ enum class CommandSettingEditor {
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
+    VARIABLE_SCOPE,
+    VARIABLE_NAME,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
@@ -454,13 +456,23 @@ object CommandSettingsModel {
                 val allowed = setOf("particle", "geometrySettings", "particleDensity", "position", "particleDisplay")
                 fields.filter { it.key in allowed }
             }
+            // #2: 操作内容ごとに必要な項目だけを表示します。scope・name・operation は
+            // 常に表示し、type・changeMode・value・source は操作で切り替えます。
+            // - DEFINE: 型＋初期値。changeMode・source は不要です。
+            // - SET: 型＋値。changeMode・source は不要です。
+            // - CHANGE: 値＋changeMode（NUMBERのみ）。型は定義側を正とします。
+            // - COPY: 複写元のみ。型・値・changeMode は不要です。
+            // - DELETE: 項目なし（name だけで確定します）。
             node.type == CommandType.VARIABLE -> {
                 val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
                     .getOrDefault(VariableOperation.DEFINE)
                 fields.filterNot { field ->
                     when (operation) {
-                        VariableOperation.DEFINE -> field.key == "changeMode"
-                        VariableOperation.CHANGE -> field.key == "type"
+                        VariableOperation.DEFINE -> field.key == "changeMode" || field.key == "source"
+                        VariableOperation.SET -> field.key == "changeMode" || field.key == "source"
+                        VariableOperation.CHANGE -> field.key == "type" || field.key == "source"
+                        VariableOperation.COPY -> field.key == "type" || field.key == "changeMode" || field.key == "value"
+                        VariableOperation.DELETE -> field.key == "type" || field.key == "changeMode" || field.key == "value" || field.key == "source"
                     }
                 }
             }
@@ -550,7 +562,44 @@ object CommandSettingsModel {
             fieldKey != "geometryEnd" || ParticleGeometry.shape(node) == ParticleShape.LINE ||
                 ParticleGeometry.shape(node) == ParticleShape.BOX
 
+        // #2: 操作内容ごとに必要な項目だけを表示します。値欄・型別項目は
+        // 値を必要とする操作（DEFINE／SET／CHANGE）でのみ表示し、複写元は
+        // COPY でのみ、型別項目は現在の型に一致するものだけ表示します。
+        CommandType.VARIABLE -> isVariableFieldVisible(node, fieldKey)
+
         else -> true
+    }
+
+    /**
+     * issue #2 の変数操作コマンドの項目可視性です。
+     *
+     * scope・operation・name は常に表示します。type・changeMode・value・source と
+     * 型別項目は操作内容と現在の型で切り替えます。保存値を変更せず表示だけを
+     * 絞るため、両GUIで同じ判定を使います。
+     */
+    fun isVariableFieldVisible(node: CommandNode, fieldKey: String): Boolean {
+        if (fieldKey in setOf("scope", "operation", "name")) return true
+        val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
+            .getOrDefault(VariableOperation.DEFINE)
+        if (fieldKey == "source") return operation == VariableOperation.COPY
+        val needsValue = operation == VariableOperation.DEFINE ||
+            operation == VariableOperation.SET ||
+            operation == VariableOperation.CHANGE
+        if (!needsValue) return false
+        if (fieldKey == "type") return operation == VariableOperation.DEFINE || operation == VariableOperation.SET
+        if (fieldKey == "changeMode") return operation == VariableOperation.CHANGE
+        val type = ValueType.parse(node.string("type")) ?: return false
+        return when (fieldKey) {
+            "value" -> type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN
+            "location" -> type == ValueType.LOCATION
+            "x", "y", "z" -> type == ValueType.VECTOR
+            "item" -> type == ValueType.ITEM
+            "block" -> type == ValueType.BLOCK
+            "entity" -> type == ValueType.ENTITY
+            "sound", "soundParameters" -> type == ValueType.SOUND
+            "effect", "level", "seconds" -> type == ValueType.EFFECT
+            else -> true
+        }
     }
 
     /**
@@ -758,7 +807,11 @@ object CommandSettingsModel {
                 "operation", "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
-                "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                "scope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
+                "entityId", "sound", "soundParameters", "volume", "effect", "level", "seconds" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.TEMP_SET -> when (fieldKey) {
@@ -970,10 +1023,21 @@ object CommandSettingsModel {
             CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
         } else text()
         CommandType.VARIABLE -> when (fieldKey) {
+            "scope" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_SCOPE)
+            // #2: WORLD scope の変数名は定義済み候補から選択し、EXECUTION scope の
+            // 変数名は実行経路で有効範囲が変わるため文字列入力で指定します。
+            // scope 欄のない旧ノードは WORLD として読み替えます。
+            "name" -> if (node.variableScope() == VariableScope.WORLD) {
+                CommandSettingDescriptor(CommandSettingEditor.VARIABLE_NAME)
+            } else {
+                text()
+            }
             "type" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
             "operation" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_OPERATION)
             "changeMode" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_CHANGE_MODE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
+            "location" -> CommandSettingDescriptor(CommandSettingEditor.LOCATION, CommandSettingRole.TEMPORARY_LOCATION)
+            "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
             else -> text()
         }
         CommandType.TEMP_SET -> when (fieldKey) {
@@ -1012,7 +1076,12 @@ object CommandSettingsModel {
             require(CommandValueRules.isVariableName(TemporaryTemplate.normalized(value))) { "予約済みまたは不正な変数名です" }
         }
         if (node.type == CommandType.TEMP_SET && key == "tempType") {
-            val type = requireNotNull(TemporaryVariableType.parse(value)) { "不正な一時変数型です" }
+            val type = requireNotNull(ValueType.parse(value)) { "不正な一時変数型です" }
+            changeTemporaryType(node, type)
+            return
+        }
+        if (node.type == CommandType.VARIABLE && key == "type") {
+            val type = requireNotNull(ValueType.parse(value)) { "不正な変数型です" }
             changeTemporaryType(node, type)
             return
         }
@@ -1103,16 +1172,19 @@ object CommandSettingsModel {
     }
 
     /**
-     * 一時変数の型変更を、古い型の入力値が新しい型へ幽霊表示されない単一操作にします。
+     * 変数の型変更を、古い型の入力値が新しい型へ幽霊表示されない単一操作にします。
      *
-     * 一時値は型によって入力経路も実行時の保存形式も変わります。型だけを書き換えて
-     * 旧payloadを残すと、いったんLOCATIONへ変えた後にNUMBERへ戻した際などに、見えない
-     * 値が実行・出力側へ流れます。型変更時は共通の可変部分を全消去し、次の型の入力を
-     * 必ずその型の設定画面から開始させます。
+     * 変数値は型によって入力経路も実行時の保存形式も変わります。型だけを書き換えて
+     * 旧payloadを残すと、見えない値が実行・出力側へ流れます。型変更時は共通の
+     * 可変部分を全消去し、次の型の入力を必ずその型の設定画面から開始させます。
+     * TEMP_SET（tempType欄）と変数操作コマンド（type欄）の両方で使います。
      */
-    fun changeTemporaryType(node: CommandNode, type: TemporaryVariableType) {
-        check(node.type == CommandType.TEMP_SET) { "一時変数型を持たないノードです: ${node.type}" }
-        val current = TemporaryVariableType.parse(node.string("tempType", TemporaryVariableType.NUMBER.name))
+    fun changeTemporaryType(node: CommandNode, type: ValueType) {
+        check(node.type == CommandType.TEMP_SET || node.type == CommandType.VARIABLE) {
+            "一時変数型を持たないノードです: ${node.type}"
+        }
+        val key = if (node.type == CommandType.TEMP_SET) "tempType" else "type"
+        val current = ValueType.parse(node.string(key, ValueType.NUMBER.name))
         if (current != type) {
             setOf(
                 "value", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
@@ -1127,8 +1199,8 @@ object CommandSettingsModel {
                 "locationPosition", "locationFacing",
             )
         }
-        node.params["tempType"] = type.name
-        node.markConfigured("tempType")
+        node.params[key] = type.name
+        node.markConfigured(key)
     }
 
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
@@ -1573,7 +1645,7 @@ object CommandSettingsModel {
      */
     internal fun isFacingSpecComplete(spec: FacingSpec?): Boolean = isFacingSpecConfigured(spec)
 
-    fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
+    fun allowedVariableOperations(type: ValueType): List<VariableOperation> =
         VariableOperation.entries
 
     /**

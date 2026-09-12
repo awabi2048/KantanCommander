@@ -15,9 +15,8 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableType
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -749,7 +748,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "place",
-                    "type" to VariableType.NUMBER.name,
+                    "type" to ValueType.NUMBER.name,
                     "operation" to VariableOperation.DEFINE.name,
                     "value" to "1",
                 )
@@ -805,9 +804,9 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "variables")
         val local = GraphEditor.append(script.graph, CommandType.VARIABLE)
-        local.params.putAll(mapOf("name" to "local", "type" to VariableType.NUMBER.name, "operation" to VariableOperation.DEFINE.name, "value" to "1"))
+        local.params.putAll(mapOf("name" to "local", "type" to ValueType.NUMBER.name, "operation" to VariableOperation.DEFINE.name, "value" to "1"))
         val world = GraphEditor.append(script.graph, CommandType.VARIABLE)
-        world.params.putAll(mapOf("name" to "shared", "type" to VariableType.NUMBER.name, "operation" to VariableOperation.DEFINE.name, "value" to "2"))
+        world.params.putAll(mapOf("name" to "shared", "type" to ValueType.NUMBER.name, "operation" to VariableOperation.DEFINE.name, "value" to "2"))
         store.save(script)
 
         val result = VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script)
@@ -828,7 +827,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "message",
-                    "tempType" to TemporaryVariableType.STRING.name,
+                    "tempType" to ValueType.STRING.name,
                     "value" to "hello",
                 ),
             )
@@ -841,7 +840,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "point",
-                    "tempType" to TemporaryVariableType.LOCATION.name,
+                    "tempType" to ValueType.LOCATION.name,
                 ),
             )
             temporaryLocationPositionSpec = PositionSpec(
@@ -864,7 +863,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "stack",
-                    "tempType" to TemporaryVariableType.ITEM.name,
+                    "tempType" to ValueType.ITEM.name,
                     "item" to "minecraft:stone",
                 ),
             )
@@ -892,19 +891,19 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "temporary-definition-references")
 
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
-            params.putAll(mapOf("name" to "amount", "tempType" to TemporaryVariableType.NUMBER.name, "value" to "2.5"))
+            params.putAll(mapOf("name" to "amount", "tempType" to ValueType.NUMBER.name, "value" to "2.5"))
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
-            params.putAll(mapOf("name" to "copied", "tempType" to TemporaryVariableType.NUMBER.name, "value" to "%{amount}%"))
+            params.putAll(mapOf("name" to "copied", "tempType" to ValueType.NUMBER.name, "value" to "%{amount}%"))
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
-            params.putAll(mapOf("name" to "label", "tempType" to TemporaryVariableType.STRING.name, "value" to "prefix-%{copied}%"))
+            params.putAll(mapOf("name" to "label", "tempType" to ValueType.STRING.name, "value" to "prefix-%{copied}%"))
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params.putAll(
                 mapOf(
                     "name" to "sound",
-                    "tempType" to TemporaryVariableType.SOUND.name,
+                    "tempType" to ValueType.SOUND.name,
                     "sound" to "minecraft:block.note_block.harp",
                     "volume" to "%{amount}%",
                     "pitch" to "1.0",
@@ -915,7 +914,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "effect",
-                    "tempType" to TemporaryVariableType.EFFECT.name,
+                    "tempType" to ValueType.EFFECT.name,
                     "effect" to "minecraft:speed",
                     "level" to "%{copied}%",
                     "seconds" to "30",
@@ -941,7 +940,7 @@ class VanillaDatapackExporterTest {
 
         fun location(name: String, x: Double, y: Double, z: Double) {
             GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
-                params.putAll(mapOf("name" to name, "tempType" to TemporaryVariableType.LOCATION.name))
+                params.putAll(mapOf("name" to name, "tempType" to ValueType.LOCATION.name))
                 temporaryLocationPositionSpec = PositionSpec(PositionKind.COORDINATES, x = x, y = y, z = z)
                 temporaryLocationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = 0f, pitch = 0f)
             }
@@ -951,7 +950,7 @@ class VanillaDatapackExporterTest {
         location("target", 5.0, 2.0, 3.0)
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "aimed"
-            params["tempType"] = TemporaryVariableType.LOCATION.name
+            params["tempType"] = ValueType.LOCATION.name
             temporaryLocationPositionSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "origin")
             temporaryLocationFacingSpec = FacingSpec(FacingKind.TEMPORARY, tempName = "target")
         }
@@ -975,7 +974,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "effect",
-                    "tempType" to TemporaryVariableType.EFFECT.name,
+                    "tempType" to ValueType.EFFECT.name,
                     "effect" to "minecraft:speed",
                     "level" to "2.0",
                     "seconds" to "30.0",
@@ -1001,7 +1000,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "entity",
-                    "tempType" to TemporaryVariableType.ENTITY.name,
+                    "tempType" to ValueType.ENTITY.name,
                     "entityId" to UUID.randomUUID().toString(),
                 ),
             )
@@ -1027,7 +1026,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "entity",
-                    "tempType" to TemporaryVariableType.ENTITY.name,
+                    "tempType" to ValueType.ENTITY.name,
                     "entityId" to "not-a-uuid",
                 ),
             )
@@ -1052,7 +1051,7 @@ class VanillaDatapackExporterTest {
             params.putAll(
                 mapOf(
                     "name" to "vehicle",
-                    "tempType" to TemporaryVariableType.ENTITY.name,
+                    "tempType" to ValueType.ENTITY.name,
                     "entityId" to UUID.randomUUID().toString(),
                 ),
             )
@@ -1077,7 +1076,7 @@ class VanillaDatapackExporterTest {
         val start = GraphEditor.append(script.graph, CommandType.FOR_START)
         val variable = GraphEditor.appendToForBody(script.graph, start.id, CommandType.VARIABLE)
         variable.params["name"] = "iteration"
-        variable.params["type"] = VariableType.NUMBER.name
+        variable.params["type"] = ValueType.NUMBER.name
         variable.params["value"] = "\${CURRENT_LOOP_COUNT}"
         store.save(script)
 
@@ -1118,7 +1117,7 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
                 script,
-                mapOf("value" to VariableType.NUMBER),
+                mapOf("value" to ValueType.NUMBER),
             ),
         )
         val text = success.functions.values.joinToString("\n")
@@ -1134,7 +1133,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "enabled",
-                "type" to VariableType.STRING.name,
+                "type" to ValueType.STRING.name,
                 "operation" to VariableOperation.DEFINE.name,
                 "value" to "true",
             )
@@ -1152,7 +1151,7 @@ class VanillaDatapackExporterTest {
             .targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
 
         val compilation = VanillaDatapackExporter(store, temp.resolve("exports"))
-            .compileForStandalone(script, mapOf("enabled" to VariableType.STRING))
+            .compileForStandalone(script, mapOf("enabled" to ValueType.STRING))
         assertInstanceOf(StandaloneCompilation.Failure::class.java, compilation)
     }
 
@@ -1178,7 +1177,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(oversized.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "large",
-                "type" to VariableType.NUMBER.name,
+                "type" to ValueType.NUMBER.name,
                 "operation" to VariableOperation.DEFINE.name,
                 "value" to (Int.MAX_VALUE.toLong() + 1).toString(),
             )
@@ -1197,7 +1196,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "message",
-                "type" to VariableType.STRING.name,
+                "type" to ValueType.STRING.name,
                 "operation" to VariableOperation.DEFINE.name,
                 "value" to "hello",
             )
@@ -1205,7 +1204,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "ratio",
-                "type" to VariableType.NUMBER.name,
+                "type" to ValueType.NUMBER.name,
                 "operation" to VariableOperation.DEFINE.name,
                 "value" to "1.25",
             )
@@ -1233,7 +1232,7 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
                 script,
-                mapOf("message" to VariableType.STRING),
+                mapOf("message" to ValueType.STRING),
             ),
         )
         val text = compilation.functions.values.joinToString("\n")
@@ -1250,7 +1249,7 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
             mapOf(
                 "name" to "flag",
-                "type" to VariableType.NUMBER.name,
+                "type" to ValueType.NUMBER.name,
                 "operation" to VariableOperation.DEFINE.name,
                 "value" to "1.25",
             )
@@ -1511,7 +1510,7 @@ class VanillaDatapackExporterTest {
         variable.params.putAll(
             mapOf(
                 "name" to "counter",
-                "type" to VariableType.NUMBER.name,
+                "type" to ValueType.NUMBER.name,
                 "operation" to VariableOperation.CHANGE.name,
                 "changeMode" to "CALCULATE",
                 "value" to "\${counter} + 10 * 2",
@@ -1526,7 +1525,7 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
                 script,
-                mapOf("counter" to VariableType.NUMBER),
+                mapOf("counter" to ValueType.NUMBER),
             ),
         )
         val arithmetic = success.functions.values
@@ -1564,7 +1563,7 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Failure::class.java,
             exporter.compileForStandalone(
                 comparisonScript("compare-oversized", (Int.MAX_VALUE.toDouble() / 1000.0 + 1.0).toString()),
-                mapOf("counter" to VariableType.NUMBER),
+                mapOf("counter" to ValueType.NUMBER),
             ),
         )
         assertTrue(oversized.errors.any { it.contains("固定小数点範囲外") })
@@ -1573,7 +1572,7 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Failure::class.java,
             exporter.compileForStandalone(
                 comparisonScript("compare-non-numeric", "abc"),
-                mapOf("counter" to VariableType.NUMBER),
+                mapOf("counter" to ValueType.NUMBER),
             ),
         )
         assertTrue(nonNumeric.errors.any { it.contains("比較値は数値") })
@@ -1611,7 +1610,7 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
                 script,
-                mapOf("limit" to VariableType.NUMBER),
+                mapOf("limit" to ValueType.NUMBER),
             ),
         )
         val text = success.functions.values.joinToString("\n")

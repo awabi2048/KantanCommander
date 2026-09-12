@@ -212,6 +212,8 @@ object SettingSpec {
             CommandSettingEditor.PLACE_DESTINATION,
             CommandSettingEditor.ENTITY_EQUIPMENT_SLOT,
             CommandSettingEditor.ENTITY_TAG_OPERATION,
+            CommandSettingEditor.VARIABLE_SCOPE,
+            CommandSettingEditor.VARIABLE_NAME,
             CommandSettingEditor.VARIABLE_TYPE,
             CommandSettingEditor.VARIABLE_OPERATION,
             CommandSettingEditor.VARIABLE_CHANGE_MODE,

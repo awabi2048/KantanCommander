@@ -47,8 +47,8 @@ import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import com.awabi2048.ccsystem.api.localization.generated.MyworldGuiSettingsKeys
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
@@ -3499,14 +3499,19 @@ object EditorMenuLayout {
             field("diskId", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK, Material.MUSIC_DISC_13),
         )
         CommandType.VARIABLE -> listOf(
+            field("scope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE, Material.ENDER_EYE) { displayVariableScope(it.string("scope")) },
             field("operation", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.REDSTONE) { displayVariableOperation(it.string("operation")) },
             field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG),
-            field("type", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) { displayVariableType(it.string("type")) },
+            field("type", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) { displayValueType(it.string("type")) },
             field("changeMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.COMPARATOR,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
             ) { displayVariableChangeMode(it.string("changeMode", "ASSIGN")) },
             field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
+            field("source", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SOURCE, Material.NAME_TAG),
+        ) + typedValueSubFields(
+            node ?: CommandNode(type = CommandType.VARIABLE),
+            ValueType.parse(node?.string("type")) ?: ValueType.NUMBER,
         )
         CommandType.TEMP_SET -> tempSetFields(node ?: CommandNode(type = CommandType.TEMP_SET))
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
@@ -3530,29 +3535,66 @@ object EditorMenuLayout {
     /**
      * 「一時変数を設定」の編集項目を、一時型ごとに切り替えます。
      *
-     * NUMBER・STRING は共通値欄、LOCATIONは位置・向きを共通設定画面へ委譲し、
-     * ITEM・BLOCKはメインハンド、ENTITYは共通対象選択、SOUND・EFFECTは共通の
-     * ID／数値入力仕様を使います。型自体はtempType欄で変更し、再設定は上書きとして扱います。
+     * NUMBER・STRING・BOOLEAN は共通値欄、VECTOR は成分欄、LOCATIONは位置・向きを
+     * 共通設定画面へ委譲し、ITEM・BLOCKはメインハンド、ENTITYは共通対象選択、
+     * SOUND・EFFECTは共通のID／数値入力仕様を使います。型自体はtempType欄で変更し、
+     * 再設定は上書きとして扱います。値欄の組み立ては変数操作コマンドと共有します。
      */
     private fun tempSetFields(node: CommandNode): List<EditorField> = buildList {
         add(field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG))
         add(field("tempType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) {
             displayTemporaryType(it.string("tempType"))
         })
-        when (TemporaryVariableType.parse(node.string("tempType", TemporaryVariableType.NUMBER.name))
-            ?: TemporaryVariableType.NUMBER) {
-            TemporaryVariableType.NUMBER, TemporaryVariableType.STRING ->
-                add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
-                    displayVariableValue(it.string("value"))
-                })
-            TemporaryVariableType.LOCATION -> add(field(
+        val type = ValueType.parse(node.string("tempType", ValueType.NUMBER.name)) ?: ValueType.NUMBER
+        if (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN) {
+            add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
+                displayVariableValue(it.string("value"))
+            })
+        }
+        addAll(typedValueSubFields(node, type))
+    }
+
+    /**
+     * issue #2 の型別値入力欄です。
+     *
+     * 一時変数の設定と変数操作コマンドで共有します。NUMBER・STRING・BOOLEAN は
+     * 親の共通値欄を使うためここでは出しません。VECTOR は成分欄、複合6型は
+     * 型ごとの共通設定欄を返します。
+     */
+    private fun typedValueSubFields(node: CommandNode, type: ValueType): List<EditorField> = buildList {
+        when (type) {
+            ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> Unit
+            ValueType.VECTOR -> {
+                add(field(
+                    "x",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX,
+                    Material.COMPARATOR,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
+                add(field(
+                    "y",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY,
+                    Material.COMPARATOR,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
+                add(field(
+                    "z",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ,
+                    Material.COMPARATOR,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
+            }
+            ValueType.LOCATION -> add(field(
                 "location",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
                 Material.COMPASS,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
             ) { displayTemporaryLocation(it) })
-            TemporaryVariableType.ITEM ->
+            ValueType.ITEM ->
                 // 一時アイテムは「付与アイテム」ではなく、実行内値として設定する項目です。
                 // コマンド固有の説明キー解決へ流すと item の意味が曖昧になるため、
                 // 一時値用の汎用説明をここで明示します。
@@ -3563,9 +3605,9 @@ object EditorMenuLayout {
                     descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
                     actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
                 ))
-            TemporaryVariableType.BLOCK ->
+            ValueType.BLOCK ->
                 add(field("block", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, Material.BRICKS))
-            TemporaryVariableType.ENTITY ->
+            ValueType.ENTITY ->
                 add(field(
                     "entity",
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
@@ -3573,7 +3615,7 @@ object EditorMenuLayout {
                     descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY,
                     actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY,
                 ) { it.temporaryEntityTargetSpec?.kind?.let(::displayTarget) ?: displayUnset() })
-            TemporaryVariableType.SOUND -> {
+            ValueType.SOUND -> {
                 add(field("sound", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND, Material.NOTE_BLOCK))
                 // PLAY_SOUNDと同じく、音量・ピッチは1つの共通入力画面へまとめます。
                 add(field(
@@ -3584,7 +3626,7 @@ object EditorMenuLayout {
                     actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_PARAMETERS,
                 ) { displaySoundParameters(it.string("volume", "1.0"), it.string("pitch", "1.0")) })
             }
-            TemporaryVariableType.EFFECT -> {
+            ValueType.EFFECT -> {
                 add(field("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT, Material.POTION))
                 add(field("level", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL, Material.COMPARATOR))
                 // seconds は TEMP_SET ではエフェクトの持続時間だけを表すため、
@@ -3649,6 +3691,7 @@ object EditorMenuLayout {
         "facing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FACING
         "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISKID to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISKID
         "scope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SCOPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SCOPE
+        "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME
         "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME
         "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE
         "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE
@@ -3793,32 +3836,46 @@ private fun displayFacing(kind: FacingKind) = DisplayValue.Localized(when (kind)
 private fun displayCondition(node: CommandNode) = node.conditionSubject()
     ?.let { DisplayValue.Localized(it.key) } ?: displayUnset()
 
-private fun displayVariableType(value: String) = runCatching { VariableType.valueOf(value) }.getOrNull()?.let {
-    DisplayValue.Localized(when (it) {
-        VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
-        VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-    })
+/** issue #2 の共通値型を、既存の表示キーで解決します。真偽値・ベクトルは新規キーを使います。 */
+private fun displayValueTypeLabel(type: ValueType): LocalizationKey<String> = when (type) {
+    ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+    ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_BOOLEAN
+    ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
+    ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
+    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+    ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
+    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    ValueType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
+    ValueType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
+}
+
+private fun displayValueType(value: String) = runCatching { ValueType.valueOf(value) }.getOrNull()?.let {
+    DisplayValue.Localized(displayValueTypeLabel(it))
 } ?: displayUnset()
 
-/** 一時変数の8型を、既存の表示キーで解決します。新規キーは増やしません。 */
+/** 一時変数の型を、変数操作コマンドと共通の表示キーで解決します。 */
 private fun displayTemporaryType(value: String) =
-    TemporaryVariableType.parse(value)?.let {
-        DisplayValue.Localized(when (it) {
-            TemporaryVariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
-            TemporaryVariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-            TemporaryVariableType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
-            TemporaryVariableType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
-            TemporaryVariableType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
-            TemporaryVariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
-            TemporaryVariableType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
-            TemporaryVariableType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
-        })
+    ValueType.parse(value)?.let {
+        DisplayValue.Localized(displayValueTypeLabel(it))
     } ?: displayUnset()
+
+/** issue #2 の変数scopeを、既存の表示キーで解決します。 */
+private fun displayVariableScope(value: String) = VariableScope.parse(value)?.let {
+    DisplayValue.Localized(when (it) {
+        VariableScope.EXECUTION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION
+        VariableScope.WORLD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD
+        VariableScope.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    })
+} ?: displayUnset()
 
 private fun displayVariableOperation(value: String) = runCatching { VariableOperation.valueOf(value) }.getOrNull()?.let {
     DisplayValue.Localized(when (it) {
         VariableOperation.DEFINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DEFINE
+        VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET
         VariableOperation.CHANGE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHANGE
+        VariableOperation.COPY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_OPERATION_COPY
+        VariableOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE
     })
 } ?: displayUnset()
 

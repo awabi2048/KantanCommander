@@ -6,8 +6,8 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.SystemVariableNames
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TypedValue
+import me.awabi2048.kantancommander.model.ValueType
 import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
@@ -29,12 +29,12 @@ class WorldVariableStore(
     }
 
     @Synchronized
-    fun get(worldId: UUID, name: String): WorldVariableValue? =
+    fun get(worldId: UUID, name: String): TypedValue? =
         state(worldId).values[normalizedName(name)]?.copy()
 
     @Synchronized
-    fun set(worldId: UUID, name: String, value: WorldVariableValue) {
-        require(valid(value)) { "invalid variable value" }
+    fun set(worldId: UUID, name: String, value: TypedValue) {
+        require(value.isValid()) { "invalid variable value" }
         val normalized = normalizedName(name)
         val current = state(worldId)
         val declared = current.definitions[normalized]
@@ -54,13 +54,13 @@ class WorldVariableStore(
      * 初期値を入力させない定義経路を共通化します。
      */
     @Synchronized
-    fun define(worldId: UUID, name: String, type: VariableType): Boolean =
-        define(worldId, name, emptyValue(type))
+    fun define(worldId: UUID, name: String, type: ValueType): Boolean =
+        define(worldId, name, TypedValue.empty(type))
 
     /** 新しい変数を定義し、渡された値を現在値として保存します。 */
     @Synchronized
-    fun define(worldId: UUID, name: String, value: WorldVariableValue): Boolean {
-        require(valid(value)) { "invalid variable value" }
+    fun define(worldId: UUID, name: String, value: TypedValue): Boolean {
+        require(value.isValid()) { "invalid variable value" }
         val normalized = normalizedName(name)
         val current = state(worldId)
         if (normalized in current.definitions) return false
@@ -86,11 +86,11 @@ class WorldVariableStore(
     }
 
     @Synchronized
-    fun list(worldId: UUID): Map<String, WorldVariableValue> =
+    fun list(worldId: UUID): Map<String, TypedValue> =
         state(worldId).values.mapValues { (_, value) -> value.copy() }
 
     @Synchronized
-    fun definitions(worldId: UUID): Map<String, WorldVariableValue> =
+    fun definitions(worldId: UUID): Map<String, TypedValue> =
         state(worldId).definitions.mapValues { (_, value) -> value.copy() }
 
     @Synchronized
@@ -203,7 +203,7 @@ class WorldVariableStore(
                     warnDropped(file, section, name, "数値が不正です")
                     null
                 } else JsonObject().apply {
-                    addProperty("type", VariableType.NUMBER.name)
+                    addProperty("type", ValueType.NUMBER.name)
                     addProperty("numberValue", number)
                 }
             }
@@ -213,11 +213,26 @@ class WorldVariableStore(
                     warnDropped(file, section, name, "文字列がありません")
                     null
                 } else JsonObject().apply {
-                    addProperty("type", VariableType.STRING.name)
+                    addProperty("type", ValueType.STRING.name)
                     addProperty("stringValue", raw.asString)
                 }
             }
-            "BOOLEAN", "POSITION", "ENTITY" -> {
+            // #2 で BOOLEAN と複合型を永続化します。旧保存に有効な旧値は存在しないため、
+            // 新形式の構造検査に通るものだけを採用し、通らないものは破棄します。
+            "BOOLEAN", "LOCATION", "VECTOR", "ITEM", "BLOCK", "ENTITY", "SOUND", "EFFECT" -> {
+                val converted = JsonObject().apply {
+                    addProperty("type", type)
+                    source.entrySet()
+                        .filter { (key, _) -> key != "type" }
+                        .forEach { (key, value) -> add(key, value) }
+                }
+                val parsed = runCatching { gson.fromJson(converted, TypedValue::class.java) }.getOrNull()
+                if (parsed == null || !parsed.isValid()) {
+                    warnDropped(file, section, name, "値の構造が型と一致しません")
+                    null
+                } else converted
+            }
+            "POSITION" -> {
                 warnDropped(file, section, name, "廃止された型 $type です")
                 null
             }
@@ -297,24 +312,12 @@ class WorldVariableStore(
         }
     }
 
-    private fun valid(value: WorldVariableValue?): Boolean {
+    private fun valid(value: TypedValue?): Boolean {
         if (value == null) return false
         val type = runCatching { value.type }.getOrNull() ?: return false
-        return when (type) {
-            VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
-            // STRINGの長さ上限はCommandValueRulesの共通上限と一致させます。超過値は
-            // 保存(set/define)で拒否され、読み込み時の正規化でも無効ペアとして破棄される
-            // ため、編集Dialogの入力上限を超える保存値が存在しない不変条件を維持します。
-            VariableType.STRING ->
-                value.stringValue != null && value.numberValue == null &&
-                    value.stringValue.length <= CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH
-        }
-    }
-
-    /** 型だけの定義で使う保存層の空値です。利用者が設定した初期値ではありません。 */
-    private fun emptyValue(type: VariableType): WorldVariableValue = when (type) {
-        VariableType.NUMBER -> WorldVariableValue(type, numberValue = 0.0)
-        VariableType.STRING -> WorldVariableValue(type, stringValue = "")
+        // 型と構造の一致は共通値の契約へ集約します。STRING長上限等の型固有の
+        // 制約も TypedValue 側で保持するため、保存層で二重に判定しません。
+        return type == value.type && value.isValid()
     }
 
     private fun file(worldId: UUID) = directory.resolve("$worldId.json")
@@ -326,8 +329,8 @@ class WorldVariableStore(
     }
 
     private data class WorldVariables(
-        val definitions: MutableMap<String, WorldVariableValue> = linkedMapOf(),
-        val values: MutableMap<String, WorldVariableValue> = linkedMapOf(),
+        val definitions: MutableMap<String, TypedValue> = linkedMapOf(),
+        val values: MutableMap<String, TypedValue> = linkedMapOf(),
     ) {
         fun deepCopy() = WorldVariables(
             definitions.mapValuesTo(linkedMapOf()) { (_, value) -> value.copy() },

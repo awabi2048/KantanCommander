@@ -53,7 +53,7 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.VariableTemplate
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
@@ -80,10 +80,10 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.MyworldSpawnKind
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.toggleControlBlockState
 import me.awabi2048.kantancommander.security.PlacementDecision
@@ -179,7 +179,7 @@ data class GestureEditorState(
     /** ワールド内変数一覧だけに使うページ番号です。 */
     var variablePage: Int = 0,
     /** ワールド内変数の新規作成で、Dialogへ進む前にGestureGUIで選択した型です。 */
-    var pendingWorldVariableType: VariableType? = null,
+    var pendingWorldVariableType: ValueType? = null,
     /** ワールド内変数の削除確認で、確認対象として表示している名前です。 */
     var pendingWorldVariableDeleteName: String? = null,
     /**
@@ -285,6 +285,8 @@ enum class GestureSettingScreen {
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
+    VARIABLE_SCOPE,
+    VARIABLE_NAME,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
@@ -3016,7 +3018,7 @@ class GestureSequenceEditor(
         if (fieldKey == "soundParameters" && (
                 node.type == CommandType.PLAY_SOUND ||
                     (node.type == CommandType.TEMP_SET &&
-                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.SOUND)
+                        ValueType.parse(node.string("tempType")) == ValueType.SOUND)
                 )) {
             showSoundParametersSettingDialog(player, context, node)
             return
@@ -3182,7 +3184,7 @@ class GestureSequenceEditor(
                 node.type == CommandType.BLOCK_OPERATION ||
                     (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.BLOCK) ||
                     (node.type == CommandType.TEMP_SET &&
-                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
+                        ValueType.parse(node.string("tempType")) == ValueType.BLOCK)
                 )) {
             applyHeldBlock(player, context)
             return true
@@ -4420,7 +4422,12 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    /** 一覧から選んだ変数の値を編集します。型は定義側を正とし、変更しません。 */
+    /**
+     * 一覧から選んだ変数の値を編集します。型は定義側を正とし、変更しません。
+     *
+     * スカラー3型はDialogで編集します。複合6型の値は変数操作コマンドの型別設定で
+     * 編集するため、一覧からは案内のみ表示します。
+     */
     private fun showWorldVariableValueDialog(player: Player, name: String) {
         val worldId = resolveVariableWorldId() ?: return
         val current = plugin.variables.get(worldId, name) ?: return
@@ -4428,6 +4435,10 @@ class GestureSequenceEditor(
         // 型ごとの長さ・有限値・参照記法の検証は、Inventory/Gestureで分岐させず
         // 共通Specへ集約します。画面側はDialogの表示と保存だけを担当します。
         val spec = CommandDialogSpecs.worldVariableValue(type)
+        if (spec == null) {
+            player.sendMessage(KcI18n.text(player, CommandDialogSpecs.worldVariableValueBody(type)))
+            return
+        }
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
@@ -4439,14 +4450,32 @@ class GestureSequenceEditor(
             val validationError = spec.validateInput(raw)
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
             val value = when (type) {
-                VariableType.NUMBER -> WorldVariableValue(
-                    VariableType.NUMBER,
+                ValueType.NUMBER -> TypedValue(
+                    ValueType.NUMBER,
                     numberValue = CommandValueRules.parseFiniteDouble(raw),
                 ).takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
                     player,
-                    CommandDialogSpecs.worldVariableValueInvalid(VariableType.NUMBER),
+                    CommandDialogSpecs.worldVariableValueInvalid(ValueType.NUMBER),
                 )
-                VariableType.STRING -> WorldVariableValue(VariableType.STRING, stringValue = raw)
+                ValueType.STRING -> TypedValue(ValueType.STRING, stringValue = raw)
+                ValueType.BOOLEAN -> TypedValue(
+                    ValueType.BOOLEAN,
+                    booleanValue = raw.trim().lowercase().toBooleanStrictOrNull(),
+                ).takeIf { it.booleanValue != null } ?: return@showInputDialog KcI18n.text(
+                    player,
+                    CommandDialogSpecs.worldVariableValueInvalid(ValueType.BOOLEAN),
+                )
+                ValueType.LOCATION,
+                ValueType.VECTOR,
+                ValueType.ITEM,
+                ValueType.BLOCK,
+                ValueType.ENTITY,
+                ValueType.SOUND,
+                ValueType.EFFECT,
+                -> return@showInputDialog KcI18n.text(
+                    player,
+                    CommandDialogSpecs.worldVariableValueBody(type),
+                )
             }
             val saved = runCatching { plugin.variables.set(worldId, name, value); true }
                 .getOrElse { failure ->
@@ -4520,7 +4549,7 @@ class GestureSequenceEditor(
      * 初期値入力はここでは行いません。保存層の型専用defineが必要な空値を用意し、
      * Dialogは名前の検証・定義の確定だけを担当します。
      */
-    private fun showWorldVariableNameDialog(player: Player, type: VariableType) {
+    private fun showWorldVariableNameDialog(player: Player, type: ValueType) {
         if (resolveVariableWorldId() == null) return
         // Dialogのキャンセル後も一覧へ戻れるよう、背面の状態を先に一覧へ戻します。
         state.pendingWorldVariableType = null
@@ -6675,12 +6704,12 @@ class GestureSequenceEditor(
             GestureSettingScreen.VARIABLE_TYPE -> {
                 if (group != "type") return
                 if (node.type == CommandType.TEMP_SET) {
-                    val type = TemporaryVariableType.parse(value) ?: return
+                    val type = ValueType.parse(value) ?: return
                     if (updateSettingNode(player, settingContext) {
                             CommandSettingsModel.changeTemporaryType(it, type)
                         }) showSettingScreen()
                 } else {
-                    val type = runCatching { VariableType.valueOf(value) }.getOrNull() ?: return
+                    val type = runCatching { ValueType.valueOf(value) }.getOrNull() ?: return
                     if (updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setParameter(it, "type", type.name)
                         }) showSettingScreen()
@@ -6692,6 +6721,38 @@ class GestureSequenceEditor(
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "operation", operation.name)
                     }) showSettingScreen()
+            }
+            // #2: scope は EXECUTION／WORLD の択一です。ENTITY は事前定義なしの
+            // 別契約（#22）のため選択肢に出しません。
+            GestureSettingScreen.VARIABLE_SCOPE -> {
+                if (group != "variableScope") return
+                val scope = runCatching { VariableScope.valueOf(value) }.getOrNull()
+                    ?.takeIf { it != VariableScope.ENTITY } ?: return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "scope", scope.name)
+                    }) showSettingScreen()
+            }
+            // #2: WORLD scope の変数名は定義済み候補から選択します。候補外の名前は
+            // 直接入力へ進み、DEFINE 操作で新規定義します。
+            GestureSettingScreen.VARIABLE_NAME -> when {
+                group == "variableName" -> {
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "name", value)
+                        }) showSettingScreen()
+                }
+                encoded == "variable-name-direct" -> {
+                    beginSettingInput(
+                        player,
+                        CommandDialogSpecs.variableName,
+                        node.string("name"),
+                    ) { raw ->
+                        if (!updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(it, "name", raw)
+                            }) {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                        } else null
+                    }
+                }
             }
             GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
                 if (group != "changeMode") return
@@ -7095,7 +7156,7 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-world-variable-type:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val type = runCatching {
-                    VariableType.valueOf(context.elementId.removePrefix("lower-world-variable-type:"))
+                    ValueType.valueOf(context.elementId.removePrefix("lower-world-variable-type:"))
                 }.getOrNull() ?: return
                 state.pendingWorldVariableType = type
                 updateLower(player)

@@ -207,6 +207,8 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.ENTITY_EQUIPMENT_SLOT -> GestureSettingScreen.ENTITY_EQUIPMENT_SLOT
     CommandSettingEditor.ENTITY_OVERWRITE -> GestureSettingScreen.ENTITY_OVERWRITE
     CommandSettingEditor.ENTITY_TAG_OPERATION -> GestureSettingScreen.ENTITY_TAG_OPERATION
+    CommandSettingEditor.VARIABLE_SCOPE -> GestureSettingScreen.VARIABLE_SCOPE
+    CommandSettingEditor.VARIABLE_NAME -> GestureSettingScreen.VARIABLE_NAME
     CommandSettingEditor.VARIABLE_TYPE -> GestureSettingScreen.VARIABLE_TYPE
     CommandSettingEditor.VARIABLE_OPERATION -> GestureSettingScreen.VARIABLE_OPERATION
     CommandSettingEditor.VARIABLE_CHANGE_MODE -> GestureSettingScreen.VARIABLE_CHANGE_MODE

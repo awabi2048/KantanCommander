@@ -626,6 +626,25 @@ fun CommandNode.setConditionSubject(subject: ConditionSubject) {
     clearConfigured("kind")
 }
 
+/**
+ * issue #2 の変数scopeを返します。
+ *
+ * scope 欄のない旧ノードは WORLD として読み替えます。不正値は null とし、
+ * 検証層で未対応として拒否します。
+ */
+fun CommandNode.variableScope(): VariableScope {
+    val raw = params["scope"]
+    if (raw.isNullOrBlank()) return VariableScope.WORLD
+    return VariableScope.parse(raw) ?: VariableScope.WORLD
+}
+
+/** scope 欄の厳密な解釈です。不正値を検出する必要がある検証向けに使います。 */
+fun CommandNode.variableScopeStrict(): VariableScope? {
+    val raw = params["scope"]
+    if (raw.isNullOrBlank()) return VariableScope.WORLD
+    return VariableScope.parse(raw)
+}
+
 /** 制御ブロックの状態条件として選択できる判定項目です。 */
 enum class ControlBlockStateKind(val key: LocalizationKey<String>) {
     REDSTONE_INPUT(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_REDSTONE_INPUT),
@@ -654,77 +673,23 @@ fun CommandNode.toggleControlBlockState(state: ControlBlockStateKind) {
     controlBlockStates = next.takeIf { it.isNotEmpty() }
 }
 
-/** ワールド内変数の保存型。数値は常にdoubleで保持します。 */
-enum class VariableType { NUMBER, STRING }
-
-/** 変数操作の大分類。すべてMyWorld単位の定義へ反映します。 */
-enum class VariableOperation { DEFINE, CHANGE }
+/**
+ * 変数操作の大分類です。
+ *
+ * - DEFINE: 新規定義のみ。既存名は拒否します。
+ * - SET: 値の設定。未定義名には暗黙定義として記録します（上書き可）。
+ * - CHANGE: 定義済み変数の変更のみ。未定義は拒否します。NUMBERでは
+ *   changeMode（ASSIGN／CALCULATE）を選択します。
+ * - COPY: 同一scope内の別変数へ値を複写します。型は複写元の型を引き継ぎます。
+ * - DELETE: 定義と値を削除します。
+ *
+ * #2 の操作仕様であり、EXECUTION／WORLD の両scopeで同じ意味を持ちます。
+ * ENTITY scope の DEFINE 不要契約は #22 で別途定めます。
+ */
+enum class VariableOperation { DEFINE, SET, CHANGE, COPY, DELETE }
 
 /** CHANGE時に数値へ適用する詳細操作です。STRINGではASSIGNだけを許可します。 */
 enum class VariableChangeMode { CALCULATE, ASSIGN }
-
-data class WorldVariableValue(
-    val type: VariableType,
-    val numberValue: Double? = null,
-    val stringValue: String? = null,
-)
-
-/**
- * 一時変数（実行内寿命）の型です。実行状態そのものを保存する型は作りません。
- *
- * リテラル利用できるのは NUMBER・STRING のみで `%{name}%` 記法を使います。
- * 複合6型（LOCATION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）は型付き設定欄で定義し、
- * 一般テキストへの埋め込みはエラーとします。利用側は対応する構造化Specまたは
- * コマンド固有の一時変数参照欄から選択します。
- */
-enum class TemporaryVariableType {
-    NUMBER,
-    STRING,
-    /** 位置と向きを一体として扱う一時値です。旧POSITIONは読み込み時だけ受け付けます。 */
-    LOCATION,
-    ITEM,
-    BLOCK,
-    ENTITY,
-    SOUND,
-    EFFECT,
-    ;
-
-    companion object {
-        /**
-         * 保存済みJSONの旧POSITIONを新しいLOCATIONへ正規化します。
-         * enumへPOSITIONを残すとentries()が増えてGUIへ旧概念が再登場するため、
-         * 互換処理は保存文字列の境界だけに閉じ込めます。
-         */
-        fun parse(raw: String?): TemporaryVariableType? {
-            val normalized = raw?.trim()?.uppercase(Locale.ROOT) ?: return null
-            return when (normalized) {
-                "POSITION" -> LOCATION
-                else -> entries.firstOrNull { it.name == normalized }
-            }
-        }
-    }
-}
-
-/** 一時変数の実行時値です。上書き可能で、実行終了時に破棄します。 */
-data class TemporaryValue(
-    val type: TemporaryVariableType,
-    val numberValue: Double? = null,
-    val stringValue: String? = null,
-    /** LOCATION型の解決済み座標・向きです。位置と向きを分離して保持しません。 */
-    val location: SavedLocation? = null,
-    /** アイテム型の素材IDと実体（Base64）です。 */
-    val item: String? = null,
-    val itemData: String? = null,
-    /** ブロック・効果・効果音のIDです。 */
-    val block: String? = null,
-    val entityId: UUID? = null,
-    val sound: String? = null,
-    val volume: Double? = null,
-    val pitch: Double? = null,
-    val effect: String? = null,
-    val level: Int? = null,
-    val seconds: Int? = null,
-)
 
 data class SavedLocation(
     val x: Double,
@@ -849,18 +814,26 @@ enum class CommandType(
         "block" to "minecraft:air",
     )),
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
-    /** ワールド内変数を定義・変更します。 */
+    /**
+     * #2 の共通変数操作コマンドです。
+     *
+     * scope（EXECUTION／WORLD）で対象storeを切り替え、operation で操作内容を
+     * 切り替えます。旧ノードに scope がない場合は WORLD として読み替えます。
+     * source は COPY 時の複写元変数名です。
+     */
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REDSTONE, mapOf(
+        "scope" to VariableScope.WORLD.name,
         "name" to "",
-        "type" to VariableType.NUMBER.name,
+        "type" to ValueType.NUMBER.name,
         "operation" to VariableOperation.DEFINE.name,
         "changeMode" to VariableChangeMode.ASSIGN.name,
         "value" to "0.0",
+        "source" to "",
     )),
     /** 一時変数を設定します。再設定は上書きとして扱います。 */
     TEMP_SET(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET_DESCRIPTION, Material.REPEATER, mapOf(
         "name" to "",
-        "tempType" to TemporaryVariableType.NUMBER.name,
+        "tempType" to ValueType.NUMBER.name,
         "value" to "0.0",
     )),
     MERGE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE_DESCRIPTION, Material.HOPPER, emptyMap()),

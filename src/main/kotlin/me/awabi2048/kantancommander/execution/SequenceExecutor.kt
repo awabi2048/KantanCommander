@@ -11,21 +11,23 @@ import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.variableScope
 import me.awabi2048.kantancommander.model.ControlBlockStateConditionPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.TemporaryTemplate
-import me.awabi2048.kantancommander.model.TemporaryValue
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.TypedValue
+import me.awabi2048.kantancommander.model.ExecutionVariables
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.normalizedTemporaryName
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.VariableStore
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
-import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
@@ -510,8 +512,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val callerContext = session.context
                 val callerPrevious = session.previousContext
                 // 一時変数は呼出先へ引き継がず、復帰時に復元します（隔離）。
-                val callerTemporaries = session.temporaries.toMap()
-                session.temporaries.clear()
+                // EXECUTION scope の定義表も同じ境界で隔離します。
+                val callerTemporaries = session.executionVariables.snapshot()
+                session.executionVariables.clear()
                 // 実行状態はDISK_CALLの境界を越えて共有しません。現在はGUIから
                 // コンテキストを生成しませんが、内部呼出し元が保持している実行状態
                 // を呼出先の処理へ渡す境界として、この保存・復元を残します。
@@ -519,8 +522,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 runDiskCall(node, session, depth) { success ->
                     session.context = callerContext
                     session.previousContext = callerPrevious
-                    session.temporaries.clear()
-                    session.temporaries.putAll(callerTemporaries)
+                    session.executionVariables.restore(callerTemporaries)
                     session.lastDetail = if (success) "ディスク呼び出しに成功した" else "ディスク呼び出しに失敗した"
                     next(
                         node.next,
@@ -918,8 +920,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 if (players.isEmpty()) return false
                 // 一時変数参照があれば最優先します。リテラルとの併記は検証で拒否します。
                 val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.ITEM }
+                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                    ?.takeIf { it.type == ValueType.ITEM }
                 val material = if (refTemp != null) {
                     CommandValueRules.material(refTemp.item.orEmpty(), allowAir = false)
                 } else {
@@ -1078,8 +1080,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.FIREWORK_LAUNCH -> executeFirework(node, session, effectiveContext, effectiveOrigin, origins, attempts)
             CommandType.APPLY_EFFECT -> {
                 val refTemp = node.effectTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.EFFECT }
+                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                    ?.takeIf { it.type == ValueType.EFFECT }
                 val key = NamespacedKey.fromString(refTemp?.effect ?: node.string("effect")) ?: return false
                 val effect = Registry.EFFECT.get(key) ?: return false
                 val applicable = targets.filterIsInstance<LivingEntity>()
@@ -1299,8 +1301,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         when (SoundSettings.operation(node)) {
             SoundOperation.PLAY -> {
                 val refTemp = node.soundTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.SOUND }
+                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                    ?.takeIf { it.type == ValueType.SOUND }
                 val sound = refTemp?.sound ?: node.string("sound")
                 if (NamespacedKey.fromString(sound) == null) return false
                 val volume = (refTemp?.volume ?: resolveNumber(node.string("volume", "1.0"), session))
@@ -1327,8 +1329,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             SoundOperation.STOP -> {
                 val refTemp = node.soundTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.SOUND }
+                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                    ?.takeIf { it.type == ValueType.SOUND }
                 val sound = (refTemp?.sound ?: node.string("sound")).takeIf(String::isNotBlank)
                 if (sound != null && NamespacedKey.fromString(sound) == null) return false
                 val category = SoundSettings.category(node.string("soundCategory"))
@@ -1788,8 +1790,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): Boolean {
         // 一時変数参照があれば最優先します。リテラルとの併記は検証で拒否します。
         val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-            ?.takeIf { it.type == TemporaryVariableType.ITEM }
+            ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+            ?.takeIf { it.type == ValueType.ITEM }
         val material = if (refTemp != null) {
             CommandValueRules.material(refTemp.item.orEmpty(), allowAir = false)
         } else {
@@ -1932,8 +1934,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         attempts: MultiAttemptRecorder,
     ): Boolean {
         val refTemp = node.blockTempRef?.takeIf(String::isNotBlank)
-            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-            ?.takeIf { it.type == TemporaryVariableType.BLOCK }
+            ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+            ?.takeIf { it.type == ValueType.BLOCK }
         val material = if (refTemp != null) {
             CommandValueRules.placementMaterial(refTemp.block.orEmpty())
         } else {
@@ -2060,7 +2062,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val value = plugin.variables.get(session.worldId, node.string("variable"))
                     ?: return ConditionEvaluation.UNRESOLVED
                 // 非 NUMBER 変数との数値比較は正常 false ではなく型不一致として分離します。
-                if (value.type != VariableType.NUMBER) return ConditionEvaluation.INVALID
+                if (value.type != ValueType.NUMBER) return ConditionEvaluation.INVALID
                 val comparisonValue = resolveNumber(node.string("value"), session)
                     ?: return ConditionEvaluation.UNRESOLVED
                 val operator = node.string("operator", "==")
@@ -2129,92 +2131,177 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
         val sneakingMatches = sneaking == null || player.isSneaking == sneaking
         val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-            ?.takeIf { it.type == TemporaryVariableType.ITEM }
+            ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+            ?.takeIf { it.type == ValueType.ITEM }
         val item = refTemp?.item ?: node.string("item")
         val itemData = refTemp?.itemData ?: node.string("itemData")
         val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
         return sneakingMatches && itemMatches
     }
 
+    /**
+     * issue #2 の共通変数操作コマンドを実行します。
+     *
+     * scope（EXECUTION／WORLD）で対象storeを切り替え、operation で操作内容を
+     * 切り替えます。旧ノードに scope がない場合は WORLD として読み替えます。
+     * ENTITY scope は #22 で接続するため、ここでは失敗として扱います。
+     *
+     * - DEFINE: 新規定義のみ。既存名・不明な型・値の解決失敗は失敗です。
+     * - SET: 値の設定。未定義名には暗黙定義として記録し、定義済みと異なる型は
+     *   拒否します（定義型を正とし、GUI上のtypeを優先しません）。
+     * - CHANGE: 定義済みの変更のみ。NUMBERでは changeMode（ASSIGN／CALCULATE）
+     *   を選択します。STRING等は ASSIGN として解決します。
+     * - COPY: 同一scope内の別変数へ値を複写します。複写元の型を引き継ぎ、
+     *   複写先の定義型と異なる場合は失敗します。
+     * - DELETE: 定義と値を削除します。存在しない場合は失敗します。
+     */
     private fun executeVariable(
         node: CommandNode,
         session: ExecutionSession,
     ): Boolean = runCatching {
+        val scope = node.variableScope()
+        if (scope == VariableScope.ENTITY) return false
+        val store: VariableStore = when (scope) {
+            VariableScope.EXECUTION -> session.executionVariables
+            VariableScope.WORLD -> WorldVariableAdapter(plugin.variables, session.worldId)
+            VariableScope.ENTITY -> return false
+        }
         val name = node.string("name")
         val operation = VariableOperation.valueOf(node.string("operation", VariableOperation.DEFINE.name))
-        val current = plugin.variables.get(session.worldId, name)
-        // CHANGEではGUI上のtypeを編集させず、MyWorldに定義済みの型を唯一の正とします。
-        // 古いノードに残ったtypeを参照すると、STRING変数の変更がNUMBERとして拒否されます。
-        val type = when (operation) {
-            VariableOperation.DEFINE -> VariableType.valueOf(node.string("type", VariableType.NUMBER.name))
-            VariableOperation.CHANGE -> current?.type ?: return false
-        }
-        val value = when (operation) {
-            VariableOperation.DEFINE -> {
-                if (current != null) return false
-                parseAssignedValue(type, node.string("value"), session)
-            }
-            VariableOperation.CHANGE -> {
-                when (type) {
-                    VariableType.NUMBER -> when (VariableChangeMode.valueOf(node.string("changeMode", VariableChangeMode.ASSIGN.name))) {
-                        VariableChangeMode.ASSIGN -> parseAssignedValue(type, node.string("value"), session)
-                        VariableChangeMode.CALCULATE -> {
-                            val expression = NumericExpression.parse(node.string("value")).expression ?: return false
-                            val result = expression.evaluate(
-                                { reference ->
-                                    if (SystemVariableNames.isSystemName(reference)) {
-                                        when (reference) {
-                                            SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toDouble()
-                                            else -> null
-                                        }
-                                    } else plugin.variables.get(session.worldId, reference)?.numberValue
-                                },
-                                { reference ->
-                                    session.temporaries[reference.normalizedTemporaryName()]
-                                        ?.takeIf { it.type == TemporaryVariableType.NUMBER }
-                                        ?.numberValue?.takeIf(Double::isFinite)
-                                },
-                            ) ?: return false
-                            WorldVariableValue(VariableType.NUMBER, numberValue = result)
-                        }
-                    }
-                    VariableType.STRING -> parseAssignedValue(type, node.string("value"), session)
-                }
-            }
-        }
         when (operation) {
-            VariableOperation.DEFINE -> plugin.variables.define(session.worldId, name, value)
-            VariableOperation.CHANGE -> {
-                plugin.variables.set(session.worldId, name, value)
+            VariableOperation.DEFINE -> {
+                val type = ValueType.parse(node.string("type")) ?: return false
+                if (store.definition(name) != null) return false
+                val value = resolveNodeValue(type, node, session) ?: return false
+                store.define(name, value)
+            }
+            VariableOperation.SET -> {
+                // 定義済みの型を正とします。未定義の場合はGUI上のtypeで暗黙定義します。
+                val type = store.definition(name)
+                    ?: (ValueType.parse(node.string("type")) ?: return false)
+                val value = resolveNodeValue(type, node, session) ?: return false
+                store.set(name, value)
                 true
             }
+            VariableOperation.CHANGE -> {
+                val type = store.definition(name) ?: return false
+                if (type == ValueType.NUMBER &&
+                    VariableChangeMode.valueOf(node.string("changeMode", VariableChangeMode.ASSIGN.name)) ==
+                    VariableChangeMode.CALCULATE
+                ) {
+                    val expression = NumericExpression.parse(node.string("value")).expression ?: return false
+                    val result = expression.evaluate(
+                        { reference ->
+                            if (SystemVariableNames.isSystemName(reference)) {
+                                when (reference) {
+                                    SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toDouble()
+                                    else -> null
+                                }
+                            } else plugin.variables.get(session.worldId, reference)?.numberValue
+                        },
+                        { reference ->
+                            session.executionVariables.get(reference.normalizedTemporaryName())
+                                ?.takeIf { it.type == ValueType.NUMBER }
+                                ?.numberValue?.takeIf(Double::isFinite)
+                        },
+                    ) ?: return false
+                    store.set(name, TypedValue(ValueType.NUMBER, numberValue = result))
+                    true
+                } else {
+                    val value = resolveNodeValue(type, node, session) ?: return false
+                    store.set(name, value)
+                    true
+                }
+            }
+            VariableOperation.COPY -> {
+                val source = store.get(node.string("source")) ?: return false
+                store.set(name, source)
+                true
+            }
+            VariableOperation.DELETE -> store.remove(name)
         }
     }.getOrDefault(false)
 
     /**
+     * WORLD scope を共通store契約へ接続します。
+     *
+     * WorldVariableStore は worldId を引数に取るため、実行セッションの worldId で
+     * 束縛して VariableStore として扱います。名前正規化は保存層へ委ねます。
+     */
+    private class WorldVariableAdapter(
+        private val store: me.awabi2048.kantancommander.data.WorldVariableStore,
+        private val worldId: UUID,
+    ) : VariableStore {
+        override fun define(name: String, value: TypedValue): Boolean =
+            store.define(worldId, name, value)
+
+        override fun set(name: String, value: TypedValue) =
+            store.set(worldId, name, value)
+
+        override fun get(name: String): TypedValue? =
+            store.get(worldId, name)
+
+        override fun definition(name: String): ValueType? =
+            store.definitions(worldId)[name.trim().lowercase(java.util.Locale.ROOT)]?.type
+
+        override fun definitions(): Map<String, ValueType> =
+            store.definitions(worldId).mapValues { (_, value) -> value.type }
+
+        override fun remove(name: String): Boolean =
+            store.remove(worldId, name)
+    }
+
+    /**
      * 一時変数を設定します。再設定は上書きとして扱います。
      *
-     * NUMBER・STRING はリテラル値を受け付け、`%{name}%` 参照の展開に対応します。
-     * 複合6型は型ごとの共通設定で解決済み値を保持する想定であり、
-     * ここでは型ごとの最小検証のうえ保存します。
+     * #2 の共通store（EXECUTION scope）へ保存し、定義も同時に記録します。
+     * 値の組み立ては [resolveNodeValue] へ集約し、変数操作コマンドと共有します。
      */
     private fun executeTemporary(node: CommandNode, session: ExecutionSession): Boolean = runCatching {
         val name = me.awabi2048.kantancommander.model.TemporaryTemplate.normalized(node.string("name"))
         require(CommandValueRules.isVariableName(name)) { "invalid temporary name" }
-        val type = TemporaryVariableType.parse(
-            node.string("tempType", TemporaryVariableType.NUMBER.name),
+        val type = ValueType.parse(
+            node.string("tempType", ValueType.NUMBER.name),
         ) ?: return false
-        val value = when (type) {
-            TemporaryVariableType.NUMBER -> TemporaryValue(
-                type,
-                numberValue = resolveNumber(node.string("value"), session) ?: error("number must be finite"),
-            )
-            TemporaryVariableType.STRING -> TemporaryValue(
-                type,
-                stringValue = resolveText(node.string("value"), session) ?: error("string is unavailable"),
-            )
-            TemporaryVariableType.LOCATION -> {
+        val value = resolveNodeValue(type, node, session) ?: return false
+        session.executionVariables.set(name, value)
+        true
+    }.getOrDefault(false)
+
+    /**
+     * issue #2 の型別値組み立てです。
+     *
+     * NUMBER・STRING・BOOLEAN・VECTOR は値欄から、複合6型は型ごとの共通設定から
+     * 解決済み値を保持します。Bukkit／Paper の実体は保持せず、再解決可能な
+     * 表現（UUID・座標・素材名等）だけを使います。失敗は null で返します。
+     */
+    private fun resolveNodeValue(type: ValueType, node: CommandNode, session: ExecutionSession): TypedValue? =
+        runCatching {
+            when (type) {
+                ValueType.NUMBER -> TypedValue(
+                    type,
+                    numberValue = resolveNumber(node.string("value"), session) ?: error("number must be finite"),
+                )
+                ValueType.STRING -> {
+                    val text = resolveText(node.string("value"), session) ?: error("string is unavailable")
+                    require(text.length <= CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH) {
+                        "variable string exceeds ${CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH} characters"
+                    }
+                    TypedValue(type, stringValue = text)
+                }
+                ValueType.BOOLEAN -> TypedValue(
+                    type,
+                    booleanValue = parseBooleanInput(node.string("value")) ?: error("boolean must be true or false"),
+                )
+                ValueType.VECTOR -> TypedValue(
+                    type,
+                    vector = me.awabi2048.kantancommander.model.SavedVector(
+                        x = resolveNumber(node.string("x"), session)?.takeIf(Double::isFinite) ?: error("invalid x"),
+                        y = resolveNumber(node.string("y"), session)?.takeIf(Double::isFinite) ?: error("invalid y"),
+                        z = resolveNumber(node.string("z"), session)?.takeIf(Double::isFinite) ?: error("invalid z"),
+                    ),
+                )
+                ValueType.LOCATION -> {
                 // 新形式は通常コマンドと同じPositionSpec/FacingSpecから解決します。
                 // 旧POSITIONのx/y/z形式は読み込み済みデータを壊さないため、この実行境界
                 // だけでLOCATIONへ組み立て直します。以後の参照は常に一つのSavedLocationです。
@@ -2234,7 +2321,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val location = resolveSinglePosition(positionSpec, session, session.context)
                     ?: error("location is unavailable")
                 applyFacing(location, facingSpec, session.context, session)
-                TemporaryValue(
+                TypedValue(
                     type,
                     location = me.awabi2048.kantancommander.model.SavedLocation(
                         location.x,
@@ -2245,17 +2332,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ),
                 )
             }
-            TemporaryVariableType.ITEM -> {
+            ValueType.ITEM -> {
                 val material = CommandValueRules.material(node.string("item"), allowAir = false)
                     ?: error("invalid item")
-                TemporaryValue(type, item = material.name, itemData = node.string("itemData"))
+                TypedValue(type, item = material.name, itemData = node.string("itemData"))
             }
-            TemporaryVariableType.BLOCK -> {
+            ValueType.BLOCK -> {
                 val material = CommandValueRules.placementMaterial(node.string("block"))
                     ?: error("invalid block")
-                TemporaryValue(type, block = material.name)
+                TypedValue(type, block = material.name)
             }
-            TemporaryVariableType.ENTITY -> {
+            ValueType.ENTITY -> {
                 val targetSpec = node.temporaryEntityTargetSpec
                 val entityId = if (targetSpec != null) {
                     resolveTargetSpec(targetSpec, session, session.context)?.uniqueId
@@ -2266,17 +2353,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // 定義時点で実体が見つからなくても一時値そのものは保存します。
                 // 死亡・別ワールド・未ロードは参照時の「対象なし」と同じ契約で扱い、
                 // 後続ノードだけをスキップできるようにします。
-                TemporaryValue(type, entityId = entityId)
+                TypedValue(type, entityId = entityId)
             }
-            TemporaryVariableType.SOUND -> {
+            ValueType.SOUND -> {
                 if (!CommandValueRules.isSoundId(node.string("sound"))) error("invalid sound")
                 val volume = resolveNumber(node.string("volume", "1.0"), session)
                     ?.takeIf { it.isFinite() && it in 0.0..34.0 } ?: error("invalid volume")
                 val pitch = resolveNumber(node.string("pitch", "1.0"), session)
                     ?.takeIf { it.isFinite() && it in 0.5..2.0 } ?: error("invalid pitch")
-                TemporaryValue(type, sound = node.string("sound"), volume = volume, pitch = pitch)
+                TypedValue(type, sound = node.string("sound"), volume = volume, pitch = pitch)
             }
-            TemporaryVariableType.EFFECT -> {
+            ValueType.EFFECT -> {
                 if (!CommandValueRules.isEffectId(node.string("effect"))) error("invalid effect")
                 val level = resolveNumber(node.string("level", "1"), session)
                     ?.takeIf { it == kotlin.math.floor(it) && it in 1.0..255.0 }
@@ -2284,33 +2371,20 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val seconds = resolveNumber(node.string("seconds", "30"), session)
                     ?.takeIf { it == kotlin.math.floor(it) && it in 1.0..86_400.0 }
                     ?.toInt() ?: error("invalid seconds")
-                TemporaryValue(type, effect = node.string("effect"), level = level, seconds = seconds)
+                TypedValue(type, effect = node.string("effect"), level = level, seconds = seconds)
             }
         }
-        session.temporaries[name] = value
-        true
-    }.getOrDefault(false)
+    }.getOrNull()
 
-    private fun parseAssignedValue(type: VariableType, raw: String, session: ExecutionSession): WorldVariableValue {
-        return when (type) {
-            VariableType.NUMBER -> WorldVariableValue(
-                VariableType.NUMBER,
-                numberValue = resolveNumber(raw, session) ?: error("number must be finite"),
-            )
-            // STRING代入もGUI入力と同じ共通上限へ揃えます。超過代入はGUIで入力できない
-            // 値と同じ扱いとして失敗(原因表示)にするため、保存層の不変条件を崩しません。
-            VariableType.STRING -> {
-                val text = resolveText(raw, session) ?: error("string variable is unavailable")
-                require(text.length <= CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH) {
-                    "world variable string exceeds ${CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH} characters"
-                }
-                WorldVariableValue(VariableType.STRING, stringValue = text)
-            }
-        }
+    /** 真偽値入力を解釈します。受付は大小無視の true／false のみです。 */
+    private fun parseBooleanInput(raw: String): Boolean? = when (raw.trim().lowercase()) {
+        "true" -> true
+        "false" -> false
+        else -> null
     }
 
-    private fun compareVariable(value: WorldVariableValue?, comparisonValue: Double, operator: String): Boolean {
-        val actual = value?.takeIf { it.type == VariableType.NUMBER }?.numberValue ?: return false
+    private fun compareVariable(value: TypedValue?, comparisonValue: Double, operator: String): Boolean {
+        val actual = value?.takeIf { it.type == ValueType.NUMBER }?.numberValue ?: return false
         val comparison = actual.compareTo(comparisonValue)
         return when (operator) {
             "==" -> comparison == 0
@@ -2351,8 +2425,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val candidates: List<Entity> = when (resolvedSpec.kind) {
             TargetKind.TEMPORARY -> listOfNotNull(
                 resolvedSpec.tempName
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.ENTITY }
+                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                    ?.takeIf { it.type == ValueType.ENTITY }
                     ?.entityId?.let(session.origin.world::getEntity),
             )
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER ->
@@ -2441,8 +2515,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val search = spec.searchOrigin?.takeIf { it.hasAnySetting() }
         if (search != null) {
             search.positionTemp?.takeIf(String::isNotBlank)?.let { name ->
-                val temp = session.temporaries[TemporaryTemplate.normalized(name)]
-                    ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                val temp = session.executionVariables.get(TemporaryTemplate.normalized(name))
+                    ?.takeIf { it.type == ValueType.LOCATION }
                     ?.location ?: return null
                 return Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
             }
@@ -2527,8 +2601,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         PositionKind.TEMPORARY -> {
             if (spec.hasNonAbsoluteSemantics()) return null
             val temp = spec.tempName
-                ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                    ?.takeIf { it.type == ValueType.LOCATION }
                     ?.location ?: return null
             Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
         }
@@ -2730,8 +2804,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         RegionAnchorKind.TEMPORARY -> {
             val temp = spec.anchor.tempName
                 ?.takeIf(String::isNotBlank)
-                ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                ?.takeIf { it.type == ValueType.LOCATION }
                 ?.location ?: return null
             Location(session.origin.world, temp.x, temp.y, temp.z, temp.yaw, temp.pitch)
         }
@@ -2807,8 +2881,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
             FacingKind.TEMPORARY -> {
                 val temp = facing.tempName
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.LOCATION }
+                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
+                    ?.takeIf { it.type == ValueType.LOCATION }
                     ?.location ?: return
                 faceLocation(destination, Location(destination.world, temp.x, temp.y, temp.z))
             }
@@ -2823,7 +2897,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             TemporaryTemplate.interpolateText(raw) { name ->
                 when (name) {
                     SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toString()
-                    else -> session.temporaries[TemporaryTemplate.normalized(name)]?.let(::stringifyTemporary)
+                    else -> session.executionVariables.get(TemporaryTemplate.normalized(name))?.let(::stringifyTemporary)
                 }
             } ?: return null
         }
@@ -2846,8 +2920,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             TemporaryTemplate.interpolateText(raw) { name ->
                 when (name) {
                     SystemVariableNames.CURRENT_LOOP_COUNT -> session.currentLoopCount?.toString()
-                    else -> session.temporaries[TemporaryTemplate.normalized(name)]
-                        ?.takeIf { it.type == TemporaryVariableType.NUMBER }
+                    else -> session.executionVariables.get(TemporaryTemplate.normalized(name))
+                        ?.takeIf { it.type == ValueType.NUMBER }
                         ?.numberValue?.takeIf(Double::isFinite)?.toString()
                 }
             } ?: return null
@@ -2859,7 +2933,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     // 数値欄は文字列変数を暗黙にDoubleへ変換しません。保存値がたまたま
                     // 数字だけでも、定義型を越境するとGUI・実行・出力で意味が分岐するためです。
                     else -> plugin.variables.get(session.worldId, name)
-                        ?.takeIf { it.type == VariableType.NUMBER }
+                        ?.takeIf { it.type == ValueType.NUMBER }
                         ?.numberValue
                         ?.takeIf(Double::isFinite)
                         ?.toString()
@@ -2880,8 +2954,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun hasUnavailableTemporaryReference(node: CommandNode, session: ExecutionSession): Boolean {
         fun scalarReferencesAvailable(raw: String): Boolean =
             TemporaryTemplate.references(raw).all { name ->
-                val value = session.temporaries[TemporaryTemplate.normalized(name)]
-                value != null && value.type in setOf(TemporaryVariableType.NUMBER, TemporaryVariableType.STRING)
+                val value = session.executionVariables.get(TemporaryTemplate.normalized(name))
+                value != null && value.type in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
             }
 
         // テキスト／数値欄に現れる `%{name}%` はスカラーだけを許可します。
@@ -2890,9 +2964,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
         fun entityAvailable(name: String?): Boolean {
             val value = name?.takeIf(String::isNotBlank)
-                ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+                ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
                 ?: return false
-            if (value.type != TemporaryVariableType.ENTITY) return false
+            if (value.type != ValueType.ENTITY) return false
             val id = value.entityId ?: return false
             val entity = session.origin.world.getEntity(id) ?: return false
             return entity.isValid &&
@@ -2903,9 +2977,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
         fun positionAvailable(name: String?): Boolean {
             val value = name?.takeIf(String::isNotBlank)
-                ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+                ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
                 ?: return false
-            return value.type == TemporaryVariableType.LOCATION && value.location != null
+            return value.type == ValueType.LOCATION && value.location != null
         }
 
         fun targetUnavailable(spec: TargetSpec?): Boolean =
@@ -2947,23 +3021,24 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             search.positionTemp?.let { !positionAvailable(it) } == true ||
                 positionUnavailable(search.position)
         } || listOfNotNull(
-            node.itemTempRef to TemporaryVariableType.ITEM,
-            node.blockTempRef to TemporaryVariableType.BLOCK,
-            node.soundTempRef to TemporaryVariableType.SOUND,
-            node.effectTempRef to TemporaryVariableType.EFFECT,
+            node.itemTempRef to ValueType.ITEM,
+            node.blockTempRef to ValueType.BLOCK,
+            node.soundTempRef to ValueType.SOUND,
+            node.effectTempRef to ValueType.EFFECT,
         ).any { (name, expected) ->
             name?.takeIf(String::isNotBlank)?.let {
-                session.temporaries[TemporaryTemplate.normalized(it)]?.type != expected
+                session.executionVariables.get(TemporaryTemplate.normalized(it))?.type != expected
             } == true
         }
     }
 
     /** 一時変数値を文字列へ変換します。複合型は暗黙に空文字へ変換しません。 */
-    private fun stringifyTemporary(value: TemporaryValue): String? = when (value.type) {
-        TemporaryVariableType.NUMBER -> value.numberValue?.let {
+    private fun stringifyTemporary(value: TypedValue): String? = when (value.type) {
+        ValueType.NUMBER -> value.numberValue?.let {
             if (it.isFinite() && it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
         }
-        TemporaryVariableType.STRING -> value.stringValue
+        ValueType.STRING -> value.stringValue
+        ValueType.BOOLEAN -> value.booleanValue?.toString()
         else -> null
     }
 
@@ -3114,8 +3189,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var previousContext: ExecutionContextSpec? = null,
         val loops: MutableList<LoopFrame> = mutableListOf(),
         var currentLoopCount: Long? = null,
-        /** 一時変数の実行内保持域です。実行終了時に破棄し、DISK_CALL越境では隔離します。 */
-        val temporaries: MutableMap<String, TemporaryValue> = linkedMapOf(),
+        /** EXECUTION scope の実行内保持域です。実行終了時に破棄し、DISK_CALL越境では隔離します。 */
+        val executionVariables: ExecutionVariables = ExecutionVariables(),
     ) {
         val isActive: Boolean get() = !cancelled && !finished
         val scheduledTasks: MutableSet<BukkitTask> = linkedSetOf()
