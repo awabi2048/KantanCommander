@@ -26,6 +26,14 @@ data class GestureSettingTreeNode(
     val valueState: GestureSettingValueState = GestureSettingValueState.INITIAL,
     /** 実行前検証で要確認（未設定・不正）と判定された設定に属するかを表します。 */
     val attention: Boolean = false,
+    /**
+     * 下揃えで配置する詳細項目かを表します。
+     *
+     * プリセット等の上位項目は上揃えのまま、詳細設定・一時変数参照等の
+     * 下位項目だけを下端基準で配置します。上からの位置指定ではなく
+     * 下端からの行番号で定まるため、項目数の増減で位置がずれません。
+     */
+    val bottomAligned: Boolean = false,
 ) {
     val hasChildren: Boolean
         get() = children.isNotEmpty()
@@ -154,6 +162,25 @@ internal fun settingSelectionAction(
         GestureSettingSelectionAction.STAY_ON_FRAME
     }
 
+/**
+ * 経路末尾の選択を同階層へ排他的に適用します。
+ *
+ * 経路が現在の候補一覧を指す場合、その1件だけを選択表示にし、
+ * 保存値由来の他候補の選択表示を抑止します。経路が一覧外（子画面の
+ * 詳細ID等）を指す場合や空の場合は何も変えず、保存値表示を維持します。
+ * これにより、詳細カードの初回クリック直後にプリセットと詳細が
+ * 二重選択表示になることを防ぎます。
+ */
+internal fun applyPathSelectionExclusive(
+    choices: List<GestureSettingTreeNode>,
+    pathLastNodeId: String?,
+): List<GestureSettingTreeNode> {
+    if (pathLastNodeId == null || choices.none { it.id == pathLastNodeId }) return choices
+    return choices.map { choice ->
+        choice.copy(selected = choice.id == pathLastNodeId)
+    }
+}
+
 /** 詳細子画面をまたぐための設定木上の1フレームです。 */
 data class GestureSettingFrame(
     val context: CommandSettingContext,
@@ -171,6 +198,12 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.CONDITION_DETAIL -> GestureSettingScreen.CONDITION_DETAIL
     CommandSettingEditor.DISPLAY_MODE -> GestureSettingScreen.DISPLAY_MODE
     CommandSettingEditor.ENTITY_ACTION -> GestureSettingScreen.ENTITY_ACTION
+    CommandSettingEditor.ENTITY_OPERATION -> GestureSettingScreen.ENTITY_OPERATION
+    CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION -> GestureSettingScreen.ENTITY_ATTRIBUTE_OPERATION
+    CommandSettingEditor.ENTITY_MODIFIER_OPERATION -> GestureSettingScreen.ENTITY_MODIFIER_OPERATION
+    CommandSettingEditor.ENTITY_PROPERTY -> GestureSettingScreen.ENTITY_PROPERTY
+    CommandSettingEditor.ENTITY_PROPERTY_VALUE -> GestureSettingScreen.ENTITY_PROPERTY_VALUE
+    CommandSettingEditor.PLACE_DESTINATION -> GestureSettingScreen.PLACE_DESTINATION
     CommandSettingEditor.ENTITY_EQUIPMENT_SLOT -> GestureSettingScreen.ENTITY_EQUIPMENT_SLOT
     CommandSettingEditor.ENTITY_OVERWRITE -> GestureSettingScreen.ENTITY_OVERWRITE
     CommandSettingEditor.ENTITY_TAG_OPERATION -> GestureSettingScreen.ENTITY_TAG_OPERATION

@@ -77,6 +77,22 @@ class ErrorContractTest {
     }
 
     @Test
+    fun `partial display vars appear only for mixed outcomes`() {
+        // issue #32 のレビューF4対応：全件適用時は件数表示を付けず、
+        // 非対応・失敗が混ざるときだけ置換変数を返します。
+        assertNull(PartialApplicability(appliedCount = 3).displayVars())
+        assertNull(PartialApplicability().displayVars())
+        assertEquals(
+            mapOf("applied" to 1, "nonApplicable" to 2, "failed" to 0),
+            PartialApplicability(appliedCount = 1, nonApplicableCount = 2).displayVars(),
+        )
+        assertEquals(
+            mapOf("applied" to 0, "nonApplicable" to 0, "failed" to 1),
+            PartialApplicability(failedCount = 1).displayVars(),
+        )
+    }
+
+    @Test
     fun `normal execution shows ERROR only`() {
         assertTrue(ExecutionError(ErrorCode.COMMAND_FAILED).visibleInNormalExecution())
         assertFalse(ExecutionError(ErrorCode.TEMPORARY_UNRESOLVED).visibleInNormalExecution())

@@ -6,7 +6,8 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.DiskScript
@@ -21,9 +22,14 @@ import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertySupport
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.RegionAnchorKind
 import me.awabi2048.kantancommander.model.RegionKind
 import me.awabi2048.kantancommander.model.RegionSpec
@@ -40,6 +46,7 @@ import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.error.ErrorSeverity
 import me.awabi2048.kantancommander.error.ExecutionError
@@ -365,13 +372,24 @@ object ExecutableScriptValidator {
             node.particleEndPositionSpec,
             node.fireworkPositionSpec,
             node.summonPositionSpec,
+            node.executionPositionSpec,
         ).forEach { validatePosition(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationPositionSpec?.let {
             validatePosition(it, path, node, errors, temporaryDefinitions)
         }
+        validateEmbeddedPositionTargets(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        validateSinglePositionTargets(node, path, errors)
+        validateBareTargetPositions(node, path, errors)
         node.destinationFacingSpec?.let { validateFacing(it, path, node, errors, temporaryDefinitions) }
         node.temporaryLocationFacingSpec?.let {
             validateFacing(it, path, node, errors, temporaryDefinitions)
+        }
+        // 向き注視・複写の参照先は汎用対象検証へ通し、対象設定と同じ規則で検証します。
+        listOfNotNull(
+            node.destinationFacingSpec?.target,
+            node.temporaryLocationFacingSpec?.target,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
         }
         when (node.type) {
             CommandType.TELEPORT -> {
@@ -388,6 +406,8 @@ object ExecutableScriptValidator {
                 validatePositiveIntegerInput(node.string("count"), variableDefinitions, node, path, setOf("count"), errors, temporaryDefinitions)
             }
             CommandType.ENTITY_ACTION -> validateEntityAction(node, path, errors, temporaryDefinitions)
+            CommandType.ENTITY_OPERATION -> validateEntityOperation(node, path, errors, temporaryDefinitions)
+            CommandType.PLACE_ITEM -> validatePlaceItem(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.DISPLAY_TEXT -> validateDisplayText(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.WAIT -> validateWait(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.SUMMON_ENTITY -> {
@@ -824,32 +844,233 @@ object ExecutableScriptValidator {
                 errors += nodeError(node, path, setOf("other"), "乗り物となる対象が未設定です")
             }
             "dismount" -> Unit
-            "equip" -> {
-                if (!CommandValueRules.isEquipmentSlot(node.string("slot"))) {
-                    errors += nodeError(node, path, setOf("slot"), "装備するスロットが不正です")
+            "motion" -> {
+                // 動き設定は現在速度を指定値へ設定する意味であり、加算等の
+                // modeを混在させません。成分ごとに有限数値を要求します。
+                if (CommandValueRules.parseFiniteDouble(node.string("motionX")) == null) {
+                    errors += nodeError(node, path, setOf("motionX"), "動きのX成分は有限な数値で指定してください")
                 }
-                if (node.itemTempRef.isNullOrBlank() && CommandValueRules.material(node.string("item"), allowAir = false) == null) {
-                    errors += nodeError(node, path, setOf("item"), "装備アイテムが未設定です")
+                if (CommandValueRules.parseFiniteDouble(node.string("motionY")) == null) {
+                    errors += nodeError(node, path, setOf("motionY"), "動きのY成分は有限な数値で指定してください")
                 }
-                if (node.params["overwrite"]?.toBooleanStrictOrNull() == null) {
-                    errors += nodeError(node, path, setOf("overwrite"), "上書き設定が不正です")
-                }
-            }
-            "tag" -> {
-                if (node.string("tagOperation", "add") !in setOf("add", "remove")) {
-                    errors += nodeError(node, path, setOf("tagOperation"), "タグ操作が不正です")
-                }
-                val tag = node.string("tag")
-                // カンマを特別扱いせず、単一タグの通常の形式検証へ委ねます。
-                // 一時変数 `%{name}%` の参照も文字列欄として許可します。
-                validateTemplate(tag, node, path, "tag", errors, null, temporaries = temporaryDefinitions)
-                if (VariableTemplate.references(tag).isEmpty() && TemporaryTemplate.references(tag).isEmpty() &&
-                    !CommandValueRules.isTag(tag)
-                ) {
-                    errors += nodeError(node, path, setOf("tag"), "タグが不正です")
+                if (CommandValueRules.parseFiniteDouble(node.string("motionZ")) == null) {
+                    errors += nodeError(node, path, setOf("motionZ"), "動きのZ成分は有限な数値で指定してください")
                 }
             }
+            // 旧equipは#21のPLACE_ITEMへ移行済みのため、
+            // ここに残る値は移行漏れとして明示エラーにします。
+            "equip" -> errors += nodeError(node, path, setOf("action"), "装備操作は「アイテムを配置する」へ移行しました")
+            // 旧tagはv13→v14移行でENTITY_OPERATIONへ変換済みのため、
+            // ここに残る値は移行漏れとして明示エラーにします。
+            "tag" -> errors += nodeError(node, path, setOf("action"), "タグ操作は「エンティティを操作」へ移行しました")
             else -> errors += nodeError(node, path, setOf("action"), "不明なエンティティ操作です")
+        }
+    }
+
+    /**
+     * issue #32 の「エンティティを操作」を検証します。
+     *
+     * Entity自身の状態・データ変更（tag／attribute／data）を扱います。
+     * 即時的な移動・関係変化はENTITY_ACTION側の責務であり、ここでは扱いません。
+     * capabilityの判定は「確実に不可能」だけを編集時エラーとし、
+     * runtimeまで不明な対象は実行時の適用可否へ委ねます（#6・#18）。
+     */
+    private fun validateEntityOperation(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
+        when (node.string("operation", "tag")) {
+            "tag" -> validateEntityTagValue(node, path, errors, temporaryDefinitions)
+            "attribute" -> validateEntityAttribute(node, path, errors)
+            "data" -> validateEntityData(node, path, errors, temporaryDefinitions)
+            else -> errors += nodeError(node, path, setOf("operation"), "不明なエンティティ操作です")
+        }
+    }
+
+    /**
+     * タグ設定の検証です。
+     *
+     * 旧ENTITY_ACTIONから移行した値と新規値を同じ規則で検証します。
+     * カンマを特別扱いせず、単一タグの通常の形式検証へ委ねます。
+     * 一時変数 `%{name}%` の参照も文字列欄として許可します。
+     */
+    private fun validateEntityTagValue(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        if (node.string("tagOperation", "add") !in setOf("add", "remove")) {
+            errors += nodeError(node, path, setOf("tagOperation"), "タグ操作が不正です")
+        }
+        val tag = node.string("tag")
+        validateTemplate(tag, node, path, "tag", errors, null, temporaries = temporaryDefinitions)
+        if (VariableTemplate.references(tag).isEmpty() && TemporaryTemplate.references(tag).isEmpty() &&
+            !CommandValueRules.isTag(tag)
+        ) {
+            errors += nodeError(node, path, setOf("tag"), "タグが不正です")
+        }
+    }
+
+    private fun validateEntityAttribute(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        val attributeRaw = node.string(EntityAttributeSupport.PARAM_ATTRIBUTE)
+        val attributeKnown = EntityAttributeSupport.isAttributeId(attributeRaw)
+        if (!attributeKnown) {
+            errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_ATTRIBUTE), "attributeの指定が不正です")
+        }
+        val operation = node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)
+        if (!EntityAttributeSupport.isOperation(operation)) {
+            errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_OPERATION), "attributeの操作内容が不正です")
+            return
+        }
+        // 対象の種類が静的に確定し、LivingEntityでないことが明らかな場合だけ
+        // 非対応とします。種類不明の対象はruntime判定へ委ねます。
+        val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
+        if (knownType != null && !knownType.isAlive) {
+            errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_ATTRIBUTE), "この対象の種類にはattributeを適用できません")
+        }
+        when (operation) {
+            EntityAttributeSupport.OPERATION_BASE_VALUE -> {
+                if (CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT)) == null) {
+                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_AMOUNT), "基本値は有限な数値で指定してください")
+                }
+            }
+            EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
+                if (!EntityAttributeSupport.isModifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))) {
+                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_MODIFIER_KEY), "modifierキーが不正です")
+                }
+                if (CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT)) == null) {
+                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_AMOUNT), "量は有限な数値で指定してください")
+                }
+                if (!EntityAttributeSupport.isModifierOperation(node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION))) {
+                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_MODIFIER_OPERATION), "modifierの演算方法が不正です")
+                }
+            }
+            EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
+                if (!EntityAttributeSupport.isModifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))) {
+                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_MODIFIER_KEY), "modifierキーが不正です")
+                }
+            }
+        }
+    }
+
+    private fun validateEntityData(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        val propertyId = node.string(EntityDataSchema.PARAM_PROPERTY)
+        val definition = EntityDataSchema.definition(propertyId)
+        if (definition == null) {
+            errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_PROPERTY), "不明な設定項目です")
+            return
+        }
+        // 確実に対象外の種類だけを編集時エラーとし、種類不明の対象は
+        // 過剰に制限せずruntime判定へ委ねます（#10・#18）。
+        val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
+        if (EntityDataSchema.staticSupport(knownType, propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) {
+            errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_PROPERTY), "この対象の種類には適用できない設定項目です")
+        }
+        val raw = node.string(EntityDataSchema.PARAM_VALUE)
+        when (definition.valueKind) {
+            EntityPropertyValueKind.BOOLEAN -> {
+                if (raw.toBooleanStrictOrNull() == null) {
+                    errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "設定値はtrueまたはfalseで指定してください")
+                }
+            }
+            EntityPropertyValueKind.ENUM -> {
+                if (definition.enumChoices.none { it.id == raw }) {
+                    errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "設定値が不正です")
+                }
+            }
+            // 表示名は召喚時の表示名と同じくテンプレート参照を許可します。
+            EntityPropertyValueKind.TEXT -> {
+                validateTemplate(raw, node, path, EntityDataSchema.PARAM_VALUE, errors, null, temporaries = temporaryDefinitions)
+            }
+        }
+    }
+
+    /**
+     * 「アイテムを配置する」(PLACE_ITEM) を検証します。
+     *
+     * 配置先ごとに要求する対象が異なります。エンティティ系は TargetSpec、
+     * ブロックコンテナ系は blockPositionSpec を必須にし、もう一方は要求しません。
+     * スロットは配置先ごとの保存形式で検証し、個数は正整数として変数参照ごと
+     * 受け付けます。配置スタックの上限（保存済みitemDataの独自上限があれば
+     * それを、なければ素材の標準上限）を超えるリテラル個数は、上限が解決できる
+     * 場合に早期エラーにします（上限超過は実行・出力ともに失敗するため）。
+     * 変数・一時参照の個数と上限が解決できない場合（サーバーなし試験など）は
+     * 実行時の失敗に委ねます。
+     */
+    private fun validatePlaceItem(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        val destination = PlaceItemDestination.from(node.string("destination"))
+        if (destination == null) {
+            errors += nodeError(node, path, setOf("destination"), "配置先が不正です")
+            return
+        }
+        if (destination.requiresEntityTarget && node.targetSpec == null) {
+            errors += nodeError(node, path, setOf("target"), "対象が未設定です")
+        }
+        if (destination.requiresBlockPosition && node.blockPositionSpec == null) {
+            errors += nodeError(node, path, setOf("position"), "配置位置が未設定です")
+        }
+        if (!PlaceItemDestination.isValidSlot(destination, node.string("slot"))) {
+            errors += nodeError(node, path, setOf("slot"), "配置スロットが不正です")
+        }
+        if (node.itemTempRef.isNullOrBlank() && CommandValueRules.material(node.string("item"), allowAir = false) == null) {
+            errors += nodeError(node, path, setOf("item"), "配置アイテムが未設定です")
+        }
+        validatePositiveIntegerInput(node.string("count"), variableDefinitions, node, path, setOf("count"), errors, temporaryDefinitions)
+        validatePlaceItemCountLimit(node, variableDefinitions, temporaryDefinitions, path, errors)
+        if (node.params["overwrite"]?.toBooleanStrictOrNull() == null) {
+            errors += nodeError(node, path, setOf("overwrite"), "上書き設定が不正です")
+        }
+    }
+
+    /**
+     * 配置個数のスタック上限超過を、解決できる範囲で早期エラーにします。
+     *
+     * 実行側と同じ優先順位（保存済みitemDataの上限があればそれを、なければ
+     * 素材の標準上限）で上限を解決します。リテラル個数かつ上限が確定した
+     * ときだけ判定し、それ以外（変数・一時参照、上限が解決できない
+     * サーバーなし試験）は実行時の失敗に委ねます。実行も出力も上限超過で
+     * 失敗するため等価です。
+     */
+    private fun validatePlaceItemCountLimit(
+        node: CommandNode,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        val raw = node.string("count", "1")
+        if (deferNumericValidation(raw, variableDefinitions, temporaryDefinitions)) return
+        // 一時変数アイテムは内容が確定しないため、上限検査を飛ばします。
+        if (!node.itemTempRef.isNullOrBlank()) return
+        val itemDataMax = node.string("itemData").takeIf { it.isNotBlank() }?.let { encoded ->
+            runCatching { ItemStackCodec.decode(encoded)?.maxStackSize }.getOrNull()
+        }
+        val material = CommandValueRules.material(node.string("item"), allowAir = false)
+        val max = PlaceItemDestination.effectiveStackMax(
+            itemDataMax,
+            material?.let(PlaceItemDestination::materialMaxStackSize),
+        ) ?: return
+        if (PlaceItemDestination.countExceedsMax(raw, max)) {
+            errors += nodeError(node, path, setOf("count"), "配置個数がスタック上限を超えています")
         }
     }
 
@@ -917,15 +1138,27 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("block"), "配置ブロックが未設定または不正です")
         }
         when (operation) {
-            BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null) {
+            // issue #26: コマンド固有位置が未設定のときは実行位置を既定値とします。
+            // 実行位置も未設定の場合だけ未設定エラーにし、実行時のフォールバックと一致させます。
+            BlockOperationMode.SETBLOCK -> if (node.blockPositionSpec == null && node.executionPositionSpec == null) {
                 errors += nodeError(node, path, setOf("position"), "ブロック配置位置が未設定です")
             }
             BlockOperationMode.FILL -> {
                 val from = node.blockFromSpec
                 val to = node.blockToSpec
-                if (from == null) errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
-                if (to == null) errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
-                if (from != null && to != null && blockVolume(from, to)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true) {
+                if (from == null && node.executionPositionSpec == null) {
+                    errors += nodeError(node, path, setOf("from"), "範囲配置の始点が未設定です")
+                }
+                if (to == null && node.executionPositionSpec == null) {
+                    errors += nodeError(node, path, setOf("to"), "範囲配置の終点が未設定です")
+                }
+                // 体積上限は実行位置の既定値も含めて判定します。座標に定まらない
+                // 指定（対象由来等）は blockVolume がnullを返すため対象外です。
+                val effectiveFrom = from ?: node.executionPositionSpec
+                val effectiveTo = to ?: node.executionPositionSpec
+                if (effectiveFrom != null && effectiveTo != null &&
+                    blockVolume(effectiveFrom, effectiveTo)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true
+                ) {
                     errors += nodeError(node, path, setOf("from", "to"), "範囲配置は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
                 }
             }
@@ -1021,6 +1254,104 @@ object ExecutableScriptValidator {
     }
 
     /**
+     * issue #29: 位置・向きに内包された対象指定を、通常の対象検証へ通します。
+     *
+     * 対象内包なし（旧データ）は検証対象外であり、互換性を維持します。
+     */
+    private fun validateEmbeddedPositionTargets(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        variableDefinitions: Map<String, WorldVariableValue>?,
+        insideForBody: Boolean,
+        temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
+    ) {
+        listOfNotNull(
+            node.destinationSpec?.target,
+            node.conditionPositionSpec?.target,
+            node.blockPositionSpec?.target,
+            node.blockFromSpec?.target,
+            node.blockToSpec?.target,
+            node.soundPositionSpec?.target,
+            node.particlePositionSpec?.target,
+            node.particleEndPositionSpec?.target,
+            node.fireworkPositionSpec?.target,
+            node.summonPositionSpec?.target,
+            node.executionPositionSpec?.target,
+            node.temporaryLocationPositionSpec?.target,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        }
+        listOfNotNull(
+            node.destinationFacingSpec?.target,
+            node.temporaryLocationFacingSpec?.target,
+        ).forEach {
+            validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
+        }
+    }
+
+    /**
+     * issue #29: 単一限定の役割に対象由来位置が選ばれていないか検証します。
+     *
+     * 複数位置の対応関係が別途必要になる位置（fill始点終点・図形の対応位置・
+     * LOCATION一時変数そのもの）は、GUIでも無効化します。静的0..1の指定は
+     * 先頭1件へ解決するため許可します。テレポート先のdestinationSpecは
+     * 旧来の対象移動経路（destinationTargetSpec併用）のため除外します。
+     */
+    private fun validateSinglePositionTargets(        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        listOfNotNull(
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.particleEndPositionSpec,
+            node.temporaryLocationPositionSpec,
+        ).filter { it.kind == PositionKind.TARGET && (it.target == null || it.target.isMultiCapable()) }
+            .forEach { errors += nodeError(node, path, setOf("position"), "この位置に対象由来の複数位置は指定できません") }
+        // issue #26・#29: fillの始点終点は単一へ定まる実行起点だけを既定値とします。
+        // 複数になり得る実行位置との組合せは実行時に定まらないため検証で拒否します。
+        // 片端だけの欠落も既定値を使うため、両端欠落に限定しません。
+        val executionTarget = node.executionPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target
+        if (node.type == CommandType.BLOCK_OPERATION &&
+            BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+            BlockOperationMode.FILL &&
+            (node.blockFromSpec == null || node.blockToSpec == null) &&
+            executionTarget != null && executionTarget.isMultiCapable()
+        ) {
+            errors += nodeError(node, path, setOf("executionPosition"), "範囲指定の既定値に複数位置は指定できません")
+        }
+    }
+
+    /**
+     * issue #29: 対象指定のない対象由来位置を検証します。
+     *
+     * 内包対象のないTARGET種別は解決不能な旧データであり、黙って
+     * 空集合扱いにせず明示エラーとします。テレポート先のdestinationSpecと
+     * 向きの旧来形式（実行状態対象）は従来経路のため除外します。
+     */
+    private fun validateBareTargetPositions(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        listOfNotNull(
+            node.conditionPositionSpec,
+            node.blockPositionSpec,
+            node.blockFromSpec,
+            node.blockToSpec,
+            node.soundPositionSpec,
+            node.particlePositionSpec,
+            node.particleEndPositionSpec,
+            node.fireworkPositionSpec,
+            node.summonPositionSpec,
+            node.executionPositionSpec,
+            node.temporaryLocationPositionSpec,
+        ).filter { it.kind == PositionKind.TARGET && it.target == null }
+            .forEach { errors += nodeError(node, path, setOf("position"), "対象由来位置に対象の指定がありません") }
+    }
+
+    /**
      * issue #4 の移植用ベクトル検証骨組みです。現行コマンドへの本接続は行わず、
      * 将来Typed Value接続へ移植できる判定に留めます。
      */
@@ -1111,9 +1442,9 @@ object ExecutableScriptValidator {
             }
             return
         }
-        // 意味付けはROTATION／CAPTUREDの向き成分だけの指定です。
+        // 意味付けはROTATIONの向き成分だけの指定です。
         if (spec.hasNonAbsoluteSemantics() &&
-            spec.kind != FacingKind.ROTATION && spec.kind != FacingKind.CAPTURED
+            spec.kind != FacingKind.ROTATION
         ) {
             errors += nodeError(node, path, setOf("semantics"), "相対・ローカルは向き指定のときだけ有効です")
             return
@@ -1122,12 +1453,25 @@ object ExecutableScriptValidator {
         if (spec.semanticsYaw == CoordinateSemantics.LOCAL || spec.semanticsPitch == CoordinateSemantics.LOCAL) {
             errors += nodeError(node, path, setOf("semantics"), "向きにローカルは指定できません")
         }
+        // 注視・向き複写は単一体参照へ帰着します。複数解決は汎用単一参照として拒否します。
+        // 詳細条件の妥当性は呼び出し側で汎用対象検証へ通すため、ここでは存在と単一性のみを見ます。
+        if (spec.kind == FacingKind.TARGET || spec.kind == FacingKind.COPY_ORIENTATION) {
+            val target = spec.target
+            if (target == null) {
+                errors += nodeError(node, path, emptySet(), "向き参照先の実体が未設定です")
+                return
+            }
+            if ((target.limit ?: 1) != 1) {
+                errors += nodeError(node, path, emptySet(), "向き参照は単一体のみ指定できます")
+            }
+            return
+        }
         // 向きは各コマンドのFacingSpecだけで解決し、前段の向きを
         // GUI設定として指定する経路は検証しません。
         if (spec.kind == FacingKind.COORDINATES && listOf(spec.x, spec.y, spec.z).any { it?.isFinite() != true }) {
             errors += nodeError(node, path, emptySet(), "向く座標が未設定または有限値ではありません")
         }
-        if (spec.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION) &&
+        if (spec.kind == FacingKind.ROTATION &&
             (spec.yaw?.isFinite() != true || spec.pitch?.isFinite() != true)
         ) {
             errors += nodeError(node, path, emptySet(), "向きが未設定または有限値ではありません")
@@ -1141,16 +1485,19 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, WorldVariableValue>?,
         temporaryDefinitions: Map<String, TemporaryVariableType>? = null,
     ) {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        if (kind == null) {
-            errors += nodeError(node, path, setOf("kind"), "条件の種類が未設定です")
+        // issue #27: 判定対象ベースで検証します。条件の単一正本は `subject` 欄であり、
+        // 旧 `kind` へのフォールバックは行いません。旧保存の読込は保存境界の正規化が担います。
+        // 未設定・不正な判定対象は「判定対象」タブ（kind）の未設定として拒否します。
+        val subject = node.conditionSubject()
+        if (subject == null) {
+            errors += nodeError(node, path, setOf("kind"), "判定対象が未設定です")
             return
         }
-        when (kind) {
-            ConditionKind.TARGET_EXISTS -> if (node.targetSpec == null) {
+        when (subject) {
+            ConditionSubject.OTHER_ENTITY -> if (node.targetSpec == null) {
                 errors += nodeError(node, path, setOf("condition"), "条件の対象が未設定です")
             }
-            ConditionKind.PLAYER_STATE -> {
+            ConditionSubject.PLAYER -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("condition"), "対象プレイヤーが未設定です")
                 if (node.params["sneaking"]?.isNotBlank() == true && node.params["sneaking"]?.toBooleanStrictOrNull() == null) {
                     errors += nodeError(node, path, setOf("condition"), "スニーク状態の設定が不正です")
@@ -1160,7 +1507,7 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("condition"), "所持アイテムが不正です")
                 }
             }
-            ConditionKind.VARIABLE_STATE -> {
+            ConditionSubject.VARIABLE -> {
                 if (!CommandValueRules.isVariableName(node.string("variable"))) {
                     errors += nodeError(node, path, setOf("condition"), "評価する変数名が不正です")
                 } else checkDefinition(node.string("variable"), VariableType.NUMBER, variableDefinitions, node, path, setOf("condition"), errors)
@@ -1169,13 +1516,13 @@ object ExecutableScriptValidator {
                 }
                 validateNumberInput(node.string("value"), variableDefinitions, node, path, setOf("condition"), errors, temporaryDefinitions)
             }
-            ConditionKind.BLOCK_STATE -> {
+            ConditionSubject.BLOCK -> {
                 if (CommandValueRules.material(node.string("block")) == null) {
                     errors += nodeError(node, path, setOf("condition"), "判定するブロックが未設定です")
                 }
                 // 判定位置が未設定の場合は、実行元の制御ブロック位置を使います。
             }
-            ConditionKind.CONTROL_BLOCK_STATE -> {
+            ConditionSubject.CONTROL_BLOCK -> {
                 if (node.selectedControlBlockStates().isEmpty()) {
                     errors += nodeError(node, path, setOf("condition"), "制御ブロックの状態が未設定です")
                 }

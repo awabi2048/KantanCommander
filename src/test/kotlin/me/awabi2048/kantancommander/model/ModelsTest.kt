@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.model
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Test
 
@@ -26,5 +27,32 @@ class ModelsTest {
         assertNotSame(graph.nodes[node.id]?.params, copy.nodes[node.id]?.params)
         assertNotSame(graph.nodes[node.id]?.secondaryTargetSpec, copy.nodes[node.id]?.secondaryTargetSpec)
         assertEquals(graph.nodes[node.id]?.secondaryTargetSpec, copy.nodes[node.id]?.secondaryTargetSpec)
+    }
+
+    @Test
+    fun `entity action keeps only ride motion defaults`() {
+        // ENTITY_ACTIONはride/dismount/motionに限定します。旧equip欄は
+        // PLACE_ITEM、旧tag欄はENTITY_OPERATIONへ移行済みのため既定値に含めません。
+        val node = CommandType.ENTITY_ACTION.newNode()
+        assertEquals("ride", node.string("action", ""))
+        assertEquals("0.0", node.string("motionX", ""))
+        assertEquals("0.0", node.string("motionY", ""))
+        assertEquals("0.0", node.string("motionZ", ""))
+        assertFalse(node.params.containsKey("slot"))
+        assertFalse(node.params.containsKey("tagOperation"))
+        assertFalse(node.params.containsKey("tag"))
+    }
+
+    @Test
+    fun `entity operation starts with tag operation defaults`() {
+        val node = CommandType.ENTITY_OPERATION.newNode()
+        assertEquals("tag", node.string("operation", ""))
+        assertEquals("add", node.string("tagOperation", ""))
+        assertEquals(EntityAttributeSupport.OPERATION_BASE_VALUE, node.string(EntityAttributeSupport.PARAM_OPERATION, ""))
+        assertEquals(EntityAttributeSupport.MODIFIER_ADD_NUMBER, node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION, ""))
+        assertEquals("0.0", node.string(EntityAttributeSupport.PARAM_AMOUNT, ""))
+        // 未選択の設定項目は空保存値であり、表示側の既定値解決で未設定として扱います。
+        assertEquals("", node.params[EntityDataSchema.PARAM_PROPERTY])
+        assertEquals("unset", node.string(EntityDataSchema.PARAM_PROPERTY, "unset"))
     }
 }

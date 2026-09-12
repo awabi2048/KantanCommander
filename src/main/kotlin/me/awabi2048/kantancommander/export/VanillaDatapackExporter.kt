@@ -9,8 +9,10 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -30,6 +32,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
@@ -131,21 +134,26 @@ class VanillaDatapackExporter(
                 }
                 CommandType.ENTITY_ACTION -> when (node.string("action")) {
                     "ride", "dismount" -> Unit
-                    "equip" -> {
-                        val item = node.string("item")
-                        if (node.itemTempRef.isNullOrBlank() &&
-                            (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
-                        ) {
-                            errors += "${script.id}/${node.id}: バニラに存在しない装備アイテムです: $item"
-                        }
-                        val itemData = node.string("itemData")
-                        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
-                            errors += "${script.id}/${node.id}: 保存された装備ItemStackメタデータは完全バニラ出力に未対応です"
-                        }
-                    }
-                    "tag" -> Unit
+                    // 動き設定は単一バニラコマンドへ正確に変換できないため、
+                    // 不正確な変換を行わず未対応として明示します。
+                    "motion" -> errors += "${script.id}/${node.id}: 動き設定はバニラ出力に未対応です"
+                    // 旧equipはPLACE_ITEM、旧tagはENTITY_OPERATIONへ移行済みのため、
+                    // ここでは扱いません。
                     else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
+                CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
+                    "tag" -> Unit
+                    "attribute" -> {
+                        if (!EntityAttributeSupport.isAttributeId(node.string(EntityAttributeSupport.PARAM_ATTRIBUTE))) {
+                            errors += "${script.id}/${node.id}: バニラに存在しないattributeです"
+                        }
+                    }
+                    // 型付きデータ編集はバニラの等価表現へ正確に変換できないため、
+                    // 不正確な変換を行わず未対応として明示します。
+                    "data" -> errors += "${script.id}/${node.id}: データ編集はバニラ出力に未対応です"
+                    else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
+                }
+                CommandType.PLACE_ITEM -> validatePlaceItemExport(script, node, errors)
                 CommandType.PARTICLE -> {
                     val particle = ParticleSettings.particle(node)
                     if (particle == null) {
@@ -189,11 +197,26 @@ class VanillaDatapackExporter(
                     ) {
                         errors += "${script.id}/${node.id}: 完全バニラ出力できない配置ブロックです"
                     }
+                    // issue #26: コマンド固有位置が未設定のときは実行位置を既定値とします。
                     when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
-                        BlockOperationMode.SETBLOCK -> validatePosition(script, node, node.blockPositionSpec, errors)
+                        BlockOperationMode.SETBLOCK -> {
+                            val position = effectiveBlockPosition(node)
+                            if (position == null) {
+                                errors += "${script.id}/${node.id}: ブロック配置位置が未設定です"
+                            }
+                            validatePosition(script, node, position, errors)
+                        }
                         BlockOperationMode.FILL -> {
-                            validatePosition(script, node, node.blockFromSpec, errors)
-                            validatePosition(script, node, node.blockToSpec, errors)
+                            val from = effectiveFillFrom(node)
+                            if (from == null) {
+                                errors += "${script.id}/${node.id}: 範囲配置の始点が未設定です"
+                            }
+                            val to = effectiveFillTo(node)
+                            if (to == null) {
+                                errors += "${script.id}/${node.id}: 範囲配置の終点が未設定です"
+                            }
+                            validatePosition(script, node, from, errors)
+                            validatePosition(script, node, to, errors)
                         }
                         null -> errors += "${script.id}/${node.id}: 不明な配置方式です"
                     }
@@ -256,9 +279,6 @@ class VanillaDatapackExporter(
                             if (node.temporaryLocationPositionSpec?.kind == PositionKind.MYWORLD_SPAWN) {
                                 errors += "${script.id}/${node.id}: 一時LOCATIONのMyWorldスポーン位置は完全バニラ出力に未対応です"
                             }
-                            if (node.temporaryLocationFacingSpec?.kind == FacingKind.MYWORLD_SPAWN) {
-                                errors += "${script.id}/${node.id}: 一時LOCATIONのMyWorldスポーン向きは完全バニラ出力に未対応です"
-                            }
                         }
                         TemporaryVariableType.ENTITY -> if (node.temporaryEntityTargetSpec?.kind == TargetKind.FIXED_ENTITY) {
                             errors += "${script.id}/${node.id}: 一時ENTITYの固定エンティティ参照は完全バニラ出力できません"
@@ -274,19 +294,100 @@ class VanillaDatapackExporter(
             validatePosition(script, node, node.particleEndPositionSpec, errors)
             validatePosition(script, node, node.fireworkPositionSpec, errors)
             validatePosition(script, node, node.summonPositionSpec, errors)
-            if (node.soundPositionSpec?.kind == PositionKind.TARGET) {
-                errors += "${script.id}/${node.id}: 効果音の対象位置指定は完全バニラ出力に未対応です"
+            // issue #26: 実行位置も同じ制約で検証します。未設定時は従来どおり
+            // 制御ブロック位置で動作するため、出力可否に影響しません。
+            validatePosition(script, node, node.executionPositionSpec, errors)
+            if (node.executionPositionSpec?.kind == PositionKind.TARGET) {
+                errors += "${script.id}/${node.id}: 実行位置の対象位置指定は完全バニラ出力に未対応です"
             }
-            if (node.particlePositionSpec?.kind == PositionKind.TARGET ||
-                node.particleEndPositionSpec?.kind == PositionKind.TARGET
+            // issue #29: 単一限定の役割は、実行時と同じく複数になり得る対象由来を拒否します。
+            // 静的0..1の指定は先頭1件へ解決するため出力できます。
+            // テレポート先は旧来の対象移動経路のため除外します。
+            listOfNotNull(
+                node.blockFromSpec,
+                node.blockToSpec,
+                node.particleEndPositionSpec,
+                node.temporaryLocationPositionSpec,
+            ).filter { it.kind == PositionKind.TARGET && (it.target == null || it.target.isMultiCapable()) }
+                .forEach { errors += "${script.id}/${node.id}: この位置に対象由来の複数位置は指定できません" }
+            // issue #29: fillの始点と終点が異なる対象由来の場合は1命令で表現できません。
+            // 未設定の片端は実行位置を既定値とするため、既定値込みで比較します。
+            val fillFromTarget = effectiveFillFrom(node)
+                ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                ?.takeIf { it.kind != TargetKind.TEMPORARY }
+            val fillToTarget = effectiveFillTo(node)
+                ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                ?.takeIf { it.kind != TargetKind.TEMPORARY }
+            if (node.type == CommandType.BLOCK_OPERATION &&
+                BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+                BlockOperationMode.FILL &&
+                fillFromTarget != null && fillToTarget != null && fillFromTarget != fillToTarget
             ) {
-                errors += "${script.id}/${node.id}: パーティクルの対象位置指定は完全バニラ出力に未対応です"
+                errors += "${script.id}/${node.id}: 始点と終点で異なる対象由来位置は完全バニラ出力に未対応です"
             }
-            if (node.fireworkPositionSpec?.kind == PositionKind.TARGET) {
-                errors += "${script.id}/${node.id}: 花火の対象位置指定は完全バニラ出力に未対応です"
+            // issue #29: fillで片端だけがDISK（制御ブロック位置）の場合、
+            // もう片端の対象由来へ execute at で包むとDISK側の相対座標まで
+            // ずれるため、1命令では表現できません。未設定の片端は実行位置を
+            // 既定値とするため、既定値込みで比較します。
+            if (node.type == CommandType.BLOCK_OPERATION &&
+                BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+                BlockOperationMode.FILL
+            ) {
+                val fromDisk = effectiveFillFrom(node)?.kind == PositionKind.DISK
+                val toDisk = effectiveFillTo(node)?.kind == PositionKind.DISK
+                val fromEmbedded = effectiveFillFrom(node)
+                    ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                    ?.takeIf { it.kind != TargetKind.TEMPORARY }
+                val toEmbedded = effectiveFillTo(node)
+                    ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                    ?.takeIf { it.kind != TargetKind.TEMPORARY }
+                if ((fromDisk && toEmbedded != null) || (toDisk && fromEmbedded != null)) {
+                    errors += "${script.id}/${node.id}: 始点と終点で基準位置（制御ブロック位置と対象由来）が異なるfillは完全バニラ出力に未対応です"
+                }
             }
-            if (node.summonPositionSpec?.kind == PositionKind.TARGET) {
-                errors += "${script.id}/${node.id}: 召喚の対象位置指定は完全バニラ出力に未対応です"
+            // issue #29: 対象由来の扱いを表現可能性で分けます。
+            // - MyWorld固有・実行位置の対象由来：表現不能のため明示エラーとします。
+            // - 内包対象のない対象由来：解決不能な旧データのため明示エラーとします。
+            // - 一時変数内包：実行側の一時実体とvanillaの実行者が一致しないため未対応とします。
+            // - 条件分岐の複数位置：ANY評価の蓄積出力が未実装のため明示エラーとします。
+            // - 上記以外（各コマンドの対象由来・静的単一・向き内包）は at 包み等で出力します。
+            // 別の位置へ黙って読み替えず、出力時だけ異なる意味になりません。
+            val bareTargets = listOfNotNull(
+                node.conditionPositionSpec,
+                node.blockPositionSpec,
+                node.blockFromSpec,
+                node.blockToSpec,
+                node.soundPositionSpec,
+                node.particlePositionSpec,
+                node.particleEndPositionSpec,
+                node.fireworkPositionSpec,
+                node.summonPositionSpec,
+                node.temporaryLocationPositionSpec,
+            ).filter { it.kind == PositionKind.TARGET && it.target == null }
+            if (bareTargets.isNotEmpty()) {
+                errors += "${script.id}/${node.id}: 対象由来位置に対象の指定がありません"
+            }
+            val embeddedTargets = listOfNotNull(
+                node.conditionPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.blockPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.blockFromSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.blockToSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.soundPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.particlePositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.particleEndPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.fireworkPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.summonPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.temporaryLocationPositionSpec?.takeIf { it.kind == PositionKind.TARGET }?.target,
+                node.destinationFacingSpec?.takeIf { it.kind == FacingKind.TARGET }?.target,
+                node.temporaryLocationFacingSpec?.takeIf { it.kind == FacingKind.TARGET }?.target,
+            )
+            if (embeddedTargets.any { it.kind == TargetKind.TEMPORARY }) {
+                errors += "${script.id}/${node.id}: 一時変数参照の対象由来は完全バニラ出力に未対応です"
+            }
+            val conditionTarget = node.conditionPositionSpec
+                ?.takeIf { it.kind == PositionKind.TARGET }?.target
+            if (conditionTarget != null && (conditionTarget.kind == TargetKind.TEMPORARY || conditionTarget.isMultiCapable())) {
+                errors += "${script.id}/${node.id}: 条件分岐の複数位置は完全バニラ出力に未対応です"
             }
             validateFacing(script, node, node.destinationFacingSpec, errors)
             if (listOfNotNull(
@@ -321,13 +422,14 @@ class VanillaDatapackExporter(
         errors: MutableList<String>,
         worldVariableTypes: Map<String, VariableType>,
     ) {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        if (kind == null) {
-            errors += "${script.id}/${node.id}: 不明な条件の種類です"
+        // issue #27: 判定対象ベースで検証します。単一正本は `subject` 欄です。
+        val subject = node.conditionSubject()
+        if (subject == null) {
+            errors += "${script.id}/${node.id}: 不明な判定対象です"
             return
         }
-        when (kind) {
-            ConditionKind.VARIABLE_STATE -> {
+        when (subject) {
+            ConditionSubject.VARIABLE -> {
                 val variable = node.string("variable")
                 if (variable.isBlank()) {
                     errors += "${script.id}/${node.id}: ワールド内変数名がありません"
@@ -355,13 +457,13 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: 比較対象の変数は数値型である必要があります: $reference"
                 }
             }
-            ConditionKind.PLAYER_STATE -> {
+            ConditionSubject.PLAYER -> {
                 val itemData = node.string("itemData")
                 if (itemData.isNotBlank() && ItemStackCodec.decode(itemData)?.hasItemMeta() != false) {
                     errors += "${script.id}/${node.id}: アイテムデータ付き所持判定は完全バニラ出力に未対応です"
                 }
             }
-            ConditionKind.CONTROL_BLOCK_STATE ->
+            ConditionSubject.CONTROL_BLOCK ->
                 errors += "${script.id}/${node.id}: 制御ブロックの状態条件は完全バニラ出力に未対応です"
             else -> Unit
         }
@@ -375,7 +477,7 @@ class VanillaDatapackExporter(
         fun annotate(current: CommandGraph) {
             current.nodes.values.forEach { node ->
                 if (node.type == CommandType.CONDITION &&
-                    node.string("kind") == ConditionKind.VARIABLE_STATE.name
+                    node.conditionSubject() == ConditionSubject.VARIABLE
                 ) {
                     val name = node.string("variable")
                     val type = worldVariableTypes[name]
@@ -426,11 +528,12 @@ class VanillaDatapackExporter(
         facing: me.awabi2048.kantancommander.model.FacingSpec?,
         errors: MutableList<String>,
     ) {
-        if (facing?.kind == FacingKind.MYWORLD_SPAWN) {
-            errors += "${script.id}/${node.id}: 出力先のマイワールドのスポーン位置の向きを検証できません"
-        }
         if (facing?.hasNonAbsoluteSemantics() == true) {
             errors += "${script.id}/${node.id}: 相対・ローカル指定の向きは完全バニラ出力に未対応です"
+        }
+        // 向き複写はバニラのtp facing entity（注視）では表現できないため未対応とします。
+        if (facing?.kind == FacingKind.COPY_ORIENTATION) {
+            errors += "${script.id}/${node.id}: 向き複写は完全バニラ出力に未対応です"
         }
     }
 
@@ -564,14 +667,31 @@ class VanillaDatapackExporter(
                     lines += storeFunctionResult(node, "function kantan:$helper")
                 }
                 else -> lower(node, graph)?.let { command ->
+                    // issue #26: 実行位置が設定され、バニラで表現できる場合だけ
+                    // positionedで包みます。
+                    // issue #29: 対象由来位置は execute at で包むため positioned を
+                    // 付けません。内側の positioned が外側の at を上書きし、実行時の
+                    // 各位置実行と食い違うためです。DISK由来の相対座標も制御ブロック
+                    // 位置を指すためずらしてはならず、作用位置が未設定のときだけ包みます。
+                    val derivedTarget = entityDerivedTarget(node)
+                    val positionedCommand = executionPositionContext(node)
+                        ?.takeUnless { derivedTarget != null || PositionKind.DISK in actionPositionKinds(node) }
+                        ?.let { context ->
+                            wrapContext(context, command, node)
+                        } ?: command
+                    // issue #29: 対象由来位置は execute at で包みます。
+                    // 複数該当時はエンティティごとに実行され、実行時の各位置実行と一致します。
+                    val atCommand = derivedTarget?.let { target ->
+                        "execute at ${selector(target)} run $positionedCommand"
+                    } ?: positionedCommand
                     val temporaryReferences = temporaryEntityReferences(node, null)
                     temporaryReferences.forEach { reference ->
                         lines += temporaryEntityPreparation(reference)
                     }
                     val temporaryArgument = temporaryEntityArgumentReference(node)
                     val targetedCommand = temporaryArgument?.let { reference ->
-                        temporaryEntitySelection(reference, command)
-                    } ?: command
+                        temporaryEntitySelection(reference, atCommand)
+                    } ?: atCommand
                     if (node.type == CommandType.DISPLAY_TEXT && DisplayTextTimingPolicy.supports(node)) {
                         val timing = DisplayTextTiming.from(node)
                         val times = "title ${effectiveTarget(node)} times " +
@@ -598,6 +718,14 @@ class VanillaDatapackExporter(
             when (node.type) {
                 CommandType.CONDITION -> {
                     val conditionContext = conditionContext(node)
+                    // issue #29: 静的単一の対象由来位置は execute at で包みます。
+                    // 複数位置はANY蓄積が未実装のため検証で除外済みです。
+                    val conditionAtTarget = node.conditionPositionSpec
+                        ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                        ?.takeIf { it.kind != TargetKind.TEMPORARY }
+                    fun atWrap(command: String): String = conditionAtTarget?.let { target ->
+                        "execute at ${selector(target)} run $command"
+                    } ?: command
                     val conditionTarget = temporaryConditionTargetReference(node, conditionContext)
                     val temporaryConditionFound = conditionTarget?.let { conditionTargetFoundHolder(node) }
                     temporaryEntityReferences(node, conditionContext).forEach { reference ->
@@ -608,7 +736,8 @@ class VanillaDatapackExporter(
                         lines += temporaryEntityPresence(conditionTarget, temporaryConditionFound)
                     }
                     conditionPreparation(node, graph)?.let { preparation ->
-                        lines += conditionContext?.let { context -> wrapContext(context, preparation, node) } ?: preparation
+                        val wrapped = conditionContext?.let { context -> wrapContext(context, preparation, node) } ?: preparation
+                        lines += atWrap(wrapped)
                     }
                     val predicate = predicate(node)
                     val predicateMacro = prepareMacroTemplate(node, predicate, graph)
@@ -620,20 +749,35 @@ class VanillaDatapackExporter(
                     val inverted = node.boolean("inverted") xor conditionNeedsInversion(node)
                     val trueCheck = if (inverted) "unless" else "if"
                     val falseCheck = if (inverted) "if" else "unless"
-                    val trueBranch = node.trueNext?.let {
-                        "execute $trueCheck $predicateCommand run return run function kantan:${nodeFunction(prefix, it)}"
-                    } ?: "execute $trueCheck $predicateCommand run return 1"
-                    val falseBranch = node.falseNext?.let {
-                        "execute $falseCheck $predicateCommand run return run function kantan:${nodeFunction(prefix, it)}"
-                    } ?: "execute $falseCheck $predicateCommand run return 1"
+                    // issue #29: 空集合フォールバックと共用するため、継続先へ名前を付けます。
+                    fun continuation(next: UUID?): String = next?.let {
+                        "return run function kantan:${nodeFunction(prefix, it)}"
+                    } ?: "return 1"
+                    val trueBranch =
+                        "execute $trueCheck $predicateCommand run ${continuation(node.trueNext)}"
+                    val falseBranch =
+                        "execute $falseCheck $predicateCommand run ${continuation(node.falseNext)}"
                     val targetedTrueBranch = conditionTarget?.let { reference ->
                         temporaryEntitySelection(reference, trueBranch)
                     } ?: trueBranch
                     val targetedFalseBranch = conditionTarget?.let { reference ->
                         temporaryEntitySelection(reference, falseBranch)
                     } ?: falseBranch
-                    lines += conditionContext?.let { context -> wrapContext(context, targetedTrueBranch, node) } ?: targetedTrueBranch
-                    lines += conditionContext?.let { context -> wrapContext(context, targetedFalseBranch, node) } ?: targetedFalseBranch
+                    lines += conditionContext?.let { context -> wrapContext(context, atWrap(targetedTrueBranch), node) } ?: atWrap(targetedTrueBranch)
+                    lines += conditionContext?.let { context -> wrapContext(context, atWrap(targetedFalseBranch), node) } ?: atWrap(targetedFalseBranch)
+                    conditionAtTarget?.let { target ->
+                        // issue #29: 対象由来位置のセレクタが0件の場合、at包みの枝は
+                        // 一度も実行されず分岐全体が途切れるため、false側の継続へ
+                        // 明示的にフォールバックします。実行時も対象由来の空集合は
+                        // FALSE扱いのため、ノード自身の反転だけを適用します。
+                        val emptyFallback = if (node.boolean("inverted")) {
+                            continuation(node.trueNext)
+                        } else {
+                            continuation(node.falseNext)
+                        }
+                        val emptyCheck = "execute unless entity ${selector(target)} run $emptyFallback"
+                        lines += conditionContext?.let { context -> wrapContext(context, emptyCheck, node) } ?: emptyCheck
+                    }
                     if (conditionTarget != null && temporaryConditionFound != null) {
                         // 一時ENTITYが消えている場合、execute as @e の枝は一度も
                         // 実行されないため、Java版と同じ「対象なし＝条件false」へ
@@ -677,12 +821,14 @@ class VanillaDatapackExporter(
         val base = "tp ${effectiveTarget(node)} ${destination(node)}"
         val facing = node.destinationFacingSpec ?: return base
         return when (facing.kind) {
-            FacingKind.ROTATION, FacingKind.CAPTURED ->
+            FacingKind.ROTATION ->
                 "$base ${facing.yaw ?: 0f} ${facing.pitch ?: 0f}"
             FacingKind.TARGET -> {
-                val target = node.targetSpec ?: error("destination target is missing")
+                // 注視は向き専用の単一体参照へ帰着します。
+                val target = facing.target ?: error("destination facing target is missing")
                 "$base facing entity ${singleSelector(target)} eyes"
             }
+            FacingKind.COPY_ORIENTATION -> error("copy orientation is not supported by vanilla teleport")
             FacingKind.TEMPORARY -> {
                 val name = facing.tempName ?: error("temporary facing name is missing")
                 "$base facing ${temporaryPositionCoordinates(name)}"
@@ -691,7 +837,6 @@ class VanillaDatapackExporter(
                 "$base facing ${facing.x ?: error("destination facing x is missing")} " +
                     "${facing.y ?: error("destination facing y is missing")} " +
                     "${facing.z ?: error("destination facing z is missing")}"
-            FacingKind.MYWORLD_SPAWN -> error("unsupported destination facing")
         }
     }
 
@@ -719,10 +864,9 @@ class VanillaDatapackExporter(
                 "execute positioned ${position.x ?: error("sound x is missing")} " +
                     "${position.y ?: error("sound y is missing")} ${position.z ?: error("sound z is missing")} run $sound"
             PositionKind.DISK -> sound
-            // TARGETはテレポート先だけのコマンド固有値です。音の位置へ
-            // 対象欄を暗黙に読み替えると、廃止した共通コンテキストへ戻るため、
-            // 事前検証で拒否し、実行時にも別の意味へ変換しません。
-            PositionKind.TARGET -> error("sound target position is not supported")
+            // issue #29: 対象由来位置は相対座標のまま出力し、呼び出し側で
+            // execute atへ包みます。
+            PositionKind.TARGET -> sound
             PositionKind.TEMPORARY -> {
                 val name = position.tempName ?: error("temporary sound position name is missing")
                 "execute positioned ${temporaryPositionCoordinates(name)} run $sound"
@@ -809,7 +953,9 @@ class VanillaDatapackExporter(
             PositionKind.TEMPORARY -> "execute positioned ${temporaryPositionCoordinates(
                 position.tempName ?: error("temporary particle position name is missing"),
             )} run $command"
-            PositionKind.TARGET -> error("particle target position is not supported")
+            // issue #29: 対象由来位置は相対座標のまま出力し、呼び出し側で
+            // execute atへ包みます。
+            PositionKind.TARGET -> command
             PositionKind.MYWORLD_SPAWN -> error("unsupported particle position")
         }
     }
@@ -878,7 +1024,7 @@ class VanillaDatapackExporter(
                     require(position.kind in setOf(PositionKind.CAPTURED, PositionKind.COORDINATES)) {
                         "dynamic temporary LOCATION requires expanded commands"
                     }
-                    require(facing.kind in setOf(FacingKind.CAPTURED, FacingKind.ROTATION)) {
+                    require(facing.kind == FacingKind.ROTATION) {
                         "dynamic temporary LOCATION facing requires expanded commands"
                     }
                     "data modify storage kantan:variables $destination set value " +
@@ -1025,7 +1171,7 @@ class VanillaDatapackExporter(
         }
 
         when (facing.kind) {
-            FacingKind.CAPTURED, FacingKind.ROTATION -> {
+            FacingKind.ROTATION -> {
                 commands += "data modify storage $storage.yaw set value ${number(facing.yaw ?: error("location yaw is missing"))}"
                 commands += "data modify storage $storage.pitch set value ${number(facing.pitch ?: error("location pitch is missing"))}"
             }
@@ -1046,6 +1192,7 @@ class VanillaDatapackExporter(
                 )
             }
             FacingKind.TARGET -> error("temporary LOCATION target facing is not supported")
+            FacingKind.COPY_ORIENTATION -> error("temporary LOCATION copy orientation is not supported")
             FacingKind.COORDINATES -> {
                 val rotation = staticFacingRotation(position, facing)
                 if (rotation != null) {
@@ -1064,7 +1211,6 @@ class VanillaDatapackExporter(
                     )
                 }
             }
-            FacingKind.MYWORLD_SPAWN -> error("temporary LOCATION spawn facing is not supported by vanilla")
         }
         return commands
     }
@@ -1157,11 +1303,20 @@ class VanillaDatapackExporter(
             node.string("count", "1")
         CommandType.ENTITY_ACTION -> when (node.string("action")) {
             "dismount" -> "ride ${effectiveTarget(node)} dismount"
-            "equip" -> "item replace entity ${effectiveTarget(node)} ${equipmentSlot(node.string("slot"))} with " +
-                (node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") } ?: node.string("item"))
-            "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
-            else -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
+            // 旧equipの出力はPLACE_ITEMへ移行済みのためここでは扱いません。
+            // tagはENTITY_OPERATIONへ移行済みのため、ここでは扱いません。
+            // motionは単一バニラコマンドへ正確に変換できないため出力しません（事前検査で未対応を明示します）。
+            "ride" -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
+            else -> null
         }
+        CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
+            "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
+            "attribute" -> attributeCommand(node)
+            // データ編集はバニラの等価表現へ正確に変換できないため出力しません（事前検査で未対応を明示します）。
+            else -> null
+        }
+        // issue #21: PLACE_ITEMの出力を統合します。等価性の詳細はF1対応を参照します。
+        CommandType.PLACE_ITEM -> placeItemCommand(node)
         CommandType.DISPLAY_TEXT -> when (node.string("mode", "tellraw")) {
             "title" -> "title ${effectiveTarget(node)} title {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
             "subtitle" -> "title ${effectiveTarget(node)} subtitle {\"text\":\"${escape(node.string("text").replace('&', '§'))}\"}"
@@ -1212,9 +1367,9 @@ class VanillaDatapackExporter(
                         "${position.z ?: error("summon z is missing")}",
                 )
                 PositionKind.DISK -> summon("~ ~ ~")
-                // TARGETはテレポート先だけのコマンド固有値です。召喚位置で
-                // 対象欄を暗黙利用する旧コンテキスト解釈は受け付けません。
-                PositionKind.TARGET -> error("summon target position is not supported")
+                // issue #29: 対象由来位置は相対座標で出力し、呼び出し側で
+                // execute atへ包みます。単一限定の静的単一も同じ経路です。
+                PositionKind.TARGET -> summon("~ ~ ~")
                 PositionKind.TEMPORARY -> summon(
                     temporaryPositionCoordinates(
                         position.tempName ?: error("temporary summon position name is missing"),
@@ -1265,7 +1420,9 @@ class VanillaDatapackExporter(
                         "${position.z ?: error("firework z is missing")}",
                 )
                 PositionKind.DISK -> summon("~ ~ ~")
-                PositionKind.TARGET -> error("firework target position is not supported")
+                // issue #29: 対象由来位置は相対座標で出力し、呼び出し側で
+                // execute atへ包みます。
+                PositionKind.TARGET -> summon("~ ~ ~")
                 PositionKind.TEMPORARY -> summon(
                     temporaryPositionCoordinates(
                         position.tempName ?: error("temporary firework position name is missing"),
@@ -1392,13 +1549,145 @@ class VanillaDatapackExporter(
         val setup: List<String>,
     )
 
-    private fun equipmentSlot(slot: String) = when (slot) {
-        "OFF_HAND" -> "weapon.offhand"
-        "HEAD" -> "armor.head"
-        "CHEST" -> "armor.chest"
-        "LEGS" -> "armor.legs"
-        "FEET" -> "armor.feet"
-        else -> "weapon.mainhand"
+    /**
+     * 「アイテムを配置する」(PLACE_ITEM) をバニラ `/item replace` へ変換します。
+     *
+     * 配置先のバニラ slot 記法は PlaceItemDestination が一元管理し、ここでは
+     * 対象・位置・アイテム・個数の埋め込みだけを行います。個数は生の保存値を
+     * そのまま出力します。スタック上限を超える個数は実行・出力ともに失敗する
+     * ため等価であり、上限が解決できるリテラル超過は事前検査で拒否します。
+     * 上書き禁止時は空スロット条件を前置した等価出力にします。実行側の成功は
+     * 「1件以上適用」であり、条件付き出力と `store success` 包みの組合せで
+     * 再現します。等価な空き検査を作れない配置先は事前検査で拒否するため、
+     * ここへは到達させません。
+     */
+    private fun placeItemCommand(node: CommandNode): String {
+        val destination = PlaceItemDestination.from(node.string("destination"))
+            ?: error("unknown place item destination")
+        val slot = PlaceItemDestination.vanillaSlot(destination, node.string("slot"))
+            ?: error("unknown place item slot")
+        val item = node.itemTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "item") }
+            ?: node.string("item")
+        val count = node.string("count", "1")
+        if (node.boolean("overwrite")) {
+            if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+                val anchor = blockAnchor(node.blockPositionSpec ?: error("structured block position is missing"))
+                return "${anchor.prefix}item replace block ${anchor.coordinates} $slot with $item $count"
+            }
+            return "item replace entity ${effectiveTarget(node)} $slot with $item $count"
+        }
+        // 上書き禁止時は空き検査を前置します。検査パスの不存在は空と等価です。
+        // 対象が複数でも `as` で1件ずつ検査するため、実行側の適用件数と一致します。
+        val guard = PlaceItemDestination.emptyCheckNbtPath(destination, node.string("slot"))
+            ?: error("overwrite=false place item destination is not supported")
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            val anchor = blockAnchor(node.blockPositionSpec ?: error("structured block position is missing"))
+            return "execute unless data block ${anchor.coordinates} $guard run " +
+                "${anchor.prefix}item replace block ${anchor.coordinates} $slot with $item $count"
+        }
+        return "execute as ${effectiveTarget(node)} unless data entity @s $guard run " +
+            "item replace entity @s $slot with $item $count"
+    }
+
+    /**
+     * PLACE_ITEM の完全バニラ出力可否を検証します。
+     *
+     * GIVE_ITEM と同じく minecraft 名前空間・ItemStack メタデータを検査し、
+     * 配置先とスロットの組合せ・ブロック位置の表現可否を加えます。
+     * 個数は配置スタックの上限以下でなければ、実行・出力ともに失敗するため、
+     * 上限が解決できる場合にリテラル超過を誤出力として拒否します。上限は
+     * 保存済みitemDataの独自上限があればそれを、なければ素材の標準上限を
+     * 用います。上限が解決できない場合（サーバーなし試験など）と変数・
+     * 一時参照の個数は、実行時の失敗に委ねます。
+     * 上書き禁止時は等価な空き検査を作れる配置先だけを通し、作れない配置先
+     * （装備先など対象種別でNBT構造が変わる場合）は誤った等価出力を出さず
+     * 明示拒否します。警告だけで別意味のコマンドは出力しません。
+     */
+    private fun validatePlaceItemExport(script: DiskScript, node: CommandNode, errors: MutableList<String>) {
+        val item = node.string("item")
+        if (node.itemTempRef.isNullOrBlank() &&
+            (!item.startsWith("minecraft:") || CommandValueRules.material(item, allowAir = false) == null)
+        ) {
+            errors += "${script.id}/${node.id}: バニラに存在しない配置アイテムです: $item"
+        }
+        val itemData = node.string("itemData")
+        // 保存済みスタックは1回だけ復元し、メタ検査と上限解決に使い回します。
+        // 上限・メタの取得失敗は検査飛ばし・未対応として扱い、例外にしません。
+        val decodedData = itemData.takeIf { it.isNotBlank() }?.let(ItemStackCodec::decode)
+        if (node.itemTempRef.isNullOrBlank() && itemData.isNotBlank() &&
+            decodedData?.let { runCatching { it.hasItemMeta() }.getOrNull() } != false
+        ) {
+            errors += "${script.id}/${node.id}: 保存された配置ItemStackメタデータは完全バニラ出力に未対応です"
+        }
+        val destination = PlaceItemDestination.from(node.string("destination"))
+        if (destination == null) {
+            errors += "${script.id}/${node.id}: 不明な配置先です"
+            return
+        }
+        if (!PlaceItemDestination.isValidSlot(destination, node.string("slot"))) {
+            errors += "${script.id}/${node.id}: 配置先に適用できないスロットです"
+        }
+        // 配置スタックの上限（保存済みitemDataの独自上限があればそれを、
+        // なければ素材の標準上限）を超えるリテラル個数は、実行・出力ともに
+        // 失敗する誤出力になるため、上限が解決できる場合に拒否します。
+        // 一時変数アイテムは内容が確定しないため飛ばします。
+        val itemDataMax = decodedData?.let { runCatching { it.maxStackSize }.getOrNull() }
+        val material = if (!node.itemTempRef.isNullOrBlank()) null
+        else CommandValueRules.material(node.string("item"), allowAir = false)
+        val max = PlaceItemDestination.effectiveStackMax(
+            itemDataMax,
+            material?.let(PlaceItemDestination::materialMaxStackSize),
+        )
+        if (max != null && PlaceItemDestination.countExceedsMax(node.string("count", "1"), max)) {
+            errors += "${script.id}/${node.id}: 配置個数がスタック上限を超えています"
+        }
+        if (!node.boolean("overwrite") &&
+            PlaceItemDestination.emptyCheckNbtPath(destination, node.string("slot")) == null
+        ) {
+            errors += "${script.id}/${node.id}: 上書き禁止の配置先は完全バニラ出力に未対応です"
+        }
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            validatePosition(script, node, node.blockPositionSpec, errors)
+        }
+    }
+
+    /**
+     * issue #32 のattribute操作をバニラのattributeコマンドへ変換します。
+     *
+     * 演算子の対応は[EntityAttributeSupport.vanillaModifierOperation]が正本であり、
+     * 不正確な変換は行いません。対応付け不能な値は事前検査で未対応として扱い、
+     * ここへは到達させません。
+     * バニラのattributeは単一対象専用のため、対象ごとに `execute as … run` へ
+     * 展開します。複数対象セレクターをそのまま渡すと無効になるためです。
+     * 外側の `store success` 包みと組で、実行側の「1件以上適用」と一致します。
+     */
+    private fun attributeCommand(node: CommandNode): String? {
+        val attribute = node.string(EntityAttributeSupport.PARAM_ATTRIBUTE).takeIf(String::isNotBlank)
+            ?: return null
+        val target = effectiveTarget(node)
+        return when (node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)) {
+            EntityAttributeSupport.OPERATION_BASE_VALUE -> {
+                val value = node.string(EntityAttributeSupport.PARAM_AMOUNT).takeIf(String::isNotBlank)
+                    ?: return null
+                "execute as $target run attribute @s $attribute base set $value"
+            }
+            EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
+                val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
+                    ?: return null
+                val amount = node.string(EntityAttributeSupport.PARAM_AMOUNT).takeIf(String::isNotBlank)
+                    ?: return null
+                val operation = EntityAttributeSupport.vanillaModifierOperation(
+                    node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION),
+                ) ?: return null
+                "execute as $target run attribute @s $attribute modifier add $key $amount $operation"
+            }
+            EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
+                val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
+                    ?: return null
+                "execute as $target run attribute @s $attribute modifier remove $key"
+            }
+            else -> null
+        }
     }
 
     private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {
@@ -1410,11 +1699,13 @@ class VanillaDatapackExporter(
         }
     }
 
+    // issue #27: 判定対象ベースで述語を生成します。未設定・不正な判定対象は
+    // 検証で拒否済みのため、ここでは明示的に停止します。
     private fun predicate(node: CommandNode): String = when (
-        ConditionKind.valueOf(node.string("kind", ConditionKind.TARGET_EXISTS.name))
+        node.conditionSubject()
     ) {
-        ConditionKind.TARGET_EXISTS -> "entity ${conditionTarget(node)}"
-        ConditionKind.PLAYER_STATE -> {
+        ConditionSubject.OTHER_ENTITY -> "entity ${conditionTarget(node)}"
+        ConditionSubject.PLAYER -> {
             val nbt = buildList {
                 when (node.string("sneaking").toBooleanStrictOrNull()) {
                     true -> add("Pose:\\\"CROUCHING\\\"")
@@ -1429,7 +1720,7 @@ class VanillaDatapackExporter(
             if (nbt.isEmpty()) "entity $target"
             else "entity ${appendSelectorArguments(target, "nbt={${nbt.joinToString(",")}}")}"
         }
-        ConditionKind.VARIABLE_STATE -> {
+        ConditionSubject.VARIABLE -> {
             val holder = conditionCountHolder(node)
             val raw = node.string("value")
             val value = raw.toDoubleOrNull()?.let(::scaledScore)
@@ -1440,16 +1731,18 @@ class VanillaDatapackExporter(
                 "score $holder kc_runtime $operator ${conditionValueHolder(node)} kc_runtime"
             }
         }
-        ConditionKind.BLOCK_STATE ->
+        ConditionSubject.BLOCK ->
             "block ~ ~ ~ ${node.string("block", "minecraft:air")}"
         // 制御ブロック状態はプラグインの実行元ブロックを参照する条件であり、
         // 完全バニラ出力へ誤変換できないため、検証で拒否したうえでここでも明示的に止めます。
-        ConditionKind.CONTROL_BLOCK_STATE ->
+        ConditionSubject.CONTROL_BLOCK ->
             error("制御ブロックの状態条件は完全バニラ出力に未対応です")
+        // 未設定・不正な判定対象は検証で拒否済みのため、述語生成へ進めません。
+        null -> error("判定対象が未設定です")
     }
 
     private fun conditionPreparation(node: CommandNode, graph: CommandGraph): String? =
-        if (ConditionKind.valueOf(node.string("kind")) == ConditionKind.VARIABLE_STATE) {
+        if (node.conditionSubject() == ConditionSubject.VARIABLE) {
             buildList {
                 add(
                     "execute store result score ${conditionCountHolder(node)} kc_runtime run data get storage " +
@@ -1496,7 +1789,7 @@ class VanillaDatapackExporter(
         "#ct_${node.id.toString().replace("-", "")}"
 
     private fun conditionNeedsInversion(node: CommandNode): Boolean =
-        node.string("kind") == ConditionKind.VARIABLE_STATE.name && node.string("operator") == "!="
+        node.conditionSubject() == ConditionSubject.VARIABLE && node.string("operator") == "!="
 
     private fun comparisonOperator(node: CommandNode): String =
         node.string("operator").takeUnless { it == "!=" } ?: "=="
@@ -1853,10 +2146,10 @@ class VanillaDatapackExporter(
         node: CommandNode,
         context: ExecutionContextSpec?,
     ): TemporaryEntityReference? {
-        // CONDITIONの条件対象として実際に効くTARGET_EXISTS／PLAYER_STATEだけを
+        // CONDITIONの条件対象として実際に効くプレイヤー／その他存在判定だけを
         // 対象にし、変数・ブロック条件の無関係な内部対象状態で分岐を変えません。
-        val conditionKind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-        if (conditionKind !in setOf(ConditionKind.TARGET_EXISTS, ConditionKind.PLAYER_STATE)) return null
+        val subject = node.conditionSubject()
+        if (subject != ConditionSubject.OTHER_ENTITY && subject != ConditionSubject.PLAYER) return null
         val explicitTarget = node.targetSpec
         val spec = explicitTarget ?: context?.target ?: context?.executor ?: return null
         if (spec.kind != TargetKind.TEMPORARY) return null
@@ -1924,13 +2217,18 @@ class VanillaDatapackExporter(
             ?: node.string("block")
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
-                val position = requireNotNull(node.blockPositionSpec)
+                val position = effectiveBlockPosition(node)
+                    ?: error("structured block position is missing")
                 val anchor = blockAnchor(position)
                 "${anchor.prefix}setblock ${anchor.coordinates} $block"
             }
             BlockOperationMode.FILL -> {
-                val from = blockAnchor(requireNotNull(node.blockFromSpec))
-                val to = blockAnchor(requireNotNull(node.blockToSpec))
+                val from = blockAnchor(
+                    effectiveFillFrom(node) ?: error("structured fill range is missing"),
+                )
+                val to = blockAnchor(
+                    effectiveFillTo(node) ?: error("structured fill range is missing"),
+                )
                 require(from.prefix == to.prefix) {
                     "fillの始点と終点は同じ基準位置で指定してください"
                 }
@@ -1948,7 +2246,9 @@ class VanillaDatapackExporter(
             "${spec.x ?: error("block x is missing")} ${spec.y ?: error("block y is missing")} ${spec.z ?: error("block z is missing")}",
         )
         PositionKind.DISK -> BlockAnchor("", "~ ~ ~")
-        PositionKind.TARGET -> error("block target position is not supported")
+        // issue #29: 対象由来位置は相対座標で出力し、呼び出し側で
+        // execute atへ包みます。単一限定の静的単一も同じ経路です。
+        PositionKind.TARGET -> BlockAnchor("", "~ ~ ~")
         PositionKind.TEMPORARY -> BlockAnchor(
             "",
             temporaryPositionCoordinates(spec.tempName ?: error("temporary block position name is missing")),
@@ -1957,8 +2257,104 @@ class VanillaDatapackExporter(
     }
 
     private fun conditionContext(node: CommandNode): ExecutionContextSpec? {
-        val position = node.conditionPositionSpec ?: return null
+        // issue #26: 条件判定位置が未設定のときだけ実行位置を既定値とします。
+        val position = node.conditionPositionSpec ?: node.executionPositionSpec ?: return null
         return ExecutionContextSpec(position = position)
+    }
+
+    /**
+     * issue #26: バニラで表現できる実行位置だけを文脈化します。
+     *
+     * MYWORLD_SPAWN・相対・対象位置は上記検証で除外済みのためここでは扱わず、
+     * 未設定・DISK（制御ブロック位置と同義）は包みません。
+     */
+    private fun executionPositionContext(node: CommandNode): ExecutionContextSpec? {
+        val position = node.executionPositionSpec ?: return null
+        return when (position.kind) {
+            PositionKind.COORDINATES, PositionKind.CAPTURED, PositionKind.TEMPORARY -> ExecutionContextSpec(position = position)
+            else -> null
+        }
+    }
+
+    /**
+     * issue #29: コマンドの代表位置に内包された対象を返します。
+     *
+     * 検証済みの範囲では、対象由来位置の相対座標出力と組で execute at へ包み、
+     * 実行時の各位置実行と一致させます。一時変数内包・実行位置・条件分岐の
+     * 複数位置は検証で除外済みのため、ここでは扱いません。
+     */
+    private fun entityDerivedTarget(node: CommandNode): TargetSpec? {
+        // fillは始点の対象へ包みます。終点だけが対象由来の場合は終点へ包み、
+        // 両端で異なる対象の場合は検証で除外済みです。
+        // 未設定の片端は実行位置を既定値とするため、既定値込みで判定します。
+        if (node.type == CommandType.BLOCK_OPERATION &&
+            BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+            BlockOperationMode.FILL
+        ) {
+            val from = effectiveFillFrom(node)
+                ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                ?.takeIf { it.kind != TargetKind.TEMPORARY }
+            val to = effectiveFillTo(node)
+                ?.takeIf { it.kind == PositionKind.TARGET }?.target
+                ?.takeIf { it.kind != TargetKind.TEMPORARY }
+            return from ?: to
+        }
+        val spec = when (node.type) {
+            CommandType.SUMMON_ENTITY -> node.summonPositionSpec
+            CommandType.PLAY_SOUND -> node.soundPositionSpec
+            CommandType.PARTICLE -> node.particlePositionSpec
+            CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
+            CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
+            CommandType.PLACE_ITEM -> node.blockPositionSpec
+            else -> null
+        }?.takeIf { it.kind == PositionKind.TARGET } ?: return null
+        return spec.target?.takeIf { it.kind != TargetKind.TEMPORARY }
+    }
+
+    /**
+     * issue #26: ブロック操作の実行時と同じ既定値を返します。
+     *
+     * コマンド固有位置があればそちらを優先し、未設定時は実行位置を既定値とします。
+     * 実行位置の対象由来は上記検証で除外済みのため、ここへは到達しません。
+     */
+    private fun effectiveBlockPosition(node: CommandNode): me.awabi2048.kantancommander.model.PositionSpec? =
+        node.blockPositionSpec ?: node.executionPositionSpec
+
+    /** issue #26: fill始点の実行時と同じ既定値です。 */
+    private fun effectiveFillFrom(node: CommandNode): me.awabi2048.kantancommander.model.PositionSpec? =
+        node.blockFromSpec ?: node.executionPositionSpec
+
+    /** issue #26: fill終点の実行時と同じ既定値です。 */
+    private fun effectiveFillTo(node: CommandNode): me.awabi2048.kantancommander.model.PositionSpec? =
+        node.blockToSpec ?: node.executionPositionSpec
+
+    /**
+     * issue #29: コマンドの代表位置の種別を返します。
+     *
+     * DISK由来の相対座標は制御ブロック位置を指すため、実行位置の
+     * positioned包みでずらしてはなりません。テレポート先も同じ扱いです。
+     * セレクタ方式の移動先（destinationTargetSpec）は位置に依存しないため
+     * 含めません。
+     */
+    private fun actionPositionKinds(node: CommandNode): Set<PositionKind> {
+        if (node.type == CommandType.BLOCK_OPERATION &&
+            BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) ==
+            BlockOperationMode.FILL
+        ) {
+            return listOfNotNull(effectiveFillFrom(node), effectiveFillTo(node)).map { it.kind }.toSet()
+        }
+        return listOfNotNull(
+            when (node.type) {
+                CommandType.SUMMON_ENTITY -> node.summonPositionSpec
+                CommandType.PLAY_SOUND -> node.soundPositionSpec
+                CommandType.PARTICLE -> node.particlePositionSpec
+                CommandType.FIREWORK_LAUNCH -> node.fireworkPositionSpec
+                CommandType.BLOCK_OPERATION -> effectiveBlockPosition(node)
+                CommandType.PLACE_ITEM -> node.blockPositionSpec
+                CommandType.TELEPORT -> node.destinationSpec
+                else -> null
+            }?.kind,
+        ).toSet()
     }
 
     private fun wrapContext(
@@ -1987,11 +2383,11 @@ class VanillaDatapackExporter(
             }
             context.facing?.let { facing ->
                 when (facing.kind) {
-                    FacingKind.TARGET -> context.target?.let { add("facing entity ${selector(it)} eyes") }
+                    FacingKind.TARGET -> facing.target?.let { add("facing entity ${selector(it)} eyes") }
+                    FacingKind.COPY_ORIENTATION -> error("copy orientation context is not supported by vanilla export")
                     FacingKind.COORDINATES -> add("facing ${facing.x} ${facing.y} ${facing.z}")
                     FacingKind.TEMPORARY -> facing.tempName?.let { name -> add("facing ${temporaryPositionCoordinates(name)}") }
-                    FacingKind.ROTATION, FacingKind.CAPTURED -> add("rotated ${facing.yaw} ${facing.pitch}")
-                    else -> Unit
+                    FacingKind.ROTATION -> add("rotated ${facing.yaw} ${facing.pitch}")
                 }
             }
         }
@@ -2060,6 +2456,11 @@ class VanillaDatapackExporter(
                 .append(":particlePosition=").append(node.particlePositionSpec)
                 .append(":particleEndPosition=").append(node.particleEndPositionSpec)
                 .append(":fireworkPosition=").append(node.fireworkPositionSpec)
+                .append(":summonPosition=").append(node.summonPositionSpec)
+                .append(":blockPosition=").append(node.blockPositionSpec)
+                .append(":blockFrom=").append(node.blockFromSpec)
+                .append(":blockTo=").append(node.blockToSpec)
+                .append(":executionPosition=").append(node.executionPositionSpec)
             node.snapshot?.let {
                 append(":snapshot={").append(graphFingerprint(it)).append('}')
             }

@@ -26,7 +26,7 @@ import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
@@ -373,9 +373,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             "$target → $destination"
         }
         CommandType.GIVE_ITEM -> "${node.string("item")} ×${node.string("count", "1")}"
+        CommandType.PLACE_ITEM -> "${node.string("item")} ×${node.string("count", "1")}"
         CommandType.DISPLAY_TEXT -> node.string("text").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.WAIT -> "${node.string("seconds", "1")}秒"
-        CommandType.CONDITION -> runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
+        CommandType.CONDITION -> node.conditionSubject()
             ?.let { KcI18n.text(player, it.key) }
             ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         CommandType.DISK_CALL ->

@@ -16,6 +16,8 @@ import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.mwmchanpon.api.PreparedStandaloneExport
 import me.awabi2048.mwmchanpon.api.StandaloneExportContext
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributor
@@ -130,7 +132,7 @@ class KantanStandaloneExportContributor(
                             node.string("changeMode", "ASSIGN") == "CALCULATE" -> namespaceExpression(raw, namespace)
                         key in DIRECT_VARIABLE_FIELDS &&
                             node.type == CommandType.CONDITION &&
-                            node.string("kind") == "VARIABLE_STATE" -> "${namespace}_$raw"
+                            node.conditionSubject() == ConditionSubject.VARIABLE -> "${namespace}_$raw"
                         key in REGISTRY_FIELDS || key in NON_TEXT_FIELDS -> raw
                         else -> namespaceTemplate(raw, namespace) ?: raw
                     }
@@ -176,6 +178,7 @@ class KantanStandaloneExportContributor(
             "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
             "tagOperation", "soundScope", "soundOperation", "soundCategory", "particleDisplayMode",
             "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
+            "attributeOperation", "modifierOperation", "property",
         )
     }
 }

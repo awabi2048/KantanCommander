@@ -147,4 +147,21 @@ class GestureEditorDirtyStateTest {
 
         assertTrue(GraphChangeClassifier.changedNodeIds(before, before.deepCopy()).isEmpty())
     }
+
+    @Test
+    fun `execution position change is field value and keeps signature`() {
+        // issue #26 と #15 の統合点です。実行位置の変更は値差分であり、
+        // 配置を使い回せるため署名は変わりません。分類漏れは表示更新の抑止に直結します。
+        val before = CommandGraph.empty()
+        val node = GraphEditor.append(before, CommandType.SUMMON_ENTITY)
+        val after = before.deepCopy()
+        after.nodes.getValue(node.id).executionPositionSpec =
+            me.awabi2048.kantancommander.model.PositionSpec(
+                me.awabi2048.kantancommander.model.PositionKind.DISK,
+            )
+
+        assertEquals(GraphChangeKind.FIELD_VALUE, GraphChangeClassifier.classify(before, after))
+        assertEquals(GraphStructureFingerprint.fingerprint(before), GraphStructureFingerprint.fingerprint(after))
+        assertEquals(setOf(node.id), GraphChangeClassifier.changedNodeIds(before, after))
+    }
 }

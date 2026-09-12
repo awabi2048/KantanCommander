@@ -111,6 +111,23 @@ data class SettingsActionCard(
     val consume: Boolean = false,
 )
 
+/** ID候補一覧の1セルです。ID文字列は常時表示せず、ホバーで示します。 */
+data class ResourcePickerCard(
+    /** 要素 ID 全文です（例 lower-resource-pick:minecraft:cow）。 */
+    val elementId: String,
+    val icon: ItemStack?,
+    val background: BlockData,
+    /** 現在選択中の候補の外周枠です。ない場合は枠なしです。 */
+    val outline: BlockData?,
+    val cx: Double,
+    val cy: Double,
+    val w: Double,
+    val h: Double,
+    /** 表示名とNamespaced IDの解決値をそのまま渡します。 */
+    val hover: GestureGuiHoverText?,
+    val visualIndex: Int,
+)
+
 /** プログラム全体設定カード1件です。背景・図柄・2行文言・操作面を同じ矩形で表します。 */
 data class ScriptSettingCard(
     /**
@@ -167,6 +184,11 @@ object DeclarativeSettings {
     /**
      * 左タブ列と固定操作（複製・削除）を配置します。
      * 設定項目なしの案内画面でも同じ固定操作を用います。
+     *
+     * 実行位置タブは `executionTabIndex` で指定し、タブ列から抽出して
+     * 下端の操作行の直上へ固定配置します。タブ列の番号は全項目基準の
+     * まま変えず、既存の選択記憶とずらしません。
+     * 削除・複製は下端1行に半幅で並べます（複製不可時は削除だけ全幅）。
      */
     fun tabsSection(
         nodes: MutableList<GestureGuiNode>,
@@ -176,9 +198,13 @@ object DeclarativeSettings {
         duplicateBackground: BlockData?,
         deleteLabel: Component,
         deleteBackground: BlockData,
+        executionTabIndex: Int? = null,
     ) {
+        val executionTab = executionTabIndex?.let { tabs.getOrNull(it) }
         tabs.forEachIndexed { index, tab ->
-            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - index * GestureLowerPanel.SETTINGS_TAB_PITCH
+            if (index == executionTabIndex) return@forEachIndexed
+            val position = if (executionTabIndex != null && index > executionTabIndex) index - 1 else index
+            val cy = GestureLowerPanel.SETTINGS_TAB_TOP_Y - position * GestureLowerPanel.SETTINGS_TAB_PITCH
             val width = GestureSettingVisualPolicy.selectedTabWidth(GestureLowerPanel.SETTINGS_TAB_WIDTH, tab.selected)
             val cx = GestureSettingVisualPolicy.selectedTabCenterX(
                 GestureLowerPanel.SETTINGS_TAB_CENTER_X,
@@ -206,7 +232,52 @@ object DeclarativeSettings {
                 absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, cy - 0.02, 1.0, 0.0055 * 3.0),
             )
         }
+        executionTab?.let { tab ->
+            // 実行位置行は幅を広げるアニメーションを行わず、選択色・ホバー・注意表示だけを残します。
+            val width = GestureLowerPanel.SETTINGS_TAB_WIDTH
+            val cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X
+            nodes += GestureGuiBlock(
+                blockData = tab.background,
+                width = GestureGuiSizeSpec.Fixed(width),
+                height = GestureGuiSizeSpec.Fixed(GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+                id = "lower-tab:exec",
+                actionId = "lower-tab:exec",
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                hover = tab.attentionHover?.let(::hoverSpecOf),
+                absolute = placed(frame, cx, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y, width, GestureLowerPanel.SETTINGS_TAB_HEIGHT),
+            )
+            nodes += GestureGuiText(
+                text = tab.label,
+                size = 0.0055,
+                lineWidth = 90,
+                alignment = GestureGuiTextAlignment.CENTER,
+                id = "tab-exec",
+                width = GestureGuiSizeSpec.Fixed(1.0),
+                height = GestureGuiSizeSpec.Auto,
+                absolute = placed(frame, GestureLowerPanel.SETTINGS_TAB_CENTER_X, GestureLowerPanel.SETTINGS_TAB_EXECUTION_Y - 0.02, 1.0, 0.0055 * 3.0),
+            )
+        }
+        val halfWidth = GestureLowerPanel.SETTINGS_TAB_WIDTH / 2.0
         if (duplicateLabel != null && duplicateBackground != null) {
+            appendActionCard(
+                nodes,
+                frame,
+                SettingsActionCard(
+                    elementId = "lower-delete",
+                    label = deleteLabel,
+                    background = deleteBackground,
+                    cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X - halfWidth / 2.0,
+                    cy = GestureLowerPanel.SETTINGS_TAB_ACTION_Y,
+                    w = halfWidth,
+                    h = GestureLowerPanel.SETTINGS_TAB_HEIGHT,
+                    labelSize = 0.0049,
+                    labelWidth = 45,
+                    gestures = GestureGuiClickPolicy.CLICK,
+                    guard = null,
+                    hover = null,
+                    visualTag = "delete",
+                ),
+            )
             appendActionCard(
                 nodes,
                 frame,
@@ -214,18 +285,19 @@ object DeclarativeSettings {
                     elementId = "lower-duplicate",
                     label = duplicateLabel,
                     background = duplicateBackground,
-                    cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X,
-                    cy = GestureLowerPanel.SETTINGS_TAB_DUPLICATE_Y,
-                    w = GestureLowerPanel.SETTINGS_TAB_WIDTH,
+                    cx = GestureLowerPanel.SETTINGS_TAB_CENTER_X + halfWidth / 2.0,
+                    cy = GestureLowerPanel.SETTINGS_TAB_ACTION_Y,
+                    w = halfWidth,
                     h = GestureLowerPanel.SETTINGS_TAB_HEIGHT,
                     labelSize = 0.0049,
-                    labelWidth = 90,
+                    labelWidth = 45,
                     gestures = GestureGuiClickPolicy.CLICK,
                     guard = null,
                     hover = null,
                     visualTag = "duplicate",
                 ),
             )
+            return
         }
         appendActionCard(
             nodes,
@@ -337,6 +409,10 @@ object DeclarativeSettings {
     /**
      * 設定候補・対象分類カードを配置します。
      * 無効な候補は操作面なしの消費面にし、ホバーは維持します。
+     *
+     * 文言ノードのIDは要素ID由来とし、visualTag/visualIndexの連番に依存しません。
+     * 同一文書へ候補列を複数回追加しても重複診断にならないための全体最適です。
+     * 初回表示時のstale状態で同一visualIndexが再利用されても、要素IDが異なれば衝突しません。
      */
     fun choiceCardsSection(
         nodes: MutableList<GestureGuiNode>,
@@ -369,7 +445,7 @@ object DeclarativeSettings {
                 size = card.labelSize,
                 lineWidth = card.labelWidth,
                 alignment = GestureGuiTextAlignment.CENTER,
-                id = "${card.visualTag}-label-${card.visualIndex}",
+                id = "${card.elementId}-label",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
                 absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),
@@ -384,6 +460,43 @@ object DeclarativeSettings {
         card: SettingsActionCard,
     ) {
         appendActionCard(nodes, frame, card)
+    }
+
+    /**
+     * issue #28 のID候補グリッドを配置します。
+     *
+     * 各セルは Block＋Item＋GestureGuiElement の基本構成です。
+     * ID文字列は常時表示せず、ホバーで表示名とNamespaced IDを示します。
+     */
+    fun resourcePickerSection(
+        nodes: MutableList<GestureGuiNode>,
+        frame: ContentFrame,
+        cards: List<ResourcePickerCard>,
+    ) {
+        cards.forEach { card ->
+            nodes += GestureGuiBlock(
+                blockData = card.background,
+                width = GestureGuiSizeSpec.Fixed(card.w),
+                height = GestureGuiSizeSpec.Fixed(card.h),
+                outline = card.outline?.let { GestureGuiOutline(it) },
+                id = card.elementId,
+                actionId = card.elementId,
+                acceptedGestures = GestureGuiClickPolicy.CLICK,
+                hover = card.hover?.let(::hoverSpecOf),
+                absolute = placed(frame, card.cx, card.cy, card.w, card.h),
+            )
+            card.icon?.let { icon ->
+                val iconSize = minOf(card.w, card.h) * 0.62
+                nodes += GestureGuiItem(
+                    item = icon,
+                    scale = iconSize,
+                    width = GestureGuiSizeSpec.Fixed(iconSize),
+                    height = GestureGuiSizeSpec.Fixed(iconSize),
+                    id = "${card.elementId}-icon",
+                    absolute = placed(frame, card.cx, card.cy + 0.005, iconSize, iconSize),
+                )
+            }
+        }
     }
 
     /**
@@ -476,12 +589,15 @@ object DeclarativeSettings {
     }
 
     private fun appendActionCard(nodes: MutableList<GestureGuiNode>, frame: ContentFrame, card: SettingsActionCard) {
+        // 背景と文言のIDは要素ID由来とし、同一visualTagの再利用による重複診断を防ぎます。
+        // 要素なし（無効ページャ等）はvisualTag由来のままですが、呼び出し側でtargetPage等を含めて一意化しています。
+        val baseId = card.elementId ?: "${card.visualTag}-bg"
         nodes += GestureGuiBlock(
             blockData = card.background,
             width = GestureGuiSizeSpec.Fixed(card.w),
             height = GestureGuiSizeSpec.Fixed(card.h),
             outline = card.outline?.let { GestureGuiOutline(it) },
-            id = card.elementId ?: "${card.visualTag}-bg",
+            id = baseId,
             actionId = card.elementId,
             acceptedGestures = card.gestures,
             consumeInput = card.consume,
@@ -495,7 +611,7 @@ object DeclarativeSettings {
                 size = card.labelSize,
                 lineWidth = card.labelWidth,
                 alignment = GestureGuiTextAlignment.CENTER,
-                id = "${card.visualTag}-label",
+                id = "$baseId-label",
                 width = GestureGuiSizeSpec.Fixed(1.0),
                 height = GestureGuiSizeSpec.Auto,
                 absolute = placed(frame, card.cx, card.cy + card.labelDy, 1.0, card.labelSize * 3.0),

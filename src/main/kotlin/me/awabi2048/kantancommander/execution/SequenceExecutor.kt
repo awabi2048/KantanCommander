@@ -9,7 +9,8 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.BlockOperationMode
 import me.awabi2048.kantancommander.model.MAX_BLOCK_OPERATION_VOLUME
-import me.awabi2048.kantancommander.model.ConditionKind
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateConditionPolicy
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -28,6 +29,9 @@ import me.awabi2048.kantancommander.model.WorldVariableValue
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValue
 import me.awabi2048.kantancommander.model.clampMinecraftPitch
 import me.awabi2048.kantancommander.model.wrapMinecraftYaw
 import me.awabi2048.kantancommander.model.PositionKind
@@ -44,9 +48,13 @@ import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.error.PartialApplicability
+import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
 import org.bukkit.Location
@@ -54,8 +62,10 @@ import org.bukkit.NamespacedKey
 import org.bukkit.Registry
 import org.bukkit.SoundCategory
 import org.bukkit.entity.Entity
+import org.bukkit.entity.ItemFrame
 import org.bukkit.entity.LivingEntity
 import org.bukkit.entity.Player
+import org.bukkit.inventory.InventoryHolder
 import org.bukkit.inventory.ItemStack
 import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
@@ -63,6 +73,7 @@ import java.util.logging.Level
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import org.bukkit.inventory.EquipmentSlot
+import org.bukkit.util.Vector
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer
 
 /** テスト実行の終了理由です。手動停止は失敗と区別して表示します。 */
@@ -387,6 +398,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         }
         session.lastDetail = null
+        session.lastPartial = null
         session.lastExpandedParams = emptyMap()
         session.lastPositionText = null
         session.lastFailureReason = null
@@ -462,10 +474,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 schedule(session, waitTicks) { next(node.next, NodeExecutionOutcome.SUCCESS) }
             }
             CommandType.CONDITION -> {
-                val effectiveContext = effectiveContext(session)
+                val ambient = effectiveContext(session)
+                // issue #26・#29: 実行起点集合を求め、対象は起点ごとの和集合で評価します。
+                // 解決不能は従来経路へ委譲し、正常 false と解決失敗の分離を維持します。
+                val origins = effectiveExecutionOrigins(node, session, ambient)
+                val unionTargets = origins?.flatMap { origin ->
+                    resolveTargets(originContext(origin, ambient), node.targetSpec, session)
+                }?.distinctBy { it.uniqueId }
+                val effectiveContext =
+                    origins?.firstOrNull()?.let { originContext(it, ambient) } ?: ambient
                 // 正常 false と解決失敗を分離します。UNRESOLVED/INVALID は
                 // FALSE 分岐継続にせず、共通コード付きで失敗停止します。
-                when (val evaluation = evaluateConditionDetailed(node, session, effectiveContext)) {
+                when (val evaluation = evaluateConditionDetailed(node, session, effectiveContext, unionTargets, origins)) {
                     ConditionEvaluation.TRUE, ConditionEvaluation.FALSE -> {
                         val rawResult = evaluation == ConditionEvaluation.TRUE
                         val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
@@ -637,7 +657,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun immediateDetail(type: CommandType): String = when (type) {
         CommandType.TELEPORT -> "対象を指定位置へテレポートした"
         CommandType.GIVE_ITEM -> "対象へアイテムを付与した"
+        CommandType.PLACE_ITEM -> "対象へアイテムを配置した"
         CommandType.ENTITY_ACTION -> "対象へエンティティ操作を行った"
+        CommandType.ENTITY_OPERATION -> "対象のエンティティデータを変更した"
         CommandType.DISPLAY_TEXT -> "対象へテキストを表示した"
         CommandType.SUMMON_ENTITY -> "エンティティを召喚した"
         CommandType.PLAY_SOUND -> "サウンドを再生した"
@@ -820,8 +842,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             if (session.lastDetail.isNullOrBlank()) session.lastDetail = immediateDetail(node.type)
             ImmediateExecutionResult.SUCCESS
         } else {
+            // 全件非適用・全件失敗時も件数と理由を残します。件数接尾辞は
+            // 部分適用があるときだけ付き、全件適用時と同様の表示にはなりません。
+            // lastPartialを設定する操作以外には影響しません。
             if (session.lastDetail.isNullOrBlank()) {
-                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）"
+                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）" +
+                    partialDetailSuffix(session.actor, session.lastPartial)
             }
             session.lastFailureReason = session.lastFailureReason ?: ErrorCode.COMMAND_FAILED.code
             session.lastFailureCode = session.lastFailureCode ?: ErrorCode.COMMAND_FAILED
@@ -838,19 +864,44 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val reason = failure.message?.takeIf(String::isNotBlank) ?: failure::class.simpleName ?: "command_failed"
         session.lastFailureReason = reason
         session.lastFailureCode = ErrorCode.fromLegacyReason(reason)
-        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）"
+        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）" +
+            partialDetailSuffix(session.actor, session.lastPartial)
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
         ImmediateExecutionResult.FAILED
     }
 
-    private fun executeImmediateBoolean(node: CommandNode, session: ExecutionSession): Boolean = run {
-        val effectiveContext = effectiveContext(session)
-        val targets = resolveTargets(effectiveContext, node.targetSpec, session)
-        val effectiveOrigin = if (effectiveContext?.position != null) {
-            resolvePosition(effectiveContext.position, session, effectiveContext) ?: return false
-        } else {
-            session.origin
+    /**
+     * issue #29: 複数位置の試行記録です。
+     *
+     * 各位置を独立に試行し、1件でも成功すれば全体成功とします。
+     * 失敗は件数で記録し、試行なし（空集合）は成功扱いとします。
+     */
+    private class MultiAttemptRecorder {
+        var succeeded: Int = 0
+            private set
+        var failed: Int = 0
+            private set
+
+        fun record(success: Boolean) {
+            if (success) succeeded++ else failed++
         }
+
+        /** 1件でも成功すれば成功です。全件失敗のときだけ失敗とします。 */
+        val overall: Boolean get() = failed == 0 || succeeded > 0
+    }
+
+    private fun executeImmediateBoolean(node: CommandNode, session: ExecutionSession): Boolean = run {
+        val ambient = effectiveContext(session)
+        // issue #26・#29: 実行起点集合を求めます。解決不能は従来どおり失敗にします。
+        val origins = effectiveExecutionOrigins(node, session, ambient) ?: return false
+        // issue #29: 対象探索は各起点を基準に行い、結果を重複排除の和集合とします。
+        val targets = origins.flatMap { origin ->
+            resolveTargets(originContext(origin, ambient), node.targetSpec, session)
+        }.distinctBy { it.uniqueId }
+        val effectiveContext = origins.firstOrNull()?.let { originContext(it, ambient) } ?: ambient
+        val effectiveOrigin = origins.firstOrNull() ?: session.origin
+        // issue #29: 複数位置の試行記録です。位置依存の実行だけが使います。
+        val attempts = MultiAttemptRecorder()
         val success = when (node.type) {
             CommandType.TELEPORT -> {
                 if (targets.isEmpty()) return false
@@ -893,32 +944,32 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         targets.all(vehicle::addPassenger)
                     }
                     "dismount" -> targets.all(Entity::leaveVehicle)
-                    "equip" -> {
-                        val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-                            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                            ?.takeIf { it.type == TemporaryVariableType.ITEM }
-                        val material = if (refTemp != null) {
-                            CommandValueRules.material(refTemp.item.orEmpty(), allowAir = false)
-                        } else {
-                            CommandValueRules.material(node.string("item"), allowAir = false)
-                        } ?: return false
-                        val template = if (refTemp != null) {
-                            refTemp.itemData?.takeIf(String::isNotBlank)?.let(ItemStackCodec::decode)
-                                ?: ItemStack(material)
-                        } else {
-                            ItemStackCodec.decode(node.string("itemData")) ?: ItemStack(material)
-                        }
-                        val slot = runCatching { EquipmentSlot.valueOf(node.string("slot")) }.getOrNull() ?: return false
-                        val overwrite = node.boolean("overwrite")
-                        val applicable = targets.filterIsInstance<LivingEntity>().mapNotNull { it.equipment }
-                        if (applicable.isEmpty()) return false
-                        applicable.forEach { equipment ->
-                            if (overwrite || equipment.getItem(slot).type.isAir) {
-                                equipment.setItem(slot, template.clone())
-                            }
-                        }
+                    // 動き設定は現在速度を指定値へ設定する意味です。Bukkit／Paper APIの
+                    // velocityとして扱い、生NBTは経由しません。将来の加算modeとは混在させません。
+                    "motion" -> {
+                        val x = CommandValueRules.parseFiniteDouble(node.string("motionX")) ?: return false
+                        val y = CommandValueRules.parseFiniteDouble(node.string("motionY")) ?: return false
+                        val z = CommandValueRules.parseFiniteDouble(node.string("motionZ")) ?: return false
+                        val velocity = Vector(x, y, z)
+                        targets.forEach { it.velocity = velocity.clone() }
                         true
                     }
+                    // 旧equipは#21のPLACE_ITEMへ移行済みのため実行しません。
+                    // 旧tagは#32のENTITY_OPERATIONへ移行済みのためここでは扱いません。
+                    // いずれも検証層で移行漏れとして拒否されるため、到達時は失敗とします。
+                    else -> false
+                }
+            }
+            // issue #32 の「エンティティを操作」です。Entity自身の状態・データを変更します。
+            //
+            // 混合対象では対応する対象にだけ適用し、件数は構造化結果へ残します
+            // （#6のPARTIAL_APPLY方針、レビューF4対応）。表示への変換は共通の
+            // 成功・失敗処理が行い、1件も適用できなかった場合は失敗とします。
+            // modifierの追加・削除はバニラの同名操作と等価です。
+            CommandType.ENTITY_OPERATION -> {
+                if (targets.isEmpty()) return false
+                when (node.string("operation", "tag")) {
+                    // tag実行本体は#32の分岐を維持します（旧ENTITY_ACTIONの重複は置きません）。
                     "tag" -> {
                         val tag = resolveText(node.string("tag"), session) ?: return false
                         // タグは単一値としてそのまま扱います。カンマを分割したり、
@@ -935,9 +986,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                             else -> false
                         }
                     }
+                    "attribute" -> executeEntityAttribute(node, session, targets)
+                    "data" -> executeEntityData(node, session, targets)
                     else -> false
                 }
             }
+            CommandType.PLACE_ITEM -> executePlaceItem(node, session, effectiveContext, targets, origins, attempts)
             CommandType.DISPLAY_TEXT -> {
                 val players = targets.filterIsInstance<Player>()
                 if (players.isEmpty()) return false
@@ -988,32 +1042,40 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // 複数タグの区切りに変換しないことでGUI・保存・実行の契約を揃えます。
                 val tag = resolveText(node.string("tags"), session) ?: return false
                 if (tag.isNotBlank() && !CommandValueRules.isTag(tag)) return false
-                // 召喚位置が指定されていればそちらを優先し、未設定時はコンテキスト位置（effectiveOrigin）を使用します。
-                val summonOrigin = node.summonPositionSpec?.let { resolvePosition(it, session, effectiveContext) ?: return false } ?: effectiveOrigin
-                val spawn = summonOrigin.clone()
-                effectiveContext?.facing?.let { applyFacing(spawn, it, effectiveContext, session) }
-                val entity = summonOrigin.world.spawnEntity(spawn, type)
-                if (tag.isNotBlank()) entity.addScoreboardTag(tag)
-                val rawCustomName = node.string("customName")
-                val customName = resolveText(rawCustomName, session)
-                    ?: return false.also { entity.remove() }
-                if (customName.isNotEmpty()) {
-                    entity.customName(legacyText(customName))
-                    entity.isCustomNameVisible = true
+                // 召喚位置が指定されていればそちらを優先し、未設定時は実行起点集合を使用します。
+                // issue #29: 対象内包位置は各位置へ実行し、1件でも成功すれば全体成功とします。
+                // 空集合は実行対象なしの成功、対象外種別の未解決は従来どおり失敗にします。
+                val summonOrigins = node.summonPositionSpec?.let {
+                    actionOrigins(it, session, effectiveContext) ?: return false
+                } ?: origins
+                summonOrigins.forEach { summonOrigin ->
+                    attempts.record(runCatching {
+                        val spawn = summonOrigin.clone()
+                        effectiveContext?.facing?.let { applyFacing(spawn, it, effectiveContext, session) }
+                        val entity = summonOrigin.world.spawnEntity(spawn, type)
+                        try {
+                            if (tag.isNotBlank()) entity.addScoreboardTag(tag)
+                            val rawCustomName = node.string("customName")
+                            val customName = resolveText(rawCustomName, session)
+                                ?: error("custom name is unavailable")
+                            if (customName.isNotEmpty()) {
+                                entity.customName(legacyText(customName))
+                                entity.isCustomNameVisible = true
+                            }
+                            plugin.summonedEntities.register(entity, session.rootId)
+                        } catch (failure: Throwable) {
+                            // 台帳へ登録できない召喚体をワールドへ残すと、制限をすり抜けた
+                            // 孤児Entityになります。登録と実体生成を一組として扱います。
+                            runCatching { entity.remove() }
+                            throw failure
+                        }
+                    }.isSuccess)
                 }
-                try {
-                    plugin.summonedEntities.register(entity, session.rootId)
-                } catch (failure: Throwable) {
-                    // 台帳へ登録できない召喚体をワールドへ残すと、制限をすり抜けた
-                    // 孤児Entityになります。登録と実体生成を一組として扱います。
-                    entity.remove()
-                    throw failure
-                }
-                true
+                attempts.overall
             }
-            CommandType.PLAY_SOUND -> executeSound(node, session, effectiveContext, effectiveOrigin, targets)
-            CommandType.PARTICLE -> executeParticle(node, session, effectiveContext, effectiveOrigin, targets)
-            CommandType.FIREWORK_LAUNCH -> executeFirework(node, session, effectiveContext, effectiveOrigin)
+            CommandType.PLAY_SOUND -> executeSound(node, session, effectiveContext, effectiveOrigin, targets, origins, attempts)
+            CommandType.PARTICLE -> executeParticle(node, session, effectiveContext, effectiveOrigin, targets, origins, attempts)
+            CommandType.FIREWORK_LAUNCH -> executeFirework(node, session, effectiveContext, effectiveOrigin, origins, attempts)
             CommandType.APPLY_EFFECT -> {
                 val refTemp = node.effectTempRef?.takeIf(String::isNotBlank)
                     ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
@@ -1049,7 +1111,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }
                 true
             }
-            CommandType.BLOCK_OPERATION -> executeBlockOperation(node, session, effectiveContext)
+            CommandType.BLOCK_OPERATION -> executeBlockOperation(node, session, effectiveContext, origins, attempts)
             CommandType.ENTITY_DELETE -> {
                 if (targets.isEmpty()) return false
                 targets.forEach(Entity::remove)
@@ -1060,11 +1122,161 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (success) {
             session.previousContext = effectiveContext
             val content = executionContent(node, targets, effectiveOrigin, session)
-            session.lastDetail = content.head
+            // issue #32 のレビューF4対応：部分適用の件数は構造化結果から
+            // 中央で表示へ変換します。操作側で詳細文字列を直接書かないことで、
+            // 成功時の共通表示生成で件数が失われないようにします。
+            session.lastDetail = content.head + partialDetailSuffix(session.actor, session.lastPartial)
             session.lastExpandedParams = content.expandedParams
             session.lastPositionText = content.positionText
+            // issue #29: 複数位置の一部失敗は件数で記録します。
+            if (attempts.failed > 0) {
+                session.lastDetail = (session.lastDetail ?: "") + "（${attempts.failed}件の位置で失敗）"
+            }
         }
         success
+    }
+
+    /**
+     * issue #32 のレビューF4対応：部分適用件数の表示変換です。
+     *
+     * 件数の有無判定は [PartialApplicability.displayVars] が担い、ここでは
+     * 型付き言語キーへの解決だけを行います。実行者のlocaleで解決し、
+     * テスト実行表示の詳細行へ残します。全件適用時は空文字を返します。
+     */
+    private fun partialDetailSuffix(actor: Player?, partial: PartialApplicability?): String {
+        val vars = partial?.displayVars() ?: return ""
+        return KcI18n.text(
+            actor,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_PARTIAL_APPLY,
+            vars,
+        )
+    }
+
+    /**
+     * issue #32 のattribute操作を実行します。
+     *
+     * 対象がattributeを持つかはcapabilityとして判定し、対応しない対象は
+     * 非適用として数えます。基本値の設定・modifierの追加・削除を型付きで扱い、
+     * 曖昧な「デフォルトへ戻す」は用意しません。
+     * 適用数が0件の場合は失敗とし、設定値自体の不正とも区別します。
+     */
+    private fun executeEntityAttribute(
+        node: CommandNode,
+        session: ExecutionSession,
+        targets: List<Entity>,
+    ): Boolean {
+        val attribute = EntityAttributeSupport.resolve(node.string(EntityAttributeSupport.PARAM_ATTRIBUTE))
+            ?: return false
+        val operation = node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)
+        if (!EntityAttributeSupport.isOperation(operation)) return false
+        var applied = 0
+        var nonApplicable = 0
+        var failed = 0
+        targets.forEach { target ->
+            val instance = EntityAttributeSupport.instanceOf(target, attribute)
+            if (instance == null) {
+                nonApplicable++
+                return@forEach
+            }
+            val success = when (operation) {
+                EntityAttributeSupport.OPERATION_BASE_VALUE -> {
+                    val value = CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT))
+                        ?: return@forEach run { failed++ }
+                    EntityAttributeSupport.setBaseValue(instance, value)
+                }
+                EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
+                    val key = EntityAttributeSupport.modifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))
+                        ?: return@forEach run { failed++ }
+                    val amount = CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT))
+                        ?: return@forEach run { failed++ }
+                    val modifierOperation = EntityAttributeSupport.modifierOperation(
+                        node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION),
+                    ) ?: return@forEach run { failed++ }
+                    EntityAttributeSupport.addModifier(instance, key, amount, modifierOperation)
+                }
+                EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
+                    val key = EntityAttributeSupport.modifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))
+                        ?: return@forEach run { failed++ }
+                    // 削除対象の不在は失敗とします（バニラの `modifier remove` と等価）。
+                    // 対象自体がattributeを持たない場合だけが非適用です。
+                    EntityAttributeSupport.removeModifier(instance, key)
+                }
+                else -> false
+            }
+            if (success) applied++ else failed++
+        }
+        // issue #32 のレビューF4対応：件数は構造化結果として保持し、
+        // 詳細文字列への変換は共通成功処理へ委ねます。
+        session.lastPartial = PartialApplicability(
+            appliedCount = applied,
+            nonApplicableCount = nonApplicable,
+            failedCount = failed,
+        )
+        return applied > 0
+    }
+
+    /**
+     * issue #32 の型付きデータ編集（#10スキーマ）を実行します。
+     *
+     * 任意NBTではなくスキーマ定義の項目だけを適用し、対応しない対象は
+     * 非適用として数えます。表示名は召喚時と同じ描画規則で適用します。
+     */
+    private fun executeEntityData(
+        node: CommandNode,
+        session: ExecutionSession,
+        targets: List<Entity>,
+    ): Boolean {
+        val propertyId = node.string(EntityDataSchema.PARAM_PROPERTY)
+        val definition = EntityDataSchema.definition(propertyId) ?: return false
+        val raw = node.string(EntityDataSchema.PARAM_VALUE)
+        val parsed = EntityDataSchema.parse(propertyId, raw) ?: return false
+        // 表示名はテンプレート参照を解決します。解決不能は失敗とします。
+        val resolvedText = if (parsed is EntityPropertyValue.TextValue) {
+            resolveText(parsed.text, session) ?: return false
+        } else null
+        var applied = 0
+        var nonApplicable = 0
+        var failed = 0
+        targets.forEach { target ->
+            if (!EntityDataSchema.supports(target, propertyId)) {
+                nonApplicable++
+                return@forEach
+            }
+            val success = when (parsed) {
+                is EntityPropertyValue.BooleanValue ->
+                    EntityDataSchema.applyBoolean(target, propertyId, parsed.value)
+                is EntityPropertyValue.EnumValue ->
+                    EntityDataSchema.applyEnum(target, propertyId, parsed.choiceId)
+                is EntityPropertyValue.TextValue -> applyCustomName(target, propertyId, resolvedText.orEmpty())
+            }
+            if (success) applied++ else failed++
+        }
+        // issue #32 のレビューF4対応：件数は構造化結果として保持し、
+        // 詳細文字列への変換は共通成功処理へ委ねます。
+        session.lastPartial = PartialApplicability(
+            appliedCount = applied,
+            nonApplicableCount = nonApplicable,
+            failedCount = failed,
+        )
+        return applied > 0
+    }
+
+    /**
+     * 表示名を適用します。召喚時の表示名と同じ規則であり、空欄は表示名の
+     * 消去として扱います。TEXT種別の項目は現行では表示名だけです。
+     */
+    private fun applyCustomName(target: Entity, propertyId: String, text: String): Boolean {
+        if (propertyId != EntityDataSchema.PROPERTY_CUSTOM_NAME) return false
+        return runCatching {
+            if (text.isBlank()) {
+                target.customName(null)
+                target.isCustomNameVisible = false
+            } else {
+                target.customName(legacyText(text))
+                target.isCustomNameVisible = true
+            }
+            true
+        }.getOrDefault(false)
     }
 
     /**
@@ -1080,6 +1292,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
         effectiveOrigin: Location,
         targets: List<Entity>,
+        origins: List<Location>,
+        attempts: MultiAttemptRecorder,
     ): Boolean {
         val receivers = soundReceivers(node, effectiveOrigin, targets)
         when (SoundSettings.operation(node)) {
@@ -1098,8 +1312,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     // 「起動ワールドの全プレイヤーへ確実に届ける」挙動を維持します。
                     receivers.forEach { it.playSound(it.location, sound, SoundCategory.MASTER, volume, pitch) }
                 } else {
-                    val source = node.soundPositionSpec?.let { resolvePosition(it, session, context) } ?: effectiveOrigin
-                    receivers.forEach { it.playSound(source, sound, SoundCategory.MASTER, volume, pitch) }
+                    // issue #29: 対象内包位置は各位置へ実行し、1件でも成功すれば全体成功とします。
+                    val sources = node.soundPositionSpec?.let {
+                        actionOrigins(it, session, context) ?: return false
+                    } ?: origins
+                    sources.forEach { source ->
+                        attempts.record(runCatching {
+                            receivers.forEach { it.playSound(source, sound, SoundCategory.MASTER, volume, pitch) }
+                        }.isSuccess)
+                    }
+                    return attempts.overall
                 }
                 return true
             }
@@ -1148,8 +1370,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     /**
      * Particleの送信は、対象プレイヤー指定がなければ表示中心と同じワールドの
-     * 全プレイヤーへ1回のパケット送信で届けます。個数の上限判定はパケット送信
-     * 前に行い、拒否時に部分表示が発生しないようにします。
+     * 全プレイヤーへ1回のパケット送信で届けます。
+     * issue #29: 各位置を独立に試行し、1件でも成功すれば全体成功とします。
      */
     private fun executeParticle(
         node: CommandNode,
@@ -1157,12 +1379,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
         effectiveOrigin: Location,
         targets: List<Entity>,
+        origins: List<Location>,
+        attempts: MultiAttemptRecorder,
     ): Boolean {
         val particle = ParticleSettings.particle(node) ?: return false
-        val origin = node.particlePositionSpec
-            ?.let { resolvePosition(it, session, context) ?: return false }
-            ?: effectiveOrigin
-        val receivers = if (node.targetSpec == null) origin.world.players else targets.filterIsInstance<Player>()
+        // issue #29: コマンド固有位置があればそちらを優先し、なければ実行起点集合を使います。
+        val centers = node.particlePositionSpec?.let {
+            actionOrigins(it, session, context) ?: return false
+        } ?: origins
+        val receivers = if (node.targetSpec == null) effectiveOrigin.world.players else targets.filterIsInstance<Player>()
         val data = if (ParticleSettings.requiresData(particle)) {
             ParticleSettings.parseData(particle, node.string(ParticleSettings.PARAM_DATA))
                 .getOrNull() ?: return false
@@ -1171,7 +1396,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             // 実行を止めません。検証側も同じく対象外にしています。
             ParticleSettings.ParticleDataSpec.None
         }
-        val bukkitData = data.toBukkitData(origin)
+        val bukkitData = data.toBukkitData(effectiveOrigin)
         if (ParticleSettings.requiresData(particle) && bukkitData == null) return false
 
         return when (ParticleGeometry.displayMode(node)) {
@@ -1185,29 +1410,50 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val speed = resolveNumber(node.string(ParticleSettings.PARAM_SPEED, "0.0"), session)
                     ?.takeIf { it.isFinite() && it >= 0.0 } ?: return false
                 val count = resolvePositiveInt(node.string(ParticleSettings.PARAM_COUNT, "1"), session) ?: return false
-                if (!plugin.particleQuota.tryAcquire(origin.world.uid, count)) {
+                // 上限超過は失敗ではなくスキップ扱いのため、全位置分を事前予約し、
+                // 不足時は送信せずスキップします。送信時の個別失敗は記録します。
+                if (centers.isNotEmpty() &&
+                    !plugin.particleQuota.tryAcquire(effectiveOrigin.world.uid, count * centers.size)
+                ) {
                     throw ParticleQuotaRejected()
                 }
                 // receiverへ明示対象を渡すことで、「実行位置周囲」ではなく
                 // 「表示中心と同じワールドの全員または指定対象」という仕様を残します。
-                origin.world.spawnParticle(
-                    particle,
-                    receivers,
-                    null,
-                    origin.x,
-                    origin.y,
-                    origin.z,
-                    count,
-                    deltaX,
-                    deltaY,
-                    deltaZ,
-                    speed,
-                    bukkitData,
-                    true,
-                )
-                true
+                centers.forEach { origin ->
+                    attempts.record(runCatching {
+                        origin.world.spawnParticle(
+                            particle,
+                            receivers,
+                            null,
+                            origin.x,
+                            origin.y,
+                            origin.z,
+                            count,
+                            deltaX,
+                            deltaY,
+                            deltaZ,
+                            speed,
+                            bukkitData,
+                            true,
+                        )
+                    }.isSuccess)
+                }
+                attempts.overall
             }
-            ParticleDisplayMode.GEOMETRY -> executeGeometryParticle(node, session, context, origin, receivers, particle, bukkitData)
+            ParticleDisplayMode.GEOMETRY -> {
+                centers.forEach { origin ->
+                    attempts.record(
+                        runCatching {
+                            executeGeometryParticle(node, session, context, origin, receivers, particle, bukkitData)
+                        }.getOrElse { failure ->
+                            // 上限超過はスキップ扱いを維持し、他は失敗として記録します。
+                            if (failure is ParticleQuotaRejected) throw failure
+                            false
+                        },
+                    )
+                }
+                attempts.overall
+            }
         }
     }
 
@@ -1265,8 +1511,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): ParticleGeometry.ResolvedGeometry? {
         fun number(key: String, default: Double): Double? =
             resolveNumber(node.string(key, default.toString()), session)?.takeIf(Double::isFinite)
+        // issue #29: 終点も始点と同じく単一位置へ解決します。対象内包の静的単一は
+        // 先頭1件へ解決し、複数・対象なしは検証と同じく未解決として図形全体を
+        // 失敗させます。resolvePosition はTARGET種別を一律未解決にするため、
+        // ここでは使わず resolveSinglePosition を使います。
         val endOffset = node.particleEndPositionSpec
-            ?.let { resolvePosition(it, session, context) ?: return null }
+            ?.let { resolveSinglePosition(it, session, context) ?: return null }
             ?.let { Triple(it.x - origin.x, it.y - origin.y, it.z - origin.z) }
         return ParticleGeometry.ResolvedGeometry(
             radius = number(ParticleGeometry.PARAM_RADIUS, 3.0) ?: return null,
@@ -1296,6 +1546,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         session: ExecutionSession,
         context: ExecutionContextSpec?,
         effectiveOrigin: Location,
+        origins: List<Location>,
+        attempts: MultiAttemptRecorder,
     ): Boolean {
         if (!plugin.summonedEntities.canSummon(effectiveOrigin.world.uid)) return false
         val height = resolveNumber(
@@ -1303,23 +1555,45 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             session,
         )?.takeIf(Double::isFinite) ?: return false
         val stack = resolveFireworkStack(node) ?: return false
-        val launchBase = node.fireworkPositionSpec
-            ?.let { resolvePosition(it, session, context) ?: return false }
-            ?: effectiveOrigin
+        // issue #29: コマンド固有位置があればそちらを優先し、なければ実行起点集合を使います。
+        // 各位置を独立に試行し、1件でも成功すれば全体成功とします。
+        val launchBases = node.fireworkPositionSpec?.let {
+            actionOrigins(it, session, context) ?: return false
+        } ?: origins
         // 制御ブロック位置（未設定を含む）は固体内部のため、そのまま召喚すると
         // 初tickで接触起爆します。装置上端を発射口として1ブロック上げます。
         // 明示座標は利用者指定のままバニラ通りに扱います。
-        val launchAt = launchBase.clone().apply {
-            val kind = node.fireworkPositionSpec?.kind
-            if (kind == null || kind == PositionKind.DISK) add(0.0, 1.0, 0.0)
+        val explicitKind = node.fireworkPositionSpec?.kind
+        launchBases.forEach { launchBase ->
+            attempts.record(runCatching {
+                val launchAt = launchBase.clone().apply {
+                    if (explicitKind == null || explicitKind == PositionKind.DISK) add(0.0, 1.0, 0.0)
+                }
+                launchFireworkRocket(session, node, stack, height, launchAt)
+            }.isSuccess)
         }
+        return attempts.overall
+    }
+
+    /**
+     * issue #29 の花火1発分の打上げです。位置集合の各位置から呼び出します。
+     *
+     * 高さ0は演出なしの即時破裂です。
+     */
+    private fun launchFireworkRocket(
+        session: ExecutionSession,
+        node: CommandNode,
+        stack: org.bukkit.inventory.ItemStack,
+        height: Double,
+        launchAt: org.bukkit.Location,
+    ) {
         // 高さ0は演出なしの即時破裂です。
         if (height <= 0.0) {
             val instant = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)
             instant.setItem(stack)
             instant.setShotAtAngle(false)
             instant.detonate()
-            return true
+            return
         }
         val rocket = launchAt.world.spawn(launchAt.clone(), org.bukkit.entity.Firework::class.java)
         rocket.setItem(stack)
@@ -1341,7 +1615,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         schedule(session, FireworkSettings.detonationTicks(height).toLong()) {
             detonateAtTarget(rocket, target)
         }
-        return true
     }
 
     /**
@@ -1438,10 +1711,187 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 検証してから更新します。fillを無制限に受け付けると、1ノードだけでサーバー
      * メインスレッドを長時間占有できるため、実行時にも上限を再確認します。
      */
+    /**
+     * issue #26・#29: 単一位置の既定値として実行起点を使います。
+     *
+     * コマンド固有位置があればそちらを優先し、未設定時は実行起点が
+     * 1件の場合だけ既定値とします。起点が0件・複数件の場合は単一へ
+     * 定まらないためnullであり、呼び出し側で失敗にします。
+     */
+    private fun commandPositionOrExecution(
+        spec: PositionSpec?,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        origins: List<Location>,
+    ): Location? {
+        spec?.let { return resolveSinglePosition(it, session, context) }
+        return origins.singleOrNull()
+    }
+
+    /**
+     * 「アイテムを配置する」(PLACE_ITEM) を実行します。
+     *
+     * バニラ `/item replace entity|block` に相当し、配置先の capability に応じて
+     * adapter を解決します。EntityType の分岐を増やさず、対象ごとの適用可否で
+     * 判定します。`from` によるスロット間コピーは持たず、配置アイテムと個数の
+     * 変数指定で代替します。
+     *
+     * 個数は素材のスタック上限以下でなければ失敗とします。黙って寄せると
+     * バニラ出力の失敗と食い違うためです。
+     * 成功定義は全配置先で「1件以上適用なら成功」に統一します。
+     */
+    private fun executePlaceItem(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        targets: List<Entity>,
+        origins: List<Location>,
+        attempts: MultiAttemptRecorder,
+    ): Boolean {
+        // 一時変数参照があれば最優先します。リテラルとの併記は検証で拒否します。
+        val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
+            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+            ?.takeIf { it.type == TemporaryVariableType.ITEM }
+        val material = if (refTemp != null) {
+            CommandValueRules.material(refTemp.item.orEmpty(), allowAir = false)
+        } else {
+            CommandValueRules.material(node.string("item"), allowAir = false)
+        } ?: return false
+        val template = if (refTemp != null) {
+            refTemp.itemData?.takeIf(String::isNotBlank)?.let(ItemStackCodec::decode)
+                ?: ItemStack(material)
+        } else {
+            ItemStackCodec.decode(node.string("itemData")) ?: ItemStack(material)
+        }
+        val count = resolvePositiveInt(node.string("count"), session) ?: return false
+        // 個数は素材のスタック上限以下でなければ失敗とします。黙って寄せると
+        // バニラ出力の失敗と食い違うためです（出力も上限超過で失敗します）。
+        // リテラル超過は検証層でも早期エラーにします。変数・一時参照の超過は
+        // 実行時にここで失敗し、出力側も実行時に失敗するため等価です。
+        val stack = template.clone()
+        if (count > stack.maxStackSize) return false
+        stack.amount = count
+        val destination = PlaceItemDestination.from(node.string("destination")) ?: return false
+        val slot = node.string("slot")
+        if (!PlaceItemDestination.isValidSlot(destination, slot)) return false
+        val overwrite = node.boolean("overwrite")
+        // F5: 成功定義を全配置先で「1件以上適用なら成功」へ統一します。
+        // ブロック系も書込みなしの無操作は非適用とし、例外なしでも成功にしません。
+        // 空集合・全件非適用・全件失敗はいずれも失敗とします。
+        // 件数は構造化結果へ残し、共通の成功・失敗処理が型付き文言で表示します（F4）。
+        if (destination == PlaceItemDestination.BLOCK_CONTAINER) {
+            val index = slot.toIntOrNull() ?: return false
+            // コマンド固有位置がなければ起点集合を使い、各位置を独立に試行します。
+            val locations = node.blockPositionSpec?.let {
+                actionOrigins(it, session, context) ?: return false
+            } ?: origins
+            var applied = 0
+            var nonApplicable = 0
+            var failed = 0
+            locations.forEach { location ->
+                val outcome = runCatching {
+                    val world = location.world ?: error("world is unavailable")
+                    if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
+                        // 拡張コマンドブロックの位置は、配置先としても常に変更を拒否します。
+                        error("placement is protected")
+                    }
+                    val inventory = (location.block.state as? InventoryHolder)?.inventory
+                        ?: error("block is not a container")
+                    if (index !in 0 until inventory.size) error("container slot is out of range")
+                    if (overwrite || isEmptyStack(inventory.getItem(index))) {
+                        inventory.setItem(index, stack.clone())
+                        true
+                    } else {
+                        false
+                    }
+                }
+                outcome.onSuccess { placed ->
+                    if (placed) {
+                        applied++
+                        attempts.record(true)
+                    } else {
+                        // 上書き拒否による無操作は失敗でなく非適用とし、
+                        // 位置失敗件数へは数えません。
+                        nonApplicable++
+                    }
+                }.onFailure {
+                    failed++
+                    attempts.record(false)
+                }
+            }
+            session.lastPartial = PartialApplicability(applied, nonApplicable, failed)
+            return applied > 0
+        }
+        if (targets.isEmpty()) return false
+        var applied = 0
+        var nonApplicable = 0
+        var failed = 0
+        targets.forEach { target ->
+            // 対象種別の不一致・上書き拒否は非適用、設定値の不正は失敗とします。
+            val placed = when (destination) {
+                PlaceItemDestination.EQUIPMENT -> {
+                    val bukkitSlot = runCatching { EquipmentSlot.valueOf(slot) }.getOrNull()
+                    val equipment = (target as? LivingEntity)?.equipment
+                    if (bukkitSlot == null) {
+                        failed++
+                        false
+                    } else if (equipment == null) {
+                        nonApplicable++
+                        false
+                    } else if (overwrite || isEmptyStack(equipment.getItem(bukkitSlot))) {
+                        equipment.setItem(bukkitSlot, stack.clone())
+                        true
+                    } else {
+                        nonApplicable++
+                        false
+                    }
+                }
+                PlaceItemDestination.PLAYER_HOTBAR, PlaceItemDestination.PLAYER_INVENTORY -> {
+                    val player = target as? Player
+                    val bukkitSlot = PlaceItemDestination.bukkitPlayerSlot(destination, slot)
+                    if (bukkitSlot == null) {
+                        failed++
+                        false
+                    } else if (player == null) {
+                        nonApplicable++
+                        false
+                    } else if (overwrite || isEmptyStack(player.inventory.getItem(bukkitSlot))) {
+                        player.inventory.setItem(bukkitSlot, stack.clone())
+                        true
+                    } else {
+                        nonApplicable++
+                        false
+                    }
+                }
+                PlaceItemDestination.ITEM_FRAME -> {
+                    // GlowItemFrame は ItemFrame を継承するため、同じ経路で扱います。
+                    // 回転等の表示設定はこの操作の対象外です。
+                    val frame = target as? ItemFrame
+                    if (frame == null) {
+                        nonApplicable++
+                        false
+                    } else if (overwrite || isEmptyStack(frame.item)) {
+                        frame.setItem(stack.clone())
+                        true
+                    } else {
+                        nonApplicable++
+                        false
+                    }
+                }
+                PlaceItemDestination.BLOCK_CONTAINER -> false
+            }
+            if (placed) applied++
+        }
+        session.lastPartial = PartialApplicability(applied, nonApplicable, failed)
+        return applied > 0
+    }
+
     private fun executeBlockOperation(
         node: CommandNode,
         session: ExecutionSession,
         context: ExecutionContextSpec?,
+        origins: List<Location>,
+        attempts: MultiAttemptRecorder,
     ): Boolean {
         val refTemp = node.blockTempRef?.takeIf(String::isNotBlank)
             ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
@@ -1453,18 +1903,27 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } ?: return false
         return when (BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value))) {
             BlockOperationMode.SETBLOCK -> {
-                val location = node.blockPositionSpec?.let { resolvePosition(it, session, context) } ?: return false
-                val world = location.world ?: return false
-                if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
-                    // 拡張コマンドブロックの位置は、setblockでも常に変更を拒否します。
-                    return false
+                // issue #26 の既定値（単一の実行起点）＋issue #29 の各位置へ実行します。
+                // コマンド固有位置がなければ起点集合を使い、各位置を独立に試行します。
+                val locations = node.blockPositionSpec?.let {
+                    actionOrigins(it, session, context) ?: return false
+                } ?: origins
+                locations.forEach { location ->
+                    attempts.record(runCatching {
+                        val world = location.world ?: error("world is unavailable")
+                        if (plugin.placements.isRegistered(world, location.blockX, location.blockY, location.blockZ)) {
+                            // 拡張コマンドブロックの位置は、setblockでも常に変更を拒否します。
+                            error("placement is protected")
+                        }
+                        location.block.setType(material, false)
+                    }.isSuccess)
                 }
-                location.block.setType(material, false)
-                true
+                attempts.overall
             }
             BlockOperationMode.FILL -> {
-                val from = node.blockFromSpec?.let { resolvePosition(it, session, context) } ?: return false
-                val to = node.blockToSpec?.let { resolvePosition(it, session, context) } ?: return false
+                // issue #26: 未設定時は単一の実行起点を既定値とします。
+                val from = commandPositionOrExecution(node.blockFromSpec, session, context, origins) ?: return false
+                val to = commandPositionOrExecution(node.blockToSpec, session, context, origins) ?: return false
                 val world = from.world ?: return false
                 if (world != to.world) return false
                 val minX = minOf(from.blockX, to.blockX)
@@ -1526,31 +1985,40 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         node: CommandNode,
         session: ExecutionSession,
         context: ExecutionContextSpec?,
+        // issue #26・#29: 実行起点ごとの対象の和集合です。null の場合は従来どおり
+        // 文脈から解決します。
+        unionTargets: List<Entity>? = null,
+        // issue #26・#29: 有効な実行起点集合です。null の場合は従来の単一起点解決を使います。
+        executionOrigins: List<Location>? = null,
     ): ConditionEvaluation {
-        val kind = runCatching { ConditionKind.valueOf(node.string("kind")) }.getOrNull()
-            ?: return ConditionEvaluation.INVALID
-        return when (kind) {
-            ConditionKind.TARGET_EXISTS -> {
-                if (resolveTarget(context, node.targetSpec, session) != null) {
+        // issue #27: 判定対象ベースで分岐します。条件の単一正本は `subject` 欄であり、
+        // 旧 `kind` へのフォールバックは行いません。旧保存の読込は保存境界の正規化が担います。
+        // 未設定・不正な判定対象は評価失敗として停止し、FALSE 分岐へ畳みません。
+        val subject = node.conditionSubject() ?: return ConditionEvaluation.INVALID
+        // issue #26・#29: 和集合が与えられた場合は起点ごとの解決結果を使い回し、重複解決しません。
+        val targets = unionTargets ?: resolveTargets(context, node.targetSpec, session)
+        return when (subject) {
+            // Entity 系は設定条件に一致する対象が1件以上存在すれば成立します。
+            // 任意の1件だけを選んで判定せず、絞り込み条件は原則ANDで評価します。
+            ConditionSubject.OTHER_ENTITY -> {
+                if (targets.isNotEmpty()) {
                     ConditionEvaluation.TRUE
                 } else {
                     ConditionEvaluation.FALSE
                 }
             }
-            ConditionKind.PLAYER_STATE -> {
-                val target = resolveTarget(context, node.targetSpec, session)
-                val player = target as? Player ?: return ConditionEvaluation.FALSE
-                val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
-                val sneakingMatches = sneaking == null || player.isSneaking == sneaking
-                val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
-                    ?.takeIf { it.type == TemporaryVariableType.ITEM }
-                val item = refTemp?.item ?: node.string("item")
-                val itemData = refTemp?.itemData ?: node.string("itemData")
-                val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
-                if (sneakingMatches && itemMatches) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
+            ConditionSubject.PLAYER -> {
+                // issue #27×#26・#29: 先頭1件でなく対象和集合からPlayerを絞りANY評価します。
+                val players = targets.filterIsInstance<Player>()
+                if (players.isEmpty()) {
+                    ConditionEvaluation.FALSE
+                } else if (players.any { matchesPlayerCondition(node, session, it) }) {
+                    ConditionEvaluation.TRUE
+                } else {
+                    ConditionEvaluation.FALSE
+                }
             }
-            ConditionKind.VARIABLE_STATE -> {
+            ConditionSubject.VARIABLE -> {
                 val value = plugin.variables.get(session.worldId, node.string("variable"))
                     ?: return ConditionEvaluation.UNRESOLVED
                 // 非 NUMBER 変数との数値比較は正常 false ではなく型不一致として分離します。
@@ -1564,24 +2032,33 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 val applicable = compareVariable(value, comparisonValue, operator)
                 if (applicable) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
-            ConditionKind.BLOCK_STATE -> {
-                val conditionPosition = node.conditionPositionSpec
-                val location = when {
-                    conditionPosition != null ->
-                        resolvePosition(conditionPosition, session, context) ?: return ConditionEvaluation.UNRESOLVED
-                    context?.position != null ->
-                        resolvePosition(context.position, session, context) ?: return ConditionEvaluation.UNRESOLVED
-                    else -> session.origin
-                }
+            // issue #27×#26・#29: 判定対象名はBLOCKへ置換し、複数位置ANY評価と実行起点集合を維持します。
+            // #27単独の単一位置解決へは戻しません。
+            ConditionSubject.BLOCK -> {
                 val expected = CommandValueRules.material(node.string("block"))
                     ?: return ConditionEvaluation.INVALID
-                if (location.world == session.origin.world && location.block.type == expected) {
-                    ConditionEvaluation.TRUE
-                } else {
-                    ConditionEvaluation.FALSE
+                // issue #29: 複数位置はANY評価です。どこか1か所でTRUEなら全体をTRUE、
+                // 全位置FALSE・空集合はFALSEとします。対象外種別の未解決は従来どおり
+                // UNRESOLVEDにします。実行起点集合がある場合は既定値に使います。
+                val candidates = node.conditionPositionSpec?.let { spec ->
+                    val resolved = resolvePositions(spec, session, context)
+                    if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
+                        return ConditionEvaluation.UNRESOLVED
+                    }
+                    resolved
+                } ?: executionOrigins ?: context?.position?.let { spec ->
+                    val resolved = resolvePositions(spec, session, context)
+                    if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
+                        return ConditionEvaluation.UNRESOLVED
+                    }
+                    resolved
+                } ?: listOf(session.origin)
+                val matched = candidates.any { location ->
+                    location.world == session.origin.world && location.block.type == expected
                 }
+                if (matched) ConditionEvaluation.TRUE else ConditionEvaluation.FALSE
             }
-            ConditionKind.CONTROL_BLOCK_STATE -> {
+            ConditionSubject.CONTROL_BLOCK -> {
                 // 制御ブロック自身の現在状態を判定します。複数項目はポリシー側でAND評価し、
                 // 外側の反転指定は既存の条件実行共通処理へ任せます。
                 if (
@@ -1595,9 +2072,31 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ConditionEvaluation.FALSE
                 }
             }
-            // 将来の ConditionKind 追加時に false 継続へ黙って畳まないための受け皿です。
-            else -> ConditionEvaluation.INVALID
+            // when は網羅列挙のため else を置きません。将来の判定対象追加時は
+            // コンパイルエラーで検出します（冗長else除去と同一方針）。
         }
+    }
+
+    /**
+     * issue #27: 単一プレイヤーに対する絞り込み条件（スニーク状態・所持アイテム）をAND評価します。
+     *
+     * 未設定欄は不問として扱い、設定済み欄をすべて満たす場合だけ true です。
+     * 呼び出し側が複数候補へ `any` 適用し、存在判定 semantics を実現します。
+     */
+    private fun matchesPlayerCondition(
+        node: CommandNode,
+        session: ExecutionSession,
+        player: Player,
+    ): Boolean {
+        val sneaking = node.params["sneaking"]?.takeIf(String::isNotBlank)?.toBooleanStrictOrNull()
+        val sneakingMatches = sneaking == null || player.isSneaking == sneaking
+        val refTemp = node.itemTempRef?.takeIf(String::isNotBlank)
+            ?.let { session.temporaries[TemporaryTemplate.normalized(it)] }
+            ?.takeIf { it.type == TemporaryVariableType.ITEM }
+        val item = refTemp?.item ?: node.string("item")
+        val itemData = refTemp?.itemData ?: node.string("itemData")
+        val itemMatches = item.isBlank() || playerHasItem(player, item, itemData)
+        return sneakingMatches && itemMatches
     }
 
     private fun executeVariable(
@@ -1688,13 +2187,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     z = resolveNumber(node.string("z"), session) ?: error("invalid z"),
                 )
                 val facingSpec = node.temporaryLocationFacingSpec ?: FacingSpec(
-                    FacingKind.CAPTURED,
+                    FacingKind.ROTATION,
                     yaw = node.string("yaw").takeIf(String::isNotBlank)
                         ?.let { resolveNumber(it, session)?.toFloat() } ?: 0f,
                     pitch = node.string("pitch").takeIf(String::isNotBlank)
                         ?.let { resolveNumber(it, session)?.toFloat() } ?: 0f,
                 )
-                val location = resolvePosition(positionSpec, session, session.context)
+                val location = resolveSinglePosition(positionSpec, session, session.context)
                     ?: error("location is unavailable")
                 applyFacing(location, facingSpec, session.context, session)
                 TemporaryValue(
@@ -1917,6 +2416,65 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /** GUI設定ではなく、実行エンジンが現在保持している内部状態だけを返します。 */
     private fun effectiveContext(session: ExecutionSession): ExecutionContextSpec? = session.context
 
+    /**
+     * issue #26・#29: 起点位置から単一の実行状態を組み立てます。
+     *
+     * 座標解決の基準は `session.origin` に固定し、起点の値を絶対指定へ
+     * 写像します。ambientの実行者・対象・向きは引き継ぎます。
+     */
+    private fun originContext(origin: Location, ambient: ExecutionContextSpec?): ExecutionContextSpec {
+        val position = PositionSpec(
+            PositionKind.COORDINATES,
+            origin.x,
+            origin.y,
+            origin.z,
+            origin.yaw,
+            origin.pitch,
+        )
+        return ambient?.copy(position = position) ?: ExecutionContextSpec(position = position)
+    }
+
+    /**
+     * issue #26・#29: 有効な実行起点集合です。
+     *
+     * 未設定時はambient位置または制御ブロック位置の1件、対象内包位置は
+     * 0..N件です。対象外種別の未解決はnullであり、呼び出し側で従来どおり
+     * 失敗にします。空集合は対象なしとして扱います。
+     */
+    private fun effectiveExecutionOrigins(
+        node: CommandNode,
+        session: ExecutionSession,
+        ambient: ExecutionContextSpec?,
+    ): List<Location>? {
+        val spec = node.executionPositionSpec
+        if (spec == null) {
+            val base = ambient?.position?.let { resolvePosition(it, session, ambient) ?: return null }
+                ?: session.origin
+            return listOf(base)
+        }
+        val resolved = resolvePositions(spec, session, ambient)
+        if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) return null
+        return resolved
+    }
+
+    /**
+     * issue #29: 単一限定の役割を実行位置として解決します。
+     *
+     * 対象内包のうち静的0..1の指定だけを先頭1件へ解決し、それ以外は
+     * 未解決とします。複数になり得る指定は検証で拒否済みです。
+     */
+    private fun resolveSinglePosition(
+        spec: PositionSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): Location? {
+        if (spec.kind == PositionKind.TARGET) {
+            val target = spec.target?.takeIf { !it.isMultiCapable() } ?: return null
+            return resolveTargetSpecs(target, session, context).firstOrNull()?.location?.clone()
+        }
+        return resolvePosition(spec, session, context)
+    }
+
     private fun resolvePosition(
         spec: PositionSpec,
         session: ExecutionSession,
@@ -1938,11 +2496,72 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         // TARGETはテレポート先などのコマンド固有設定で解決するため、通常の
         // 実行位置へ渡された場合は静的検証と同じく未解決として扱います。
+        // issue #29 の対象内包位置は resolvePositions 側で集合解決します。
         PositionKind.TARGET -> null
         PositionKind.MYWORLD_SPAWN -> {
             if (spec.hasNonAbsoluteSemantics()) return null
-            session.origin.world.spawnLocation
+            myworldSpawnLocation(session, spec.myworldSpawn)
         }
+    }
+
+    /**
+     * issue #29 のMyWorldスポーン解決です。
+     *
+     * Bukkitの通常world spawnではなく、MyWorldManagerが保持する該当スポーン位置を
+     * 参照します。旧来の単一種別はメンバー用として扱います。
+     * MWM無効・スポーン未設定・取得例外・別ワールドの場合は解決不能とし、
+     * 通常のワールドスポーンへ無断で読み替えません。呼び出し側で失敗として扱います。
+     */
+    private fun myworldSpawnLocation(
+        session: ExecutionSession,
+        kind: me.awabi2048.kantancommander.model.MyworldSpawnKind?,
+    ): Location? {
+        val spawnKind = kind ?: me.awabi2048.kantancommander.model.MyworldSpawnKind.MEMBER
+        if (!plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) return null
+        val stored = runCatching {
+            val data = MyWorldManagerApi.getWorldRepository()?.findByWorldName(session.origin.world.name)
+            when (spawnKind) {
+                me.awabi2048.kantancommander.model.MyworldSpawnKind.MEMBER -> data?.spawnPosMember
+                me.awabi2048.kantancommander.model.MyworldSpawnKind.GUEST -> data?.spawnPosGuest
+            }
+        }.getOrNull()
+        if (stored == null || stored.world?.uid != session.origin.world.uid) return null
+        return stored.clone()
+    }
+
+    /**
+     * issue #29 のコマンド固有位置の集合解決です。
+     *
+     * 対象内包位置は0..N件（空集合あり）、対象外種別の未解決はnullであり、
+     * 呼び出し側で従来どおり失敗にします。
+     */
+    private fun actionOrigins(
+        spec: PositionSpec?,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): List<Location>? {
+        if (spec == null) return null
+        val resolved = resolvePositions(spec, session, context)
+        if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) return null
+        return resolved
+    }
+
+    /**
+     * issue #29 の位置集合解決です。
+     *
+     * 対象内包位置（TARGET）は選択エンティティそれぞれの位置へ0..N件解決し、
+     * それ以外は単一解決の0..1件です。各コマンド側で重複実装しません。
+     */
+    private fun resolvePositions(
+        spec: PositionSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): List<Location> {
+        if (spec.kind == PositionKind.TARGET) {
+            val target = spec.target ?: return emptyList()
+            return resolveTargetSpecs(target, session, context).map { it.location.clone() }
+        }
+        return resolvePosition(spec, session, context)?.let { listOf(it) } ?: emptyList()
     }
 
     /**
@@ -2114,10 +2733,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
         session: ExecutionSession,
     ) {
-        // 意味付けはROTATION／CAPTUREDの向き成分だけの指定です。他種別への付与は拒否します。
-        if (facing.hasNonAbsoluteSemantics() && facing.kind != FacingKind.ROTATION && facing.kind != FacingKind.CAPTURED) return
+        // 意味付けはROTATIONの向き成分だけの指定です。他種別への付与は拒否します。
+        if (facing.hasNonAbsoluteSemantics() && facing.kind != FacingKind.ROTATION) return
         when (facing.kind) {
-            FacingKind.ROTATION, FacingKind.CAPTURED -> {
+            FacingKind.ROTATION -> {
                 // 向きも成分ごとに解釈します。LOCALは角度に基準がないため未解決です。
                 destination.yaw = resolveAngle(
                     facing.semanticsYaw, facing.yaw, destination.yaw, ::wrapMinecraftYaw,
@@ -2127,10 +2746,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 ) ?: return
             }
             FacingKind.TARGET -> {
-                val location = context?.target
-                    ?.let { resolveTargetSpec(it, session, context) }
-                    ?.location ?: return
-                faceLocation(destination, location)
+                // 注視は向き専用の単一体参照へ帰着します。旧来のcontext.target暗黙参照は使いません。
+                val target = facing.target?.let { resolveTargetSpec(it, session, context)?.location }
+                    ?: return
+                faceLocation(destination, target)
+            }
+            FacingKind.COPY_ORIENTATION -> {
+                // 向き複写は参照先実体と同じyaw/pitchを適用します。単一体のみに制限します。
+                val source = facing.target?.let { resolveTargetSpec(it, session, context)?.location }
+                    ?: return
+                destination.yaw = source.yaw
+                destination.pitch = source.pitch
             }
             FacingKind.COORDINATES -> faceLocation(
                 destination,
@@ -2148,7 +2774,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ?.location ?: return
                 faceLocation(destination, Location(destination.world, temp.x, temp.y, temp.z))
             }
-            FacingKind.MYWORLD_SPAWN -> faceLocation(destination, session.origin.world.spawnLocation)
         }
     }
 
@@ -2326,6 +2951,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         return value.toInt()
     }
 
+    /** overwrite=false の配置可否を、空スロット判定で統一します。 */
+    private fun isEmptyStack(stack: ItemStack?): Boolean = stack == null || stack.type.isAir
+
     /** プレイヤー状態の所持判定は、メインハンド由来のItemStack情報も尊重します。 */
     private fun playerHasItem(player: Player, itemId: String, itemData: String): Boolean {
         val material = CommandValueRules.material(itemId, allowAir = false) ?: return false
@@ -2428,6 +3056,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         var failedNodeId: UUID? = null,
         var failureReason: String? = null,
         var lastDetail: String? = null,
+        /**
+         * issue #32 のレビューF4対応：部分適用の構造化結果です。
+         *
+         * 件数表示は共通成功処理が型付き言語キーへ変換します。各操作が
+         * 詳細文字列を直接書くと成功時に上書きで失われるため、計数だけを
+         * 保持し、表示への変換責務を持ちません。
+         */
+        var lastPartial: PartialApplicability? = null,
         var lastExpandedParams: Map<String, String> = emptyMap(),
         var lastPositionText: String? = null,
         var lastFailureReason: String? = null,

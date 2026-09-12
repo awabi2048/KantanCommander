@@ -194,6 +194,9 @@ object GraphChangeClassifier {
         if (before.particleEndPositionSpec != after.particleEndPositionSpec) return false
         if (before.fireworkPositionSpec != after.fireworkPositionSpec) return false
         if (before.summonPositionSpec != after.summonPositionSpec) return false
+        // issue #26: コマンド単位の実行位置も値差分です。追加し忘れるとNONEへ
+        // 誤分類され、検証・表示更新が抑止されるため注意します。
+        if (before.executionPositionSpec != after.executionPositionSpec) return false
         if (before.temporaryEntityTargetSpec != after.temporaryEntityTargetSpec) return false
         if (before.temporaryLocationPositionSpec != after.temporaryLocationPositionSpec) return false
         if (before.temporaryLocationFacingSpec != after.temporaryLocationFacingSpec) return false

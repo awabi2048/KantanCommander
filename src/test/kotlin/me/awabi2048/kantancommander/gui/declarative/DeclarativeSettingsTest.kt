@@ -70,6 +70,46 @@ class DeclarativeSettingsTest {
     }
 
     @Test
+    fun `execution tab extracts to a fixed row and actions share one row`() {
+        val nodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
+        DeclarativeSettings.tabsSection(
+            nodes,
+            frame(),
+            tabs = listOf(
+                SettingsTabEntry(Component.text("tab0"), selected = true, attentionHover = null, background = blockData()),
+                SettingsTabEntry(Component.text("tab1"), selected = false, attentionHover = null, background = blockData()),
+                SettingsTabEntry(Component.text("exec"), selected = false, attentionHover = null, background = blockData()),
+            ),
+            duplicateLabel = Component.text("dup"),
+            duplicateBackground = blockData(),
+            deleteLabel = Component.text("del"),
+            deleteBackground = blockData(),
+            executionTabIndex = 2,
+        )
+        val compiled = KantanLayoutBridge.compile(DeclarativeSettings.document(nodes, panel), onAction = {})
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        val byId = compiled.elements.associateBy { it.elementId }
+        assertEquals(
+            setOf("lower-tab:0", "lower-tab:1", "lower-tab:exec", "lower-duplicate", "lower-delete"),
+            byId.keys,
+        )
+        // タブ列の番号は全項目基準のまま変えません。
+        val tab1 = byId.getValue("lower-tab:1")
+        assertEquals(0.38 - 0.11 - 0.05, tab1.bounds.minY, 1.0e-9)
+        // 実行位置タブは下端の操作行の直上へ固定配置します。
+        val exec = byId.getValue("lower-tab:exec")
+        assertEquals(-0.32 - 0.05, exec.bounds.minY, 1.0e-9)
+        assertEquals(-0.32 + 0.05, exec.bounds.maxY, 1.0e-9)
+        // 削除・複製は下端1行に半幅で並びます。
+        val del = byId.getValue("lower-delete")
+        assertEquals(-0.7975 - 0.235, del.bounds.minX, 1.0e-9)
+        assertEquals(-0.7975, del.bounds.maxX, 1.0e-9)
+        val dup = byId.getValue("lower-duplicate")
+        assertEquals(-0.7975, dup.bounds.minX, 1.0e-9)
+        assertEquals(-0.7975 + 0.235, dup.bounds.maxX, 1.0e-9)
+    }
+
+    @Test
     fun `disabled choice becomes a silent consumer with hover`() {
         val nodes = mutableListOf<com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode>()
         val hover = GestureGuiHoverText(Component.text("reason"), 0.28, -0.35)

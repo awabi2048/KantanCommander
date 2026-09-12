@@ -4,6 +4,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.collapsedForStarts
 import me.awabi2048.kantancommander.model.collapsedConditions
 import me.awabi2048.kantancommander.model.hasDiskContent
@@ -32,6 +33,61 @@ import java.util.logging.LogRecord
 class ScriptStoreTest {
     @TempDir
     lateinit var temp: File
+
+    @Test
+    fun `legacy kind-only condition loads without conversion and fails validation`() {
+        // issue #27: 旧 `kind` のみの保存は変換せず読み込み、判定対象の未設定として
+        // 検証層で拒否します。後方互換の変換処理は残しません。
+        val dir = temp.resolve("condition-subject").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val conditionId = UUID.randomUUID()
+        val mergeId = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 13,
+              "id": "$scriptId",
+              "name": "legacy-condition",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 0,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": false, "intervalSeconds": 1.0},
+              "graph": {
+                "entryNodeId": "$conditionId",
+                "nodes": {
+                  "$conditionId": {
+                    "id": "$conditionId",
+                    "type": "CONDITION",
+                    "params": {"kind": "TARGET_EXISTS", "inverted": "false"},
+                    "targetSpec": {"kind": "NEARBY_PLAYERS", "sort": "NEAREST"},
+                    "pairedNodeId": "$mergeId",
+                    "trueNext": "$mergeId"
+                  },
+                  "$mergeId": {
+                    "id": "$mergeId",
+                    "type": "MERGE",
+                    "params": {},
+                    "pairedNodeId": "$conditionId"
+                  }
+                }
+              },
+              "revision": 0
+            }
+            """.trimIndent()
+        )
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val node = loaded.graph.nodes.getValue(conditionId)
+        // 変換も隔離もせず、そのまま読み込みます。
+        assertNull(node.conditionSubject())
+        assertEquals("TARGET_EXISTS", node.params["kind"])
+        // 実行前検証で判定対象タブの未設定として拒否します。
+        assertTrue(
+            ExecutableScriptValidator.validate(loaded).any {
+                it.nodeId == conditionId && it.fieldKeys == setOf("kind")
+            },
+        )
+    }
 
     @Test
     fun `structured script round trips and placement copy is independent`() {

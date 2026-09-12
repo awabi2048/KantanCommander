@@ -4,8 +4,10 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.FacingKind
+import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
@@ -67,6 +69,19 @@ object PersistedScriptValidator {
         requireUuid(node, "id", path, errors)
         requireEnum(node, "type", path, enumNames<CommandType>(), errors)
         requireStringMap(node, "params", path, errors)
+        // issue #27: 条件の判定対象は単一正本の `subject` 欄です。存在する場合だけ
+        // enum値を検証し、不正値は破損として隔離します。欠落（旧保存・編集中）は許容し、
+        // 読込時正規化と実行前検証に委ねます。
+        if (node["type"]?.asString == "CONDITION" || node["type"]?.asString == "FOLDED_IF") {
+            node["params"]?.takeIf { it.isJsonObject }?.asJsonObject?.get("subject")?.let { raw ->
+                if (!raw.isJsonNull &&
+                    (!raw.isJsonPrimitive || !raw.asJsonPrimitive.isString ||
+                        raw.asString !in enumNames<ConditionSubject>())
+                ) {
+                    errors += "$path/params/subject: 未対応のenum値です"
+                }
+            }
+        }
         optionalStringArray(node, "configuredFields", path, errors)
         listOf("next", "trueNext", "falseNext", "pairedNodeId").forEach {
             optionalUuid(node, it, path, errors)
@@ -96,6 +111,7 @@ object PersistedScriptValidator {
             "particleEndPositionSpec",
             "fireworkPositionSpec",
             "summonPositionSpec",
+            "executionPositionSpec",
             "temporaryLocationPositionSpec",
         ).forEach { field ->
             optionalObject(node, field, path, errors)?.let {
@@ -143,10 +159,16 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalString(spec, "tempName", path, errors)
-        // v13形式では成分ごとの意味付けを必須とします。旧データは形式番号で隔離するため、
+        // 現行形式では成分ごとの意味付けを必須とします。旧データは形式番号で隔離するため、
         // ここでの欠落は現行形式の破損として扱います。
         listOf("semanticsX", "semanticsY", "semanticsZ", "semanticsYaw", "semanticsPitch").forEach {
             requireEnum(spec, it, path, enumNames<CoordinateSemantics>(), errors)
+        }
+        // issue #29: スポーン種別と対象内包は任意項目です。旧データの欠落は
+        // メンバー用・対象なしとして互換解決します。
+        optionalEnum(spec, "myworldSpawn", path, enumNames<MyworldSpawnKind>(), errors)
+        optionalObject(spec, "target", path, errors)?.let {
+            validateTarget(it, "$path/target", errors)
         }
     }
 
@@ -158,6 +180,24 @@ object PersistedScriptValidator {
         optionalString(spec, "tempName", path, errors)
         listOf("semanticsYaw", "semanticsPitch").forEach {
             requireEnum(spec, it, path, enumNames<CoordinateSemantics>(), errors)
+        }
+        optionalEnum(spec, "myworldSpawn", path, enumNames<MyworldSpawnKind>(), errors)
+        optionalObject(spec, "target", path, errors)?.let {
+            validateTarget(it, "$path/target", errors)
+        }
+    }
+
+    private fun optionalEnum(
+        parent: JsonObject,
+        field: String,
+        path: String,
+        allowed: Set<String>,
+        errors: MutableList<String>,
+    ) {
+        val raw = parent[field] ?: return
+        if (raw.isJsonNull) return
+        if (!raw.isJsonPrimitive || !raw.asJsonPrimitive.isString || raw.asString !in allowed) {
+            errors += "$path/$field: 未対応のenum値です"
         }
     }
 

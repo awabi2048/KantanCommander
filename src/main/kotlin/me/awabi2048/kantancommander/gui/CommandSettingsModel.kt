@@ -9,16 +9,19 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
-import me.awabi2048.kantancommander.model.ConditionKind
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
+import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
+import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
@@ -55,6 +58,8 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     PARTICLE_END("particle_end", "particleEnd"),
     SUMMON_POSITION("summon_position", "summonPosition"),
     FIREWORK_POSITION("firework_position", "fireworkPosition"),
+    /** issue #26 のコマンド単位の実行位置です。後続へ継承しません。 */
+    EXECUTION_POSITION("execution_position", "executionPosition"),
     /** TEMP_SET ENTITYは通常コマンドと同じ対象選択木から1体を解決します。 */
     TEMPORARY_ENTITY("temporary_entity", "entity"),
     /** TEMP_SET LOCATIONは位置と向きをまとめた親画面から共通設定へ進みます。 */
@@ -108,6 +113,12 @@ enum class CommandSettingEditor {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
+    ENTITY_OPERATION,
+    ENTITY_ATTRIBUTE_OPERATION,
+    ENTITY_MODIFIER_OPERATION,
+    ENTITY_PROPERTY,
+    ENTITY_PROPERTY_VALUE,
+    PLACE_DESTINATION,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
@@ -157,7 +168,7 @@ object CommandSettingsModel {
     /**
      * GUIで設定元を選べる通常コマンドの値だけを列挙します。
      *
-     * CONDITIONのitem/blockは同名の保存欄を使いますが、BLOCK_STATEは実行側が
+     * CONDITIONのitem/blockは同名の保存欄を使いますが、ブロック判定は実行側が
      * blockTempRefを解決せず、条件詳細も独立した値入力画面です。そのため、ここへ
      * 含めるのは実行処理・バニラ出力・既存UIが同じ意味を共有する4つの通常値です。
      */
@@ -166,10 +177,7 @@ object CommandSettingsModel {
         return when (fieldKey) {
             "item" -> when (node.type) {
                 CommandType.GIVE_ITEM -> TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
-                CommandType.ENTITY_ACTION ->
-                    if (node.string("action", "ride") == "equip") {
-                        TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
-                    } else null
+                CommandType.PLACE_ITEM -> TemporaryValueBinding("itemTempRef", setOf("item", "itemData"))
                 else -> null
             }
             "block" -> if (node.type == CommandType.BLOCK_OPERATION) {
@@ -340,12 +348,72 @@ object CommandSettingsModel {
                 // 追加した詳細項目が無関係な操作へ漏れ続けるためです。
                 "ride" -> fields.filter { it.key in setOf("target", "action", "other") }
                 "dismount" -> fields.filter { it.key in setOf("target", "action") }
-                // itemDataはメインハンドの実物から内部保存する値であり、利用者が
-                // 別途編集する設定ではありません。表示すると実物選択と手入力の
-                // 二重入口が生まれ、装備内容の正本が分岐します。
-                "equip" -> fields.filter { it.key in setOf("target", "action", "slot", "item", "overwrite") }
-                "tag" -> fields.filter { it.key in setOf("target", "action", "tagOperation", "tag") }
+                "motion" -> fields.filter { it.key in setOf("target", "action", "motionX", "motionY", "motionZ") }
+                // 旧equipは#21のPLACE_ITEMへ移行済みのため許可リストから外します。
+                // 旧tagは#32のENTITY_OPERATIONへ移行済みのため許可リストから外します。
                 else -> fields.filter { it.key in setOf("target", "action") }
+            }
+            // issue #32: エンティティ操作の操作ごとに許可リストを明示します。
+            node.type == CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
+                "tag" -> fields.filter { it.key in setOf("target", "operation", "tagOperation", "tag") }
+                "attribute" -> when (node.string(
+                    EntityAttributeSupport.PARAM_OPERATION,
+                    EntityAttributeSupport.OPERATION_BASE_VALUE,
+                )) {
+                    EntityAttributeSupport.OPERATION_MODIFIER_ADD -> fields.filter {
+                        it.key in setOf(
+                            "target", "operation",
+                            EntityAttributeSupport.PARAM_ATTRIBUTE,
+                            EntityAttributeSupport.PARAM_OPERATION,
+                            EntityAttributeSupport.PARAM_MODIFIER_KEY,
+                            EntityAttributeSupport.PARAM_AMOUNT,
+                            EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
+                        )
+                    }
+                    EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> fields.filter {
+                        it.key in setOf(
+                            "target", "operation",
+                            EntityAttributeSupport.PARAM_ATTRIBUTE,
+                            EntityAttributeSupport.PARAM_OPERATION,
+                            EntityAttributeSupport.PARAM_MODIFIER_KEY,
+                        )
+                    }
+                    else -> fields.filter {
+                        it.key in setOf(
+                            "target", "operation",
+                            EntityAttributeSupport.PARAM_ATTRIBUTE,
+                            EntityAttributeSupport.PARAM_OPERATION,
+                            EntityAttributeSupport.PARAM_AMOUNT,
+                        )
+                    }
+                }
+                // 設定値は項目選択後に種類別の編集へ進むため、親タブ列には出しません。
+                // 項目選択→値設定の2段階フローにします。
+                "data" -> fields.filter {
+                    it.key in setOf(
+                        "target", "operation",
+                        EntityDataSchema.PARAM_PROPERTY,
+                    )
+                }
+                else -> fields.filter { it.key in setOf("target", "operation") }
+            }
+            // 配置先で要求する対象が変わります。エンティティ系は対象欄、
+            // ブロックコンテナ系は配置位置欄を使い、もう一方は出しません。
+            // 額縁は内容固定のためスロット欄を出さず、既定値で確定します。
+            // 配置先不明時は位置欄を出さず、配置先の確定を先に促します。
+            // 不明時に両方出すと通常タブ列の上限（6件）を超えるためです。
+            node.type == CommandType.PLACE_ITEM -> {
+                val destination = PlaceItemDestination.from(node.string("destination"))
+                val allowed = buildSet {
+                    if (destination == null || destination.requiresEntityTarget) add("target")
+                    add("destination")
+                    if (destination != PlaceItemDestination.ITEM_FRAME) add("slot")
+                    add("item")
+                    add("count")
+                    add("overwrite")
+                    if (destination != null && destination.requiresBlockPosition) add("position")
+                }
+                fields.filter { it.key in allowed }
             }
             node.type == CommandType.DISPLAY_TEXT -> {
                 val withoutUnusedSubtitle = if (node.string("mode", "tellraw") == "title") {
@@ -397,11 +465,64 @@ object CommandSettingsModel {
             }
             else -> fields
         }
+        // issue #26: 実行位置は対応コマンドの共通設定として末尾へ追加します。
+        // 制御系（待機・分岐端子・変数操作等）には表示しません。
+        val withExecutionPosition = if (supportsExecutionPosition(node.type)) {
+            conditionalFields + executionPositionField()
+        } else conditionalFields
         // 実行時に参照されない設定は、保存値を変更せずに両GUIから隠します。
         // ここで一元判定することで、表示だけ残って実行結果へ反映されない
         // 「テレポート先の向き」「サウンド位置」の設定入口を作りません。
-        return conditionalFields.filter { isFieldVisible(node, it.key) }
+        return withExecutionPosition.filter { isFieldVisible(node, it.key) }
     }
+
+    /**
+     * issue #26 の実行位置を表示するコマンドかを返します。
+     *
+     * 実行位置が意味を持たない制御系（待機・分岐端子・変数操作・繰返し制御等）には
+     * 表示しません。旧コンテキストの実行者・対象・向き・継承は復活させません。
+     */
+    fun supportsExecutionPosition(type: CommandType): Boolean = type in setOf(
+        CommandType.TELEPORT,
+        CommandType.GIVE_ITEM,
+        CommandType.PLACE_ITEM,
+        CommandType.ENTITY_ACTION,
+        CommandType.ENTITY_OPERATION,
+        CommandType.DISPLAY_TEXT,
+        CommandType.SUMMON_ENTITY,
+        CommandType.PLAY_SOUND,
+        CommandType.PARTICLE,
+        CommandType.FIREWORK_LAUNCH,
+        CommandType.APPLY_EFFECT,
+        CommandType.CAMERA_SHAKE,
+        CommandType.BLOCK_OPERATION,
+        CommandType.ENTITY_DELETE,
+        CommandType.CONDITION,
+        CommandType.DISK_CALL,
+    )
+
+    /** issue #26 の実行位置フィールドです。作用位置と区別できる専用文言を使います。 */
+    private fun executionPositionField(): EditorField = EditorField(
+        key = "executionPosition",
+        label = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EXECUTION_POSITION,
+        material = org.bukkit.Material.COMPASS,
+        descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EXECUTION_POSITION,
+        actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EXECUTION_POSITION,
+        value = { node -> node.executionPositionSpec?.kind?.let { kind ->
+            // 表示キーは CommandEditMenu.displayPosition と同じ既存キーを使い、
+            // 新規言語キーを増やしません。
+            DisplayValue.Localized(
+                when (kind) {
+                    me.awabi2048.kantancommander.model.PositionKind.CAPTURED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAPTURED_POSITION
+                    me.awabi2048.kantancommander.model.PositionKind.DISK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONTROL_BLOCK_POSITION
+                    me.awabi2048.kantancommander.model.PositionKind.MYWORLD_SPAWN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MYWORLD_SPAWN
+                    me.awabi2048.kantancommander.model.PositionKind.COORDINATES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_COORDINATES
+                    me.awabi2048.kantancommander.model.PositionKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
+                    me.awabi2048.kantancommander.model.PositionKind.TARGET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TARGET_POSITION
+                },
+            )
+        } ?: DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) },
+    )
 
     /**
      * コマンドの現在値に応じた実行依存フィールドの可視性を返します。
@@ -433,7 +554,18 @@ object CommandSettingsModel {
      * 表示専用の意味型へ閉じ込め、各画面が独自の文字列フォーマットを持たないようにします。
      */
     fun gestureVisibleFields(node: CommandNode): List<EditorField> =
-        visibleFields(node).map { field ->
+        visibleFields(node).filter { field ->
+            // modifier追加時は量を演算選択画面の行から編集するため、量タブを出しません。
+            // Gestureの通常タブ列の上限（6件）に収めるためです。Inventory GUIには
+            // 上限がないため、visibleFields側（量タブ）は残します。
+            !(node.type == CommandType.ENTITY_OPERATION &&
+                node.string("operation", "tag") == "attribute" &&
+                node.string(
+                    EntityAttributeSupport.PARAM_OPERATION,
+                    EntityAttributeSupport.OPERATION_BASE_VALUE,
+                ) == EntityAttributeSupport.OPERATION_MODIFIER_ADD &&
+                field.key == EntityAttributeSupport.PARAM_AMOUNT)
+        }.map { field ->
             if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)
@@ -483,6 +615,10 @@ object CommandSettingsModel {
      * 解決し、タブ単位で常に同じ警告を表示します。
      */
     fun incompleteWarningKey(node: CommandNode, fieldKey: String): LocalizationKey<String> {
+        // issue #26: 実行位置タブの注意表示です。専用警告キーを使います。
+        if (fieldKey == "executionPosition") {
+            return KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EXECUTION_POSITION
+        }
         return when (node.type) {
             CommandType.TELEPORT -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
@@ -500,11 +636,33 @@ object CommandSettingsModel {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "action" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ACTION
                 "other" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OTHER
-                "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_SLOT
-                "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_EQUIPMENT_ITEM
-                "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
                 "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
                 "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
+                "motionX", "motionY", "motionZ" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MOTION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.ENTITY_OPERATION -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
+                "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
+                EntityAttributeSupport.PARAM_ATTRIBUTE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ATTRIBUTE
+                EntityAttributeSupport.PARAM_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                EntityAttributeSupport.PARAM_MODIFIER_KEY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODIFIER_KEY
+                EntityAttributeSupport.PARAM_AMOUNT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODIFIER_AMOUNT
+                EntityAttributeSupport.PARAM_MODIFIER_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                EntityDataSchema.PARAM_PROPERTY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY
+                EntityDataSchema.PARAM_VALUE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY_VALUE
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.PLACE_ITEM -> when (fieldKey) {
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "destination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_DESTINATION
+                "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_SLOT
+                "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_ITEM
+                "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_COUNT
+                "overwrite" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OVERWRITE
+                "position" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.DISPLAY_TEXT -> when (fieldKey) {
@@ -676,6 +834,11 @@ object CommandSettingsModel {
         error("未定義の設定警告キーです: type=${node.type}, field=$fieldKey")
 
     fun descriptor(node: CommandNode, fieldKey: String): CommandSettingDescriptor {
+        // issue #26: 実行位置はコマンド横断の共通設定項目です。表示可否は
+        // visibleFields側で制御し、ここでは保存先の役割だけを解決します。
+        if (fieldKey == "executionPosition") {
+            return CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.EXECUTION_POSITION)
+        }
         return when (node.type) {
         CommandType.TELEPORT -> when (fieldKey) {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
@@ -691,9 +854,42 @@ object CommandSettingsModel {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
             "action" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_ACTION)
             "other" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.SECONDARY_TARGET)
-            "slot" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_EQUIPMENT_SLOT)
-            "overwrite" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OVERWRITE)
+            // 旧tag欄はENTITY_OPERATIONへ移行済みのため出しません。
+            else -> text()
+        }
+        CommandType.ENTITY_OPERATION -> when (fieldKey) {
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            "operation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OPERATION)
             "tagOperation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_TAG_OPERATION)
+            EntityAttributeSupport.PARAM_ATTRIBUTE -> text()
+            EntityAttributeSupport.PARAM_OPERATION ->
+                CommandSettingDescriptor(CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION)
+            EntityAttributeSupport.PARAM_MODIFIER_KEY -> text()
+            EntityAttributeSupport.PARAM_AMOUNT -> text()
+            EntityAttributeSupport.PARAM_MODIFIER_OPERATION ->
+                CommandSettingDescriptor(CommandSettingEditor.ENTITY_MODIFIER_OPERATION)
+            EntityDataSchema.PARAM_PROPERTY -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY)
+            // issue #32: 設定値の編集経路は項目の型で振り分けます。
+            // 文字列はDialog直結（TEXT）のため子画面を持たず、
+            // 真偽値・有限候補は専用画面で編集します。
+            EntityDataSchema.PARAM_VALUE -> {
+                val kind = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))?.valueKind
+                if (kind == EntityPropertyValueKind.TEXT) text()
+                else CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY_VALUE)
+            }
+            else -> text()
+        }
+        // 配置スロットは配置先で編集経路が変わります。装備は既存の装備選択、
+        // 数値スロットは汎用テキスト入力（表示は1始まり・保存は0始まり）、
+        // 額縁は固定のため欄自体を出しません。
+        CommandType.PLACE_ITEM -> when (fieldKey) {
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            "destination" -> CommandSettingDescriptor(CommandSettingEditor.PLACE_DESTINATION)
+            "slot" -> if (PlaceItemDestination.from(node.string("destination")) == PlaceItemDestination.EQUIPMENT) {
+                CommandSettingDescriptor(CommandSettingEditor.ENTITY_EQUIPMENT_SLOT)
+            } else text()
+            "overwrite" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OVERWRITE)
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_POSITION)
             else -> text()
         }
         CommandType.DISPLAY_TEXT -> when (fieldKey) {
@@ -939,6 +1135,81 @@ object CommandSettingsModel {
         }
     }
 
+    /**
+     * issue #29: 内包対象を編集する役割かを返します。
+     *
+     * 位置・向きの各役割は対象指定を内部に持ち、通常対象画面へ進む経路を
+     * 持ちません。TARGET_FILTERS画面はこれらの役割では内包対象を編集します。
+     * 移動先は旧来の対象移動経路のため除外します。
+     */
+    fun isEmbeddedTargetRole(role: CommandSettingRole?): Boolean = when (role) {
+        CommandSettingRole.CONDITION_POSITION,
+        CommandSettingRole.BLOCK_POSITION,
+        CommandSettingRole.BLOCK_FROM,
+        CommandSettingRole.BLOCK_TO,
+        CommandSettingRole.SOUND_POSITION,
+        CommandSettingRole.PARTICLE_POSITION,
+        CommandSettingRole.PARTICLE_END,
+        CommandSettingRole.SUMMON_POSITION,
+        CommandSettingRole.FIREWORK_POSITION,
+        CommandSettingRole.TEMPORARY_LOCATION_POSITION,
+        CommandSettingRole.EXECUTION_POSITION,
+        CommandSettingRole.DESTINATION_FACING,
+        CommandSettingRole.TEMPORARY_LOCATION_FACING,
+        -> true
+        else -> false
+    }
+
+    /** issue #29: 位置・向き仕様に内包された対象指定を返します。 */
+    fun embeddedTargetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? {
+        if (!isEmbeddedTargetRole(role)) return null
+        return when (role) {
+            CommandSettingRole.DESTINATION_FACING,
+            CommandSettingRole.TEMPORARY_LOCATION_FACING,
+            -> facingSpec(node, role)?.target
+            else -> positionSpec(node, role)?.target
+        }
+    }
+
+    /**
+     * issue #29: 内包対象だけを書き換えます。
+     *
+     * 種別・座標等の他要素は維持し、保存形式（PositionSpec/FacingSpecの
+     * target部）は変えません。検証・実行・出力への影響はありません。
+     * 向きでは注視・複写の種別を保持し、単一体に正規化します。
+     *
+     * @param facingKind 向き役割で種別を明示する場合に指定します（TARGET／COPY_ORIENTATION）。
+     */
+    fun setEmbeddedTargetSpec(
+        node: CommandNode,
+        role: CommandSettingRole?,
+        spec: TargetSpec,
+        facingKind: FacingKind? = null,
+    ) {
+        check(isEmbeddedTargetRole(role)) { "${node.type} の内包対象の役割が不正です: $role" }
+        when (role) {
+            CommandSettingRole.DESTINATION_FACING,
+            CommandSettingRole.TEMPORARY_LOCATION_FACING,
+            -> {
+                val resolvedKind = facingKind
+                    ?: facingSpec(node, role)?.kind?.takeIf {
+                        it == FacingKind.TARGET || it == FacingKind.COPY_ORIENTATION
+                    } ?: FacingKind.TARGET
+                require(resolvedKind == FacingKind.TARGET || resolvedKind == FacingKind.COPY_ORIENTATION) {
+                    "向き参照先を持つ種別ではありません: $resolvedKind"
+                }
+                val base = facingSpec(node, role)
+                    ?.takeIf { it.kind == resolvedKind } ?: FacingSpec(resolvedKind)
+                setFacingSpec(node, base.copy(kind = resolvedKind, target = spec.copy(limit = 1)), role)
+            }
+            else -> {
+                val base = positionSpec(node, role)
+                    ?.takeIf { it.kind == PositionKind.TARGET } ?: PositionSpec(PositionKind.TARGET)
+                setPositionSpec(node, role, base.copy(kind = PositionKind.TARGET, target = spec))
+            }
+        }
+    }
+
     fun positionSpec(node: CommandNode, role: CommandSettingRole?): PositionSpec? = when (role) {
         CommandSettingRole.DESTINATION -> node.destinationSpec
         CommandSettingRole.SOUND_POSITION -> node.soundPositionSpec
@@ -951,6 +1222,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
         CommandSettingRole.BLOCK_TO -> node.blockToSpec
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec
+        CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec
         else -> null
     }
 
@@ -978,6 +1250,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec?.kind
+        CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec?.kind
         else -> null
     }
 
@@ -997,6 +1270,7 @@ object CommandSettingsModel {
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
             CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec = spec
+            CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec = spec
             else -> error("${node.type} の位置設定役割が不正です: $role")
         }
         val configuredKey = configuredFieldKey(
@@ -1007,6 +1281,7 @@ object CommandSettingsModel {
                 CommandSettingRole.SUMMON_POSITION -> "summonPosition"
                 CommandSettingRole.FIREWORK_POSITION -> "fireworkPosition"
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
+                CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
                 else -> "position"
             },
             role,
@@ -1091,6 +1366,7 @@ object CommandSettingsModel {
                 CommandSettingRole.PARTICLE_END -> isPositionSpecConfigured(node.particleEndPositionSpec)
                 CommandSettingRole.SUMMON_POSITION -> isPositionSpecConfigured(node.summonPositionSpec)
                 CommandSettingRole.FIREWORK_POSITION -> isPositionSpecConfigured(node.fireworkPositionSpec)
+                CommandSettingRole.EXECUTION_POSITION -> isPositionSpecConfigured(node.executionPositionSpec)
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> isPositionSpecConfigured(node.temporaryLocationPositionSpec)
                 else -> false
             }
@@ -1109,6 +1385,7 @@ object CommandSettingsModel {
             "particleEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
+            "executionPosition" -> isPositionSpecConfigured(node.executionPositionSpec)
             // 再生位置と対象は、対象と再生位置のどちらかが揃えば設定済みです。
             // 停止操作では再生位置を使用しないため、対象だけを確認します。
             "soundTargetPosition" -> if (SoundSettings.operation(node) ==
@@ -1197,7 +1474,12 @@ object CommandSettingsModel {
         role: CommandSettingRole?,
         parameter: String,
     ): Boolean {
-        val spec = targetSpec(node, role) ?: return false
+        // issue #29: 位置・向きの役割では内包対象を参照します。
+        val spec = if (isEmbeddedTargetRole(role)) {
+            embeddedTargetSpec(node, role)
+        } else {
+            targetSpec(node, role)
+        } ?: return false
         val explicitlyConfigured = node.isExplicitlyConfigured(configuredFieldKey("target.$parameter", role))
         return when (parameter) {
             "kind" -> true
@@ -1230,7 +1512,7 @@ object CommandSettingsModel {
             }
 
     /** 固定エンティティだけは、種別を選んだだけでは実行対象が確定しません。 */
-    private fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {
+    internal fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {
         TargetKind.FIXED_ENTITY -> spec.fixedEntityId != null
         TargetKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
@@ -1247,14 +1529,30 @@ object CommandSettingsModel {
         else -> true
     }
 
-    /** 座標・数値回転方式は入力値が揃った場合だけ設定完了とします。 */
+    /** 座標・数値回転方式は入力値が揃った場合だけ設定完了とします。注視・複写は単一体参照の完全性で判定します。 */
     private fun isFacingSpecConfigured(spec: FacingSpec?): Boolean = spec != null && when (spec.kind) {
         FacingKind.COORDINATES -> listOf(spec.x, spec.y, spec.z).all { it?.isFinite() == true }
-        FacingKind.CAPTURED, FacingKind.ROTATION -> listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
+        FacingKind.ROTATION -> listOf(spec.yaw, spec.pitch).all { it?.isFinite() == true }
         FacingKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
-        else -> true
+        FacingKind.TARGET, FacingKind.COPY_ORIENTATION -> isTargetSpecConfigured(spec.target)
     }
+
+    /**
+     * 位置設定の表示・選択用完全性を返します。
+     *
+     * 座標・一時変数は必須値の有無を要求し、対象由来は参照先の設定済みで判定します。
+     * 選択表示されていても未完了の項目は未完了扱いにします。
+     */
+    internal fun isPositionSpecComplete(spec: PositionSpec?): Boolean =
+        isPositionSpecConfigured(spec) && (spec?.kind != PositionKind.TARGET || isTargetSpecConfigured(spec.target))
+
+    /**
+     * 向き設定の表示・選択用完全性を返します。
+     *
+     * 座標・角度・一時変数は必須値の有無を要求し、注視・複写は参照先の設定済みで判定します。
+     */
+    internal fun isFacingSpecComplete(spec: FacingSpec?): Boolean = isFacingSpecConfigured(spec)
 
     fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
         VariableOperation.entries
@@ -1270,6 +1568,26 @@ object CommandSettingsModel {
         "gameMode" -> kind in PLAYER_KINDS
         else -> true
     }
+
+    /**
+     * 周囲系（付近プレイヤー／付近エンティティ）かを返します。
+     *
+     * 周囲系の詳細設定項目は最大距離だけとし、他の絞り込みは提示しません。
+     */
+    fun isNearbyKind(kind: TargetKind?): Boolean =
+        kind == TargetKind.NEARBY_PLAYERS || kind == TargetKind.NEARBY_ENTITIES
+
+    /**
+     * 詳細画面に並べる絞り込み項目IDを返します。
+     *
+     * 周囲系は最大距離だけ、単一参照では上限数を除外し、それ以外は
+     * 対象種別ごとの適用可否に従います。表示順序は固定です。
+     */
+    fun visibleTargetFilterIds(kind: TargetKind?, singleOnly: Boolean = false): List<String> =
+        listOf("entityType", "distance", "range", "limit", "sort", "gameMode", "tag", "name")
+            .filter { id -> !isNearbyKind(kind) || id == "distance" }
+            .filter { id -> !singleOnly || id != "limit" }
+            .filter { id -> targetFilterApplies(kind, id) }
 
     /**
      * 対象種別と詳細条件の境界を共有します。
@@ -1435,6 +1753,7 @@ object CommandSettingsModel {
         CommandSettingRole.TEMPORARY_LOCATION -> "location"
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
         CommandSettingRole.TEMPORARY_LOCATION_FACING -> "locationFacing"
+        CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
         CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
             "destination.$fieldKey"
         } else "destination"

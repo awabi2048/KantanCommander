@@ -59,6 +59,22 @@ class GestureSettingTreeTest {
     }
 
     @Test
+    fun `path selection applies exclusively within the current choices`() {
+        val preset = GestureSettingTreeNode("target-preset:NEARBY_PLAYERS", "周囲", selected = true)
+        val detail = GestureSettingTreeNode("target-detail", "詳細")
+        // 詳細の初回クリック直後は詳細だけが選択表示になり、保存値由来の
+        // プリセット選択は抑止されます。
+        val applied = applyPathSelectionExclusive(listOf(preset, detail), "target-detail")
+        assertEquals(listOf(false, true), applied.map { it.selected })
+        // 経路が一覧外を指す場合は保存値表示を維持します。
+        val untouched = applyPathSelectionExclusive(listOf(preset, detail), "filter:distance")
+        assertEquals(listOf(true, false), untouched.map { it.selected })
+        // 経路なしでは何も変えません。
+        val empty = applyPathSelectionExclusive(listOf(preset, detail), null)
+        assertEquals(listOf(true, false), empty.map { it.selected })
+    }
+
+    @Test
     fun `visual policy separates selection cardinality and value state`() {
         // 設定項目の通常背景は選択方式・値状態によらず薄灰色で統一します。
         assertEquals(

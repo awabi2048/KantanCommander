@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -254,11 +256,11 @@ class CommandSettingsModelTest {
         val title = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "title" }
 
         assertEquals(
-            listOf("target", "mode", "text", "subtitle", "staySeconds"),
+            listOf("target", "mode", "text", "subtitle", "staySeconds", "executionPosition"),
             CommandSettingsModel.visibleFields(title).map { it.key },
         )
         assertEquals(
-            listOf("target", "mode", "text", "subtitle", "staySeconds"),
+            listOf("target", "mode", "text", "subtitle", "staySeconds", "executionPosition"),
             CommandSettingsModel.gestureVisibleFields(title).map { it.key },
         )
         assertEquals(
@@ -273,7 +275,7 @@ class CommandSettingsModelTest {
 
         val tellraw = CommandType.DISPLAY_TEXT.newNode()
         assertEquals(
-            listOf("target", "mode", "text"),
+            listOf("target", "mode", "text", "executionPosition"),
             CommandSettingsModel.gestureVisibleFields(tellraw).map { it.key },
         )
     }
@@ -351,10 +353,57 @@ class CommandSettingsModelTest {
             return CommandSettingsModel.visibleFields(node).map { it.key }
         }
 
-        assertEquals(listOf("target", "action", "other"), keys("ride"))
-        assertEquals(listOf("target", "action"), keys("dismount"))
-        assertEquals(listOf("target", "action", "slot", "item", "overwrite"), keys("equip"))
-        assertEquals(listOf("target", "action", "tagOperation", "tag"), keys("tag"))
+        assertEquals(listOf("target", "action", "other", "executionPosition"), keys("ride"))
+        assertEquals(listOf("target", "action", "executionPosition"), keys("dismount"))
+        assertEquals(listOf("target", "action", "motionX", "motionY", "motionZ", "executionPosition"), keys("motion"))
+        // 旧equipはPLACE_ITEM、旧tagはENTITY_OPERATIONへ移行したため基本欄へ畳みます。
+        assertEquals(listOf("target", "action", "executionPosition"), keys("equip"))
+        assertEquals(listOf("target", "action", "executionPosition"), keys("tag"))
+    }
+
+    @Test
+    fun `place item fields follow the selected destination`() {
+        val node = CommandType.PLACE_ITEM.newNode()
+        fun keys(destination: String): List<String> {
+            node.params["destination"] = destination
+            return CommandSettingsModel.visibleFields(node).map { it.key }
+        }
+
+        // エンティティ系は対象欄、ブロック系は配置位置欄を使い分けます。
+        // 額縁は内容固定のためスロット欄を出しません。
+        assertEquals(
+            listOf("target", "destination", "slot", "item", "count", "overwrite", "executionPosition"),
+            keys("EQUIPMENT"),
+        )
+        assertEquals(
+            listOf("target", "destination", "slot", "item", "count", "overwrite", "executionPosition"),
+            keys("PLAYER_HOTBAR"),
+        )
+        assertEquals(
+            listOf("target", "destination", "item", "count", "overwrite", "executionPosition"),
+            keys("ITEM_FRAME"),
+        )
+        assertEquals(
+            listOf("destination", "slot", "item", "count", "overwrite", "position", "executionPosition"),
+            keys("BLOCK_CONTAINER"),
+        )
+    }
+
+    @Test
+    fun `gesture column tabs fit within six for every place destination`() {
+        // 実行位置タブは固定行へ抽出するため、上限検査の対象外にします。
+        // PLACE_ITEM=7で設定画面が開かなくなった不具合の回帰試験です。
+        fun columnKeys(destination: String?): List<String> {
+            val node = CommandType.PLACE_ITEM.newNode()
+            if (destination == null) node.params.remove("destination") else node.params["destination"] = destination
+            return CommandSettingsModel.gestureVisibleFields(node)
+                .map { it.key }
+                .filter { it != "executionPosition" }
+        }
+        for (destination in listOf("EQUIPMENT", "PLAYER_HOTBAR", "PLAYER_INVENTORY", "ITEM_FRAME", "BLOCK_CONTAINER")) {
+            assertTrue(columnKeys(destination).size <= 6, destination)
+        }
+        assertTrue(columnKeys(null).size <= 6, "null destination")
     }
 
     @Test
@@ -432,7 +481,7 @@ class CommandSettingsModelTest {
         val node = CommandType.PLAY_SOUND.newNode()
         val fields = CommandSettingsModel.visibleFields(node)
 
-        assertEquals(listOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope"), fields.map { it.key })
+        assertEquals(listOf("soundOperation", "soundTargetPosition", "soundSetting", "soundScope", "executionPosition"), fields.map { it.key })
         assertFalse(fields.any { it.key == "volume" || it.key == "pitch" })
 
         node.params["volume"] = "0.5"
@@ -484,7 +533,7 @@ class CommandSettingsModelTest {
     fun `all executable composite value fields share the source selector`() {
         val cases = listOf(
             CommandType.GIVE_ITEM.newNode() to "item",
-            CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "equip" } to "item",
+            CommandType.PLACE_ITEM.newNode() to "item",
             CommandType.BLOCK_OPERATION.newNode() to "block",
             CommandType.PLAY_SOUND.newNode() to "sound",
             CommandType.APPLY_EFFECT.newNode() to "effect",
@@ -588,7 +637,7 @@ class CommandSettingsModelTest {
     @Test
     fun `particle detail input follows the selected kind inside the particle tab`() {
         val node = CommandType.PARTICLE.newNode()
-        // 詳細データ欄は独立タブを持たず、「パーティクル」タブのダイアログに統合します。
+        // 詳細チE�Eタ欁E�E独立タブを持たず、「パーチE��クル」タブ�Eダイアログに統合します、E
         assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
         assertTrue(CommandSettingsModel.visibleFields(node).any { it.key == "particle" })
 
@@ -597,6 +646,77 @@ class CommandSettingsModelTest {
         assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "particleData" })
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "particle"))
         assertTrue(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "particle" })
+    }
+
+    @Test
+    fun `nearby kinds expose only distance filters`() {
+        // 周囲系の詳細設定項目は最大距離だけとします。
+        assertEquals(
+            listOf("distance"),
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_PLAYERS),
+        )
+        assertEquals(
+            listOf("distance"),
+            CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEARBY_ENTITIES),
+        )
+        // 非周囲系は従来どおり種別適用に従います。
+        val nearest = CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER)
+        assertTrue(nearest.containsAll(listOf("distance", "sort", "tag", "name")))
+        // 単一参照では上限数を除外します。
+        assertFalse(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = true).contains("limit"))
+        assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_PLAYER, singleOnly = false).contains("limit"))
+    }
+
+    @Test
+    fun `fresh single choice fields are unconfigured until explicitly set`() {
+        // 初期時点では全項目を未設定とします。既定値との一致だけでは設定済みにしません。
+        val action = CommandType.ENTITY_ACTION.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(action, "action"))
+        CommandSettingsModel.setParameter(action, "action", "ride")
+        assertTrue(CommandSettingsModel.isFieldConfigured(action, "action"))
+
+        // issue #27: 条件の単一正本は subject 欄です。旧 kind 欄は使用しません。
+        val condition = CommandType.CONDITION.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(condition, "subject"))
+        condition.setConditionSubject(ConditionSubject.OTHER_ENTITY)
+        assertTrue(CommandSettingsModel.isFieldConfigured(condition, "subject"))
+
+        val display = CommandType.DISPLAY_TEXT.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(display, "mode"))
+        CommandSettingsModel.setParameter(display, "mode", "tellraw")
+        assertTrue(CommandSettingsModel.isFieldConfigured(display, "mode"))
+
+        val block = CommandType.BLOCK_OPERATION.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(block, "operation"))
+        CommandSettingsModel.setParameter(block, "operation", "setblock")
+        assertTrue(CommandSettingsModel.isFieldConfigured(block, "operation"))
+
+        // 空値の保存は未設定へ戻します。
+        CommandSettingsModel.setParameter(action, "action", "")
+        assertFalse(CommandSettingsModel.isFieldConfigured(action, "action"))
+    }
+
+    @Test
+    fun `incomplete specs are not complete for display`() {
+        // 座標は必須値が揃うまで未完了とします。
+        assertFalse(CommandSettingsModel.isPositionSpecComplete(PositionSpec(PositionKind.COORDINATES)))
+        assertTrue(
+            CommandSettingsModel.isPositionSpecComplete(PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)),
+        )
+        assertFalse(CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.ROTATION)))
+        assertTrue(
+            CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.ROTATION, yaw = 0f, pitch = 0f)),
+        )
+        // 一時変数は変数名がなければ未完了とします。
+        assertFalse(CommandSettingsModel.isPositionSpecComplete(PositionSpec(PositionKind.TEMPORARY)))
+        assertFalse(CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.TEMPORARY)))
+        // 注視・複写は参照先の設定済みで判定します。
+        assertFalse(CommandSettingsModel.isFacingSpecComplete(FacingSpec(FacingKind.TARGET)))
+        assertTrue(
+            CommandSettingsModel.isFacingSpecComplete(
+                FacingSpec(FacingKind.TARGET, target = TargetSpec(TargetKind.NEAREST_PLAYER)),
+            ),
+        )
     }
 
 }

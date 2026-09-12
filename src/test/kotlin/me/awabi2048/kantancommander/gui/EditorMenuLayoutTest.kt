@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
@@ -30,11 +32,11 @@ class EditorMenuLayoutTest {
         val entityAction = CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "dismount" }
         val displayText = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "actionbar" }
         val cameraShake = CommandType.CAMERA_SHAKE.newNode().apply { params["shakeType"] = "positional" }
-        val equipment = CommandType.ENTITY_ACTION.newNode().apply {
-            params["action"] = "equip"
+        val placement = CommandType.PLACE_ITEM.newNode().apply {
+            params["destination"] = "EQUIPMENT"
             params["slot"] = "OFF_HAND"
         }
-        val condition = CommandType.CONDITION.newNode().apply { params["kind"] = "PLAYER_STATE" }
+        val condition = CommandType.CONDITION.newNode().apply { setConditionSubject(ConditionSubject.PLAYER) }
         val variable = CommandType.VARIABLE.newNode().apply { params["value"] = "\${CURRENT_LOOP_COUNT}" }
         val loop = CommandType.FOR_START.newNode().apply { params["count"] = "3" }
 
@@ -52,7 +54,11 @@ class EditorMenuLayoutTest {
         )
         assertEquals(
             DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EQUIPMENT_OFF_HAND),
-            EditorMenuLayout.fields(CommandType.ENTITY_ACTION).single { it.key == "slot" }.value(equipment),
+            EditorMenuLayout.fields(CommandType.PLACE_ITEM).single { it.key == "slot" }.value(placement),
+        )
+        assertEquals(
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESTINATION_EQUIPMENT),
+            EditorMenuLayout.fields(CommandType.PLACE_ITEM).single { it.key == "destination" }.value(placement),
         )
         assertEquals(
             DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
@@ -101,7 +107,8 @@ class EditorMenuLayoutTest {
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DESTINATION_FACING, teleportFacing.descriptionKey)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DESTINATION_FACING, teleportFacing.actionKey)
 
-        val tagOperation = EditorMenuLayout.fields(CommandType.ENTITY_ACTION).single { it.key == "tagOperation" }
+        // 旧tag欄はENTITY_OPERATIONへ移行済みのため、ENTITY_ACTION側には出しません。
+        val tagOperation = EditorMenuLayout.fields(CommandType.ENTITY_OPERATION).single { it.key == "tagOperation" }
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION, tagOperation.label)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAG_OPERATION, tagOperation.descriptionKey)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAG_OPERATION, tagOperation.actionKey)
@@ -132,19 +139,29 @@ class EditorMenuLayoutTest {
     @Test
     fun `entity and sound layouts expose consolidated settings`() {
         val entityFields = EditorMenuLayout.fields(CommandType.ENTITY_ACTION)
+        assertFalse(entityFields.any { it.key == "slot" || it.key == "item" || it.key == "overwrite" })
+        // 旧tag欄はENTITY_OPERATIONへ移行済みのため、ENTITY_ACTION側には出しません。
+        assertFalse(entityFields.any { it.key == "tag" || it.key == "tagOperation" })
+        assertFalse(entityFields.any { it.key == "itemData" })
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EQUIPMENT_ITEM,
-            entityFields.single { it.key == "item" }.label,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_TAG,
+            EditorMenuLayout.fields(CommandType.ENTITY_OPERATION).single { it.key == "tag" }.descriptionKey,
+        )
+
+        val placeFields = EditorMenuLayout.fields(CommandType.PLACE_ITEM)
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_ITEM,
+            placeFields.single { it.key == "item" }.label,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_DESTINATION,
+            placeFields.single { it.key == "destination" }.label,
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE,
-            entityFields.single { it.key == "overwrite" }.label,
+            placeFields.single { it.key == "overwrite" }.label,
         )
-        assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_TAG,
-            entityFields.single { it.key == "tag" }.descriptionKey,
-        )
-        assertFalse(entityFields.any { it.key == "itemData" })
+        assertFalse(placeFields.any { it.key == "itemData" })
 
         val soundFields = EditorMenuLayout.fields(CommandType.PLAY_SOUND)
         assertTrue(soundFields.any { it.key == "soundSetting" })

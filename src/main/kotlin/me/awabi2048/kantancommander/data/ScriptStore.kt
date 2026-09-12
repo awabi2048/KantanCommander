@@ -5,11 +5,9 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.STRUCTURED_FORMAT_VERSION
 import me.awabi2048.kantancommander.gui.GraphLayoutEngine
 import java.io.File
-import java.math.BigDecimal
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -441,19 +439,26 @@ class ScriptStore(
             ?.asString
             ?.toIntOrNull()
             ?: error("formatVersionがありません、または整数ではありません")
-        // issue #4 のスレッド指示により旧データは読み込み不可とします。
-        // 現行形式のみ受け付け、それ以外は非対応形式として隔離します。
-        // 旧形式の移行連鎖は保持せず、黙って別意味へ変換しません。
-        val migrated = if (sourceVersion == STRUCTURED_FORMAT_VERSION) {
-            source
-        } else {
-            quarantine(
-                file,
-                QuarantineKind.INCOMPATIBLE,
-                "formatVersion=$sourceVersion",
-                fileTag = "v$sourceVersion",
-            )
-            return null
+        // issue #4 の方針により、現行15と直前2世代（14・13）だけを受け付け、
+        // それ以外は非対応形式として隔離します。旧形式の移行連鎖は保持せず、
+        // 黙って別意味へ変換しません。
+        // v14→v15は形式番号の付け替えのみ行います（#32の責務分離はv14で完了済み）。
+        // v13→v15は旧ENTITY_ACTION／tagのENTITY_OPERATIONへの変換に加え番号を付け替えます。
+        // 旧kind条件・旧equipは変換せず、検証層で未設定・移行漏れとして拒否します（#27・#21方針）。
+        // 同じ番号を異なる保存形式に再利用しません。
+        val migrated = when (sourceVersion) {
+            STRUCTURED_FORMAT_VERSION -> source
+            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV14ToV15(source)
+            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV13ToV15(source)
+            else -> {
+                quarantine(
+                    file,
+                    QuarantineKind.INCOMPATIBLE,
+                    "formatVersion=$sourceVersion",
+                    fileTag = "v$sourceVersion",
+                )
+                return null
+            }
         }
         val schemaViolations = PersistedScriptValidator.validate(migrated)
         require(schemaViolations.isEmpty()) {
@@ -464,6 +469,8 @@ class ScriptStore(
         require(script.formatVersion == STRUCTURED_FORMAT_VERSION) {
             "移行後のプログラムディスク形式が不正です: ${script.formatVersion}"
         }
+        // issue #27: 条件の判定対象は `subject` 欄が単一正本です。旧 `kind` 欄の
+        // 変換は行わず、旧値は未設定として検証層で拒否します。
         // 構造そのものの違反は破損データとして隔離する。
         val structuralViolations = validateRecursively(script.graph, UNBOUNDED_LIMITS)
         require(structuralViolations.isEmpty()) { structuralViolations.joinToString("; ") }
@@ -491,244 +498,58 @@ class ScriptStore(
     }
 
     /**
-     * v6の内部単位（10tick=0.5秒）を、v7の秒単位へ一度だけ変換します。
-     * 保存済みJSONを直接新モデルへ流し込むと旧ticksキーが黙って無視されるため、
-     * フォーマットバージョンを分岐させた明示移行にしています。
+     * v14をv15へ移行します。形式番号の付け替えだけを行います。
+     *
+     * #32の責務分離（旧tag→ENTITY_OPERATION）はv14で完了済みのため、
+     * グラフ内容には触れません。旧kind条件・旧equipは変換せず、
+     * 検証層で未設定・移行漏れとして拒否します。
      */
-    private fun migrateLegacyTickFormat(source: JsonObject): JsonObject {
+    private fun migrateStructuredV14ToV15(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
-        migrated.addProperty("formatVersion", LEGACY_COMMAND_FORMAT_VERSION)
-        migrated["timer"]?.asJsonObject?.let { timer ->
-            val units = timer["intervalUnits"]?.asInt ?: 1
-            val seconds = ((units.toLong() + 1L) / 2L)
-                .coerceIn(1L, MAX_TIMER_SECONDS.toLong())
-            timer.addProperty("intervalSeconds", seconds.toInt())
-            timer.remove("intervalUnits")
-        }
-        migrateGraphTimes(migrated["graph"]?.asJsonObject)
-        return migrated
-    }
-
-    /**
-     * v9の整数秒タイマーをv10の小数秒へ移行します。JSON数値の整数は
-     * Doubleへそのまま復元できるため、形式番号の付け替えだけを行います。
-     */
-    private fun migrateStructuredV9ToV10(source: JsonObject): JsonObject {
-        val migrated = source.deepCopy()
-        migrated.addProperty("formatVersion", STRUCTURED_V10_FORMAT_VERSION)
-        return migrated
-    }
-
-    /**
-     * v10の折り畳み表示状態（collapsedForStartIds／collapsedConditionIds）を
-     * 除去し v11 へ移行します。旧形式の折り畳みは引き継がず、旧データは
-     * 展開形として扱います。折り畳み自体は v11 でノード種別として保存します。
-     */
-    private fun migrateStructuredV10ToV11(source: JsonObject): JsonObject {
-        val migrated = source.deepCopy()
-        migrated.remove("collapsedForStartIds")
-        migrated.remove("collapsedConditionIds")
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
         return migrated
     }
 
-    /** v7のコマンド・型モデルを現行形式へ意味変換します。 */
-    private fun migrateCommandFormat(source: JsonObject): JsonObject {
+    /**
+     * v13をv15へ直接移行します。v14を経由する連鎖は残しません。
+     *
+     * - 旧 `ENTITY_ACTION / tag` → 新 `ENTITY_OPERATION / tag`（tagOperation／tagを引き継ぎます）。
+     * - 旧 `ENTITY_ACTION / ride／dismount` → 変更なし（保存形式を変えません）。
+     * - 旧 `ENTITY_ACTION / equip` → 変更なし（自動でPLACE_ITEMへ変換せず、
+     *   検証層で移行漏れとして拒否します）。
+     * - 旧 `kind` 条件 → 変更なし（subjectへの推測変換を行わず、
+     *   検証層で未設定として拒否します）。
+     * - 不明な操作値は変換せず、検証側で不正として扱います。
+     *
+     * グラフ内のsnapshot／foldedGraphへ退避した副グラフも同じ規則で移行します。
+     */
+    private fun migrateStructuredV13ToV15(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
-        migrateCommandGraph(migrated["graph"]?.asJsonObject)
+        migrateEntityActionGraph(migrated["graph"]?.asJsonObject)
         return migrated
     }
 
-    private fun migrateCommandGraph(graph: JsonObject?) {
+    private fun migrateEntityActionGraph(graph: JsonObject?) {
         val nodes = graph?.get("nodes")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
         val nodeIds = nodes.entrySet().map { it.key }.toList()
         nodeIds.forEach { nodeId ->
             val node = nodes[nodeId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
             val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
-            when (node["type"]?.asString) {
-                "EQUIP_ITEM" -> {
-                    node.addProperty("type", "ENTITY_ACTION")
-                    params?.addProperty("action", "equip")
-                    params?.addProperty("slot", params["slot"]?.asString ?: "HAND")
-                    params?.addProperty("item", params["item"]?.asString ?: "")
-                    params?.addProperty("itemData", params["itemData"]?.asString ?: "")
-                    params?.addProperty("overwrite", "false")
-                }
-                "ENTITY_STATE" -> migrateLegacyEntityState(node, params, graph)
-                "ITEM_POSSESSION" -> {
-                    node.addProperty("type", "CONDITION")
-                    params?.addProperty("kind", "PLAYER_STATE")
-                    params?.addProperty("sneaking", "")
-                    params?.addProperty("item", params["item"]?.asString ?: "")
-                    params?.addProperty("itemData", params["itemData"]?.asString ?: "")
-                    params?.remove("variableScope")
-                    params?.remove("count")
-                }
-                "VARIABLE" -> migrateLegacyVariable(node, params, graph)
-                else -> Unit
+            if (node["type"]?.asString == "ENTITY_ACTION" &&
+                params?.get("action")?.takeIf { it.isJsonPrimitive }?.asString == "tag"
+            ) {
+                node.addProperty("type", "ENTITY_OPERATION")
+                params.addProperty("operation", "tag")
+                params.remove("action")
             }
-            migrateLegacyPositionFields(node, params)
-            if (node["type"]?.asString == "FOR_START") migrateLegacyForCount(params)
-            migrateCommandGraph(node["snapshot"]?.asJsonObject)
+            migrateEntityActionGraph(node["snapshot"]?.asJsonObject)
+            migrateEntityActionGraph(node["foldedGraph"]?.asJsonObject)
         }
     }
 
-    private fun migrateLegacyEntityState(node: JsonObject, params: JsonObject?, graph: JsonObject?) {
-        if (params == null) {
-            logger.warning("v7の状態条件に設定値がないため操作を破棄します: node=${node["id"]?.asString}")
-            dropLinearNode(graph, node["id"]?.asString)
-            return
-        }
-        val state = params["state"]?.asString
-        if (state == "sneaking") {
-            node.addProperty("type", "CONDITION")
-            params.addProperty("kind", "PLAYER_STATE")
-            params.addProperty("sneaking", "true")
-            params.remove("state")
-            return
-        }
-        logger.warning("v7の未対応エンティティ状態のノードを破棄します: node=${node["id"]?.asString} state=$state")
-        dropLinearNode(graph, node["id"]?.asString)
-    }
-
-    private fun migrateLegacyVariable(node: JsonObject, params: JsonObject?, graph: JsonObject?) {
-        if (params == null) {
-            logger.warning("v7の変数操作に設定値がないため操作を破棄します: node=${node["id"]?.asString}")
-            dropLinearNode(graph, node["id"]?.asString)
-            return
-        }
-        val type = params["type"]?.asString?.uppercase()
-        val newType = when (type) {
-            "INTEGER", "DECIMAL" -> "NUMBER"
-            "TEXT" -> "STRING"
-            else -> null
-        }
-        if (newType == null) {
-            logger.warning("v7の未対応変数型の操作を破棄します: node=${node["id"]?.asString} type=$type")
-            dropLinearNode(graph, node["id"]?.asString)
-            return
-        }
-        val name = params["name"]?.asString.orEmpty()
-        val operation = params["operation"]?.asString?.uppercase()
-        val rawValue = params["value"]?.asString ?: ""
-        val mappedOperation: String
-        val mappedValue: String
-        val mappedMode: String
-        when (operation) {
-            "SET" -> {
-                mappedOperation = "DEFINE"
-                mappedValue = rawValue
-                mappedMode = "ASSIGN"
-            }
-            "ADD" -> {
-                mappedOperation = "CHANGE"
-                mappedValue = "${'$'}{$name} + ($rawValue)"
-                mappedMode = "CALCULATE"
-            }
-            "SUBTRACT" -> {
-                mappedOperation = "CHANGE"
-                mappedValue = "${'$'}{$name} - ($rawValue)"
-                mappedMode = "CALCULATE"
-            }
-            else -> {
-                logger.warning("v7の未対応変数操作を破棄します: node=${node["id"]?.asString} operation=$operation")
-                dropLinearNode(graph, node["id"]?.asString)
-                return
-            }
-        }
-        if (mappedOperation.isBlank()) {
-            logger.warning("v7の未対応変数操作を破棄します: node=${node["id"]?.asString} operation=$operation")
-            dropLinearNode(graph, node["id"]?.asString)
-            return
-        }
-        params.remove("scope")
-        params.remove("variableScope")
-        params.addProperty("type", newType)
-        params.addProperty("operation", mappedOperation)
-        params.addProperty("changeMode", mappedMode)
-        params.addProperty("value", mappedValue)
-    }
-
-    private fun migrateLegacyPositionFields(node: JsonObject, params: JsonObject?) {
-        val fields = listOf("destinationSpec", "conditionPositionSpec", "blockPositionSpec", "blockFromSpec", "blockToSpec")
-        fields.forEach { field ->
-            node[field]?.takeIf { it.isJsonObject }?.asJsonObject?.let { position ->
-                val kind = position["kind"]?.asString
-                if (kind == "TEMPORARY_VARIABLE" || kind == "WORLD_VARIABLE") {
-                    logger.warning("v7の変数位置参照を移行時に破棄します: node=${node["id"]?.asString} field=$field")
-                    node.remove(field)
-                }
-            }
-        }
-    }
-
-    /** v7の範囲指定を、現行の回数指定へ残さず変換します。 */
-    private fun migrateLegacyForCount(params: JsonObject?) {
-        if (params == null) return
-        val legacyFields = listOf(
-            "startSource", "endSource", "stepSource",
-            "startValue", "endValue", "stepValue", "inclusiveEnd",
-        )
-        if (legacyFields.none(params::has)) return
-        legacyFields.forEach(params::remove)
-        if (!params.has("count")) params.addProperty("count", "1")
-        logger.warning("v7の範囲指定forを現行の回数指定へ移行しました。旧範囲値は保持しません")
-    }
-
-    /** 変換不能な線形ノードを経路から外し、保存グラフの構造を壊さないようにします。 */
-    private fun dropLinearNode(graph: JsonObject?, rawId: String?) {
-        if (graph == null || rawId.isNullOrBlank()) return
-        val nodes = graph["nodes"]?.takeIf { it.isJsonObject }?.asJsonObject ?: return
-        val node = nodes[rawId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return
-        val replacement = node["next"]?.asString
-        nodes.entrySet().forEach { (_, element) ->
-            val parent = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-            listOf("next", "trueNext", "falseNext").forEach { edge ->
-                if (parent[edge]?.asString == rawId) {
-                    if (replacement == null) parent.remove(edge) else parent.addProperty(edge, replacement)
-                }
-            }
-        }
-        if (graph["entryNodeId"]?.asString == rawId) {
-            if (replacement == null) graph.remove("entryNodeId") else graph.addProperty("entryNodeId", replacement)
-        }
-        nodes.remove(rawId)
-    }
-
-    private fun migrateGraphTimes(graph: JsonObject?) {
-        val nodes = graph?.get("nodes")?.asJsonObject ?: return
-        nodes.entrySet().forEach { (_, element) ->
-            val node = element.asJsonObject
-            val params = node["params"]?.asJsonObject
-            when (node["type"]?.asString) {
-                "WAIT" -> migrateTicksParam(params, "ticks", "seconds")
-                "DISPLAY_TEXT" -> {
-                    migrateTicksParam(params, "fadeIn", "fadeInSeconds")
-                    migrateTicksParam(params, "stay", "staySeconds")
-                    migrateTicksParam(params, "fadeOut", "fadeOutSeconds")
-                }
-            }
-            migrateGraphTimes(node["snapshot"]?.asJsonObject)
-        }
-    }
-
-    private fun migrateTicksParam(params: JsonObject?, oldKey: String, newKey: String) {
-        val raw = params?.get(oldKey)?.asString ?: return
-        val ticks = raw.toLongOrNull() ?: return
-        // 旧形式のtick値は、整数秒へ切り上げると1tick=0.05秒の設定を失います。
-        // 現行形式は小数秒を正本にできるため、丸めずに1tick単位の値へ移行します。
-        val seconds = if (ticks <= 0L) {
-            "0"
-        } else {
-            BigDecimal.valueOf(ticks)
-                .divide(BigDecimal.valueOf(20L))
-                .stripTrailingZeros()
-                .toPlainString()
-        }
-        params.addProperty(newKey, seconds)
-        params.remove(oldKey)
-    }
+    // v7以前の移行処理は削除しました。現行15と直前2世代（14・13）以外は
+    // 読み込み時に隔離するため、到達不能な移行連鎖を残しません。
 
     private fun quarantine(
         file: File,
@@ -822,10 +643,6 @@ class ScriptStore(
     }
 
     private companion object {
-        private const val LEGACY_TICK_FORMAT_VERSION = 6
-        private const val LEGACY_COMMAND_FORMAT_VERSION = 7
-        private const val STRUCTURED_PREVIOUS_FORMAT_VERSION = 9
-        private const val STRUCTURED_V10_FORMAT_VERSION = 10
         /** 保存データ検証で確保してよい描画セル数。入力JSONによるメモリ消費を制限します。 */
         private const val MAX_LAYOUT_VALIDATION_CELLS = 1_000_000L
 

@@ -48,8 +48,9 @@ class ValidatorPhaseTest {
         GraphEditor.append(script.graph, CommandType.TELEPORT)
 
         val structured = GraphValidator.validateStructured(script.graph)
-        // 正常グラフは空ですが、API 自体が code 付きであることを固定します。
-        assertTrue(structured.all { it.code != null })
+        // 正常グラフは構造エラーを出しません。前提が崩れた場合だけ後続の検証が意味を持つため、
+        // 空であること自体を固定します（code は非null型のため、all での存在確認は行いません）。
+        assertTrue(structured.isEmpty(), "正常グラフは構造エラーを出さない")
 
         val broken = DiskScript(name = "broken", owner = UUID.randomUUID())
         GraphEditor.append(broken.graph, CommandType.TELEPORT)

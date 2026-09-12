@@ -9,23 +9,38 @@ import org.bukkit.Material
 /**
  * 構造化設定の選択可否を、表示側と入力側で共有するポリシーです。
  *
- * setblockの配置位置だけは、制御ブロックを上書きできないという実行時制約が
- * あるため、選択肢を表示したまま無効化します。無効化条件をGUIごとに複製せず、
- * インベントリGUIとジェスチャーGUIの表示・クリック受付へ同じ判定を渡します。
+ * setblockの配置位置とアイテム配置のコンテナ位置だけは、制御ブロックを
+ * 上書きできないという実行時制約があるため、選択肢を表示したまま無効化します。
+ * 無効化条件をGUIごとに複製せず、インベントリGUIとジェスチャーGUIの
+ * 表示・クリック受付へ同じ判定を渡します。
  */
 internal object CommandSettingAvailabilityPolicy {
     /** 制御ブロック位置を選べない理由として、無効項目のホバーへ表示します。 */
     const val CONTROL_BLOCK_POSITION_DISABLED_HOVER = "制御ブロックのある位置は操作できません"
 
+    /** issue #29: 単一限定の役割へ対象由来位置を選べない理由を表示します。 */
+    const val MULTI_POSITION_DISABLED_HOVER = "この位置には複数の位置を指定できません"
+
     fun isPositionChoiceEnabled(
         node: CommandNode,
         role: CommandSettingRole?,
         kind: PositionKind,
-    ): Boolean =
-        kind != PositionKind.DISK ||
-            node.type != CommandType.BLOCK_OPERATION ||
-            role != CommandSettingRole.BLOCK_POSITION ||
+    ): Boolean {
+        if (kind != PositionKind.DISK || role != CommandSettingRole.BLOCK_POSITION) return true
+        // 制御ブロック自体はコンテナではないため、配置先としても選べません。
+        if (node.type == CommandType.PLACE_ITEM) return false
+        return node.type != CommandType.BLOCK_OPERATION ||
             BlockOperationMode.from(node.string("operation", BlockOperationMode.SETBLOCK.value)) != BlockOperationMode.SETBLOCK
+    }
+
+    /**
+     * issue #29: 対象由来位置の選択可否です。
+     *
+     * 単一限定の役割ではGUIで無効化し、検証・出力でも明示エラーとします。
+     * 判定は [MultiPositionPolicy] と共有し、GUIごとの個別実装にしません。
+     */
+    fun isEmbeddedTargetPositionEnabled(role: CommandSettingRole?): Boolean =
+        MultiPositionPolicy.multiplicityFor(role) == PositionMultiplicity.MULTI
 }
 
 /** メインハンドのブロック設定値を、空手を含む同じ変換規則で保存します。 */
