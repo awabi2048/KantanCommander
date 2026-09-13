@@ -34,7 +34,8 @@ object ResourcePicker {
 
     /** 候補選択の対象になる設定項目かを返します。 */
     fun kindForFieldKey(fieldKey: String): GestureResourcePickerKind? = when (fieldKey) {
-        "entity", "entityType" -> GestureResourcePickerKind.ENTITY_TYPE
+        // v17改名キーを使います。一時対象指定の "entity" は一覧選択を使いません。
+        "summonEntity", "entityType" -> GestureResourcePickerKind.ENTITY_TYPE
         ParticleSettings.PARAM_PARTICLE -> GestureResourcePickerKind.PARTICLE
         "sound" -> GestureResourcePickerKind.SOUND
         "effect" -> GestureResourcePickerKind.EFFECT

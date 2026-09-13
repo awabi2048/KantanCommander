@@ -367,7 +367,7 @@ class CommandSettingsModelTest {
     fun `place item fields follow the selected destination`() {
         val node = CommandType.PLACE_ITEM.newNode()
         fun keys(destination: String): List<String> {
-            node.params["destination"] = destination
+            node.params["placeDestination"] = destination
             return CommandSettingsModel.visibleFields(node).map { it.key }
         }
 
@@ -375,19 +375,19 @@ class CommandSettingsModelTest {
         // 額縁は内容固定のためスロット欄を出しません。
         // 上書き設定は独立タブを持たず、配置先タブの中央下トグルで編集します。
         assertEquals(
-            listOf("target", "destination", "slot", "item", "count", "executionPosition"),
+            listOf("target", "placeDestination", "slot", "item", "count", "executionPosition"),
             keys("EQUIPMENT"),
         )
         assertEquals(
-            listOf("target", "destination", "slot", "item", "count", "executionPosition"),
+            listOf("target", "placeDestination", "slot", "item", "count", "executionPosition"),
             keys("PLAYER_HOTBAR"),
         )
         assertEquals(
-            listOf("target", "destination", "item", "count", "executionPosition"),
+            listOf("target", "placeDestination", "item", "count", "executionPosition"),
             keys("ITEM_FRAME"),
         )
         assertEquals(
-            listOf("destination", "slot", "item", "count", "position", "executionPosition"),
+            listOf("placeDestination", "slot", "item", "count", "position", "executionPosition"),
             keys("BLOCK_CONTAINER"),
         )
     }
@@ -396,8 +396,8 @@ class CommandSettingsModelTest {
     fun `place item overwrite attention projects to the destination tab`() {
         // 上書き検証の注意表示は、存在しない独立タブではなく配置先タブへ投影します。
         val node = CommandType.PLACE_ITEM.newNode()
-        node.params["destination"] = "EQUIPMENT"
-        assertEquals("destination", CommandSettingsModel.visibleAttentionFieldKey(node, "overwrite"))
+        node.params["placeDestination"] = "EQUIPMENT"
+        assertEquals("placeDestination", CommandSettingsModel.visibleAttentionFieldKey(node, "overwrite"))
         assertFalse(CommandSettingsModel.visibleFields(node).any { it.key == "overwrite" })
         assertFalse(CommandSettingsModel.gestureVisibleFields(node).any { it.key == "overwrite" })
     }
@@ -408,7 +408,7 @@ class CommandSettingsModelTest {
         // 上書き独立タブの除去後は最大5件ですが、上限超過の回帰として維持します。
         fun columnKeys(destination: String?): List<String> {
             val node = CommandType.PLACE_ITEM.newNode()
-            if (destination == null) node.params.remove("destination") else node.params["destination"] = destination
+            if (destination == null) node.params.remove("placeDestination") else node.params["placeDestination"] = destination
             return CommandSettingsModel.gestureVisibleFields(node)
                 .map { it.key }
                 .filter { it != "executionPosition" }
@@ -417,6 +417,84 @@ class CommandSettingsModelTest {
             assertTrue(columnKeys(destination).size <= 6, destination)
         }
         assertTrue(columnKeys(null).size <= 6, "null destination")
+    }
+
+    @Test
+    fun `summon entity type follows its own params value`() {
+        // v17改名の回帰試験です。一時対象指定と同名だった旧キーの誤判定を固定します。
+        val node = CommandType.SUMMON_ENTITY.newNode()
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "summonEntity"))
+
+        CommandSettingsModel.setParameter(node, "summonEntity", "minecraft:mannequin")
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "summonEntity"))
+
+        // 一時対象指定の有無は召喚種類の判定へ混ざりません。
+        val bare = CommandType.SUMMON_ENTITY.newNode()
+        bare.temporaryEntityTargetSpec = me.awabi2048.kantancommander.model.TargetSpec(
+            me.awabi2048.kantancommander.model.TargetKind.NEAREST_ENTITY,
+        )
+        assertFalse(CommandSettingsModel.isFieldConfigured(bare, "summonEntity"))
+    }
+
+    @Test
+    fun `place destination follows its own params value`() {
+        // v17改名の回帰試験です。テレポート移動先と同名だった旧キーの誤判定を固定します。
+        val node = CommandType.PLACE_ITEM.newNode()
+        node.params.remove("placeDestination")
+        node.clearConfigured("placeDestination")
+        assertFalse(CommandSettingsModel.isFieldConfigured(node, "placeDestination"))
+
+        CommandSettingsModel.setParameter(node, "placeDestination", "EQUIPMENT")
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "placeDestination"))
+
+        // テレポート移動先の有無は配置先の判定へ混ざりません。
+        val bare = CommandType.PLACE_ITEM.newNode()
+        bare.params.remove("placeDestination")
+        bare.clearConfigured("placeDestination")
+        bare.destinationSpec = me.awabi2048.kantancommander.model.PositionSpec(
+            me.awabi2048.kantancommander.model.PositionKind.DISK,
+        )
+        assertFalse(CommandSettingsModel.isFieldConfigured(bare, "placeDestination"))
+    }
+
+    @Test
+    fun `literal params fields are display-consistent across all command types`() {
+        // v17改名の再発防止試験です。同名キーの意味衝突（保存先と表示判定の
+        // 不一致）を全種別×可視項目で機械検証します。構造値・複合項目は
+        // 専用の表示規則を持つため対象外です。
+        val structuralKeys = setOf(
+            "target", "other", "entity", "location", "destination", "destinationFacing",
+            "position", "from", "to", "facing",
+            "soundPosition", "particlePosition", "particleEnd", "geometryEnd",
+            "summonPosition", "fireworkPosition", "executionPosition",
+            "soundTargetPosition",
+        )
+        val compositeKeys = setOf(
+            "soundSetting", "particleDisplay", "condition", "geometrySettings", "particleParameters",
+            "fireworkContents",
+        )
+        for (type in CommandType.entries) {
+            val keys = CommandSettingsModel.visibleFields(type.newNode()).map { it.key }.toSet()
+            for (key in keys) {
+                if (key in structuralKeys || key in compositeKeys) continue
+                val fresh = type.newNode()
+                assertFalse(
+                    CommandSettingsModel.isFieldConfigured(fresh, key),
+                    "$type/$key は初期状態で未設定のはず",
+                )
+                val node = type.newNode()
+                try {
+                    CommandSettingsModel.setParameter(node, key, "probevalue")
+                } catch (ignored: IllegalArgumentException) {
+                    // 型欄など値域制限のある項目は探査対象外とします。
+                    continue
+                }
+                assertTrue(
+                    CommandSettingsModel.isFieldConfigured(node, key),
+                    "$type/$key は設定後に設定済みのはず",
+                )
+            }
+        }
     }
 
     @Test

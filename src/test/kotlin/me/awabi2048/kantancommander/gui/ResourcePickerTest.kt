@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
 class ResourcePickerTest {
     @Test
     fun `field keys map to picker kinds`() {
-        assertEquals(GestureResourcePickerKind.ENTITY_TYPE, ResourcePicker.kindForFieldKey("entity"))
+        assertEquals(GestureResourcePickerKind.ENTITY_TYPE, ResourcePicker.kindForFieldKey("summonEntity"))
         assertEquals(GestureResourcePickerKind.ENTITY_TYPE, ResourcePicker.kindForFieldKey("entityType"))
         assertEquals(GestureResourcePickerKind.PARTICLE, ResourcePicker.kindForFieldKey(ParticleSettings.PARAM_PARTICLE))
         assertEquals(GestureResourcePickerKind.SOUND, ResourcePicker.kindForFieldKey("sound"))
@@ -83,7 +83,7 @@ class ResourcePickerTest {
     fun `suggestions stay within the shared registry boundary`() {
         // Dialog候補検索とPickerは同じ取得境界を使います。
         // サーバーなしでは空列ですが、契約（部分集合・空欄空列）は維持します。
-        listOf("entity", "sound", "effect", ParticleSettings.PARAM_PARTICLE).forEach { fieldKey ->
+        listOf("summonEntity", "sound", "effect", ParticleSettings.PARAM_PARTICLE).forEach { fieldKey ->
             val ids = CommandDialogSpecs.registeredIds(fieldKey)
             val found = CommandDialogSpecs.suggestions(fieldKey, "xyz-no-such-id")
             assertTrue(ids.containsAll(found), fieldKey)

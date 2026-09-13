@@ -11,10 +11,11 @@ import java.util.UUID
 import java.util.logging.Logger
 
 /**
- * 統合保存版v16の移行テストです。
+ * 統合保存版v17の移行テストです。
  *
- * v15・v14は#30の粒子移行（旧POINT→PARTICLE、旧GEOMETRY→PARTICLE_GEOMETRY）を
- * 適用して読み込みます。v13以前（旧ENTITY_ACTION／tag移行を含む）は受付対象外
+ * v16は保存キーの改名（召喚の種類 entity→summonEntity、配置先
+ * destination→placeDestination、値保持）を適用して読み込みます。
+ * v15は#30の粒子移行に加えて同じ改名を適用します。v14以前は受付対象外
  * として隔離します。旧ENTITY_ACTION／ride／dismountは保存形式を変えずに読み込みます。
  * 旧equip・旧kindは変換せず、検証層で移行漏れ・未設定として拒否します。
  */
@@ -73,74 +74,77 @@ class EntityMigrationTest {
     }
 
     @Test
-    fun `v14 entity operation loads with particle migration`() {
-        val dir = temp.resolve("v14-operation").also(File::mkdirs)
+    fun `v16 summon entity key migrates keeping its value`() {
+        // v17改名の移行試験です。旧キーの値は新キーへ引き継ぎます。
+        val dir = temp.resolve("v16-summon").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
-        dir.resolve("$scriptId.json").writeText(
+        writeRaw(
+            dir,
+            scriptId,
+            16,
+            nodeId,
             """
-            {
-              "formatVersion": 14,
-              "id": "$scriptId",
-              "name": "migration",
-              "owner": "${UUID.randomUUID()}",
-              "createdAt": 0,
-              "listed": false,
-              "activation": "NEEDS_REDSTONE",
-              "timer": {"enabled": false, "intervalSeconds": 1.0},
-              "graph": {
-                "entryNodeId": "$nodeId",
-                "nodes": {
-                  "$nodeId": {
-                    "id": "$nodeId",
-                    "type": "ENTITY_OPERATION",
-                    "params": {"operation": "tag", "tagOperation": "add", "tag": "kc_test"}
-                  }
-                }
-              },
-              "revision": 0,
-              "contentModified": false
+            "$nodeId": {
+              "id": "$nodeId",
+              "type": "SUMMON_ENTITY",
+              "params": {"entity": "minecraft:mannequin", "tags": "", "customName": ""},
+              "configuredFields": ["entity"]
             }
             """.trimIndent(),
-            Charsets.UTF_8,
         )
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val loaded = requireNotNull(store.load(scriptId))
         val migrated = loaded.graph.nodes.getValue(nodeId)
-        assertEquals(CommandType.ENTITY_OPERATION, migrated.type)
-        assertEquals("tag", migrated.string("operation", ""))
-        assertEquals("kc_test", migrated.string("tag", ""))
-        assertEquals(16, loaded.formatVersion)
+        assertEquals(CommandType.SUMMON_ENTITY, migrated.type)
+        assertEquals("minecraft:mannequin", migrated.string("summonEntity", ""))
+        assertTrue("entity" !in migrated.params)
+        assertTrue("summonEntity" in (migrated.configuredFields ?: emptySet()))
+        assertEquals(17, loaded.formatVersion)
     }
 
     @Test
-    fun `v14 ride dismount and equip keep their shape`() {
-        // 読み込み時は形状を保ちます。旧equipの実行可否は実行前検証が
-        // 移行漏れとして拒否します（自動でPLACE_ITEMへ変換しません）。
-        val dir = temp.resolve("v14-keep").also(File::mkdirs)
+    fun `v16 place destination key migrates keeping its value`() {
+        val dir = temp.resolve("v16-place").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
-        val rideId = UUID.randomUUID()
-        val equipId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
         writeRaw(
             dir,
             scriptId,
-            14,
-            rideId,
+            16,
+            nodeId,
             """
-            ${entityActionNode(rideId, "ride", next = equipId)},
-            ${entityActionNode(equipId, "equip", ", \"slot\": \"HAND\", \"item\": \"minecraft:stone\", \"overwrite\": \"false\"")}
+            "$nodeId": {
+              "id": "$nodeId",
+              "type": "PLACE_ITEM",
+              "params": {"destination": "EQUIPMENT", "slot": "HAND", "item": "", "itemData": "", "count": "1", "overwrite": "false"},
+              "configuredFields": ["destination"]
+            }
             """.trimIndent(),
         )
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val loaded = requireNotNull(store.load(scriptId))
-        assertEquals(CommandType.ENTITY_ACTION, loaded.graph.nodes.getValue(rideId).type)
-        assertEquals("ride", loaded.graph.nodes.getValue(rideId).string("action", ""))
-        val equip = loaded.graph.nodes.getValue(equipId)
-        assertEquals(CommandType.ENTITY_ACTION, equip.type)
-        assertEquals("equip", equip.string("action", ""))
-        assertEquals("minecraft:stone", equip.string("item", ""))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.PLACE_ITEM, migrated.type)
+        assertEquals("EQUIPMENT", migrated.string("placeDestination", ""))
+        assertTrue("destination" !in migrated.params)
+        assertTrue("placeDestination" in (migrated.configuredFields ?: emptySet()))
+        assertEquals(17, loaded.formatVersion)
+    }
+
+    @Test
+    fun `v14 is quarantined as incompatible`() {
+        // v17受付（17・16・15）の範囲外のため隔離します。
+        val dir = temp.resolve("v14-quarantine").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(dir, scriptId, 14, nodeId, entityActionNode(nodeId, "ride"))
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        assertNull(store.load(scriptId))
+        assertTrue(requireNotNull(dir.resolve("incompatible").listFiles()).isNotEmpty())
     }
 
     @Test

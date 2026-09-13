@@ -615,8 +615,8 @@ object ExecutableScriptValidator {
             CommandType.DISPLAY_TEXT -> validateDisplayText(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.WAIT -> validateWait(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.SUMMON_ENTITY -> {
-                if (!CommandValueRules.isEntityTypeId(node.string("entity"))) {
-                    errors += nodeError(node, path, setOf("entity"), "エンティティの種類が不正です")
+                if (!CommandValueRules.isEntityTypeId(node.string("summonEntity"))) {
+                    errors += nodeError(node, path, setOf("summonEntity"), "エンティティの種類が不正です")
                 }
                 // 召喚タグも単一文字列です。カンマ区切りの複数タグへ展開せず、
                 // 入力された値全体を一つのタグとして検証します。
@@ -1271,9 +1271,9 @@ object ExecutableScriptValidator {
         variableDefinitions: Map<String, TypedValue>?,
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
-        val destination = PlaceItemDestination.from(node.string("destination"))
+        val destination = PlaceItemDestination.from(node.string("placeDestination"))
         if (destination == null) {
-            errors += nodeError(node, path, setOf("destination"), "配置先が不正です")
+            errors += nodeError(node, path, setOf("placeDestination"), "配置先が不正です")
             return
         }
         if (destination.requiresEntityTarget && node.targetSpec == null) {

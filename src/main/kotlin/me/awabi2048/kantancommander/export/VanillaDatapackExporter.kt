@@ -1539,7 +1539,7 @@ class VanillaDatapackExporter(
             ?.let { "CustomName:\"{\\\"text\\\":\\\"${escape(it.replace('&', '§'))}\\\"}\"" }
         val nbtFields = listOfNotNull(tagNbt.takeIf(String::isNotBlank), customName)
         val nbt = nbtFields.takeIf { it.isNotEmpty() }?.let { " {${it.joinToString(",")}}" }.orEmpty()
-        val entity = node.string("entity")
+        val entity = node.string("summonEntity")
         val summon = { coordinates: String -> "summon $entity $coordinates$nbt" }
         return when (val position = node.summonPositionSpec) {
             null -> summon("~ ~ ~")
@@ -1745,7 +1745,7 @@ class VanillaDatapackExporter(
      * ここへは到達させません。
      */
     private fun placeItemCommand(node: CommandNode): String {
-        val destination = PlaceItemDestination.from(node.string("destination"))
+        val destination = PlaceItemDestination.from(node.string("placeDestination"))
             ?: error("unknown place item destination")
         val slot = PlaceItemDestination.vanillaSlot(destination, node.string("slot"))
             ?: error("unknown place item slot")
@@ -1802,7 +1802,7 @@ class VanillaDatapackExporter(
         ) {
             errors += "${script.id}/${node.id}: 保存された配置ItemStackメタデータは完全バニラ出力に未対応です"
         }
-        val destination = PlaceItemDestination.from(node.string("destination"))
+        val destination = PlaceItemDestination.from(node.string("placeDestination"))
         if (destination == null) {
             errors += "${script.id}/${node.id}: 不明な配置先です"
             return

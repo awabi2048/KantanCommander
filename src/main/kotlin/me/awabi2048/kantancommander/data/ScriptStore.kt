@@ -449,19 +449,19 @@ class ScriptStore(
             ?.asString
             ?.toIntOrNull()
             ?: error("formatVersionがありません、または整数ではありません")
-        // issue #4 の方針により、現行16と直前2世代（15・14）だけを受け付け、
+        // issue #4 の方針により、現行17と直前2世代（16・15）だけを受け付け、
         // それ以外は非対応形式として隔離します。旧形式の移行連鎖は保持せず、
         // 黙って別意味へ変換しません。
-        // v15→v16は#30のパーティクル／図形分離（旧POINT→PARTICLE、旧GEOMETRY→
-        // PARTICLE_GEOMETRY、particleDisplayModeの除去）を行います。
-        // v14→v16はv15相当の内容として同じ粒子移行を適用します（v14→v15は番号付け替えのみ）。
-        // v13以前（旧ENTITY_ACTION／tag移行を含む）は今回の受付対象外として隔離します。
+        // v16→v17は保存キーの改名（召喚の種類 entity→summonEntity、
+        // 配置先 destination→placeDestination、値保持）を行います。
+        // v15→v17は#30の粒子移行に加えて同じ改名を適用します（v15→v16相当）。
+        // v14以前は今回の受付対象外として隔離します。
         // 旧kind条件・旧equipは変換せず、検証層で未設定・移行漏れとして拒否します（#27・#21方針）。
         // 同じ番号を異なる保存形式に再利用しません。
         val migrated = when (sourceVersion) {
             STRUCTURED_FORMAT_VERSION -> source
-            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV15ToV16(source)
-            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV14ToV16(source)
+            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV16ToV17(source)
+            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV15ToV17(source)
             else -> {
                 quarantine(
                     file,
@@ -518,39 +518,80 @@ class ScriptStore(
     }
 
     /**
-     * v15をv16へ移行します。#30のパーティクル／図形分離を行います。
+     * v16をv17へ移行します。保存キーの改名（値保持）を行います。
      *
-     * - 旧 `PARTICLE / particleDisplayMode=POINT`（欠落時もPOINT扱い）→ 新 `PARTICLE`。
-     *   図形系キー（particleShape／particleDensity／geometry*）を除去し、
-     *   `particleDisplayMode` を除去します。散布系・種類系の値は保持します。
-     * - 旧 `PARTICLE / particleDisplayMode=GEOMETRY` → 新 `PARTICLE_GEOMETRY`。
-     *   散布系キー（particleDelta*／particleSpeed／particleCount）を除去し、
-     *   `particleDisplayMode` を除去します。図形系・種類系の値は保持します。
+     * - 召喚ノードの種類 `entity` → `summonEntity`（一時対象指定の同名キーと区別）。
+     * - 配置ノードの配置先 `destination` → `placeDestination`（テレポート移動先と区別）。
+     * - 明示設定の記録（configuredFields）も同じ置き換えを行います。
      *
      * グラフ内のsnapshot／foldedGraphへ退避した副グラフも同じ規則で移行します。
      */
-    private fun migrateStructuredV15ToV16(source: JsonObject): JsonObject {
+    private fun migrateStructuredV16ToV17(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
         // issue #8: 旧JSONにない関数引数定義は空として移行し、欠落のまま復元しません。
         if (!migrated.has("arguments")) migrated.add("arguments", JsonArray())
-        migrateParticleGraph(migrated["graph"]?.asJsonObject)
+        migrateRenamedFieldKeys(migrated["graph"]?.asJsonObject)
         return migrated
     }
 
     /**
-     * v14をv16へ直接移行します。v15を経由する連鎖は残しません。
+     * v15をv17へ直接移行します。v16を経由する連鎖は残しません。
      *
-     * v14→v15は形式番号の付け替えのみ（#32の責務分離はv14で完了済み）のため、
-     * 粒子移行（v15→v16相当）をそのまま適用します。
+     * #30の粒子移行に加えて、v16→v17相当の保存キー改名を適用します。
      */
-    private fun migrateStructuredV14ToV16(source: JsonObject): JsonObject {
+    private fun migrateStructuredV15ToV17(source: JsonObject): JsonObject {
         val migrated = source.deepCopy()
         migrated.addProperty("formatVersion", STRUCTURED_FORMAT_VERSION)
         // issue #8: 旧JSONにない関数引数定義は空として移行し、欠落のまま復元しません。
         if (!migrated.has("arguments")) migrated.add("arguments", JsonArray())
         migrateParticleGraph(migrated["graph"]?.asJsonObject)
+        migrateRenamedFieldKeys(migrated["graph"]?.asJsonObject)
         return migrated
+    }
+
+    /**
+     * v17の保存キー改名をグラフ全体へ適用します。
+     *
+     * 同名キーの意味衝突をなくすための純粋な改名であり、値の意味は変えません。
+     * 新キーが既にある場合は旧値を破棄し、旧キーだけを除去します。
+     */
+    private fun migrateRenamedFieldKeys(graph: JsonObject?) {
+        val nodes = graph?.get("nodes")?.takeIf { it.isJsonObject }?.asJsonObject ?: return
+        val nodeIds = nodes.entrySet().map { it.key }.toList()
+        nodeIds.forEach { nodeId ->
+            val node = nodes[nodeId]?.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            val params = node["params"]?.takeIf { it.isJsonObject }?.asJsonObject
+            if (params != null) {
+                when (node["type"]?.takeIf { it.isJsonPrimitive }?.asString) {
+                    "SUMMON_ENTITY" -> moveParamKey(params, "entity", "summonEntity")
+                    "PLACE_ITEM" -> moveParamKey(params, "destination", "placeDestination")
+                }
+            }
+            val nodeType = node["type"]?.takeIf { it.isJsonPrimitive }?.asString
+            node["configuredFields"]?.takeIf { it.isJsonArray }?.asJsonArray?.let { marks ->
+                val renamed = marks.mapNotNull { element ->
+                    if (!element.isJsonPrimitive || !element.asJsonPrimitive.isString) return@mapNotNull element.asString
+                    when (Pair(nodeType, element.asString)) {
+                        Pair("SUMMON_ENTITY", "entity") -> "summonEntity"
+                        Pair("PLACE_ITEM", "destination") -> "placeDestination"
+                        else -> element.asString
+                    }
+                }
+                // configuredFieldsは集合であり順序を保持しないため、重複除去して書き戻します。
+                val rewritten = com.google.gson.JsonArray()
+                renamed.toSet().forEach { rewritten.add(it) }
+                node.add("configuredFields", rewritten)
+            }
+            migrateRenamedFieldKeys(node["snapshot"]?.asJsonObject)
+            migrateRenamedFieldKeys(node["foldedGraph"]?.asJsonObject)
+        }
+    }
+
+    // 改名元の値を改名先へ引き継ぎます。新キーが既にある場合は旧値を破棄します。
+    private fun moveParamKey(params: JsonObject, oldKey: String, newKey: String) {
+        val old = params.remove(oldKey) ?: return
+        if (!params.has(newKey)) params.add(newKey, old)
     }
 
     /**
@@ -586,7 +627,7 @@ class ScriptStore(
         }
     }
 
-    // v13以前の移行処理（旧ENTITY_ACTION／tag等）は削除しました。現行16と直前2世代（15・14）以外は
+    // v14以前の移行処理は削除しました。現行17と直前2世代（16・15）以外は
     // 読み込み時に隔離するため、到達不能な移行連鎖を残しません。
 
     private fun quarantine(

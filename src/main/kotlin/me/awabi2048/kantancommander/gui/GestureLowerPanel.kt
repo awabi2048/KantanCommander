@@ -1507,7 +1507,7 @@ class GestureLowerPanel(
         // 「アイテムを配置」の上書き設定は独立タブを持たず、配置先タブの
         // 中央下揃えトグルで編集します。配置先5択（上揃え）とは行を共有せず、
         // 下端基準の中央配置に置くため項目数の増減で位置がずれません。
-        if (node.type == CommandType.PLACE_ITEM && field.key == "destination") {
+        if (node.type == CommandType.PLACE_ITEM && field.key == "placeDestination") {
             appendCheckboxCard(
                 nodes, frame, node, "overwrite", inputCenterY, suppressHighlight,
                 centerX = SETTING_TOGGLE_CENTER_X,
@@ -3327,7 +3327,7 @@ class GestureLowerPanel(
         choiceId.startsWith("propertyValue:") -> setOf(EntityDataSchema.PARAM_VALUE)
         choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
         // issue #21: 配置先の選択肢は配置先欄へ投影します。
-        choiceId.startsWith("placeDestination:") -> setOf("destination")
+        choiceId.startsWith("placeDestination:") -> setOf("placeDestination")
         choiceId.startsWith("equipmentSlot:") -> setOf("slot")
         choiceId.startsWith("overwrite:") -> setOf("overwrite")
         choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
@@ -3463,8 +3463,8 @@ class GestureLowerPanel(
                 node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
                 CommandSettingsModel.isFieldConfigured(node, "slot")
             id.startsWith("placeDestination:") -> choice.selected &&
-                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == id.removePrefix("placeDestination:") &&
-                CommandSettingsModel.isFieldConfigured(node, "destination")
+                node.string("placeDestination", PlaceItemDestination.EQUIPMENT.paramValue) == id.removePrefix("placeDestination:") &&
+                CommandSettingsModel.isFieldConfigured(node, "placeDestination")
             id.startsWith("overwrite:") -> choice.selected &&
                 node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean() &&
                 CommandSettingsModel.isFieldConfigured(node, "overwrite")
@@ -3675,7 +3675,7 @@ class GestureLowerPanel(
             SettingChoice(
                 "placeDestination:${destination.paramValue}",
                 KcI18n.text(player, destination.labelKey),
-                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue,
+                node.string("placeDestination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue,
             )
         }
         GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
@@ -4941,7 +4941,7 @@ class GestureLowerPanel(
         val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
             "particleDensity", "burstHeight",
-            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name",
+            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "summonEntity", "diskId", "name",
             "condition", "variable", "value", "block", "sneaking",
             "motionX", "motionY", "motionZ",
             EntityAttributeSupport.PARAM_ATTRIBUTE,

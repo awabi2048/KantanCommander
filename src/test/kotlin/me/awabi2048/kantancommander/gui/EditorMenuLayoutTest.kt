@@ -33,7 +33,7 @@ class EditorMenuLayoutTest {
         val displayText = CommandType.DISPLAY_TEXT.newNode().apply { params["mode"] = "actionbar" }
         val cameraShake = CommandType.CAMERA_SHAKE.newNode().apply { params["shakeType"] = "positional" }
         val placement = CommandType.PLACE_ITEM.newNode().apply {
-            params["destination"] = "EQUIPMENT"
+            params["placeDestination"] = "EQUIPMENT"
             params["slot"] = "OFF_HAND"
         }
         val condition = CommandType.CONDITION.newNode().apply { setConditionSubject(ConditionSubject.PLAYER) }
@@ -58,7 +58,7 @@ class EditorMenuLayoutTest {
         )
         assertEquals(
             DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESTINATION_EQUIPMENT),
-            EditorMenuLayout.fields(CommandType.PLACE_ITEM).single { it.key == "destination" }.value(placement),
+            EditorMenuLayout.fields(CommandType.PLACE_ITEM).single { it.key == "placeDestination" }.value(placement),
         )
         assertEquals(
             DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),
@@ -155,7 +155,7 @@ class EditorMenuLayoutTest {
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PLACE_DESTINATION,
-            placeFields.single { it.key == "destination" }.label,
+            placeFields.single { it.key == "placeDestination" }.label,
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OVERWRITE,

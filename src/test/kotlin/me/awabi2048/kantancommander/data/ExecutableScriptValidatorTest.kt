@@ -496,7 +496,7 @@ class ExecutableScriptValidatorTest {
     @Test
     fun `summon tags are validated as one string rather than a comma-separated list`() {        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY)
-        summon.params["entity"] = "minecraft:pig"
+        summon.params["summonEntity"] = "minecraft:pig"
         summon.params["tags"] = "first_tag,second_tag"
 
         assertTrue(
@@ -609,7 +609,7 @@ class ExecutableScriptValidatorTest {
     fun `embedded targets in multi positions are validated`() {
         val script = DiskScript(name = "embedded-target", owner = UUID.randomUUID())
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:zombie"
+            params["summonEntity"] = "minecraft:zombie"
             summonPositionSpec = PositionSpec(
                 PositionKind.TARGET,
                 target = TargetSpec(TargetKind.TEMPORARY, tempName = "!!!"),
@@ -626,7 +626,7 @@ class ExecutableScriptValidatorTest {
     fun `execution position accepts entity set resolution`() {
         val script = DiskScript(name = "execution-position-target", owner = UUID.randomUUID())
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:zombie"
+            params["summonEntity"] = "minecraft:zombie"
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             executionPositionSpec = PositionSpec(
                 PositionKind.TARGET,

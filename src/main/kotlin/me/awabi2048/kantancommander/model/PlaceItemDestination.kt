@@ -16,7 +16,7 @@ import org.bukkit.Material
  * 利用者へ見せません。
  */
 enum class PlaceItemDestination(
-    /** params["destination"] へ保存する値です。 */
+    /** params["placeDestination"] へ保存する値です。 */
     val paramValue: String,
     val labelKey: LocalizationKey<String>,
     /** エンティティ対象 (TargetSpec) を要求するかを返します。 */

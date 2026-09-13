@@ -15,7 +15,7 @@ class PlaceItemValidatorTest {
     private fun validEntityNode() = DiskScript(name = "place", owner = UUID.randomUUID()).let { script ->
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "EQUIPMENT"
+            params["placeDestination"] = "EQUIPMENT"
             params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
             params["count"] = "1"
@@ -34,19 +34,19 @@ class PlaceItemValidatorTest {
     fun `unknown destination fails without further checks`() {
         val script = DiskScript(name = "place", owner = UUID.randomUUID())
         val node = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
-            params["destination"] = "UNKNOWN"
+            params["placeDestination"] = "UNKNOWN"
         }
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.nodeId == node.id && it.fieldKeys == setOf("destination") })
+        assertTrue(errors.any { it.nodeId == node.id && it.fieldKeys == setOf("placeDestination") })
     }
 
     @Test
     fun `entity destinations require a target and block destinations require a position`() {
         val entityScript = DiskScript(name = "place", owner = UUID.randomUUID())
         val entityNode = GraphEditor.append(entityScript.graph, CommandType.PLACE_ITEM).apply {
-            params["destination"] = "PLAYER_HOTBAR"
+            params["placeDestination"] = "PLAYER_HOTBAR"
             params["slot"] = "0"
             params["item"] = "minecraft:stone"
         }
@@ -59,7 +59,7 @@ class PlaceItemValidatorTest {
         val blockScript = DiskScript(name = "place", owner = UUID.randomUUID())
         val blockNode = GraphEditor.append(blockScript.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "BLOCK_CONTAINER"
+            params["placeDestination"] = "BLOCK_CONTAINER"
             params["slot"] = "0"
             params["item"] = "minecraft:stone"
         }
@@ -80,7 +80,7 @@ class PlaceItemValidatorTest {
         val script = DiskScript(name = "place", owner = UUID.randomUUID())
         val node = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "PLAYER_HOTBAR"
+            params["placeDestination"] = "PLAYER_HOTBAR"
             params["slot"] = "9"
             params["item"] = ""
             params["count"] = "0"
@@ -101,13 +101,13 @@ class PlaceItemValidatorTest {
         val script = DiskScript(name = "place", owner = UUID.randomUUID())
         val frame = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-            params["destination"] = "ITEM_FRAME"
+            params["placeDestination"] = "ITEM_FRAME"
             params["slot"] = "CONTENTS"
             params["item"] = "minecraft:stone"
         }
         val hotbar = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "PLAYER_HOTBAR"
+            params["placeDestination"] = "PLAYER_HOTBAR"
             params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
         }
@@ -123,7 +123,7 @@ class PlaceItemValidatorTest {
         val script = DiskScript(name = "place", owner = UUID.randomUUID())
         val node = GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "EQUIPMENT"
+            params["placeDestination"] = "EQUIPMENT"
             params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
             params["count"] = "1000000"
