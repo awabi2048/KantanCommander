@@ -914,6 +914,8 @@ class GestureSequenceEditor(
             if (baseline) {
                 lastValidatedScriptId = script.id
                 lastValidatedGraph = script.graph
+                lastValidationSeeds =
+                    me.awabi2048.kantancommander.data.ExecutableScriptValidator.seedTemporaries(script)
             }
         }
         return validationCacheErrors
@@ -925,6 +927,13 @@ class GestureSequenceEditor(
      */
     private var lastValidatedScriptId: java.util.UUID? = null
     private var lastValidatedGraph: me.awabi2048.kantancommander.model.CommandGraph? = null
+    /**
+     * issue #7/#8: 増分検証の前回実行開始時定義表です。
+     *
+     * 引数定義・イベント種別の変更は全ノードの定義可視性に波及するため、
+     * 不一致時は増分検証を使わず全量へ委譲します。
+     */
+    private var lastValidationSeeds: Map<String, me.awabi2048.kantancommander.model.ValueType> = emptyMap()
 
     /**
      * 前回検証結果からの増分更新を試みます。
@@ -944,6 +953,7 @@ class GestureSequenceEditor(
             script = script,
             limits = plugin.graphLimits(),
             variableDefinitions = null,
+            previousSeeds = lastValidationSeeds,
         )
     }
 

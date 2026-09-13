@@ -29,6 +29,7 @@ class IncrementalValidatorTest {
             previousGraph = previous.graph,
             previousErrors = previousErrors,
             script = mutated,
+            previousSeeds = ExecutableScriptValidator.seedTemporaries(previous),
         )
         assertNotNull(incremental, "値変更のはずが全量委譲されました")
         assertEquals(
@@ -212,6 +213,60 @@ class IncrementalValidatorTest {
         assertEquals(
             emptyList<ScriptValidationError>(),
             ExecutableScriptValidator.validateNodeLocal(script.graph, UUID.randomUUID()),
+        )
+    }
+
+    @Test
+    fun `changed node referencing disk arguments matches full validation`() {
+        // issue #8: 引数を参照するノードの編集は、種子付きで増分検証します。
+        fun scriptWithArgs(right: String): DiskScript {
+            val script = DiskScript(name = "args", owner = UUID.randomUUID())
+            script.arguments = listOf(
+                me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
+            )
+            val condition = GraphEditor.append(script.graph, CommandType.CONDITION)
+            condition.params["subject"] = ConditionSubject.VALUE.name
+            condition.params["leftScope"] = "EXECUTION"
+            condition.params["leftName"] = "count"
+            condition.params["operator"] = "=="
+            condition.params["right"] = right
+            return script
+        }
+        val previous = scriptWithArgs("1")
+        val mutated = scriptWithArgs("1").copy(
+            id = previous.id,
+            graph = previous.graph.deepCopy(),
+            arguments = previous.arguments.toList(),
+        )
+        mutated.graph.nodes.values.first { it.type == CommandType.CONDITION }.params["right"] = "2"
+
+        assertEquivalent(previous, mutated)
+    }
+
+    @Test
+    fun `argument definition change falls back to full validation`() {
+        // issue #8: 引数定義自体の変更は全ノードの定義可視性に波及するため、
+        // グラフ不変でも増分検証を使わず全量へ委譲します。
+        val previous = DiskScript(name = "args", owner = UUID.randomUUID())
+        previous.arguments = listOf(
+            me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.NUMBER),
+        )
+        GraphEditor.append(previous.graph, CommandType.WAIT).params["seconds"] = "1"
+        val mutated = DiskScript(name = "args", owner = previous.owner).copy(
+            id = previous.id,
+            graph = previous.graph.deepCopy(),
+            arguments = listOf(
+                me.awabi2048.kantancommander.model.DiskArgument("count", ValueType.STRING),
+            ),
+        )
+
+        assertNull(
+            IncrementalValidator.refresh(
+                previousGraph = previous.graph,
+                previousErrors = ExecutableScriptValidator.validate(previous),
+                script = mutated,
+                previousSeeds = ExecutableScriptValidator.seedTemporaries(previous),
+            ),
         )
     }
 

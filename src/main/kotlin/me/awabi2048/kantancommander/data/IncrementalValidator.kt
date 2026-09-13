@@ -8,6 +8,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TypedValue
+import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
 
 /**
@@ -32,6 +33,8 @@ object IncrementalValidator {
      * [previousErrors] は [previousGraph] に対する全量検証の結果でなければ
      * なりません。[script] は新世代の正本です。項目検証に必要な変数定義は
      * 全量側と同じもの（未配置編集時は null）を渡します。
+     * [previousSeeds] は前回検証時の実行開始時定義表です。引数定義・イベント種別の
+     * 変更は全ノードの定義可視性に波及するため、不一致時は全量へ委譲します。
      */
     fun refresh(
         previousGraph: CommandGraph,
@@ -39,6 +42,7 @@ object IncrementalValidator {
         script: DiskScript,
         limits: GraphLimits = GraphLimits(),
         variableDefinitions: Map<String, TypedValue>? = null,
+        previousSeeds: Map<String, ValueType> = emptyMap(),
     ): List<ScriptValidationError>? {
         val change = GraphChangeClassifier.classify(previousGraph, script.graph)
         if (IncrementalValidationPolicy.requiresStructuralRevalidation(change)) return null
@@ -48,6 +52,13 @@ object IncrementalValidator {
         if (changed.any { !containsStructuredId(script.graph, it) }) return null
         // 一時変数の可視性は下流へ波及するため、TEMP_SET絡みは全量へ委譲します。
         if (changed.any { involvesTemporaryAvailability(script.graph, it) }) return null
+        // issue #8: 戻り値の型一貫性はグラフ全体で判定するため、
+        // RETURN_VALUE絡みの変更では全量へ委譲します。
+        if (changed.any { script.graph.nodes[it]?.type == CommandType.RETURN_VALUE }) return null
+        // issue #7/#8: 実行開始時定義（イベント引数・自ディスク引数）の変更は
+        // 全ノードの定義可視性に波及するため、全量へ委譲します。
+        val seeds = ExecutableScriptValidator.seedTemporaries(script)
+        if (seeds != previousSeeds) return null
         val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
         val errors = mutableListOf<ScriptValidationError>()
         errors += ExecutableScriptValidator.validateScriptRoot(script, phase)
@@ -60,7 +71,13 @@ object IncrementalValidator {
                 previous.nodeId !in changed
         }
         changed.forEach { nodeId ->
-            errors += ExecutableScriptValidator.validateNodeLocal(script.graph, nodeId, limits, variableDefinitions)
+            errors += ExecutableScriptValidator.validateNodeLocal(
+                script.graph,
+                nodeId,
+                limits,
+                variableDefinitions,
+                seeds,
+            )
         }
         return errors
     }

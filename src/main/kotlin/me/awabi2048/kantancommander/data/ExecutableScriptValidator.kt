@@ -100,6 +100,28 @@ data class ScriptValidationError(
 /** 保存・実行・出力で共通利用するコマンド設定検証です。 */
 object ExecutableScriptValidator {
     /**
+     * issue #7/#8: 実行開始時に定義済みとなるEXECUTION変数の型表です。
+     *
+     * イベント引数と自ディスクの引数定義を合わせたもので、全量検証と増分検証で
+     * 同じ表を使います。配置実行と呼び出し実行のどちらの役割でも参照できるよう
+     * 合わせて与え、役割違いでの参照は実行時の解決失敗として扱い検証では拒否しません。
+     * 呼び出し先スナップショットの種子は呼び出し側の宣言だけであり、ここでは扱いません。
+     */
+    internal fun seedTemporaries(script: DiskScript): Map<String, ValueType> {
+        val triggerSeeds = script.effectiveTrigger().let { effective ->
+            if (effective.kind == TriggerKind.EVENT && effective.event != null) {
+                EventTriggerArguments.seedTypesFor(effective.event)
+            } else {
+                emptyMap()
+            }
+        }
+        val argumentSeeds = script.arguments.associate { argument ->
+            TemporaryTemplate.normalized(argument.name) to argument.type
+        }
+        return triggerSeeds + argumentSeeds
+    }
+
+    /**
      * variableDefinitionsは配置済みMyWorldでのみ渡します。
      * nullの場合は`${...}`の構文だけを検証し、未配置スクリプトの編集を妨げません。
      */
@@ -113,21 +135,6 @@ object ExecutableScriptValidator {
         val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
         val errors = mutableListOf<ScriptValidationError>()
         errors += validateScriptRoot(script, phase)
-        // issue #7: イベント引数は実行開始時に定義済みのEXECUTION変数です。
-        // データフロー解析の入口へ種子として与え、到達可能な全ノードで参照可能にします。
-        val triggerSeeds = script.effectiveTrigger().let { effective ->
-            if (effective.kind == TriggerKind.EVENT && effective.event != null) {
-                EventTriggerArguments.seedTypesFor(effective.event)
-            } else {
-                emptyMap()
-            }
-        }
-        // issue #8: 自ディスクの引数定義も、呼び出された実行開始時に定義済みです。
-        // 配置実行と呼び出し実行のどちらの役割でも参照できるよう、種子へ含めます。
-        // 役割違いでの参照は実行時の解決失敗として扱い、検証では拒否しません。
-        val argumentSeeds = script.arguments.associate { argument ->
-            TemporaryTemplate.normalized(argument.name) to argument.type
-        }
         validateGraph(
             script.graph,
             "root",
@@ -136,7 +143,7 @@ object ExecutableScriptValidator {
             limits,
             variableDefinitions,
             phase,
-            triggerSeeds = triggerSeeds + argumentSeeds,
+            triggerSeeds = seedTemporaries(script),
         )
         // 個別項目検証は当面 code 既定のままのため、phase だけここで正規化します。
         // 構造由来の PERSISTED_STRUCTURAL は維持し、それ以外の PREFLIGHT 既定値を
@@ -308,7 +315,7 @@ object ExecutableScriptValidator {
         // スナップショットは別グラフとして解析することで、実行時セッションの寿命と
         // 静的検証の結果を一致させます。
         val temporaryAvailability = analyzeTemporaryAvailability(effective, triggerSeeds)
-        validateReturnConsistency(effective, path, errors, variableDefinitions)
+        validateReturnConsistency(effective, path, errors, variableDefinitions, temporaryAvailability)
         effective.nodes.values.forEach { node ->
             validateNode(
                 node,
@@ -358,21 +365,29 @@ object ExecutableScriptValidator {
      * グラフ内の「値を返す」ノードのうち型を確定できるものが2種以上あれば
      * 拒否します。最初に確定した型が固定であり、最後の削除で解除されることは
      * グラフ走査の結果として自然に表れます。
+     * 戻り元の変数は参照元scopeの定義表で解決します。EXECUTION はフロー解析の
+     * 定義表、WORLD は永続定義表を見ます。scope を無視して WORLD 定義を引くと、
+     * 同名変数の型で誤判定するため、確定できない場合は除外します。
      */
     private fun validateReturnConsistency(
         graph: CommandGraph,
         path: String,
         errors: MutableList<ScriptValidationError>,
         variableDefinitions: Map<String, TypedValue>?,
+        temporaries: Map<UUID, Map<String, ValueType>>,
     ) {
         val known = linkedMapOf<UUID, ValueType>()
         graph.nodes.values.forEach { node ->
             if (node.type != CommandType.RETURN_VALUE) return@forEach
             val source = node.string("source").takeIf(String::isNotBlank)
             val type = if (source != null) {
-                // WORLD 定義で確定できる場合だけ比べます。EXECUTION 由来は
-                // フロー依存のため実行時の型安定に委ねます。
-                variableDefinitions?.get(source)?.type ?: return@forEach
+                when (VariableScope.parse(node.string("sourceScope")) ?: VariableScope.EXECUTION) {
+                    VariableScope.EXECUTION ->
+                        temporaries[node.id]?.get(TemporaryTemplate.normalized(source)) ?: return@forEach
+                    VariableScope.WORLD ->
+                        variableDefinitions?.get(source)?.type ?: return@forEach
+                    VariableScope.ENTITY -> return@forEach
+                }
             } else {
                 me.awabi2048.kantancommander.model.inferLiteralType(node.string("value"))
             }
