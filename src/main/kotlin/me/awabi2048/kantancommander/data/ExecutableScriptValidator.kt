@@ -50,7 +50,6 @@ import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.declaredArguments
-import me.awabi2048.kantancommander.model.inferredReturnType
 import me.awabi2048.kantancommander.item.ItemStackCodec
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.error.ErrorSeverity
@@ -260,6 +259,7 @@ object ExecutableScriptValidator {
             isInsideForBody(effective, node.id),
             temporaryAvailability[node.id] ?: emptyMap(),
             phase,
+            limits,
         )
         // 全量側と同じく未配置編集時は phase を寄せます。
         if (phase == ValidationPhase.EDIT_TIME) {
@@ -325,6 +325,7 @@ object ExecutableScriptValidator {
                 isInsideForBody(effective, node.id),
                 temporaryAvailability[node.id] ?: emptyMap(),
                 phase,
+                limits,
             )
             // #8: snapshot 内部は被呼出側のグラフとして、呼び出し連鎖に積んで検証します。
             node.snapshot?.let {
@@ -360,14 +361,64 @@ object ExecutableScriptValidator {
     }
 
     /**
-     * issue #8 の返り値型の一貫性を検証します。
+     * issue #8: RETURNノードの型解決の共通処理です。
+     *
+     * 戻り元の変数は参照元scopeの定義表で解決します。EXECUTION は入口時点の
+     * 定義表、WORLD は永続定義表を見ます。scope を無視して WORLD 定義を引くと、
+     * 同名変数の型で誤判定するため、確定できない場合は null とし、
+     * 呼び出し側は実行時の型安定で担保します。
+     * 一貫性検証と呼出側受取検査の両方がこの解決を使い、経路間の差を作りません。
+     */
+    internal fun resolveReturnNodeType(
+        node: CommandNode,
+        temporaries: Map<String, ValueType>,
+        variableDefinitions: Map<String, TypedValue>?,
+    ): ValueType? {
+        val source = node.string("source").takeIf(String::isNotBlank)
+        if (source != null) {
+            return when (VariableScope.parse(node.string("sourceScope")) ?: VariableScope.EXECUTION) {
+                VariableScope.EXECUTION -> temporaries[TemporaryTemplate.normalized(source)]
+                VariableScope.WORLD -> variableDefinitions?.get(source)?.type
+                VariableScope.ENTITY -> null
+            }
+        }
+        return me.awabi2048.kantancommander.model.inferLiteralType(node.string("value"))
+    }
+
+    /**
+     * issue #8: 呼び出し先スナップショットの返り値型を推論します。
+     *
+     * 折り畳み展開とデータフロー解析は既存処理を再利用し、RETURNノードの走査順と
+     * 確定規則は一貫性検証と同一です。種子は呼び出し側の引数宣言だけを使い、
+     * callerのEXECUTION変数は混ぜません（実行時は変数表を空にして引数だけを渡すため）。
+     * 最初に確定できる型を返し、確定できなければ null とします。
+     */
+    internal fun inferSnapshotReturnType(
+        snapshot: CommandGraph,
+        callSeeds: Map<String, ValueType>,
+        variableDefinitions: Map<String, TypedValue>?,
+        limits: GraphLimits,
+    ): ValueType? {
+        val effective = if (snapshot.nodes.values.any(FoldedGraphs::isFolded)) {
+            FoldedGraphs.expand(snapshot, limits.maximumBranchDepth)
+        } else {
+            snapshot
+        }
+        val availability = analyzeTemporaryAvailability(effective, callSeeds)
+        for (node in effective.nodes.values) {
+            if (node.type != CommandType.RETURN_VALUE) continue
+            resolveReturnNodeType(node, availability[node.id] ?: emptyMap(), variableDefinitions)
+                ?.let { return it }
+        }
+        return null
+    }
+
+    /**
+     * issue #8 の返り値型の一貫性を検証します.
      *
      * グラフ内の「値を返す」ノードのうち型を確定できるものが2種以上あれば
      * 拒否します。最初に確定した型が固定であり、最後の削除で解除されることは
-     * グラフ走査の結果として自然に表れます。
-     * 戻り元の変数は参照元scopeの定義表で解決します。EXECUTION はフロー解析の
-     * 定義表、WORLD は永続定義表を見ます。scope を無視して WORLD 定義を引くと、
-     * 同名変数の型で誤判定するため、確定できない場合は除外します。
+     * グラフ走査の結果として自然に表れます。型解決は共通処理を使います。
      */
     private fun validateReturnConsistency(
         graph: CommandGraph,
@@ -379,18 +430,8 @@ object ExecutableScriptValidator {
         val known = linkedMapOf<UUID, ValueType>()
         graph.nodes.values.forEach { node ->
             if (node.type != CommandType.RETURN_VALUE) return@forEach
-            val source = node.string("source").takeIf(String::isNotBlank)
-            val type = if (source != null) {
-                when (VariableScope.parse(node.string("sourceScope")) ?: VariableScope.EXECUTION) {
-                    VariableScope.EXECUTION ->
-                        temporaries[node.id]?.get(TemporaryTemplate.normalized(source)) ?: return@forEach
-                    VariableScope.WORLD ->
-                        variableDefinitions?.get(source)?.type ?: return@forEach
-                    VariableScope.ENTITY -> return@forEach
-                }
-            } else {
-                me.awabi2048.kantancommander.model.inferLiteralType(node.string("value"))
-            }
+            val type = resolveReturnNodeType(node, temporaries[node.id] ?: emptyMap(), variableDefinitions)
+                ?: return@forEach
             known[node.id] = type
         }
         val fixed = known.values.firstOrNull() ?: return
@@ -510,6 +551,7 @@ object ExecutableScriptValidator {
         insideForBody: Boolean,
         temporaryDefinitions: Map<String, ValueType>? = null,
         phase: ValidationPhase = ValidationPhase.PREFLIGHT,
+        limits: GraphLimits = GraphLimits(),
     ) {
         validateSystemReferences(node, path, insideForBody, errors)
         validateRemovedSystemReferences(node, path, errors)
@@ -609,7 +651,7 @@ object ExecutableScriptValidator {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
             }
             CommandType.CONDITION -> validateCondition(node, path, errors, variableDefinitions, temporaryDefinitions)
-            CommandType.DISK_CALL -> validateDiskCall(node, path, errors, variableDefinitions, temporaryDefinitions)
+            CommandType.DISK_CALL -> validateDiskCall(node, path, errors, variableDefinitions, temporaryDefinitions, limits)
             CommandType.RETURN_VALUE -> validateReturnValue(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.VARIABLE -> validateVariable(node, path, errors, variableDefinitions, insideForBody, temporaryDefinitions)
             CommandType.TEMP_SET -> validateTemporary(node, path, errors, temporaryDefinitions)
@@ -1957,6 +1999,7 @@ object ExecutableScriptValidator {
         errors: MutableList<ScriptValidationError>,
         variableDefinitions: Map<String, TypedValue>?,
         temporaryDefinitions: Map<String, ValueType>?,
+        limits: GraphLimits,
     ) {
         if (node.snapshot == null) {
             errors += nodeError(node, path, setOf("diskId"), "呼び出すディスク内容が未設定です")
@@ -2026,16 +2069,14 @@ object ExecutableScriptValidator {
                 return
             }
             val calleeReturn = node.snapshot?.let { snapshot ->
-                // issue #8: 呼び出し先の返り値は参照元scopeで解決します。
-                // EXECUTION は呼び出し側の引数宣言、WORLD は永続定義表を見ます。
-                // 宣言を無視して WORLD 定義を引くと、同名変数の型で誤判定します。
-                val declaredTypes = declared.associate { argument ->
+                // issue #8: 呼び出し先の返り値は共通解決で求めます。
+                // 種子は呼び出し側の引数宣言だけを使い、callerのEXECUTION変数は
+                // 混ぜません。引数・ローカル定義・WORLD変数を別々に探索する
+                // 処理は残さず、一貫性検証と同じ解析結果を使います。
+                val callSeeds = declared.associate { argument ->
                     TemporaryTemplate.normalized(argument.name) to argument.type
                 }
-                snapshot.inferredReturnType(
-                    executionTypes = { name -> declaredTypes[TemporaryTemplate.normalized(name)] },
-                    worldTypes = { name -> variableDefinitions?.get(name)?.type },
-                )
+                inferSnapshotReturnType(snapshot, callSeeds, variableDefinitions, limits)
             }
             if (receiverType != null && calleeReturn != null && receiverType != calleeReturn) {
                 errors += nodeError(node, path, setOf("diskId"), "戻り値の型が一致しません")
