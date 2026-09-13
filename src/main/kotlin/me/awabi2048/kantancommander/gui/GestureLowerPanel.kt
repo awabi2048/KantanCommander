@@ -841,6 +841,10 @@ class GestureLowerPanel(
                             key = kind.name,
                             label = Component.text(TriggerDisplay.kindName(player, kind)),
                             selected = current == kind,
+                            background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                            outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(current == kind)?.let {
+                                Bukkit.createBlockData(it)
+                            },
                         )
                     },
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
@@ -875,6 +879,10 @@ class GestureLowerPanel(
                             key = event.name,
                             label = Component.text(TriggerDisplay.eventName(player, event)),
                             selected = current == event,
+                            background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                            outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(current == event)?.let {
+                                Bukkit.createBlockData(it)
+                            },
                         )
                     },
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),

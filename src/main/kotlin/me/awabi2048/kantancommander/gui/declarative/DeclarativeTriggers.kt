@@ -7,17 +7,16 @@ import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiNode
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiSizeSpec
 import com.awabi2048.ccsystem.api.gesturegui.layout.GestureGuiText
 import me.awabi2048.kantancommander.gui.GestureLowerPanel
-import me.awabi2048.kantancommander.gui.GestureSettingVisualPolicy
 import net.kyori.adventure.text.Component
-import org.bukkit.Bukkit
-import org.bukkit.Material
 import org.bukkit.block.data.BlockData
 
-/** issue #7 の起動方法の選択肢1件です。文言は呼び出し側で解決します。 */
+/** issue #7 の起動方法の選択肢1件です。文言・素材は呼び出し側で解決します。 */
 data class TriggerChoiceOption(
     val key: String,
     val label: Component,
     val selected: Boolean,
+    val background: BlockData,
+    val outline: BlockData?,
 )
 
 /** issue #7 の起動方法の選択画面の解決済み入力です。選択時に即時確定します。 */
@@ -80,10 +79,8 @@ object DeclarativeTriggers {
                 SettingsChoiceCard(
                     elementId = "lower-$idPrefix:${option.key}",
                     label = option.label,
-                    background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
-                    outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(option.selected)?.let {
-                        Bukkit.createBlockData(it)
-                    },
+                    background = option.background,
+                    outline = option.outline,
                     enabled = true,
                     cx = cx,
                     cy = GestureLowerPanel.CHILD_CHOICE_TOP_Y - row * GestureLowerPanel.CHILD_CHOICE_PITCH,

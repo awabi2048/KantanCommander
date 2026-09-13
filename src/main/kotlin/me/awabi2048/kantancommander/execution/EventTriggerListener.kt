@@ -156,16 +156,10 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onRedstoneChange(event: BlockRedstoneEvent) {
-        val data = event.block.blockData
-        // 感圧板に専用型はないため、加重板（AnaloguePowerable）または
-        // 感圧板素材の Powerable で判定し、素材名で裏付けます。
-        val kind = when {
-            data is org.bukkit.block.data.type.Switch -> EventTriggerKind.SWITCH
-            data is org.bukkit.block.data.AnaloguePowerable ||
-                (data is org.bukkit.block.data.Powerable && event.block.type.name.endsWith("_PRESSURE_PLATE"))
-            -> EventTriggerKind.PRESSURE_PLATE
-            else -> return
-        }
+        val kind = EventTriggerClassification.switchOrPlate(
+            event.block.blockData,
+            event.block.type.name,
+        ) ?: return
         val was = event.oldCurrent > 0
         val now = event.newCurrent > 0
         if (was == now) return
