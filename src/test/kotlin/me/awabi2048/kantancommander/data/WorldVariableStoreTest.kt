@@ -1,8 +1,8 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandValueRules
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.TypedValue
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -21,8 +21,8 @@ class WorldVariableStoreTest {
         val firstWorld = UUID.randomUUID()
         val secondWorld = UUID.randomUUID()
         WorldVariableStore(directory).apply {
-            set(firstWorld, "wave", WorldVariableValue(VariableType.NUMBER, numberValue = 3.0))
-            set(secondWorld, "wave", WorldVariableValue(VariableType.NUMBER, numberValue = 8.0))
+            set(firstWorld, "wave", TypedValue(ValueType.NUMBER, numberValue = 3.0))
+            set(secondWorld, "wave", TypedValue(ValueType.NUMBER, numberValue = 8.0))
         }
 
         val reloaded = WorldVariableStore(directory)
@@ -34,7 +34,7 @@ class WorldVariableStoreTest {
     fun `removing a variable is persisted`() {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)
-        store.set(world, "open", WorldVariableValue(VariableType.STRING, stringValue = "true"))
+        store.set(world, "open", TypedValue(ValueType.STRING, stringValue = "true"))
         store.remove(world, "open")
 
         assertNull(WorldVariableStore(directory).get(world, "open"))
@@ -44,7 +44,7 @@ class WorldVariableStoreTest {
     fun `deleting a MyWorld removes cached and persisted values`() {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)
-        store.set(world, "shared", WorldVariableValue(VariableType.NUMBER, numberValue = 7.0))
+        store.set(world, "shared", TypedValue(ValueType.NUMBER, numberValue = 7.0))
 
         assertTrue(store.deleteWorld(world))
         assertTrue(store.list(world).isEmpty())
@@ -57,7 +57,7 @@ class WorldVariableStoreTest {
         val store = WorldVariableStore(directory)
 
         assertThrows(IllegalArgumentException::class.java) {
-            store.set(world, "broken", WorldVariableValue(VariableType.NUMBER, numberValue = Double.NaN))
+            store.set(world, "broken", TypedValue(ValueType.NUMBER, numberValue = Double.NaN))
         }
         assertNull(store.get(world, "broken"))
     }
@@ -67,21 +67,21 @@ class WorldVariableStoreTest {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)
 
-        assertTrue(store.define(world, "counter", VariableType.NUMBER))
-        assertEquals(VariableType.NUMBER, store.definitions(world)["counter"]?.type)
+        assertTrue(store.define(world, "counter", ValueType.NUMBER))
+        assertEquals(ValueType.NUMBER, store.definitions(world)["counter"]?.type)
         assertEquals(0.0, store.get(world, "counter")?.numberValue)
 
-        assertTrue(store.define(world, "label", VariableType.STRING))
-        assertEquals(VariableType.STRING, store.definitions(world)["label"]?.type)
+        assertTrue(store.define(world, "label", ValueType.STRING))
+        assertEquals(ValueType.STRING, store.definitions(world)["label"]?.type)
         assertEquals("", store.get(world, "label")?.stringValue)
-        assertTrue(!store.define(world, "counter", VariableType.STRING))
+        assertTrue(!store.define(world, "counter", ValueType.STRING))
     }
 
     @Test
     fun `system variable names cannot be defined or edited as world variables`() {
         val world = UUID.randomUUID()
         val store = WorldVariableStore(directory)
-        val value = WorldVariableValue(VariableType.NUMBER, numberValue = 1.0)
+        val value = TypedValue(ValueType.NUMBER, numberValue = 1.0)
 
         assertThrows(IllegalArgumentException::class.java) {
             store.define(world, "CURRENT_LOOP_COUNT", value)
@@ -104,13 +104,15 @@ class WorldVariableStoreTest {
                 "integer_value": {"type":"INTEGER","integerValue":3},
                 "text_value": {"type":"TEXT","textValue":"hello"},
                 "CURRENT_LOOP_COUNT": {"type":"NUMBER","numberValue":99},
-                "old_flag": {"type":"BOOLEAN","booleanValue":true}
+                "new_flag": {"type":"BOOLEAN","booleanValue":true},
+                "old_position": {"type":"POSITION","x":1,"y":2,"z":3}
               },
               "values": {
                 "integer_value": {"type":"INTEGER","integerValue":4},
                 "text_value": {"type":"TEXT","textValue":"world"},
                 "current_loop_count": {"type":"NUMBER","numberValue":99},
-                "old_flag": {"type":"BOOLEAN","booleanValue":false}
+                "new_flag": {"type":"BOOLEAN","booleanValue":false},
+                "old_position": {"type":"POSITION","x":1,"y":2,"z":3}
               }
             }
             """.trimIndent(),
@@ -119,10 +121,14 @@ class WorldVariableStoreTest {
         val store = WorldVariableStore(directory)
         assertEquals(4.0, store.get(world, "integer_value")?.numberValue)
         assertEquals("world", store.get(world, "text_value")?.stringValue)
-        assertNull(store.get(world, "old_flag"))
+        // #2: BOOLEAN は永続型として採用するため移行します。
+        assertEquals(false, store.get(world, "new_flag")?.booleanValue)
+        // POSITION は廃止型のため破棄します。
+        assertNull(store.get(world, "old_position"))
         assertTrue(store.definitions(world).keys.none { it.equals("current_loop_count", ignoreCase = true) })
-        assertEquals(VariableType.NUMBER, store.definitions(world)["integer_value"]?.type)
-        assertEquals(VariableType.STRING, store.definitions(world)["text_value"]?.type)
+        assertEquals(ValueType.NUMBER, store.definitions(world)["integer_value"]?.type)
+        assertEquals(ValueType.STRING, store.definitions(world)["text_value"]?.type)
+        assertEquals(ValueType.BOOLEAN, store.definitions(world)["new_flag"]?.type)
     }
 
     @Test
@@ -168,16 +174,16 @@ class WorldVariableStoreTest {
         val overLimit = "a".repeat(CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH + 1)
 
         assertThrows(IllegalArgumentException::class.java) {
-            store.set(world, "long", WorldVariableValue(VariableType.STRING, stringValue = overLimit))
+            store.set(world, "long", TypedValue(ValueType.STRING, stringValue = overLimit))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            store.define(world, "long", WorldVariableValue(VariableType.STRING, stringValue = overLimit))
+            store.define(world, "long", TypedValue(ValueType.STRING, stringValue = overLimit))
         }
         assertNull(store.get(world, "long"))
 
         // 上限ちょうどの値は受理されます。
         val atLimit = "a".repeat(CommandValueRules.WORLD_VARIABLE_STRING_MAX_LENGTH)
-        store.set(world, "at_limit", WorldVariableValue(VariableType.STRING, stringValue = atLimit))
+        store.set(world, "at_limit", TypedValue(ValueType.STRING, stringValue = atLimit))
         assertEquals(atLimit, store.get(world, "at_limit")?.stringValue)
     }
 

@@ -5,7 +5,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.ValueType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -118,7 +118,7 @@ class CommandDialogSpecsTest {
         )
 
         val variable = CommandType.VARIABLE.newNode().apply {
-            params["type"] = VariableType.NUMBER.name
+            params["type"] = ValueType.NUMBER.name
             params["operation"] = VariableOperation.DEFINE.name
         }
         assertEquals(
@@ -163,17 +163,17 @@ class CommandDialogSpecsTest {
 
     @Test
     fun `world variable value specs reject invalid values at the save boundary`() {
-        val number = CommandDialogSpecs.worldVariableValue(VariableType.NUMBER)
+        val number = requireNotNull(CommandDialogSpecs.worldVariableValue(ValueType.NUMBER))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_BODY,
-            CommandDialogSpecs.worldVariableValueBody(VariableType.NUMBER),
+            CommandDialogSpecs.worldVariableValueBody(ValueType.NUMBER),
         )
         assertEquals(32, number.maxLength)
         assertEquals(CommandDialogSpecs.InputFormat.NUMBER, number.format)
         assertNull(number.validateInput(" 1.5 "))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID,
-            CommandDialogSpecs.worldVariableValueInvalid(VariableType.NUMBER),
+            CommandDialogSpecs.worldVariableValueInvalid(ValueType.NUMBER),
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_NUMBER_INVALID,
@@ -184,10 +184,10 @@ class CommandDialogSpecsTest {
             number.validateInput("Infinity"),
         )
 
-        val string = CommandDialogSpecs.worldVariableValue(VariableType.STRING)
+        val string = requireNotNull(CommandDialogSpecs.worldVariableValue(ValueType.STRING))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_BODY,
-            CommandDialogSpecs.worldVariableValueBody(VariableType.STRING),
+            CommandDialogSpecs.worldVariableValueBody(ValueType.STRING),
         )
         assertEquals(256, string.maxLength)
         assertEquals(CommandDialogSpecs.InputFormat.ANY_STRING, string.format)
@@ -195,7 +195,7 @@ class CommandDialogSpecsTest {
         assertNull(string.validateInput("ordinary text"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID,
-            CommandDialogSpecs.worldVariableValueInvalid(VariableType.STRING),
+            CommandDialogSpecs.worldVariableValueInvalid(ValueType.STRING),
         )
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_STRING_INVALID,
@@ -491,5 +491,34 @@ class CommandDialogSpecsTest {
                 CommandDialogSpecs.formatCoordinateComponent(CoordinateSemantics.RELATIVE, 5.0),
             ),
         )
+    }
+
+    @Test
+    fun `condition right side follows operator driven types`() {
+        fun valueNode(operator: String) = me.awabi2048.kantancommander.model.CommandNode(
+            type = me.awabi2048.kantancommander.model.CommandType.CONDITION,
+            params = linkedMapOf(
+                "subject" to me.awabi2048.kantancommander.model.ConditionSubject.VALUE.name,
+                "operator" to operator,
+            ),
+        )
+        // issue #5: 比較演算子が型を決める場合だけ型別検証します。
+        // contains は文字列、比較演算子は数値のみを受け付けます。
+        val containsSpec = CommandDialogSpecs.conditionRightSpec(valueNode("contains"))
+        assertNull(containsSpec.validateInput("hello"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            containsSpec.validateInput(""),
+        )
+        val greaterSpec = CommandDialogSpecs.conditionRightSpec(valueNode(">"))
+        assertNull(greaterSpec.validateInput("1.5"))
+        assertNull(greaterSpec.validateInput("%{count}%"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            greaterSpec.validateInput("abc"),
+        )
+        // ==・!= は全型があり得るため汎用仕様とします。
+        val equalSpec = CommandDialogSpecs.conditionRightSpec(valueNode("=="))
+        assertNull(equalSpec.validateInput("abc"))
     }
 }

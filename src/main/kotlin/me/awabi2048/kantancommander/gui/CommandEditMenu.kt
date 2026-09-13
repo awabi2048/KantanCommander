@@ -23,6 +23,11 @@ import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandNode
+import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.applyCalledDisk
+import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.DiskArgument
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
@@ -35,7 +40,6 @@ import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
@@ -48,8 +52,8 @@ import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import com.awabi2048.ccsystem.api.localization.generated.MyworldGuiSettingsKeys
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
@@ -224,6 +228,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "field" to MenuActionHandler { context ->
                         val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        // issue #8: 呼び出し設定は制御系ですが両GUIで編集します。
+                        // ディスク選択は手持ち入力、引数・戻り値は専用画面へ進みます。
+                        if (node.type == CommandType.DISK_CALL && field == "diskId") {
+                            return@MenuActionHandler setHeldDisk(context)
+                        }
+                        if (node.type == CommandType.DISK_CALL && field == "diskCallSettings") {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, DISK_CALL_SETTINGS_ID))
+                            )
+                        }
                         if (!CommandPresentationPolicy.isSimpleEditable(node.type)) {
                             // 古い経路から制御系ノードの設定画面へ届いた操作は受け付けません。
                             return@MenuActionHandler MenuActionResult.Ignored
@@ -435,18 +449,30 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             showSoundSettingForm(context.player, context.route, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
-                        if (field == "particleDisplay" && node.type == CommandType.PARTICLE) {
+                        if (field == "particleDisplay" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY)) {
                             return@MenuActionHandler MenuActionResult.Success(
                                 MenuUpdate.Navigate(choiceRoute(context.route, PARTICLE_DISPLAY_ID))
                             )
                         }
-                        if (field == "particle" && node.type == CommandType.PARTICLE) {
+                        if (field == "particle" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY)) {
                             showParticleForm(context.player, context.route, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
-                        if (field == "geometrySettings" && node.type == CommandType.PARTICLE) {
+                        // #30: 図形の設定は二段階です。未選択時は図形選択へ、選択済みは
+                        // その図形固有の詳細設定（形状変更＋数値）へ進みます。
+                        if (field == "geometrySettings" && node.type == CommandType.PARTICLE_GEOMETRY) {
+                            val target = if (ParticleGeometry.shape(node) == ParticleShape.POINT_SCATTER) {
+                                choiceRoute(context.route, PARTICLE_SHAPE_ID)
+                            } else {
+                                choiceRoute(context.route, GEOMETRY_SETTINGS_ID)
+                            }
                             return@MenuActionHandler MenuActionResult.Success(
-                                MenuUpdate.Navigate(choiceRoute(context.route, GEOMETRY_SETTINGS_ID))
+                                MenuUpdate.Navigate(target)
+                            )
+                        }
+                        if (field == "geometryEnd" && node.type == CommandType.PARTICLE_GEOMETRY) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(genericPositionRoute(context.route, "particle_end"))
                             )
                         }
                         if (field == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH) {
@@ -510,8 +536,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "other" && node.type == CommandType.ENTITY_ACTION ->
                                 targetRoute(context.route, "secondary_target")
                             // issue #29: 効果音・パーティクル・召喚の位置は汎用プリセット画面へ進みます。
+                            // #30: 図形の中心・始点も同じ表示位置画面を使います。
                             field == "soundPosition" -> genericPositionRoute(context.route, "sound_position")
-                            field == "position" && node.type == CommandType.PARTICLE ->
+                            field == "position" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) ->
                                 genericPositionRoute(context.route, "particle_position")
                             field == "summonPosition" -> genericPositionRoute(context.route, "summon_position")
                             else -> null
@@ -695,6 +722,62 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                DISK_CALL_SETTINGS_ID,
+                renderer = { renderDiskCallSettings(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "arg" to MenuActionHandler { context ->
+                        val name = context.payload["name"]?.takeIf(String::isNotBlank)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val argument = node(context.route)?.declaredArguments()
+                            ?.firstOrNull { it.name == name }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        openDiskCallArgumentForm(context.player, context.route, argument)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    "returnScope" to MenuActionHandler { context ->
+                        val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (current.string("returnName").isBlank()) {
+                            // 受取先がない場合は変更しません。
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        val next = if (current.string("returnScope")
+                                .ifBlank { VariableScope.EXECUTION.name } == VariableScope.WORLD.name
+                        ) {
+                            VariableScope.EXECUTION.name
+                        } else {
+                            VariableScope.WORLD.name
+                        }
+                        if (!updateNode(context.player, context.route) {
+                                it.params["returnScope"] = next
+                                it.markConfigured("returnScope")
+                            }
+                        ) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    "returnName" to MenuActionHandler { context ->
+                        openDiskCallReturnNameForm(context.player, context.route)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    "argPage" to MenuActionHandler { context ->
+                        val page = context.payload["page"]?.toIntOrNull()
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(
+                                context.route.copy(payload = context.route.payload + ("argPage" to page.toString())),
+                            ),
+                        )
                     },
                 ),
             )
@@ -908,19 +991,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "target" to MenuActionHandler { context ->
                         MenuActionResult.Success(MenuUpdate.Navigate(targetRoute(context.route, "node_target")))
                     },
-                    "mode" to MenuActionHandler { context ->
-                        val mode = context.payload["mode"]
-                            ?.let { runCatching { ParticleDisplayMode.valueOf(it) }.getOrNull() }
-                            ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_DISPLAY_MODE, mode.name)
-                            }) {
-                            return@MenuActionHandler MenuActionResult.Rejected(
-                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
-                            )
-                        }
-                        MenuActionResult.Success(MenuUpdate.Back)
-                    },
                 ),
             )
         )
@@ -938,9 +1008,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         showGeometryForm(context.player, context.route, node)
                         MenuActionResult.Success(MenuUpdate.None)
-                    },
-                    "end" to MenuActionHandler { context ->
-                        MenuActionResult.Success(MenuUpdate.Navigate(genericPositionRoute(context.route, "particle_end")))
                     },
                 ),
             )
@@ -1105,9 +1172,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderSettings(player: Player, route: MenuRoute): InventoryMenuView {
         val node = node(route)
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS)), listOf(backElement(player)))
-        if (!CommandPresentationPolicy.isSimpleEditable(node.type)) {
+        if (!CommandPresentationPolicy.isSimpleEditable(node.type) && node.type != CommandType.DISK_CALL) {
             // 古い経路から制御系ノードの設定画面へ届いた場合は表示のみとし、
             // 設定変更・削除の入口を作りません。
+            // issue #8: 呼び出し設定は制御系ですが両GUIで編集するため除外します。
             return InventoryMenuView(
                 45,
                 KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS)),
@@ -1167,15 +1235,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
         elements += backElement(player, CommandSettingsSlotPolicy.backSlot(node.type, fields.size))
         // 削除は右クリックではなく、設定画面内の削除項目から確認画面へ進みます。
-        elements += choiceElement(
-            player = player,
-            slot = 53,
-            material = Material.RED_CONCRETE,
-            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DELETE_COMMAND),
-            actionId = "delete",
-            payload = mapOf(NODE_ID to node.id.toString()),
-            style = GuiNameStyle.DANGER,
-        )
+        // 簡易GUIでは制御系コマンドを削除できないため、DISK_CALLの設定は許可しても
+        // 削除項目は出しません。
+        if (CommandPresentationPolicy.isSimpleEditable(node.type)) {
+            elements += choiceElement(
+                player = player,
+                slot = 53,
+                material = Material.RED_CONCRETE,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DELETE_COMMAND),
+                actionId = "delete",
+                payload = mapOf(NODE_ID to node.id.toString()),
+                style = GuiNameStyle.DANGER,
+            )
+        }
         return InventoryMenuView(
             menuSize,
             KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS_NAMED, mapOf("command" to KcI18n.text(player, node.type.key)))),
@@ -1243,6 +1315,40 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TARGET_TITLE)), elements)
+    }
+
+    /** 呼び出すディスクは手持ちの実物から取得します。引数宣言も同時に転記します。 */
+    private fun setHeldDisk(context: MenuActionContext): MenuActionResult {
+        val diskId = KantanItemService.diskId(context.player.inventory.itemInMainHand)
+        if (diskId == null) {
+            context.player.sendMessage(
+                KcI18n.text(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_HELD_DISK_REQUIRED),
+            )
+            return MenuActionResult.Ignored
+        }
+        val disk = plugin.scripts.load(diskId)
+        if (disk == null) {
+            context.player.sendMessage(
+                KcI18n.text(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_HELD_DISK_REQUIRED),
+            )
+            return MenuActionResult.Ignored
+        }
+        if (!updateNode(context.player, context.route, configuredFields = setOf("diskId")) {
+                it.applyCalledDisk(diskId, disk)
+            }
+        ) {
+            return MenuActionResult.Rejected(
+                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+        }
+        context.player.sendMessage(
+            KcI18n.text(
+                context.player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_DISK_SET,
+                mapOf("disk" to disk.name),
+            ),
+        )
+        return MenuActionResult.Success(MenuUpdate.Refresh)
     }
 
     /** ブロックは自由入力や任意スロット選択を許さず、メインハンドから取得します。空手はAIRです。 */
@@ -1525,6 +1631,206 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             layout.size,
             KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION)),
             elements,
+        )
+    }
+
+    /**
+     * issue #8 の呼び出し設定子画面です（簡易GUI）。
+     *
+     * 引数の値（複合型は変数名、スカラー型はリテラル）と戻り値の受取先を編集します。
+     * 保存規則はジェスチャーGUIと同一であり、リテラルと変数指定は排他です。
+     * 引数は8件ずつページングし、候補上限（14件）に収めます。
+     */
+    private fun renderDiskCallSettings(player: Player, route: MenuRoute): InventoryMenuView {
+        val current = node(route)
+        if (current == null || current.type != CommandType.DISK_CALL) {
+            return InventoryMenuView(
+                45,
+                KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS)),
+                listOf(backElement(player)),
+            )
+        }
+        val pageSize = 8
+        val declared = current.declaredArguments()
+        val pageCount = ((declared.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["argPage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        val rows = declared.drop(page * pageSize).take(pageSize)
+        // 引数行＋戻り値2行＋ページャ2行で上限（14件）に収めます。
+        val layout = ChoiceMenuLayoutPolicy.layout((rows.size + 2 + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
+        val elements = mutableListOf<MenuElement>()
+        rows.forEachIndexed { index, argument ->
+            val variable = current.string("argvar_${argument.name}").takeIf(String::isNotBlank)
+            val literal = current.string("arg_${argument.name}").takeIf(String::isNotBlank)
+            val value = variable?.let { "%{$it}%" } ?: literal.orEmpty()
+                .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+            elements += choiceElement(
+                player,
+                layout.itemSlots[index],
+                Material.WRITABLE_BOOK,
+                argument.name,
+                "arg",
+                mapOf("name" to argument.name),
+                dataLabel = KcI18n.text(player, displayValueTypeLabel(argument.type)),
+                dataValue = value,
+            )
+        }
+        val returnName = current.string("returnName")
+        val returnScope = current.string("returnScope").ifBlank { VariableScope.EXECUTION.name }
+        elements += choiceElement(
+            player,
+            layout.itemSlots[rows.size],
+            Material.ENDER_EYE,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SCOPE),
+            "returnScope",
+            dataValue = if (returnScope == VariableScope.WORLD.name) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
+            } else {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
+            },
+        )
+        elements += choiceElement(
+            player,
+            layout.itemSlots[rows.size + 1],
+            Material.NAME_TAG,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN),
+            "returnName",
+            dataValue = returnName.ifBlank {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+            },
+        )
+        if (pageCount > 1) {
+            elements += choiceElement(
+                player,
+                layout.itemSlots[rows.size + 2],
+                Material.ARROW,
+                "◀",
+                "argPage",
+                mapOf("page" to (page - 1).toString()),
+                enabled = page > 0,
+            )
+            elements += choiceElement(
+                player,
+                layout.itemSlots[rows.size + 3],
+                Material.ARROW,
+                "▶",
+                "argPage",
+                mapOf("page" to (page + 1).toString()),
+                enabled = page < pageCount - 1,
+            )
+        }
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS)),
+            elements,
+        )
+    }
+
+    /** 呼び出し引数の値を編集します。型に応じて値入力または変数名入力へ進みます。 */
+    private fun openDiskCallArgumentForm(player: Player, route: MenuRoute, argument: DiskArgument) {
+        val current = node(route) ?: return
+        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+        if (complex) {
+            val spec = CommandDialogSpecs.variableName
+            showTextForm(
+                player = player,
+                route = route,
+                formId = "disk-call-arg-variable",
+                title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                fields = listOf(
+                    FormTextField(
+                        "value",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_ARG_VARIABLE),
+                        current.string("argvar_${argument.name}"),
+                        spec = spec,
+                    ),
+                ),
+                save = { values ->
+                    val raw = values.getValue("value").trim()
+                    if (raw.isEmpty() || !CommandValueRules.isVariableName(raw)) return@showTextForm false
+                    updateNode(player, route) {
+                        it.params["argvar_${argument.name}"] = raw
+                        it.params.remove("arg_${argument.name}")
+                        it.clearConfigured("arg_${argument.name}")
+                        it.markConfigured("argvar_${argument.name}")
+                    }
+                },
+            )
+            return
+        }
+        val spec = CommandDialogSpecs.Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+            256,
+            validate = { raw ->
+                if (CommandSettingsModel.isCallArgumentLiteralValid(argument.type, raw)) null
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            },
+        )
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "disk-call-arg-value",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = listOf(
+                FormTextField(
+                    "value",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_ARG_VALUE),
+                    current.string("arg_${argument.name}"),
+                    spec = spec,
+                ),
+            ),
+            save = { values ->
+                val raw = values.getValue("value").trim()
+                if (raw.isEmpty() || !CommandSettingsModel.isCallArgumentLiteralValid(argument.type, raw)) {
+                    return@showTextForm false
+                }
+                updateNode(player, route) {
+                    it.params["arg_${argument.name}"] = raw
+                    it.params.remove("argvar_${argument.name}")
+                    it.clearConfigured("argvar_${argument.name}")
+                    it.markConfigured("arg_${argument.name}")
+                }
+            },
+        )
+    }
+
+    /** 戻り値の受取先変数名を編集します。空欄で受取を解除します。 */
+    private fun openDiskCallReturnNameForm(player: Player, route: MenuRoute) {
+        val current = node(route) ?: return
+        // 空欄での解除を受け付けるため、必須指定を外します。空欄以外は変数名を検証します。
+        val spec = CommandDialogSpecs.variableName.copy(required = false)
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "disk-call-return-name",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = listOf(
+                FormTextField(
+                    "value",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN_NAME),
+                    current.string("returnName"),
+                    spec = spec,
+                ),
+            ),
+            save = { values ->
+                val raw = values.getValue("value").trim()
+                if (raw.isNotEmpty() && !CommandValueRules.isVariableName(raw)) return@showTextForm false
+                updateNode(player, route) {
+                    if (raw.isEmpty()) {
+                        it.params.remove("returnName")
+                        it.params.remove("returnScope")
+                        it.clearConfigured("returnName")
+                        it.clearConfigured("returnScope")
+                    } else {
+                        it.params["returnName"] = raw
+                        if (it.string("returnScope").isBlank()) {
+                            it.params["returnScope"] = VariableScope.EXECUTION.name
+                        }
+                        it.markConfigured("returnName")
+                        it.markConfigured("returnScope")
+                    }
+                }
+            },
         )
     }
 
@@ -2459,10 +2765,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return current?.kind == PositionKind.TARGET && matched == null
     }
 
+    /**
+     * 表示対象（particleDisplay）の設定画面です。
+     *
+     * #30で表示方式の選択は廃止し、対象指定だけを扱います。コマンド選択そのものが
+     * 通常表示／図形表示の選択を兼ねるため、ここで方式を切り替えません。
+     */
     private fun renderParticleDisplay(player: Player, route: MenuRoute): InventoryMenuView {
-        val node = node(route)
-        val mode = node?.let(ParticleGeometry::displayMode) ?: ParticleDisplayMode.POINT
-        val layout = ChoiceMenuLayoutPolicy.layout(3)
+        val layout = ChoiceMenuLayoutPolicy.layout(1)
         val elements = listOf(
             choiceElement(
                 player,
@@ -2470,28 +2780,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 Material.PLAYER_HEAD,
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 "target",
-            ),
-            choiceElement(
-                player,
-                layout.itemSlots[1],
-                Material.SNOWBALL,
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT),
-                "mode",
-                payload = mapOf("mode" to ParticleDisplayMode.POINT.name),
-                dataValue = if (mode == ParticleDisplayMode.POINT) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
-                } else null,
-            ),
-            choiceElement(
-                player,
-                layout.itemSlots[2],
-                Material.FILLED_MAP,
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY),
-                "mode",
-                payload = mapOf("mode" to ParticleDisplayMode.GEOMETRY.name),
-                dataValue = if (mode == ParticleDisplayMode.GEOMETRY) {
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SELECTED)
-                } else null,
             ),
         ).toMutableList()
         elements += backElement(player, layout.backSlot)
@@ -2502,42 +2790,33 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
+    /**
+     * 図形固有の詳細設定画面です。
+     *
+     * #30の二段階目の画面であり、選択済み形状の変更とその形状の数値を扱います。
+     * 終点・対角点は表示位置（geometryEnd）へ分離したため、ここでは扱いません。
+     */
     private fun renderGeometrySettings(player: Player, route: MenuRoute): InventoryMenuView {
         val node = node(route)
         val shape = node?.let(ParticleGeometry::shape) ?: ParticleShape.POINT_SCATTER
-        val showEnd = shape == ParticleShape.LINE || shape == ParticleShape.BOX
-        val buttons = buildList {
-            add("shape")
-            add("numbers")
-            if (showEnd) add("end")
-        }
-        val layout = ChoiceMenuLayoutPolicy.layout(buttons.size)
-        val elements = buttons.mapIndexed { index, button ->
-            when (button) {
-                "shape" -> choiceElement(
-                    player,
-                    layout.itemSlots[index],
-                    Material.FILLED_MAP,
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS),
-                    "shape",
-                    dataValue = KcI18n.text(player, geometryShapeKey(shape)),
-                )
-                "numbers" -> choiceElement(
-                    player,
-                    layout.itemSlots[index],
-                    Material.PAPER,
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS),
-                    "numbers",
-                )
-                else -> choiceElement(
-                    player,
-                    layout.itemSlots[index],
-                    Material.COMPASS,
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION),
-                    "end",
-                )
-            }
-        }.toMutableList()
+        val layout = ChoiceMenuLayoutPolicy.layout(2)
+        val elements = listOf(
+            choiceElement(
+                player,
+                layout.itemSlots[0],
+                Material.FILLED_MAP,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS),
+                "shape",
+                dataValue = KcI18n.text(player, geometryShapeKey(shape)),
+            ),
+            choiceElement(
+                player,
+                layout.itemSlots[1],
+                Material.PAPER,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS),
+                "numbers",
+            ),
+        ).toMutableList()
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,
@@ -2745,6 +3024,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val PARTICLE_DISPLAY_ID = "particle_display"
         private const val GEOMETRY_SETTINGS_ID = "geometry_settings"
         private const val PARTICLE_SHAPE_ID = "particle_shape"
+        /** issue #8: 呼び出し設定（引数・戻り値の受取先）の子画面です。 */
+        private const val DISK_CALL_SETTINGS_ID = "disk_call_settings"
         private const val FIREWORK_CONTENTS_ID = "firework_contents"
         private const val SCRIPT_ID = "scriptId"
         private const val NODE_ID = "nodeId"
@@ -2932,27 +3213,19 @@ sealed interface DisplayValue {
         }
     }
 
-    /** パーティクルの対象と表示方式を、一つの設定欄で現在値として表示します。 */
+    /**
+     * パーティクルの表示対象を、一つの設定欄で現在値として表示します。
+     *
+     * #30で表示方式の選択は廃止しました。対象指定だけを扱います。
+     */
     data class ParticleDisplay(
         val targetKind: TargetKind?,
-        val mode: ParticleDisplayMode,
     ) : DisplayValue {
         override fun rows(player: Player): List<TimingRow> = listOf(
             TimingRow(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET),
                 targetKind?.let { displayTarget(it).render(player) }
                     ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
-            ),
-            TimingRow(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY),
-                KcI18n.text(
-                    player,
-                    if (mode == ParticleDisplayMode.GEOMETRY) {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY
-                    } else {
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT
-                    },
-                ),
             ),
         )
     }
@@ -3322,19 +3595,9 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_SCOPE,
             ) { displaySoundScope(it.string("soundScope", "POSITION")) },
         )
+        // #30: 両コマンドともタブ順を「種類 → 表示設定 → 表示位置 → 表示対象」に統一します。
+        // 種類（particle）と表示対象（particleDisplay）は共有し、表示設定の中身だけが型固有です。
         CommandType.PARTICLE -> listOf(
-            field(
-                "particleDisplay",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY,
-                Material.ENDER_EYE,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
-            ) {
-                DisplayValue.ParticleDisplay(
-                    targetKind = it.targetSpec?.kind,
-                    mode = ParticleGeometry.displayMode(it),
-                )
-            },
             field(
                 ParticleSettings.PARAM_PARTICLE,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
@@ -3342,13 +3605,6 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE,
             ) { displayParticle(it) },
-            field(
-                "position",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
-                Material.COMPASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
-            ) { it.particlePositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
             field(
                 "particleParameters",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_PARAMETERS,
@@ -3365,6 +3621,33 @@ object EditorMenuLayout {
                 )
             },
             field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.particlePositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "particleDisplay",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY,
+                Material.ENDER_EYE,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) {
+                DisplayValue.ParticleDisplay(
+                    targetKind = it.targetSpec?.kind,
+                )
+            },
+        )
+        CommandType.PARTICLE_GEOMETRY -> listOf(
+            field(
+                ParticleSettings.PARAM_PARTICLE,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE,
+                Material.FIREWORK_STAR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE,
+            ) { displayParticle(it) },
+            field(
                 "geometrySettings",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GEOMETRY_SETTINGS,
                 Material.FILLED_MAP,
@@ -3378,6 +3661,31 @@ object EditorMenuLayout {
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PARTICLE_PARAMETERS,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PARTICLE_PARAMETERS,
             ),
+            field(
+                "position",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.particlePositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "geometryEnd",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) { it.particleEndPositionSpec?.kind?.let(::displayPosition) ?: displayUnset() },
+            field(
+                "particleDisplay",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PARTICLE_DISPLAY,
+                Material.ENDER_EYE,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) {
+                DisplayValue.ParticleDisplay(
+                    targetKind = it.targetSpec?.kind,
+                )
+            },
         )
         CommandType.FIREWORK_LAUNCH -> listOf(
             field(
@@ -3501,16 +3809,78 @@ object EditorMenuLayout {
         )
         CommandType.DISK_CALL -> listOf(
             field("diskId", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK, Material.MUSIC_DISC_13),
+            // issue #8: 呼び出し先へ渡す引数と戻り値の受取先は、専用の子画面で編集します。
+            // 現在値欄には設定済み件数を示し、親タブを増やしません。
+            field(
+                "diskCallSettings",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS,
+                Material.WRITABLE_BOOK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISK_CALL_SETTINGS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISK_CALL_SETTINGS,
+            ) { node ->
+                val configured = node.declaredArguments().isNotEmpty() || node.string("returnName").isNotBlank()
+                if (configured) {
+                    DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
+                } else {
+                    displayUnset()
+                }
+            },
+        )
+        // issue #8: 「値を返す」は変数由来またはリテラル値のどちらかを返します。
+        // 検証層と同じく source 指定時は変数、空欄時は value 欄のリテラルを採用します。
+        CommandType.RETURN_VALUE -> listOf(
+            field("source", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SOURCE, Material.NAME_TAG),
+            field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
         )
         CommandType.VARIABLE -> listOf(
+            field("scope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE, Material.ENDER_EYE) { displayVariableScope(it.string("scope")) },
             field("operation", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.REDSTONE) { displayVariableOperation(it.string("operation")) },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG),
-            field("type", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) { displayVariableType(it.string("type")) },
+            field("type", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) { displayValueType(it.string("type")) },
             field("changeMode", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION, Material.COMPARATOR,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
             ) { displayVariableChangeMode(it.string("changeMode", "ASSIGN")) },
             field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) { displayVariableValue(it.string("value")) },
+            field("source", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SOURCE, Material.NAME_TAG),
+            field(
+                "propertySource",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_SOURCE,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+            ),
+            field(
+                "property",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_PROPERTY,
+                Material.TARGET,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+            ) { displayLiteral(it.string("property")) },
+            field(
+                "randomMin",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANDOM_MIN,
+                Material.COMPARATOR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+            ),
+            field(
+                "randomMax",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANDOM_MAX,
+                Material.COMPARATOR,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+            ),
+        ) + typedValueSubFields(
+            node ?: CommandNode(type = CommandType.VARIABLE),
+            ValueType.parse(node?.string("type")) ?: ValueType.NUMBER,
         )
         CommandType.TEMP_SET -> tempSetFields(node ?: CommandNode(type = CommandType.TEMP_SET))
         CommandType.MERGE, CommandType.FOR_END, CommandType.BREAK, CommandType.CONTINUE -> emptyList()
@@ -3534,29 +3904,66 @@ object EditorMenuLayout {
     /**
      * 「一時変数を設定」の編集項目を、一時型ごとに切り替えます。
      *
-     * NUMBER・STRING は共通値欄、LOCATIONは位置・向きを共通設定画面へ委譲し、
-     * ITEM・BLOCKはメインハンド、ENTITYは共通対象選択、SOUND・EFFECTは共通の
-     * ID／数値入力仕様を使います。型自体はtempType欄で変更し、再設定は上書きとして扱います。
+     * NUMBER・STRING・BOOLEAN は共通値欄、VECTOR は成分欄、LOCATIONは位置・向きを
+     * 共通設定画面へ委譲し、ITEM・BLOCKはメインハンド、ENTITYは共通対象選択、
+     * SOUND・EFFECTは共通のID／数値入力仕様を使います。型自体はtempType欄で変更し、
+     * 再設定は上書きとして扱います。値欄の組み立ては変数操作コマンドと共有します。
      */
     private fun tempSetFields(node: CommandNode): List<EditorField> = buildList {
         add(field("name", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, Material.NAME_TAG))
         add(field("tempType", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE, Material.STRUCTURE_VOID) {
             displayTemporaryType(it.string("tempType"))
         })
-        when (TemporaryVariableType.parse(node.string("tempType", TemporaryVariableType.NUMBER.name))
-            ?: TemporaryVariableType.NUMBER) {
-            TemporaryVariableType.NUMBER, TemporaryVariableType.STRING ->
-                add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
-                    displayVariableValue(it.string("value"))
-                })
-            TemporaryVariableType.LOCATION -> add(field(
+        val type = ValueType.parse(node.string("tempType", ValueType.NUMBER.name)) ?: ValueType.NUMBER
+        if (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN) {
+            add(field("value", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, Material.COMPARATOR) {
+                displayVariableValue(it.string("value"))
+            })
+        }
+        addAll(typedValueSubFields(node, type))
+    }
+
+    /**
+     * issue #2 の型別値入力欄です。
+     *
+     * 一時変数の設定と変数操作コマンドで共有します。NUMBER・STRING・BOOLEAN は
+     * 親の共通値欄を使うためここでは出しません。VECTOR は成分欄、複合6型は
+     * 型ごとの共通設定欄を返します。
+     */
+    private fun typedValueSubFields(node: CommandNode, type: ValueType): List<EditorField> = buildList {
+        when (type) {
+            ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN -> Unit
+            ValueType.VECTOR -> {
+                add(field(
+                    "x",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX,
+                    Material.COMPARATOR,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
+                add(field(
+                    "y",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY,
+                    Material.COMPARATOR,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
+                add(field(
+                    "z",
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ,
+                    Material.COMPARATOR,
+                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
+                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
+                ))
+            }
+            ValueType.LOCATION -> add(field(
                 "location",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
                 Material.COMPASS,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
             ) { displayTemporaryLocation(it) })
-            TemporaryVariableType.ITEM ->
+            ValueType.ITEM ->
                 // 一時アイテムは「付与アイテム」ではなく、実行内値として設定する項目です。
                 // コマンド固有の説明キー解決へ流すと item の意味が曖昧になるため、
                 // 一時値用の汎用説明をここで明示します。
@@ -3567,9 +3974,9 @@ object EditorMenuLayout {
                     descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_VALUE,
                     actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_VALUE,
                 ))
-            TemporaryVariableType.BLOCK ->
+            ValueType.BLOCK ->
                 add(field("block", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, Material.BRICKS))
-            TemporaryVariableType.ENTITY ->
+            ValueType.ENTITY ->
                 add(field(
                     "entity",
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
@@ -3577,7 +3984,7 @@ object EditorMenuLayout {
                     descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY,
                     actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY,
                 ) { it.temporaryEntityTargetSpec?.kind?.let(::displayTarget) ?: displayUnset() })
-            TemporaryVariableType.SOUND -> {
+            ValueType.SOUND -> {
                 add(field("sound", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND, Material.NOTE_BLOCK))
                 // PLAY_SOUNDと同じく、音量・ピッチは1つの共通入力画面へまとめます。
                 add(field(
@@ -3588,7 +3995,7 @@ object EditorMenuLayout {
                     actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_PARAMETERS,
                 ) { displaySoundParameters(it.string("volume", "1.0"), it.string("pitch", "1.0")) })
             }
-            TemporaryVariableType.EFFECT -> {
+            ValueType.EFFECT -> {
                 add(field("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT, Material.POTION))
                 add(field("level", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL, Material.COMPARATOR))
                 // seconds は TEMP_SET ではエフェクトの持続時間だけを表すため、
@@ -3653,6 +4060,7 @@ object EditorMenuLayout {
         "facing" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_FACING to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_FACING
         "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISKID to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISKID
         "scope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SCOPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SCOPE
+        "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME
         "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME
         "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE
         "tempType" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TYPE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE
@@ -3797,32 +4205,46 @@ private fun displayFacing(kind: FacingKind) = DisplayValue.Localized(when (kind)
 private fun displayCondition(node: CommandNode) = node.conditionSubject()
     ?.let { DisplayValue.Localized(it.key) } ?: displayUnset()
 
-private fun displayVariableType(value: String) = runCatching { VariableType.valueOf(value) }.getOrNull()?.let {
-    DisplayValue.Localized(when (it) {
-        VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
-        VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-    })
+/** issue #2 の共通値型を、既存の表示キーで解決します。真偽値・ベクトルは新規キーを使います。 */
+private fun displayValueTypeLabel(type: ValueType): LocalizationKey<String> = when (type) {
+    ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+    ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_BOOLEAN
+    ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
+    ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
+    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+    ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
+    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    ValueType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
+    ValueType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
+}
+
+private fun displayValueType(value: String) = runCatching { ValueType.valueOf(value) }.getOrNull()?.let {
+    DisplayValue.Localized(displayValueTypeLabel(it))
 } ?: displayUnset()
 
-/** 一時変数の8型を、既存の表示キーで解決します。新規キーは増やしません。 */
+/** 一時変数の型を、変数操作コマンドと共通の表示キーで解決します。 */
 private fun displayTemporaryType(value: String) =
-    TemporaryVariableType.parse(value)?.let {
-        DisplayValue.Localized(when (it) {
-            TemporaryVariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
-            TemporaryVariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-            TemporaryVariableType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
-            TemporaryVariableType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
-            TemporaryVariableType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
-            TemporaryVariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
-            TemporaryVariableType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
-            TemporaryVariableType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
-        })
+    ValueType.parse(value)?.let {
+        DisplayValue.Localized(displayValueTypeLabel(it))
     } ?: displayUnset()
+
+/** issue #2 の変数scopeを、既存の表示キーで解決します。 */
+private fun displayVariableScope(value: String) = VariableScope.parse(value)?.let {
+    DisplayValue.Localized(when (it) {
+        VariableScope.EXECUTION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION
+        VariableScope.WORLD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD
+        VariableScope.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    })
+} ?: displayUnset()
 
 private fun displayVariableOperation(value: String) = runCatching { VariableOperation.valueOf(value) }.getOrNull()?.let {
     DisplayValue.Localized(when (it) {
         VariableOperation.DEFINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DEFINE
+        VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET
         VariableOperation.CHANGE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHANGE
+        VariableOperation.COPY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_OPERATION_COPY
+        VariableOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE
     })
 } ?: displayUnset()
 
@@ -3830,6 +4252,8 @@ private fun displayVariableChangeMode(value: String) = runCatching { VariableCha
     DisplayValue.Localized(when (it) {
         VariableChangeMode.ASSIGN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN
         VariableChangeMode.CALCULATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE
+        VariableChangeMode.PROPERTY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY
+        VariableChangeMode.RANDOM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM
     })
 } ?: displayUnset()
 

@@ -6,22 +6,12 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * PARTICLEの表示方式です。
+ * 旧PARTICLEの表示方式キーです。#30でコマンド分離したため正規保存（v16以降）には含めません。
  *
- * POINTは従来の単点散布（delta／speed／count）をそのまま使い、#19の回帰対象と
- * します。GEOMETRYは図形モードで、点数を密度から導出します。保存値は明示的な
- * 大文字文字列にし、欠落した旧データはPOINTとして扱います。
+ * 旧保存データ（v15以前）の移行時に `particleDisplayMode` 文字列を読み分ける
+ * ためだけにキー文字列を残しています。新規コードは CommandType（PARTICLE／
+ * PARTICLE_GEOMETRY）で分岐してください。旧POINT／GEOMETRYのenum自体は廃止しました。
  */
-enum class ParticleDisplayMode {
-    POINT,
-    GEOMETRY,
-    ;
-
-    companion object {
-        fun parse(raw: String?): ParticleDisplayMode =
-            entries.firstOrNull { it.name == raw?.trim()?.uppercase() } ?: POINT
-    }
-}
 
 /**
  * 図形表示で描画できる形状です。
@@ -97,9 +87,6 @@ object ParticleGeometry {
     /** 生成ステップ（隣接点の最大間隔・ブロック）の範囲です。 */
     const val MIN_STEP = 0.1
     const val MAX_STEP = 8.0
-
-    fun displayMode(node: CommandNode): ParticleDisplayMode =
-        ParticleDisplayMode.parse(node.params[PARAM_DISPLAY_MODE])
 
     fun shape(node: CommandNode): ParticleShape =
         ParticleShape.parse(node.params[PARAM_SHAPE])

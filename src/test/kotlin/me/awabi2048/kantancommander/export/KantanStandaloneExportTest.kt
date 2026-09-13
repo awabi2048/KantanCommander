@@ -7,8 +7,9 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TimerSetting
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.TypedValue
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
@@ -41,8 +42,8 @@ class KantanStandaloneExportTest {
                 "mwm_export:world_a" to PreparedVariables(
                     "abc",
                     mapOf(
-                        "enabled" to WorldVariableValue(VariableType.NUMBER, numberValue = 1.0),
-                        "message" to WorldVariableValue(VariableType.STRING, stringValue = "hello"),
+                        "enabled" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
+                        "message" to TypedValue(ValueType.STRING, stringValue = "hello"),
                     ),
                 )
             ),
@@ -76,5 +77,45 @@ class KantanStandaloneExportTest {
         assertTrue(first != second)
         assertTrue(first.length <= 40)
         assertTrue(second.length <= 40)
+    }
+
+    @Test
+    fun `typed condition left name is namespaced only for world scope`() {
+        fun valueCondition(extra: Map<String, String>) =
+            me.awabi2048.kantancommander.model.CommandNode(
+                type = me.awabi2048.kantancommander.model.CommandType.CONDITION,
+                params = linkedMapOf(
+                    "subject" to me.awabi2048.kantancommander.model.ConditionSubject.VALUE.name,
+                    "operator" to "==",
+                ).also { it.putAll(extra) },
+            )
+        // issue #5: WORLD参照だけが素の変数名を持つため、名前空間を付けます。
+        val worldNode = valueCondition(
+            mapOf(
+                "leftScope" to me.awabi2048.kantancommander.model.VariableScope.WORLD.name,
+                "leftName" to "counter",
+            )
+        )
+        assertEquals("ns_counter", namespaceExportParam(worldNode, "leftName", "counter", "ns"))
+        // leftScope省略時は WORLD 扱いの既定に従います。
+        val defaultNode = valueCondition(mapOf("leftName" to "counter"))
+        assertEquals("ns_counter", namespaceExportParam(defaultNode, "leftName", "counter", "ns"))
+        // EXECUTION参照は一時変数のまま扱います。
+        val executionNode = valueCondition(
+            mapOf(
+                "leftScope" to me.awabi2048.kantancommander.model.VariableScope.EXECUTION.name,
+                "leftName" to "hit",
+            )
+        )
+        assertEquals("hit", namespaceExportParam(executionNode, "leftName", "hit", "ns"))
+        // 旧形式の VARIABLE 主語は従来どおり名前空間を付けます。
+        val legacyNode = me.awabi2048.kantancommander.model.CommandNode(
+            type = me.awabi2048.kantancommander.model.CommandType.CONDITION,
+            params = linkedMapOf(
+                "subject" to me.awabi2048.kantancommander.model.ConditionSubject.VARIABLE.name,
+                "variable" to "counter",
+            ),
+        )
+        assertEquals("ns_counter", namespaceExportParam(legacyNode, "variable", "counter", "ns"))
     }
 }

@@ -11,13 +11,12 @@ import java.util.UUID
 import java.util.logging.Logger
 
 /**
- * 統合保存版v15の移行テストです。
+ * 統合保存版v16の移行テストです。
  *
- * v13の旧ENTITY_ACTION／tagは新ENTITY_OPERATION／tagへ変換します。
- * v14は形式番号の付け替えのみ行い、内容は変えません。
- * 旧ENTITY_ACTION／ride／dismountは保存形式を変えずに読み込みます。
+ * v15・v14は#30の粒子移行（旧POINT→PARTICLE、旧GEOMETRY→PARTICLE_GEOMETRY）を
+ * 適用して読み込みます。v13以前（旧ENTITY_ACTION／tag移行を含む）は受付対象外
+ * として隔離します。旧ENTITY_ACTION／ride／dismountは保存形式を変えずに読み込みます。
  * 旧equip・旧kindは変換せず、検証層で移行漏れ・未設定として拒否します。
- * v12以前は従来どおり非対応として隔離します。
  */
 class EntityMigrationTest {
     @TempDir
@@ -61,24 +60,20 @@ class EntityMigrationTest {
     }
 
     @Test
-    fun `v13 tag action migrates to entity operation`() {
+    fun `v13 tag action is quarantined as incompatible`() {
+        // v13以前は受付対象外です。旧ENTITY_ACTION／tagの自動変換は行わず隔離します。
         val dir = temp.resolve("v13-tag").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
         writeRaw(dir, scriptId, 13, nodeId, entityActionNode(nodeId, "tag"))
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
-        val loaded = requireNotNull(store.load(scriptId))
-        val migrated = loaded.graph.nodes.getValue(nodeId)
-        assertEquals(CommandType.ENTITY_OPERATION, migrated.type)
-        assertEquals("tag", migrated.string("operation", ""))
-        assertEquals("add", migrated.string("tagOperation", ""))
-        assertEquals("kc_test", migrated.string("tag", ""))
-        assertEquals(15, loaded.formatVersion)
+        assertNull(store.load(scriptId))
+        assertTrue(requireNotNull(dir.resolve("incompatible").listFiles()).isNotEmpty())
     }
 
     @Test
-    fun `v14 entity operation loads with version bump only`() {
+    fun `v14 entity operation loads with particle migration`() {
         val dir = temp.resolve("v14-operation").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
@@ -116,21 +111,21 @@ class EntityMigrationTest {
         assertEquals(CommandType.ENTITY_OPERATION, migrated.type)
         assertEquals("tag", migrated.string("operation", ""))
         assertEquals("kc_test", migrated.string("tag", ""))
-        assertEquals(15, loaded.formatVersion)
+        assertEquals(16, loaded.formatVersion)
     }
 
     @Test
-    fun `v13 ride dismount and equip keep their shape`() {
+    fun `v14 ride dismount and equip keep their shape`() {
         // 読み込み時は形状を保ちます。旧equipの実行可否は実行前検証が
         // 移行漏れとして拒否します（自動でPLACE_ITEMへ変換しません）。
-        val dir = temp.resolve("v13-keep").also(File::mkdirs)
+        val dir = temp.resolve("v14-keep").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val rideId = UUID.randomUUID()
         val equipId = UUID.randomUUID()
         writeRaw(
             dir,
             scriptId,
-            13,
+            14,
             rideId,
             """
             ${entityActionNode(rideId, "ride", next = equipId)},
@@ -149,11 +144,11 @@ class EntityMigrationTest {
     }
 
     @Test
-    fun `v12 is quarantined as incompatible`() {
-        val dir = temp.resolve("v12").also(File::mkdirs)
+    fun `v13 is quarantined as incompatible`() {
+        val dir = temp.resolve("v13").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
         val nodeId = UUID.randomUUID()
-        writeRaw(dir, scriptId, 12, nodeId, entityActionNode(nodeId, "tag"))
+        writeRaw(dir, scriptId, 13, nodeId, entityActionNode(nodeId, "tag"))
 
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         assertNull(store.load(scriptId))

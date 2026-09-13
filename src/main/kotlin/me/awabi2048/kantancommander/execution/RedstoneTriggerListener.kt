@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.ActivationMode
+import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import org.bukkit.Bukkit
 import org.bukkit.Material
@@ -48,16 +50,37 @@ class RedstoneTriggerListener(private val plugin: KantanCommanderPlugin) : Liste
             val powerMask = RedstoneInputReader.incomingPowerMask(block)
             val hasPower = RedstoneInputReader.isPowered(powerMask)
             val previous = runtimeState.observePower(placement.key, powerMask)
-            val previousRun = runtimeState.timerAnchor(script.id, script.timer.enabled, now)
-            val shouldRun = RedstoneActivationPolicy.shouldRun(
-                activation = script.activation,
-                timerEnabled = script.timer.enabled,
-                intervalTicks = script.timer.intervalTicks,
-                wasPowered = previous,
-                isPowered = hasPower,
-                currentTick = now,
-                lastRunTick = previousRun,
-            )
+            // issue #7: 明示の起動方法がある場合はそちらが正本です。イベント起動は
+            // イベントリスナーが担当するため tick では実行しません。旧保存は従来どおりです。
+            val explicit = script.trigger?.normalized()
+            val shouldRun = when {
+                explicit?.kind == TriggerKind.EVENT -> false
+                explicit?.kind == TriggerKind.TIMER -> {
+                    val anchor = runtimeState.timerAnchor(script.id, true, now)
+                    // 明示間隔を正本とし、従来欄との食い違いに引きずられません。
+                    val intervalTicks =
+                        CommandValueRules.secondsToTicks(explicit.intervalSeconds) ?: 1L
+                    RedstoneActivationPolicy.isIntervalElapsed(
+                        intervalTicks = intervalTicks,
+                        currentTick = now,
+                        lastRunTick = anchor,
+                    )
+                }
+                explicit?.kind == TriggerKind.REDSTONE ->
+                    RedstoneActivationPolicy.isRisingEdge(wasPowered = previous, isPowered = hasPower)
+                else -> {
+                    val previousRun = runtimeState.timerAnchor(script.id, script.timer.enabled, now)
+                    RedstoneActivationPolicy.shouldRun(
+                        activation = script.activation,
+                        timerEnabled = script.timer.enabled,
+                        intervalTicks = script.timer.intervalTicks,
+                        wasPowered = previous,
+                        isPowered = hasPower,
+                        currentTick = now,
+                        lastRunTick = previousRun,
+                    )
+                }
+            }
             if (shouldRun) {
                 val normalExecution = plugin.testExecution.beginNormal(placement.key) ?: return@forEach
                 runtimeState.markRun(script.id, now)
@@ -181,6 +204,14 @@ internal class RedstoneRuntimeState {
 }
 
 internal object RedstoneActivationPolicy {
+    /** 信号の立ち上がりかを返します。初回観測は呼び出し側で除外します。 */
+    fun isRisingEdge(wasPowered: Boolean, isPowered: Boolean): Boolean =
+        !wasPowered && isPowered
+
+    /** 定期実行の間隔が満ちたかを返します。 */
+    fun isIntervalElapsed(intervalTicks: Long, currentTick: Long, lastRunTick: Long?): Boolean =
+        lastRunTick != null && currentTick - lastRunTick >= intervalTicks
+
     fun shouldRun(
         activation: ActivationMode,
         timerEnabled: Boolean,
@@ -191,13 +222,12 @@ internal object RedstoneActivationPolicy {
         lastRunTick: Long?,
     ): Boolean {
         if (!timerEnabled) {
-            return activation == ActivationMode.NEEDS_REDSTONE && !wasPowered && isPowered
+            return activation == ActivationMode.NEEDS_REDSTONE && isRisingEdge(wasPowered, isPowered)
         }
         // タイマー有効時は、レッドストーン信号の立ち上がりで即時実行して基準時刻を張り直し、
         // 以降は常時実行へ切り替えた場合と同じく、間隔経過だけで定期実行する。
         // 通電が切れている間も経過時間は進むため、再通電時に間隔が満ちていれば直ちに実行される。
-        if (activation == ActivationMode.NEEDS_REDSTONE && !wasPowered && isPowered) return true
-        val intervalElapsed = lastRunTick != null && currentTick - lastRunTick >= intervalTicks
-        return intervalElapsed
+        if (activation == ActivationMode.NEEDS_REDSTONE && isRisingEdge(wasPowered, isPowered)) return true
+        return isIntervalElapsed(intervalTicks, currentTick, lastRunTick)
     }
 }

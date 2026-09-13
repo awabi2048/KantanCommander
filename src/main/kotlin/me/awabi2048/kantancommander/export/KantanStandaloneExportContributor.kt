@@ -9,8 +9,10 @@ import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.VariableType
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.effectiveTrigger
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.NumericExpression
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.SystemVariableNames
@@ -18,6 +20,7 @@ import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.mwmchanpon.api.PreparedStandaloneExport
 import me.awabi2048.mwmchanpon.api.StandaloneExportContext
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributor
@@ -32,7 +35,7 @@ class KantanStandaloneExportContributor(
         context.worlds.forEach { world ->
             plugin.variables.definitions(world.uuid).forEach { (name, value) ->
                 validateVariable(world.sourceWorldName, name, value)?.let(errors::add)
-                if (value.type == VariableType.NUMBER && value.numberValue?.isFinite() != true) {
+                if (value.type == ValueType.NUMBER && value.numberValue?.isFinite() != true) {
                     errors += "${world.sourceWorldName}/$name: 数値初期値は有限値で指定してください"
                 }
             }
@@ -49,10 +52,16 @@ class KantanStandaloneExportContributor(
                 errors += "${placement.key}: script ${placement.scriptId} is missing"
                 return@mapNotNull null
             }
+            // issue #7: イベント起動にバニラの等価表現はありません。
+            // 黙って別意味へ変換せず、単体出力の検証で明示エラーにします。
+            if (sourceScript.effectiveTrigger().kind == TriggerKind.EVENT) {
+                errors += "${placement.key}: イベント起動は単体出力に変換できません"
+                return@mapNotNull null
+            }
             val world = worldsByName.getValue(placement.world)
             val namespace = world.uuid.toString().replace("-", "")
             val script = namespaceWorldVariables(sourceScript, namespace)
-            val worldVariableTypes = plugin.variables.definitions(world.uuid)
+            val worldValueTypes = plugin.variables.definitions(world.uuid)
                 .mapKeys { (name, _) -> "${namespace}_$name" }
                 .mapValues { (_, value) -> value.type }
             // 同じスクリプトを複数ワールドへ配置しても、ワールド変数を含む関数本文が衝突しない名前にする。
@@ -60,7 +69,7 @@ class KantanStandaloneExportContributor(
             when (
                 val compilation = plugin.exporter.compileForStandalone(
                     script,
-                    worldVariableTypes,
+                    worldValueTypes,
                     entryFunctionName,
                 )
             ) {
@@ -94,10 +103,21 @@ class KantanStandaloneExportContributor(
         return PreparedKantanExport(programs, variableDefinitions)
     }
 
-    private fun validateVariable(world: String, name: String, value: WorldVariableValue): String? {
+    private fun validateVariable(world: String, name: String, value: TypedValue): String? {
+        // #2: 単体出力の初期値埋め込みはスカラー3型だけに対応します。複合型は
+        // 構造がバニラstorageへ直結しないため、明示エラーにします。
         val valid = when (value.type) {
-            VariableType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
-            VariableType.STRING -> value.stringValue != null && value.numberValue == null
+            ValueType.NUMBER -> value.numberValue?.isFinite() == true && value.stringValue == null
+            ValueType.STRING -> value.stringValue != null && value.numberValue == null
+            ValueType.BOOLEAN -> value.booleanValue != null
+            ValueType.LOCATION,
+            ValueType.VECTOR,
+            ValueType.ITEM,
+            ValueType.BLOCK,
+            ValueType.ENTITY,
+            ValueType.SOUND,
+            ValueType.EFFECT,
+            -> return "$world/$name: 複合型の変数は単体出力に未対応です"
         }
         return if (valid) null else "$world/$name: 変数初期値が不完全または有限値ではありません"
     }
@@ -126,16 +146,7 @@ class KantanStandaloneExportContributor(
                 val operation = node.string("operation", VariableOperation.DEFINE.name)
                 node.params.keys.toList().forEach { key ->
                     val raw = node.params[key] ?: return@forEach
-                    node.params[key] = when {
-                        node.type == CommandType.VARIABLE && key == "value" &&
-                            operation == VariableOperation.CHANGE.name &&
-                            node.string("changeMode", "ASSIGN") == "CALCULATE" -> namespaceExpression(raw, namespace)
-                        key in DIRECT_VARIABLE_FIELDS &&
-                            node.type == CommandType.CONDITION &&
-                            node.conditionSubject() == ConditionSubject.VARIABLE -> "${namespace}_$raw"
-                        key in REGISTRY_FIELDS || key in NON_TEXT_FIELDS -> raw
-                        else -> namespaceTemplate(raw, namespace) ?: raw
-                    }
+                    node.params[key] = namespaceExportParam(node, key, raw, namespace, operation)
                 }
                 node.snapshot?.let(::rewrite)
             }
@@ -152,36 +163,66 @@ class KantanStandaloneExportContributor(
         name = namespaceTemplate(target.name, namespace),
     )
 
-    private fun namespaceTemplate(raw: String?, namespace: String): String? = raw?.let {
-        TEMPLATE_REFERENCE.replace(it) { match ->
-            "${'$'}{${namespace}_${match.groupValues[1]}}"
-        }
-    }
+    private fun namespaceExpression(raw: String, namespace: String): String =
+        namespaceStandaloneExpression(raw, namespace)
+}
 
-    private fun namespaceExpression(raw: String, namespace: String): String {
-        val parsed = NumericExpression.parse(raw).expression ?: return raw
-        return parsed.references
-            .filterNot(SystemVariableNames::isSystemName)
-            .fold(raw) { expression, reference ->
-                expression.replace(
-                    "${'$'}{$reference}",
-                    "${'$'}{${namespace}_$reference}",
-                )
-            }
-    }
+/**
+ * issue #5: 単体出力の変数名前空間付与は、1キー分の純粋な書換え規則です。
+ * クラスの外に出して単体検証できる形にします。
+ */
+internal fun namespaceExportParam(
+    node: me.awabi2048.kantancommander.model.CommandNode,
+    key: String,
+    raw: String,
+    namespace: String,
+    operation: String = node.string("operation", VariableOperation.DEFINE.name),
+): String = when {
+    node.type == CommandType.VARIABLE && key == "value" &&
+        operation == VariableOperation.CHANGE.name &&
+        node.string("changeMode", "ASSIGN") == "CALCULATE" -> namespaceStandaloneExpression(raw, namespace)
+    key in DIRECT_VARIABLE_FIELDS &&
+        node.type == CommandType.CONDITION &&
+        node.conditionSubject() == ConditionSubject.VARIABLE -> "${namespace}_$raw"
+    // 型付き条件比較の左辺は、WORLD参照の場合だけ素の変数名を持つため
+    // 名前空間を付けます。EXECUTION参照は一時変数のまま扱い、
+    // ENTITY参照は検証層で拒否済みです。
+    key == "leftName" &&
+        node.type == CommandType.CONDITION &&
+        node.conditionSubject() == ConditionSubject.VALUE &&
+        node.string("leftScope").ifBlank { VariableScope.WORLD.name } == VariableScope.WORLD.name &&
+        raw.isNotBlank() -> "${namespace}_$raw"
+    key in REGISTRY_FIELDS || key in NON_TEXT_FIELDS -> raw
+    else -> namespaceTemplate(raw, namespace) ?: raw
+}
 
-    private companion object {
-        val TEMPLATE_REFERENCE = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}")
-        val DIRECT_VARIABLE_FIELDS = setOf("variable")
-        val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
-        val NON_TEXT_FIELDS = setOf(
-            "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
-            "tagOperation", "soundScope", "soundOperation", "soundCategory", "particleDisplayMode",
-            "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
-            "attributeOperation", "modifierOperation", "property",
-        )
+internal fun namespaceTemplate(raw: String?, namespace: String): String? = raw?.let {
+    TEMPLATE_REFERENCE.replace(it) { match ->
+        "${'$'}{${namespace}_${match.groupValues[1]}}"
     }
 }
+
+internal fun namespaceStandaloneExpression(raw: String, namespace: String): String {
+    val parsed = NumericExpression.parse(raw).expression ?: return raw
+    return parsed.references
+        .filterNot(SystemVariableNames::isSystemName)
+        .fold(raw) { expression, reference ->
+            expression.replace(
+                "${'$'}{$reference}",
+                "${'$'}{${namespace}_$reference}",
+            )
+        }
+}
+
+private val TEMPLATE_REFERENCE = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}")
+private val DIRECT_VARIABLE_FIELDS = setOf("variable")
+private val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
+private val NON_TEXT_FIELDS = setOf(
+    "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
+    "tagOperation", "soundScope", "soundOperation", "soundCategory",
+    "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
+    "attributeOperation", "modifierOperation", "property",
+)
 
 internal data class PreparedProgram(
     val placement: DiskPlacement,
@@ -194,7 +235,7 @@ internal data class PreparedProgram(
 
 internal data class PreparedVariables(
     val namespace: String,
-    val values: Map<String, WorldVariableValue>,
+    val values: Map<String, TypedValue>,
 )
 
 internal class PreparedKantanExport(
@@ -294,10 +335,19 @@ internal class PreparedKantanExport(
     private fun timerHolder(scriptId: String) =
         "#timer_${scriptId.replace("-", "")}"
 
-    private fun initializeVariable(dimension: String, name: String, value: WorldVariableValue): String {
+    private fun initializeVariable(dimension: String, name: String, value: TypedValue): String {
         return when (value.type) {
-            VariableType.NUMBER -> storageSet(name, "${value.numberValue ?: 0.0}d")
-            VariableType.STRING -> storageSet(name, "\"${escapeNbt(value.stringValue.orEmpty())}\"")
+            ValueType.NUMBER -> storageSet(name, "${value.numberValue ?: 0.0}d")
+            ValueType.STRING -> storageSet(name, "\"${escapeNbt(value.stringValue.orEmpty())}\"")
+            ValueType.BOOLEAN -> storageSet(name, if (value.booleanValue == true) "1b" else "0b")
+            ValueType.LOCATION,
+            ValueType.VECTOR,
+            ValueType.ITEM,
+            ValueType.BLOCK,
+            ValueType.ENTITY,
+            ValueType.SOUND,
+            ValueType.EFFECT,
+            -> error("unsupported variable type for standalone export: ${value.type}")
         }
     }
 

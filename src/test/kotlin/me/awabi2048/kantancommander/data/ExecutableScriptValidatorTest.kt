@@ -5,7 +5,7 @@ import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableOperation
-import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.TimerSetting
 import me.awabi2048.kantancommander.model.TargetKind
@@ -15,8 +15,7 @@ import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.BlockOperationMode
-import me.awabi2048.kantancommander.model.WorldVariableValue
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.TypedValue
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -88,7 +87,7 @@ class ExecutableScriptValidatorTest {
         variable.params.putAll(
             mapOf(
                 "name" to "message",
-                "type" to VariableType.STRING.name,
+                "type" to ValueType.STRING.name,
                 "operation" to VariableOperation.DEFINE.name,
                 "value" to "ready",
             )
@@ -106,7 +105,7 @@ class ExecutableScriptValidatorTest {
         }
         val definition = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "message"
-            params["tempType"] = TemporaryVariableType.STRING.name
+            params["tempType"] = ValueType.STRING.name
             params["value"] = "ready"
         }
 
@@ -124,7 +123,7 @@ class ExecutableScriptValidatorTest {
         }
         val definition = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "message"
-            params["tempType"] = TemporaryVariableType.STRING.name
+            params["tempType"] = ValueType.STRING.name
             params["value"] = "ready"
         }
         GraphEditor.append(script.graph, CommandType.WAIT, condition.id)
@@ -148,12 +147,12 @@ class ExecutableScriptValidatorTest {
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "message"
-            params["tempType"] = TemporaryVariableType.STRING.name
+            params["tempType"] = ValueType.STRING.name
             params["value"] = "true"
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET, condition.id).apply {
             params["name"] = "message"
-            params["tempType"] = TemporaryVariableType.STRING.name
+            params["tempType"] = ValueType.STRING.name
             params["value"] = "false"
         }
         GraphEditor.appendMerge(script.graph, condition.id)
@@ -172,12 +171,12 @@ class ExecutableScriptValidatorTest {
         val script = DiskScript(name = "temporary-redefinition", owner = UUID.randomUUID())
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "value"
-            params["tempType"] = TemporaryVariableType.STRING.name
+            params["tempType"] = ValueType.STRING.name
             params["value"] = "text"
         }
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "value"
-            params["tempType"] = TemporaryVariableType.NUMBER.name
+            params["tempType"] = ValueType.NUMBER.name
             params["value"] = "2"
         }
         val wait = GraphEditor.append(script.graph, CommandType.WAIT).apply {
@@ -194,7 +193,7 @@ class ExecutableScriptValidatorTest {
         val script = DiskScript(name = "temporary-composite-text", owner = UUID.randomUUID())
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params["name"] = "point"
-            params["tempType"] = TemporaryVariableType.LOCATION.name
+            params["tempType"] = ValueType.LOCATION.name
             temporaryLocationPositionSpec = PositionSpec(
                 PositionKind.COORDINATES,
                 x = 1.0,
@@ -224,7 +223,7 @@ class ExecutableScriptValidatorTest {
             params.putAll(
                 mapOf(
                     "name" to "sound",
-                    "tempType" to TemporaryVariableType.SOUND.name,
+                    "tempType" to ValueType.SOUND.name,
                     "sound" to "minecraft:block.note_block.harp",
                     "volume" to "35",
                     "pitch" to "1",
@@ -341,7 +340,7 @@ class ExecutableScriptValidatorTest {
         val errors = ExecutableScriptValidator.validate(
             script,
             variableDefinitions = mapOf(
-                "limit" to WorldVariableValue(VariableType.STRING, stringValue = "3"),
+                "limit" to TypedValue(ValueType.STRING, stringValue = "3"),
             ),
         )
 
@@ -356,7 +355,7 @@ class ExecutableScriptValidatorTest {
         variable.params.putAll(
             mapOf(
                 "name" to "shared",
-                "type" to VariableType.NUMBER.name,
+                "type" to ValueType.NUMBER.name,
                 "operation" to VariableOperation.DEFINE.name,
                 "value" to "\${CURRENT_LOOP_COUNT}",
             )

@@ -2,7 +2,6 @@ package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -60,8 +59,8 @@ class EffectsValidatorTest {
 
     @Test
     fun `geometry circle passes with agreed density`() {
-        val script = scriptWith(CommandType.PARTICLE) {
-            params["particleDisplayMode"] = ParticleDisplayMode.GEOMETRY.name
+        // #30: 図形表示は独立したPARTICLE_GEOMETRY型で検証します。
+        val script = scriptWith(CommandType.PARTICLE_GEOMETRY) {
             params["particleShape"] = ParticleShape.CIRCLE.name
             params["particleDensity"] = "0.5"
             params["geometryRadius"] = "3.0"
@@ -71,21 +70,18 @@ class EffectsValidatorTest {
 
     @Test
     fun `geometry rejects point scatter density overflow and missing end`() {
-        val scatter = scriptWith(CommandType.PARTICLE) {
-            params["particleDisplayMode"] = ParticleDisplayMode.GEOMETRY.name
+        val scatter = scriptWith(CommandType.PARTICLE_GEOMETRY) {
             params["particleShape"] = ParticleShape.POINT_SCATTER.name
         }
         assertTrue(ExecutableScriptValidator.validate(scatter).any { it.fieldKeys == setOf("geometrySettings") })
 
-        val density = scriptWith(CommandType.PARTICLE) {
-            params["particleDisplayMode"] = ParticleDisplayMode.GEOMETRY.name
+        val density = scriptWith(CommandType.PARTICLE_GEOMETRY) {
             params["particleShape"] = ParticleShape.CIRCLE.name
             params["particleDensity"] = "2.1"
         }
         assertTrue(ExecutableScriptValidator.validate(density).any { it.fieldKeys == setOf("particleDensity") })
 
-        val line = scriptWith(CommandType.PARTICLE) {
-            params["particleDisplayMode"] = ParticleDisplayMode.GEOMETRY.name
+        val line = scriptWith(CommandType.PARTICLE_GEOMETRY) {
             params["particleShape"] = ParticleShape.LINE.name
             particlePositionSpec = PositionSpec(PositionKind.COORDINATES, 0.0, 0.0, 0.0)
         }
@@ -94,8 +90,7 @@ class EffectsValidatorTest {
 
     @Test
     fun `oversized geometry estimate is rejected before quota`() {
-        val script = scriptWith(CommandType.PARTICLE) {
-            params["particleDisplayMode"] = ParticleDisplayMode.GEOMETRY.name
+        val script = scriptWith(CommandType.PARTICLE_GEOMETRY) {
             params["particleShape"] = ParticleShape.SPHERE.name
             params["particleDensity"] = "2.0"
             params["geometryRadius"] = "32.0"

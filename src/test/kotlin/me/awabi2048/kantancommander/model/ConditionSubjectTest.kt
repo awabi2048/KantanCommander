@@ -59,6 +59,69 @@ class ConditionSubjectTest {
     }
 
     @Test
+    fun `value comparison validates names operators and static types`() {
+        fun valueNode(configure: CommandNode.() -> Unit): DiskScript {
+            val script = DiskScript(name = "value-subject", owner = UUID.randomUUID())
+            GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+                params["subject"] = ConditionSubject.VALUE.name
+                configure()
+            }
+            return script
+        }
+        val definitions = mapOf(
+            "counter" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
+            "label" to TypedValue(ValueType.STRING, stringValue = "a"),
+        )
+
+        // 正常系は検証を通ります。
+        val valid = valueNode {
+            params["leftScope"] = "WORLD"
+            params["leftName"] = "counter"
+            params["operator"] = ">="
+            params["right"] = "2"
+        }
+        assertFalse(
+            ExecutableScriptValidator.validate(valid, variableDefinitions = definitions).any { it.nodeId != null },
+        )
+
+        // 未定義の左辺は拒否します。
+        val missing = valueNode {
+            params["leftScope"] = "WORLD"
+            params["leftName"] = "ghost"
+            params["operator"] = "=="
+            params["right"] = "1"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(missing, variableDefinitions = definitions)
+                .any { it.message.contains("未定義") },
+        )
+
+        // 型に使えない演算子は拒否します。
+        val mismatch = valueNode {
+            params["leftScope"] = "WORLD"
+            params["leftName"] = "label"
+            params["operator"] = ">"
+            params["right"] = "b"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(mismatch, variableDefinitions = definitions)
+                .any { it.message.contains("使えない比較方法") },
+        )
+
+        // ENTITY scope の左辺は未対応として拒否します。
+        val entity = valueNode {
+            params["leftScope"] = "ENTITY"
+            params["leftName"] = "mark"
+            params["operator"] = "=="
+            params["right"] = "1"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(entity, variableDefinitions = definitions)
+                .any { it.message.contains("未対応") },
+        )
+    }
+
+    @Test
     fun `persisted layer rejects unknown subjects but allows missing ones`() {
         fun rootWithSubject(subject: String?): com.google.gson.JsonObject {
             val params = if (subject == null) "{}" else """{"subject": "$subject"}"""

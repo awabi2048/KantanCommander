@@ -11,6 +11,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataSchema
@@ -22,7 +23,6 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.PlaceItemDestination
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.SoundOperation
@@ -31,10 +31,14 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
-import me.awabi2048.kantancommander.model.TemporaryVariableType
-import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.variableScope
 import java.util.UUID
 
 /**
@@ -122,6 +126,9 @@ enum class CommandSettingEditor {
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
+    VARIABLE_SCOPE,
+    VARIABLE_NAME,
+    VARIABLE_PROPERTY,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
@@ -443,24 +450,42 @@ object CommandSettingsModel {
                 }
                 fields.filter { it.key in allowed }
             }
-            // パーティクルは表示方式（点／図形）を先頭タブで切り替えます。
-            // 点表示は従来の散布設定を維持し、図形表示は形状と密度へ組み替えます。
+            // #30: 通常表示と図形表示は別CommandTypeです。両者ともタブ順を
+            // 「種類 → 表示設定 → 表示位置 → 表示対象」に統一します。
+            // 種類（particle）と表示対象（particleDisplay）は共有し、
+            // 表示設定の中身だけが型固有です（通常=散布、図形=形状＋密度）。
             node.type == CommandType.PARTICLE -> {
-                val mode = ParticleGeometry.displayMode(node)
-                val allowed = if (mode == ParticleDisplayMode.GEOMETRY) {
-                    setOf("particleDisplay", "particle", "geometrySettings", "particleDensity")
-                } else {
-                    setOf("particleDisplay", "particle", "position", "particleParameters")
-                }
+                val allowed = setOf("particle", "particleParameters", "position", "particleDisplay")
                 fields.filter { it.key in allowed }
             }
+            node.type == CommandType.PARTICLE_GEOMETRY -> {
+                val allowed = setOf("particle", "geometrySettings", "particleDensity", "position", "particleDisplay")
+                fields.filter { it.key in allowed }
+            }
+            // #2: 操作内容ごとに必要な項目だけを表示します。scope・name・operation は
+            // 常に表示し、type・changeMode・value・source は操作で切り替えます。
+            // #3: 値生成方法（changeMode）は値を書き込む3操作で表示し、生成方法別の
+            // 項目（propertySource・property・randomMin・randomMax）は対応する
+            // 生成方法のときだけ表示します。
+            // - DEFINE: 型＋初期値。COPY／DELETE 用の項目は不要です。
+            // - SET: 型＋値。COPY／DELETE 用の項目は不要です。
+            // - CHANGE: 値＋changeMode。型は定義側を正とします。
+            // - COPY: 複写元のみ。型・値・changeMode は不要です。
+            // - DELETE: 項目なし（name だけで確定します）。
             node.type == CommandType.VARIABLE -> {
                 val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
                     .getOrDefault(VariableOperation.DEFINE)
                 fields.filterNot { field ->
                     when (operation) {
-                        VariableOperation.DEFINE -> field.key == "changeMode"
-                        VariableOperation.CHANGE -> field.key == "type"
+                        VariableOperation.DEFINE -> field.key == "source"
+                        VariableOperation.SET -> field.key == "source"
+                        VariableOperation.CHANGE -> field.key == "type" || field.key == "source"
+                        VariableOperation.COPY -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
+                            field.key == "propertySource" || field.key == "property" ||
+                            field.key == "randomMin" || field.key == "randomMax"
+                        VariableOperation.DELETE -> field.key == "type" || field.key == "changeMode" || field.key == "value" ||
+                            field.key == "source" || field.key == "propertySource" || field.key == "property" ||
+                            field.key == "randomMin" || field.key == "randomMax"
                     }
                 }
             }
@@ -493,6 +518,7 @@ object CommandSettingsModel {
         CommandType.SUMMON_ENTITY,
         CommandType.PLAY_SOUND,
         CommandType.PARTICLE,
+        CommandType.PARTICLE_GEOMETRY,
         CommandType.FIREWORK_LAUNCH,
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
@@ -544,7 +570,66 @@ object CommandSettingsModel {
 
         CommandType.PARTICLE -> true
 
+        // #30: 図形の終点・対角点は線・直方体でのみ意味を持つため、それ以外の形状では隠します。
+        CommandType.PARTICLE_GEOMETRY ->
+            fieldKey != "geometryEnd" || ParticleGeometry.shape(node) == ParticleShape.LINE ||
+                ParticleGeometry.shape(node) == ParticleShape.BOX
+
+        // #2: 操作内容ごとに必要な項目だけを表示します。値欄・型別項目は
+        // 値を必要とする操作（DEFINE／SET／CHANGE）でのみ表示し、複写元は
+        // COPY でのみ、型別項目は現在の型に一致するものだけ表示します。
+        CommandType.VARIABLE -> isVariableFieldVisible(node, fieldKey)
+
         else -> true
+    }
+
+    /**
+     * issue #2 の変数操作コマンドの項目可視性です。
+     *
+     * scope・operation・name は常に表示します。type・changeMode・value・source と
+     * #3 の生成方法別項目は操作内容・値生成方法・現在の型で切り替えます。保存値を
+     * 変更せず表示だけを絞るため、両GUIで同じ判定を使います。
+     */
+    fun isVariableFieldVisible(node: CommandNode, fieldKey: String): Boolean {
+        if (fieldKey in setOf("scope", "operation", "name")) return true
+        // #22: 対象は ENTITY scope でのみ表示します。
+        if (fieldKey == "target") return node.variableScope() == VariableScope.ENTITY
+        val operation = runCatching { VariableOperation.valueOf(node.string("operation")) }
+            .getOrDefault(VariableOperation.DEFINE)
+        if (fieldKey == "source") return operation == VariableOperation.COPY
+        val needsValue = operation == VariableOperation.DEFINE ||
+            operation == VariableOperation.SET ||
+            operation == VariableOperation.CHANGE
+        if (!needsValue) return false
+        val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode", VariableChangeMode.ASSIGN.name)) }
+            .getOrDefault(VariableChangeMode.ASSIGN)
+        if (fieldKey == "type") {
+            // #22: ENTITY scope は定義表を持たないため、CHANGE＋ASSIGN でも
+            // 型欄で指定します。EXECUTION／WORLD の CHANGE は定義済みの型を使います。
+            if (operation == VariableOperation.CHANGE) {
+                return node.variableScope() == VariableScope.ENTITY && mode == VariableChangeMode.ASSIGN
+            }
+            // PROPERTY／RANDOM モードでは生成結果の型を採用するため型欄を隠します。
+            return mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE
+        }
+        if (fieldKey == "changeMode") return true
+        // #3: 生成方法別の項目は対応する生成方法のときだけ表示します。
+        if (fieldKey == "propertySource" || fieldKey == "property") return mode == VariableChangeMode.PROPERTY
+        if (fieldKey == "randomMin" || fieldKey == "randomMax") return mode == VariableChangeMode.RANDOM
+        val type = ValueType.parse(node.string("type")) ?: return false
+        return when (fieldKey) {
+            "value" -> (mode == VariableChangeMode.ASSIGN &&
+                (type == ValueType.NUMBER || type == ValueType.STRING || type == ValueType.BOOLEAN)) ||
+                (mode == VariableChangeMode.CALCULATE && type == ValueType.NUMBER)
+            "location" -> mode == VariableChangeMode.ASSIGN && type == ValueType.LOCATION
+            "x", "y", "z" -> mode == VariableChangeMode.ASSIGN && type == ValueType.VECTOR
+            "item" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ITEM
+            "block" -> mode == VariableChangeMode.ASSIGN && type == ValueType.BLOCK
+            "entity" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ENTITY
+            "sound", "soundParameters" -> mode == VariableChangeMode.ASSIGN && type == ValueType.SOUND
+            "effect", "level", "seconds" -> mode == VariableChangeMode.ASSIGN && type == ValueType.EFFECT
+            else -> true
+        }
     }
 
     /**
@@ -696,8 +781,14 @@ object CommandSettingsModel {
                 "particleDisplay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DISPLAY
                 "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
                 "particleParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.PARTICLE_GEOMETRY -> when (fieldKey) {
+                "particleDisplay" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_DISPLAY
+                "particle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE
                 "geometrySettings" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GEOMETRY_SETTINGS
                 "particleDensity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PARTICLE_PARAMETERS
+                "geometryEnd" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_GEOMETRY_SETTINGS
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.FIREWORK_LAUNCH -> when (fieldKey) {
@@ -740,13 +831,29 @@ object CommandSettingsModel {
             }
             CommandType.DISK_CALL -> when (fieldKey) {
                 "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
+                // 呼び出し設定の未完了も、ディスク指定と同じ警告面で示します。
+                "diskCallSettings" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            // issue #8: 「値を返す」は変数由来またはリテラル値のどちらかを返します。
+            CommandType.RETURN_VALUE -> when (fieldKey) {
+                "sourceScope", "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.VARIABLE -> when (fieldKey) {
                 "operation", "changeMode" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 "name" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
                 "type" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TYPE
-                "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                "scope" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "source" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "propertySource" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VARIABLE
+                "property" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                "randomMin", "randomMax" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                "value", "location", "x", "y", "z", "yaw", "pitch", "item", "block", "entity",
+                "entityId", "sound", "soundParameters", "volume", "effect", "level", "seconds" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.TEMP_SET -> when (fieldKey) {
@@ -803,10 +910,11 @@ object CommandSettingsModel {
                 -> "particleParameters"
                 ParticleSettings.PARAM_DATA -> "particle"
                 "target" -> "particleDisplay"
-                // 図形表示では中心位置タブを出さず、図形設定内で編集します。
-                "position" -> if (ParticleGeometry.displayMode(node) ==
-                    ParticleDisplayMode.GEOMETRY
-                ) "geometrySettings" else "position"
+                else -> validationFieldKey
+            }
+            CommandType.PARTICLE_GEOMETRY -> when (validationFieldKey) {
+                ParticleSettings.PARAM_DATA -> "particle"
+                "target" -> "particleDisplay"
                 else -> validationFieldKey
             }
             CommandType.CONDITION -> when (validationFieldKey) {
@@ -918,6 +1026,12 @@ object CommandSettingsModel {
         CommandType.PARTICLE -> when (fieldKey) {
             "particleDisplay" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_DISPLAY)
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
+            else -> text()
+        }
+        CommandType.PARTICLE_GEOMETRY -> when (fieldKey) {
+            "particleDisplay" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_DISPLAY)
+            "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_POSITION)
+            "geometryEnd" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.PARTICLE_END)
             "geometrySettings" -> CommandSettingDescriptor(CommandSettingEditor.PARTICLE_GEOMETRY)
             else -> text()
         }
@@ -940,6 +1054,8 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.DISK_CALL -> text()
+        // issue #8: 呼び出し設定は専用子画面で編集します。ここでは対話入力へ進めません。
+        CommandType.RETURN_VALUE -> text()
         CommandType.BLOCK_OPERATION -> when (fieldKey) {
             "operation" -> CommandSettingDescriptor(CommandSettingEditor.BLOCK_OPERATION)
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_POSITION)
@@ -951,10 +1067,27 @@ object CommandSettingsModel {
             CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
         } else text()
         CommandType.VARIABLE -> when (fieldKey) {
+            "scope" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_SCOPE)
+            // #22: ENTITY scope の対象は通常の対象形式で選択します。
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            // #2: WORLD scope の変数名は定義済み候補から選択し、EXECUTION scope の
+            // 変数名は実行経路で有効範囲が変わるため文字列入力で指定します。
+            // scope 欄のない旧ノードは WORLD として読み替えます。
+            "name" -> if (node.variableScope() == VariableScope.WORLD) {
+                CommandSettingDescriptor(CommandSettingEditor.VARIABLE_NAME)
+            } else {
+                text()
+            }
             "type" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_TYPE)
             "operation" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_OPERATION)
             "changeMode" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_CHANGE_MODE)
             "value" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_VALUE)
+            // #3: 参照元は変数名の自由入力、詳細値は候補選択、乱数範囲は数値入力です。
+            "propertySource" -> text()
+            "property" -> CommandSettingDescriptor(CommandSettingEditor.VARIABLE_PROPERTY)
+            "randomMin", "randomMax" -> text()
+            "location" -> CommandSettingDescriptor(CommandSettingEditor.LOCATION, CommandSettingRole.TEMPORARY_LOCATION)
+            "entity" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.TEMPORARY_ENTITY)
             else -> text()
         }
         CommandType.TEMP_SET -> when (fieldKey) {
@@ -993,7 +1126,12 @@ object CommandSettingsModel {
             require(CommandValueRules.isVariableName(TemporaryTemplate.normalized(value))) { "予約済みまたは不正な変数名です" }
         }
         if (node.type == CommandType.TEMP_SET && key == "tempType") {
-            val type = requireNotNull(TemporaryVariableType.parse(value)) { "不正な一時変数型です" }
+            val type = requireNotNull(ValueType.parse(value)) { "不正な一時変数型です" }
+            changeTemporaryType(node, type)
+            return
+        }
+        if (node.type == CommandType.VARIABLE && key == "type") {
+            val type = requireNotNull(ValueType.parse(value)) { "不正な変数型です" }
             changeTemporaryType(node, type)
             return
         }
@@ -1042,6 +1180,8 @@ object CommandSettingsModel {
      *
      * 他形状の残存値は表示・検証・実行へ漏らさないため、完了判定の対象外に
      * します。形状未選択（POINT_SCATTER）の図形表示は未完了として扱います。
+     * 終点・対角点は表示位置（geometryEnd）として独立に判定するため、
+     * ここには含めません。
      */
     private fun isGeometryConfigured(node: CommandNode): Boolean {
         val geometry = ParticleGeometry
@@ -1066,13 +1206,7 @@ object CommandSettingsModel {
                 (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
         }
         val shapeConfigured = node.params[geometry.PARAM_SHAPE]?.isNotBlank() == true
-        val endConfigured = when (shape) {
-            ParticleShape.LINE,
-            ParticleShape.BOX,
-            -> isPositionSpecConfigured(node.particleEndPositionSpec)
-            else -> false
-        }
-        return shapeConfigured || numbersConfigured || endConfigured
+        return shapeConfigured || numbersConfigured
     }
 
     /** 複数の文字列パラメータを同じ明示設定契約で保存します。 */
@@ -1088,16 +1222,19 @@ object CommandSettingsModel {
     }
 
     /**
-     * 一時変数の型変更を、古い型の入力値が新しい型へ幽霊表示されない単一操作にします。
+     * 変数の型変更を、古い型の入力値が新しい型へ幽霊表示されない単一操作にします。
      *
-     * 一時値は型によって入力経路も実行時の保存形式も変わります。型だけを書き換えて
-     * 旧payloadを残すと、いったんLOCATIONへ変えた後にNUMBERへ戻した際などに、見えない
-     * 値が実行・出力側へ流れます。型変更時は共通の可変部分を全消去し、次の型の入力を
-     * 必ずその型の設定画面から開始させます。
+     * 変数値は型によって入力経路も実行時の保存形式も変わります。型だけを書き換えて
+     * 旧payloadを残すと、見えない値が実行・出力側へ流れます。型変更時は共通の
+     * 可変部分を全消去し、次の型の入力を必ずその型の設定画面から開始させます。
+     * TEMP_SET（tempType欄）と変数操作コマンド（type欄）の両方で使います。
      */
-    fun changeTemporaryType(node: CommandNode, type: TemporaryVariableType) {
-        check(node.type == CommandType.TEMP_SET) { "一時変数型を持たないノードです: ${node.type}" }
-        val current = TemporaryVariableType.parse(node.string("tempType", TemporaryVariableType.NUMBER.name))
+    fun changeTemporaryType(node: CommandNode, type: ValueType) {
+        check(node.type == CommandType.TEMP_SET || node.type == CommandType.VARIABLE) {
+            "一時変数型を持たないノードです: ${node.type}"
+        }
+        val key = if (node.type == CommandType.TEMP_SET) "tempType" else "type"
+        val current = ValueType.parse(node.string(key, ValueType.NUMBER.name))
         if (current != type) {
             setOf(
                 "value", "x", "y", "z", "yaw", "pitch", "item", "itemData", "entityId",
@@ -1112,8 +1249,8 @@ object CommandSettingsModel {
                 "locationPosition", "locationFacing",
             )
         }
-        node.params["tempType"] = type.name
-        node.markConfigured("tempType")
+        node.params[key] = type.name
+        node.markConfigured(key)
     }
 
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
@@ -1390,6 +1527,8 @@ object CommandSettingsModel {
             "soundPosition" -> isPositionSpecConfigured(node.soundPositionSpec)
             "particlePosition" -> isPositionSpecConfigured(node.particlePositionSpec)
             "particleEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
+            // #30: 図形の終点・対角点は表示位置として独立タブで編集します。
+            "geometryEnd" -> isPositionSpecConfigured(node.particleEndPositionSpec)
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
             "executionPosition" -> isPositionSpecConfigured(node.executionPositionSpec)
@@ -1419,14 +1558,9 @@ object CommandSettingsModel {
                             (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
                     }
             }
-            // 表示設定は、対象か表示方式の明示選択があれば設定済みです。
-            // 既定値のままでは完了扱いにしません。
-            "particleDisplay" -> isTargetSpecConfigured(node.targetSpec) ||
-                node.params[ParticleGeometry.PARAM_DISPLAY_MODE]
-                    ?.takeIf(String::isNotBlank)?.let {
-                        it != CommandType.PARTICLE.defaults[ParticleGeometry.PARAM_DISPLAY_MODE] ||
-                            node.isExplicitlyConfigured(ParticleGeometry.PARAM_DISPLAY_MODE)
-                    } == true
+            // 表示対象は、対象の指定があれば設定済みです。
+            // #30で表示方式の選択は廃止し、対象指定だけを扱います。
+            "particleDisplay" -> isTargetSpecConfigured(node.targetSpec)
             // パーティクル種類と詳細データは同じタブで編集します。
             // 既定値のままでは完了扱いにしません。
             "particle" -> {
@@ -1561,7 +1695,7 @@ object CommandSettingsModel {
      */
     internal fun isFacingSpecComplete(spec: FacingSpec?): Boolean = isFacingSpecConfigured(spec)
 
-    fun allowedVariableOperations(type: VariableType): List<VariableOperation> =
+    fun allowedVariableOperations(type: ValueType): List<VariableOperation> =
         VariableOperation.entries
 
     /**
@@ -1628,6 +1762,53 @@ object CommandSettingsModel {
         // プログラム名・タイマーはノードを変更しないため差分は空集合です。
         plugin.gestureEditor.refreshForScript(script.id, changedNodeIds = emptySet())
         return true
+    }
+
+    /**
+     * issue #8 のディスク引数定義を両GUIが同じ保存境界で更新します。
+     *
+     * 引数の追加・改名・型変更・削除を一つの操作として扱い、読み込み・保存・
+     * 表示更新をまとめます。名前の重複・不正は検証層でも拒否しますが、
+     * 保存前にここでも検査し、不正な定義を保存しません。
+     */
+    fun updateDiskArguments(
+        plugin: KantanCommanderPlugin,
+        scriptId: UUID,
+        editorId: UUID? = null,
+        expectedRevision: Long? = null,
+        change: (MutableList<DiskArgument>) -> Unit,
+    ): Boolean {
+        val current = plugin.scripts.load(scriptId) ?: return false
+        val candidate = current.arguments.toMutableList()
+        change(candidate)
+        val names = candidate.map { it.name }
+        if (names.any { !CommandValueRules.isVariableName(it) }) return false
+        if (names.size != names.toSet().size) return false
+        return updateScript(
+            plugin,
+            scriptId,
+            editorId,
+            expectedRevision = expectedRevision,
+        ) { script ->
+            script.arguments = candidate.toList()
+        }
+    }
+
+    /**
+     * issue #8 の呼び出し引数のリテラルが型に適合するかを判定します。
+     *
+     * 検証層と同じ規則であり、両GUIの入力検証で共有します。複合型は変数指定だけを
+     * 受け付けるため、ここではスカラー3型だけを判定します。
+     */
+    fun isCallArgumentLiteralValid(type: ValueType, raw: String): Boolean = when (type) {
+        ValueType.NUMBER -> CommandValueRules.parseFiniteDouble(raw) != null ||
+            VariableTemplate.isSingleReference(raw) ||
+            TemporaryTemplate.isSingleReference(raw)
+        ValueType.BOOLEAN -> raw.trim().lowercase() in setOf("true", "false") ||
+            VariableTemplate.isSingleReference(raw) ||
+            TemporaryTemplate.isSingleReference(raw)
+        else -> !VariableTemplate.hasMalformedReference(raw) &&
+            !TemporaryTemplate.hasMalformedReference(raw)
     }
 
     /** インベントリ／ジェスチャー共通のグラフ更新処理です。 */
@@ -1700,37 +1881,52 @@ object CommandSettingsModel {
     }
 
     /**
-     * プログラム全体設定であるタイマーも、両GUIが同じ保存境界を通ります。
+     * プログラム全体設定である起動方法も、両GUIが同じ保存境界を通ります。
      *
-     * タイマー値だけを各画面で更新すると、間隔変更時の再登録や無効化時の
-     * 実行方式解除が片方から抜けます。ノード設定と同じく、読み込み・検証・
-     * 保存・実行時登録更新・表示更新を一つの操作として扱います。
-     * 間隔は小数秒（tick境界）で受け付け、下限は設けません。
+     * 起動方法の変更は、読み込み・検証・保存・実行時登録更新・表示更新を
+     * 一つの操作として扱います。明示の起動方法を保存し、従来欄（`timer`／
+     * `activation`）も整合させるため、旧来の実行経路・表示・出力が
+     * 読み替えなしに追従します。間隔は小数秒（tick境界）で受け付け、下限は設けません。
      */
-    fun updateTimer(
+    fun updateTrigger(
         plugin: KantanCommanderPlugin,
         scriptId: UUID,
-        enabled: Boolean,
-        intervalSeconds: Double? = null,
+        trigger: ScriptTrigger,
         editorId: UUID? = null,
         expectedRevision: Long? = null,
     ): Boolean {
+        val normalized = trigger.normalized()
+        if (normalized.kind == TriggerKind.TIMER) {
+            require(CommandValueRules.isTimerSeconds(normalized.intervalSeconds)) {
+                "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください"
+            }
+        }
+        require(normalized.kind != TriggerKind.EVENT || normalized.event != null) {
+            "イベント起動には種別の指定が必要です"
+        }
         return updateScript(
             plugin,
             scriptId,
             editorId,
             expectedRevision = expectedRevision,
-            afterSave = { plugin.resetActivationTiming(it.id) },
+            afterSave = {
+                plugin.resetActivationTiming(it.id)
+                // issue #7: 起動方法の変更をイベント起動の登録へ反映します。
+                plugin.refreshEventTriggerIndex()
+            },
         ) { script ->
-            if (enabled) {
-                val seconds = requireNotNull(intervalSeconds) { "タイマー有効化には間隔が必要です" }
-                require(CommandValueRules.isTimerSeconds(seconds)) {
-                    "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください"
+            script.trigger = normalized
+            // 従来欄も整合させ、旧来の実行経路・表示・出力が追従できるようにします。
+            when (normalized.kind) {
+                TriggerKind.TIMER -> {
+                    script.timer.intervalSeconds = normalized.intervalSeconds
+                    script.timer.enabled = true
                 }
-                script.timer.intervalSeconds = seconds
+                TriggerKind.REDSTONE, TriggerKind.EVENT -> {
+                    script.timer.enabled = false
+                    script.activation = ActivationMode.NEEDS_REDSTONE
+                }
             }
-            script.timer.enabled = enabled
-            if (!enabled) script.activation = ActivationMode.NEEDS_REDSTONE
         }
     }
 

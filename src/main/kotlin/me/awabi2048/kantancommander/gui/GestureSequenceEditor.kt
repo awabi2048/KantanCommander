@@ -53,7 +53,7 @@ import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.VariableTemplate
-import me.awabi2048.kantancommander.model.WorldVariableValue
+import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.myworldmanager.api.MyWorldManagerApi
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
@@ -61,6 +61,7 @@ import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
@@ -70,7 +71,6 @@ import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
@@ -81,12 +81,17 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.MyworldSpawnKind
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.toggleControlBlockState
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.EventTriggerKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
+import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.applyCalledDisk
 import me.awabi2048.kantancommander.security.PlacementDecision
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -180,7 +185,7 @@ data class GestureEditorState(
     /** ワールド内変数一覧だけに使うページ番号です。 */
     var variablePage: Int = 0,
     /** ワールド内変数の新規作成で、Dialogへ進む前にGestureGUIで選択した型です。 */
-    var pendingWorldVariableType: VariableType? = null,
+    var pendingWorldVariableType: ValueType? = null,
     /** ワールド内変数の削除確認で、確認対象として表示している名前です。 */
     var pendingWorldVariableDeleteName: String? = null,
     /**
@@ -192,6 +197,12 @@ data class GestureEditorState(
     var resourcePickerFieldKey: String? = null,
     /** issue #28: ID候補選択子画面のページ番号です。 */
     var resourcePickerPage: Int = 0,
+    /** issue #8: ディスク呼び出し設定の引数ページ番号です。 */
+    var diskCallArgsPage: Int = 0,
+    /** issue #7: イベント種別の選択子画面のページ番号です。 */
+    var triggerEventPage: Int = 0,
+    /** issue #8: ディスク設定の引数ページ番号です。 */
+    var diskSettingsArgsPage: Int = 0,
     /** テスト実行中だけ共有する表示・復元状態です。 */
     var testExecution: GestureTestState? = null,
 )
@@ -211,6 +222,26 @@ enum class GestureLowerMode {
     WORLD_VARIABLES,
     WORLD_VARIABLE_TYPE,
     WORLD_VARIABLE_DELETE_CONFIRM,
+    /**
+     * issue #7: 起動方法の種別選択子画面です。
+     *
+     * タイマー／信号／イベントの3択を親から分離した子画面として扱います。
+     */
+    TRIGGER_KIND,
+    /**
+     * issue #7: イベント種別の選択子画面です。
+     *
+     * 初期6種から一つを選び、選択時に起動方法として確定します。
+     */
+    TRIGGER_EVENT,
+    /**
+     * issue #8: ディスク呼び出しの引数・戻り値受取先の設定子画面です。
+     */
+    DISK_CALL_SETTINGS,
+    /**
+     * issue #8: ディスクの設定（取り出しと引数定義）の子画面です。
+     */
+    DISK_SETTINGS,
     CONFIRM,
     TEST_CONFIRM,
     TEST_STATUS,
@@ -248,8 +279,10 @@ internal object GestureSharedOperationPolicy {
 data class GestureAttentionState(
     /** ノードID → そのノードで要確認となっている表示上の設定タブ（fieldKey）の集合。 */
     val fieldKeysByNode: Map<UUID, Set<String>> = emptyMap(),
-    /** プログラムタイマー（スクリプト全体設定）が要確認か。 */
+    /** プログラムタイマー（スクリプト全体設定）が要確認か。旧保存の従来欄用に維持します。 */
     val timer: Boolean = false,
+    /** issue #7 の起動方法（スクリプト全体設定）が要確認か。 */
+    val trigger: Boolean = false,
 ) {
     companion object {
         val EMPTY = GestureAttentionState()
@@ -286,6 +319,9 @@ enum class GestureSettingScreen {
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
     ENTITY_TAG_OPERATION,
+    VARIABLE_SCOPE,
+    VARIABLE_NAME,
+    VARIABLE_PROPERTY,
     VARIABLE_TYPE,
     VARIABLE_OPERATION,
     VARIABLE_CHANGE_MODE,
@@ -772,6 +808,13 @@ class GestureSequenceEditor(
                 GestureLowerMode.WORLD_VARIABLES -> lowerPanel.buildWorldVariablesChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_TYPE -> lowerPanel.buildWorldVariableTypeChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> lowerPanel.buildWorldVariableDeleteConfirmationChild(state, owner)
+                // issue #7: 起動方法の選択子画面です。子画面の内容だけを差し替えます。
+                GestureLowerMode.TRIGGER_KIND -> lowerPanel.buildTriggerKindChild(state, owner)
+                GestureLowerMode.TRIGGER_EVENT -> lowerPanel.buildTriggerEventChild(state, owner)
+                // issue #8: 呼び出し設定の子画面です。
+                GestureLowerMode.DISK_CALL_SETTINGS -> lowerPanel.buildDiskCallSettingsChild(state, owner)
+                // issue #8: ディスク設定の子画面です。
+                GestureLowerMode.DISK_SETTINGS -> lowerPanel.buildDiskSettingsChild(state, owner)
                 else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
             }
             else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
@@ -871,6 +914,8 @@ class GestureSequenceEditor(
             if (baseline) {
                 lastValidatedScriptId = script.id
                 lastValidatedGraph = script.graph
+                lastValidationSeeds =
+                    me.awabi2048.kantancommander.data.ExecutableScriptValidator.seedTemporaries(script)
             }
         }
         return validationCacheErrors
@@ -882,6 +927,13 @@ class GestureSequenceEditor(
      */
     private var lastValidatedScriptId: java.util.UUID? = null
     private var lastValidatedGraph: me.awabi2048.kantancommander.model.CommandGraph? = null
+    /**
+     * issue #7/#8: 増分検証の前回実行開始時定義表です。
+     *
+     * 引数定義・イベント種別の変更は全ノードの定義可視性に波及するため、
+     * 不一致時は増分検証を使わず全量へ委譲します。
+     */
+    private var lastValidationSeeds: Map<String, me.awabi2048.kantancommander.model.ValueType> = emptyMap()
 
     /**
      * 前回検証結果からの増分更新を試みます。
@@ -901,6 +953,7 @@ class GestureSequenceEditor(
             script = script,
             limits = plugin.graphLimits(),
             variableDefinitions = null,
+            previousSeeds = lastValidationSeeds,
         )
     }
 
@@ -947,6 +1000,8 @@ class GestureSequenceEditor(
         return GestureAttentionState(
             fieldKeysByNode = fieldKeysByNode,
             timer = errors.any { it.nodeId == null && "timer" in it.fieldKeys },
+            // issue #7: 明示の起動方法と旧来のタイマー欄のどちらも起動方法カードへ集約します。
+            trigger = errors.any { it.nodeId == null && ("trigger" in it.fieldKeys || "timer" in it.fieldKeys) },
         )
     }
 
@@ -3008,6 +3063,11 @@ class GestureSequenceEditor(
         val descriptor = CommandSettingsModel.descriptor(node, fieldKey)
         val context = CommandSettingContext(state.scriptId, node.id, descriptor.role)
         if (applyHeldField(player, context, node, fieldKey)) return
+        // issue #8: 呼び出し設定は専用子画面で編集します。対話入力へは進めません。
+        if (fieldKey == "diskCallSettings" && node.type == CommandType.DISK_CALL) {
+            openDiskCallSettings(player)
+            return
+        }
         if (fieldKey == "staySeconds" && node.type == CommandType.DISPLAY_TEXT) {
             // 表示時間は1つのタブにまとめ、現在値欄では3項目を表示します。編集時は
             // インベントリGUIと同じ一組の入力欄・最大長・検証を使います。
@@ -3017,7 +3077,7 @@ class GestureSequenceEditor(
         if (fieldKey == "soundParameters" && (
                 node.type == CommandType.PLAY_SOUND ||
                     (node.type == CommandType.TEMP_SET &&
-                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.SOUND)
+                        ValueType.parse(node.string("tempType")) == ValueType.SOUND)
                 )) {
             showSoundParametersSettingDialog(player, context, node)
             return
@@ -3183,7 +3243,7 @@ class GestureSequenceEditor(
                 node.type == CommandType.BLOCK_OPERATION ||
                     (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.BLOCK) ||
                     (node.type == CommandType.TEMP_SET &&
-                        TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
+                        ValueType.parse(node.string("tempType")) == ValueType.BLOCK)
                 )) {
             applyHeldBlock(player, context)
             return true
@@ -3326,8 +3386,8 @@ class GestureSequenceEditor(
             return false
         }
         val updated = updateSettingNode(player, context, configuredFields = setOf("diskId")) { node ->
-            CommandSettingsModel.setParameter(node, "diskId", diskId.toString())
-            node.snapshot = disk.graph.deepCopy()
+            // issue #8: 呼び出し先の内容スナップショットと引数宣言を転記します。
+            node.applyCalledDisk(diskId, disk)
         }
         if (updated) {
             player.sendMessage(
@@ -4208,8 +4268,463 @@ class GestureSequenceEditor(
         }
     }
 
-    /** ノード未選択時のプログラムタイマーを秒単位で設定します。 */
-    private fun showTimerSettingDialog(player: Player) {
+    /**
+     * issue #7 の起動方法の種別選択子画面へ遷移します。
+     *
+     * 種別選択はDialogの追加操作ではなく、GestureGUI上の独立した設定画面として扱います。
+     * タイマーは確定後に間隔入力へ進み、信号・イベントは選択時に即時確定します。
+     */
+    private fun openTriggerKindSelection(player: Player) {
+        state.lowerMode = GestureLowerMode.TRIGGER_KIND
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildTriggerKindChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "起動方法の選択画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    /**
+     * issue #8 のディスク設定子画面へ遷移します。
+     *
+     * 取り出し操作と引数定義の一覧を示します。引数の追加・改名・型変更・削除は
+     * すべてこの画面から行い、子画面の内容差し替えで遷移します。
+     */
+    private fun openDiskSettings(player: Player) {
+        state.diskSettingsArgsPage = 0
+        state.lowerMode = GestureLowerMode.DISK_SETTINGS
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildDiskSettingsChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ディスク設定画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    /** ディスク設定から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
+    private fun closeDiskSettings(player: Player) {
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateLower(player)
+    }
+
+    /**
+     * 引数定義の変更を保存します。
+     *
+     * 成功時は子画面を再描画します。名前の重複・不正は保存前に拒否し、
+     * 保存失敗時はログへ原因を残して画面に示します。
+     */
+    private fun saveDiskArguments(
+        player: Player,
+        change: (MutableList<DiskArgument>) -> Unit,
+    ): Boolean {
+        val updated = runCatching {
+            CommandSettingsModel.updateDiskArguments(
+                plugin,
+                state.scriptId,
+                editorId = player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+                change = change,
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "引数定義を保存できませんでした: script=${state.scriptId}",
+                failure,
+            )
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        if (!updated) {
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        updateLower(player)
+        return true
+    }
+
+    /** 引数定義の追加・改名を名前入力で受け付けます。空欄・重複・不正名は拒否します。 */
+    private fun editDiskArgumentName(player: Player, current: String?) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        observedRevision = script.revision
+        val spec = CommandDialogSpecs.variableName
+        val inputId = "value"
+        showInputDialog(
+            player = player,
+            body = listOf(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_NAME),
+            ),
+            inputs = listOf(
+                CommandDialogSpecs.input(player, inputId, current.orEmpty(), spec),
+            ),
+        ) { response ->
+            val raw = response.textValue(inputId).trim()
+            val errorKey = when {
+                raw.isEmpty() -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_INVALID
+                else -> spec.validateInput(raw)
+            } ?: if (script.arguments.any { it.name == raw && it.name != current }) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED
+            } else {
+                null
+            }
+            if (errorKey != null) {
+                KcI18n.text(player, errorKey)
+            } else if (!saveDiskArguments(player) { arguments ->
+                    if (current == null) {
+                        arguments += DiskArgument(raw, ValueType.NUMBER)
+                    } else {
+                        val index = arguments.indexOfFirst { it.name == current }
+                        if (index >= 0) arguments[index] = arguments[index].copy(name = raw)
+                    }
+                }) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            } else null
+        }
+    }
+
+    /** 引数定義の型を全型で循環します。 */
+    private fun cycleDiskArgumentType(player: Player, name: String) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        val current = script.arguments.firstOrNull { it.name == name } ?: return
+        observedRevision = script.revision
+        val entries = ValueType.entries
+        val next = entries[(entries.indexOf(current.type) + 1) % entries.size]
+        saveDiskArguments(player) { arguments ->
+            val index = arguments.indexOfFirst { it.name == name }
+            if (index >= 0) arguments[index] = arguments[index].copy(type = next)
+        }
+    }
+
+    /** 引数定義を削除します。即時確定し、結果を画面に示します。 */
+    private fun deleteDiskArgument(player: Player, name: String) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        if (script.arguments.none { it.name == name }) return
+        observedRevision = script.revision
+        if (!saveDiskArguments(player) { arguments ->
+                arguments.removeIf { it.name == name }
+            }
+        ) {
+            return
+        }
+        player.sendMessage(
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_DELETED),
+        )
+    }
+
+    /** 起動方法の種別選択から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
+    private fun closeTriggerKindSelection(player: Player) {
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateLower(player)
+    }
+
+    /** 起動方法の種別選択からイベント種別の選択へ進みます。子画面の内容だけを差し替えます。 */
+    private fun openTriggerEventSelection(player: Player) {
+        state.triggerEventPage = 0
+        state.lowerMode = GestureLowerMode.TRIGGER_EVENT
+        updateLower(player)
+    }
+
+    /**
+     * 起動方法を保存します。
+     *
+     * 保存失敗時はログへ原因を残し、画面には保存失敗を示します。成功時は
+     * 設定一覧へ戻して上下画面を更新します。
+     */
+    private fun saveTrigger(player: Player, trigger: ScriptTrigger): Boolean {
+        val updated = runCatching {
+            CommandSettingsModel.updateTrigger(
+                plugin,
+                state.scriptId,
+                trigger,
+                editorId = player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "起動方法を保存できませんでした: script=${state.scriptId}",
+                failure,
+            )
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        if (!updated) {
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateUpperIfNeeded(player)
+        updateLower(player)
+        return true
+    }
+
+    /**
+     * issue #8 の呼び出し設定子画面へ遷移します。
+     */
+    private fun openDiskCallSettings(player: Player) {
+        state.diskCallArgsPage = 0
+        state.lowerMode = GestureLowerMode.DISK_CALL_SETTINGS
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildDiskCallSettingsChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "呼び出し設定画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    /** 呼び出し設定から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
+    private fun closeDiskCallSettings(player: Player) {
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateLower(player)
+    }
+
+    /** 呼び出し設定の変更を保存し、成功時は子画面を再描画します。 */
+    private fun saveDiskCallNode(
+        player: Player,
+        change: (me.awabi2048.kantancommander.model.CommandNode) -> Unit,
+    ): Boolean {
+        val script = plugin.scripts.load(state.scriptId) ?: return false
+        val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return false
+        val context = CommandSettingContext(
+            state.scriptId,
+            node.id,
+            CommandSettingsModel.descriptor(node, "diskCallSettings").role,
+        )
+        val saved = updateSettingNode(player, context, configuredFields = emptySet(), change = change)
+        if (saved) updateLower(player)
+        return saved
+    }
+
+    /**
+     * 引数の値を編集します。
+     *
+     * 複合型は変数名のみ受け付け、スカラー型はリテラル（テンプレート参照を含む）を
+     * 受け付けます。リテラルと変数指定は排他で、保存時に他方を除去します。
+     */
+    private fun editDiskCallArgument(player: Player, name: String) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+        val argument = node.declaredArguments().firstOrNull { it.name == name } ?: return
+        observedRevision = script.revision
+        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+        val inputId = "value"
+        if (complex) {
+            val spec = CommandDialogSpecs.variableName
+            showInputDialog(
+                player = player,
+                body = listOf(
+                    KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_ARG_VARIABLE),
+                ),
+                inputs = listOf(
+                    CommandDialogSpecs.input(
+                        player,
+                        inputId,
+                        node.string("argvar_$name"),
+                        spec,
+                        Component.text(name),
+                    ),
+                ),
+            ) { response ->
+                val raw = response.textValue(inputId).trim()
+                val errorKey = if (raw.isEmpty()) {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_INVALID
+                } else {
+                    spec.validateInput(raw)
+                }
+                if (errorKey != null) {
+                    KcI18n.text(player, errorKey)
+                } else if (!saveDiskCallNode(player) { target ->
+                        target.params["argvar_$name"] = raw
+                        target.params.remove("arg_$name")
+                        target.clearConfigured("arg_$name")
+                        target.markConfigured("argvar_$name")
+                    }) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                } else null
+            }
+            return
+        }
+        val spec = CommandDialogSpecs.Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+            256,
+            validate = { raw ->
+                if (isValidArgumentLiteral(argument.type, raw)) null
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            },
+        )
+        showInputDialog(
+            player = player,
+            body = listOf(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_ARG_VALUE),
+            ),
+            inputs = listOf(
+                CommandDialogSpecs.input(player, inputId, node.string("arg_$name"), spec, Component.text(name)),
+            ),
+        ) { response ->
+            val raw = response.textValue(inputId).trim()
+            val errorKey = if (raw.isEmpty()) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else {
+                spec.validateInput(raw)
+            }
+            if (errorKey != null) {
+                KcI18n.text(player, errorKey)
+            } else if (!saveDiskCallNode(player) { target ->
+                    target.params["arg_$name"] = raw
+                    target.params.remove("argvar_$name")
+                    target.clearConfigured("argvar_$name")
+                    target.markConfigured("arg_$name")
+                }) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            } else null
+        }
+    }
+
+    /** 引数のリテラルが型に適合するかを判定します。規則は共通モデルで共有します。 */
+    private fun isValidArgumentLiteral(type: ValueType, raw: String): Boolean =
+        CommandSettingsModel.isCallArgumentLiteralValid(type, raw)
+
+    /** 戻り値の受取先scopeをEXECUTION／WORLDで切り替えます。受取先未設定時は変更しません。 */
+    private fun cycleDiskCallReturnScope(player: Player) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+        if (node.string("returnName").isBlank()) return
+        observedRevision = script.revision
+        val current = node.string("returnScope").ifBlank { VariableScope.EXECUTION.name }
+        val next = if (current == VariableScope.WORLD.name) {
+            VariableScope.EXECUTION.name
+        } else {
+            VariableScope.WORLD.name
+        }
+        saveDiskCallNode(player) { target ->
+            target.params["returnScope"] = next
+            target.markConfigured("returnScope")
+        }
+    }
+
+    /**
+     * 戻り値の受取先変数名を編集します。空欄で受取を解除します。
+     */
+    private fun editDiskCallReturnName(player: Player) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
+        observedRevision = script.revision
+        val spec = CommandDialogSpecs.variableName
+        val inputId = "value"
+        showInputDialog(
+            player = player,
+            body = listOf(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN_NAME),
+            ),
+            inputs = listOf(
+                CommandDialogSpecs.input(player, inputId, node.string("returnName"), spec),
+            ),
+        ) { response ->
+            val raw = response.textValue(inputId).trim()
+            when {
+                raw.isEmpty() -> {
+                    if (!saveDiskCallNode(player) { target ->
+                            target.params.remove("returnName")
+                            target.params.remove("returnScope")
+                            target.clearConfigured("returnName")
+                            target.clearConfigured("returnScope")
+                        }
+                    ) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else null
+                }
+                spec.validateInput(raw) != null -> KcI18n.text(player, spec.validateInput(raw)!!)
+                !saveDiskCallNode(player) { target ->
+                    target.params["returnName"] = raw
+                    if (target.string("returnScope").isBlank()) {
+                        target.params["returnScope"] = VariableScope.EXECUTION.name
+                    }
+                    target.markConfigured("returnName")
+                    target.markConfigured("returnScope")
+                } -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                else -> null
+            }
+        }
+    }
+
+    /** ノード未選択時のプログラムのタイマー間隔を秒単位で設定します。 */
+    private fun showTriggerIntervalDialog(player: Player) {
         val script = plugin.scripts.load(state.scriptId) ?: return
         observedRevision = script.revision
         val timerSpec = CommandDialogSpecs.timerSeconds
@@ -4225,34 +4740,13 @@ class GestureSequenceEditor(
                 return@showInputDialog KcI18n.text(player, validationError)
             }
             val seconds = requireNotNull(CommandDialogSpecs.parseTimerSeconds(rawSeconds))
-            val updated = runCatching {
-                CommandSettingsModel.updateTimer(
-                    plugin,
-                    state.scriptId,
-                    enabled = true,
-                    intervalSeconds = seconds,
-                    editorId = player.uniqueId,
-                    expectedRevision = expectedMutationRevision(player),
-                )
-            }.getOrElse { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "タイマー設定を保存できませんでした: script=${state.scriptId}",
-                    failure,
-                )
+            state.lowerMode = GestureLowerMode.SETTINGS
+            if (!saveTrigger(player, ScriptTrigger(TriggerKind.TIMER, intervalSeconds = seconds))) {
                 return@showInputDialog KcI18n.text(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
                 )
             }
-            if (!updated) {
-                return@showInputDialog KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
-                )
-            }
-            updateUpperIfNeeded(player)
-            updateLower(player)
             null
         }
     }
@@ -4421,7 +4915,12 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    /** 一覧から選んだ変数の値を編集します。型は定義側を正とし、変更しません。 */
+    /**
+     * 一覧から選んだ変数の値を編集します。型は定義側を正とし、変更しません。
+     *
+     * スカラー3型はDialogで編集します。複合6型の値は変数操作コマンドの型別設定で
+     * 編集するため、一覧からは案内のみ表示します。
+     */
     private fun showWorldVariableValueDialog(player: Player, name: String) {
         val worldId = resolveVariableWorldId() ?: return
         val current = plugin.variables.get(worldId, name) ?: return
@@ -4429,6 +4928,10 @@ class GestureSequenceEditor(
         // 型ごとの長さ・有限値・参照記法の検証は、Inventory/Gestureで分岐させず
         // 共通Specへ集約します。画面側はDialogの表示と保存だけを担当します。
         val spec = CommandDialogSpecs.worldVariableValue(type)
+        if (spec == null) {
+            player.sendMessage(KcI18n.text(player, CommandDialogSpecs.worldVariableValueBody(type)))
+            return
+        }
         showInputDialog(
             player = player,
             title = KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_TITLE),
@@ -4440,14 +4943,32 @@ class GestureSequenceEditor(
             val validationError = spec.validateInput(raw)
             if (validationError != null) return@showInputDialog KcI18n.text(player, validationError)
             val value = when (type) {
-                VariableType.NUMBER -> WorldVariableValue(
-                    VariableType.NUMBER,
+                ValueType.NUMBER -> TypedValue(
+                    ValueType.NUMBER,
                     numberValue = CommandValueRules.parseFiniteDouble(raw),
                 ).takeIf { it.numberValue != null } ?: return@showInputDialog KcI18n.text(
                     player,
-                    CommandDialogSpecs.worldVariableValueInvalid(VariableType.NUMBER),
+                    CommandDialogSpecs.worldVariableValueInvalid(ValueType.NUMBER),
                 )
-                VariableType.STRING -> WorldVariableValue(VariableType.STRING, stringValue = raw)
+                ValueType.STRING -> TypedValue(ValueType.STRING, stringValue = raw)
+                ValueType.BOOLEAN -> TypedValue(
+                    ValueType.BOOLEAN,
+                    booleanValue = raw.trim().lowercase().toBooleanStrictOrNull(),
+                ).takeIf { it.booleanValue != null } ?: return@showInputDialog KcI18n.text(
+                    player,
+                    CommandDialogSpecs.worldVariableValueInvalid(ValueType.BOOLEAN),
+                )
+                ValueType.LOCATION,
+                ValueType.VECTOR,
+                ValueType.ITEM,
+                ValueType.BLOCK,
+                ValueType.ENTITY,
+                ValueType.SOUND,
+                ValueType.EFFECT,
+                -> return@showInputDialog KcI18n.text(
+                    player,
+                    CommandDialogSpecs.worldVariableValueBody(type),
+                )
             }
             val saved = runCatching { plugin.variables.set(worldId, name, value); true }
                 .getOrElse { failure ->
@@ -4521,7 +5042,7 @@ class GestureSequenceEditor(
      * 初期値入力はここでは行いません。保存層の型専用defineが必要な空値を用意し、
      * Dialogは名前の検証・定義の確定だけを担当します。
      */
-    private fun showWorldVariableNameDialog(player: Player, type: VariableType) {
+    private fun showWorldVariableNameDialog(player: Player, type: ValueType) {
         if (resolveVariableWorldId() == null) return
         // Dialogのキャンセル後も一覧へ戻れるよう、背面の状態を先に一覧へ戻します。
         state.pendingWorldVariableType = null
@@ -5339,6 +5860,8 @@ class GestureSequenceEditor(
     private fun specSaveKey(encoded: String): String = when (encoded) {
         "condition-variable" -> "variable"
         "condition-value" -> "value"
+        "condition-left" -> "leftName"
+        "condition-right" -> "right"
         "condition-block" -> "block"
         "condition-item" -> "item"
         "condition-item-data" -> "itemData"
@@ -6377,13 +6900,31 @@ class GestureSequenceEditor(
                             }) updateLower(player)
                     }
                     "condition-operator" -> {
-                        val operators = listOf("==", "!=", ">", ">=", "<", "<=")
+                        val operators = if (node.conditionSubject() == ConditionSubject.VALUE) {
+                            // #5: 型付き比較では contains を含む7演算子から循環します。
+                            // 型への適用可否は検証層で確認します。
+                            listOf("==", "!=", ">", ">=", "<", "<=", "contains")
+                        } else {
+                            listOf("==", "!=", ">", ">=", "<", "<=")
+                        }
                         if (updateSettingNode(player, settingContext) {
                                 val current = operators.indexOf(it.string("operator", "==")).coerceAtLeast(0)
                                 CommandSettingsModel.setParameter(it, "operator", operators[(current + 1) % operators.size])
                             }) updateLower(player)
                     }
-                    "condition-variable", "condition-value", "condition-block", "condition-item" -> {
+                    "condition-left-scope" -> {
+                        if (updateSettingNode(player, settingContext) {
+                                val next = if (it.string("leftScope", VariableScope.WORLD.name) == VariableScope.WORLD.name) {
+                                    VariableScope.EXECUTION.name
+                                } else {
+                                    VariableScope.WORLD.name
+                                }
+                                CommandSettingsModel.setParameter(it, "leftScope", next)
+                            }) updateLower(player)
+                    }
+                    "condition-variable", "condition-value", "condition-block", "condition-item",
+                    "condition-left", "condition-right",
+                    -> {
                         if (encoded == "condition-item") {
                             applyHeldItem(player, settingContext)
                             updateLower(player)
@@ -6396,7 +6937,9 @@ class GestureSequenceEditor(
                         // インベントリGUIと同一の入力仕様（ラベル・maxLength・検証）を使います。
                         val spec = when (encoded) {
                             "condition-variable" -> CommandDialogSpecs.variableName
+                            "condition-left" -> CommandDialogSpecs.variableName
                             "condition-value" -> CommandDialogSpecs.conditionValueSpec(node)
+                            "condition-right" -> CommandDialogSpecs.conditionRightSpec(node)
                             else -> return
                         }
                         val saveKey = specSaveKey(encoded)
@@ -6635,11 +7178,6 @@ class GestureSequenceEditor(
                 }
             }
             GestureSettingScreen.PARTICLE_DISPLAY -> when {
-                group == "display" && value in setOf("POINT", "GEOMETRY") -> {
-                    if (updateSettingNode(player, settingContext) {
-                            CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_DISPLAY_MODE, value)
-                        }) showSettingScreen()
-                }
                 encoded == "particle-target" -> {
                     val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
@@ -6677,35 +7215,16 @@ class GestureSequenceEditor(
                 encoded == "geometry-numbers" -> {
                     showGeometryNumbersDialog(player, settingContext, node)
                 }
-                encoded == "geometry-end" -> {
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
-                    when (settingSelectionAction(wasSelected, hasChildren)) {
-                        GestureSettingSelectionAction.ENTER_CHILD -> {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(
-                                    settingContext.copy(role = CommandSettingRole.PARTICLE_END),
-                                    fieldKey,
-                                    GestureSettingScreen.POSITION,
-                                ),
-                                encoded,
-                            )
-                        }
-                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                    }
-                }
             }
             GestureSettingScreen.VARIABLE_TYPE -> {
                 if (group != "type") return
                 if (node.type == CommandType.TEMP_SET) {
-                    val type = TemporaryVariableType.parse(value) ?: return
+                    val type = ValueType.parse(value) ?: return
                     if (updateSettingNode(player, settingContext) {
                             CommandSettingsModel.changeTemporaryType(it, type)
                         }) showSettingScreen()
                 } else {
-                    val type = runCatching { VariableType.valueOf(value) }.getOrNull() ?: return
+                    val type = runCatching { ValueType.valueOf(value) }.getOrNull() ?: return
                     if (updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setParameter(it, "type", type.name)
                         }) showSettingScreen()
@@ -6716,6 +7235,45 @@ class GestureSequenceEditor(
                 val operation = runCatching { VariableOperation.valueOf(value) }.getOrNull() ?: return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "operation", operation.name)
+                    }) showSettingScreen()
+            }
+            // #22: ENTITY scope は事前DEFINEなしの別契約ですが、選択肢に出します。
+            // 通常の対象形式と文字列の変数名で操作できるようにします。
+            GestureSettingScreen.VARIABLE_SCOPE -> {
+                if (group != "variableScope") return
+                val scope = runCatching { VariableScope.valueOf(value) }.getOrNull() ?: return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "scope", scope.name)
+                    }) showSettingScreen()
+            }
+            // #2: WORLD scope の変数名は定義済み候補から選択します。候補外の名前は
+            // 直接入力へ進み、DEFINE 操作で新規定義します。
+            GestureSettingScreen.VARIABLE_NAME -> when {
+                group == "variableName" -> {
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "name", value)
+                        }) showSettingScreen()
+                }
+                encoded == "variable-name-direct" -> {
+                    beginSettingInput(
+                        player,
+                        CommandDialogSpecs.variableName,
+                        node.string("name"),
+                    ) { raw ->
+                        if (!updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(it, "name", raw)
+                            }) {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                        } else null
+                    }
+                }
+            }
+            // #3: 詳細値は参照元の型で取得できる候補から選択します。
+            GestureSettingScreen.VARIABLE_PROPERTY -> {
+                if (group != "property") return
+                if (me.awabi2048.kantancommander.model.ValueProperties.definition(value) == null) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "property", value)
                     }) showSettingScreen()
             }
             GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
@@ -7062,14 +7620,49 @@ class GestureSequenceEditor(
             context.elementId == "lower-script-name" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 showProgramNameDialog(player)
             }
-            context.elementId == "lower-script-timer" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                showTimerSettingDialog(player)
+            context.elementId == "lower-script-trigger" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                openTriggerKindSelection(player)
             }
             context.elementId == "lower-script-variables" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 openWorldVariables(player)
             }
             context.elementId == "lower-script-disk" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                // issue #8: 取り出し操作はディスク設定の子画面へ移し、引数定義と同列に扱います。
+                openDiskSettings(player)
+            }
+            // issue #8: ディスク設定の取り出し・引数定義の編集です。
+            context.elementId == "lower-disk-take-out" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 outputScriptDisk(player)
+            }
+            context.elementId == "lower-diskdef-add" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                editDiskArgumentName(player, null)
+            }
+            context.elementId.startsWith("lower-diskdef-name:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-diskdef-name:")
+                if (name.isNotBlank()) editDiskArgumentName(player, name)
+            }
+            context.elementId.startsWith("lower-diskdef-type:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-diskdef-type:")
+                if (name.isNotBlank()) cycleDiskArgumentType(player, name)
+            }
+            context.elementId.startsWith("lower-diskdef-delete:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-diskdef-delete:")
+                if (name.isNotBlank()) deleteDiskArgument(player, name)
+            }
+            context.elementId.startsWith("lower-diskdef-page:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.diskSettingsArgsPage =
+                    context.elementId.removePrefix("lower-diskdef-page:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.DISK_SETTINGS &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeDiskSettings(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -7120,7 +7713,7 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-world-variable-type:") &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val type = runCatching {
-                    VariableType.valueOf(context.elementId.removePrefix("lower-world-variable-type:"))
+                    ValueType.valueOf(context.elementId.removePrefix("lower-world-variable-type:"))
                 }.getOrNull() ?: return
                 state.pendingWorldVariableType = type
                 updateLower(player)
@@ -7129,6 +7722,66 @@ class GestureSequenceEditor(
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val type = state.pendingWorldVariableType ?: return
                 showWorldVariableNameDialog(player, type)
+            }
+            // issue #7: 起動方法の種別選択です。タイマーは間隔入力へ進み、
+            // 信号は即時確定し、イベントは種別選択へ進みます。
+            context.elementId.startsWith("lower-trigger-kind:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val kind = runCatching {
+                    TriggerKind.valueOf(context.elementId.removePrefix("lower-trigger-kind:"))
+                }.getOrNull() ?: return
+                when (kind) {
+                    TriggerKind.TIMER -> showTriggerIntervalDialog(player)
+                    TriggerKind.REDSTONE -> saveTrigger(player, ScriptTrigger(TriggerKind.REDSTONE))
+                    TriggerKind.EVENT -> openTriggerEventSelection(player)
+                }
+            }
+            // issue #7: イベント種別の選択です。選択時に起動方法として確定します。
+            context.elementId.startsWith("lower-trigger-event:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val event = runCatching {
+                    EventTriggerKind.valueOf(context.elementId.removePrefix("lower-trigger-event:"))
+                }.getOrNull() ?: return
+                saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event))
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_EVENT &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                openTriggerKindSelection(player)
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_KIND &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeTriggerKindSelection(player)
+            }
+            // issue #8: 呼び出し設定の引数・戻り値受取先の編集です。
+            context.elementId.startsWith("lower-disk-arg:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-disk-arg:")
+                if (name.isNotBlank()) editDiskCallArgument(player, name)
+            }
+            context.elementId == "lower-disk-return-scope" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                cycleDiskCallReturnScope(player)
+            }
+            context.elementId == "lower-disk-return-name" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                editDiskCallReturnName(player)
+            }
+            context.elementId.startsWith("lower-disk-arg-page:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.diskCallArgsPage =
+                    context.elementId.removePrefix("lower-disk-arg-page:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            // issue #7: イベント種別の選択子画面のページ移動です。
+            context.elementId.startsWith("lower-trigger-event-page:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.triggerEventPage =
+                    context.elementId.removePrefix("lower-trigger-event-page:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.DISK_CALL_SETTINGS &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeDiskCallSettings(player)
             }
             context.elementId == "lower-variables-create" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 openWorldVariableTypeSelection(player)

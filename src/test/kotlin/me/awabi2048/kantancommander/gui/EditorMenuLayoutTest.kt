@@ -8,7 +8,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -175,14 +175,16 @@ class EditorMenuLayoutTest {
     @Test
     fun `temporary variable layouts provide presentation for every temporary type`() {
         val expectedKeys = mapOf(
-            TemporaryVariableType.NUMBER to setOf("name", "tempType", "value"),
-            TemporaryVariableType.STRING to setOf("name", "tempType", "value"),
-            TemporaryVariableType.LOCATION to setOf("name", "tempType", "location"),
-            TemporaryVariableType.ITEM to setOf("name", "tempType", "item"),
-            TemporaryVariableType.BLOCK to setOf("name", "tempType", "block"),
-            TemporaryVariableType.ENTITY to setOf("name", "tempType", "entity"),
-            TemporaryVariableType.SOUND to setOf("name", "tempType", "sound", "soundParameters"),
-            TemporaryVariableType.EFFECT to setOf("name", "tempType", "effect", "level", "seconds"),
+            ValueType.NUMBER to setOf("name", "tempType", "value"),
+            ValueType.STRING to setOf("name", "tempType", "value"),
+            ValueType.BOOLEAN to setOf("name", "tempType", "value"),
+            ValueType.LOCATION to setOf("name", "tempType", "location"),
+            ValueType.VECTOR to setOf("name", "tempType", "x", "y", "z"),
+            ValueType.ITEM to setOf("name", "tempType", "item"),
+            ValueType.BLOCK to setOf("name", "tempType", "block"),
+            ValueType.ENTITY to setOf("name", "tempType", "entity"),
+            ValueType.SOUND to setOf("name", "tempType", "sound", "soundParameters"),
+            ValueType.EFFECT to setOf("name", "tempType", "effect", "level", "seconds"),
         )
 
         expectedKeys.forEach { (type, keys) ->

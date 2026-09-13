@@ -77,4 +77,42 @@ class NumericExpressionTest {
             assertEquals(expected, NumericExpression.parse(raw).error?.code, raw)
         }
     }
+
+    @Test
+    fun `power binds tighter than unary and associates to the right`() {
+        assertEquals(8.0, NumericExpression.parse("2^3").expression?.evaluate { null })
+        // 2^(3^2) = 512
+        assertEquals(512.0, NumericExpression.parse("2^3^2").expression?.evaluate { null })
+        // -(2^2) = -4
+        assertEquals(-4.0, NumericExpression.parse("-2^2").expression?.evaluate { null })
+        assertEquals(9.0, NumericExpression.parse("(1 + 2)^2").expression?.evaluate { null })
+        // 定義域外・非有限結果は解決失敗にします。
+        assertNull(NumericExpression.parse("(-8)^0.5").expression?.evaluate { null })
+    }
+
+    @Test
+    fun `trigonometric functions use degrees`() {
+        assertEquals(1.0, NumericExpression.parse("sin(90)").expression?.evaluate { null }!!, 1e-9)
+        assertEquals(0.0, NumericExpression.parse("cos(90)").expression?.evaluate { null }!!, 1e-9)
+        assertEquals(1.0, NumericExpression.parse("tan(45)").expression?.evaluate { null }!!, 1e-9)
+        assertEquals(30.0, NumericExpression.parse("asin(0.5)").expression?.evaluate { null }!!, 1e-9)
+        assertEquals(60.0, NumericExpression.parse("acos(0.5)").expression?.evaluate { null }!!, 1e-9)
+        assertEquals(45.0, NumericExpression.parse("atan(1)").expression?.evaluate { null }!!, 1e-9)
+        // 大文字も受け付け、定義域外は解決失敗にします。
+        assertEquals(0.0, NumericExpression.parse("SIN(0)").expression?.evaluate { null }!!, 1e-9)
+        assertNull(NumericExpression.parse("asin(2)").expression?.evaluate { null })
+        // 未知の関数名は文字不正として拒否します。
+        assertFalse(NumericExpression.isValid("foo(1)"))
+        assertFalse(NumericExpression.isValid("sin 30"))
+    }
+
+    @Test
+    fun `vanilla lowering accepts only basic arithmetic`() {
+        val basic = requireNotNull(NumericExpression.parse("1 + 2 * \${x}").expression)
+        assertTrue(basic.isVanillaLowerable())
+        val power = requireNotNull(NumericExpression.parse("2^3").expression)
+        assertFalse(power.isVanillaLowerable())
+        val trig = requireNotNull(NumericExpression.parse("sin(30)").expression)
+        assertFalse(trig.isVanillaLowerable())
+    }
 }

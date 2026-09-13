@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.FacingKind
@@ -11,7 +13,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -141,9 +143,9 @@ class CommandSettingsModelTest {
         val node = CommandType.TEMP_SET.newNode()
 
         assertEquals(listOf("name", "tempType", "value"), CommandSettingsModel.visibleFields(node).map { it.key })
-        node.params["tempType"] = TemporaryVariableType.LOCATION.name
+        node.params["tempType"] = ValueType.LOCATION.name
         assertEquals(listOf("name", "tempType", "location"), CommandSettingsModel.visibleFields(node).map { it.key })
-        node.params["tempType"] = TemporaryVariableType.SOUND.name
+        node.params["tempType"] = ValueType.SOUND.name
         assertEquals(listOf("name", "tempType", "sound", "soundParameters"), CommandSettingsModel.visibleFields(node).map { it.key })
     }
 
@@ -460,6 +462,72 @@ class CommandSettingsModelTest {
         node.markConfigured("count")
 
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "count"))
+    }
+
+    @Test
+    fun `variable operations expose only their required fields`() {
+        // #2: 操作内容ごとに必要な項目だけを表示します。
+        fun keysFor(operation: VariableOperation): List<String> {
+            val node = CommandType.VARIABLE.newNode().apply {
+                params["operation"] = operation.name
+            }
+            return CommandSettingsModel.visibleFields(node).map { it.key }
+        }
+
+        assertEquals(
+            listOf("scope", "operation", "name", "type", "changeMode", "value"),
+            keysFor(VariableOperation.DEFINE),
+        )
+        assertEquals(
+            listOf("scope", "operation", "name", "type", "changeMode", "value"),
+            keysFor(VariableOperation.SET),
+        )
+        assertEquals(
+            listOf("scope", "operation", "name", "changeMode", "value"),
+            keysFor(VariableOperation.CHANGE),
+        )
+        assertEquals(
+            listOf("scope", "operation", "name", "source"),
+            keysFor(VariableOperation.COPY),
+        )
+        assertEquals(
+            listOf("scope", "operation", "name"),
+            keysFor(VariableOperation.DELETE),
+        )
+    }
+
+    @Test
+    fun `variable scope routes names to candidates or free text`() {
+        // #2: WORLD scope の変数名は定義済み候補から選択し、EXECUTION scope は文字列入力です。
+        val world = CommandType.VARIABLE.newNode().apply { params["scope"] = VariableScope.WORLD.name }
+        assertEquals(
+            CommandSettingEditor.VARIABLE_NAME,
+            CommandSettingsModel.descriptor(world, "name").editor,
+        )
+        val execution = CommandType.VARIABLE.newNode().apply { params["scope"] = VariableScope.EXECUTION.name }
+        assertEquals(
+            CommandSettingEditor.TEXT,
+            CommandSettingsModel.descriptor(execution, "name").editor,
+        )
+        // scope 欄のない旧ノードは WORLD として読み替えます。
+        val legacy = CommandType.VARIABLE.newNode().apply { params.remove("scope") }
+        assertEquals(
+            CommandSettingEditor.VARIABLE_NAME,
+            CommandSettingsModel.descriptor(legacy, "name").editor,
+        )
+    }
+
+    @Test
+    fun `entity scope exposes the target tab only for entity variables`() {
+        // #22: 対象は ENTITY scope でのみ表示します。
+        val entity = CommandType.VARIABLE.newNode().apply { params["scope"] = VariableScope.ENTITY.name }
+        assertTrue(CommandSettingsModel.visibleFields(entity).map { it.key }.contains("target"))
+        assertEquals(
+            CommandSettingEditor.TARGET,
+            CommandSettingsModel.descriptor(entity, "target").editor,
+        )
+        val world = CommandType.VARIABLE.newNode().apply { params["scope"] = VariableScope.WORLD.name }
+        assertTrue(CommandSettingsModel.visibleFields(world).map { it.key }.none { it == "target" })
     }
 
     @Test

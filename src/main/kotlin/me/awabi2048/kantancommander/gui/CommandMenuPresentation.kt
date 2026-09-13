@@ -61,6 +61,7 @@ internal object CommandPresentationPolicy {
         CommandType.SUMMON_ENTITY,
         CommandType.PLAY_SOUND,
         CommandType.PARTICLE,
+        CommandType.PARTICLE_GEOMETRY,
         CommandType.FIREWORK_LAUNCH,
         CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
@@ -71,6 +72,8 @@ internal object CommandPresentationPolicy {
         CommandType.WAIT,
         CommandType.CONDITION,
         CommandType.DISK_CALL,
+        // issue #8: 「値を返す」は呼出先の実行を打ち切る制御コマンドです。
+        CommandType.RETURN_VALUE,
         CommandType.VARIABLE,
         CommandType.TEMP_SET,
         CommandType.MERGE,

@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 15
+const val STRUCTURED_FORMAT_VERSION = 16
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -53,7 +53,69 @@ data class DiskScript(
      * 誤って「内容あり」と扱いません。旧JSONには存在しないためfalseで復元します。
      */
     var contentModified: Boolean = false,
+    /**
+     * issue #8 の関数引数定義です。
+     *
+     * ディスクとして取り出した時点で外部から呼び出せる関数として扱い、引数は
+     * 呼び出し先の実行開始時点で定義済みのEXECUTION変数になります。別途の
+     * 公開設定は作りません。旧JSONには存在しないため空で復元します。
+     * 引数はすべて必須とし、optional／default値は初期実装に含めません。
+     */
+    var arguments: List<DiskArgument> = emptyList(),
+    /**
+     * issue #7 の起動方法の明示指定です。
+     *
+     * 旧JSONには存在しないため null で復元し、その場合は [effectiveTrigger] が
+     * 従来の `activation`＋`timer` から読み替えます。新規保存は常に明示値を書き、
+     * 従来欄も整合させるため、null は旧保存の意味だけを持ちます。
+     */
+    var trigger: ScriptTrigger? = null,
 )
+
+/**
+ * issue #8 の関数引数定義です。
+ *
+ * name は EXECUTION変数名、type は値型です。呼び出し側は全引数に対応する値を
+ * 設定します。
+ */
+data class DiskArgument(
+    val name: String = "",
+    val type: ValueType = ValueType.NUMBER,
+)
+
+/**
+ * issue #8 の「値を返す」ノードの値型を推論します。
+ *
+ * 変数由来の場合は呼び出し側の定義表で解決するため、ここではリテラルの
+ * 推論だけを行います。真偽値リテラル・数値リテラル以外は文字列とします。
+ */
+fun inferLiteralType(raw: String): ValueType {
+    val normalized = raw.trim().lowercase()
+    if (normalized == "true" || normalized == "false") return ValueType.BOOLEAN
+    if (raw.trim().toDoubleOrNull()?.isFinite() == true) return ValueType.NUMBER
+    return ValueType.STRING
+}
+
+/**
+ * issue #8 の呼出側が保持する被呼出側の引数宣言です。
+ *
+ * snapshot と同じく取り出し時点の独立複写であり、被呼出側の編集で黙って
+ * 変わりません。形式は `name:TYPE` のカンマ区切りです。検証層で live の
+ * 定義との差分（引数名変更・削除）を検出します。
+ */
+fun CommandNode.declaredArguments(): List<DiskArgument> {
+    val raw = params["declaredArgs"]?.takeIf(String::isNotBlank) ?: return emptyList()
+    return raw.split(',').mapNotNull { entry ->
+        val name = entry.substringBefore(':').trim()
+        val type = ValueType.parse(entry.substringAfter(':', "")) ?: return@mapNotNull null
+        if (!CommandValueRules.isVariableName(name)) return@mapNotNull null
+        DiskArgument(name, type)
+    }
+}
+
+/** 引数宣言を保存形式へ符号化します。 */
+fun encodeDeclaredArguments(arguments: List<DiskArgument>): String =
+    arguments.joinToString(",") { "${it.name}:${it.type.name}" }
 
 /** 配置されたかんたんコマンダー制御ブロックからディスクへ出力できる内容があるかを判定します。 */
 fun DiskScript.hasDiskContent(): Boolean = contentModified || graph.nodes.isNotEmpty()
@@ -600,6 +662,31 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
     BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_BLOCK_STATE),
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VARIABLE_STATE),
     CONTROL_BLOCK(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_CONTROL_BLOCK_STATE),
+    /**
+     * issue #5 の型付き条件比較です。
+     *
+     * 左辺（変数）・演算子・右辺（リテラル）の共通モデルで比較します。既存5区分の
+     * 専用predicateは残し、新しい値型・property・Regionへの拡張点にします。
+     */
+    VALUE(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_VALUE_STATE),
+}
+
+/**
+ * issue #2 の共通値型の表示キーを返します。両GUIで同じ文言を使います。
+ *
+ * 型名の表示対応はこの一点に集約し、画面ごとの複製を作りません。
+ */
+fun ValueType.displayKey(): LocalizationKey<String> = when (this) {
+    ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+    ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_BOOLEAN
+    ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
+    ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
+    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+    ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
+    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    ValueType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
+    ValueType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
 }
 
 /**
@@ -624,6 +711,25 @@ fun CommandNode.setConditionSubject(subject: ConditionSubject) {
     params.remove("kind")
     markConfigured("subject")
     clearConfigured("kind")
+}
+
+/**
+ * issue #2 の変数scopeを返します。
+ *
+ * scope 欄のない旧ノードは WORLD として読み替えます。不正値は null とし、
+ * 検証層で未対応として拒否します。
+ */
+fun CommandNode.variableScope(): VariableScope {
+    val raw = params["scope"]
+    if (raw.isNullOrBlank()) return VariableScope.WORLD
+    return VariableScope.parse(raw) ?: VariableScope.WORLD
+}
+
+/** scope 欄の厳密な解釈です。不正値を検出する必要がある検証向けに使います。 */
+fun CommandNode.variableScopeStrict(): VariableScope? {
+    val raw = params["scope"]
+    if (raw.isNullOrBlank()) return VariableScope.WORLD
+    return VariableScope.parse(raw)
 }
 
 /** 制御ブロックの状態条件として選択できる判定項目です。 */
@@ -654,77 +760,36 @@ fun CommandNode.toggleControlBlockState(state: ControlBlockStateKind) {
     controlBlockStates = next.takeIf { it.isNotEmpty() }
 }
 
-/** ワールド内変数の保存型。数値は常にdoubleで保持します。 */
-enum class VariableType { NUMBER, STRING }
-
-/** 変数操作の大分類。すべてMyWorld単位の定義へ反映します。 */
-enum class VariableOperation { DEFINE, CHANGE }
-
-/** CHANGE時に数値へ適用する詳細操作です。STRINGではASSIGNだけを許可します。 */
-enum class VariableChangeMode { CALCULATE, ASSIGN }
-
-data class WorldVariableValue(
-    val type: VariableType,
-    val numberValue: Double? = null,
-    val stringValue: String? = null,
-)
+/**
+ * 変数操作の大分類です。
+ *
+ * - DEFINE: 新規定義のみ。既存名は拒否します。
+ * - SET: 定義済み変数の値設定。未定義名は拒否します（暗黙定義しません）。
+ *   型は定義済みの型を正とし、型不一致も拒否します。
+ * - CHANGE: 定義済み変数の変更のみ。未定義は拒否します。NUMBERでは
+ *   changeMode（ASSIGN／CALCULATE）を選択します。
+ * - COPY: 定義済みの別変数へ値を複写します。複写先も定義済みである必要があり、
+ *   型は複写元の型を引き継ぎます。
+ * - DELETE: 定義と値を削除します。
+ *
+ * #2 の操作仕様であり、EXECUTION／WORLD の両scopeで同じ意味を持ちます。
+ * いずれも明示定義を前提とし、未定義名への書き込みは行いません。
+ * ENTITY scope の DEFINE 不要契約は #22 で別途定めます。
+ */
+enum class VariableOperation { DEFINE, SET, CHANGE, COPY, DELETE }
 
 /**
- * 一時変数（実行内寿命）の型です。実行状態そのものを保存する型は作りません。
+ * 値を書き込む操作の値生成方法です。
  *
- * リテラル利用できるのは NUMBER・STRING のみで `%{name}%` 記法を使います。
- * 複合6型（LOCATION/ITEM/BLOCK/ENTITY/SOUND/EFFECT）は型付き設定欄で定義し、
- * 一般テキストへの埋め込みはエラーとします。利用側は対応する構造化Specまたは
- * コマンド固有の一時変数参照欄から選択します。
+ * - ASSIGN: 値欄・型別設定のリテラル（テンプレート参照を含む）を代入します。
+ * - CALCULATE: 数値計算式を評価して代入します（NUMBERのみ）。
+ * - PROPERTY: 別変数の詳細値を型安全なadapterで取得して代入します（#3）。
+ * - RANDOM: 乱数を生成して代入します（#3、NUMBERのみ）。
+ *
+ * #2 では CHANGE（NUMBER）の詳細として導入し、#3 で DEFINE／SET の値生成へ
+ * 拡張しました。COPY／DELETE では使いません。
  */
-enum class TemporaryVariableType {
-    NUMBER,
-    STRING,
-    /** 位置と向きを一体として扱う一時値です。旧POSITIONは読み込み時だけ受け付けます。 */
-    LOCATION,
-    ITEM,
-    BLOCK,
-    ENTITY,
-    SOUND,
-    EFFECT,
-    ;
-
-    companion object {
-        /**
-         * 保存済みJSONの旧POSITIONを新しいLOCATIONへ正規化します。
-         * enumへPOSITIONを残すとentries()が増えてGUIへ旧概念が再登場するため、
-         * 互換処理は保存文字列の境界だけに閉じ込めます。
-         */
-        fun parse(raw: String?): TemporaryVariableType? {
-            val normalized = raw?.trim()?.uppercase(Locale.ROOT) ?: return null
-            return when (normalized) {
-                "POSITION" -> LOCATION
-                else -> entries.firstOrNull { it.name == normalized }
-            }
-        }
-    }
-}
-
-/** 一時変数の実行時値です。上書き可能で、実行終了時に破棄します。 */
-data class TemporaryValue(
-    val type: TemporaryVariableType,
-    val numberValue: Double? = null,
-    val stringValue: String? = null,
-    /** LOCATION型の解決済み座標・向きです。位置と向きを分離して保持しません。 */
-    val location: SavedLocation? = null,
-    /** アイテム型の素材IDと実体（Base64）です。 */
-    val item: String? = null,
-    val itemData: String? = null,
-    /** ブロック・効果・効果音のIDです。 */
-    val block: String? = null,
-    val entityId: UUID? = null,
-    val sound: String? = null,
-    val volume: Double? = null,
-    val pitch: Double? = null,
-    val effect: String? = null,
-    val level: Int? = null,
-    val seconds: Int? = null,
-)
+enum class VariableChangeMode { CALCULATE, ASSIGN, PROPERTY, RANDOM }
 
 data class SavedLocation(
     val x: Double,
@@ -797,8 +862,20 @@ enum class CommandType(
         "particleSpeed" to "0.0",
         "particleCount" to "1",
         "particleData" to "",
-        "particleDisplayMode" to ParticleDisplayMode.POINT.name,
-        "particleShape" to ParticleShape.POINT_SCATTER.name,
+    )),
+    /**
+     * #30で分離した「図形を表示する」コマンドです。
+     *
+     * 既存PARTICLEのPOINT／散布設定（個数・速度・XYZ散布）は持たず、図形の
+     * 形状・密度・形状数値だけを持ちます。表示位置は中心・始点用の
+     * particlePositionSpecと終点・対角点用のparticleEndPositionSpecを使い、
+     * 半径・角度・回転等の形状値はparams側の図形設定で扱います。
+     * バニラ出力は非対応とし、検証層で明示エラーにします。
+     */
+    PARTICLE_GEOMETRY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_GEOMETRY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_GEOMETRY_DESCRIPTION, Material.FILLED_MAP, mapOf(
+        "particle" to "FLAME",
+        "particleData" to "",
+        "particleShape" to ParticleShape.LINE.name,
         "particleDensity" to "0.5",
         "geometryRadius" to "3.0",
         "geometryHeight" to "3.0",
@@ -835,20 +912,51 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
+        // issue #5: 型付き条件比較（VALUE）の左辺・右辺です。旧ノードにない場合は
+        // WORLD scope・空欄として読み替え、検証層で未設定として拒否します。
+        "leftScope" to VariableScope.WORLD.name,
+        "leftName" to "",
+        "right" to "",
     )),
     DISK_CALL(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISK_CALL_DESCRIPTION, Material.MUSIC_DISC_13, mapOf("diskId" to "")),
-    /** ワールド内変数を定義・変更します。 */
+    /**
+     * issue #8 の「値を返す」制御コマンドです。
+     *
+     * 実行時に残りのノードを打ち切って呼出元へ戻り、値を返します。source が
+     * 空欄の場合は value 欄のリテラルを返し、指定がある場合は sourceScope の
+     * 変数を返します。
+     */
+    RETURN_VALUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_RETURN_VALUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_RETURN_VALUE_DESCRIPTION, Material.TARGET, mapOf(
+        "sourceScope" to VariableScope.EXECUTION.name,
+        "source" to "",
+        "value" to "",
+    )),
+    /**
+     * #2 の共通変数操作コマンドです。
+     *
+     * scope（EXECUTION／WORLD）で対象storeを切り替え、operation で操作内容を
+     * 切り替えます。旧ノードに scope がない場合は WORLD として読み替えます。
+     * #3 の値生成方法は changeMode（ASSIGN／CALCULATE／PROPERTY／RANDOM）で
+     * 切り替え、PROPERTY は propertySource＋property 欄、RANDOM は
+     * randomMin／randomMax 欄を使います。source は COPY 時の複写元変数名です。
+     */
     VARIABLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_VARIABLE_DESCRIPTION, Material.REDSTONE, mapOf(
+        "scope" to VariableScope.WORLD.name,
         "name" to "",
-        "type" to VariableType.NUMBER.name,
+        "type" to ValueType.NUMBER.name,
         "operation" to VariableOperation.DEFINE.name,
         "changeMode" to VariableChangeMode.ASSIGN.name,
         "value" to "0.0",
+        "source" to "",
+        "propertySource" to "",
+        "property" to "",
+        "randomMin" to "1.0",
+        "randomMax" to "6.0",
     )),
     /** 一時変数を設定します。再設定は上書きとして扱います。 */
     TEMP_SET(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TEMPORARY_VARIABLE_SET_DESCRIPTION, Material.REPEATER, mapOf(
         "name" to "",
-        "tempType" to TemporaryVariableType.NUMBER.name,
+        "tempType" to ValueType.NUMBER.name,
         "value" to "0.0",
     )),
     MERGE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_MERGE_DESCRIPTION, Material.HOPPER, emptyMap()),
@@ -876,6 +984,7 @@ enum class CommandType(
      */
     FOLDED_IF(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
         // issue #27: 折り畳み外側は先頭 CONDITION の写しのため、判定対象欄も同じ既定値にします。
+        // issue #5 の型付き条件比較（VALUE）の左辺・右辺も CONDITION と同じ既定値にします。
         "subject" to ConditionSubject.OTHER_ENTITY.name,
         "inverted" to "false",
         "sneaking" to "",
@@ -885,6 +994,9 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
+        "leftScope" to VariableScope.WORLD.name,
+        "leftName" to "",
+        "right" to "",
     )),
     BREAK(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONTINUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE_DESCRIPTION, Material.ARROW, emptyMap());

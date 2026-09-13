@@ -6,7 +6,11 @@ import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.VariableTemplate
+import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableChangeMode
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.variableScope
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.Locale
@@ -159,7 +163,16 @@ internal object WorldVariableReferenceScanner {
                 }
                 // VARIABLEの対象名と変数判定の比較対象は、${name}ではなく
                 // 構造化された名前欄なので、テンプレート走査とは別に明示します。
-                if (node.type == CommandType.VARIABLE) add(node.string("name"))
+                // #2: EXECUTION scope の変数は実行内寿命のため、ワールド変数の
+                // 使用箇所には数えません。COPY の複写元も同様に scope で判定します。
+                if (node.type == CommandType.VARIABLE && node.variableScope() == VariableScope.WORLD) {
+                    add(node.string("name"))
+                    if (node.string("operation") == VariableOperation.COPY.name) add(node.string("source"))
+                    // #3: 詳細値の参照元も構造化された名前欄のため明示します。
+                    if (node.string("changeMode") == VariableChangeMode.PROPERTY.name) {
+                        add(node.string("propertySource"))
+                    }
+                }
                 if (
                     node.type == CommandType.CONDITION &&
                     node.conditionSubject() == ConditionSubject.VARIABLE

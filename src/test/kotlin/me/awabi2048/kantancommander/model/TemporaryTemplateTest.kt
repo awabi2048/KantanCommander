@@ -9,9 +9,10 @@ import org.junit.jupiter.api.Test
 class TemporaryTemplateTest {
     @Test
     fun `legacy POSITION names are normalized to LOCATION`() {
-        assertEquals(TemporaryVariableType.LOCATION, TemporaryVariableType.parse("POSITION"))
-        assertEquals(TemporaryVariableType.LOCATION, TemporaryVariableType.parse(" position "))
-        assertNull(TemporaryVariableType.parse("unknown"))
+        // #2: 型の正本は ValueType へ統合しました。旧名の互換は parse 境界に残します。
+        assertEquals(ValueType.LOCATION, ValueType.parse("POSITION"))
+        assertEquals(ValueType.LOCATION, ValueType.parse(" position "))
+        assertNull(ValueType.parse("unknown"))
     }
 
     @Test

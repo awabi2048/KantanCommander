@@ -20,6 +20,9 @@ import com.awabi2048.ccsystem.api.gui.MenuActionResult
 import com.awabi2048.ccsystem.api.gui.MenuElement
 import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
+import com.awabi2048.ccsystem.api.gui.MenuCustomFormRequest
+import com.awabi2048.ccsystem.api.gui.MenuFormHandler
+import com.awabi2048.ccsystem.api.gui.MenuFormInput
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.item.KantanItemService
@@ -28,6 +31,10 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.model.DiskArgument
+import me.awabi2048.kantancommander.model.ValueType
+import me.awabi2048.kantancommander.model.displayKey
+import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.hasDiskContent
@@ -83,7 +90,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         // 簡易GUIは左クリックのみで操作します。制御系コマンドは
                         // 表示のみとし、設定変更はフルGUI（ジェスチャーGUI）へ案内します。
                         // 内部データはフル形式のまま保持するため、削除もしません。
-                        if (!CommandPresentationPolicy.isSimpleEditable(node.type)) {
+                        // issue #8: 呼び出し設定は制御系ですが両GUIで編集するため除外します。
+                        if (!CommandPresentationPolicy.isSimpleEditable(node.type) &&
+                            node.type != CommandType.DISK_CALL
+                        ) {
                             return@handler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_LOCKED_MESSAGE),
                             )
@@ -93,9 +103,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         )
                     },
                     "output" to handler { context ->
-                        val placement = placement(context.route) ?: return@handler MenuActionResult.Ignored
-                        if (!outputDisk(context.player, placement)) return@handler MenuActionResult.Ignored
-                        MenuActionResult.Success(MenuUpdate.Refresh)
+                        MenuActionResult.Success(MenuUpdate.Navigate(diskSettingsRoute(context.route)))
                     },
                     "save_library" to handler { context ->
                         val source = scriptId(context.route)?.let(plugin.scripts::load)
@@ -123,6 +131,52 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             return@handler MenuActionResult.Ignored
                         }
                         MenuActionResult.Success(MenuUpdate.Close)
+                    },
+                ),
+            ),
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                OWNER,
+                DISK_SETTINGS_ID,
+                renderer = { renderDiskSettings(it.player, it.route) },
+                actions = mapOf(
+                    "back" to handler { MenuActionResult.Success(MenuUpdate.Back) },
+                    "takeOut" to handler { context ->
+                        val current = placement(context.route) ?: return@handler MenuActionResult.Ignored
+                        if (!outputDisk(context.player, current)) return@handler MenuActionResult.Ignored
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    "argName" to handler { context ->
+                        val name = context.payload["name"]?.takeIf(String::isNotBlank)
+                            ?: return@handler MenuActionResult.Ignored
+                        openDiskArgumentNameForm(context.player, context.route, name)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    "argType" to handler { context ->
+                        if (!cycleDiskArgumentType(context.player, context.route, context.payload["name"])) {
+                            return@handler MenuActionResult.Ignored
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    "argDelete" to handler { context ->
+                        if (!deleteDiskArgument(context.player, context.route, context.payload["name"])) {
+                            return@handler MenuActionResult.Ignored
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    "argAdd" to handler { context ->
+                        openDiskArgumentNameForm(context.player, context.route, null)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    "argPage" to handler { context ->
+                        val page = context.payload["page"]?.toIntOrNull()
+                            ?: return@handler MenuActionResult.Ignored
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(
+                                context.route.copy(payload = context.route.payload + ("argPage" to page.toString())),
+                            ),
+                        )
                     },
                 ),
             ),
@@ -266,21 +320,19 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         )
         val currentPlacement = placement(route)
         if (currentPlacement != null) {
-            val placementScript = scriptId(route)?.let(plugin.scripts::load)
-            val hasContent = placementScript?.hasDiskContent() == true
-            if (hasContent) {
-                elements += KcGui.menuEntry(
-                    player = player,
-                    slot = 40,
-                    material = Material.MUSIC_DISC_OTHERSIDE,
-                    name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT),
-                    style = GuiNameStyle.PRIMARY,
-                    description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
-                    actions = listOf(
-                        GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_COPY)),
-                    ),
-                )
-            }
+            // issue #8: 取り出し操作はディスク設定の子画面へ移し、引数定義と同列に扱います。
+            // 引数定義は内容がなくても行えるため、内容有無にかかわらず表示します。
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = 40,
+                material = Material.MUSIC_DISC_OTHERSIDE,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick("output", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS)),
+                ),
+            )
         }
         elements += KcGui.menuEntry(
             player = player,
@@ -334,7 +386,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun commandElement(player: Player, slot: Int, node: CommandNode): MenuElement {
         // 簡易GUIは左クリックのみのため、編集・削除の区別はジェスチャーで行いません。
         // 削除は設定画面内の削除項目へ集約し、制御系コマンドは表示のみとします。
-        val editable = CommandPresentationPolicy.isSimpleEditable(node.type)
+        // issue #8: 呼び出し設定は制御系ですが両GUIで編集するため編集扱いとします。
+        val editable = CommandPresentationPolicy.isSimpleEditable(node.type) || node.type == CommandType.DISK_CALL
         return KcGui.menuEntry(
             player = player,
             slot = slot,
@@ -509,6 +562,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 placementScript.name = diskScript.name
                 placementScript.activation = diskScript.activation
                 placementScript.timer = diskScript.timer.copy()
+                // issue #7/#8: 起動方法と引数定義も引き継ぎます。従来欄だけでは
+                // イベント起動が失われるため、明示指定ごと複写します。
+                placementScript.trigger = diskScript.trigger?.copy()
+                placementScript.arguments = diskScript.arguments.toList()
                 placementScript.graph = diskScript.graph.deepCopy()
                 placementScript.contentModified = diskScript.contentModified
                 true
@@ -524,6 +581,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             .getOrElse { return false } == true
         if (!written) return false
         plugin.resetActivationTiming(placement.scriptId)
+        // issue #7: 起動方法が変わり得るため、イベント起動の登録を作り直します。
+        plugin.refreshEventTriggerIndex()
         runCatching { plugin.placements.refreshDisplaysForScript(placement.scriptId) }
             .onFailure { failure ->
                 plugin.logger.log(
@@ -538,6 +597,240 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         plugin.gestureEditor.refreshForScript(placement.scriptId)
         player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_DISK_WRITTEN))
         return true
+    }
+
+    /**
+     * issue #8 のディスク設定子画面です（簡易GUI）。
+     *
+     * 取り出し操作と引数定義の一覧を示します。引数は名前・型・削除の3行1組で
+     * 6組まで表示し、追加行と戻る行を続けます。保存規則はジェスチャーGUIと同一です。
+     */
+    private fun renderDiskSettings(player: Player, route: MenuRoute): InventoryMenuView {
+        val currentPlacement = placement(route)
+        val script = currentPlacement?.let { plugin.scripts.load(it.scriptId) }
+        if (currentPlacement == null || script == null) {
+            return InventoryMenuView(
+                45,
+                KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS)),
+                emptyList(),
+            )
+        }
+        val elements = mutableListOf<MenuElement>()
+        var slot = 10
+        if (script.hasDiskContent()) {
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = slot++,
+                material = Material.MUSIC_DISC_OTHERSIDE,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_TAKE_OUT),
+                style = GuiNameStyle.PRIMARY,
+                description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_OUTPUT_DESCRIPTION),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick("takeOut", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_TAKE_OUT)),
+                ),
+            )
+        }
+        // 引数は2組ずつページングし、追加・戻る操作と重ならないようにします。
+        val pageSize = 2
+        val pageCount = ((script.arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["argPage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        script.arguments.drop(page * pageSize).take(pageSize).forEach { argument ->
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = slot++,
+                material = Material.NAME_TAG,
+                name = argument.name,
+                style = GuiNameStyle.PRIMARY,
+                data = listOf(
+                    GuiMenuEntryData(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE),
+                        KcI18n.text(player, argument.type.displayKey()),
+                    ),
+                ),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick("argName", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME), mapOf("name" to argument.name)),
+                ),
+            )
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = slot++,
+                material = Material.BOOK,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TYPE),
+                style = GuiNameStyle.PRIMARY,
+                data = listOf(GuiMenuEntryData(argument.name, KcI18n.text(player, argument.type.displayKey()))),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick("argType", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TYPE), mapOf("name" to argument.name)),
+                ),
+            )
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = slot++,
+                material = Material.BARRIER,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE),
+                style = GuiNameStyle.DANGER,
+                data = listOf(
+                    GuiMenuEntryData(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE),
+                        argument.name,
+                    ),
+                ),
+                actions = listOf(
+                    GuiMenuActionIntent.AnyClick("argDelete", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE), mapOf("name" to argument.name)),
+                ),
+            )
+        }
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = slot++,
+            material = Material.EMERALD,
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_ADD),
+            style = GuiNameStyle.PRIMARY,
+            actions = listOf(
+                GuiMenuActionIntent.AnyClick("argAdd", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_ADD)),
+            ),
+        )
+        if (pageCount > 1) {
+            // 移動できない方向の矢印は出さず、押せないボタンを残しません。
+            if (page > 0) {
+                elements += KcGui.menuEntry(
+                    player = player,
+                    slot = 46,
+                    material = Material.ARROW,
+                    name = "◀",
+                    style = GuiNameStyle.PRIMARY,
+                    actions = listOf(
+                        GuiMenuActionIntent.AnyClick("argPage", "◀", mapOf("page" to (page - 1).toString())),
+                    ),
+                )
+            }
+            if (page < pageCount - 1) {
+                elements += KcGui.menuEntry(
+                    player = player,
+                    slot = 47,
+                    material = Material.ARROW,
+                    name = "▶",
+                    style = GuiNameStyle.PRIMARY,
+                    actions = listOf(
+                        GuiMenuActionIntent.AnyClick("argPage", "▶", mapOf("page" to (page + 1).toString())),
+                    ),
+                )
+            }
+        }
+        elements += KcGui.menuEntry(
+            player = player,
+            slot = 49,
+            material = Material.ARROW,
+            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK),
+            style = GuiNameStyle.PRIMARY,
+            actions = listOf(
+                GuiMenuActionIntent.AnyClick("back", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+            ),
+        )
+        return InventoryMenuView(
+            54,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS)),
+            elements,
+        )
+    }
+
+    /** 引数定義の追加・改名を名前入力で受け付けます。空欄・重複・不正名は拒否します。 */
+    private fun openDiskArgumentNameForm(player: Player, route: MenuRoute, current: String?) {
+        val scriptId = scriptId(route) ?: return
+        val script = plugin.scripts.load(scriptId) ?: return
+        showDiskSettingsTextForm(
+            player = player,
+            route = route,
+            formId = "disk-arg-name",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS),
+            label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_NAME),
+            initial = current.orEmpty(),
+            spec = CommandDialogSpecs.variableName,
+        ) { raw ->
+            if (raw.isEmpty() || !CommandValueRules.isVariableName(raw)) return@showDiskSettingsTextForm false
+            if (script.arguments.any { it.name == raw && it.name != current }) return@showDiskSettingsTextForm false
+            CommandSettingsModel.updateDiskArguments(plugin, scriptId, editorId = player.uniqueId) { arguments ->
+                if (current == null) {
+                    arguments += DiskArgument(raw, ValueType.NUMBER)
+                } else {
+                    val index = arguments.indexOfFirst { it.name == current }
+                    if (index >= 0) arguments[index] = arguments[index].copy(name = raw)
+                }
+            }
+        }
+    }
+
+    /** 引数定義の型を全型で循環します。 */
+    private fun cycleDiskArgumentType(player: Player, route: MenuRoute, name: String?): Boolean {
+        val scriptId = scriptId(route) ?: return false
+        if (name.isNullOrBlank()) return false
+        return CommandSettingsModel.updateDiskArguments(plugin, scriptId, editorId = player.uniqueId) { arguments ->
+            val index = arguments.indexOfFirst { it.name == name }
+            if (index < 0) return@updateDiskArguments
+            val entries = ValueType.entries
+            val next = entries[(entries.indexOf(arguments[index].type) + 1) % entries.size]
+            arguments[index] = arguments[index].copy(type = next)
+        }
+    }
+
+    /** 引数定義を削除します。即時確定し、結果を画面に示します。 */
+    private fun deleteDiskArgument(player: Player, route: MenuRoute, name: String?): Boolean {
+        val scriptId = scriptId(route) ?: return false
+        if (name.isNullOrBlank()) return false
+        val removed = CommandSettingsModel.updateDiskArguments(plugin, scriptId, editorId = player.uniqueId) { arguments ->
+            arguments.removeIf { it.name == name }
+        }
+        if (removed) {
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_DELETED),
+            )
+        }
+        return removed
+    }
+
+    /**
+     * 簡易GUIの文字入力基盤です。
+     *
+     * 検証仕様はDialogと共有し、画面ごとに検証を複製しません。保存後は
+     * 呼び出し元の画面へ戻ります。Formを閉じた場合も復帰します。
+     */
+    private fun showDiskSettingsTextForm(
+        player: Player,
+        route: MenuRoute,
+        formId: String,
+        title: String,
+        label: String,
+        initial: String,
+        spec: CommandDialogSpecs.Spec,
+        save: (String) -> Boolean,
+    ) {
+        val forms = CCSystem.getAPI().getMenuFormService()
+        if (!forms.isAvailable(player)) {
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_FORM_UNAVAILABLE))
+            return
+        }
+        forms.show(
+            player,
+            MenuCustomFormRequest(
+                owner = OWNER,
+                id = formId,
+                title = title,
+                inputs = listOf(MenuFormInput.Text("value", label, "", initial)),
+                handler = MenuFormHandler { _, response ->
+                    val raw = CommandDialogSpecs.normalize("value", response.textValue("value")).trim()
+                    val validationError = spec.validateInput(raw)
+                    if (validationError != null) {
+                        player.sendMessage(KcI18n.component(player, validationError))
+                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                    }
+                    if (!save(raw)) {
+                        player.sendMessage(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Resume)
+                    }
+                    MenuActionResult.Success(MenuUpdate.Replace(route))
+                },
+                onClosed = MenuFormHandler { _, _ -> MenuActionResult.Success(MenuUpdate.Resume) },
+            ),
+        )
     }
 
     private fun outputDisk(player: Player, placement: DiskPlacement): Boolean {
@@ -568,6 +861,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         private const val MENU_ID = "editor"
         private const val WRITE_ID = "write_confirm"
         private const val DISK_ID = "diskId"
+        /** issue #8: ディスク設定（取り出しと引数定義）の子画面です。 */
+        private const val DISK_SETTINGS_ID = "disk_settings"
         private const val VIEWPORT_WIDTH = 9
         private const val VIEWPORT_HEIGHT = 3
 
@@ -577,6 +872,9 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
 
         fun editorRoute(current: MenuRoute) =
             EditorSession.from(current)?.route(OWNER, MENU_ID) ?: current.copy(id = MENU_ID)
+
+        /** issue #8: 配置のディスク設定画面への経路です。配置文脈を引き継ぎます。 */
+        private fun diskSettingsRoute(current: MenuRoute) = current.copy(id = DISK_SETTINGS_ID)
 
         private fun route(current: MenuRoute, x: Int, y: Int) =
             EditorSession.from(current)?.withOrigin(MapPoint(x, y))?.route(OWNER, MENU_ID)

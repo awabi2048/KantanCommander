@@ -44,18 +44,23 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
-import me.awabi2048.kantancommander.model.TemporaryVariableType
+import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
+import me.awabi2048.kantancommander.model.VariableScope
+import me.awabi2048.kantancommander.model.variableScope
 import me.awabi2048.kantancommander.model.VariableChangeMode
-import me.awabi2048.kantancommander.model.VariableType
 import me.awabi2048.kantancommander.model.VariableTemplate
-import me.awabi2048.kantancommander.model.ParticleDisplayMode
 import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.hasDiskContent
+import me.awabi2048.kantancommander.model.effectiveTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.EventTriggerKind
+import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.displayKey
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.kantancommander.gui.declarative.CenteredLine
@@ -149,6 +154,16 @@ class GestureLowerPanel(
             GestureLowerMode.WORLD_VARIABLE_TYPE -> buildSettings(state, player, attention, suppressHighlight)
             // 削除確認も一覧と同じ子画面契約で表示し、親画面へ確認ボタンを混在させません。
             GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> buildSettings(state, player, attention, suppressHighlight)
+            // issue #7: 起動方法の選択子画面です。子画面が閉じられた場合でも、
+            // 親側へ選択肢の内部座標を誤描画しないようにします。
+            GestureLowerMode.TRIGGER_KIND -> buildSettings(state, player, attention, suppressHighlight)
+            GestureLowerMode.TRIGGER_EVENT -> buildSettings(state, player, attention, suppressHighlight)
+            // issue #8: 呼び出し設定の子画面です。子画面が閉じられた場合でも、
+            // 親側へ設定用の内部座標を誤描画しないようにします。
+            GestureLowerMode.DISK_CALL_SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
+            // issue #8: ディスク設定の子画面です。子画面が閉じられた場合でも、
+            // 親側へ設定用の内部座標を誤描画しないようにします。
+            GestureLowerMode.DISK_SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirmNew(state, player)
             GestureLowerMode.TEST_CONFIRM -> buildTestConfirmationNew(state, player, child = true)
             GestureLowerMode.TEST_STATUS -> buildTestStatusNew(state, player)
@@ -775,7 +790,7 @@ class GestureLowerPanel(
                     description = Component.text(
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DESC_TYPE),
                     ),
-                    options = listOf(VariableType.NUMBER, VariableType.STRING).map { type ->
+                    options = ValueType.entries.map { type ->
                         val selected = selectedType == type
                         val label = variableTypeName(player, type)
                         WorldVariableTypeOption(
@@ -806,7 +821,235 @@ class GestureLowerPanel(
                 ),
             ),
             GestureLowerMode.WORLD_VARIABLE_TYPE,
-            "[DeclarativeVariableType]",
+            "[DeclarativeValueType]",
+        )
+    }
+
+    /**
+     * issue #7 の起動方法の種別選択子画面を生成します。
+     *
+     * 現在の起動方法を選択表示し、選択時に即時確定します。タイマーは確定後に
+     * 間隔入力へ進み、信号・イベントはそのまま保存します。
+     */
+    fun buildTriggerKindChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val current = state.scriptId
+            .let { plugin.scripts.load(it)?.effectiveTrigger()?.kind }
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.kindDocument(
+                me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY),
+                    ),
+                    options = TriggerKind.entries.map { kind ->
+                        me.awabi2048.kantancommander.gui.declarative.TriggerChoiceOption(
+                            key = kind.name,
+                            label = Component.text(TriggerDisplay.kindName(player, kind)),
+                            selected = current == kind,
+                            background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                            outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(current == kind)?.let {
+                                Bukkit.createBlockData(it)
+                            },
+                        )
+                    },
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.TRIGGER_KIND,
+            "[DeclarativeTriggerKind]",
+        )
+    }
+
+    /**
+     * issue #8 の呼び出し設定子画面を生成します。
+     *
+     * 引数の値（リテラルまたは変数参照）と戻り値の受取先を一画面で編集します。
+     * 引数は3件ずつページングし、カード選択でDialogへ進みます。
+     */
+    fun buildDiskCallSettingsChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val script = plugin.scripts.load(state.scriptId)
+        val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
+        val arguments = node?.declaredArguments().orEmpty()
+        val pageSize = 3
+        val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.diskCallArgsPage.coerceIn(0, pageCount - 1)
+        val returnName = node?.string("returnName").orEmpty()
+        val returnScope = node?.string("returnScope").orEmpty().ifBlank { VariableScope.EXECUTION.name }
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskCall.settingsDocument(
+                me.awabi2048.kantancommander.gui.declarative.DiskCallSettingsData(
+                    title = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS),
+                    ),
+                    body = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_BODY),
+                    ),
+                    emptyArgs = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_NO_ARGS),
+                    ),
+                    arguments = arguments
+                        .drop(page * pageSize)
+                        .take(pageSize)
+                        .map { argument ->
+                            val variable = node?.string("argvar_${argument.name}")?.takeIf(String::isNotBlank)
+                            val literal = node?.string("arg_${argument.name}")?.takeIf(String::isNotBlank)
+                            val valueText = when {
+                                variable != null -> "%{$variable}%"
+                                literal != null -> literal
+                                else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+                            }
+                            val configured = variable != null || literal != null
+                            me.awabi2048.kantancommander.gui.declarative.DiskCallArgumentCard(
+                                name = argument.name,
+                                label = Component.text("${argument.name}: $valueText"),
+                                background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                                outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(configured)?.let {
+                                    Bukkit.createBlockData(it)
+                                },
+                            )
+                        },
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    returnLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN),
+                    ),
+                    returnScopeLabel = Component.text(
+                        if (returnScope == VariableScope.WORLD.name) {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
+                        } else {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
+                        },
+                    ),
+                    returnScopeBackground = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
+                    returnNameLabel = Component.text(
+                        returnName.ifBlank {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+                        },
+                    ),
+                    returnNameBackground = Bukkit.createBlockData(
+                        if (returnName.isNotBlank()) Material.CYAN_CONCRETE else Material.LIGHT_GRAY_CONCRETE,
+                    ),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.DISK_CALL_SETTINGS,
+            "[DeclarativeDiskCall]",
+        )
+    }
+
+    /**
+     * issue #7 のイベント種別の選択子画面を生成します。
+     *
+     * 初期6種から一つを選び、選択時に起動方法として確定します。
+     */
+    fun buildTriggerEventChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val current = state.scriptId
+            .let { plugin.scripts.load(it)?.effectiveTrigger()?.event }
+        val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
+        val total = EventTriggerKind.entries.size
+        val pageCount = ((total + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.triggerEventPage.coerceIn(0, pageCount - 1)
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.eventDocument(
+                me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
+                    title = Component.text(TriggerDisplay.kindName(player, TriggerKind.EVENT)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY),
+                    ),
+                    options = EventTriggerKind.entries.map { event ->
+                        me.awabi2048.kantancommander.gui.declarative.TriggerChoiceOption(
+                            key = event.name,
+                            label = Component.text(TriggerDisplay.eventName(player, event)),
+                            selected = current == event,
+                            background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                            outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(current == event)?.let {
+                                Bukkit.createBlockData(it)
+                            },
+                        )
+                    },
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                ),
+            ),
+            GestureLowerMode.TRIGGER_EVENT,
+            "[DeclarativeTriggerEvent]",
+        )
+    }
+
+    /**
+     * issue #8 のディスク設定子画面を生成します。
+     *
+     * 取り出し操作と引数定義の一覧を示します。引数は名前・型・削除の3カード1行で
+     * 2件ずつページングし、追加カードと戻る操作が重ならないようにします。
+     */
+    fun buildDiskSettingsChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val script = plugin.scripts.load(state.scriptId)
+        val arguments = script?.arguments.orEmpty()
+        val pageSize = 2
+        val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.diskSettingsArgsPage.coerceIn(0, pageCount - 1)
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskSettings.settingsDocument(
+                me.awabi2048.kantancommander.gui.declarative.DiskSettingsData(
+                    title = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS),
+                    ),
+                    body = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_SETTINGS_BODY),
+                    ),
+                    takeOutLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_TAKE_OUT),
+                    ),
+                    takeOutBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    emptyArgs = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_NO_ARGS),
+                    ),
+                    arguments = arguments
+                        .drop(page * pageSize)
+                        .take(pageSize)
+                        .map { argument ->
+                            me.awabi2048.kantancommander.gui.declarative.DiskArgumentRow(
+                                name = argument.name,
+                                nameLabel = Component.text(argument.name),
+                                typeLabel = Component.text(variableTypeName(player, argument.type)),
+                                background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                                outline = null,
+                            )
+                        },
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    addLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_ADD),
+                    ),
+                    addBackground = Bukkit.createBlockData(Material.GREEN_CONCRETE),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.DISK_SETTINGS,
+            "[DeclarativeDiskSettings]",
         )
     }
 
@@ -1416,7 +1659,7 @@ class GestureLowerPanel(
             node.type == CommandType.BLOCK_OPERATION ||
                 (node.type == CommandType.CONDITION && node.conditionSubject() == ConditionSubject.BLOCK) ||
                 (node.type == CommandType.TEMP_SET &&
-                    TemporaryVariableType.parse(node.string("tempType")) == TemporaryVariableType.BLOCK)
+                    ValueType.parse(node.string("tempType")) == ValueType.BLOCK)
             )
         val heldDiskSetting = field.key == "diskId" && node.type == CommandType.DISK_CALL
         val heldFireworkSetting = field.key == "fireworkContents" && node.type == CommandType.FIREWORK_LAUNCH
@@ -2102,37 +2345,27 @@ class GestureLowerPanel(
                 cy = SCRIPT_SETTING_ROW_TOP_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
-            val timerState = if (script.timer.enabled) {
-                GestureSettingValueState.CONFIGURED
-            } else {
-                GestureSettingValueState.INITIAL
-            }
-            val timerValue = if (script.timer.enabled) {
-                "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED)} " +
-                    KcI18n.text(
-                        player,
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS,
-                        mapOf("value" to CommandDialogSpecs.formatSeconds(script.timer.intervalSeconds)),
-                    )
-            } else {
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED)
-            }
+            // issue #7: 「タイマー設定」を「起動方法」へ整理します。
+            // 実行時に採用する起動方法（明示指定または従来欄の読み替え）の要約を示し、
+            // 名称の固定ラベルと現在値の表示欄を分離します。
+            val triggerState = GestureSettingValueState.CONFIGURED
+            val triggerValue = TriggerDisplay.summary(player, script.effectiveTrigger())
             cards += ScriptSettingCard(
-                elementId = "lower-script-timer",
-                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
-                value = Component.text(timerValue),
+                elementId = "lower-script-trigger",
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
+                value = Component.text(triggerValue),
                 background = Bukkit.createBlockData(
                     GestureSettingVisualPolicy.material(
                         GestureSettingSelectionMode.MULTIPLE,
-                        timerState,
+                        triggerState,
                     ),
                 ),
                 icon = ItemStack(Material.CLOCK),
-                attentionHover = if (attention.timer) {
+                attentionHover = if (attention.trigger) {
                     // 注意ホバーは上段カードの図柄の上側へ出します（下段は下側の規則）。
                     // 固定ホバースロット（HOVER_SLOT_Y）は使わず、対象カードの直上へ置きます。
                     singleLineHover(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TRIGGER),
                         x = SCRIPT_SETTING_COL_RIGHT_X,
                         y = SCRIPT_SETTING_ROW_TOP_Y +
                             DeclarativeSettings.SCRIPT_CARD_HEIGHT / 2.0 +
@@ -2177,9 +2410,9 @@ class GestureLowerPanel(
                 cy = SCRIPT_SETTING_ROW_BOTTOM_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
-            // 未選択時下部の4枚目はプログラムディスクの取得操作です。設定値の編集ではなく
-            // 内容の複製であり、簡易GUIの出力操作と同じく内容があるときだけ有効にします。
-            // 空のプログラムでは未設定表示とし、クリック時点のガードでも受け付けません。
+            // issue #8: 未選択時下部の4枚目はディスクの設定（取り出しと引数定義）です。
+            // 取り出し自体は内容の複製であり、簡易GUIの出力操作と同じく内容があるときだけ
+            // 有効にします。空のプログラムでは未設定表示とし、クリック時点のガードでも受け付けません。
             val diskAvailable = script.hasDiskContent()
             val diskState = if (diskAvailable) {
                 GestureSettingValueState.CONFIGURED
@@ -2193,7 +2426,7 @@ class GestureLowerPanel(
             }
             cards += ScriptSettingCard(
                 elementId = "lower-script-disk",
-                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_DISK),
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS),
                 value = Component.text(diskValue),
                 background = Bukkit.createBlockData(
                     GestureSettingVisualPolicy.material(
@@ -2241,16 +2474,46 @@ class GestureLowerPanel(
         }.getOrNull()
     }
 
+    /**
+     * issue #2 の変数名候補で使うワールドIDです。
+     *
+     * 設定画面の文脈は state を持たないため、スクリプトの配置先から所有ワールドを
+     * 解決します。未配置・解決不能の場合は候補なし（直接入力のみ）として扱います。
+     */
+    private fun variableWorldIdFor(scriptId: java.util.UUID): java.util.UUID? {
+        val worldName = plugin.placements.findByScript(scriptId).firstOrNull()?.world ?: return null
+        if (!plugin.server.pluginManager.isPluginEnabled("MyWorldManager")) return null
+        return runCatching {
+            me.awabi2048.myworldmanager.api.MyWorldManagerApi.getWorldRepository()
+                ?.findByWorldName(worldName)?.uuid
+        }.getOrNull()
+    }
 
 
-    /** ワールド変数の型名を、ノード設定と同じ表示キーで解決します。 */
-    private fun variableTypeName(player: Player, type: VariableType): String = KcI18n.text(
+
+    /**
+     * issue #3 の参照元変数の定義型を解決します。
+     *
+     * WORLD scope は永続定義表から確定します。EXECUTION scope はフロー解析の
+     * 定義表を画面側で持たないため未確定（null）とし、全候補を提示します。
+     * 不適合の選択は検証層で拒否します。
+     */
+    private fun resolvePropertySourceType(node: CommandNode, context: CommandSettingContext): ValueType? {
+        val source = node.string("propertySource").takeIf(String::isNotBlank) ?: return null
+        if (node.variableScope() != VariableScope.WORLD) return null
+        val worldId = variableWorldIdFor(context.scriptId) ?: return null
+        return plugin.variables.definitions(worldId)[source]?.type
+    }
+
+    /** 変数の型名を、ノード設定と同じ表示キーで解決します。 */
+    private fun variableTypeName(player: Player, type: ValueType): String = KcI18n.text(
         player,
-        when (type) {
-            VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
-            VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-        },
+        displayVariableTypeNameKey(type),
     )
+
+    /** issue #2 の共通値型の表示キーを返します。両GUIで同じ文言を使います。 */
+    fun displayVariableTypeNameKey(type: ValueType): com.awabi2048.ccsystem.api.localization.LocalizationKey<String> =
+        type.displayKey()
 
     /**
      * 直接値を確認するための実行ボタンです。
@@ -2593,16 +2856,27 @@ class GestureLowerPanel(
             else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_SCOPE_POSITION,
         )
         choice.id.startsWith("type:") -> suffixKeyDescription(player, choice.id, "type:") { suffix ->
-            when (runCatching { VariableType.valueOf(suffix) }.getOrNull()) {
-                VariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_DECIMAL
-                VariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_TEXT
+            when (runCatching { ValueType.valueOf(suffix) }.getOrNull()) {
+                ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_DECIMAL
+                ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_TEXT
+                ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_BOOLEAN
+                ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_POSITION
+                ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_TYPE_ENTITY
+                ValueType.VECTOR,
+                ValueType.ITEM,
+                ValueType.BLOCK,
+                ValueType.SOUND,
+                ValueType.EFFECT,
                 null -> null
             }
         }
         choice.id.startsWith("operation:") -> suffixKeyDescription(player, choice.id, "operation:") { suffix ->
             when (runCatching { VariableOperation.valueOf(suffix) }.getOrNull()) {
                 VariableOperation.DEFINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_SET
+                VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_SET
                 VariableOperation.CHANGE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_ADD
+                VariableOperation.COPY -> null
+                VariableOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_VARIABLE_OPERATION_CLEAR
                 null -> null
             }
         }
@@ -2716,6 +2990,10 @@ class GestureLowerPanel(
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_TARGET_EXISTS
                 ConditionSubject.VARIABLE ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
+                // #5: 型付き比較は変数条件の説明を共用します。左辺・演算子・右辺の
+                // 意味は詳細項目の説明で補います。
+                ConditionSubject.VALUE ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_VARIABLE_STATE
                 ConditionSubject.BLOCK ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_BLOCK_STATE
                 ConditionSubject.CONTROL_BLOCK ->
@@ -2733,6 +3011,13 @@ class GestureLowerPanel(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_STATE)
             "condition-variable" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VARIABLE)
+            // #5: 左辺・右辺は変数名・比較値の説明を共用し、範囲は対象範囲の説明を共用します。
+            "condition-left" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VARIABLE)
+            "condition-right" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_VALUE)
+            "condition-left-scope" ->
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_SCOPE)
             "condition-scope" ->
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DESCRIPTION_CONDITION_DETAIL_SCOPE)
             "condition-operator" ->
@@ -3454,11 +3739,9 @@ class GestureLowerPanel(
                 )
             }
         }
-        // 表示設定は、表示方式の択一と対象選択の掘り下げで構成します。
-        // 表示方式の選択表示は明示記録だけを反映し、対象設定の有無に引きずられません。
+        // 表示対象は対象選択の掘り下げだけで構成します。
+        // #30で表示方式の選択は廃止し、コマンド選択そのものが通常／図形の選択を兼ねます。
         GestureSettingScreen.PARTICLE_DISPLAY -> listOf(
-            SettingChoice("display:POINT", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_POINT), ParticleGeometry.displayMode(node) == ParticleDisplayMode.POINT && node.isExplicitlyConfigured(ParticleGeometry.PARAM_DISPLAY_MODE)),
-            SettingChoice("display:GEOMETRY", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARTICLE_GEOMETRY), ParticleGeometry.displayMode(node) == ParticleDisplayMode.GEOMETRY && node.isExplicitlyConfigured(ParticleGeometry.PARAM_DISPLAY_MODE)),
             GestureSettingTreeNode(
                 id = "particle-target",
                 label = labeled(
@@ -3470,8 +3753,9 @@ class GestureLowerPanel(
                 children = targetChoices(node, context.copy(role = CommandSettingRole.NODE_TARGET), player),
             ),
         )
-        // 図形設定は、形状の択一・数値入力・終端位置の掘り下げで構成します。
-        // 数値入力はダイアログで開く葉であり、終端位置はLINE／BOXのときだけ提示します。
+        // 図形設定は、形状の択一と数値入力で構成します。
+        // 数値入力はダイアログで開く葉であり、選択形状の数値だけを扱います。
+        // 終点・対角点は表示位置（geometryEnd）へ分離したため、ここでは扱いません。
         GestureSettingScreen.PARTICLE_GEOMETRY -> buildList {
             addAll(
                 listOf(
@@ -3513,49 +3797,65 @@ class GestureLowerPanel(
                     selected = false,
                 ),
             )
-            val shape = ParticleGeometry.shape(node)
-            if (shape == ParticleShape.LINE || shape == ParticleShape.BOX) {
+        }
+        // #2: WORLD scope の変数名は定義済み候補から選択します。候補にない名前は
+        // 直接入力から定義フロー（DEFINE）へ進めます。EXECUTION scope は文字列入力の
+        // ためこの画面を使いません（TEXT表示）。
+        GestureSettingScreen.VARIABLE_NAME -> buildList {
+            val worldId = variableWorldIdFor(context.scriptId)
+            val defined = worldId?.let { plugin.variables.definitions(it).keys.sorted() }.orEmpty()
+            val current = node.string("name")
+            defined.forEach { name ->
                 add(
-                    GestureSettingTreeNode(
-                        id = "geometry-end",
-                        label = labeled(
-                            player,
-                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_POSITION,
-                            CommandSettingsModel.positionKind(node, CommandSettingRole.PARTICLE_END)
-                                ?.let { positionKindLabel(player, it) },
-                        ),
-                        selected = CommandSettingsModel.isFieldConfigured(node, "position", CommandSettingRole.PARTICLE_END),
-                        children = positionChoices(node, context.copy(role = CommandSettingRole.PARTICLE_END), player),
+                    SettingChoice(
+                        "variableName:$name",
+                        name,
+                        explicitSelected(node, fieldKey, context.role, current == name),
                     ),
                 )
             }
+            add(
+                GestureSettingTreeNode(
+                    id = "variable-name-direct",
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE),
+                    selected = current.isNotBlank() && current !in defined,
+                ),
+            )
         }
-        GestureSettingScreen.VARIABLE_TYPE -> if (node.type == CommandType.TEMP_SET) {
-            TemporaryVariableType.entries.map { type ->
-                val label = when (type) {
-                    TemporaryVariableType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
-                    TemporaryVariableType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-                    TemporaryVariableType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
-                    TemporaryVariableType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
-                    TemporaryVariableType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
-                    TemporaryVariableType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
-                    TemporaryVariableType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
-                    TemporaryVariableType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
-                }
-                SettingChoice(
-                    "type:${type.name}",
-                    KcI18n.text(player, label),
-                    explicitSelected(node, fieldKey, context.role, TemporaryVariableType.parse(node.string("tempType", TemporaryVariableType.NUMBER.name)) == type),
-                )
-            }
-        } else listOf(
-            SettingChoice("type:NUMBER", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER), explicitSelected(node, fieldKey, context.role, node.string("type", VariableType.NUMBER.name) == VariableType.NUMBER.name)),
-            SettingChoice("type:STRING", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT), explicitSelected(node, fieldKey, context.role, node.string("type", VariableType.NUMBER.name) == VariableType.STRING.name)),
+        GestureSettingScreen.VARIABLE_TYPE -> ValueType.entries.map { type ->
+            val key = if (node.type == CommandType.TEMP_SET) "tempType" else "type"
+            SettingChoice(
+                "type:${type.name}",
+                KcI18n.text(player, displayVariableTypeNameKey(type)),
+                explicitSelected(node, fieldKey, context.role, ValueType.parse(node.string(key, ValueType.NUMBER.name)) == type),
+            )
+        }
+        GestureSettingScreen.VARIABLE_SCOPE -> listOf(
+            SettingChoice(
+                "variableScope:${VariableScope.EXECUTION.name}",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION),
+                explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.EXECUTION.name),
+            ),
+            SettingChoice(
+                "variableScope:${VariableScope.WORLD.name}",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD),
+                explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.WORLD.name),
+            ),
+            // #22: ENTITY scope は事前DEFINEなしで対象直結のため、選択肢に出します。
+            // 通常の対象形式と文字列の変数名で操作します。
+            SettingChoice(
+                "variableScope:${VariableScope.ENTITY.name}",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_ENTITY),
+                explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.ENTITY.name),
+            ),
         )
         GestureSettingScreen.VARIABLE_OPERATION -> {
-            val type = runCatching { VariableType.valueOf(node.string("type", VariableType.NUMBER.name)) }
-                .getOrDefault(VariableType.NUMBER)
-            CommandSettingsModel.allowedVariableOperations(type).map { operation ->
+            val type = runCatching { ValueType.valueOf(node.string("type", ValueType.NUMBER.name)) }
+                .getOrDefault(ValueType.NUMBER)
+            // #22: ENTITY scope は事前DEFINEを要求しないため、定義操作を提示しません。
+            val operations = CommandSettingsModel.allowedVariableOperations(type)
+                .filter { node.variableScope() != VariableScope.ENTITY || it != VariableOperation.DEFINE }
+            operations.map { operation ->
                 SettingChoice(
                     "operation:${operation.name}",
                     KcI18n.text(player, operationLabel(operation)),
@@ -3564,21 +3864,45 @@ class GestureLowerPanel(
             }
         }
         GestureSettingScreen.VARIABLE_CHANGE_MODE -> {
-            // 文字列型では計算式を適用できないため、代入のみを提供します。
-            val isString = node.string("type", VariableType.NUMBER.name) == VariableType.STRING.name
-            if (isString) {
-                listOf(SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), explicitSelected(node, fieldKey, context.role, true)))
-            } else {
-                listOf(
-                    SettingChoice("changeMode:ASSIGN", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN), explicitSelected(node, fieldKey, context.role, node.string("changeMode", "ASSIGN") == "ASSIGN")),
-                    SettingChoice("changeMode:CALCULATE", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE), explicitSelected(node, fieldKey, context.role, node.string("changeMode", "ASSIGN") == "CALCULATE")),
+            // #3: 値生成方法は型で出し分けます。計算式と乱数はNUMBERだけ、
+            // 代入と詳細値取得は全型で提供します。
+            val type = ValueType.parse(node.string("type")) ?: ValueType.NUMBER
+            val current = node.string("changeMode", "ASSIGN")
+            fun choice(mode: VariableChangeMode, label: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>) =
+                SettingChoice(
+                    "changeMode:${mode.name}",
+                    KcI18n.text(player, label),
+                    explicitSelected(node, fieldKey, context.role, current == mode.name),
+                )
+            buildList {
+                add(choice(VariableChangeMode.ASSIGN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ASSIGN))
+                if (type == ValueType.NUMBER) {
+                    add(choice(VariableChangeMode.CALCULATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CALCULATE))
+                }
+                add(choice(VariableChangeMode.PROPERTY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_PROPERTY))
+                if (type == ValueType.NUMBER) {
+                    add(choice(VariableChangeMode.RANDOM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_CHANGE_RANDOM))
+                }
+            }
+        }
+        // #3: 詳細値は参照元の型で取得できる候補だけを提示します。参照元が
+        // 未確定の場合は全候補を提示し、検証層で不適合を拒否します。
+        GestureSettingScreen.VARIABLE_PROPERTY -> {
+            val candidates = resolvePropertySourceType(node, context)
+                ?.let { me.awabi2048.kantancommander.model.ValueProperties.forSource(it) }
+                ?: me.awabi2048.kantancommander.model.ValueProperties.ALL
+            candidates.map { definition ->
+                SettingChoice(
+                    "property:${definition.id}",
+                    definition.id,
+                    explicitSelected(node, fieldKey, context.role, node.string("property") == definition.id),
                 )
             }
         }
         GestureSettingScreen.VARIABLE_VALUE -> buildList {
             add(SettingChoice("value:direct", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE), explicitSelected(node, fieldKey, context.role, !node.string("value").startsWith("$"))))
             val script = plugin.scripts.load(context.scriptId)
-            val insideFor = script != null && node.string("type", VariableType.NUMBER.name) == VariableType.NUMBER.name &&
+            val insideFor = script != null && node.string("type", ValueType.NUMBER.name) == ValueType.NUMBER.name &&
                 GraphEditor.isInsideFor(script.graph, node.id, GraphEditor.Edge.NEXT)
             if (insideFor) {
                 add(
@@ -4010,6 +4334,24 @@ class GestureLowerPanel(
                 SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, node.string("operator", "=="))),
                 SettingChoice("condition-value", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("value", "0"))),
             )
+            // issue #5: 型付き条件比較は左辺（範囲＋変数）・演算子・右辺で構成します。
+            // 簡単な条件プリセット（既存5区分）はそのまま残し、詳細比較はこの
+            // 判定対象を選んだ場合の高度設定として展開します。
+            ConditionSubject.VALUE -> listOf(
+                SettingChoice(
+                    "condition-left-scope",
+                    label(
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE,
+                        when (node.string("leftScope").ifBlank { VariableScope.WORLD.name }) {
+                            VariableScope.EXECUTION.name -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
+                            else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
+                        },
+                    ),
+                ),
+                SettingChoice("condition-left", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("leftName"))),
+                SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, node.string("operator", "=="))),
+                SettingChoice("condition-right", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("right"))),
+            )
             ConditionSubject.BLOCK -> listOf(
                 SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION), node.conditionPositionSpec != null),
                 SettingChoice("condition-block", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, node.string("block", "minecraft:air"))),
@@ -4028,7 +4370,10 @@ class GestureLowerPanel(
 
     private fun operationLabel(operation: VariableOperation): com.awabi2048.ccsystem.api.localization.LocalizationKey<String> = when (operation) {
         VariableOperation.DEFINE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DEFINE
+        VariableOperation.SET -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET
         VariableOperation.CHANGE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CHANGE
+        VariableOperation.COPY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_OPERATION_COPY
+        VariableOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE
     }
 
     private fun settingCurrentValue(
