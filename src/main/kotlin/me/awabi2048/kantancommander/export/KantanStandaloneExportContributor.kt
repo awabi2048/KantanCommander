@@ -20,6 +20,7 @@ import me.awabi2048.kantancommander.placement.PlacedBlockMaterials
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.mwmchanpon.api.PreparedStandaloneExport
 import me.awabi2048.mwmchanpon.api.StandaloneExportContext
 import me.awabi2048.mwmchanpon.api.StandaloneExportContributor
@@ -145,16 +146,7 @@ class KantanStandaloneExportContributor(
                 val operation = node.string("operation", VariableOperation.DEFINE.name)
                 node.params.keys.toList().forEach { key ->
                     val raw = node.params[key] ?: return@forEach
-                    node.params[key] = when {
-                        node.type == CommandType.VARIABLE && key == "value" &&
-                            operation == VariableOperation.CHANGE.name &&
-                            node.string("changeMode", "ASSIGN") == "CALCULATE" -> namespaceExpression(raw, namespace)
-                        key in DIRECT_VARIABLE_FIELDS &&
-                            node.type == CommandType.CONDITION &&
-                            node.conditionSubject() == ConditionSubject.VARIABLE -> "${namespace}_$raw"
-                        key in REGISTRY_FIELDS || key in NON_TEXT_FIELDS -> raw
-                        else -> namespaceTemplate(raw, namespace) ?: raw
-                    }
+                    node.params[key] = namespaceExportParam(node, key, raw, namespace, operation)
                 }
                 node.snapshot?.let(::rewrite)
             }
@@ -171,36 +163,66 @@ class KantanStandaloneExportContributor(
         name = namespaceTemplate(target.name, namespace),
     )
 
-    private fun namespaceTemplate(raw: String?, namespace: String): String? = raw?.let {
-        TEMPLATE_REFERENCE.replace(it) { match ->
-            "${'$'}{${namespace}_${match.groupValues[1]}}"
-        }
-    }
+    private fun namespaceExpression(raw: String, namespace: String): String =
+        namespaceStandaloneExpression(raw, namespace)
+}
 
-    private fun namespaceExpression(raw: String, namespace: String): String {
-        val parsed = NumericExpression.parse(raw).expression ?: return raw
-        return parsed.references
-            .filterNot(SystemVariableNames::isSystemName)
-            .fold(raw) { expression, reference ->
-                expression.replace(
-                    "${'$'}{$reference}",
-                    "${'$'}{${namespace}_$reference}",
-                )
-            }
-    }
+/**
+ * issue #5: 単体出力の変数名前空間付与は、1キー分の純粋な書換え規則です。
+ * クラスの外に出して単体検証できる形にします。
+ */
+internal fun namespaceExportParam(
+    node: me.awabi2048.kantancommander.model.CommandNode,
+    key: String,
+    raw: String,
+    namespace: String,
+    operation: String = node.string("operation", VariableOperation.DEFINE.name),
+): String = when {
+    node.type == CommandType.VARIABLE && key == "value" &&
+        operation == VariableOperation.CHANGE.name &&
+        node.string("changeMode", "ASSIGN") == "CALCULATE" -> namespaceStandaloneExpression(raw, namespace)
+    key in DIRECT_VARIABLE_FIELDS &&
+        node.type == CommandType.CONDITION &&
+        node.conditionSubject() == ConditionSubject.VARIABLE -> "${namespace}_$raw"
+    // 型付き条件比較の左辺は、WORLD参照の場合だけ素の変数名を持つため
+    // 名前空間を付けます。EXECUTION参照は一時変数のまま扱い、
+    // ENTITY参照は検証層で拒否済みです。
+    key == "leftName" &&
+        node.type == CommandType.CONDITION &&
+        node.conditionSubject() == ConditionSubject.VALUE &&
+        node.string("leftScope").ifBlank { VariableScope.WORLD.name } == VariableScope.WORLD.name &&
+        raw.isNotBlank() -> "${namespace}_$raw"
+    key in REGISTRY_FIELDS || key in NON_TEXT_FIELDS -> raw
+    else -> namespaceTemplate(raw, namespace) ?: raw
+}
 
-    private companion object {
-        val TEMPLATE_REFERENCE = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}")
-        val DIRECT_VARIABLE_FIELDS = setOf("variable")
-        val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
-        val NON_TEXT_FIELDS = setOf(
-            "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
-            "tagOperation", "soundScope", "soundOperation", "soundCategory",
-            "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
-            "attributeOperation", "modifierOperation", "property",
-        )
+internal fun namespaceTemplate(raw: String?, namespace: String): String? = raw?.let {
+    TEMPLATE_REFERENCE.replace(it) { match ->
+        "${'$'}{${namespace}_${match.groupValues[1]}}"
     }
 }
+
+internal fun namespaceStandaloneExpression(raw: String, namespace: String): String {
+    val parsed = NumericExpression.parse(raw).expression ?: return raw
+    return parsed.references
+        .filterNot(SystemVariableNames::isSystemName)
+        .fold(raw) { expression, reference ->
+            expression.replace(
+                "${'$'}{$reference}",
+                "${'$'}{${namespace}_$reference}",
+            )
+        }
+}
+
+private val TEMPLATE_REFERENCE = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}")
+private val DIRECT_VARIABLE_FIELDS = setOf("variable")
+private val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
+private val NON_TEXT_FIELDS = setOf(
+    "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
+    "tagOperation", "soundScope", "soundOperation", "soundCategory",
+    "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
+    "attributeOperation", "modifierOperation", "property",
+)
 
 internal data class PreparedProgram(
     val placement: DiskPlacement,

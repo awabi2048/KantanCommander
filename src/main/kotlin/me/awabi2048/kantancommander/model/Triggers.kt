@@ -171,6 +171,12 @@ fun CommandNode.applyCalledDisk(diskId: java.util.UUID, disk: DiskScript) {
         (key.startsWith("arg_") && key.removePrefix("arg_") !in names) ||
             (key.startsWith("argvar_") && key.removePrefix("argvar_") !in names)
     }
+    // 除去した値・変数指定に対応する明示設定も消し、表示上の設定済み残骸を残しません。
+    configuredFields?.removeIf { key ->
+        (key.startsWith("arg_") && key.removePrefix("arg_") !in names) ||
+            (key.startsWith("argvar_") && key.removePrefix("argvar_") !in names)
+    }
+    if (configuredFields?.isEmpty() == true) configuredFields = null
     val encoded = encodeDeclaredArguments(disk.arguments)
     if (encoded.isBlank()) {
         params.remove("declaredArgs")

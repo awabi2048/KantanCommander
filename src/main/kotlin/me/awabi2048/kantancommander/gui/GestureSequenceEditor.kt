@@ -6939,7 +6939,7 @@ class GestureSequenceEditor(
                             "condition-variable" -> CommandDialogSpecs.variableName
                             "condition-left" -> CommandDialogSpecs.variableName
                             "condition-value" -> CommandDialogSpecs.conditionValueSpec(node)
-                            "condition-right" -> CommandDialogSpecs.conditionValueSpec(node)
+                            "condition-right" -> CommandDialogSpecs.conditionRightSpec(node)
                             else -> return
                         }
                         val saveKey = specSaveKey(encoded)
@@ -7237,12 +7237,11 @@ class GestureSequenceEditor(
                         CommandSettingsModel.setParameter(it, "operation", operation.name)
                     }) showSettingScreen()
             }
-            // #2: scope は EXECUTION／WORLD の択一です。ENTITY は事前定義なしの
-            // 別契約（#22）のため選択肢に出しません。
+            // #22: ENTITY scope は事前DEFINEなしの別契約ですが、選択肢に出します。
+            // 通常の対象形式と文字列の変数名で操作できるようにします。
             GestureSettingScreen.VARIABLE_SCOPE -> {
                 if (group != "variableScope") return
-                val scope = runCatching { VariableScope.valueOf(value) }.getOrNull()
-                    ?.takeIf { it != VariableScope.ENTITY } ?: return
+                val scope = runCatching { VariableScope.valueOf(value) }.getOrNull() ?: return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "scope", scope.name)
                     }) showSettingScreen()

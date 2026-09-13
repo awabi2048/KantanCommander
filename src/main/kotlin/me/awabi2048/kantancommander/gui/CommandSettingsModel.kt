@@ -604,7 +604,11 @@ object CommandSettingsModel {
         val mode = runCatching { VariableChangeMode.valueOf(node.string("changeMode", VariableChangeMode.ASSIGN.name)) }
             .getOrDefault(VariableChangeMode.ASSIGN)
         if (fieldKey == "type") {
-            if (operation == VariableOperation.CHANGE) return false
+            // #22: ENTITY scope は定義表を持たないため、CHANGE＋ASSIGN でも
+            // 型欄で指定します。EXECUTION／WORLD の CHANGE は定義済みの型を使います。
+            if (operation == VariableOperation.CHANGE) {
+                return node.variableScope() == VariableScope.ENTITY && mode == VariableChangeMode.ASSIGN
+            }
             // PROPERTY／RANDOM モードでは生成結果の型を採用するため型欄を隠します。
             return mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE
         }

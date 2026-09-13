@@ -7,6 +7,7 @@ import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.conditionSubject
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataSchema
@@ -1026,6 +1027,32 @@ internal object CommandDialogSpecs {
     /** 条件種別に応じた比較値の形式を返し、数値条件だけを数値欄へ切り替えます。 */
     fun conditionValueSpec(node: CommandNode): Spec =
         field(node, "value") ?: conditionValue
+
+    /**
+     * issue #5: 型付き条件比較（VALUE）の右辺入力仕様です。
+     *
+     * 左辺の型は入力時点では確定しないため、演算子が型を決める場合だけ
+     * 型別検証します。`contains` は文字列、`>・>=・<・<=` は数値のみを受け付け、
+     * `==・!=` は全型があり得るため汎用仕様とします。左辺型まで含めた完全な
+     * 検査は検証層が行います。両GUIで同じ仕様を使います。
+     */
+    fun conditionRightSpec(node: CommandNode): Spec {
+        if (node.conditionSubject() != ConditionSubject.VALUE) return conditionValueSpec(node)
+        return when (node.string("operator", "==")) {
+            // contains の右辺は空欄にできないため、STRING検証へ必須を付けます。
+            // 共有 Spec の required は変えない（他用途へ波及させない）。
+            "contains" -> tempStringValue.copy(
+                required = true,
+                validate = { raw ->
+                    if (raw.isBlank() || hasMalformedAnyReference(raw)) {
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                    } else null
+                },
+            )
+            ">", ">=", "<", "<=" -> tempNumberValue
+            else -> conditionValueSpec(node)
+        }
+    }
 
     /**
      * 一時変数 NUMBER の値入力です。有限doubleまたは単一 `%{name}%` 参照を受け付けます。

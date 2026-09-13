@@ -492,4 +492,33 @@ class CommandDialogSpecsTest {
             ),
         )
     }
+
+    @Test
+    fun `condition right side follows operator driven types`() {
+        fun valueNode(operator: String) = me.awabi2048.kantancommander.model.CommandNode(
+            type = me.awabi2048.kantancommander.model.CommandType.CONDITION,
+            params = linkedMapOf(
+                "subject" to me.awabi2048.kantancommander.model.ConditionSubject.VALUE.name,
+                "operator" to operator,
+            ),
+        )
+        // issue #5: 比較演算子が型を決める場合だけ型別検証します。
+        // contains は文字列、比較演算子は数値のみを受け付けます。
+        val containsSpec = CommandDialogSpecs.conditionRightSpec(valueNode("contains"))
+        assertNull(containsSpec.validateInput("hello"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            containsSpec.validateInput(""),
+        )
+        val greaterSpec = CommandDialogSpecs.conditionRightSpec(valueNode(">"))
+        assertNull(greaterSpec.validateInput("1.5"))
+        assertNull(greaterSpec.validateInput("%{count}%"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            greaterSpec.validateInput("abc"),
+        )
+        // ==・!= は全型があり得るため汎用仕様とします。
+        val equalSpec = CommandDialogSpecs.conditionRightSpec(valueNode("=="))
+        assertNull(equalSpec.validateInput("abc"))
+    }
 }

@@ -984,6 +984,7 @@ enum class CommandType(
      */
     FOLDED_IF(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(
         // issue #27: 折り畳み外側は先頭 CONDITION の写しのため、判定対象欄も同じ既定値にします。
+        // issue #5 の型付き条件比較（VALUE）の左辺・右辺も CONDITION と同じ既定値にします。
         "subject" to ConditionSubject.OTHER_ENTITY.name,
         "inverted" to "false",
         "sneaking" to "",
@@ -993,6 +994,9 @@ enum class CommandType(
         "operator" to ">=",
         "value" to "0.0",
         "block" to "minecraft:air",
+        "leftScope" to VariableScope.WORLD.name,
+        "leftName" to "",
+        "right" to "",
     )),
     BREAK(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BREAK_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONTINUE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONTINUE_DESCRIPTION, Material.ARROW, emptyMap());

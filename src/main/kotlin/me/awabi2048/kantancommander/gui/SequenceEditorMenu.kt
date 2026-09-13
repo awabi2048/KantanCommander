@@ -562,6 +562,10 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 placementScript.name = diskScript.name
                 placementScript.activation = diskScript.activation
                 placementScript.timer = diskScript.timer.copy()
+                // issue #7/#8: 起動方法と引数定義も引き継ぎます。従来欄だけでは
+                // イベント起動が失われるため、明示指定ごと複写します。
+                placementScript.trigger = diskScript.trigger?.copy()
+                placementScript.arguments = diskScript.arguments.toList()
                 placementScript.graph = diskScript.graph.deepCopy()
                 placementScript.contentModified = diskScript.contentModified
                 true
@@ -577,6 +581,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             .getOrElse { return false } == true
         if (!written) return false
         plugin.resetActivationTiming(placement.scriptId)
+        // issue #7: 起動方法が変わり得るため、イベント起動の登録を作り直します。
+        plugin.refreshEventTriggerIndex()
         runCatching { plugin.placements.refreshDisplaysForScript(placement.scriptId) }
             .onFailure { failure ->
                 plugin.logger.log(

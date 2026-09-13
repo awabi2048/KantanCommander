@@ -3841,6 +3841,13 @@ class GestureLowerPanel(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD),
                 explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.WORLD.name),
             ),
+            // #22: ENTITY scope は事前DEFINEなしで対象直結のため、選択肢に出します。
+            // 通常の対象形式と文字列の変数名で操作します。
+            SettingChoice(
+                "variableScope:${VariableScope.ENTITY.name}",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_ENTITY),
+                explicitSelected(node, fieldKey, context.role, node.string("scope", VariableScope.WORLD.name) == VariableScope.ENTITY.name),
+            ),
         )
         GestureSettingScreen.VARIABLE_OPERATION -> {
             val type = runCatching { ValueType.valueOf(node.string("type", ValueType.NUMBER.name)) }
