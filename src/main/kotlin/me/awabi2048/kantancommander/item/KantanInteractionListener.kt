@@ -29,10 +29,19 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
      * クリエイティブのホイールクリックはPaperのPickBlockイベントで差し替えます。
      * バニラの素材だけを返すと制御ブロックのプログラムが失われるため、配置台帳から
      * 最新スクリプトを読み、完全なスナップショットを同梱したアイテムを返します。
+     * 取得も設置権限と同じ使用可能判定を通し、権限なしには何も渡しません。
      */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onPickControlBlock(event: PlayerPickBlockEvent) {
         val placement = plugin.placements.find(event.block.location) ?: return
+        // スポイト取得も設置・編集と同じ使用可能判定を通します。
+        // 拒否時はバニラの既定付与へ漏らさないようキャンセルして理由を通知します。
+        val decision = plugin.placementAccess.decide(event.player, placement.world)
+        if (decision != PlacementDecision.ALLOW) {
+            event.isCancelled = true
+            plugin.placementAccess.notifyDenied(event.player, decision)
+            return
+        }
         val script = plugin.scripts.load(placement.scriptId) ?: return
         val item = runCatching { KantanItemService.createBlock(script, event.player) }
             .getOrElse { error ->
