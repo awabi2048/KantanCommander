@@ -169,6 +169,15 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                         openDiskArgumentNameForm(context.player, context.route, null)
                         MenuActionResult.Success(MenuUpdate.None)
                     },
+                    "argPage" to handler { context ->
+                        val page = context.payload["page"]?.toIntOrNull()
+                            ?: return@handler MenuActionResult.Ignored
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(
+                                context.route.copy(payload = context.route.payload + ("argPage" to page.toString())),
+                            ),
+                        )
+                    },
                 ),
             ),
         )
@@ -615,8 +624,11 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 ),
             )
         }
-        // 引数が多い場合は先頭6組だけを示します。未設定のまま残るため検証で検出します。
-        script.arguments.take(6).forEach { argument ->
+        // 引数は2組ずつページングし、追加・戻る操作と重ならないようにします。
+        val pageSize = 2
+        val pageCount = ((script.arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["argPage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        script.arguments.drop(page * pageSize).take(pageSize).forEach { argument ->
             elements += KcGui.menuEntry(
                 player = player,
                 slot = slot++,
@@ -671,6 +683,33 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 GuiMenuActionIntent.AnyClick("argAdd", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_ADD)),
             ),
         )
+        if (pageCount > 1) {
+            // 移動できない方向の矢印は出さず、押せないボタンを残しません。
+            if (page > 0) {
+                elements += KcGui.menuEntry(
+                    player = player,
+                    slot = 46,
+                    material = Material.ARROW,
+                    name = "◀",
+                    style = GuiNameStyle.PRIMARY,
+                    actions = listOf(
+                        GuiMenuActionIntent.AnyClick("argPage", "◀", mapOf("page" to (page - 1).toString())),
+                    ),
+                )
+            }
+            if (page < pageCount - 1) {
+                elements += KcGui.menuEntry(
+                    player = player,
+                    slot = 47,
+                    material = Material.ARROW,
+                    name = "▶",
+                    style = GuiNameStyle.PRIMARY,
+                    actions = listOf(
+                        GuiMenuActionIntent.AnyClick("argPage", "▶", mapOf("page" to (page + 1).toString())),
+                    ),
+                )
+            }
+        }
         elements += KcGui.menuEntry(
             player = player,
             slot = 49,

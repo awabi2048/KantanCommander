@@ -2,10 +2,12 @@ package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.ValueType
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -83,6 +85,50 @@ class TriggerValidationTest {
         // 同じ記述でも起動方法がなければ未定義として拒否します。
         assertTrue(
             ExecutableScriptValidator.validate(eventScript(false)).any { it.nodeId != null },
+        )
+    }
+
+    @Test
+    fun `disk arguments seed the callee graph`() {
+        fun argScript(withArguments: Boolean): DiskScript {
+            val prepared = stateCondition {
+                params["leftScope"] = "EXECUTION"
+                params["leftName"] = "count"
+                params["operator"] = "=="
+                params["right"] = "1"
+            }
+            if (withArguments) {
+                prepared.arguments = listOf(DiskArgument("count", ValueType.NUMBER))
+            }
+            return prepared
+        }
+        // 自ディスクの引数定義は、呼び出された実行開始時に定義済みのため検証を通ります。
+        assertFalse(
+            ExecutableScriptValidator.validate(argScript(true)).any { it.nodeId != null },
+        )
+        // 同じ記述でも引数定義がなければ未定義として拒否します。
+        assertTrue(
+            ExecutableScriptValidator.validate(argScript(false)).any { it.nodeId != null },
+        )
+    }
+
+    @Test
+    fun `disk call snapshot uses declared arguments`() {
+        val callee = stateCondition {
+            params["leftScope"] = "EXECUTION"
+            params["leftName"] = "count"
+            params["operator"] = "=="
+            params["right"] = "1"
+        }
+        val caller = script {}
+        GraphEditor.append(caller.graph, CommandType.DISK_CALL).apply {
+            params["declaredArgs"] = "count:NUMBER"
+            params["arg_count"] = "1"
+            snapshot = callee.graph
+        }
+        // 呼び出し側の引数宣言が、スナップショット内部の定義として使われます。
+        assertFalse(
+            ExecutableScriptValidator.validate(caller).any { it.nodeId != null },
         )
     }
 }

@@ -770,6 +770,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         openDiskCallReturnNameForm(context.player, context.route)
                         MenuActionResult.Success(MenuUpdate.None)
                     },
+                    "argPage" to MenuActionHandler { context ->
+                        val page = context.payload["page"]?.toIntOrNull()
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        MenuActionResult.Success(
+                            MenuUpdate.Navigate(
+                                context.route.copy(payload = context.route.payload + ("argPage" to page.toString())),
+                            ),
+                        )
+                    },
                 ),
             )
         )
@@ -1630,7 +1639,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
      *
      * 引数の値（複合型は変数名、スカラー型はリテラル）と戻り値の受取先を編集します。
      * 保存規則はジェスチャーGUIと同一であり、リテラルと変数指定は排他です。
-     * 候補数が上限（14件）を超える引数は簡易GUIでは扱わず、フルGUIへ案内します。
+     * 引数は8件ずつページングし、候補上限（14件）に収めます。
      */
     private fun renderDiskCallSettings(player: Player, route: MenuRoute): InventoryMenuView {
         val current = node(route)
@@ -1641,11 +1650,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 listOf(backElement(player)),
             )
         }
-        // 候補上限を超える引数は表示しません。未設定のまま残るため検証で検出します。
-        val declared = current.declaredArguments().take(12)
-        val layout = ChoiceMenuLayoutPolicy.layout((declared.size + 2).coerceAtLeast(1))
+        val pageSize = 8
+        val declared = current.declaredArguments()
+        val pageCount = ((declared.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["argPage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        val rows = declared.drop(page * pageSize).take(pageSize)
+        // 引数行＋戻り値2行＋ページャ2行で上限（14件）に収めます。
+        val layout = ChoiceMenuLayoutPolicy.layout((rows.size + 2 + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
         val elements = mutableListOf<MenuElement>()
-        declared.forEachIndexed { index, argument ->
+        rows.forEachIndexed { index, argument ->
             val variable = current.string("argvar_${argument.name}").takeIf(String::isNotBlank)
             val literal = current.string("arg_${argument.name}").takeIf(String::isNotBlank)
             val value = variable?.let { "%{$it}%" } ?: literal.orEmpty()
@@ -1665,7 +1678,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val returnScope = current.string("returnScope").ifBlank { VariableScope.EXECUTION.name }
         elements += choiceElement(
             player,
-            layout.itemSlots[declared.size],
+            layout.itemSlots[rows.size],
             Material.ENDER_EYE,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SCOPE),
             "returnScope",
@@ -1677,7 +1690,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
         elements += choiceElement(
             player,
-            layout.itemSlots[declared.size + 1],
+            layout.itemSlots[rows.size + 1],
             Material.NAME_TAG,
             KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN),
             "returnName",
@@ -1685,6 +1698,26 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
             },
         )
+        if (pageCount > 1) {
+            elements += choiceElement(
+                player,
+                layout.itemSlots[rows.size + 2],
+                Material.ARROW,
+                "◀",
+                "argPage",
+                mapOf("page" to (page - 1).toString()),
+                enabled = page > 0,
+            )
+            elements += choiceElement(
+                player,
+                layout.itemSlots[rows.size + 3],
+                Material.ARROW,
+                "▶",
+                "argPage",
+                mapOf("page" to (page + 1).toString()),
+                enabled = page < pageCount - 1,
+            )
+        }
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,
@@ -1764,7 +1797,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     /** 戻り値の受取先変数名を編集します。空欄で受取を解除します。 */
     private fun openDiskCallReturnNameForm(player: Player, route: MenuRoute) {
         val current = node(route) ?: return
-        val spec = CommandDialogSpecs.variableName
+        // 空欄での解除を受け付けるため、必須指定を外します。空欄以外は変数名を検証します。
+        val spec = CommandDialogSpecs.variableName.copy(required = false)
         showTextForm(
             player = player,
             route = route,

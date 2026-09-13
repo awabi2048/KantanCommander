@@ -122,6 +122,12 @@ object ExecutableScriptValidator {
                 emptyMap()
             }
         }
+        // issue #8: 自ディスクの引数定義も、呼び出された実行開始時に定義済みです。
+        // 配置実行と呼び出し実行のどちらの役割でも参照できるよう、種子へ含めます。
+        // 役割違いでの参照は実行時の解決失敗として扱い、検証では拒否しません。
+        val argumentSeeds = script.arguments.associate { argument ->
+            TemporaryTemplate.normalized(argument.name) to argument.type
+        }
         validateGraph(
             script.graph,
             "root",
@@ -130,7 +136,7 @@ object ExecutableScriptValidator {
             limits,
             variableDefinitions,
             phase,
-            triggerSeeds = triggerSeeds,
+            triggerSeeds = triggerSeeds + argumentSeeds,
         )
         // 個別項目検証は当面 code 既定のままのため、phase だけここで正規化します。
         // 構造由来の PERSISTED_STRUCTURAL は維持し、それ以外の PREFLIGHT 既定値を
@@ -320,6 +326,12 @@ object ExecutableScriptValidator {
                 if (diskId != null && diskId in callPath) {
                     errors += nodeError(node, "$path/${node.id}", setOf("diskId"), "循環呼出しのため実行できません")
                 } else {
+                    // issue #8: 呼び出し先のグラフは、呼び出し側の引数宣言を実行開始時の
+                    // 定義として検証します。実行時は変数表を空にして引数だけを渡すため、
+                    // 外側の種子は引き継がず、宣言だけを与えます。
+                    val callSeeds = node.declaredArguments().associate { argument ->
+                        TemporaryTemplate.normalized(argument.name) to argument.type
+                    }
                     validateGraph(
                         it,
                         "$path/${node.id}/snapshot",
@@ -329,6 +341,7 @@ object ExecutableScriptValidator {
                         variableDefinitions,
                         phase,
                         if (diskId != null) callPath + diskId else callPath,
+                        triggerSeeds = callSeeds,
                     )
                 }
             }
