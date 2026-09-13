@@ -16,6 +16,7 @@ import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.item.KantanItemService
+import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
 import org.bukkit.entity.Player
@@ -87,18 +88,11 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ENTRY_DESCRIPTION),
                 data = listOf(
                     GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size),
-                    // 起動条件は設定項目として廃止したため、一覧ではタイマーの状態だけを示します。
+                    // issue #7: 起動条件は設定項目として廃止したため、一覧では
+                    // 実行時に採用する起動方法の要約だけを示します。
                     GuiMenuEntryData(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
-                        if (script.timer.enabled) {
-                            KcI18n.text(
-                                player,
-                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS,
-                                mapOf("value" to CommandDialogSpecs.formatSeconds(script.timer.intervalSeconds)),
-                            )
-                        } else {
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED)
-                        },
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
+                        TriggerDisplay.summary(player, script.effectiveTrigger()),
                     ),
                 ),
                 role = GuiElementRole.CONTENT,

@@ -39,6 +39,13 @@ class ScriptStore(
     private val mutationGuard: (UUID, UUID?, ScriptMutationOperation) -> Unit = { _, _, _ -> },
     /** ロックを意図的に越えた管理経路を、実行中テストへ通知する共有境界です。 */
     private val bypassedMutationNotifier: (UUID, ScriptMutationOperation) -> Unit = { _, _ -> },
+    /**
+     * issue #7 の正本の削除を、イベント起動の登録解除へ伝える共有境界です。
+     *
+     * 履歴に残る間の関係解除では正本が残るため呼び出しません。
+     * JSONとキャッシュを消した削除確定時だけ呼び出します。
+     */
+    private val onScriptDeleted: (UUID) -> Unit = {},
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
     private val relationFile = dir.resolve("relations.json")
@@ -230,6 +237,9 @@ class ScriptStore(
         }
         cache.remove(id)
         rejectedFiles.remove(id)
+        runCatching { onScriptDeleted(id) }.onFailure { failure ->
+            logger.log(Level.WARNING, "スクリプト削除の通知に失敗しました: script=$id", failure)
+        }
     }
 
     fun listAll(): List<DiskScript> =

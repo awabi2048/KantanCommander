@@ -20,6 +20,7 @@ import me.awabi2048.kantancommander.data.WorldVariableUsageFinder
 import me.awabi2048.kantancommander.data.WorldVariableRemovalResult
 import me.awabi2048.kantancommander.data.WorldVariableUsageScanResult
 import me.awabi2048.kantancommander.execution.RedstoneTriggerListener
+import me.awabi2048.kantancommander.execution.EventTriggerListener
 import me.awabi2048.kantancommander.execution.ParticleQuotaService
 import me.awabi2048.kantancommander.execution.SequenceExecutor
 import me.awabi2048.kantancommander.execution.TestExecutionCoordinator
@@ -54,7 +55,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "0864693f69bc361da16b49229f91bc59076ee685e1342e316a0e5447d8a13a43"
+    "fcb1edc6cb235678627288677a16f2373acc33d2d1b6d8a3d035da3ef11f5841"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -99,6 +100,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     lateinit var itemGrantService: KantanItemGrantService
         private set
     private lateinit var triggerListener: RedstoneTriggerListener
+    private lateinit var eventTriggerListener: EventTriggerListener
     private var standaloneExportContributor: KantanStandaloneExportContributor? = null
 
     override fun onEnable() {
@@ -234,11 +236,13 @@ class KantanCommanderPlugin : JavaPlugin() {
         feedback = PlayerFeedbackService()
         controlBlockSync = ControlBlockInventorySync(this)
         triggerListener = RedstoneTriggerListener(this)
+        eventTriggerListener = EventTriggerListener(this)
 
         getCommand("kankoma")?.setExecutor(KantanCommanderCommand(this, itemGrantService))
         registerEvents()
         placements.restoreDisplays()
         triggerListener.start()
+        eventTriggerListener.start()
         if (server.pluginManager.isPluginEnabled("MWMChanpon")) {
             KantanStandaloneExportContributor(this).also {
                 StandaloneExportContributors.register(it)
@@ -267,6 +271,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(KantanInteractionListener(this), this)
         pm.registerEvents(PlacementProtectionListener(this), this)
         pm.registerEvents(triggerListener, this)
+        pm.registerEvents(eventTriggerListener, this)
         pm.registerEvents(itemSelection, this)
         pm.registerEvents(WorldVariableLifecycleListener(this), this)
         pm.registerEvents(EntityVariableLifecycleListener(this), this)
@@ -298,6 +303,21 @@ class KantanCommanderPlugin : JavaPlugin() {
         triggerListener.forget(placementKey, scriptId)
     }
 
+    /**
+     * issue #7 のイベント起動の登録を作り直します。
+     *
+     * 配置の追加・撤去・スクリプトの保存・削除の境界から呼び出し、
+     * チャンク単位の登録と台帳の食い違いを残しません。
+     */
+    internal fun refreshEventTriggerIndex() {
+        if (::eventTriggerListener.isInitialized) eventTriggerListener.rebuild()
+    }
+
+    /** issue #7 のスクリプト削除時に、そのスクリプトへのイベント登録を解除します。 */
+    internal fun forgetEventTriggerScript(scriptId: java.util.UUID) {
+        if (::eventTriggerListener.isInitialized) eventTriggerListener.forgetScript(scriptId)
+    }
+
     fun reloadManagedSettings(): Boolean {
         return CCSystem.getAPI().getConfigSchemaService().reload("kantan").successful
     }
@@ -318,6 +338,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     testExecution.notifyBypassedMutation(scriptId, operation)
                 }
             },
+            onScriptDeleted = { scriptId -> forgetEventTriggerScript(scriptId) },
         )
         exporter = VanillaDatapackExporter(
             scripts,

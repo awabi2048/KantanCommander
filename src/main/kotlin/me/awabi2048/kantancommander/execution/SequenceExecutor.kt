@@ -200,12 +200,31 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         get() = CCSystem.getAPI().getSystemEntityRegistry()
 
     fun execute(scriptId: UUID, origin: Location, actor: Player? = null, callback: (Boolean) -> Unit = {}) {
+        execute(scriptId, origin, actor, emptyMap(), callback)
+    }
+
+    /**
+     * issue #7 のイベント引数付き実行です。
+     *
+     * `initialVariables` は実行開始時に定義済みとなるEXECUTION変数であり、
+     * #8 のDISK_CALL引数と同じく呼び出し先の開始時点で定義済みとして渡します。
+     * 検証層は同じ表をデータフロー解析の種子として扱うため、静的検証と
+     * 実行時の定義状態が一致します。不正な値は fail-fast で拒否します。
+     */
+    fun execute(
+        scriptId: UUID,
+        origin: Location,
+        actor: Player? = null,
+        initialVariables: Map<String, TypedValue> = emptyMap(),
+        callback: (Boolean) -> Unit = {},
+    ) {
         val script = plugin.scripts.load(scriptId) ?: return callback(false)
         startExecution(
             script = script,
             origin = origin,
             actor = actor,
             options = ExecutionOptions(),
+            initialVariables = initialVariables,
         ) { result -> callback(result.status == ExecutionFinishStatus.SUCCESS) }
     }
 
@@ -233,6 +252,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         origin: Location,
         actor: Player?,
         options: ExecutionOptions,
+        initialVariables: Map<String, TypedValue> = emptyMap(),
         callback: (ExecutionResult) -> Unit,
     ): ExecutionHandle {
         val handle = ExecutionHandle()
@@ -292,6 +312,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             handle = handle,
             callback = callback,
         )
+        // issue #7: イベント引数を実行開始時の定義済みEXECUTION変数として設定します。
+        // 不正な値は fail-fast で拒否し、未定義のまま実行しません。
+        initialVariables.forEach { (name, value) -> session.executionVariables.set(name, value) }
         handle.bind { reason -> cancelSession(session, reason) }
         runGraph(executionScript, executionGraph, session, 0) { success ->
             finishSession(

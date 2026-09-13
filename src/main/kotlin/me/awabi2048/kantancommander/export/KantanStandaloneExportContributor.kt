@@ -9,6 +9,8 @@ import me.awabi2048.kantancommander.data.PlacementStore
 import me.awabi2048.kantancommander.model.ActivationMode
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.NumericExpression
@@ -47,6 +49,12 @@ class KantanStandaloneExportContributor(
             val sourceScript = plugin.scripts.load(placement.scriptId)
             if (sourceScript == null) {
                 errors += "${placement.key}: script ${placement.scriptId} is missing"
+                return@mapNotNull null
+            }
+            // issue #7: イベント起動にバニラの等価表現はありません。
+            // 黙って別意味へ変換せず、単体出力の検証で明示エラーにします。
+            if (sourceScript.effectiveTrigger().kind == TriggerKind.EVENT) {
+                errors += "${placement.key}: イベント起動は単体出力に変換できません"
                 return@mapNotNull null
             }
             val world = worldsByName.getValue(placement.world)

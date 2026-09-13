@@ -62,6 +62,14 @@ data class DiskScript(
      * 引数はすべて必須とし、optional／default値は初期実装に含めません。
      */
     var arguments: List<DiskArgument> = emptyList(),
+    /**
+     * issue #7 の起動方法の明示指定です。
+     *
+     * 旧JSONには存在しないため null で復元し、その場合は [effectiveTrigger] が
+     * 従来の `activation`＋`timer` から読み替えます。新規保存は常に明示値を書き、
+     * 従来欄も整合させるため、null は旧保存の意味だけを持ちます。
+     */
+    var trigger: ScriptTrigger? = null,
 )
 
 /**

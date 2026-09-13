@@ -30,6 +30,8 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
@@ -1824,37 +1826,52 @@ object CommandSettingsModel {
     }
 
     /**
-     * プログラム全体設定であるタイマーも、両GUIが同じ保存境界を通ります。
+     * プログラム全体設定である起動方法も、両GUIが同じ保存境界を通ります。
      *
-     * タイマー値だけを各画面で更新すると、間隔変更時の再登録や無効化時の
-     * 実行方式解除が片方から抜けます。ノード設定と同じく、読み込み・検証・
-     * 保存・実行時登録更新・表示更新を一つの操作として扱います。
-     * 間隔は小数秒（tick境界）で受け付け、下限は設けません。
+     * 起動方法の変更は、読み込み・検証・保存・実行時登録更新・表示更新を
+     * 一つの操作として扱います。明示の起動方法を保存し、従来欄（`timer`／
+     * `activation`）も整合させるため、旧来の実行経路・表示・出力が
+     * 読み替えなしに追従します。間隔は小数秒（tick境界）で受け付け、下限は設けません。
      */
-    fun updateTimer(
+    fun updateTrigger(
         plugin: KantanCommanderPlugin,
         scriptId: UUID,
-        enabled: Boolean,
-        intervalSeconds: Double? = null,
+        trigger: ScriptTrigger,
         editorId: UUID? = null,
         expectedRevision: Long? = null,
     ): Boolean {
+        val normalized = trigger.normalized()
+        if (normalized.kind == TriggerKind.TIMER) {
+            require(CommandValueRules.isTimerSeconds(normalized.intervalSeconds)) {
+                "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください"
+            }
+        }
+        require(normalized.kind != TriggerKind.EVENT || normalized.event != null) {
+            "イベント起動には種別の指定が必要です"
+        }
         return updateScript(
             plugin,
             scriptId,
             editorId,
             expectedRevision = expectedRevision,
-            afterSave = { plugin.resetActivationTiming(it.id) },
+            afterSave = {
+                plugin.resetActivationTiming(it.id)
+                // issue #7: 起動方法の変更をイベント起動の登録へ反映します。
+                plugin.refreshEventTriggerIndex()
+            },
         ) { script ->
-            if (enabled) {
-                val seconds = requireNotNull(intervalSeconds) { "タイマー有効化には間隔が必要です" }
-                require(CommandValueRules.isTimerSeconds(seconds)) {
-                    "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください"
+            script.trigger = normalized
+            // 従来欄も整合させ、旧来の実行経路・表示・出力が追従できるようにします。
+            when (normalized.kind) {
+                TriggerKind.TIMER -> {
+                    script.timer.intervalSeconds = normalized.intervalSeconds
+                    script.timer.enabled = true
                 }
-                script.timer.intervalSeconds = seconds
+                TriggerKind.REDSTONE, TriggerKind.EVENT -> {
+                    script.timer.enabled = false
+                    script.activation = ActivationMode.NEEDS_REDSTONE
+                }
             }
-            script.timer.enabled = enabled
-            if (!enabled) script.activation = ActivationMode.NEEDS_REDSTONE
         }
     }
 

@@ -40,6 +40,9 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.TypedValue
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.effectiveTrigger
+import me.awabi2048.kantancommander.model.EventTriggerArguments
 import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableTemplate
@@ -110,6 +113,15 @@ object ExecutableScriptValidator {
         val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
         val errors = mutableListOf<ScriptValidationError>()
         errors += validateScriptRoot(script, phase)
+        // issue #7: イベント引数は実行開始時に定義済みのEXECUTION変数です。
+        // データフロー解析の入口へ種子として与え、到達可能な全ノードで参照可能にします。
+        val triggerSeeds = script.effectiveTrigger().let { effective ->
+            if (effective.kind == TriggerKind.EVENT && effective.event != null) {
+                EventTriggerArguments.seedTypesFor(effective.event)
+            } else {
+                emptyMap()
+            }
+        }
         validateGraph(
             script.graph,
             "root",
@@ -118,6 +130,7 @@ object ExecutableScriptValidator {
             limits,
             variableDefinitions,
             phase,
+            triggerSeeds = triggerSeeds,
         )
         // 個別項目検証は当面 code 既定のままのため、phase だけここで正規化します。
         // 構造由来の PERSISTED_STRUCTURAL は維持し、それ以外の PREFLIGHT 既定値を
@@ -143,18 +156,40 @@ object ExecutableScriptValidator {
         script: DiskScript,
         phase: ValidationPhase,
     ): List<ScriptValidationError> = buildList {
-        if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
-            this += ScriptValidationError(
-                "root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません",
-                code = ErrorCode.TIMER_CONFLICT, phase = phase,
-            )
-        }
-        if (script.timer.enabled && !CommandValueRules.isTimerSeconds(script.timer.intervalSeconds)) {
-            this += ScriptValidationError(
-                "root", null, setOf("timer"),
-                "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
-                code = ErrorCode.TIMER_RANGE, phase = phase,
-            )
+        // issue #7: 明示の起動方法がある場合はそちらを検証し、従来欄の検査は行いません。
+        // 保存時に従来欄も整合させるため、両方の検査が同時に通る状態は作りません。
+        val explicit = script.trigger
+        if (explicit != null) {
+            // 生値を検査します。正規化後の検査では不正な保存値を検出できません。
+            if (explicit.kind == TriggerKind.TIMER &&
+                !CommandValueRules.isTimerSeconds(explicit.intervalSeconds)
+            ) {
+                this += ScriptValidationError(
+                    "root", null, setOf("trigger"),
+                    "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
+                    code = ErrorCode.TIMER_RANGE, phase = phase,
+                )
+            }
+            if (explicit.kind == TriggerKind.EVENT && explicit.event == null) {
+                this += ScriptValidationError(
+                    "root", null, setOf("trigger"), "イベント起動には種別の指定が必要です",
+                    code = ErrorCode.CONFIG_INVALID, phase = phase,
+                )
+            }
+        } else {
+            if (!script.timer.enabled && script.activation == ActivationMode.ALWAYS_ACTIVE) {
+                this += ScriptValidationError(
+                    "root", null, setOf("timer"), "タイマーオフでは常時実行を使用できません",
+                    code = ErrorCode.TIMER_CONFLICT, phase = phase,
+                )
+            }
+            if (script.timer.enabled && !CommandValueRules.isTimerSeconds(script.timer.intervalSeconds)) {
+                this += ScriptValidationError(
+                    "root", null, setOf("timer"),
+                    "タイマー間隔は0より大きく${MAX_TIMER_SECONDS}秒以下のtick境界（0.05秒単位）で指定してください",
+                    code = ErrorCode.TIMER_RANGE, phase = phase,
+                )
+            }
         }
         // issue #8: 関数引数の重複・不正名を拒否します。型は enum のため保存時に確定します。
         val argumentNames = script.arguments.map { it.name }
@@ -190,6 +225,8 @@ object ExecutableScriptValidator {
         nodeId: UUID,
         limits: GraphLimits = GraphLimits(),
         variableDefinitions: Map<String, TypedValue>? = null,
+        // issue #7: 実行開始時に定義済みとなる変数（イベント引数）の型表です。
+        seedTemporaries: Map<String, ValueType> = emptyMap(),
     ): List<ScriptValidationError> {
         val phase = if (variableDefinitions == null) ValidationPhase.EDIT_TIME else ValidationPhase.PREFLIGHT
         val errors = mutableListOf<ScriptValidationError>()
@@ -201,7 +238,7 @@ object ExecutableScriptValidator {
             graph
         }
         val node = effective.nodes[nodeId] ?: return errors
-        val temporaryAvailability = analyzeTemporaryAvailability(effective)
+        val temporaryAvailability = analyzeTemporaryAvailability(effective, seedTemporaries)
         validateNode(
             node,
             "root/${node.id}",
@@ -233,6 +270,9 @@ object ExecutableScriptValidator {
         phase: ValidationPhase,
         // issue #8: 呼び出し連鎖の diskId 経路です。同一ディスクの再入で循環を検出します。
         callPath: List<UUID> = emptyList(),
+        // issue #7: 実行開始時に定義済みとなるEXECUTION変数の型表です。
+        // イベント引数を入口ノードの初期定義として与えます。
+        triggerSeeds: Map<String, ValueType> = emptyMap(),
     ) {
         if (!visited.add(graph)) {
             errors += ScriptValidationError(
@@ -261,7 +301,7 @@ object ExecutableScriptValidator {
         // 参照可能とします。分岐合流では全経路の共通部分を使い、DISK_CALLの
         // スナップショットは別グラフとして解析することで、実行時セッションの寿命と
         // 静的検証の結果を一致させます。
-        val temporaryAvailability = analyzeTemporaryAvailability(effective)
+        val temporaryAvailability = analyzeTemporaryAvailability(effective, triggerSeeds)
         validateReturnConsistency(effective, path, errors, variableDefinitions)
         effective.nodes.values.forEach { node ->
             validateNode(
@@ -341,9 +381,12 @@ object ExecutableScriptValidator {
      * 到達経路に存在し、かつ型が一致する名前だけを残します。異なる分岐で異なる型を
      * 設定した名前は、合流後の型を静的に決められないため未定義として扱います。
      * 実行時のセッション表は別途必ず確認し、動的な参照失敗を防御します。
+     * issue #7: `seed` は実行開始時に定義済みとなる変数（イベント引数）であり、
+     * 入口ノードの初期定義として与えます。
      */
     private fun analyzeTemporaryAvailability(
         graph: CommandGraph,
+        seed: Map<String, ValueType> = emptyMap(),
     ): Map<UUID, Map<String, ValueType>> {
         val entry = graph.entryNodeId?.takeIf(graph.nodes::containsKey) ?: return emptyMap()
         fun successors(node: CommandNode): List<UUID> = when (node.type) {
@@ -409,13 +452,13 @@ object ExecutableScriptValidator {
         val inputs = mutableMapOf<UUID, Map<String, ValueType>>()
         val outputs = mutableMapOf<UUID, Map<String, ValueType>>()
         val queue = ArrayDeque<UUID>()
-        inputs[entry] = emptyMap()
+        inputs[entry] = seed
         queue.add(entry)
         while (queue.isNotEmpty()) {
             val id = queue.removeFirst()
             val node = graph.nodes[id] ?: continue
             val input = if (id == entry) {
-                emptyMap()
+                seed
             } else {
                 val incoming = predecessors.getValue(id)
                 if (incoming.any { it !in outputs }) continue

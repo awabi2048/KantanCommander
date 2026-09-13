@@ -86,6 +86,9 @@ import me.awabi2048.kantancommander.model.VariableChangeMode
 import me.awabi2048.kantancommander.model.VariableScope
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.toggleControlBlockState
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.EventTriggerKind
+import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.security.PlacementDecision
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
@@ -210,6 +213,18 @@ enum class GestureLowerMode {
     WORLD_VARIABLES,
     WORLD_VARIABLE_TYPE,
     WORLD_VARIABLE_DELETE_CONFIRM,
+    /**
+     * issue #7: 起動方法の種別選択子画面です。
+     *
+     * タイマー／信号／イベントの3択を親から分離した子画面として扱います。
+     */
+    TRIGGER_KIND,
+    /**
+     * issue #7: イベント種別の選択子画面です。
+     *
+     * 初期6種から一つを選び、選択時に起動方法として確定します。
+     */
+    TRIGGER_EVENT,
     CONFIRM,
     TEST_CONFIRM,
     TEST_STATUS,
@@ -247,8 +262,10 @@ internal object GestureSharedOperationPolicy {
 data class GestureAttentionState(
     /** ノードID → そのノードで要確認となっている表示上の設定タブ（fieldKey）の集合。 */
     val fieldKeysByNode: Map<UUID, Set<String>> = emptyMap(),
-    /** プログラムタイマー（スクリプト全体設定）が要確認か。 */
+    /** プログラムタイマー（スクリプト全体設定）が要確認か。旧保存の従来欄用に維持します。 */
     val timer: Boolean = false,
+    /** issue #7 の起動方法（スクリプト全体設定）が要確認か。 */
+    val trigger: Boolean = false,
 ) {
     companion object {
         val EMPTY = GestureAttentionState()
@@ -774,6 +791,9 @@ class GestureSequenceEditor(
                 GestureLowerMode.WORLD_VARIABLES -> lowerPanel.buildWorldVariablesChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_TYPE -> lowerPanel.buildWorldVariableTypeChild(state, owner)
                 GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> lowerPanel.buildWorldVariableDeleteConfirmationChild(state, owner)
+                // issue #7: 起動方法の選択子画面です。子画面の内容だけを差し替えます。
+                GestureLowerMode.TRIGGER_KIND -> lowerPanel.buildTriggerKindChild(state, owner)
+                GestureLowerMode.TRIGGER_EVENT -> lowerPanel.buildTriggerEventChild(state, owner)
                 else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
             }
             else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
@@ -949,6 +969,8 @@ class GestureSequenceEditor(
         return GestureAttentionState(
             fieldKeysByNode = fieldKeysByNode,
             timer = errors.any { it.nodeId == null && "timer" in it.fieldKeys },
+            // issue #7: 明示の起動方法と旧来のタイマー欄のどちらも起動方法カードへ集約します。
+            trigger = errors.any { it.nodeId == null && ("trigger" in it.fieldKeys || "timer" in it.fieldKeys) },
         )
     }
 
@@ -4210,8 +4232,97 @@ class GestureSequenceEditor(
         }
     }
 
-    /** ノード未選択時のプログラムタイマーを秒単位で設定します。 */
-    private fun showTimerSettingDialog(player: Player) {
+    /**
+     * issue #7 の起動方法の種別選択子画面へ遷移します。
+     *
+     * 種別選択はDialogの追加操作ではなく、GestureGUI上の独立した設定画面として扱います。
+     * タイマーは確定後に間隔入力へ進み、信号・イベントは選択時に即時確定します。
+     */
+    private fun openTriggerKindSelection(player: Player) {
+        state.lowerMode = GestureLowerMode.TRIGGER_KIND
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildTriggerKindChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "起動方法の選択画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    /** 起動方法の種別選択から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
+    private fun closeTriggerKindSelection(player: Player) {
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateLower(player)
+    }
+
+    /** 起動方法の種別選択からイベント種別の選択へ進みます。子画面の内容だけを差し替えます。 */
+    private fun openTriggerEventSelection(player: Player) {
+        state.lowerMode = GestureLowerMode.TRIGGER_EVENT
+        updateLower(player)
+    }
+
+    /**
+     * 起動方法を保存します。
+     *
+     * 保存失敗時はログへ原因を残し、画面には保存失敗を示します。成功時は
+     * 設定一覧へ戻して上下画面を更新します。
+     */
+    private fun saveTrigger(player: Player, trigger: ScriptTrigger): Boolean {
+        val updated = runCatching {
+            CommandSettingsModel.updateTrigger(
+                plugin,
+                state.scriptId,
+                trigger,
+                editorId = player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "起動方法を保存できませんでした: script=${state.scriptId}",
+                failure,
+            )
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        if (!updated) {
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateUpperIfNeeded(player)
+        updateLower(player)
+        return true
+    }
+
+    /** ノード未選択時のプログラムのタイマー間隔を秒単位で設定します。 */
+    private fun showTriggerIntervalDialog(player: Player) {
         val script = plugin.scripts.load(state.scriptId) ?: return
         observedRevision = script.revision
         val timerSpec = CommandDialogSpecs.timerSeconds
@@ -4227,34 +4338,13 @@ class GestureSequenceEditor(
                 return@showInputDialog KcI18n.text(player, validationError)
             }
             val seconds = requireNotNull(CommandDialogSpecs.parseTimerSeconds(rawSeconds))
-            val updated = runCatching {
-                CommandSettingsModel.updateTimer(
-                    plugin,
-                    state.scriptId,
-                    enabled = true,
-                    intervalSeconds = seconds,
-                    editorId = player.uniqueId,
-                    expectedRevision = expectedMutationRevision(player),
-                )
-            }.getOrElse { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "タイマー設定を保存できませんでした: script=${state.scriptId}",
-                    failure,
-                )
+            state.lowerMode = GestureLowerMode.SETTINGS
+            if (!saveTrigger(player, ScriptTrigger(TriggerKind.TIMER, intervalSeconds = seconds))) {
                 return@showInputDialog KcI18n.text(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
                 )
             }
-            if (!updated) {
-                return@showInputDialog KcI18n.text(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
-                )
-            }
-            updateUpperIfNeeded(player)
-            updateLower(player)
             null
         }
     }
@@ -7129,8 +7219,8 @@ class GestureSequenceEditor(
             context.elementId == "lower-script-name" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 showProgramNameDialog(player)
             }
-            context.elementId == "lower-script-timer" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                showTimerSettingDialog(player)
+            context.elementId == "lower-script-trigger" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                openTriggerKindSelection(player)
             }
             context.elementId == "lower-script-variables" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 openWorldVariables(player)
@@ -7196,6 +7286,35 @@ class GestureSequenceEditor(
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val type = state.pendingWorldVariableType ?: return
                 showWorldVariableNameDialog(player, type)
+            }
+            // issue #7: 起動方法の種別選択です。タイマーは間隔入力へ進み、
+            // 信号は即時確定し、イベントは種別選択へ進みます。
+            context.elementId.startsWith("lower-trigger-kind:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val kind = runCatching {
+                    TriggerKind.valueOf(context.elementId.removePrefix("lower-trigger-kind:"))
+                }.getOrNull() ?: return
+                when (kind) {
+                    TriggerKind.TIMER -> showTriggerIntervalDialog(player)
+                    TriggerKind.REDSTONE -> saveTrigger(player, ScriptTrigger(TriggerKind.REDSTONE))
+                    TriggerKind.EVENT -> openTriggerEventSelection(player)
+                }
+            }
+            // issue #7: イベント種別の選択です。選択時に起動方法として確定します。
+            context.elementId.startsWith("lower-trigger-event:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val event = runCatching {
+                    EventTriggerKind.valueOf(context.elementId.removePrefix("lower-trigger-event:"))
+                }.getOrNull() ?: return
+                saveTrigger(player, ScriptTrigger(TriggerKind.EVENT, event))
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_EVENT &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                openTriggerKindSelection(player)
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.TRIGGER_KIND &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeTriggerKindSelection(player)
             }
             context.elementId == "lower-variables-create" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 openWorldVariableTypeSelection(player)

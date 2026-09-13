@@ -39,6 +39,8 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         val previous = placements.put(placement.key, placement)
         try {
             save()
+            // issue #7: 配置の追加をイベント起動の登録へ反映します。
+            plugin.refreshEventTriggerIndex()
         } catch (failure: Throwable) {
             // ディスクへ書けなかった場合はメモリだけ先に進めない。次の操作が
             // 壊れた配置を参照しないよう、直前の値へ戻してから例外を伝播します。
@@ -53,6 +55,8 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         try {
             save()
             plugin.forgetActivationState(removed.key, removed.scriptId)
+            // issue #7: 制御ブロック撤去時にイベント起動の登録を解除します。
+            plugin.refreshEventTriggerIndex()
         } catch (failure: Throwable) {
             placements[placementKey] = removed
             throw failure
@@ -85,6 +89,8 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             return null
         }
         plugin.forgetActivationState(placement.key, placement.scriptId)
+        // issue #7: 参照切れ配置の除去をイベント起動の登録へ反映します。
+        plugin.refreshEventTriggerIndex()
         removeDisplay(world, placement.displayId)
         return null
     }
@@ -129,6 +135,8 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
             throw failure
         }
         removed.forEach { plugin.forgetActivationState(it.key, it.scriptId) }
+        // issue #7: ワールド削除に伴う配置除去をイベント起動の登録へ反映します。
+        plugin.refreshEventTriggerIndex()
         return removed
     }
 
@@ -161,6 +169,8 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
         stale.forEach { key ->
             placements.remove(key)?.let { removed ->
                 plugin.forgetActivationState(removed.key, removed.scriptId)
+                // issue #7: 起動時整理での配置除去をイベント起動の登録へ反映します。
+                plugin.refreshEventTriggerIndex()
                 // 台帳を消した後に再計算し、実体が残っている場合も拡張ブロック向けの
                 // 特殊接続を通常のバニラ形状へ戻します。
                 Bukkit.getWorld(removed.world)?.let { world ->

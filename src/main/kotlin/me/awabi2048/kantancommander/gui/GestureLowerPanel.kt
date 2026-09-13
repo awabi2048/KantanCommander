@@ -56,6 +56,9 @@ import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.hasDiskContent
+import me.awabi2048.kantancommander.model.effectiveTrigger
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.kantancommander.gui.declarative.CenteredLine
@@ -149,6 +152,10 @@ class GestureLowerPanel(
             GestureLowerMode.WORLD_VARIABLE_TYPE -> buildSettings(state, player, attention, suppressHighlight)
             // 削除確認も一覧と同じ子画面契約で表示し、親画面へ確認ボタンを混在させません。
             GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM -> buildSettings(state, player, attention, suppressHighlight)
+            // issue #7: 起動方法の選択子画面です。子画面が閉じられた場合でも、
+            // 親側へ選択肢の内部座標を誤描画しないようにします。
+            GestureLowerMode.TRIGGER_KIND -> buildSettings(state, player, attention, suppressHighlight)
+            GestureLowerMode.TRIGGER_EVENT -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirmNew(state, player)
             GestureLowerMode.TEST_CONFIRM -> buildTestConfirmationNew(state, player, child = true)
             GestureLowerMode.TEST_STATUS -> buildTestStatusNew(state, player)
@@ -807,6 +814,75 @@ class GestureLowerPanel(
             ),
             GestureLowerMode.WORLD_VARIABLE_TYPE,
             "[DeclarativeValueType]",
+        )
+    }
+
+    /**
+     * issue #7 の起動方法の種別選択子画面を生成します。
+     *
+     * 現在の起動方法を選択表示し、選択時に即時確定します。タイマーは確定後に
+     * 間隔入力へ進み、信号・イベントはそのまま保存します。
+     */
+    fun buildTriggerKindChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val current = state.scriptId
+            .let { plugin.scripts.load(it)?.effectiveTrigger()?.kind }
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.kindDocument(
+                me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY),
+                    ),
+                    options = TriggerKind.entries.map { kind ->
+                        me.awabi2048.kantancommander.gui.declarative.TriggerChoiceOption(
+                            key = kind.name,
+                            label = Component.text(TriggerDisplay.kindName(player, kind)),
+                            selected = current == kind,
+                        )
+                    },
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.TRIGGER_KIND,
+            "[DeclarativeTriggerKind]",
+        )
+    }
+
+    /**
+     * issue #7 のイベント種別の選択子画面を生成します。
+     *
+     * 初期6種から一つを選び、選択時に起動方法として確定します。
+     */
+    fun buildTriggerEventChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val current = state.scriptId
+            .let { plugin.scripts.load(it)?.effectiveTrigger()?.event }
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.eventDocument(
+                me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
+                    title = Component.text(TriggerDisplay.kindName(player, TriggerKind.EVENT)),
+                    description = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TRIGGER_BODY),
+                    ),
+                    options = EventTriggerKind.entries.map { event ->
+                        me.awabi2048.kantancommander.gui.declarative.TriggerChoiceOption(
+                            key = event.name,
+                            label = Component.text(TriggerDisplay.eventName(player, event)),
+                            selected = current == event,
+                        )
+                    },
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.TRIGGER_EVENT,
+            "[DeclarativeTriggerEvent]",
         )
     }
 
@@ -2102,37 +2178,27 @@ class GestureLowerPanel(
                 cy = SCRIPT_SETTING_ROW_TOP_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
-            val timerState = if (script.timer.enabled) {
-                GestureSettingValueState.CONFIGURED
-            } else {
-                GestureSettingValueState.INITIAL
-            }
-            val timerValue = if (script.timer.enabled) {
-                "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED)} " +
-                    KcI18n.text(
-                        player,
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_INTERVAL_SECONDS,
-                        mapOf("value" to CommandDialogSpecs.formatSeconds(script.timer.intervalSeconds)),
-                    )
-            } else {
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED)
-            }
+            // issue #7: 「タイマー設定」を「起動方法」へ整理します。
+            // 実行時に採用する起動方法（明示指定または従来欄の読み替え）の要約を示し、
+            // 名称の固定ラベルと現在値の表示欄を分離します。
+            val triggerState = GestureSettingValueState.CONFIGURED
+            val triggerValue = TriggerDisplay.summary(player, script.effectiveTrigger())
             cards += ScriptSettingCard(
-                elementId = "lower-script-timer",
-                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TIMER),
-                value = Component.text(timerValue),
+                elementId = "lower-script-trigger",
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
+                value = Component.text(triggerValue),
                 background = Bukkit.createBlockData(
                     GestureSettingVisualPolicy.material(
                         GestureSettingSelectionMode.MULTIPLE,
-                        timerState,
+                        triggerState,
                     ),
                 ),
                 icon = ItemStack(Material.CLOCK),
-                attentionHover = if (attention.timer) {
+                attentionHover = if (attention.trigger) {
                     // 注意ホバーは上段カードの図柄の上側へ出します（下段は下側の規則）。
                     // 固定ホバースロット（HOVER_SLOT_Y）は使わず、対象カードの直上へ置きます。
                     singleLineHover(
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TRIGGER),
                         x = SCRIPT_SETTING_COL_RIGHT_X,
                         y = SCRIPT_SETTING_ROW_TOP_Y +
                             DeclarativeSettings.SCRIPT_CARD_HEIGHT / 2.0 +

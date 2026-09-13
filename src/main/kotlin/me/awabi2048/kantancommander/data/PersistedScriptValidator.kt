@@ -11,6 +11,8 @@ import me.awabi2048.kantancommander.model.MyworldSpawnKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
+import me.awabi2048.kantancommander.model.TriggerKind
+import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
 
@@ -45,6 +47,7 @@ object PersistedScriptValidator {
         optionalInteger(root, "revision", path, errors)
         optionalBoolean(root, "contentModified", path, errors)
         optionalDiskArguments(root, path, errors)
+        optionalTrigger(root, path, errors)
         optionalUuidArray(root, "collapsedForStartIds", path, errors)
         optionalUuidArray(root, "collapsedConditionIds", path, errors)
         return errors
@@ -355,6 +358,27 @@ object PersistedScriptValidator {
             requireString(item, "name", itemPath, errors)
             requireEnum(item, "type", itemPath, enumNames<ValueType>(), errors)
         }
+    }
+
+    /**
+     * issue #7 の起動方法を検証します。
+     *
+     * 旧JSONには存在しないため欠落・nullは許容し、読込時に従来欄から読み替えます。
+     * 存在する場合は種別enumを確認し、不正値は破損として隔離します。
+     * 間隔の範囲は実行前検証の責務とし、ここでは型・enum整合性だけを扱います。
+     */
+    private fun optionalTrigger(parent: JsonObject, path: String, errors: MutableList<String>) {
+        val raw = parent["trigger"] ?: return
+        if (raw.isJsonNull) return
+        if (!raw.isJsonObject) {
+            errors += "$path/trigger: オブジェクトではありません"
+            return
+        }
+        val item = raw.asJsonObject
+        val triggerPath = "$path/trigger"
+        requireEnum(item, "kind", triggerPath, enumNames<TriggerKind>(), errors)
+        optionalEnum(item, "event", triggerPath, enumNames<EventTriggerKind>(), errors)
+        optionalFiniteNumber(item, "intervalSeconds", triggerPath, errors)
     }
 
     /** 折りたたみfor開始IDなど、任意のUUID配列を受け付けます。欠落・nullは旧形式として許容します。 */
