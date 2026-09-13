@@ -58,23 +58,38 @@ class TriggerChoiceDocumentTest {
     }
 
     @Test
-    fun `event document covers six initial events`() {
-        val compiled = KantanLayoutBridge.compile(
+    fun `event document pages eleven events without overlap`() {
+        val names = listOf(
+            "BLOCK_BREAK",
+            "BLOCK_PLACE",
+            "BUTTON_ON",
+            "BUTTON_OFF",
+            "LEVER_ON",
+            "LEVER_OFF",
+            "PRESSURE_PLATE_ON",
+            "ENTITY_LEFT_CLICK",
+            "ENTITY_RIGHT_CLICK",
+            "BLOCK_LEFT_CLICK",
+            "BLOCK_RIGHT_CLICK",
+        )
+        val first = KantanLayoutBridge.compile(
             DeclarativeTriggers.eventDocument(
-                data(
-                    "BLOCK_BREAK",
-                    "BLOCK_PLACE",
-                    "SWITCH",
-                    "PRESSURE_PLATE",
-                    "ENTITY_CLICK",
-                    "BLOCK_CLICK",
+                data(*names.toTypedArray()).copy(
+                    page = 0,
+                    pageCount = 2,
+                    pagerAvailableBackground = blockData(),
+                    pagerDisabledBackground = blockData(),
                 ),
                 panel,
             ),
             onAction = {},
         )
-        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
-        val ids = compiled.elements.map { it.elementId }.toSet()
-        assertEquals(6, ids.count { it.startsWith("lower-trigger-event:") })
+        assertTrue(first.diagnostics.isEmpty(), "diagnostics: ${first.diagnostics}")
+        val firstIds = first.elements.map { it.elementId }.toSet()
+        // 1ページに6件だけを示し、ページャで移動します。
+        assertEquals(6, firstIds.count { it.startsWith("lower-trigger-event:") })
+        assertTrue(firstIds.any { it.startsWith("lower-trigger-event-page:") })
+        // 戻る操作と重ならないよう、ページャは候補の上部にあります。
+        assertTrue(firstIds.contains("lower-setting-back"))
     }
 }

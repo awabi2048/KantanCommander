@@ -706,6 +706,24 @@ enum class ConditionSubject(val key: LocalizationKey<String>) {
 }
 
 /**
+ * issue #2 の共通値型の表示キーを返します。両GUIで同じ文言を使います。
+ *
+ * 型名の表示対応はこの一点に集約し、画面ごとの複製を作りません。
+ */
+fun ValueType.displayKey(): LocalizationKey<String> = when (this) {
+    ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
+    ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
+    ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_BOOLEAN
+    ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
+    ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
+    ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
+    ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
+    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    ValueType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
+    ValueType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
+}
+
+/**
  * ノードの判定対象を返します。条件の単一正本である `params["subject"]` だけを読みます。
  *
  * 未設定・不正値は null とし、旧 `kind` への推測フォールバックは行いません。

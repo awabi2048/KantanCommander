@@ -26,6 +26,12 @@ data class TriggerChoiceData(
     val options: List<TriggerChoiceOption>,
     val backLabel: Component,
     val backBackground: BlockData,
+    /** 候補ページ番号です。単一ページの画面では0のままにします。 */
+    val page: Int = 0,
+    /** 候補ページ数です。2以上でページャを表示します。 */
+    val pageCount: Int = 1,
+    val pagerAvailableBackground: BlockData? = null,
+    val pagerDisabledBackground: BlockData? = null,
 )
 
 /**
@@ -35,8 +41,22 @@ data class TriggerChoiceData(
  * `lower-trigger-kind`／`lower-trigger-event` へ変えます。選択は即時確定のため
  * ［次へ］操作は持たず、戻る操作は設定画面共通の `lower-setting-back` を使います。
  * 3件以上の候補は2列格子へ並べ、端数行は中央へ寄せて重心を保ちます。
+ * 候補が多い画面はページ分割し、戻る操作と重ならないようにします。
  */
 object DeclarativeTriggers {
+    /**
+     * イベント選択の1ページあたり候補数です。
+     *
+     * 2列×3行で戻る操作・ページャと重なりません。11候補は2ページ（6＋5）です。
+     */
+    const val EVENT_PAGE_SIZE = 6
+
+    private fun visibleOptions(data: TriggerChoiceData): List<TriggerChoiceOption> =
+        if (data.pageCount > 1) {
+            data.options.drop(data.page * EVENT_PAGE_SIZE).take(EVENT_PAGE_SIZE)
+        } else {
+            data.options
+        }
     fun kindDocument(data: TriggerChoiceData, panel: GestureGuiPanel = GestureGuiPanel()): GestureGuiDocument =
         choiceDocument(data, idPrefix = "trigger-kind", visualTag = "trigger-kind", panel = panel)
 
@@ -69,12 +89,13 @@ object DeclarativeTriggers {
             centerX = 0.0,
             hoverY = GestureLowerPanel.CHILD_HOVER_Y,
         )
+        val visible = visibleOptions(data)
         DeclarativeSettings.choiceCardsSection(
             nodes,
             frame,
-            cards = data.options.mapIndexed { index, option ->
+            cards = visible.mapIndexed { index, option ->
                 val row = index / 2
-                val oddLast = data.options.size % 2 == 1 && index == data.options.lastIndex
+                val oddLast = visible.size % 2 == 1 && index == visible.lastIndex
                 val cx = if (oddLast) 0.0 else if (index % 2 == 0) -0.53 else 0.53
                 SettingsChoiceCard(
                     elementId = "lower-$idPrefix:${option.key}",
@@ -96,6 +117,36 @@ object DeclarativeTriggers {
                 )
             },
         )
+        if (data.pageCount > 1) {
+            DeclarativeSettings.pagerSection(
+                nodes,
+                frame,
+                idPrefix = idPrefix,
+                elementPrefix = "lower-$idPrefix-page",
+                page = data.page,
+                pageCount = data.pageCount,
+                centerX = 0.0,
+                centerY = GestureLowerPanel.CHILD_PAGER_Y,
+                arrowBackgrounds = listOf(data.page - 1, data.page + 1).map { targetPage ->
+                    if (targetPage in 0 until data.pageCount) {
+                        requireNotNull(data.pagerAvailableBackground)
+                    } else {
+                        requireNotNull(data.pagerDisabledBackground)
+                    }
+                },
+                arrowGlyphs = listOf("◀", "▶").mapIndexed { arrowIndex, glyph ->
+                    val targetPage = if (arrowIndex == 0) data.page - 1 else data.page + 1
+                    Component.text(glyph).color(
+                        if (targetPage in 0 until data.pageCount) {
+                            net.kyori.adventure.text.format.NamedTextColor.WHITE
+                        } else {
+                            net.kyori.adventure.text.format.NamedTextColor.GRAY
+                        },
+                    )
+                },
+                status = Component.text("${data.page + 1}/${data.pageCount}"),
+            )
+        }
         DeclarativeSettings.backSection(
             nodes,
             frame,

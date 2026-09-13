@@ -24,6 +24,10 @@ import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.applyCalledDisk
+import me.awabi2048.kantancommander.model.CommandValueRules
+import me.awabi2048.kantancommander.model.DiskArgument
+import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
@@ -224,6 +228,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "field" to MenuActionHandler { context ->
                         val field = context.payload["field"] ?: return@MenuActionHandler MenuActionResult.Ignored
                         val node = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        // issue #8: 呼び出し設定は制御系ですが両GUIで編集します。
+                        // ディスク選択は手持ち入力、引数・戻り値は専用画面へ進みます。
+                        if (node.type == CommandType.DISK_CALL && field == "diskId") {
+                            return@MenuActionHandler setHeldDisk(context)
+                        }
+                        if (node.type == CommandType.DISK_CALL && field == "diskCallSettings") {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, DISK_CALL_SETTINGS_ID))
+                            )
+                        }
                         if (!CommandPresentationPolicy.isSimpleEditable(node.type)) {
                             // 古い経路から制御系ノードの設定画面へ届いた操作は受け付けません。
                             return@MenuActionHandler MenuActionResult.Ignored
@@ -715,6 +729,53 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         runtime.register(
             InventoryMenuDefinition(
                 SequenceEditorMenu.OWNER,
+                DISK_CALL_SETTINGS_ID,
+                renderer = { renderDiskCallSettings(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "arg" to MenuActionHandler { context ->
+                        val name = context.payload["name"]?.takeIf(String::isNotBlank)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val argument = node(context.route)?.declaredArguments()
+                            ?.firstOrNull { it.name == name }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        openDiskCallArgumentForm(context.player, context.route, argument)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                    "returnScope" to MenuActionHandler { context ->
+                        val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (current.string("returnName").isBlank()) {
+                            // 受取先がない場合は変更しません。
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        val next = if (current.string("returnScope")
+                                .ifBlank { VariableScope.EXECUTION.name } == VariableScope.WORLD.name
+                        ) {
+                            VariableScope.EXECUTION.name
+                        } else {
+                            VariableScope.WORLD.name
+                        }
+                        if (!updateNode(context.player, context.route) {
+                                it.params["returnScope"] = next
+                                it.markConfigured("returnScope")
+                            }
+                        ) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
+                    },
+                    "returnName" to MenuActionHandler { context ->
+                        openDiskCallReturnNameForm(context.player, context.route)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
                 SOUND_TARGET_POSITION_ID,
                 renderer = { renderSoundTargetPosition(it.player, it.route) },
                 actions = mapOf(
@@ -1102,9 +1163,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderSettings(player: Player, route: MenuRoute): InventoryMenuView {
         val node = node(route)
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS)), listOf(backElement(player)))
-        if (!CommandPresentationPolicy.isSimpleEditable(node.type)) {
+        if (!CommandPresentationPolicy.isSimpleEditable(node.type) && node.type != CommandType.DISK_CALL) {
             // 古い経路から制御系ノードの設定画面へ届いた場合は表示のみとし、
             // 設定変更・削除の入口を作りません。
+            // issue #8: 呼び出し設定は制御系ですが両GUIで編集するため除外します。
             return InventoryMenuView(
                 45,
                 KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS)),
@@ -1164,15 +1226,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
         elements += backElement(player, CommandSettingsSlotPolicy.backSlot(node.type, fields.size))
         // 削除は右クリックではなく、設定画面内の削除項目から確認画面へ進みます。
-        elements += choiceElement(
-            player = player,
-            slot = 53,
-            material = Material.RED_CONCRETE,
-            name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DELETE_COMMAND),
-            actionId = "delete",
-            payload = mapOf(NODE_ID to node.id.toString()),
-            style = GuiNameStyle.DANGER,
-        )
+        // 簡易GUIでは制御系コマンドを削除できないため、DISK_CALLの設定は許可しても
+        // 削除項目は出しません。
+        if (CommandPresentationPolicy.isSimpleEditable(node.type)) {
+            elements += choiceElement(
+                player = player,
+                slot = 53,
+                material = Material.RED_CONCRETE,
+                name = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DELETE_COMMAND),
+                actionId = "delete",
+                payload = mapOf(NODE_ID to node.id.toString()),
+                style = GuiNameStyle.DANGER,
+            )
+        }
         return InventoryMenuView(
             menuSize,
             KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_COMMAND_SETTINGS_NAMED, mapOf("command" to KcI18n.text(player, node.type.key)))),
@@ -1240,6 +1306,40 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         }
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TARGET_TITLE)), elements)
+    }
+
+    /** 呼び出すディスクは手持ちの実物から取得します。引数宣言も同時に転記します。 */
+    private fun setHeldDisk(context: MenuActionContext): MenuActionResult {
+        val diskId = KantanItemService.diskId(context.player.inventory.itemInMainHand)
+        if (diskId == null) {
+            context.player.sendMessage(
+                KcI18n.text(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_HELD_DISK_REQUIRED),
+            )
+            return MenuActionResult.Ignored
+        }
+        val disk = plugin.scripts.load(diskId)
+        if (disk == null) {
+            context.player.sendMessage(
+                KcI18n.text(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_HELD_DISK_REQUIRED),
+            )
+            return MenuActionResult.Ignored
+        }
+        if (!updateNode(context.player, context.route, configuredFields = setOf("diskId")) {
+                it.applyCalledDisk(diskId, disk)
+            }
+        ) {
+            return MenuActionResult.Rejected(
+                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+        }
+        context.player.sendMessage(
+            KcI18n.text(
+                context.player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_MESSAGE_DISK_SET,
+                mapOf("disk" to disk.name),
+            ),
+        )
+        return MenuActionResult.Success(MenuUpdate.Refresh)
     }
 
     /** ブロックは自由入力や任意スロット選択を許さず、メインハンドから取得します。空手はAIRです。 */
@@ -1522,6 +1622,181 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             layout.size,
             KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION)),
             elements,
+        )
+    }
+
+    /**
+     * issue #8 の呼び出し設定子画面です（簡易GUI）。
+     *
+     * 引数の値（複合型は変数名、スカラー型はリテラル）と戻り値の受取先を編集します。
+     * 保存規則はジェスチャーGUIと同一であり、リテラルと変数指定は排他です。
+     * 候補数が上限（14件）を超える引数は簡易GUIでは扱わず、フルGUIへ案内します。
+     */
+    private fun renderDiskCallSettings(player: Player, route: MenuRoute): InventoryMenuView {
+        val current = node(route)
+        if (current == null || current.type != CommandType.DISK_CALL) {
+            return InventoryMenuView(
+                45,
+                KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS)),
+                listOf(backElement(player)),
+            )
+        }
+        // 候補上限を超える引数は表示しません。未設定のまま残るため検証で検出します。
+        val declared = current.declaredArguments().take(12)
+        val layout = ChoiceMenuLayoutPolicy.layout((declared.size + 2).coerceAtLeast(1))
+        val elements = mutableListOf<MenuElement>()
+        declared.forEachIndexed { index, argument ->
+            val variable = current.string("argvar_${argument.name}").takeIf(String::isNotBlank)
+            val literal = current.string("arg_${argument.name}").takeIf(String::isNotBlank)
+            val value = variable?.let { "%{$it}%" } ?: literal.orEmpty()
+                .ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+            elements += choiceElement(
+                player,
+                layout.itemSlots[index],
+                Material.WRITABLE_BOOK,
+                argument.name,
+                "arg",
+                mapOf("name" to argument.name),
+                dataLabel = KcI18n.text(player, displayValueTypeLabel(argument.type)),
+                dataValue = value,
+            )
+        }
+        val returnName = current.string("returnName")
+        val returnScope = current.string("returnScope").ifBlank { VariableScope.EXECUTION.name }
+        elements += choiceElement(
+            player,
+            layout.itemSlots[declared.size],
+            Material.ENDER_EYE,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SCOPE),
+            "returnScope",
+            dataValue = if (returnScope == VariableScope.WORLD.name) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
+            } else {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
+            },
+        )
+        elements += choiceElement(
+            player,
+            layout.itemSlots[declared.size + 1],
+            Material.NAME_TAG,
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN),
+            "returnName",
+            dataValue = returnName.ifBlank {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+            },
+        )
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS)),
+            elements,
+        )
+    }
+
+    /** 呼び出し引数の値を編集します。型に応じて値入力または変数名入力へ進みます。 */
+    private fun openDiskCallArgumentForm(player: Player, route: MenuRoute, argument: DiskArgument) {
+        val current = node(route) ?: return
+        val complex = argument.type !in setOf(ValueType.NUMBER, ValueType.STRING, ValueType.BOOLEAN)
+        if (complex) {
+            val spec = CommandDialogSpecs.variableName
+            showTextForm(
+                player = player,
+                route = route,
+                formId = "disk-call-arg-variable",
+                title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+                fields = listOf(
+                    FormTextField(
+                        "value",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_ARG_VARIABLE),
+                        current.string("argvar_${argument.name}"),
+                        spec = spec,
+                    ),
+                ),
+                save = { values ->
+                    val raw = values.getValue("value").trim()
+                    if (raw.isEmpty() || !CommandValueRules.isVariableName(raw)) return@showTextForm false
+                    updateNode(player, route) {
+                        it.params["argvar_${argument.name}"] = raw
+                        it.params.remove("arg_${argument.name}")
+                        it.clearConfigured("arg_${argument.name}")
+                        it.markConfigured("argvar_${argument.name}")
+                    }
+                },
+            )
+            return
+        }
+        val spec = CommandDialogSpecs.Spec(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
+            256,
+            validate = { raw ->
+                if (CommandSettingsModel.isCallArgumentLiteralValid(argument.type, raw)) null
+                else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            },
+        )
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "disk-call-arg-value",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = listOf(
+                FormTextField(
+                    "value",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_ARG_VALUE),
+                    current.string("arg_${argument.name}"),
+                    spec = spec,
+                ),
+            ),
+            save = { values ->
+                val raw = values.getValue("value").trim()
+                if (raw.isEmpty() || !CommandSettingsModel.isCallArgumentLiteralValid(argument.type, raw)) {
+                    return@showTextForm false
+                }
+                updateNode(player, route) {
+                    it.params["arg_${argument.name}"] = raw
+                    it.params.remove("argvar_${argument.name}")
+                    it.clearConfigured("argvar_${argument.name}")
+                    it.markConfigured("arg_${argument.name}")
+                }
+            },
+        )
+    }
+
+    /** 戻り値の受取先変数名を編集します。空欄で受取を解除します。 */
+    private fun openDiskCallReturnNameForm(player: Player, route: MenuRoute) {
+        val current = node(route) ?: return
+        val spec = CommandDialogSpecs.variableName
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "disk-call-return-name",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = listOf(
+                FormTextField(
+                    "value",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN_NAME),
+                    current.string("returnName"),
+                    spec = spec,
+                ),
+            ),
+            save = { values ->
+                val raw = values.getValue("value").trim()
+                if (raw.isNotEmpty() && !CommandValueRules.isVariableName(raw)) return@showTextForm false
+                updateNode(player, route) {
+                    if (raw.isEmpty()) {
+                        it.params.remove("returnName")
+                        it.params.remove("returnScope")
+                        it.clearConfigured("returnName")
+                        it.clearConfigured("returnScope")
+                    } else {
+                        it.params["returnName"] = raw
+                        if (it.string("returnScope").isBlank()) {
+                            it.params["returnScope"] = VariableScope.EXECUTION.name
+                        }
+                        it.markConfigured("returnName")
+                        it.markConfigured("returnScope")
+                    }
+                }
+            },
         )
     }
 
@@ -2715,6 +2990,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val PARTICLE_DISPLAY_ID = "particle_display"
         private const val GEOMETRY_SETTINGS_ID = "geometry_settings"
         private const val PARTICLE_SHAPE_ID = "particle_shape"
+        /** issue #8: 呼び出し設定（引数・戻り値の受取先）の子画面です。 */
+        private const val DISK_CALL_SETTINGS_ID = "disk_call_settings"
         private const val FIREWORK_CONTENTS_ID = "firework_contents"
         private const val SCRIPT_ID = "scriptId"
         private const val NODE_ID = "nodeId"

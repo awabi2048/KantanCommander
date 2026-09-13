@@ -61,6 +61,7 @@ import me.awabi2048.kantancommander.model.setConditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.DiskPlacement
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
@@ -198,6 +199,10 @@ data class GestureEditorState(
     var resourcePickerPage: Int = 0,
     /** issue #8: ディスク呼び出し設定の引数ページ番号です。 */
     var diskCallArgsPage: Int = 0,
+    /** issue #7: イベント種別の選択子画面のページ番号です。 */
+    var triggerEventPage: Int = 0,
+    /** issue #8: ディスク設定の引数ページ番号です。 */
+    var diskSettingsArgsPage: Int = 0,
     /** テスト実行中だけ共有する表示・復元状態です。 */
     var testExecution: GestureTestState? = null,
 )
@@ -233,6 +238,10 @@ enum class GestureLowerMode {
      * issue #8: ディスク呼び出しの引数・戻り値受取先の設定子画面です。
      */
     DISK_CALL_SETTINGS,
+    /**
+     * issue #8: ディスクの設定（取り出しと引数定義）の子画面です。
+     */
+    DISK_SETTINGS,
     CONFIRM,
     TEST_CONFIRM,
     TEST_STATUS,
@@ -804,6 +813,8 @@ class GestureSequenceEditor(
                 GestureLowerMode.TRIGGER_EVENT -> lowerPanel.buildTriggerEventChild(state, owner)
                 // issue #8: 呼び出し設定の子画面です。
                 GestureLowerMode.DISK_CALL_SETTINGS -> lowerPanel.buildDiskCallSettingsChild(state, owner)
+                // issue #8: ディスク設定の子画面です。
+                GestureLowerMode.DISK_SETTINGS -> lowerPanel.buildDiskSettingsChild(state, owner)
                 else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
             }
             else -> lowerPanel.build(state, owner, attention, fieldPreviews = previewStore.snapshot())
@@ -4286,6 +4297,159 @@ class GestureSequenceEditor(
         }
     }
 
+    /**
+     * issue #8 のディスク設定子画面へ遷移します。
+     *
+     * 取り出し操作と引数定義の一覧を示します。引数の追加・改名・型変更・削除は
+     * すべてこの画面から行い、子画面の内容差し替えで遷移します。
+     */
+    private fun openDiskSettings(player: Player) {
+        state.diskSettingsArgsPage = 0
+        state.lowerMode = GestureLowerMode.DISK_SETTINGS
+        val ownerId = ownerIdFor(player)
+        if (settingChildOpen(ownerId)) {
+            updateLower(player)
+            return
+        }
+        val owner = ownerPlayerFor(player)
+        val opened = runCatching {
+            openChildAndSuppressParentHighlight(
+                ownerId,
+                lowerPanel.build(state, owner, attentionState(), suppressHighlight = true),
+                lowerPanel.buildDiskSettingsChild(state, owner),
+                GestureGuiChildOptions(
+                    parentScreenId = lowerPanel.LOWER_SCREEN_ID,
+                    overlayMaterial = Material.GRAY_STAINED_GLASS,
+                    animated = false,
+                ),
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "ディスク設定画面のオープンに失敗しました: script=${state.scriptId}",
+                failure,
+            )
+            false
+        }
+        if (!opened) {
+            state.lowerMode = GestureLowerMode.SETTINGS
+            updateLower(player)
+        }
+    }
+
+    /** ディスク設定から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
+    private fun closeDiskSettings(player: Player) {
+        state.lowerMode = GestureLowerMode.SETTINGS
+        updateLower(player)
+    }
+
+    /**
+     * 引数定義の変更を保存します。
+     *
+     * 成功時は子画面を再描画します。名前の重複・不正は保存前に拒否し、
+     * 保存失敗時はログへ原因を残して画面に示します。
+     */
+    private fun saveDiskArguments(
+        player: Player,
+        change: (MutableList<DiskArgument>) -> Unit,
+    ): Boolean {
+        val updated = runCatching {
+            CommandSettingsModel.updateDiskArguments(
+                plugin,
+                state.scriptId,
+                editorId = player.uniqueId,
+                expectedRevision = expectedMutationRevision(player),
+                change = change,
+            )
+        }.getOrElse { failure ->
+            plugin.logger.log(
+                java.util.logging.Level.WARNING,
+                "引数定義を保存できませんでした: script=${state.scriptId}",
+                failure,
+            )
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        if (!updated) {
+            player.sendMessage(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+            )
+            return false
+        }
+        updateLower(player)
+        return true
+    }
+
+    /** 引数定義の追加・改名を名前入力で受け付けます。空欄・重複・不正名は拒否します。 */
+    private fun editDiskArgumentName(player: Player, current: String?) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        observedRevision = script.revision
+        val spec = CommandDialogSpecs.variableName
+        val inputId = "value"
+        showInputDialog(
+            player = player,
+            body = listOf(
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_NAME),
+            ),
+            inputs = listOf(
+                CommandDialogSpecs.input(player, inputId, current.orEmpty(), spec),
+            ),
+        ) { response ->
+            val raw = response.textValue(inputId).trim()
+            val errorKey = when {
+                raw.isEmpty() -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_VARIABLE_INVALID
+                else -> spec.validateInput(raw)
+            } ?: if (script.arguments.any { it.name == raw && it.name != current }) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED
+            } else {
+                null
+            }
+            if (errorKey != null) {
+                KcI18n.text(player, errorKey)
+            } else if (!saveDiskArguments(player) { arguments ->
+                    if (current == null) {
+                        arguments += DiskArgument(raw, ValueType.NUMBER)
+                    } else {
+                        val index = arguments.indexOfFirst { it.name == current }
+                        if (index >= 0) arguments[index] = arguments[index].copy(name = raw)
+                    }
+                }) {
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+            } else null
+        }
+    }
+
+    /** 引数定義の型を全型で循環します。 */
+    private fun cycleDiskArgumentType(player: Player, name: String) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        val current = script.arguments.firstOrNull { it.name == name } ?: return
+        observedRevision = script.revision
+        val entries = ValueType.entries
+        val next = entries[(entries.indexOf(current.type) + 1) % entries.size]
+        saveDiskArguments(player) { arguments ->
+            val index = arguments.indexOfFirst { it.name == name }
+            if (index >= 0) arguments[index] = arguments[index].copy(type = next)
+        }
+    }
+
+    /** 引数定義を削除します。即時確定し、結果を画面に示します。 */
+    private fun deleteDiskArgument(player: Player, name: String) {
+        val script = plugin.scripts.load(state.scriptId) ?: return
+        if (script.arguments.none { it.name == name }) return
+        observedRevision = script.revision
+        if (!saveDiskArguments(player) { arguments ->
+                arguments.removeIf { it.name == name }
+            }
+        ) {
+            return
+        }
+        player.sendMessage(
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_DELETED),
+        )
+    }
+
     /** 起動方法の種別選択から設定一覧へ戻ります。子画面自体は閉じず、内容だけを差し替えます。 */
     private fun closeTriggerKindSelection(player: Player) {
         state.lowerMode = GestureLowerMode.SETTINGS
@@ -4294,6 +4458,7 @@ class GestureSequenceEditor(
 
     /** 起動方法の種別選択からイベント種別の選択へ進みます。子画面の内容だけを差し替えます。 */
     private fun openTriggerEventSelection(player: Player) {
+        state.triggerEventPage = 0
         state.lowerMode = GestureLowerMode.TRIGGER_EVENT
         updateLower(player)
     }
@@ -4481,17 +4646,9 @@ class GestureSequenceEditor(
         }
     }
 
-    /** 引数のリテラルが型に適合するかを判定します。 */
-    private fun isValidArgumentLiteral(type: ValueType, raw: String): Boolean = when (type) {
-        ValueType.NUMBER -> CommandValueRules.parseFiniteDouble(raw) != null ||
-            VariableTemplate.isSingleReference(raw) ||
-            me.awabi2048.kantancommander.model.TemporaryTemplate.isSingleReference(raw)
-        ValueType.BOOLEAN -> raw.trim().lowercase() in setOf("true", "false") ||
-            VariableTemplate.isSingleReference(raw) ||
-            me.awabi2048.kantancommander.model.TemporaryTemplate.isSingleReference(raw)
-        else -> !VariableTemplate.hasMalformedReference(raw) &&
-            !me.awabi2048.kantancommander.model.TemporaryTemplate.hasMalformedReference(raw)
-    }
+    /** 引数のリテラルが型に適合するかを判定します。規則は共通モデルで共有します。 */
+    private fun isValidArgumentLiteral(type: ValueType, raw: String): Boolean =
+        CommandSettingsModel.isCallArgumentLiteralValid(type, raw)
 
     /** 戻り値の受取先scopeをEXECUTION／WORLDで切り替えます。受取先未設定時は変更しません。 */
     private fun cycleDiskCallReturnScope(player: Player) {
@@ -7461,7 +7618,42 @@ class GestureSequenceEditor(
                 openWorldVariables(player)
             }
             context.elementId == "lower-script-disk" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                // issue #8: 取り出し操作はディスク設定の子画面へ移し、引数定義と同列に扱います。
+                openDiskSettings(player)
+            }
+            // issue #8: ディスク設定の取り出し・引数定義の編集です。
+            context.elementId == "lower-disk-take-out" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 outputScriptDisk(player)
+            }
+            context.elementId == "lower-diskdef-add" &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                editDiskArgumentName(player, null)
+            }
+            context.elementId.startsWith("lower-diskdef-name:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-diskdef-name:")
+                if (name.isNotBlank()) editDiskArgumentName(player, name)
+            }
+            context.elementId.startsWith("lower-diskdef-type:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-diskdef-type:")
+                if (name.isNotBlank()) cycleDiskArgumentType(player, name)
+            }
+            context.elementId.startsWith("lower-diskdef-delete:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val name = context.elementId.removePrefix("lower-diskdef-delete:")
+                if (name.isNotBlank()) deleteDiskArgument(player, name)
+            }
+            context.elementId.startsWith("lower-diskdef-page:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.diskSettingsArgsPage =
+                    context.elementId.removePrefix("lower-diskdef-page:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.DISK_SETTINGS &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                closeDiskSettings(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.WORLD_VARIABLE_DELETE_CONFIRM &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
@@ -7569,6 +7761,13 @@ class GestureSequenceEditor(
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.diskCallArgsPage =
                     context.elementId.removePrefix("lower-disk-arg-page:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            // issue #7: イベント種別の選択子画面のページ移動です。
+            context.elementId.startsWith("lower-trigger-event-page:") &&
+                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.triggerEventPage =
+                    context.elementId.removePrefix("lower-trigger-event-page:").toIntOrNull() ?: return
                 updateLower(player)
             }
             context.elementId == "lower-setting-back" && state.lowerMode == GestureLowerMode.DISK_CALL_SETTINGS &&

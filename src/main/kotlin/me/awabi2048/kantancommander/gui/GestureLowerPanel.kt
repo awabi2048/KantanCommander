@@ -60,6 +60,7 @@ import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.declaredArguments
+import me.awabi2048.kantancommander.model.displayKey
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.kantancommander.gui.declarative.CenteredLine
@@ -160,6 +161,9 @@ class GestureLowerPanel(
             // issue #8: 呼び出し設定の子画面です。子画面が閉じられた場合でも、
             // 親側へ設定用の内部座標を誤描画しないようにします。
             GestureLowerMode.DISK_CALL_SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
+            // issue #8: ディスク設定の子画面です。子画面が閉じられた場合でも、
+            // 親側へ設定用の内部座標を誤描画しないようにします。
+            GestureLowerMode.DISK_SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirmNew(state, player)
             GestureLowerMode.TEST_CONFIRM -> buildTestConfirmationNew(state, player, child = true)
             GestureLowerMode.TEST_STATUS -> buildTestStatusNew(state, player)
@@ -954,6 +958,10 @@ class GestureLowerPanel(
     ): GestureGuiView {
         val current = state.scriptId
             .let { plugin.scripts.load(it)?.effectiveTrigger()?.event }
+        val pageSize = me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.EVENT_PAGE_SIZE
+        val total = EventTriggerKind.entries.size
+        val pageCount = ((total + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.triggerEventPage.coerceIn(0, pageCount - 1)
         return finishVariablesChild(
             me.awabi2048.kantancommander.gui.declarative.DeclarativeTriggers.eventDocument(
                 me.awabi2048.kantancommander.gui.declarative.TriggerChoiceData(
@@ -974,10 +982,74 @@ class GestureLowerPanel(
                     },
                     backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
                     backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
                 ),
             ),
             GestureLowerMode.TRIGGER_EVENT,
             "[DeclarativeTriggerEvent]",
+        )
+    }
+
+    /**
+     * issue #8 のディスク設定子画面を生成します。
+     *
+     * 取り出し操作と引数定義の一覧を示します。引数は名前・型・削除の3カード1行で
+     * 2件ずつページングし、追加カードと戻る操作が重ならないようにします。
+     */
+    fun buildDiskSettingsChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val script = plugin.scripts.load(state.scriptId)
+        val arguments = script?.arguments.orEmpty()
+        val pageSize = 2
+        val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.diskSettingsArgsPage.coerceIn(0, pageCount - 1)
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskSettings.settingsDocument(
+                me.awabi2048.kantancommander.gui.declarative.DiskSettingsData(
+                    title = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS),
+                    ),
+                    body = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_SETTINGS_BODY),
+                    ),
+                    takeOutLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_TAKE_OUT),
+                    ),
+                    takeOutBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    emptyArgs = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_NO_ARGS),
+                    ),
+                    arguments = arguments
+                        .drop(page * pageSize)
+                        .take(pageSize)
+                        .map { argument ->
+                            me.awabi2048.kantancommander.gui.declarative.DiskArgumentRow(
+                                name = argument.name,
+                                nameLabel = Component.text(argument.name),
+                                typeLabel = Component.text(variableTypeName(player, argument.type)),
+                                background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                                outline = null,
+                            )
+                        },
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    addLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_ARG_ADD),
+                    ),
+                    addBackground = Bukkit.createBlockData(Material.GREEN_CONCRETE),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.DISK_SETTINGS,
+            "[DeclarativeDiskSettings]",
         )
     }
 
@@ -2338,9 +2410,9 @@ class GestureLowerPanel(
                 cy = SCRIPT_SETTING_ROW_BOTTOM_Y,
                 w = SCRIPT_SETTING_WIDTH,
             )
-            // 未選択時下部の4枚目はプログラムディスクの取得操作です。設定値の編集ではなく
-            // 内容の複製であり、簡易GUIの出力操作と同じく内容があるときだけ有効にします。
-            // 空のプログラムでは未設定表示とし、クリック時点のガードでも受け付けません。
+            // issue #8: 未選択時下部の4枚目はディスクの設定（取り出しと引数定義）です。
+            // 取り出し自体は内容の複製であり、簡易GUIの出力操作と同じく内容があるときだけ
+            // 有効にします。空のプログラムでは未設定表示とし、クリック時点のガードでも受け付けません。
             val diskAvailable = script.hasDiskContent()
             val diskState = if (diskAvailable) {
                 GestureSettingValueState.CONFIGURED
@@ -2354,7 +2426,7 @@ class GestureLowerPanel(
             }
             cards += ScriptSettingCard(
                 elementId = "lower-script-disk",
-                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_DISK),
+                label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISK_SETTINGS),
                 value = Component.text(diskValue),
                 background = Bukkit.createBlockData(
                     GestureSettingVisualPolicy.material(
@@ -2440,18 +2512,8 @@ class GestureLowerPanel(
     )
 
     /** issue #2 の共通値型の表示キーを返します。両GUIで同じ文言を使います。 */
-    fun displayVariableTypeNameKey(type: ValueType): com.awabi2048.ccsystem.api.localization.LocalizationKey<String> = when (type) {
-        ValueType.NUMBER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NUMBER
-        ValueType.STRING -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEXT
-        ValueType.BOOLEAN -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_BOOLEAN
-        ValueType.LOCATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION
-        ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
-        ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
-        ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
-        ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
-        ValueType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
-        ValueType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
-    }
+    fun displayVariableTypeNameKey(type: ValueType): com.awabi2048.ccsystem.api.localization.LocalizationKey<String> =
+        type.displayKey()
 
     /**
      * 直接値を確認するための実行ボタンです。

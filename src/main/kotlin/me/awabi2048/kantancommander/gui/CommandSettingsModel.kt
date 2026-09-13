@@ -11,6 +11,7 @@ import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.model.DiskScript
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataSchema
@@ -30,6 +31,7 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
+import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.ValueType
@@ -1756,6 +1758,53 @@ object CommandSettingsModel {
         // プログラム名・タイマーはノードを変更しないため差分は空集合です。
         plugin.gestureEditor.refreshForScript(script.id, changedNodeIds = emptySet())
         return true
+    }
+
+    /**
+     * issue #8 のディスク引数定義を両GUIが同じ保存境界で更新します。
+     *
+     * 引数の追加・改名・型変更・削除を一つの操作として扱い、読み込み・保存・
+     * 表示更新をまとめます。名前の重複・不正は検証層でも拒否しますが、
+     * 保存前にここでも検査し、不正な定義を保存しません。
+     */
+    fun updateDiskArguments(
+        plugin: KantanCommanderPlugin,
+        scriptId: UUID,
+        editorId: UUID? = null,
+        expectedRevision: Long? = null,
+        change: (MutableList<DiskArgument>) -> Unit,
+    ): Boolean {
+        val current = plugin.scripts.load(scriptId) ?: return false
+        val candidate = current.arguments.toMutableList()
+        change(candidate)
+        val names = candidate.map { it.name }
+        if (names.any { !CommandValueRules.isVariableName(it) }) return false
+        if (names.size != names.toSet().size) return false
+        return updateScript(
+            plugin,
+            scriptId,
+            editorId,
+            expectedRevision = expectedRevision,
+        ) { script ->
+            script.arguments = candidate.toList()
+        }
+    }
+
+    /**
+     * issue #8 の呼び出し引数のリテラルが型に適合するかを判定します。
+     *
+     * 検証層と同じ規則であり、両GUIの入力検証で共有します。複合型は変数指定だけを
+     * 受け付けるため、ここではスカラー3型だけを判定します。
+     */
+    fun isCallArgumentLiteralValid(type: ValueType, raw: String): Boolean = when (type) {
+        ValueType.NUMBER -> CommandValueRules.parseFiniteDouble(raw) != null ||
+            VariableTemplate.isSingleReference(raw) ||
+            TemporaryTemplate.isSingleReference(raw)
+        ValueType.BOOLEAN -> raw.trim().lowercase() in setOf("true", "false") ||
+            VariableTemplate.isSingleReference(raw) ||
+            TemporaryTemplate.isSingleReference(raw)
+        else -> !VariableTemplate.hasMalformedReference(raw) &&
+            !TemporaryTemplate.hasMalformedReference(raw)
     }
 
     /** インベントリ／ジェスチャー共通のグラフ更新処理です。 */
