@@ -296,6 +296,29 @@ class EntityOperationValidationTest {
     }
 
     @Test
+    fun `mannequin description accepts text including empty`() {
+        val empty = DiskScript(name = "mannequin-description-empty", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+                params[EntityDataSchema.PARAM_VALUE] = ""
+            }
+        }
+        assertTrue(ExecutableScriptValidator.validate(empty).isEmpty())
+
+        val text = DiskScript(name = "mannequin-description-text", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+                params[EntityDataSchema.PARAM_VALUE] = "案内人"
+            }
+        }
+        assertTrue(ExecutableScriptValidator.validate(text).isEmpty())
+    }
+
+    @Test
     fun `mannequin property is rejected for player target`() {
         val script = scriptWith {
             it.params["operation"] = "data"

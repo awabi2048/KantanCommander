@@ -109,6 +109,8 @@ object EntityDataSchema {
     // Mannequin固有項目です。descriptionは設定不可とし、ここでは扱いません。
     // profileはスキンのプレイヤー名のみを受け付け、UUID・テクスチャ直接指定は行いません。
     const val PROPERTY_MANNEQUIN_PROFILE_NAME = "mannequin_profile_name"
+    // スコア下に表示する説明文です。空欄は除去して既定表示に戻します。
+    const val PROPERTY_MANNEQUIN_DESCRIPTION = "mannequin_description"
     const val PROPERTY_MANNEQUIN_IMMOVABLE = "mannequin_immovable"
     const val PROPERTY_MANNEQUIN_MAIN_HAND = "mannequin_main_hand"
     const val PROPERTY_MANNEQUIN_POSE = "mannequin_pose"
@@ -234,6 +236,11 @@ object EntityDataSchema {
             PROPERTY_MANNEQUIN_PROFILE_NAME, EntityPropertyValueKind.TEXT,
             entityTypes = setOf(EntityType.MANNEQUIN.name),
             optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_PROFILE_NAME,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_DESCRIPTION, EntityPropertyValueKind.TEXT,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_DESCRIPTION,
         ),
         EntityPropertyDefinition(
             PROPERTY_MANNEQUIN_IMMOVABLE, EntityPropertyValueKind.BOOLEAN,

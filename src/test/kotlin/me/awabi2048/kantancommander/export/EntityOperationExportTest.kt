@@ -161,6 +161,21 @@ class EntityOperationExportTest {
     }
 
     @Test
+    fun `mannequin description edit is reported as unsupported without conversion`() {
+        val (_, exporter) = exporter()
+        val script = operationScript {
+            it.params["operation"] = "data"
+            it.params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+            it.params[EntityDataSchema.PARAM_VALUE] = "案内人"
+        }
+        val result = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(script),
+        )
+        assertTrue(result.errors.any { it.contains("データ編集はバニラ出力に未対応") })
+    }
+
+    @Test
     fun `motion is reported as unsupported without conversion`() {
         val (store, exporter) = exporter()
         val script = store.create(UUID.randomUUID(), "entity-motion")

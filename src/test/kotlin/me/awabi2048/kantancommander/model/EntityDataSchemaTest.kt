@@ -60,10 +60,11 @@ class EntityDataSchemaTest {
     }
 
     @Test
-    fun `mannequin shows its own properties without description`() {
+    fun `mannequin shows its own properties`() {
         val ids = EntityDataSchema.propertiesFor(EntityType.MANNEQUIN).map { it.id }
         assertTrue(ids.containsAll(listOf(
             "mannequin_profile_name",
+            "mannequin_description",
             "mannequin_immovable",
             "mannequin_main_hand",
             "mannequin_pose",
@@ -77,8 +78,6 @@ class EntityDataSchemaTest {
         )))
         assertFalse(ids.contains("rabbit_type"))
         assertFalse(ids.contains("armor_stand_arms"))
-        // descriptionは設定不可のため項目に含めない。
-        assertTrue(EntityDataSchema.definition("mannequin_description") == null)
     }
 
     @Test
@@ -117,6 +116,22 @@ class EntityDataSchemaTest {
         assertFalse(EntityDataSchema.isMannequinProfileName("ab"))
         assertFalse(EntityDataSchema.isMannequinProfileName("has space"))
         assertFalse(EntityDataSchema.isMannequinProfileName("abcdefghijklmnopq"))
+    }
+
+    @Test
+    fun `mannequin description is an empty-default text property`() {
+        val definition = EntityDataSchema.definition("mannequin_description")
+        assertNotNull(definition)
+        assertEquals(EntityPropertyValueKind.TEXT, definition!!.valueKind)
+        assertEquals(EntityPropertyValue.TextValue(""), EntityDataSchema.parse("mannequin_description", ""))
+        assertEquals(
+            EntityPropertySupport.STATICALLY_SUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.MANNEQUIN, "mannequin_description"),
+        )
+        assertEquals(
+            EntityPropertySupport.STATICALLY_UNSUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.PLAYER, "mannequin_description"),
+        )
     }
 
     @Test

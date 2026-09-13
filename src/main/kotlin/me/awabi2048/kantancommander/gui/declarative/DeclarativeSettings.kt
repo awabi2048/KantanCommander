@@ -54,11 +54,16 @@ data class DescriptionDetail(
     val y: Double,
 )
 
-/** 現在値の1行です。 */
+/**
+ * 現在値の1行です。
+ *
+ * 値はComponentで保持し、バニラ翻訳（種別名など）も欠落させません。
+ * 従来の文字列値は `Component.text` で包んで渡します。
+ */
 data class SettingsValueRow(
     val id: String,
     val label: String,
-    val value: String,
+    val value: Component,
     val y: Double,
 )
 
@@ -394,7 +399,7 @@ object DeclarativeSettings {
                 absolute = placed(frame, labelX, row.y, 1.0, 0.0060 * 3.0),
             )
             nodes += GestureGuiText(
-                text = Component.text(row.value),
+                text = row.value,
                 size = 0.0060,
                 lineWidth = 170,
                 alignment = GestureGuiTextAlignment.CENTER,

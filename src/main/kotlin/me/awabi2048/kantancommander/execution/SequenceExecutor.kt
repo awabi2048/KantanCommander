@@ -1469,7 +1469,24 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private fun applyTextProperty(target: Entity, propertyId: String, text: String): Boolean = when (propertyId) {
         EntityDataSchema.PROPERTY_CUSTOM_NAME -> applyCustomName(target, propertyId, text)
         EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME -> EntityDataSchema.applyMannequinProfile(target, text)
+        EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION -> applyMannequinDescription(target, text)
         else -> false
+    }
+
+    /**
+     * Mannequinの説明文を適用します。召喚時の表示名と同じ描画規則を使い、
+     * 空欄は説明の除去（既定表示へ戻す）として扱います。
+     */
+    private fun applyMannequinDescription(target: Entity, text: String): Boolean {
+        val mannequin = target as? org.bukkit.entity.Mannequin ?: return false
+        return runCatching {
+            if (text.isBlank()) {
+                mannequin.setDescription(null)
+            } else {
+                mannequin.setDescription(legacyText(text))
+            }
+            true
+        }.getOrDefault(false)
     }
 
     /**

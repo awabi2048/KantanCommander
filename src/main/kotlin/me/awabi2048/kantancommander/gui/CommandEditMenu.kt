@@ -1199,12 +1199,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             val display = field.value(node)
             // 複数の意味値を持つ表示はLoreのデータ行へ分けます。単一行の結合は
             // 行ピッチを崩すため、意味ごとの行をそのままデータ行へ写します。
+            // 種別名はバニラ翻訳のComponentで渡し、CC-System側でComponent行へ変換します。
             val data = display.rows(player)?.map { row ->
                 GuiMenuEntryData(row.label, row.value)
-            } ?: listOf(GuiMenuEntryData(
-                KcI18n.text(player, field.label),
-                display.render(player),
-            ))
+            } ?: listOf(when (display) {
+                is DisplayValue.EntityTypeName -> GuiMenuEntryData(
+                    KcI18n.text(player, field.label),
+                    display.entityComponent(net.kyori.adventure.text.format.NamedTextColor.GRAY),
+                )
+                else -> GuiMenuEntryData(
+                    KcI18n.text(player, field.label),
+                    display.render(player),
+                )
+            })
             KcGui.menuEntry(
                 player = player,
                 slot = slots[index],
@@ -3097,6 +3104,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 sealed interface DisplayValue {
     data class Literal(val value: String) : DisplayValue
     data class Localized(val key: LocalizationKey<String>) : DisplayValue
+    /**
+     * エンティティ種別IDです。独自翻訳は持たず、バニラ翻訳キーへの
+     * translatableを各表示経路で解決します。文字列が必須の文脈では
+     * ID原文へ落とします。
+     */
+    data class EntityTypeName(val rawId: String) : DisplayValue {
+        fun entityComponent(color: net.kyori.adventure.text.format.TextColor? = null): net.kyori.adventure.text.Component =
+            me.awabi2048.kantancommander.model.EntityTypeDisplay.componentFor(rawId, color)
+    }
     /** 現在値をGUI上で意味ごとの行へ分けるための表示単位です。 */
     data class TimingRow(
         val label: String,
@@ -3239,6 +3255,7 @@ sealed interface DisplayValue {
     fun render(player: Player): String = when (this) {
         is Literal -> value
         is Localized -> KcI18n.text(player, key)
+        is EntityTypeName -> rawId
         is Timing -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is ParticleParameters -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is SoundTargetPosition -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
@@ -3536,7 +3553,9 @@ object EditorMenuLayout {
             ),
         )
         CommandType.SUMMON_ENTITY -> listOf(
-            field("summonEntity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY, Material.ZOMBIE_SPAWN_EGG),
+            field("summonEntity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY, Material.ZOMBIE_SPAWN_EGG) {
+                displayEntityTypeName(it.string("summonEntity"))
+            },
             field(
                 "customName",
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DISPLAY_NAME,
@@ -4075,6 +4094,13 @@ object EditorMenuLayout {
 
 private fun displayLiteral(value: Any?): DisplayValue = value?.toString()?.takeIf(String::isNotBlank)
     ?.let(DisplayValue::Literal) ?: displayUnset()
+
+/**
+ * 種別IDの表示です。空欄は未設定とし、値がある場合は翻訳名解決へ委ねます。
+ * 独自翻訳は持たず、各表示経路がバニラ翻訳キーへ変換します。
+ */
+private fun displayEntityTypeName(rawId: String): DisplayValue =
+    rawId.takeIf(String::isNotBlank)?.let(DisplayValue::EntityTypeName) ?: displayUnset()
 
 /**
  * 実行値を直接設定するか一時変数から解決するかを、現在値表示へ反映します。
