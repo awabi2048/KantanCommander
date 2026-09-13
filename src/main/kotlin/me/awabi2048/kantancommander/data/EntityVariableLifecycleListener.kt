@@ -48,13 +48,30 @@ class EntityVariableLifecycleListener(
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onEntityTransform(event: EntityTransformEvent) {
         runCatching {
-            event.transformedEntities.forEach { transformed ->
-                plugin.entityVariables.copyTo(event.transformedEntity, transformed)
-            }
+            applyEntityTransformCopy(plugin.entityVariables, event)
         }.onFailure { failure ->
             plugin.logger.warning(
-                "エンティティ変数を変化時に複製できませんでした: ${event.transformedEntity.uniqueId} $failure",
+                "エンティティ変数を変化時に複製できませんでした: ${event.entity.uniqueId} $failure",
             )
         }
+    }
+}
+
+/**
+ * issue #22 の変化時複製を実行します。
+ *
+ * Paper API の `EntityTransformEvent` は、`entity` が変化元（変換される実体）、
+ * `transformedEntities` が変化先（変換後の実体一覧）です。`transformedEntity` は
+ * `transformedEntities` の先頭を返すだけであり、変化元ではありません。
+ * 複製元には必ず変化元 [`EntityTransformEvent.getEntity`] を使います。
+ * 変化先へ値が自動継承されない経路でも、元の変数一式を各変化先へ引き継ぎます。
+ * plugin に依存しないため単体試験できます。
+ */
+internal fun applyEntityTransformCopy(
+    store: me.awabi2048.kantancommander.model.EntityVariableStore,
+    event: EntityTransformEvent,
+) {
+    event.transformedEntities.forEach { transformed ->
+        store.copyTo(event.entity, transformed)
     }
 }

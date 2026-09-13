@@ -23,6 +23,7 @@ import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.data.GraphEditor
 import me.awabi2048.kantancommander.model.CommandNode
+import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
@@ -3497,6 +3498,22 @@ object EditorMenuLayout {
         )
         CommandType.DISK_CALL -> listOf(
             field("diskId", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK, Material.MUSIC_DISC_13),
+            // issue #8: 呼び出し先へ渡す引数と戻り値の受取先は、専用の子画面で編集します。
+            // 現在値欄には設定済み件数を示し、親タブを増やしません。
+            field(
+                "diskCallSettings",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS,
+                Material.WRITABLE_BOOK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISK_CALL_SETTINGS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISK_CALL_SETTINGS,
+            ) { node ->
+                val configured = node.declaredArguments().isNotEmpty() || node.string("returnName").isNotBlank()
+                if (configured) {
+                    DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED)
+                } else {
+                    displayUnset()
+                }
+            },
         )
         // issue #8: 「値を返す」は変数由来またはリテラル値のどちらかを返します。
         // 検証層と同じく source 指定時は変数、空欄時は value 欄のリテラルを採用します。

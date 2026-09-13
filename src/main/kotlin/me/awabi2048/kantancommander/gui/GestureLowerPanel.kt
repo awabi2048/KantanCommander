@@ -59,6 +59,7 @@ import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.EventTriggerKind
+import me.awabi2048.kantancommander.model.declaredArguments
 import me.awabi2048.kantancommander.model.selectedControlBlockStates
 import me.awabi2048.kantancommander.util.KcI18n
 import me.awabi2048.kantancommander.gui.declarative.CenteredLine
@@ -156,6 +157,9 @@ class GestureLowerPanel(
             // 親側へ選択肢の内部座標を誤描画しないようにします。
             GestureLowerMode.TRIGGER_KIND -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.TRIGGER_EVENT -> buildSettings(state, player, attention, suppressHighlight)
+            // issue #8: 呼び出し設定の子画面です。子画面が閉じられた場合でも、
+            // 親側へ設定用の内部座標を誤描画しないようにします。
+            GestureLowerMode.DISK_CALL_SETTINGS -> buildSettings(state, player, attention, suppressHighlight)
             GestureLowerMode.CONFIRM -> buildConfirmNew(state, player)
             GestureLowerMode.TEST_CONFIRM -> buildTestConfirmationNew(state, player, child = true)
             GestureLowerMode.TEST_STATUS -> buildTestStatusNew(state, player)
@@ -853,6 +857,89 @@ class GestureLowerPanel(
             ),
             GestureLowerMode.TRIGGER_KIND,
             "[DeclarativeTriggerKind]",
+        )
+    }
+
+    /**
+     * issue #8 の呼び出し設定子画面を生成します。
+     *
+     * 引数の値（リテラルまたは変数参照）と戻り値の受取先を一画面で編集します。
+     * 引数は3件ずつページングし、カード選択でDialogへ進みます。
+     */
+    fun buildDiskCallSettingsChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val script = plugin.scripts.load(state.scriptId)
+        val node = state.selectedNodeId?.let { id -> script?.graph?.nodes?.get(id) }
+        val arguments = node?.declaredArguments().orEmpty()
+        val pageSize = 3
+        val pageCount = ((arguments.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.diskCallArgsPage.coerceIn(0, pageCount - 1)
+        val returnName = node?.string("returnName").orEmpty()
+        val returnScope = node?.string("returnScope").orEmpty().ifBlank { VariableScope.EXECUTION.name }
+        return finishVariablesChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeDiskCall.settingsDocument(
+                me.awabi2048.kantancommander.gui.declarative.DiskCallSettingsData(
+                    title = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DISK_CALL_SETTINGS),
+                    ),
+                    body = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_BODY),
+                    ),
+                    emptyArgs = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_NO_ARGS),
+                    ),
+                    arguments = arguments
+                        .drop(page * pageSize)
+                        .take(pageSize)
+                        .map { argument ->
+                            val variable = node?.string("argvar_${argument.name}")?.takeIf(String::isNotBlank)
+                            val literal = node?.string("arg_${argument.name}")?.takeIf(String::isNotBlank)
+                            val valueText = when {
+                                variable != null -> "%{$variable}%"
+                                literal != null -> literal
+                                else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+                            }
+                            val configured = variable != null || literal != null
+                            me.awabi2048.kantancommander.gui.declarative.DiskCallArgumentCard(
+                                name = argument.name,
+                                label = Component.text("${argument.name}: $valueText"),
+                                background = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                                outline = GestureSettingVisualPolicy.nonTabOutlineMaterial(configured)?.let {
+                                    Bukkit.createBlockData(it)
+                                },
+                            )
+                        },
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    returnLabel = Component.text(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DISK_CALL_RETURN),
+                    ),
+                    returnScopeLabel = Component.text(
+                        if (returnScope == VariableScope.WORLD.name) {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
+                        } else {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
+                        },
+                    ),
+                    returnScopeBackground = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
+                    returnNameLabel = Component.text(
+                        returnName.ifBlank {
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+                        },
+                    ),
+                    returnNameBackground = Bukkit.createBlockData(
+                        if (returnName.isNotBlank()) Material.CYAN_CONCRETE else Material.LIGHT_GRAY_CONCRETE,
+                    ),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+            GestureLowerMode.DISK_CALL_SETTINGS,
+            "[DeclarativeDiskCall]",
         )
     }
 

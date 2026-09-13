@@ -780,13 +780,16 @@ fun CommandNode.toggleControlBlockState(state: ControlBlockStateKind) {
  * 変数操作の大分類です。
  *
  * - DEFINE: 新規定義のみ。既存名は拒否します。
- * - SET: 値の設定。未定義名には暗黙定義として記録します（上書き可）。
+ * - SET: 定義済み変数の値設定。未定義名は拒否します（暗黙定義しません）。
+ *   型は定義済みの型を正とし、型不一致も拒否します。
  * - CHANGE: 定義済み変数の変更のみ。未定義は拒否します。NUMBERでは
  *   changeMode（ASSIGN／CALCULATE）を選択します。
- * - COPY: 同一scope内の別変数へ値を複写します。型は複写元の型を引き継ぎます。
+ * - COPY: 定義済みの別変数へ値を複写します。複写先も定義済みである必要があり、
+ *   型は複写元の型を引き継ぎます。
  * - DELETE: 定義と値を削除します。
  *
  * #2 の操作仕様であり、EXECUTION／WORLD の両scopeで同じ意味を持ちます。
+ * いずれも明示定義を前提とし、未定義名への書き込みは行いません。
  * ENTITY scope の DEFINE 不要契約は #22 で別途定めます。
  */
 enum class VariableOperation { DEFINE, SET, CHANGE, COPY, DELETE }

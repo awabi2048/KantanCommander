@@ -25,16 +25,23 @@ enum class TriggerKind {
 /**
  * issue #7 の初期イベント種別です。
  *
- * 手順書の指定どおり初期6種に限定します。追加のイベント種別は、
- * 引数契約と登録解除の検証と合わせて拡張します。無断で種別を増やしません。
+ * 手順書の指定どおり初期種別に限定します。起動設定そのもので操作を選び分けるため、
+ * ボタンとレバーを分け、レバーはオン／オフ、クリックは左右を別種別とします。
+ * 感圧板は「踏まれた時」だけを提供します（離した時に起動させません）。
+ * 追加のイベント種別は、引数契約と登録解除の検証と合わせて拡張します。
  */
 enum class EventTriggerKind {
     BLOCK_BREAK,
     BLOCK_PLACE,
-    SWITCH,
-    PRESSURE_PLATE,
-    ENTITY_CLICK,
-    BLOCK_CLICK,
+    BUTTON_ON,
+    BUTTON_OFF,
+    LEVER_ON,
+    LEVER_OFF,
+    PRESSURE_PLATE_ON,
+    ENTITY_LEFT_CLICK,
+    ENTITY_RIGHT_CLICK,
+    BLOCK_LEFT_CLICK,
+    BLOCK_RIGHT_CLICK,
     ;
 
     companion object {
@@ -108,22 +115,15 @@ data class EventTriggerArgument(
  *
  * 引数の正式名称・型はこの表が単一正本です。実行層の引数生成と検証層の
  * 定義表はどちらもここから導出し、名称・型の食い違いを作りません。
- * SWITCH／PRESSURE_PLATE は信号変化の観測であり操作者を特定できないため、
- * 操作者（actor）を持ちません。ENTITY_CLICK／BLOCK_CLICK の左右は
- * `event_action`（`left`／`right`）で区別します。
+ * ボタン／レバー／感圧板は信号変化の観測であり操作者を特定できないため、
+ * 操作者（actor）を持ちません。オン／オフや左右はイベント種別そのもので
+ * 選び分けるため、状態や操作方向の引数は持ちません。
  */
 object EventTriggerArguments {
     const val ACTOR = "event_actor"
     const val BLOCK = "event_block"
     const val POSITION = "event_position"
     const val TARGET = "event_target"
-    const val STATE = "event_state"
-    const val ACTION = "event_action"
-
-    const val STATE_ON = "on"
-    const val STATE_OFF = "off"
-    const val ACTION_LEFT = "left"
-    const val ACTION_RIGHT = "right"
 
     /** イベント種別ごとの正式な引数表です。順序は GUI の表示順と一致させます。 */
     fun argumentsFor(event: EventTriggerKind): List<EventTriggerArgument> = when (event) {
@@ -132,25 +132,51 @@ object EventTriggerArguments {
             EventTriggerArgument(BLOCK, ValueType.BLOCK),
             EventTriggerArgument(POSITION, ValueType.LOCATION),
         )
-        EventTriggerKind.SWITCH, EventTriggerKind.PRESSURE_PLATE -> listOf(
+        EventTriggerKind.BUTTON_ON, EventTriggerKind.BUTTON_OFF,
+        EventTriggerKind.LEVER_ON, EventTriggerKind.LEVER_OFF,
+        EventTriggerKind.PRESSURE_PLATE_ON,
+        -> listOf(
             EventTriggerArgument(BLOCK, ValueType.BLOCK),
             EventTriggerArgument(POSITION, ValueType.LOCATION),
-            EventTriggerArgument(STATE, ValueType.STRING),
         )
-        EventTriggerKind.ENTITY_CLICK -> listOf(
+        EventTriggerKind.ENTITY_LEFT_CLICK, EventTriggerKind.ENTITY_RIGHT_CLICK -> listOf(
             EventTriggerArgument(ACTOR, ValueType.ENTITY),
             EventTriggerArgument(TARGET, ValueType.ENTITY),
-            EventTriggerArgument(ACTION, ValueType.STRING),
         )
-        EventTriggerKind.BLOCK_CLICK -> listOf(
+        EventTriggerKind.BLOCK_LEFT_CLICK, EventTriggerKind.BLOCK_RIGHT_CLICK -> listOf(
             EventTriggerArgument(ACTOR, ValueType.ENTITY),
             EventTriggerArgument(BLOCK, ValueType.BLOCK),
             EventTriggerArgument(POSITION, ValueType.LOCATION),
-            EventTriggerArgument(ACTION, ValueType.STRING),
         )
     }
 
     /** 検証層が実行開始時点の定義として扱う型表です。 */
     fun seedTypesFor(event: EventTriggerKind): Map<String, ValueType> =
         argumentsFor(event).associate { it.name to it.type }
+}
+
+/**
+ * issue #8 の呼び出し先ディスクの選択をノードへ反映します。
+ *
+ * 呼び出すディスクの内容スナップショットを保持し、併せて引数宣言を転記します。
+ * 宣言から消えた引数の古い値・変数指定は、実行時に残存キーを誤って使わないよう
+ * 除去します。選択操作の副作用を一箇所へ集約し、GUI とテストで同じ規則を使います。
+ */
+fun CommandNode.applyCalledDisk(diskId: java.util.UUID, disk: DiskScript) {
+    params["diskId"] = diskId.toString()
+    snapshot = disk.graph.deepCopy()
+    markConfigured("diskId")
+    val names = disk.arguments.map { it.name }.toSet()
+    params.keys.removeIf { key ->
+        (key.startsWith("arg_") && key.removePrefix("arg_") !in names) ||
+            (key.startsWith("argvar_") && key.removePrefix("argvar_") !in names)
+    }
+    val encoded = encodeDeclaredArguments(disk.arguments)
+    if (encoded.isBlank()) {
+        params.remove("declaredArgs")
+        clearConfigured("declaredArgs")
+    } else {
+        params["declaredArgs"] = encoded
+        markConfigured("declaredArgs")
+    }
 }

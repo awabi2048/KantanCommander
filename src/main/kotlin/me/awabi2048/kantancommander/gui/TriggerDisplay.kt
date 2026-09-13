@@ -22,14 +22,24 @@ internal object TriggerDisplay {
         TriggerKind.EVENT -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER)
     }
 
-    /** 初期イベント種別の固定名称です。選択肢の識別ラベルとしてそのまま示します。 */
+    /** イベント種別の固定名称です。選択肢の識別ラベルとしてそのまま示します。 */
     fun eventName(player: Player?, event: EventTriggerKind): String = when (event) {
         EventTriggerKind.BLOCK_BREAK -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BLOCK_BREAK)
         EventTriggerKind.BLOCK_PLACE -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BLOCK_PLACE)
-        EventTriggerKind.SWITCH -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_SWITCH)
-        EventTriggerKind.PRESSURE_PLATE -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_PRESSURE_PLATE)
-        EventTriggerKind.ENTITY_CLICK -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_ENTITY_CLICK)
-        EventTriggerKind.BLOCK_CLICK -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BLOCK_CLICK)
+        EventTriggerKind.BUTTON_ON -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BUTTON_ON)
+        EventTriggerKind.BUTTON_OFF -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BUTTON_OFF)
+        EventTriggerKind.LEVER_ON -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_LEVER_ON)
+        EventTriggerKind.LEVER_OFF -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_LEVER_OFF)
+        EventTriggerKind.PRESSURE_PLATE_ON ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_PRESSURE_PLATE_ON)
+        EventTriggerKind.ENTITY_LEFT_CLICK ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_ENTITY_LEFT_CLICK)
+        EventTriggerKind.ENTITY_RIGHT_CLICK ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_ENTITY_RIGHT_CLICK)
+        EventTriggerKind.BLOCK_LEFT_CLICK ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BLOCK_LEFT_CLICK)
+        EventTriggerKind.BLOCK_RIGHT_CLICK ->
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BLOCK_RIGHT_CLICK)
     }
 
     /**

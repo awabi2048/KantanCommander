@@ -825,6 +825,8 @@ object CommandSettingsModel {
             }
             CommandType.DISK_CALL -> when (fieldKey) {
                 "diskId" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
+                // 呼び出し設定の未完了も、ディスク指定と同じ警告面で示します。
+                "diskCallSettings" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_DISK
                 else -> undefinedWarningKey(node, fieldKey)
             }
             // issue #8: 「値を返す」は変数由来またはリテラル値のどちらかを返します。
@@ -1046,7 +1048,7 @@ object CommandSettingsModel {
             else -> text()
         }
         CommandType.DISK_CALL -> text()
-        // issue #8: 「値を返す」の入力は汎用テキスト欄で扱い、型検査は検証層で行います。
+        // issue #8: 呼び出し設定は専用子画面で編集します。ここでは対話入力へ進めません。
         CommandType.RETURN_VALUE -> text()
         CommandType.BLOCK_OPERATION -> when (fieldKey) {
             "operation" -> CommandSettingDescriptor(CommandSettingEditor.BLOCK_OPERATION)

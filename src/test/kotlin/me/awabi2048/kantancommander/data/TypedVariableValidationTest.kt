@@ -60,7 +60,7 @@ class TypedVariableValidationTest {
     }
 
     @Test
-    fun `set upserts and enforces defined types`() {
+    fun `set requires definitions and enforces defined types`() {
         val definitions = worldDefinitions(
             "counter" to TypedValue(ValueType.NUMBER, numberValue = 0.0),
         )
@@ -76,6 +76,7 @@ class TypedVariableValidationTest {
                 .any { it.message.contains("型が一致しません") },
         )
 
+        // issue #2: 明示定義を前提とし、未定義名へのSETは拒否します。
         val implicit = scriptWith {
             params["scope"] = "WORLD"
             params["name"] = "brand_new"
@@ -83,9 +84,9 @@ class TypedVariableValidationTest {
             params["operation"] = VariableOperation.SET.name
             params["value"] = "2"
         }
-        assertFalse(
+        assertTrue(
             ExecutableScriptValidator.validate(implicit, variableDefinitions = definitions)
-                .any { it.nodeId != null },
+                .any { it.message.contains("未定義") && it.fieldKeys == setOf("name") },
         )
     }
 

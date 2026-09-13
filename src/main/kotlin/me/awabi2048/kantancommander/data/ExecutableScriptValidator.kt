@@ -2151,9 +2151,18 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("changeMode"), "値の生成方法が不正です")
                     return
                 }
-                // 定義済みの型を正とします。未定義の場合はGUI上のtypeで暗黙定義します。
-                // PROPERTY／RANDOM モードでは生成結果の型を採用します。
+                // issue #2: EXECUTION／WORLD は明示定義を前提とします。定義表が
+                // あるのに未定義の場合は、DEFINEの省略や変数名の誤入力を拒否します。
+                // 定義表がない編集時だけは型欄での確定を許し、配置時の事前検証で
+                // 改めて未定義として検出します。
                 val defined = definedType(name)
+                if (hasDefinitions() && defined == null) {
+                    if (name.isNotBlank()) {
+                        errors += nodeError(node, path, setOf("name"), "変数が未定義です: $name")
+                    }
+                    return
+                }
+                // 定義済みの型を正とします。PROPERTY／RANDOM モードでは生成結果の型を採用します。
                 val effective = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
                     val candidate = defined ?: type
                     if (candidate == null) {
@@ -2217,6 +2226,14 @@ object ExecutableScriptValidator {
                     return
                 }
                 val targetType = definedType(name)
+                // issue #2: 複写先も明示定義を前提とします。未定義名へのCOPYは
+                // 変数名の誤入力を隠すため拒否します。
+                if (hasDefinitions() && targetType == null) {
+                    if (name.isNotBlank()) {
+                        errors += nodeError(node, path, setOf("name"), "変数が未定義です: $name")
+                    }
+                    return
+                }
                 if (sourceType != null && targetType != null && sourceType != targetType) {
                     errors += nodeError(node, path, setOf("name"), "複写先の変数の型が一致しません: $name")
                 }

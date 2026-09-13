@@ -151,39 +151,37 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
     /**
      * ボタン・レバー・感圧板のオン／オフを信号変化で検出します。
      *
-     * 信号変化の観測であり操作者を特定できないため、操作者（actor）は持ちません。
-     * 立ち上がり・立ち下がりの両辺だけを採用し、中間変化では実行しません。
+     * 起動設定で選ばれた種別の変化辺だけを実行します。感圧板は踏まれた時だけを
+     * 提供し、離した時は実行しません。信号変化の観測であり操作者を特定できないため、
+     * 操作者（actor）は持ちません。
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onRedstoneChange(event: BlockRedstoneEvent) {
-        val kind = EventTriggerClassification.switchOrPlate(
+        val category = EventTriggerClassification.redstoneCategory(
             event.block.blockData,
             event.block.type.name,
         ) ?: return
         val was = event.oldCurrent > 0
         val now = event.newCurrent > 0
         if (was == now) return
-        val state = if (now) EventTriggerArguments.STATE_ON else EventTriggerArguments.STATE_OFF
+        val kind = EventTriggerClassification.eventFor(category, now) ?: return
         fire(
             kind,
             event.block.world,
             actor = null,
-            arguments = blockArguments(event.block) + mapOf(
-                EventTriggerArguments.STATE to TypedValue(ValueType.STRING, stringValue = state),
-            ),
+            arguments = blockArguments(event.block),
         )
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onEntityInteract(event: PlayerInteractEntityEvent) {
         fire(
-            EventTriggerKind.ENTITY_CLICK,
+            EventTriggerKind.ENTITY_RIGHT_CLICK,
             event.player.world,
             actor = event.player,
             arguments = mapOf(
                 EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = event.player.uniqueId),
                 EventTriggerArguments.TARGET to TypedValue(ValueType.ENTITY, entityId = event.rightClicked.uniqueId),
-                EventTriggerArguments.ACTION to TypedValue(ValueType.STRING, stringValue = EventTriggerArguments.ACTION_RIGHT),
             ),
         )
     }
@@ -198,13 +196,12 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
     fun onEntityDamage(event: EntityDamageByEntityEvent) {
         val damager = event.damager as? Player ?: return
         fire(
-            EventTriggerKind.ENTITY_CLICK,
+            EventTriggerKind.ENTITY_LEFT_CLICK,
             damager.world,
             actor = damager,
             arguments = mapOf(
                 EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = damager.uniqueId),
                 EventTriggerArguments.TARGET to TypedValue(ValueType.ENTITY, entityId = event.entity.uniqueId),
-                EventTriggerArguments.ACTION to TypedValue(ValueType.STRING, stringValue = EventTriggerArguments.ACTION_LEFT),
             ),
         )
     }
@@ -218,21 +215,18 @@ class EventTriggerListener(private val plugin: KantanCommanderPlugin) : Listener
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onBlockInteract(event: PlayerInteractEvent) {
         if (event.hand != EquipmentSlot.HAND) return
-        val action = when (event.action) {
-            Action.LEFT_CLICK_BLOCK -> EventTriggerArguments.ACTION_LEFT
-            Action.RIGHT_CLICK_BLOCK -> EventTriggerArguments.ACTION_RIGHT
+        val kind = when (event.action) {
+            Action.LEFT_CLICK_BLOCK -> EventTriggerKind.BLOCK_LEFT_CLICK
+            Action.RIGHT_CLICK_BLOCK -> EventTriggerKind.BLOCK_RIGHT_CLICK
             else -> return
         }
         val block = event.clickedBlock ?: return
         if (plugin.placements.isRegistered(block.world, block.x, block.y, block.z)) return
         fire(
-            EventTriggerKind.BLOCK_CLICK,
+            kind,
             block.world,
             actor = event.player,
-            arguments = blockArguments(block) + mapOf(
-                EventTriggerArguments.ACTOR to TypedValue(ValueType.ENTITY, entityId = event.player.uniqueId),
-                EventTriggerArguments.ACTION to TypedValue(ValueType.STRING, stringValue = action),
-            ),
+            arguments = blockArguments(block, event.player),
         )
     }
 

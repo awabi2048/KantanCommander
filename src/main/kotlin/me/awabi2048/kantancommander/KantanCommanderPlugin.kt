@@ -55,7 +55,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "fcb1edc6cb235678627288677a16f2373acc33d2d1b6d8a3d035da3ef11f5841"
+    "30addcd11cb7b515cd5c1102acb6f27fc6ba1300d388b302bc6b98c35ff93259"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore

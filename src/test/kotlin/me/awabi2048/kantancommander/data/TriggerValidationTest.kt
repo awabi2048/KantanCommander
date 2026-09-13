@@ -63,25 +63,26 @@ class TriggerValidationTest {
 
     @Test
     fun `event arguments are predefined execution variables`() {
-        fun switchScript(withTrigger: Boolean): DiskScript {
+        fun eventScript(withTrigger: Boolean): DiskScript {
             val prepared = stateCondition {
                 params["leftScope"] = "EXECUTION"
-                params["leftName"] = "event_state"
+                // BLOCK_BREAK の操作者（ENTITY）は比較演算子を適用できます。
+                params["leftName"] = me.awabi2048.kantancommander.model.EventTriggerArguments.ACTOR
                 params["operator"] = "=="
-                params["right"] = "on"
+                params["right"] = "x"
             }
             if (withTrigger) {
-                prepared.trigger = ScriptTrigger(TriggerKind.EVENT, EventTriggerKind.SWITCH)
+                prepared.trigger = ScriptTrigger(TriggerKind.EVENT, EventTriggerKind.BLOCK_BREAK)
             }
             return prepared
         }
-        // イベント起動では event_state が定義済みのため検証を通ります。
+        // イベント起動では event_actor が定義済みのため検証を通ります。
         assertFalse(
-            ExecutableScriptValidator.validate(switchScript(true)).any { it.nodeId != null },
+            ExecutableScriptValidator.validate(eventScript(true)).any { it.nodeId != null },
         )
         // 同じ記述でも起動方法がなければ未定義として拒否します。
         assertTrue(
-            ExecutableScriptValidator.validate(switchScript(false)).any { it.nodeId != null },
+            ExecutableScriptValidator.validate(eventScript(false)).any { it.nodeId != null },
         )
     }
 }

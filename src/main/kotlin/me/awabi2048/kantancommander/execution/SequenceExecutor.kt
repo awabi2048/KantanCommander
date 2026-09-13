@@ -2451,12 +2451,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 store.define(name, value)
             }
             VariableOperation.SET -> {
-                // 定義済みの型を正とします。未定義の場合はGUI上のtypeで暗黙定義します。
-                // PROPERTY／RANDOM モードでは生成結果の型を採用します。
+                // issue #2: 明示定義を前提とします。未定義名へのSETは拒否します。
+                // 定義済みの型を正とし、型不一致は VariableStore 側でも拒否されます。
                 val mode = variableChangeMode(node)
-                val defined = store.definition(name)
+                val defined = store.definition(name) ?: return false
                 val type = if (mode == VariableChangeMode.ASSIGN || mode == VariableChangeMode.CALCULATE) {
-                    defined ?: (ValueType.parse(node.string("type")) ?: return false)
+                    defined
                 } else null
                 if (mode == VariableChangeMode.CALCULATE && type != ValueType.NUMBER) return false
                 val value = resolveVariableGeneration(node, type, mode, store::get, session) ?: return false
@@ -2472,6 +2472,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 true
             }
             VariableOperation.COPY -> {
+                // issue #2: 複写先も明示定義を前提とします。
+                if (store.definition(name) == null) return false
                 val source = store.get(node.string("source")) ?: return false
                 store.set(name, source)
                 true

@@ -58,7 +58,7 @@ class TriggerModelTest {
 
         val redstone = ScriptTrigger(
             TriggerKind.REDSTONE,
-            event = EventTriggerKind.SWITCH,
+            event = EventTriggerKind.LEVER_ON,
             intervalSeconds = 10.0,
         ).normalized()
         assertNull(redstone.event)
@@ -75,7 +75,7 @@ class TriggerModelTest {
         assertEquals(TriggerKind.EVENT, TriggerKind.parse(" event "))
         assertNull(TriggerKind.parse("fancy"))
         assertNull(TriggerKind.parse(null))
-        assertEquals(EventTriggerKind.SWITCH, EventTriggerKind.parse("switch"))
+        assertEquals(EventTriggerKind.LEVER_ON, EventTriggerKind.parse("lever_on"))
         assertNull(EventTriggerKind.parse("redstone"))
     }
 
@@ -110,30 +110,56 @@ class TriggerModelTest {
     }
 
     @Test
-    fun `switch and plate carry state without actor`() {
+    fun `switch events carry block and position without actor`() {
         // 信号変化の観測であり操作者を特定できないため、操作者を持ちません。
-        EventTriggerKind.entries
-            .filter { it == EventTriggerKind.SWITCH || it == EventTriggerKind.PRESSURE_PLATE }
-            .forEach { event ->
-                val table = EventTriggerArguments.seedTypesFor(event)
-                assertEquals(ValueType.BLOCK, table[EventTriggerArguments.BLOCK])
-                assertEquals(ValueType.LOCATION, table[EventTriggerArguments.POSITION])
-                assertEquals(ValueType.STRING, table[EventTriggerArguments.STATE])
-                assertNull(table[EventTriggerArguments.ACTOR])
-            }
+        listOf(
+            EventTriggerKind.BUTTON_ON,
+            EventTriggerKind.BUTTON_OFF,
+            EventTriggerKind.LEVER_ON,
+            EventTriggerKind.LEVER_OFF,
+            EventTriggerKind.PRESSURE_PLATE_ON,
+        ).forEach { event ->
+            val table = EventTriggerArguments.seedTypesFor(event)
+            assertEquals(ValueType.BLOCK, table[EventTriggerArguments.BLOCK])
+            assertEquals(ValueType.LOCATION, table[EventTriggerArguments.POSITION])
+            assertNull(table[EventTriggerArguments.ACTOR])
+        }
     }
 
     @Test
-    fun `clicks carry left-right action`() {
-        val entity = EventTriggerArguments.seedTypesFor(EventTriggerKind.ENTITY_CLICK)
-        assertEquals(ValueType.ENTITY, entity[EventTriggerArguments.ACTOR])
-        assertEquals(ValueType.ENTITY, entity[EventTriggerArguments.TARGET])
-        assertEquals(ValueType.STRING, entity[EventTriggerArguments.ACTION])
+    fun `clicks are separated by left and right kinds`() {
+        // 左右はイベント種別そのもので選び分けます。
+        val left = EventTriggerArguments.seedTypesFor(EventTriggerKind.ENTITY_LEFT_CLICK)
+        assertEquals(ValueType.ENTITY, left[EventTriggerArguments.ACTOR])
+        assertEquals(ValueType.ENTITY, left[EventTriggerArguments.TARGET])
 
-        val block = EventTriggerArguments.seedTypesFor(EventTriggerKind.BLOCK_CLICK)
-        assertEquals(ValueType.ENTITY, block[EventTriggerArguments.ACTOR])
-        assertEquals(ValueType.BLOCK, block[EventTriggerArguments.BLOCK])
-        assertEquals(ValueType.LOCATION, block[EventTriggerArguments.POSITION])
-        assertEquals(ValueType.STRING, block[EventTriggerArguments.ACTION])
+        val right = EventTriggerArguments.seedTypesFor(EventTriggerKind.ENTITY_RIGHT_CLICK)
+        assertEquals(ValueType.ENTITY, right[EventTriggerArguments.TARGET])
+
+        val blockLeft = EventTriggerArguments.seedTypesFor(EventTriggerKind.BLOCK_LEFT_CLICK)
+        assertEquals(ValueType.ENTITY, blockLeft[EventTriggerArguments.ACTOR])
+        assertEquals(ValueType.BLOCK, blockLeft[EventTriggerArguments.BLOCK])
+        assertEquals(ValueType.LOCATION, blockLeft[EventTriggerArguments.POSITION])
+
+        val blockRight = EventTriggerArguments.seedTypesFor(EventTriggerKind.BLOCK_RIGHT_CLICK)
+        assertEquals(ValueType.BLOCK, blockRight[EventTriggerArguments.BLOCK])
+    }
+
+    @Test
+    fun `initial event kinds are exactly eleven`() {
+        assertEquals(11, EventTriggerKind.entries.size)
+        // ボタンとレバーを区別し、オン／オフと左右を別種別で持つことを固定します。
+        assertTrue(EventTriggerKind.entries.containsAll(
+            listOf(
+                EventTriggerKind.BUTTON_ON,
+                EventTriggerKind.BUTTON_OFF,
+                EventTriggerKind.LEVER_ON,
+                EventTriggerKind.LEVER_OFF,
+                EventTriggerKind.ENTITY_LEFT_CLICK,
+                EventTriggerKind.ENTITY_RIGHT_CLICK,
+                EventTriggerKind.BLOCK_LEFT_CLICK,
+                EventTriggerKind.BLOCK_RIGHT_CLICK,
+            ),
+        ))
     }
 }
