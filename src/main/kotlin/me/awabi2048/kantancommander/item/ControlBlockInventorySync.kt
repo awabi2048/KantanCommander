@@ -6,6 +6,9 @@ import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
 import org.bukkit.event.EventPriority
 import org.bukkit.event.Listener
+import org.bukkit.event.inventory.InventoryClickEvent
+import org.bukkit.event.inventory.InventoryCloseEvent
+import org.bukkit.event.inventory.InventoryDragEvent
 import org.bukkit.event.inventory.InventoryOpenEvent
 import org.bukkit.event.player.PlayerChangedWorldEvent
 import org.bukkit.event.player.PlayerGameModeChangeEvent
@@ -21,6 +24,8 @@ import org.bukkit.inventory.ItemStack
  * 論理情報を維持した正規化だけを行い、payloadの作り直しはしません。
  * コンテナ内のアイテムまで世界中から書き換えず、利用者が取得して同期される
  * 境界（所持品・防具・オフハンド）で正規化します。
+ * チェスト等からの出し入れ・ドラッグ・閉じる操作はイベント時点ではバニラの
+ * 反映前であるため、次tickへ遅延して再評価します。
  */
 class ControlBlockInventorySync(private val plugin: KantanCommanderPlugin) : Listener {
     companion object {
@@ -55,6 +60,34 @@ class ControlBlockInventorySync(private val plugin: KantanCommanderPlugin) : Lis
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onInventoryOpen(event: InventoryOpenEvent) {
         (event.player as? Player)?.let(::normalizeSafely)
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onInventoryClick(event: InventoryClickEvent) {
+        // クリック結果はイベント処理後にバニラが反映するため、確定後のtickで評価します。
+        (event.whoClicked as? Player)?.let(::scheduleNormalizeSoon)
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onInventoryDrag(event: InventoryDragEvent) {
+        // ドラッグ結果もクリックと同様にイベント処理後に確定するため、次tickで評価します。
+        (event.whoClicked as? Player)?.let(::scheduleNormalizeSoon)
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onInventoryClose(event: InventoryCloseEvent) {
+        // 閉じる操作で出し入れが確定するため、確定後のtickでもう一度評価します。
+        (event.player as? Player)?.let(::scheduleNormalizeSoon)
+    }
+
+    /**
+     * 在庫変更の確定を待って次tickで正規化します。対象がオフラインになった場合は何もしません。
+     */
+    private fun scheduleNormalizeSoon(player: Player) {
+        val playerId = player.uniqueId
+        plugin.server.scheduler.runTask(plugin, Runnable {
+            plugin.server.getPlayer(playerId)?.let(::normalizeSafely)
+        })
     }
 
     /**
