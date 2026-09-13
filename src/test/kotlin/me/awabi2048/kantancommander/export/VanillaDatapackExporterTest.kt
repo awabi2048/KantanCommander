@@ -197,6 +197,23 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `mannequin summon remains in vanilla output`() {
+        val store = ScriptStore(temp.resolve("mannequin-summon"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "mannequin summon")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["entity"] = "minecraft:mannequin"
+            params["tags"] = "kc_mannequin"
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("summon minecraft:mannequin"), body)
+    }
+
+    @Test
     fun `bare target positions without embedded targets are rejected`() {
         val store = ScriptStore(temp.resolve("removed-target-position"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "removed target position")

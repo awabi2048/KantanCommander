@@ -1220,9 +1220,35 @@ object ExecutableScriptValidator {
                 }
             }
             // 表示名は召喚時の表示名と同じくテンプレート参照を許可します。
+            // Mannequinのスキン名はプレイヤー名のみを受け付け、参照なしのリテラルは構文検証します。
             EntityPropertyValueKind.TEXT -> {
-                validateTemplate(raw, node, path, EntityDataSchema.PARAM_VALUE, errors, null, temporaries = temporaryDefinitions)
+                if (node.string(EntityDataSchema.PARAM_PROPERTY) == EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME) {
+                    validateMannequinProfileName(node, path, raw, errors, temporaryDefinitions)
+                } else {
+                    validateTemplate(raw, node, path, EntityDataSchema.PARAM_VALUE, errors, null, temporaries = temporaryDefinitions)
+                }
             }
+        }
+    }
+
+    /**
+     * Mannequinのスキン名（プレイヤー名のみ）を検証します。
+     *
+     * 変数参照を含む場合は解決後の値を実行時に検証するため、ここでは
+     * 記法の正しさのみを確認します。参照なしのリテラルはプレイヤー名構文を要求します。
+     * descriptionは設定不可のためここでは扱いません。
+     */
+    private fun validateMannequinProfileName(
+        node: CommandNode,
+        path: String,
+        raw: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, ValueType>?,
+    ) {
+        validateTemplate(raw, node, path, EntityDataSchema.PARAM_VALUE, errors, null, temporaries = temporaryDefinitions)
+        if (VariableTemplate.references(raw).isNotEmpty() || TemporaryTemplate.references(raw).isNotEmpty()) return
+        if (!EntityDataSchema.isMannequinProfileName(raw)) {
+            errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "スキンのプレイヤー名が不正です")
         }
     }
 

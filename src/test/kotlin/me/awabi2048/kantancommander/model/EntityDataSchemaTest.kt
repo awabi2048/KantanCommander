@@ -60,6 +60,90 @@ class EntityDataSchemaTest {
     }
 
     @Test
+    fun `mannequin shows its own properties without description`() {
+        val ids = EntityDataSchema.propertiesFor(EntityType.MANNEQUIN).map { it.id }
+        assertTrue(ids.containsAll(listOf(
+            "mannequin_profile_name",
+            "mannequin_immovable",
+            "mannequin_main_hand",
+            "mannequin_pose",
+            "mannequin_skin_cape",
+            "mannequin_skin_jacket",
+            "mannequin_skin_left_sleeve",
+            "mannequin_skin_right_sleeve",
+            "mannequin_skin_left_pants",
+            "mannequin_skin_right_pants",
+            "mannequin_skin_hat",
+        )))
+        assertFalse(ids.contains("rabbit_type"))
+        assertFalse(ids.contains("armor_stand_arms"))
+        // descriptionは設定不可のため項目に含めない。
+        assertTrue(EntityDataSchema.definition("mannequin_description") == null)
+    }
+
+    @Test
+    fun `mannequin main hand choices map to left and right`() {
+        val definition = EntityDataSchema.definition("mannequin_main_hand")
+        assertNotNull(definition)
+        assertEquals(EntityPropertyValueKind.ENUM, definition!!.valueKind)
+        assertEquals(setOf("left", "right"), definition.enumChoices.map { it.id }.toSet())
+        assertEquals(EntityPropertyValue.EnumValue("left"), EntityDataSchema.parse("mannequin_main_hand", "left"))
+        assertNull(EntityDataSchema.parse("mannequin_main_hand", "center"))
+    }
+
+    @Test
+    fun `mannequin pose choices are selected from child screen ids`() {
+        val definition = EntityDataSchema.definition("mannequin_pose")
+        assertNotNull(definition)
+        assertEquals(EntityPropertyValueKind.ENUM, definition!!.valueKind)
+        assertEquals(
+            setOf("standing", "sneaking", "swimming", "sleeping", "sitting", "fall_flying", "spin_attack"),
+            definition.enumChoices.map { it.id }.toSet(),
+        )
+        assertEquals(EntityPropertyValue.EnumValue("standing"), EntityDataSchema.parse("mannequin_pose", "standing"))
+        assertNull(EntityDataSchema.parse("mannequin_pose", "dancing"))
+        // 選択肢IDとBukkitのPoseの対応を固定する。
+        assertEquals(org.bukkit.entity.Pose.STANDING, EntityDataSchema.mannequinPose("standing"))
+        assertEquals(org.bukkit.entity.Pose.SNEAKING, EntityDataSchema.mannequinPose("sneaking"))
+        assertNull(EntityDataSchema.mannequinPose("dancing"))
+    }
+
+    @Test
+    fun `mannequin profile name accepts only resolvable player names`() {
+        assertTrue(EntityDataSchema.isMannequinProfileName("Notch"))
+        assertTrue(EntityDataSchema.isMannequinProfileName("awabi2048"))
+        assertTrue(EntityDataSchema.isMannequinProfileName("a_b"))
+        assertFalse(EntityDataSchema.isMannequinProfileName(""))
+        assertFalse(EntityDataSchema.isMannequinProfileName("ab"))
+        assertFalse(EntityDataSchema.isMannequinProfileName("has space"))
+        assertFalse(EntityDataSchema.isMannequinProfileName("abcdefghijklmnopq"))
+    }
+
+    @Test
+    fun `mannequin properties are scoped to mannequin type`() {
+        assertEquals(
+            EntityPropertySupport.STATICALLY_SUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.MANNEQUIN, "mannequin_pose"),
+        )
+        assertEquals(
+            EntityPropertySupport.STATICALLY_SUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.MANNEQUIN, "mannequin_profile_name"),
+        )
+        assertEquals(
+            EntityPropertySupport.STATICALLY_UNSUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.PLAYER, "mannequin_pose"),
+        )
+        assertEquals(
+            EntityPropertySupport.STATICALLY_UNSUPPORTED,
+            EntityDataSchema.staticSupport(EntityType.ZOMBIE, "mannequin_immovable"),
+        )
+        assertEquals(
+            EntityPropertySupport.RUNTIME_DEPENDENT,
+            EntityDataSchema.staticSupport(null, "mannequin_pose"),
+        )
+    }
+
+    @Test
     fun `boolean values parse strictly`() {
         assertEquals(EntityPropertyValue.BooleanValue(true), EntityDataSchema.parse("ai", "true"))
         assertEquals(EntityPropertyValue.BooleanValue(false), EntityDataSchema.parse("gravity", "false"))

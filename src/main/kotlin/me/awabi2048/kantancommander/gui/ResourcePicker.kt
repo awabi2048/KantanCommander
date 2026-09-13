@@ -103,6 +103,8 @@ object ResourcePickerIcons {
             "ENDER_DRAGON" -> Material.DRAGON_EGG
             "WITHER" -> Material.NETHER_STAR
             "PLAYER", "FISHING_BOBBER" -> Material.PLAYER_HEAD
+            // Mannequinにスポーンエッグは存在しないため、発見可能性のために頭で表示します。
+            "MANNEQUIN" -> Material.PLAYER_HEAD
             "LEASH_KNOT", "LEASH_HITCH" -> Material.LEAD
             "PAINTING" -> Material.PAINTING
             "ARROW", "SPECTRAL_ARROW" -> Material.ARROW
