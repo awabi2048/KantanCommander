@@ -275,4 +275,100 @@ class IncrementalValidatorTest {
         // 将来VARIABLE系の波及条件を追加する際の錨です。
         assertEquals(VariableOperation.DEFINE, VariableOperation.valueOf("DEFINE"))
     }
+
+    private fun executionScript(): DiskScript {
+        val script = DiskScript(name = "execution", owner = UUID.randomUUID())
+        GraphEditor.append(script.graph, CommandType.VARIABLE).params.putAll(
+            mapOf(
+                "scope" to "EXECUTION",
+                "name" to "total",
+                "type" to ValueType.NUMBER.name,
+                "operation" to VariableOperation.DEFINE.name,
+                "changeMode" to "ASSIGN",
+                "value" to "1",
+            ),
+        )
+        GraphEditor.append(script.graph, CommandType.RETURN_VALUE).params.putAll(
+            mapOf("sourceScope" to "EXECUTION", "source" to "total"),
+        )
+        return script
+    }
+
+    private fun mutatedCopy(previous: DiskScript): DiskScript =
+        DiskScript(name = previous.name, owner = previous.owner).copy(
+            id = previous.id,
+            graph = previous.graph.deepCopy(),
+        )
+
+    @Test
+    fun `execution define type change falls back to full validation`() {
+        // issue #8: DEFINEの型変更は下流の定義可視性に波及するため、
+        // 戻り値型の不一致が残ってもGUIに以前の結果を残しません。
+        val previous = executionScript()
+        val mutated = mutatedCopy(previous)
+        mutated.graph.nodes.values
+            .first { it.type == CommandType.VARIABLE }
+            .params["type"] = ValueType.STRING.name
+
+        assertNull(
+            IncrementalValidator.refresh(
+                previousGraph = previous.graph,
+                previousErrors = ExecutableScriptValidator.validate(previous),
+                script = mutated,
+                previousSeeds = ExecutableScriptValidator.seedTemporaries(previous),
+            ),
+        )
+    }
+
+    @Test
+    fun `define to change operation falls back to full validation`() {
+        // issue #8: 操作変更で定義寄与が消える場合も、新世代だけを見ると
+        // 検出できないため、旧世代と合わせて判定します。
+        val previous = executionScript()
+        val mutated = mutatedCopy(previous)
+        mutated.graph.nodes.values
+            .first { it.type == CommandType.VARIABLE }
+            .params["operation"] = VariableOperation.CHANGE.name
+
+        assertNull(
+            IncrementalValidator.refresh(
+                previousGraph = previous.graph,
+                previousErrors = ExecutableScriptValidator.validate(previous),
+                script = mutated,
+                previousSeeds = ExecutableScriptValidator.seedTemporaries(previous),
+            ),
+        )
+    }
+
+    @Test
+    fun `change value edit stays incremental`() {
+        // issue #8: 定義の有無を変えないCHANGEの値編集は、下流へ波及しないため
+        // 増分のまま全量と一致します。委譲の過剰適用を防ぎます。
+        val previous = executionScript()
+        val change = GraphEditor.append(previous.graph, CommandType.VARIABLE)
+        change.params.putAll(
+            mapOf(
+                "scope" to "EXECUTION",
+                "name" to "total",
+                "operation" to VariableOperation.CHANGE.name,
+                "changeMode" to "ASSIGN",
+                "value" to "2",
+            ),
+        )
+        val mutated = mutatedCopy(previous)
+        mutated.graph.nodes.getValue(change.id).params["value"] = "3"
+
+        val previousErrors = ExecutableScriptValidator.validate(previous)
+        val incremental = IncrementalValidator.refresh(
+            previousGraph = previous.graph,
+            previousErrors = previousErrors,
+            script = mutated,
+            previousSeeds = ExecutableScriptValidator.seedTemporaries(previous),
+        )
+        assertNotNull(incremental, "定義を変えない編集のはずが全量委譲されました")
+        assertEquals(
+            signature(ExecutableScriptValidator.validate(mutated)),
+            signature(requireNotNull(incremental)),
+        )
+    }
 }

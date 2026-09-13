@@ -2026,9 +2026,16 @@ object ExecutableScriptValidator {
                 return
             }
             val calleeReturn = node.snapshot?.let { snapshot ->
-                snapshot.inferredReturnType { name ->
-                    variableDefinitions?.get(name)?.type
+                // issue #8: 呼び出し先の返り値は参照元scopeで解決します。
+                // EXECUTION は呼び出し側の引数宣言、WORLD は永続定義表を見ます。
+                // 宣言を無視して WORLD 定義を引くと、同名変数の型で誤判定します。
+                val declaredTypes = declared.associate { argument ->
+                    TemporaryTemplate.normalized(argument.name) to argument.type
                 }
+                snapshot.inferredReturnType(
+                    executionTypes = { name -> declaredTypes[TemporaryTemplate.normalized(name)] },
+                    worldTypes = { name -> variableDefinitions?.get(name)?.type },
+                )
             }
             if (receiverType != null && calleeReturn != null && receiverType != calleeReturn) {
                 errors += nodeError(node, path, setOf("diskId"), "戻り値の型が一致しません")

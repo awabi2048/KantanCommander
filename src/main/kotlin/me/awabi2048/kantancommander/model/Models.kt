@@ -91,25 +91,37 @@ data class DiskArgument(
  * できない場合は固定を解除（null）します。保存状態を持たず、グラフから
  * そのつど導出するため、stale な固定が残りません。
  *
- * 変数由来の戻り値は variableTypes 解決で型を確定します。解決できない場合は
+ * 変数由来の戻り値は参照元scopeの定義表で解決します。EXECUTION は呼出先の
+ * 引数宣言など実行開始時定義、WORLD は永続定義表を見ます。解決できない場合は
  * 次の候補へ進みます。呼び出し側の受取検査は確定できる場合だけ行い、
  * 実行時の型安定で担保します。
  */
-fun DiskScript.inferredReturnType(variableTypes: (String) -> ValueType? = { null }): ValueType? =
-    graph.inferredReturnType(variableTypes)
+fun DiskScript.inferredReturnType(
+    executionTypes: (String) -> ValueType? = { null },
+    worldTypes: (String) -> ValueType? = { null },
+): ValueType? = graph.inferredReturnType(executionTypes, worldTypes)
 
 /**
  * issue #8 の返り値型の推論（グラフ版）です。
  *
  * 検証層では取り出し時点の独立複写（snapshot＝CommandGraph）だけを持つため、
  * DiskScript を再構築せずに型を導出します。走査順序と確定規則は DiskScript 版と同一です。
+ * 参照元scopeを無視して単一の表で解決すると、EXECUTION／WORLD の同名変数で
+ * 誤判定するため、scope ごとに定義表を使い分けます。
  */
-fun CommandGraph.inferredReturnType(variableTypes: (String) -> ValueType? = { null }): ValueType? {
+fun CommandGraph.inferredReturnType(
+    executionTypes: (String) -> ValueType? = { null },
+    worldTypes: (String) -> ValueType? = { null },
+): ValueType? {
     for (node in nodes.values) {
         if (node.type != CommandType.RETURN_VALUE) continue
         val source = node.string("source").takeIf(String::isNotBlank)
         if (source != null) {
-            val resolved = variableTypes(source) ?: continue
+            val resolved = when (VariableScope.parse(node.string("sourceScope")) ?: VariableScope.EXECUTION) {
+                VariableScope.EXECUTION -> executionTypes(source)
+                VariableScope.WORLD -> worldTypes(source)
+                VariableScope.ENTITY -> null
+            } ?: continue
             return resolved
         }
         return inferLiteralType(node.string("value"))
