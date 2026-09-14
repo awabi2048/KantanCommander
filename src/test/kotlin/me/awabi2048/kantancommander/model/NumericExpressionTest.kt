@@ -107,6 +107,30 @@ class NumericExpressionTest {
     }
 
     @Test
+    fun `literal operand detection separates calculate contract from syntax`() {
+        // 構文として正しい式でも、数値リテラルを含むかで CALCULATE 可否が分かれます。
+        listOf("2 + 3", "\${a} * 0.5", "sin(30)", "-2", "2^3").forEach { raw ->
+            assertTrue(
+                requireNotNull(NumericExpression.parse(raw).expression).hasLiteralOperand(),
+                raw,
+            )
+        }
+        listOf(
+            "\${a} + \${b}",
+            "%{x}% * \${rate}",
+            "sin(\${angle})",
+            "-(\${a})",
+            "-\${a}",
+        ).forEach { raw ->
+            assertTrue(NumericExpression.isValid(raw), raw)
+            assertFalse(
+                requireNotNull(NumericExpression.parse(raw).expression).hasLiteralOperand(),
+                raw,
+            )
+        }
+    }
+
+    @Test
     fun `vanilla lowering accepts only basic arithmetic`() {
         val basic = requireNotNull(NumericExpression.parse("1 + 2 * \${x}").expression)
         assertTrue(basic.isVanillaLowerable())

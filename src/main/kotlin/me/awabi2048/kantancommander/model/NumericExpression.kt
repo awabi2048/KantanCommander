@@ -12,6 +12,11 @@ import kotlin.math.pow
  * 6種の三角関数（`sin`／`cos`／`tan`／`asin`／`acos`／`atan`）、括弧です。
  * システム変数は `${CURRENT_LOOP_COUNT}` のように大文字で記述します。
  *
+ * 数値リテラル自体の受理は字句・構文層の責務であり、CALCULATE（計算して保存）の
+ * 「変数同士に限定」する契約は検証層（`ExecutableScriptValidator`）と入力画面が
+ * [hasLiteralOperand] で判定します。単純な数値代入は ASSIGN、乱数は RANDOM を
+ * 使うため、CALCULATE の式にリテラルは現れません。
+ *
  * 三角関数の角度単位は度数法です。Minecraft の yaw／pitch と同じ単位に揃え、
  * 利用者がラジアン換算を意識しないようにします。逆三角関数の戻り値も度です。
  */
@@ -63,6 +68,15 @@ object NumericExpression {
 
         /** Vanilla exporterがscoreboard演算へ写像できるよう、式を後置記法で公開します。 */
         internal fun postfix(): List<PostfixToken> = buildList { root.appendPostfix(this) }
+
+        /**
+         * 数値リテラルを被演算子に含むかを返します。
+         *
+         * issue #3 の「計算に使用できる値は変数同士に限定」する契約の判定です。
+         * 単項マイナスで修飾されたリテラル（`-2` 等）もリテラルとして扱い、
+         * 変数参照だけの式（`-${a}` を含む）は含まないと判定します。
+         */
+        fun hasLiteralOperand(): Boolean = postfix().any { it is PostfixToken.Literal }
 
         /**
          * 後置記法がバニラscoreboardへ写像可能かを返します。

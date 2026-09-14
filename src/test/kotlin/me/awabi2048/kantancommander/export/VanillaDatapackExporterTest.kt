@@ -1481,7 +1481,7 @@ class VanillaDatapackExporterTest {
                 "type" to ValueType.NUMBER.name,
                 "operation" to VariableOperation.CHANGE.name,
                 "changeMode" to "CALCULATE",
-                "value" to "\${counter} + 10 * 2",
+                "value" to "\${counter} + \${bonus}",
             )
         )
         val loop = GraphEditor.append(script.graph, CommandType.FOR_START)
@@ -1493,7 +1493,7 @@ class VanillaDatapackExporterTest {
             StandaloneCompilation.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(
                 script,
-                mapOf("counter" to ValueType.NUMBER),
+                mapOf("counter" to ValueType.NUMBER, "bonus" to ValueType.NUMBER),
             ),
         )
         val arithmetic = success.functions.values
@@ -1530,8 +1530,8 @@ class VanillaDatapackExporterTest {
         val power = assertInstanceOf(
             StandaloneCompilation.Failure::class.java,
             exporter.compileForStandalone(
-                calculationScript("power", "\${counter} ^ 2"),
-                mapOf("counter" to ValueType.NUMBER),
+                calculationScript("power", "\${counter} ^ \${bonus}"),
+                mapOf("counter" to ValueType.NUMBER, "bonus" to ValueType.NUMBER),
             ),
         )
         assertTrue(power.errors.any { it.contains("べき乗・三角関数") })
@@ -1539,8 +1539,8 @@ class VanillaDatapackExporterTest {
         val trig = assertInstanceOf(
             StandaloneCompilation.Failure::class.java,
             exporter.compileForStandalone(
-                calculationScript("trig", "sin(30) + \${counter}"),
-                mapOf("counter" to ValueType.NUMBER),
+                calculationScript("trig", "sin(\${bonus}) + \${counter}"),
+                mapOf("counter" to ValueType.NUMBER, "bonus" to ValueType.NUMBER),
             ),
         )
         assertTrue(trig.errors.any { it.contains("べき乗・三角関数") })

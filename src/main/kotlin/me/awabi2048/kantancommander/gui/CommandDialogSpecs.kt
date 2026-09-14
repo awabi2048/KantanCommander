@@ -1696,10 +1696,12 @@ internal object CommandDialogSpecs {
                 when {
                     type == null && changeMode == VariableChangeMode.CALCULATE ->
                         numericExpressionValidationError(raw)
+                            ?: numericExpressionLiteralError(raw)
                     type == null ->
                         if (VariableTemplate.hasMalformedReference(raw)) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT else null
                     type == ValueType.NUMBER -> if (changeMode == VariableChangeMode.CALCULATE) {
                         numericExpressionValidationError(raw)
+                            ?: numericExpressionLiteralError(raw)
                     } else if (isNumericTemplate(raw) || CommandValueRules.parseFiniteDouble(raw) != null
                     ) {
                         null
@@ -1734,6 +1736,20 @@ internal object CommandDialogSpecs {
                 NumericExpression.ErrorCode.INVALID_VARIABLE_NAME -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_INVALID_VARIABLE_NAME
             }
         }
+
+    /**
+     * issue #3: CALCULATEの入力画面で数値リテラルを被演算子に含む式を拒否します。
+     *
+     * 構文として正しい式だけが対象であり、構文不正は [numericExpressionValidationError]
+     * が先に処理します。単純な数値代入は ASSIGN、乱数は RANDOM を使うため、
+     * ここでは変数同士の式だけを受け付けます。
+     */
+    private fun numericExpressionLiteralError(raw: String): LocalizationKey<String>? {
+        val parsed = NumericExpression.parse(raw).expression ?: return null
+        return if (parsed.hasLiteralOperand()) {
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_LITERAL_OPERAND
+        } else null
+    }
 
     /** 一覧から選択できる入力項目だけを候補提示の対象にします。 */
     fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("summonEntity", "entityType", "sound", "effect", ParticleSettings.PARAM_PARTICLE)

@@ -1,6 +1,7 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.TypedValue
 import me.awabi2048.kantancommander.model.ValueType
@@ -396,5 +397,138 @@ class TypedVariableValidationTest {
             me.awabi2048.kantancommander.model.TargetKind.NEAREST_ENTITY,
         )
         assertFalse(ExecutableScriptValidator.validate(valid).any { it.nodeId != null })
+    }
+
+    @Test
+    fun `calculate accepts only variable to variable expressions`() {
+        val definitions = worldDefinitions(
+            "result" to TypedValue(ValueType.NUMBER, numberValue = 0.0),
+            "a" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
+            "b" to TypedValue(ValueType.NUMBER, numberValue = 2.0),
+            "rate" to TypedValue(ValueType.NUMBER, numberValue = 0.5),
+            "angle" to TypedValue(ValueType.NUMBER, numberValue = 30.0),
+        )
+        fun calculate(value: String, arguments: List<DiskArgument> = emptyList()): DiskScript =
+            scriptWith {
+                params["scope"] = "WORLD"
+                params["name"] = "result"
+                params["operation"] = VariableOperation.CHANGE.name
+                params["changeMode"] = "CALCULATE"
+                params["value"] = value
+            }.apply { this.arguments = arguments }
+
+        // 変数同士の四則演算・べき乗・三角関数を受け付けます。
+        listOf(
+            "\${a} + \${b}",
+            "\${a} - \${b}",
+            "\${a} * \${b}",
+            "\${a} / \${b}",
+            "\${a} ^ \${b}",
+            "sin(\${angle})",
+            "cos(\${angle})",
+            "tan(\${angle})",
+            "asin(\${a})",
+            "acos(\${a})",
+            "atan(\${a})",
+            "-\${a}",
+        ).forEach { value ->
+            assertFalse(
+                ExecutableScriptValidator.validate(calculate(value), variableDefinitions = definitions)
+                    .any { it.nodeId != null },
+                value,
+            )
+        }
+        // EXECUTION × WORLD の組合せも受け付けます。
+        assertFalse(
+            ExecutableScriptValidator.validate(
+                calculate(
+                    "%{x}% * \${rate}",
+                    listOf(DiskArgument("x", ValueType.NUMBER)),
+                ),
+                variableDefinitions = definitions,
+            ).any { it.nodeId != null },
+        )
+        // EXECUTION 同士も受け付けます。
+        assertFalse(
+            ExecutableScriptValidator.validate(
+                calculate(
+                    "%{x}% + %{y}%",
+                    listOf(DiskArgument("x", ValueType.NUMBER), DiskArgument("y", ValueType.NUMBER)),
+                ),
+                variableDefinitions = definitions,
+            ).any { it.nodeId != null },
+        )
+    }
+
+    @Test
+    fun `calculate rejects numeric literals as operands`() {
+        val definitions = worldDefinitions(
+            "result" to TypedValue(ValueType.NUMBER, numberValue = 0.0),
+            "a" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
+            "counter" to TypedValue(ValueType.NUMBER, numberValue = 0.0),
+            "angle" to TypedValue(ValueType.NUMBER, numberValue = 30.0),
+        )
+        fun calculate(value: String): DiskScript = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "result"
+            params["operation"] = VariableOperation.CHANGE.name
+            params["changeMode"] = "CALCULATE"
+            params["value"] = value
+        }
+
+        // 数値リテラルを含む式は、構文が正しくても CALCULATE では拒否します。
+        // 単純な数値代入は ASSIGN、乱数は RANDOM を使います。
+        listOf(
+            "2 + \${a}",
+            "\${a} * 0.5",
+            "2 + 3",
+            "sin(30)",
+            "\${counter} + 10 * 2",
+            "-2",
+        ).forEach { value ->
+            assertTrue(
+                ExecutableScriptValidator.validate(calculate(value), variableDefinitions = definitions)
+                    .any { it.fieldKeys == setOf("value") && it.message.contains("変数同士") },
+                value,
+            )
+        }
+    }
+
+    @Test
+    fun `calculate resolves references against definitions`() {
+        val definitions = worldDefinitions(
+            "result" to TypedValue(ValueType.NUMBER, numberValue = 0.0),
+            "a" to TypedValue(ValueType.NUMBER, numberValue = 1.0),
+            "label" to TypedValue(ValueType.STRING, stringValue = "x"),
+        )
+        fun calculate(value: String): DiskScript = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "result"
+            params["operation"] = VariableOperation.CHANGE.name
+            params["changeMode"] = "CALCULATE"
+            params["value"] = value
+        }
+
+        // 未定義・非数値の参照は拒否します。
+        assertTrue(
+            ExecutableScriptValidator.validate(calculate("\${a} + \${ghost}"), variableDefinitions = definitions)
+                .any { it.message.contains("未定義または数値型") },
+        )
+        assertTrue(
+            ExecutableScriptValidator.validate(calculate("\${a} + \${label}"), variableDefinitions = definitions)
+                .any { it.message.contains("未定義または数値型") },
+        )
+        // 数値変数以外への計算適用は拒否します。
+        val stringTarget = scriptWith {
+            params["scope"] = "WORLD"
+            params["name"] = "label"
+            params["operation"] = VariableOperation.CHANGE.name
+            params["changeMode"] = "CALCULATE"
+            params["value"] = "\${a} + \${a}"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(stringTarget, variableDefinitions = definitions)
+                .any { it.message.contains("数値変数以外へ計算式を適用できません") },
+        )
     }
 }

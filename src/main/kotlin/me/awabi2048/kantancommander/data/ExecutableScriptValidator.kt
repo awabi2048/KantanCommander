@@ -2355,6 +2355,13 @@ object ExecutableScriptValidator {
             return
         }
         val expression = requireNotNull(parsed.expression)
+        // issue #3: 計算に使用できる値は変数同士に限定します。数値リテラルを
+        // 含む式は構文としては正しくても CALCULATE では拒否し、単純な数値代入は
+        // ASSIGN、乱数は RANDOM を使わせます。
+        if (expression.hasLiteralOperand()) {
+            errors += nodeError(node, path, setOf("value"), "計算に使える値は変数同士に限ります")
+            return
+        }
         expression.references.forEach { reference ->
             if (SystemVariableNames.isSystemName(reference)) {
                 if (!insideForBody) {
