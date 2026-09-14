@@ -74,8 +74,27 @@ class ConditionComparisonTest {
         assertTrue(ConditionComparison.operatorsFor(ValueType.NUMBER).containsAll(listOf("==", "!=", ">", ">=", "<", "<=")))
         assertEquals(setOf("==", "!=", "contains"), ConditionComparison.operatorsFor(ValueType.STRING))
         assertEquals(setOf("==", "!="), ConditionComparison.operatorsFor(ValueType.BOOLEAN))
-        assertEquals(setOf("==", "!="), ConditionComparison.operatorsFor(ValueType.ENTITY))
-        assertTrue(ConditionComparison.operatorsFor(ValueType.LOCATION).isEmpty())
+        assertEquals(
+            setOf("==", "!=", "in_region", "not_in_region"),
+            ConditionComparison.operatorsFor(ValueType.ENTITY),
+        )
+        assertEquals(
+            setOf("in_region", "not_in_region"),
+            ConditionComparison.operatorsFor(ValueType.LOCATION),
+        )
+        assertTrue(ConditionComparison.operatorsFor(ValueType.VECTOR).isEmpty())
         assertTrue(ConditionComparison.ALL.contains("contains"))
+        assertTrue(ConditionComparison.ALL.containsAll(listOf("in_region", "not_in_region")))
+        assertTrue(ConditionComparison.isRegionPredicate("in_region"))
+        assertTrue(ConditionComparison.isRegionPredicate("not_in_region"))
+        assertFalse(ConditionComparison.isRegionPredicate("=="))
+        // 領域述語は右辺ではなくノードの領域指定を使うため、比較関数では扱いません。
+        assertNull(
+            ConditionComparison.compare(
+                TypedValue(ValueType.LOCATION),
+                "in_region",
+                TypedValue(ValueType.LOCATION),
+            ),
+        )
     }
 }

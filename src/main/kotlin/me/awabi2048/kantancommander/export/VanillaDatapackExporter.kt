@@ -525,6 +525,21 @@ class VanillaDatapackExporter(
             // それ以外の型・範囲はJava実行が正本であり、バニラには同等概念がありません。
             ConditionSubject.VALUE -> {
                 val scope = node.string("leftScope").ifBlank { VariableScope.WORLD.name }
+                // issue #5: ENTITY scope・直接条件・領域述語はバニラに同等概念が
+                // ないため、不正確な変換を行わず明示します。
+                if (scope == VariableScope.ENTITY.name) {
+                    errors += "${script.id}/${node.id}: エンティティ変数の条件は完全バニラ出力に未対応です"
+                    return@validateCondition
+                }
+                val operator = node.string("operator")
+                if (operator.isBlank()) {
+                    errors += "${script.id}/${node.id}: 直接条件は完全バニラ出力に未対応です"
+                    return@validateCondition
+                }
+                if (me.awabi2048.kantancommander.model.ConditionComparison.isRegionPredicate(operator)) {
+                    errors += "${script.id}/${node.id}: 領域条件は完全バニラ出力に未対応です"
+                    return@validateCondition
+                }
                 if (scope != VariableScope.WORLD.name) {
                     errors += "${script.id}/${node.id}: 実行内変数の条件は完全バニラ出力に未対応です"
                     return@validateCondition

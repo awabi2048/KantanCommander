@@ -1658,6 +1658,73 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `entity direct and region conditions fail export with explicit reasons`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
+
+        fun conditionScript(name: String, configure: me.awabi2048.kantancommander.model.CommandNode.() -> Unit): me.awabi2048.kantancommander.model.DiskScript {
+            val script = store.create(UUID.randomUUID(), name)
+            GraphEditor.append(script.graph, CommandType.CONDITION).apply {
+                params["subject"] = ConditionSubject.VALUE.name
+                configure()
+            }
+            return script
+        }
+
+        // ENTITY scope は出力できません。
+        val entity = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                conditionScript("condition-entity") {
+                    params["leftScope"] = "ENTITY"
+                    params["leftName"] = "mark"
+                    params["operator"] = "=="
+                    params["right"] = "1"
+                },
+            ),
+        )
+        assertTrue(entity.errors.any { it.contains("エンティティ変数の条件は完全バニラ出力に未対応") })
+
+        // 直接条件は出力できません。
+        val direct = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                conditionScript("condition-direct") {
+                    params["leftScope"] = "WORLD"
+                    params["leftName"] = "flag"
+                    params["operator"] = ""
+                    params["right"] = ""
+                },
+                mapOf("flag" to ValueType.BOOLEAN),
+            ),
+        )
+        assertTrue(direct.errors.any { it.contains("直接条件は完全バニラ出力に未対応") })
+
+        // 領域述語は出力できません。
+        val region = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                conditionScript("condition-region") {
+                    params["leftScope"] = "WORLD"
+                    params["leftName"] = "spot"
+                    params["operator"] = "in_region"
+                    params["right"] = ""
+                    regionSpec = RegionSpec(
+                        anchor = RegionAnchorSpec(RegionAnchorKind.CONTROL_BLOCK),
+                        dx = 1.0,
+                        dy = 1.0,
+                        dz = 1.0,
+                    )
+                },
+                mapOf(
+                    "spot" to ValueType.LOCATION,
+                ),
+            ),
+        )
+        assertTrue(region.errors.any { it.contains("領域条件は完全バニラ出力に未対応") })
+    }
+
+    @Test
     fun `typed value comparison lowers world numbers like variable conditions`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "value-subject")

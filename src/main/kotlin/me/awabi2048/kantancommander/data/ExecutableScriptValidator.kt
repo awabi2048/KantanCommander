@@ -1784,8 +1784,9 @@ object ExecutableScriptValidator {
     /**
      * issue #5 の型付き条件比較を検証します。
      *
-     * 左辺は EXECUTION／WORLD scope の変数、右辺は型に応じたリテラルです。
-     * ENTITY scope の左辺は対象文脈を必要とするため未対応として拒否します。
+     * 左辺は EXECUTION／WORLD／ENTITY scope の変数、右辺は型に応じたリテラルです。
+     * 演算子なしは Boolean 直接条件、領域演算子はノードの領域指定を使います。
+     * ENTITY scope は定義表を持たないため型検査は実行時に行います。
      * 定義型が確定している場合は演算子の適用可否まで確認し、未確定の場合は
      * 形状検証だけを行って実行時へ委ねます。
      */
@@ -1802,18 +1803,44 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf("condition"), "比較左辺の範囲が不正です")
             return
         }
-        if (scope == VariableScope.ENTITY) {
-            errors += nodeError(node, path, setOf("condition"), "エンティティ変数の条件は未対応です")
-            return
-        }
         val leftName = node.string("leftName")
         if (!CommandValueRules.isVariableName(leftName)) {
             errors += nodeError(node, path, setOf("condition"), "比較する変数名が不正です")
             return
         }
+        // 定義型が確定している場合だけ、型依存の検査を行います。
+        // ENTITY scope は定義表を持たないため、型検査は実行時に行います。
+        val definedType: ValueType? = when (scope) {
+            VariableScope.WORLD -> variableDefinitions?.get(leftName)?.type
+            VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(leftName))
+            VariableScope.ENTITY -> null
+        }
+        val hasTables = variableDefinitions != null || temporaryDefinitions != null
         val operator = node.string("operator")
+        // issue #5: Boolean値を直接条件として利用できます。演算子・右辺なしで
+        // 左辺の真偽を判定し、内部で `== true` へ読み替えるのと同じ契約です。
+        if (operator.isBlank()) {
+            if (scope != VariableScope.ENTITY && hasTables && definedType == null) {
+                errors += nodeError(node, path, setOf("condition"), "比較する変数が未定義です: $leftName")
+                return
+            }
+            if (definedType != null && definedType != ValueType.BOOLEAN) {
+                errors += nodeError(node, path, setOf("condition"), "直接条件はBOOLEAN型の変数に指定してください")
+            }
+            return
+        }
         if (operator !in me.awabi2048.kantancommander.model.ConditionComparison.ALL) {
             errors += nodeError(node, path, setOf("condition"), "比較の方法が不正です")
+            return
+        }
+        // issue #5: 領域述語は右辺リテランの代わりにノードの領域指定を使います。
+        // 左辺はLOCATION／ENTITYに限定し、型が確定している場合に検査します。
+        if (me.awabi2048.kantancommander.model.ConditionComparison.isRegionPredicate(operator)) {
+            if (definedType != null && definedType != ValueType.LOCATION && definedType != ValueType.ENTITY) {
+                errors += nodeError(node, path, setOf("condition"), "変数の型に使えない比較方法です: $operator")
+                return
+            }
+            validateRegionSpec(node.regionSpec, "$path/region", node, errors, temporaryDefinitions)
             return
         }
         if (node.string("right").isBlank()) {
@@ -1821,13 +1848,7 @@ object ExecutableScriptValidator {
             return
         }
         // 定義型が確定している場合だけ、演算子の適用可否を確認します。
-        val definedType: ValueType? = when (scope) {
-            VariableScope.WORLD -> variableDefinitions?.get(leftName)?.type
-            VariableScope.EXECUTION -> temporaryDefinitions?.get(TemporaryTemplate.normalized(leftName))
-            VariableScope.ENTITY -> null
-        }
-        val hasTables = variableDefinitions != null || temporaryDefinitions != null
-        if (hasTables && definedType == null) {
+        if (scope != VariableScope.ENTITY && hasTables && definedType == null) {
             errors += nodeError(node, path, setOf("condition"), "比較する変数が未定義です: $leftName")
             return
         }

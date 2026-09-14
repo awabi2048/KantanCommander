@@ -1619,30 +1619,34 @@ object CommandSettingsModel {
     }
 
     /**
-     * issue #4: 領域の子選択肢の設定状態です。
+     * issue #4・#5: 領域とその子選択肢の設定状態です。
      *
-     * 子選択肢ID（`region-anchor:` 等）は親の領域設定から導出し、
-     * 親同様に表示・検証・実行の正本（TargetSpec.region）だけを見ます。
+     * 子選択肢ID（`region`／`region-anchor:` 等）は領域設定から導出し、
+     * 親同様に表示・検証・実行の正本だけを見ます。対象絞り込みと条件の
+     * 両系統で共有し、分岐を増やしません。
      */
-    private fun isRegionFilterConfigured(spec: TargetSpec, parameter: String): Boolean {
-        val region = spec.region?.takeIf { it.hasAnySetting() }
+    fun isRegionConfigured(region: RegionSpec?, parameter: String): Boolean {
+        val active = region?.takeIf { it.hasAnySetting() }
         return when {
-            parameter == "region" -> region != null
+            parameter == "region" -> active != null
             parameter.startsWith("region-anchor:") ->
-                region?.anchor?.kind?.name == parameter.removePrefix("region-anchor:")
+                active?.anchor?.kind?.name == parameter.removePrefix("region-anchor:")
             parameter == "region-range" ->
-                region?.let { it.dx != null || it.dy != null || it.dz != null } == true
+                active?.let { it.dx != null || it.dy != null || it.dz != null } == true
             parameter == "region-distance" ->
-                region?.minimumDistance != null || region?.maximumDistance != null
-            parameter == "region-position" -> region?.anchor?.position != null
-            parameter == "region-temp" -> !region?.anchor?.tempName.isNullOrBlank()
+                active?.minimumDistance != null || active?.maximumDistance != null
+            parameter == "region-position" -> active?.anchor?.position != null
+            parameter == "region-temp" -> !active?.anchor?.tempName.isNullOrBlank()
             parameter.startsWith("region-target-preset:") ->
-                region?.anchor?.kind == RegionAnchorKind.TARGET_ENTITY &&
-                    SettingPresets.matchTargetPreset(region.anchor.target)?.name ==
+                active?.anchor?.kind == RegionAnchorKind.TARGET_ENTITY &&
+                    SettingPresets.matchTargetPreset(active.anchor.target)?.name ==
                     parameter.removePrefix("region-target-preset:")
             else -> false
         }
     }
+
+    private fun isRegionFilterConfigured(spec: TargetSpec, parameter: String): Boolean =
+        isRegionConfigured(spec.region, parameter)
 
     private fun conditionDetailConfigured(node: CommandNode): Boolean =
         isTargetSpecConfigured(node.targetSpec) || isPositionSpecConfigured(node.conditionPositionSpec) ||

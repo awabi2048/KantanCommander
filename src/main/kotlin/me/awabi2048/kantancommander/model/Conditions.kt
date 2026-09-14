@@ -16,22 +16,32 @@ object ConditionComparison {
     const val LESS = "<"
     const val LESS_OR_EQUAL = "<="
     const val CONTAINS = "contains"
+    /**
+     * issue #5 の領域述語です。左辺のLOCATION／ENTITY値が [RegionSpec] の
+     * 内側にあるかを判定します。右辺リテランの代わりにノードの領域指定を使い、
+     * [compare] では扱わず実行層の領域 resolver へ接続します。
+     */
+    const val IN_REGION = "in_region"
+    const val NOT_IN_REGION = "not_in_region"
 
     /** 全演算子の一覧です。GUIの循環選択と検証で共有します。 */
-    val ALL: List<String> = listOf(EQUAL, NOT_EQUAL, GREATER, GREATER_OR_EQUAL, LESS, LESS_OR_EQUAL, CONTAINS)
+    val ALL: List<String> = listOf(EQUAL, NOT_EQUAL, GREATER, GREATER_OR_EQUAL, LESS, LESS_OR_EQUAL, CONTAINS, IN_REGION, NOT_IN_REGION)
 
     /** 型ごとに使える演算子を返します。 */
     fun operatorsFor(type: ValueType): Set<String> = when (type) {
         ValueType.NUMBER -> setOf(EQUAL, NOT_EQUAL, GREATER, GREATER_OR_EQUAL, LESS, LESS_OR_EQUAL)
         ValueType.STRING -> setOf(EQUAL, NOT_EQUAL, CONTAINS)
         ValueType.BOOLEAN -> setOf(EQUAL, NOT_EQUAL)
-        ValueType.ENTITY -> setOf(EQUAL, NOT_EQUAL)
-        ValueType.LOCATION,
+        ValueType.ENTITY -> setOf(EQUAL, NOT_EQUAL, IN_REGION, NOT_IN_REGION)
+        ValueType.LOCATION -> setOf(IN_REGION, NOT_IN_REGION)
         ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
         -> emptySet()
     }
+
+    /** 領域述語の演算子かを返します。右辺ではなくノードの領域指定を使います。 */
+    fun isRegionPredicate(operator: String): Boolean = operator == IN_REGION || operator == NOT_IN_REGION
 
     /**
      * 型付き値を比較します。

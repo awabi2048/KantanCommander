@@ -3469,6 +3469,15 @@ class GestureLowerPanel(
                 controlState != null && controlState in node.selectedControlBlockStates()
             }
             id.startsWith("condition-state") -> CommandSettingsModel.isFieldConfigured(node, "sneaking")
+            // issue #5: Boolean直接条件は演算子なしで成立します。
+            id == "condition-direct" -> node.string("operator").isBlank()
+            // issue #5: 条件の領域とその子選択肢はノードの領域指定から導出します。
+            // 対象絞り込み側と同じ共有判定を使い、分岐を増やしません。
+            id == "condition-region" -> CommandSettingsModel.isRegionConfigured(node.regionSpec, "region")
+            id.startsWith("condition-region-") -> CommandSettingsModel.isRegionConfigured(
+                node.regionSpec,
+                id.removePrefix("condition-"),
+            )
             id.startsWith("condition-variable") -> CommandSettingsModel.isFieldConfigured(node, "variable")
             id.startsWith("condition-operator") -> CommandSettingsModel.isFieldConfigured(node, "operator")
             id.startsWith("condition-value") -> CommandSettingsModel.isFieldConfigured(node, "value")
@@ -4175,35 +4184,37 @@ class GestureLowerPanel(
                 SettingChoice(
                     "filter:$id",
                     labeled(player, label, value(id)),
-                    children = if (id == "region") regionChildren(spec, player) else emptyList(),
+                    children = if (id == "region") regionChildren(spec.region, player, "filter") else emptyList(),
                 )
             }
         return filterChoices
     }
 
     /**
-     * issue #4 の領域編集の子選択肢です。
+     * issue #4・#5 の領域編集の子選択肢です。
      *
-     * 基準選択・範囲・距離・基準別参数・解除を一つの行へ集約し、
-     * 受付は既存の `filter:` 派生IDで共有します。基準別参数は現在の
+     * 基準選択・範囲・距離・基準別参数・解除を一つの行へ集約します。
+     * `idPrefix` に対象絞り込み（`filter`）と条件（`condition`）の
+     * 派生ID接頭辞を渡し、受付側の画面と共有します。基準別参数は現在の
      * 基準のときだけ出し、無関係な入力欄を提示しません。
      */
     private fun regionChildren(
-        spec: me.awabi2048.kantancommander.model.TargetSpec,
+        region: me.awabi2048.kantancommander.model.RegionSpec?,
         player: Player,
+        idPrefix: String,
     ): List<SettingChoice> {
-        val region = spec.region?.takeIf { it.hasAnySetting() }
-        val anchor = region?.anchor?.kind
-        fun extents(): String? = region?.let {
+        val active = region?.takeIf { it.hasAnySetting() }
+        val anchor = active?.anchor?.kind
+        fun extents(): String? = active?.let {
             displayTargetRange(player, it.dx, it.dy, it.dz)
         }
-        fun distances(): String? = region?.let {
+        fun distances(): String? = active?.let {
             if (it.minimumDistance == null && it.maximumDistance == null) null
             else displayDistance(it.minimumDistance, it.maximumDistance)
         }
         val children = mutableListOf(
             SettingChoice(
-                "filter:region-clear",
+                "$idPrefix:region-clear",
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR),
                 selected = false,
             ),
@@ -4211,26 +4222,26 @@ class GestureLowerPanel(
         // 基準選択は4択を常時提示します。選択時に範囲等は引き継ぎます。
         me.awabi2048.kantancommander.model.RegionAnchorKind.entries.forEach { kind ->
             children += SettingChoice(
-                "filter:region-anchor:${kind.name}",
+                "$idPrefix:region-anchor:${kind.name}",
                 KcI18n.text(player, CommandSettingsModel.regionAnchorNameKey(kind)),
-                selected = anchor == kind && region != null,
+                selected = anchor == kind && active != null,
             )
         }
         children += SettingChoice(
-            "filter:region-range",
+            "$idPrefix:region-range",
             labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, extents()),
         )
         children += SettingChoice(
-            "filter:region-distance",
+            "$idPrefix:region-distance",
             labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, distances()),
         )
         if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.FIXED) {
             children += SettingChoice(
-                "filter:region-position",
+                "$idPrefix:region-position",
                 labeled(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION_COORDINATES,
-                    region?.anchor?.position?.let { position ->
+                    active?.anchor?.position?.let { position ->
                         listOf(position.x, position.y, position.z).joinToString(" / ") { value ->
                             value?.let {
                                 if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
@@ -4242,19 +4253,19 @@ class GestureLowerPanel(
         }
         if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.TEMPORARY) {
             children += SettingChoice(
-                "filter:region-temp",
+                "$idPrefix:region-temp",
                 labeled(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_TEMPORARY,
-                    region?.anchor?.tempName,
+                    active?.anchor?.tempName,
                 ),
             )
         }
         if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.TARGET_ENTITY) {
             children += embeddedTargetPresetChoices(
-                region?.anchor?.target,
+                active?.anchor?.target,
                 player,
-                "filter:region-target-preset",
+                "$idPrefix:region-target-preset",
                 null,
             )
         }
@@ -4512,21 +4523,59 @@ class GestureLowerPanel(
             // issue #5: 型付き条件比較は左辺（範囲＋変数）・演算子・右辺で構成します。
             // 簡単な条件プリセット（既存5区分）はそのまま残し、詳細比較はこの
             // 判定対象を選んだ場合の高度設定として展開します。
-            ConditionSubject.VALUE -> listOf(
-                SettingChoice(
-                    "condition-left-scope",
-                    label(
-                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE,
-                        when (node.string("leftScope").ifBlank { VariableScope.WORLD.name }) {
-                            VariableScope.EXECUTION.name -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
-                            else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
-                        },
+            // Boolean直接条件と領域述語は同じ行構成へ載せ、演算子・右辺・領域の
+            // 表示を現在の指定に合わせます。
+            ConditionSubject.VALUE -> buildList {
+                add(
+                    SettingChoice(
+                        "condition-left-scope",
+                        label(
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE_SCOPE,
+                            when (node.string("leftScope").ifBlank { VariableScope.WORLD.name }) {
+                                VariableScope.EXECUTION.name -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION)
+                                VariableScope.ENTITY.name -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_ENTITY)
+                                else -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD)
+                            },
+                        ),
                     ),
-                ),
-                SettingChoice("condition-left", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("leftName"))),
-                SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, node.string("operator", "=="))),
-                SettingChoice("condition-right", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("right"))),
-            )
+                )
+                add(SettingChoice("condition-left", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VARIABLE, node.string("leftName"))))
+                val operator = node.string("operator")
+                if (operator.isBlank()) {
+                    add(
+                        SettingChoice(
+                            "condition-direct",
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
+                            selected = true,
+                        ),
+                    )
+                } else {
+                    add(SettingChoice("condition-operator", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATOR, operator)))
+                    if (me.awabi2048.kantancommander.model.ConditionComparison.isRegionPredicate(operator)) {
+                        add(
+                            SettingChoice(
+                                "condition-region",
+                                label(
+                                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REGION,
+                                    CommandSettingsModel.formatRegionSummary(node.regionSpec) { key ->
+                                        KcI18n.text(player, key)
+                                    },
+                                ),
+                                children = regionChildren(node.regionSpec, player, "condition"),
+                            ),
+                        )
+                    } else {
+                        add(SettingChoice("condition-right", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE, node.string("right"))))
+                    }
+                    add(
+                        SettingChoice(
+                            "condition-direct",
+                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONDITION_DIRECT),
+                            selected = false,
+                        ),
+                    )
+                }
+            }
             ConditionSubject.BLOCK -> listOf(
                 SettingChoice("condition-position", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_CONDITION_POSITION), node.conditionPositionSpec != null),
                 SettingChoice("condition-block", label(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK, node.string("block", "minecraft:air"))),
