@@ -6963,38 +6963,65 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_DATA_ROOT -> {
-                // 診断ログ：無反応報告の切り分け用。原因確定後に除去します。
-                plugin.logger.info("[EntityDataDiag] root click group=$group value=$value fieldKey=$fieldKey")
                 if (group != "entityData") return
-                // attributeグループは子画面への遷移であり、保存は行いません。
+                // タグ・attribute・有限候補は子画面を持つ親項目であり、
+                // 選択済みの再クリックで入室します（コードベースの共通契約）。
+                // 真偽値・文字列・整数は葉としてその場で確定します。
                 if (value == "attribute") {
-                    startSettingRoute(GestureSettingFrame(
-                        settingContext,
-                        EntityDataPath.PARAM_PATH,
-                        GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT,
-                    ))
-                    state.lowerMode = GestureLowerMode.SETTINGS
-                    updateLower(player)
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                    rememberSettingNode(encoded)
+                    if (settingSelectionAction(wasSelected, hasChildren) !=
+                        GestureSettingSelectionAction.ENTER_CHILD
+                    ) {
+                        showSettingScreen()
+                        return
+                    }
+                    pushSettingFrame(
+                        player,
+                        GestureSettingFrame(
+                            settingContext,
+                            EntityDataPath.PARAM_PATH,
+                            GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT,
+                        ),
+                        encoded,
+                    )
                     return
                 }
                 if (value == "tag") {
-                    if (updateSettingNode(player, settingContext) {
+                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                    rememberSettingNode(encoded)
+                    if (!updateSettingNode(player, settingContext) {
                             CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
                         }) {
-                        startSettingRoute(GestureSettingFrame(
+                        showSettingScreen()
+                        return
+                    }
+                    if (settingSelectionAction(wasSelected, hasChildren) !=
+                        GestureSettingSelectionAction.ENTER_CHILD
+                    ) {
+                        showSettingScreen()
+                        return
+                    }
+                    pushSettingFrame(
+                        player,
+                        GestureSettingFrame(
                             settingContext,
-                            EntityTagEntries.PARAM_ENTRIES,
+                            EntityDataPath.PARAM_PATH,
                             GestureSettingScreen.ENTITY_TAG_LIST,
-                        ))
-                        state.lowerMode = GestureLowerMode.SETTINGS
-                        updateLower(player)
-                    } else showSettingScreen()
+                        ),
+                        encoded,
+                    )
                     return
                 }
                 if (!value.startsWith("property:")) return
                 val propertyId = value.removePrefix("property:")
                 val definition = EntityDataSchema.definition(propertyId) ?: return
                 val previous = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
+                val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
+                val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
+                rememberSettingNode(encoded)
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
                         // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
@@ -7012,13 +7039,21 @@ class GestureSequenceEditor(
                                 }) showSettingScreen()
                         }
                         EntityPropertyValueKind.ENUM -> {
-                            startSettingRoute(GestureSettingFrame(
-                                settingContext,
-                                EntityDataSchema.PARAM_VALUE,
-                                GestureSettingScreen.ENTITY_PROPERTY_VALUE,
-                            ))
-                            state.lowerMode = GestureLowerMode.SETTINGS
-                            updateLower(player)
+                            if (settingSelectionAction(wasSelected, hasChildren) !=
+                                GestureSettingSelectionAction.ENTER_CHILD
+                            ) {
+                                showSettingScreen()
+                                return
+                            }
+                            pushSettingFrame(
+                                player,
+                                GestureSettingFrame(
+                                    settingContext,
+                                    EntityDataPath.PARAM_PATH,
+                                    GestureSettingScreen.ENTITY_PROPERTY_VALUE,
+                                ),
+                                encoded,
+                            )
                         }
                         EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
                             // 保存前のnode参照では項目が古いままになり、入力仕様が
@@ -7055,8 +7090,6 @@ class GestureSequenceEditor(
                 } else showSettingScreen()
             }
             GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT -> {
-                // 診断ログ：無反応報告の切り分け用。原因確定後に除去します。
-                plugin.logger.info("[EntityDataDiag] attribute click group=$group value=$value fieldKey=$fieldKey")
                 // 選択→変更後の値入力フローです。attribute IDを確定して値Dialogを開きます。
                 if (group != "attribute" || !EntityAttributeSupport.isAttributeId(value)) return
                 if (!updateSettingNode(player, settingContext) {
@@ -7092,8 +7125,6 @@ class GestureSequenceEditor(
                 }
             }
             GestureSettingScreen.ENTITY_TAG_LIST -> {
-                // 診断ログ：無反応報告の切り分け用。原因確定後に除去します。
-                plugin.logger.info("[EntityDataDiag] tag click group=$group value=$value fieldKey=$fieldKey")
                 when (group) {
                     // 新規タグ入力行です。入力値をaddモードで追記します。
                     "tagAdd" -> {

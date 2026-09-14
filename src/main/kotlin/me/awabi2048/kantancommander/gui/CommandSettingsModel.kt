@@ -615,7 +615,18 @@ object CommandSettingsModel {
      * 表示専用の意味型へ閉じ込め、各画面が独自の文字列フォーマットを持たないようにします。
      */
     fun gestureVisibleFields(node: CommandNode): List<EditorField> =
-        visibleFields(node).map { field ->
+        visibleFields(node).filter { field ->
+            // エンティティ操作の詳細（タグ一覧・attribute値・設定値）は
+            // 子画面で編集するため、タブ列には出しません。タブ列が選択で
+            // 増減すると表示と経路がずれるため、対象・項目・実行位置に固定します。
+            // Inventory GUIの直接編集行はvisibleFields側に残します。
+            node.type != CommandType.ENTITY_OPERATION ||
+                field.key !in setOf(
+                    EntityTagEntries.PARAM_ENTRIES,
+                    EntityAttributeSupport.PARAM_VALUE,
+                    EntityDataSchema.PARAM_VALUE,
+                )
+        }.map { field ->
             if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)
@@ -694,9 +705,6 @@ object CommandSettingsModel {
             CommandType.ENTITY_OPERATION -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 EntityDataPath.PARAM_PATH -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY_DATA
-                EntityTagEntries.PARAM_ENTRIES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_ENTRIES
-                EntityAttributeSupport.PARAM_VALUE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ATTRIBUTE_VALUE
-                EntityDataSchema.PARAM_VALUE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY_VALUE
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.PLACE_ITEM -> when (fieldKey) {
@@ -896,6 +904,15 @@ object CommandSettingsModel {
                 // 新形式のENTITYも対象選択欄へ投影します。
                 "x", "y", "z", "yaw", "pitch", "location" -> "location"
                 "entityId", "entity" -> "entity"
+                else -> validationFieldKey
+            }
+            // 詳細タブを持たないため、検証結果は設定対象タブへ投影します。
+            CommandType.ENTITY_OPERATION -> when (validationFieldKey) {
+                EntityDataPath.PARAM_PATH,
+                EntityTagEntries.PARAM_ENTRIES,
+                EntityAttributeSupport.PARAM_VALUE,
+                EntityDataSchema.PARAM_VALUE,
+                -> EntityDataPath.PARAM_PATH
                 else -> validationFieldKey
             }
             else -> validationFieldKey

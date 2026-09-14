@@ -3236,13 +3236,14 @@ class GestureLowerPanel(
         choiceId.startsWith("action:") -> setOf("action")
         // エンティティ操作の選択肢は変数操作と接頭辞を分け、
         // 変数操作の説明解決へ混ざらないようにします。
+        // 詳細タブを持たないため、注意表示は設定対象タブへ投影します。
         choiceId.startsWith("entityData:") -> setOf(EntityDataPath.PARAM_PATH)
         choiceId.startsWith("attribute:") -> setOf(EntityDataPath.PARAM_PATH)
-        choiceId.startsWith("tagAdd") -> setOf(EntityTagEntries.PARAM_ENTRIES)
-        choiceId.startsWith("tagEntry:") -> setOf(EntityTagEntries.PARAM_ENTRIES)
-        choiceId.startsWith("tagMode:") -> setOf(EntityTagEntries.PARAM_ENTRIES)
-        choiceId.startsWith("tagDelete:") -> setOf(EntityTagEntries.PARAM_ENTRIES)
-        choiceId.startsWith("propertyValue:") -> setOf(EntityDataSchema.PARAM_VALUE)
+        choiceId.startsWith("tagAdd") -> setOf(EntityDataPath.PARAM_PATH)
+        choiceId.startsWith("tagEntry:") -> setOf(EntityDataPath.PARAM_PATH)
+        choiceId.startsWith("tagMode:") -> setOf(EntityDataPath.PARAM_PATH)
+        choiceId.startsWith("tagDelete:") -> setOf(EntityDataPath.PARAM_PATH)
+        choiceId.startsWith("propertyValue:") -> setOf(EntityDataPath.PARAM_PATH)
         choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
         // issue #21: 配置先の選択肢は配置先欄へ投影します。
         choiceId.startsWith("placeDestination:") -> setOf("placeDestination")
@@ -3807,20 +3808,23 @@ class GestureLowerPanel(
      *
      * タグ・attributeグループ・各データ項目を同じ階層に並べます。
      * attribute全種のフラット展開は行わず、attributeは子画面への親項目とします。
-     * 真偽値は選択→クリックの直接切替えであり、ON状態を選択表示します。
+     * タグ・attribute・有限候補は子画面を持つ親項目であり、選択済みの
+     * 再クリックで入室します（コードベースの共通契約）。真偽値は選択→
+     * クリックの直接切替えであり、ON状態を選択表示します。
      * 対象種別が確定できる場合のみ適用可能な項目を表示し、和集合表示は行いません。
      */
     private fun entityDataRootChoices(node: CommandNode, player: Player): List<SettingChoice> {
         val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))
         val currentProperty = (parsed as? EntityDataPath.Parsed.Property)?.propertyId
         val currentValue = node.string(EntityDataSchema.PARAM_VALUE)
+        val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)).orEmpty()
         return buildList {
-            val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)).orEmpty()
             add(
-                SettingChoice(
-                    "entityData:tag",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_TAG),
-                    parsed is EntityDataPath.Parsed.Tag && entries.isNotEmpty(),
+                GestureSettingTreeNode(
+                    id = "entityData:tag",
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_TAG),
+                    selected = parsed is EntityDataPath.Parsed.Tag,
+                    children = tagChildNodes(node, player, entries),
                 ),
             )
             val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
@@ -3828,39 +3832,82 @@ class GestureLowerPanel(
             // 検証・実行時のcapability判定へ委ねます。
             if (knownType == null || knownType.isAlive) {
                 add(
-                    SettingChoice(
-                        "entityData:attribute",
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_ATTRIBUTE),
-                        parsed is EntityDataPath.Parsed.Attribute,
+                    GestureSettingTreeNode(
+                        id = "entityData:attribute",
+                        label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_ATTRIBUTE),
+                        selected = parsed is EntityDataPath.Parsed.Attribute,
+                        children = EntityAttributeSupport.allAttributeIds().map { id ->
+                            SettingChoice("attribute:$id", id, false)
+                        },
                     ),
                 )
             }
             EntityDataSchema.propertiesFor(knownType).forEach { definition ->
                 val targeted = currentProperty == definition.id
-                val selected = when (definition.valueKind) {
-                    // 真偽値はON状態を選択表示し、トグル操作と一致させます。
-                    EntityPropertyValueKind.BOOLEAN -> targeted && currentValue == "true"
-                    EntityPropertyValueKind.ENUM -> targeted
-                    EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER ->
-                        targeted && currentValue.isNotBlank()
+                when (definition.valueKind) {
+                    // 真偽値はON状態を選択表示し、トグル操作と一致させます。子画面を持ちません。
+                    EntityPropertyValueKind.BOOLEAN -> add(
+                        SettingChoice(
+                            "entityData:property:${definition.id}",
+                            KcI18n.text(player, definition.optionKey),
+                            targeted && currentValue == "true",
+                        ),
+                    )
+                    EntityPropertyValueKind.ENUM -> add(
+                        GestureSettingTreeNode(
+                            id = "entityData:property:${definition.id}",
+                            label = KcI18n.text(player, definition.optionKey),
+                            selected = targeted,
+                            children = definition.enumChoices.map { choice ->
+                                SettingChoice(
+                                    "propertyValue:${choice.id}",
+                                    KcI18n.text(player, choice.optionKey),
+                                    currentValue == choice.id,
+                                )
+                            },
+                        ),
+                    )
+                    EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> add(
+                        SettingChoice(
+                            "entityData:property:${definition.id}",
+                            KcI18n.text(player, definition.optionKey),
+                            targeted && currentValue.isNotBlank(),
+                        ),
+                    )
                 }
-                add(
-                    SettingChoice(
-                        "entityData:property:${definition.id}",
-                        KcI18n.text(player, definition.optionKey),
-                        selected,
-                    ),
-                )
             }
+        }
+    }
+
+    /**
+     * タグ親項目の子要素です。タグ行が空の場合は追加行マーカーで非空を保ち、
+     * 入室判定が常に成立するようにします。
+     */
+    private fun tagChildNodes(
+        node: CommandNode,
+        player: Player,
+        entries: List<EntityTagEntries.Entry>,
+    ): List<SettingChoice> {
+        if (entries.isEmpty()) {
+            return listOf(
+                SettingChoice(
+                    "tagAdd",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_ADD),
+                    false,
+                ),
+            )
+        }
+        return entries.mapIndexed { index, entry ->
+            SettingChoice("tagEntry:$index", entry.tag, false)
         }
     }
 
     /**
      * タグ一覧画面の選択肢です。
      *
-     * 入力で行を追加し、タグごとのカードへ列挙します。カード端の2子ボタンで
-     * モード切替・削除を行います。Nameへ現在値を含めず、モードの現在値は
-     * Loreのデータ行へ表示します。
+     * 入力で行を追加し、タグごとにモード切替行と削除行を並べます。
+     * 子画面内での入れ子遷移は行わず、すべての行を単一クリックで確定します。
+     * Nameへ現在値を含めず、モードの現在値はLoreのデータ行へ表示します。
      */
     private fun tagListChoices(node: CommandNode, player: Player): List<SettingChoice> {
         val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)).orEmpty()
@@ -3882,20 +3929,13 @@ class GestureLowerPanel(
                         else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE,
                     ),
                 )
+                // モード切替行にタグ名を含め、対象を識別できるようにします。
+                add(SettingChoice("tagMode:$index", "${entry.tag} : $modeLabel", false))
                 add(
-                    GestureSettingTreeNode(
-                        // 一覧アイコンは個別対象（タグ）を識別する名前を使用できます。
-                        id = "tagEntry:$index",
-                        label = entry.tag,
-                        selected = false,
-                        children = listOf(
-                            SettingChoice("tagMode:$index", modeLabel, false),
-                            SettingChoice(
-                                "tagDelete:$index",
-                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE),
-                                false,
-                            ),
-                        ),
+                    SettingChoice(
+                        "tagDelete:$index",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE),
+                        false,
                     ),
                 )
             }

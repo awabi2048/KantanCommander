@@ -70,18 +70,22 @@ class EntityOperationSettingsTest {
     }
 
     @Test
-    fun `gesture column tabs fit within six for every path`() {
+    fun `gesture column tabs stay fixed regardless of selection`() {
+        // 詳細（タグ一覧・attribute値・設定値）は子画面で編集するため、
+        // ジェスチャーのタブ列は対象・項目・実行位置に固定します。
+        // タブ列が選択で増減すると表示と経路がずれるためです。
         // 実行位置タブは固定行へ抽出するため、上限検査の対象外にします。
         fun columnKeys(path: String): List<String> =
             CommandSettingsModel.gestureVisibleFields(pathNode(path))
                 .map { it.key }
                 .filter { it != "executionPosition" }
-        assertTrue(columnKeys("").size <= 6, "unset")
-        assertTrue(columnKeys(EntityDataPath.TAG).size <= 6, "tag")
-        assertTrue(columnKeys(EntityDataPath.attributePath("minecraft:max_health")).size <= 6, "attribute")
-        assertTrue(columnKeys(EntityDataPath.propertyPath("gravity")).size <= 6, "boolean")
-        assertTrue(columnKeys(EntityDataPath.propertyPath("rabbit_type")).size <= 6, "enum")
-        assertTrue(columnKeys(EntityDataPath.propertyPath("custom_name")).size <= 6, "text")
+        val expected = listOf("target", EntityDataPath.PARAM_PATH)
+        assertEquals(expected, columnKeys(""))
+        assertEquals(expected, columnKeys(EntityDataPath.TAG))
+        assertEquals(expected, columnKeys(EntityDataPath.attributePath("minecraft:max_health")))
+        assertEquals(expected, columnKeys(EntityDataPath.propertyPath("gravity")))
+        assertEquals(expected, columnKeys(EntityDataPath.propertyPath("rabbit_type")))
+        assertEquals(expected, columnKeys(EntityDataPath.propertyPath("custom_name")))
     }
 
     @Test
@@ -133,22 +137,27 @@ class EntityOperationSettingsTest {
             "kantan_commander_clean.gui.gesture.warning.entity_data",
             CommandSettingsModel.incompleteWarningKey(node, EntityDataPath.PARAM_PATH).id,
         )
-        assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.tag_entries",
-            CommandSettingsModel.incompleteWarningKey(node, EntityTagEntries.PARAM_ENTRIES).id,
-        )
-        assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.attribute_value",
-            CommandSettingsModel.incompleteWarningKey(node, EntityAttributeSupport.PARAM_VALUE).id,
-        )
-        assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.property_value",
-            CommandSettingsModel.incompleteWarningKey(node, EntityDataSchema.PARAM_VALUE).id,
-        )
         val motion = CommandType.ENTITY_ACTION.newNode().apply { params["action"] = "motion" }
         assertEquals(
             "kantan_commander_clean.gui.gesture.warning.motion",
             CommandSettingsModel.incompleteWarningKey(motion, "motionX").id,
+        )
+    }
+
+    @Test
+    fun `detail validation keys project onto the selection tab`() {
+        val node = pathNode(EntityDataPath.TAG)
+        assertEquals(
+            EntityDataPath.PARAM_PATH,
+            CommandSettingsModel.visibleAttentionFieldKey(node, EntityTagEntries.PARAM_ENTRIES),
+        )
+        assertEquals(
+            EntityDataPath.PARAM_PATH,
+            CommandSettingsModel.visibleAttentionFieldKey(node, EntityAttributeSupport.PARAM_VALUE),
+        )
+        assertEquals(
+            EntityDataPath.PARAM_PATH,
+            CommandSettingsModel.visibleAttentionFieldKey(node, EntityDataSchema.PARAM_VALUE),
         )
     }
 
