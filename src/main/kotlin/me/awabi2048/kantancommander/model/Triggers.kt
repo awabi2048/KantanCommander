@@ -25,8 +25,9 @@ enum class TriggerKind {
 /**
  * issue #7 の初期イベント種別です。
  *
- * 手順書の指定どおり初期種別に限定します。起動設定そのもので操作を選び分けるため、
- * ボタンとレバーを分け、レバーはオン／オフ、クリックは左右を別種別とします。
+ * Issueの初期一覧どおり10種に限定します。起動設定そのもので操作を選び分けるため、
+ * ボタンは押した時だけを提供し（戻った時は提供しません）、レバーはオン／オフ、
+ * クリックは左右を別種別とします。
  * 感圧板は「踏まれた時」だけを提供します（離した時に起動させません）。
  * 追加のイベント種別は、引数契約と登録解除の検証と合わせて拡張します。
  */
@@ -34,7 +35,6 @@ enum class EventTriggerKind {
     BLOCK_BREAK,
     BLOCK_PLACE,
     BUTTON_ON,
-    BUTTON_OFF,
     LEVER_ON,
     LEVER_OFF,
     PRESSURE_PLATE_ON,
@@ -132,7 +132,7 @@ object EventTriggerArguments {
             EventTriggerArgument(BLOCK, ValueType.BLOCK),
             EventTriggerArgument(POSITION, ValueType.LOCATION),
         )
-        EventTriggerKind.BUTTON_ON, EventTriggerKind.BUTTON_OFF,
+        EventTriggerKind.BUTTON_ON,
         EventTriggerKind.LEVER_ON, EventTriggerKind.LEVER_OFF,
         EventTriggerKind.PRESSURE_PLATE_ON,
         -> listOf(

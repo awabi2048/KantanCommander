@@ -77,6 +77,8 @@ class TriggerModelTest {
         assertNull(TriggerKind.parse(null))
         assertEquals(EventTriggerKind.LEVER_ON, EventTriggerKind.parse("lever_on"))
         assertNull(EventTriggerKind.parse("redstone"))
+        // 廃止した種別は読み替えず、保存時の検証で破損として隔離します。
+        assertNull(EventTriggerKind.parse("BUTTON_OFF"))
     }
 
     @Test
@@ -112,9 +114,9 @@ class TriggerModelTest {
     @Test
     fun `switch events carry block and position without actor`() {
         // 信号変化の観測であり操作者を特定できないため、操作者を持ちません。
+        // ボタンは押した時だけを提供します（戻った時は提供しません）。
         listOf(
             EventTriggerKind.BUTTON_ON,
-            EventTriggerKind.BUTTON_OFF,
             EventTriggerKind.LEVER_ON,
             EventTriggerKind.LEVER_OFF,
             EventTriggerKind.PRESSURE_PLATE_ON,
@@ -146,13 +148,12 @@ class TriggerModelTest {
     }
 
     @Test
-    fun `initial event kinds are exactly eleven`() {
-        assertEquals(11, EventTriggerKind.entries.size)
-        // ボタンとレバーを区別し、オン／オフと左右を別種別で持つことを固定します。
+    fun `initial event kinds are exactly ten`() {
+        assertEquals(10, EventTriggerKind.entries.size)
+        // ボタンは押した時だけを持ち、オン／オフと左右の区別はレバーとクリックで行うことを固定します。
         assertTrue(EventTriggerKind.entries.containsAll(
             listOf(
                 EventTriggerKind.BUTTON_ON,
-                EventTriggerKind.BUTTON_OFF,
                 EventTriggerKind.LEVER_ON,
                 EventTriggerKind.LEVER_OFF,
                 EventTriggerKind.ENTITY_LEFT_CLICK,

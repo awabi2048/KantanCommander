@@ -12,6 +12,7 @@ internal enum class RedstoneTriggerCategory { BUTTON, LEVER, PRESSURE_PLATE }
  * ボタン・レバーは `Switch` 型で、素材名（`*_BUTTON`／`LEVER`）により区別します。
  * 感圧板は加重板（`AnaloguePowerable`）または感圧板素材の `Powerable` で判定します。
  * オン／オフの変化辺に対応するイベント種別を返し、提供しない辺は null とします。
+ * ボタンは押した時だけを提供し、戻った時は起動しません（issue #7 の初期一覧どおり）。
  * 感圧板は「踏まれた時」だけを提供し、離した時は起動しません。
  * Bukkit 実体を必要としない純粋判定であり、単体試験します。
  */
@@ -30,7 +31,7 @@ internal object EventTriggerClassification {
 
     /** 指定した変化辺（`on` が真なら通電）に対応する起動種別を返します。 */
     fun eventFor(category: RedstoneTriggerCategory, on: Boolean): EventTriggerKind? = when (category) {
-        RedstoneTriggerCategory.BUTTON -> if (on) EventTriggerKind.BUTTON_ON else EventTriggerKind.BUTTON_OFF
+        RedstoneTriggerCategory.BUTTON -> if (on) EventTriggerKind.BUTTON_ON else null
         RedstoneTriggerCategory.LEVER -> if (on) EventTriggerKind.LEVER_ON else EventTriggerKind.LEVER_OFF
         RedstoneTriggerCategory.PRESSURE_PLATE -> if (on) EventTriggerKind.PRESSURE_PLATE_ON else null
     }

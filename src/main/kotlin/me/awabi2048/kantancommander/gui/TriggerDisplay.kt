@@ -27,7 +27,6 @@ internal object TriggerDisplay {
         EventTriggerKind.BLOCK_BREAK -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BLOCK_BREAK)
         EventTriggerKind.BLOCK_PLACE -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BLOCK_PLACE)
         EventTriggerKind.BUTTON_ON -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BUTTON_ON)
-        EventTriggerKind.BUTTON_OFF -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_BUTTON_OFF)
         EventTriggerKind.LEVER_ON -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_LEVER_ON)
         EventTriggerKind.LEVER_OFF -> KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_TRIGGER_EVENT_LEVER_OFF)
         EventTriggerKind.PRESSURE_PLATE_ON ->

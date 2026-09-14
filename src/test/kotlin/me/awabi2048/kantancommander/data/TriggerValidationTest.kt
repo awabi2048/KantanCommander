@@ -8,6 +8,7 @@ import me.awabi2048.kantancommander.model.EventTriggerKind
 import me.awabi2048.kantancommander.model.ScriptTrigger
 import me.awabi2048.kantancommander.model.TriggerKind
 import me.awabi2048.kantancommander.model.ValueType
+import com.google.gson.JsonParser
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -49,6 +50,29 @@ class TriggerValidationTest {
         }
         val errors = ExecutableScriptValidator.validate(prepared)
         assertTrue(errors.any { it.nodeId == null && it.fieldKeys == setOf("trigger") })
+    }
+
+    @Test
+    fun `removed button-off event is rejected at load without silent remapping`() {
+        // 廃止した BUTTON_OFF を保存した開発途中データは、別種別へ読み替えず破損として隔離します。
+        val root = JsonParser.parseString(
+            """
+            {
+              "formatVersion": 17,
+              "id": "${UUID.randomUUID()}",
+              "name": "removed-event",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 0,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": false, "intervalSeconds": 1.0},
+              "graph": {"nodes": {}},
+              "trigger": {"kind": "EVENT", "event": "BUTTON_OFF", "intervalSeconds": 1.0}
+            }
+            """.trimIndent(),
+        ).asJsonObject
+        assertTrue(
+            PersistedScriptValidator.validate(root).any { it.contains("root/trigger/event") },
+        )
     }
 
     @Test

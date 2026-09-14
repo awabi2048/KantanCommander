@@ -58,12 +58,11 @@ class TriggerChoiceDocumentTest {
     }
 
     @Test
-    fun `event document pages eleven events without overlap`() {
+    fun `event document pages ten events without overlap`() {
         val names = listOf(
             "BLOCK_BREAK",
             "BLOCK_PLACE",
             "BUTTON_ON",
-            "BUTTON_OFF",
             "LEVER_ON",
             "LEVER_OFF",
             "PRESSURE_PLATE_ON",
