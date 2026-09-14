@@ -200,6 +200,7 @@ class GestureLowerPanel(
         inputCx: Double,
         inputCy: Double,
         inputW: Double,
+        gridLeftX: Double = INLINE_RESOURCE_GRID_LEFT_X,
         columns: Int = INLINE_RESOURCE_COLUMNS,
         cellW: Double = INLINE_RESOURCE_CELL_W,
         cellH: Double = INLINE_RESOURCE_CELL_H,
@@ -226,7 +227,7 @@ class GestureLowerPanel(
                 outline = if (selected) {
                     GestureSettingVisualPolicy.nonTabOutlineMaterial(true)?.let { Bukkit.createBlockData(it) }
                 } else null,
-                cx = INLINE_RESOURCE_GRID_LEFT_X + col * pitchX,
+                cx = gridLeftX + col * pitchX,
                 cy = gridTopY - row * pitchY,
                 w = cellW,
                 h = cellH,
@@ -1720,6 +1721,7 @@ class GestureLowerPanel(
                     inputCx = 0.58,
                     inputCy = inlinePreviewY,
                     inputW = 0.56,
+                    gridLeftX = INLINE_RESOURCE_TYPED_GRID_LEFT_X,
                     columns = INLINE_RESOURCE_TYPED_COLUMNS,
                     cellW = INLINE_RESOURCE_TYPED_CELL_W,
                     cellH = INLINE_RESOURCE_TYPED_CELL_H,
@@ -4901,7 +4903,12 @@ class GestureLowerPanel(
         const val INLINE_RESOURCE_CELL_H = 0.085
         const val INLINE_RESOURCE_GRID_PITCH_X = 0.14
         const val INLINE_RESOURCE_GRID_PITCH_Y = 0.10
-        const val INLINE_RESOURCE_GRID_LEFT_X = -0.27
+        // グリッド重心を値入力ボタンの中心（0.28）へ合わせます。
+        // 外縁-0.275〜0.835に対し余白が左右0.045ずつ均等となり、
+        // グリッド＋余白の横幅はボタンの1.2と一致します。
+        const val INLINE_RESOURCE_GRID_LEFT_X = -0.21
+        // 一時変数参照項目のグリッド左端です。対話分岐と左端を一致させます。
+        const val INLINE_RESOURCE_TYPED_GRID_LEFT_X = -0.2325
         // 通常入力行の直下へ3行を置くための、入力行からの下げ幅です。
         const val INLINE_RESOURCE_GRID_TOP_DY = 0.03
         // 一時変数参照項目の方式行の直下へ2行を置くための、方式行からの下げ幅です。
