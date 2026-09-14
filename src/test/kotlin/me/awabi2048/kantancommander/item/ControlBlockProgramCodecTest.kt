@@ -15,7 +15,7 @@ class ControlBlockProgramCodecTest {
     @Test
     fun `embedded program round trips the complete graph`() {
         val node = CommandNode(type = CommandType.CONDITION).apply {
-            params["kind"] = "CONTROL_BLOCK_STATE"
+            params["subject"] = "CONTROL_BLOCK"
             controlBlockStates = linkedSetOf(ControlBlockStateKind.REDSTONE_INPUT)
         }
         val script = DiskScript(
@@ -34,7 +34,7 @@ class ControlBlockProgramCodecTest {
         assertEquals(script.owner, decoded?.owner)
         assertEquals(script.graph.entryNodeId, decoded?.graph?.entryNodeId)
         assertEquals(script.graph.nodes.keys, decoded?.graph?.nodes?.keys)
-        assertEquals("CONTROL_BLOCK_STATE", decoded?.graph?.nodes?.get(node.id)?.params?.get("kind"))
+        assertEquals("CONTROL_BLOCK", decoded?.graph?.nodes?.get(node.id)?.params?.get("subject"))
         assertEquals(
             setOf(ControlBlockStateKind.REDSTONE_INPUT),
             decoded?.graph?.nodes?.get(node.id)?.selectedControlBlockStates(),

@@ -670,7 +670,8 @@ internal data class ExecutionContextSpec(
  * 旧 `kind` 分類（`TARGET_EXISTS`／`PLAYER_STATE` 等）は廃止し、この5区分へ置き換えます。
  * `プレイヤー` と `その他エンティティ` は UI 上区別しますが、条件評価上はいずれも
  * Entity 系として同じ基本ルール（一致対象が1件以上存在すれば成立・絞り込みはAND）を用います。
- * 旧 `kind` 保存の変換処理は残さず、旧値は未設定として検証層で拒否します。
+ * 旧 `kind` 保存は読込時に LegacyConditionMigration で判定対象へ正本化し、
+ * 新規保存では `subject` だけを記録します。
  */
 enum class ConditionSubject(val key: LocalizationKey<String>) {
     PLAYER(KcKeys.KANTAN_COMMANDER_CLEAN_CONDITION_PLAYER_STATE),

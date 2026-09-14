@@ -117,9 +117,10 @@ class ScriptStore(
      * 埋め込みスナップショットを現行形式へ移行します。
      *
      * ファイル読込（[read]）と同じ受付方針です。現行17と直前2世代（16・15）を
-     * 受け付け、それ以外は移行せずnullを返します。旧kind条件は変換せず、
-     * 検証層で拒否されるため、移行後の検証に通らない内容もnullとします。
-     * 旧equipは [LegacyEquipMigration] で PLACE_ITEM へ正本化します。
+     * 受け付け、それ以外は移行せずnullを返します。
+     * 旧equipは [LegacyEquipMigration] で PLACE_ITEM へ、
+     * 旧kind条件は [LegacyConditionMigration] で判定対象へ正本化するため、
+     * 移行後の検証に通らない内容もnullとします。
      */
     private fun migrateEmbedded(source: DiskScript): DiskScript? = runCatching {
         val json = gson.toJsonTree(source).asJsonObject
@@ -135,6 +136,8 @@ class ScriptStore(
         }
         // issue #21: 旧装備操作を PLACE_ITEM へ正本化します。
         LegacyEquipMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
+        // issue #27: 旧条件分類を判定対象へ正本化します。
+        LegacyConditionMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         if (PersistedScriptValidator.validate(migrated).isNotEmpty()) return null
         val script = gson.fromJson(migrated, DiskScript::class.java) ?: return null
         // 旧JSONには arguments 欄が存在しません。Gsonの復元ではKotlinの
@@ -501,7 +504,7 @@ class ScriptStore(
         // 配置先 destination→placeDestination、値保持）を行います。
         // v15→v17は#30の粒子移行に加えて同じ改名を適用します（v15→v16相当）。
         // v14以前は今回の受付対象外として隔離します。
-        // 旧kind条件は変換せず、検証層で未設定として拒否します（#27方針）。
+        // 旧kind条件は [LegacyConditionMigration] で判定対象へ正本化します（#27）。
         // 旧equipは [LegacyEquipMigration] で PLACE_ITEM へ正本化します（#21）。
         // 同じ番号を異なる保存形式に再利用しません。
         val migrated = when (sourceVersion) {
@@ -522,6 +525,8 @@ class ScriptStore(
         // バージョン移行とは独立した読込時正規化であり、現行v17を含む
         // 受付全世代へ適用します。新規保存は常に PLACE_ITEM だけを書きます。
         LegacyEquipMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
+        // issue #27: 旧条件分類を判定対象へ正本化します。適用範囲は同じです。
+        LegacyConditionMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         val schemaViolations = PersistedScriptValidator.validate(migrated)
         require(schemaViolations.isEmpty()) {
             "保存データの型・enum検証に失敗しました: ${schemaViolations.joinToString("; ")}"
