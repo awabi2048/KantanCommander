@@ -44,15 +44,15 @@ class ModelsTest {
     }
 
     @Test
-    fun `entity operation starts with tag operation defaults`() {
+    fun `entity operation starts with unified selection defaults`() {
         val node = CommandType.ENTITY_OPERATION.newNode()
-        assertEquals("tag", node.string("operation", ""))
-        assertEquals("add", node.string("tagOperation", ""))
-        assertEquals(EntityAttributeSupport.OPERATION_BASE_VALUE, node.string(EntityAttributeSupport.PARAM_OPERATION, ""))
-        assertEquals(EntityAttributeSupport.MODIFIER_ADD_NUMBER, node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION, ""))
-        assertEquals("0.0", node.string(EntityAttributeSupport.PARAM_AMOUNT, ""))
-        // 未選択の設定項目は空保存値であり、表示側の既定値解決で未設定として扱います。
-        assertEquals("", node.params[EntityDataSchema.PARAM_PROPERTY])
-        assertEquals("unset", node.string(EntityDataSchema.PARAM_PROPERTY, "unset"))
+        // 統合選択形式では設定対象IDが未選択であり、旧3択キーは保持しません。
+        assertEquals("", node.params[EntityDataPath.PARAM_PATH])
+        assertEquals("", node.params[EntityTagEntries.PARAM_ENTRIES])
+        assertEquals("0.0", node.string(EntityAttributeSupport.PARAM_VALUE, ""))
+        assertEquals("", node.params[EntityDataSchema.PARAM_VALUE])
+        assertFalse(node.params.containsKey("operation"))
+        assertFalse(node.params.containsKey("tagOperation"))
+        assertFalse(node.params.containsKey("tag"))
     }
 }

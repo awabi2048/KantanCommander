@@ -342,27 +342,22 @@ class CommandDialogSpecsTest {
     }
 
     @Test
-    fun `entity operation ids and amounts share validation`() {
-        val node = CommandType.ENTITY_OPERATION.newNode().apply { params["operation"] = "attribute" }
-        val attribute = requireNotNull(
-            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityAttributeSupport.PARAM_ATTRIBUTE),
-        )
-        val modifierKey = requireNotNull(
-            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityAttributeSupport.PARAM_MODIFIER_KEY),
+    fun `entity operation tag entry and attribute value share validation`() {
+        val node = CommandType.ENTITY_OPERATION.newNode().apply {
+            params[me.awabi2048.kantancommander.model.EntityDataPath.PARAM_PATH] =
+                me.awabi2048.kantancommander.model.EntityDataPath.TAG
+        }
+        val tagEntry = requireNotNull(
+            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityTagEntries.PARAM_ENTRIES),
         )
         val amount = requireNotNull(
-            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityAttributeSupport.PARAM_AMOUNT),
+            CommandDialogSpecs.field(node, me.awabi2048.kantancommander.model.EntityAttributeSupport.PARAM_VALUE),
         )
 
-        assertNull(attribute.validate("minecraft:max_health"))
+        assertNull(tagEntry.validate("kc_test"))
         assertEquals(
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
-            attribute.validate("not a key"),
-        )
-        assertNull(modifierKey.validate("kantan:boost"))
-        assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
-            modifierKey.validate("not a key"),
+            tagEntry.validate("has space"),
         )
         assertNull(amount.validate("0.1"))
         assertEquals(
@@ -372,18 +367,24 @@ class CommandDialogSpecsTest {
     }
 
     @Test
-    fun `property value dialog exists only for text properties`() {
+    fun `property value dialog exists only for text and integer properties`() {
         val text = CommandType.ENTITY_OPERATION.newNode().apply {
-            params["operation"] = "data"
-            params[me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_PROPERTY] = "custom_name"
+            params[me.awabi2048.kantancommander.model.EntityDataPath.PARAM_PATH] =
+                me.awabi2048.kantancommander.model.EntityDataPath.propertyPath("custom_name")
         }
         val boolean = CommandType.ENTITY_OPERATION.newNode().apply {
-            params["operation"] = "data"
-            params[me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_PROPERTY] = "gravity"
+            params[me.awabi2048.kantancommander.model.EntityDataPath.PARAM_PATH] =
+                me.awabi2048.kantancommander.model.EntityDataPath.propertyPath("gravity")
+        }
+        val integer = CommandType.ENTITY_OPERATION.newNode().apply {
+            params[me.awabi2048.kantancommander.model.EntityDataPath.PARAM_PATH] =
+                me.awabi2048.kantancommander.model.EntityDataPath.propertyPath(
+                    me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_SLIME_SIZE,
+                )
         }
         val unknown = CommandType.ENTITY_OPERATION.newNode().apply {
-            params["operation"] = "data"
-            params[me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_PROPERTY] = "nope"
+            params[me.awabi2048.kantancommander.model.EntityDataPath.PARAM_PATH] =
+                me.awabi2048.kantancommander.model.EntityDataPath.propertyPath("nope")
         }
 
         val textSpec = requireNotNull(
@@ -392,7 +393,15 @@ class CommandDialogSpecsTest {
         assertNull(textSpec.validate("hello"))
         assertNull(
             CommandDialogSpecs.field(boolean, me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_VALUE),
-            "真偽値はCheckboxで編集するためDialog仕様を持ちません",
+            "真偽値は直接切替で編集するためDialog仕様を持ちません",
+        )
+        val integerSpec = requireNotNull(
+            CommandDialogSpecs.field(integer, me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_VALUE),
+        )
+        assertNull(integerSpec.validate("4"))
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT,
+            integerSpec.validate("0"),
         )
         assertNull(
             CommandDialogSpecs.field(unknown, me.awabi2048.kantancommander.model.EntityDataSchema.PARAM_VALUE),

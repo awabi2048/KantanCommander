@@ -128,6 +128,19 @@ internal object GestureSettingVisualPolicy {
         choice.hasChildren -> NamedTextColor.AQUA
         else -> NamedTextColor.GOLD
     }
+
+    /**
+     * エンティティ操作の設定済み縁色です。
+     *
+     * 「選択している状態」（排他的）と「値を設定済みである状態」（非排他的）を
+     * 別チャネルで表します。選択中は白縁、未選択の設定済みは空色縁とします。
+     * 真偽値の偽値も入力として扱い、設定済みに含めます。
+     */
+    fun entityChoiceOutlineMaterial(selected: Boolean, configured: Boolean): Material? = when {
+        selected -> nonTabOutlineMaterial(true)
+        configured -> Material.LIGHT_BLUE_CONCRETE
+        else -> null
+    }
 }
 
 /** 木構造上の現在位置。表示状態と戻る経路を同じ値から復元します。 */
@@ -210,15 +223,13 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.CONDITION_DETAIL -> GestureSettingScreen.CONDITION_DETAIL
     CommandSettingEditor.DISPLAY_MODE -> GestureSettingScreen.DISPLAY_MODE
     CommandSettingEditor.ENTITY_ACTION -> GestureSettingScreen.ENTITY_ACTION
-    CommandSettingEditor.ENTITY_OPERATION -> GestureSettingScreen.ENTITY_OPERATION
-    CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION -> GestureSettingScreen.ENTITY_ATTRIBUTE_OPERATION
-    CommandSettingEditor.ENTITY_MODIFIER_OPERATION -> GestureSettingScreen.ENTITY_MODIFIER_OPERATION
-    CommandSettingEditor.ENTITY_PROPERTY -> GestureSettingScreen.ENTITY_PROPERTY
+    CommandSettingEditor.ENTITY_DATA_ROOT -> GestureSettingScreen.ENTITY_DATA_ROOT
+    CommandSettingEditor.ENTITY_ATTRIBUTE_SELECT -> GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT
+    CommandSettingEditor.ENTITY_TAG_LIST -> GestureSettingScreen.ENTITY_TAG_LIST
     CommandSettingEditor.ENTITY_PROPERTY_VALUE -> GestureSettingScreen.ENTITY_PROPERTY_VALUE
     CommandSettingEditor.PLACE_DESTINATION -> GestureSettingScreen.PLACE_DESTINATION
     CommandSettingEditor.ENTITY_EQUIPMENT_SLOT -> GestureSettingScreen.ENTITY_EQUIPMENT_SLOT
     CommandSettingEditor.ENTITY_OVERWRITE -> GestureSettingScreen.ENTITY_OVERWRITE
-    CommandSettingEditor.ENTITY_TAG_OPERATION -> GestureSettingScreen.ENTITY_TAG_OPERATION
     CommandSettingEditor.VARIABLE_SCOPE -> GestureSettingScreen.VARIABLE_SCOPE
     CommandSettingEditor.VARIABLE_NAME -> GestureSettingScreen.VARIABLE_NAME
     CommandSettingEditor.VARIABLE_PROPERTY -> GestureSettingScreen.VARIABLE_PROPERTY

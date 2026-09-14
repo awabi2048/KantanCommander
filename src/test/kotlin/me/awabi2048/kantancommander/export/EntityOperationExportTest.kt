@@ -5,7 +5,9 @@ import me.awabi2048.kantancommander.data.ScriptStore
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertInstanceOf
@@ -17,10 +19,10 @@ import java.util.UUID
 import java.util.logging.Logger
 
 /**
- * issue #32 のバニラ出力テストです。
+ * 統合選択形式のバニラ出力テストです。
  *
- * tagとattribute操作は等価なバニラコマンドへ変換し、motionとデータ編集は
- * 不正確な変換を行わず未対応として明示することを固定します。
+ * 単一タグとattribute基本値は等価なバニラコマンドへ変換し、複数タグ・
+ * データ編集は不正確な変換を行わず未対応として明示することを固定します。
  */
 class EntityOperationExportTest {
     @TempDir
@@ -45,9 +47,8 @@ class EntityOperationExportTest {
     fun `tag operation lowers to tag command`() {
         val (_, exporter) = exporter()
         val script = operationScript {
-            it.params["operation"] = "tag"
-            it.params["tagOperation"] = "add"
-            it.params["tag"] = "kc_test"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.TAG
+            it.params[EntityTagEntries.PARAM_ENTRIES] = "add=kc_test"
         }
         val result = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
@@ -58,14 +59,26 @@ class EntityOperationExportTest {
     }
 
     @Test
+    fun `multi tag is reported as unsupported without conversion`() {
+        val (_, exporter) = exporter()
+        val script = operationScript {
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.TAG
+            it.params[EntityTagEntries.PARAM_ENTRIES] = "add=kc_test;remove=kc_old"
+        }
+        val result = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(script),
+        )
+        assertTrue(result.errors.any { it.contains("複数タグはバニラ出力に未対応") })
+    }
+
+    @Test
     fun `attribute base value lowers to per target attribute command`() {
         // attributeは単一対象専用のため、対象ごとに execute as … run へ展開します。
         val (_, exporter) = exporter()
         val script = operationScript {
-            it.params["operation"] = "attribute"
-            it.params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:max_health"
-            it.params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_BASE_VALUE
-            it.params[EntityAttributeSupport.PARAM_AMOUNT] = "20.0"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.attributePath("minecraft:max_health")
+            it.params[EntityAttributeSupport.PARAM_VALUE] = "20.0"
         }
         val result = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
@@ -82,10 +95,8 @@ class EntityOperationExportTest {
         val script = store.create(UUID.randomUUID(), "entity-operation-multi")
         GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
             targetSpec = TargetSpec(TargetKind.NEARBY_PLAYERS)
-            params["operation"] = "attribute"
-            params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:max_health"
-            params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_BASE_VALUE
-            params[EntityAttributeSupport.PARAM_AMOUNT] = "20.0"
+            params[EntityDataPath.PARAM_PATH] = EntityDataPath.attributePath("minecraft:max_health")
+            params[EntityAttributeSupport.PARAM_VALUE] = "20.0"
         }
         val result = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
@@ -96,46 +107,10 @@ class EntityOperationExportTest {
     }
 
     @Test
-    fun `attribute modifier add lowers with vanilla operation name`() {
-        val (_, exporter) = exporter()
-        val script = operationScript {
-            it.params["operation"] = "attribute"
-            it.params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:movement_speed"
-            it.params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_ADD
-            it.params[EntityAttributeSupport.PARAM_MODIFIER_KEY] = "kantan:boost"
-            it.params[EntityAttributeSupport.PARAM_AMOUNT] = "0.1"
-            it.params[EntityAttributeSupport.PARAM_MODIFIER_OPERATION] = EntityAttributeSupport.MODIFIER_MULTIPLY_TOTAL
-        }
-        val result = assertInstanceOf(
-            StandaloneCompilation.Success::class.java,
-            exporter.compileForStandalone(script),
-        )
-        val body = result.functions.values.joinToString("\n")
-        assertTrue(body.contains("modifier add kantan:boost 0.1 add_multiplied_total"))
-    }
-
-    @Test
-    fun `attribute modifier remove lowers to modifier remove`() {
-        val (_, exporter) = exporter()
-        val script = operationScript {
-            it.params["operation"] = "attribute"
-            it.params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:movement_speed"
-            it.params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_REMOVE
-            it.params[EntityAttributeSupport.PARAM_MODIFIER_KEY] = "kantan:boost"
-        }
-        val result = assertInstanceOf(
-            StandaloneCompilation.Success::class.java,
-            exporter.compileForStandalone(script),
-        )
-        assertTrue(result.functions.values.joinToString("\n").contains("modifier remove kantan:boost"))
-    }
-
-    @Test
     fun `data edit is reported as unsupported without conversion`() {
         val (_, exporter) = exporter()
         val script = operationScript {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = "gravity"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("gravity")
             it.params[EntityDataSchema.PARAM_VALUE] = "false"
         }
         val result = assertInstanceOf(
@@ -149,8 +124,7 @@ class EntityOperationExportTest {
     fun `mannequin data edit is reported as unsupported without conversion`() {
         val (_, exporter) = exporter()
         val script = operationScript {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_POSE
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_POSE)
             it.params[EntityDataSchema.PARAM_VALUE] = EntityDataSchema.MANNEQUIN_POSE_STANDING
         }
         val result = assertInstanceOf(
@@ -164,8 +138,7 @@ class EntityOperationExportTest {
     fun `mannequin description edit is reported as unsupported without conversion`() {
         val (_, exporter) = exporter()
         val script = operationScript {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION)
             it.params[EntityDataSchema.PARAM_VALUE] = "案内人"
         }
         val result = assertInstanceOf(

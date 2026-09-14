@@ -3,15 +3,38 @@ package me.awabi2048.kantancommander.model
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import io.papermc.paper.datacomponent.item.ResolvableProfile
+import io.papermc.paper.entity.CollarColorable
+import org.bukkit.DyeColor
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
+import org.bukkit.entity.Ageable
 import org.bukkit.entity.ArmorStand
+import org.bukkit.entity.Axolotl
+import org.bukkit.entity.Bee
+import org.bukkit.entity.Boat
+import org.bukkit.entity.Cat
+import org.bukkit.entity.Creeper
 import org.bukkit.entity.Entity
 import org.bukkit.entity.EntityType
+import org.bukkit.entity.Fox
+import org.bukkit.entity.Frog
+import org.bukkit.entity.Horse
 import org.bukkit.entity.LivingEntity
+import org.bukkit.entity.Llama
 import org.bukkit.entity.Mannequin
+import org.bukkit.entity.MushroomCow
+import org.bukkit.entity.Parrot
 import org.bukkit.entity.Pose
+import org.bukkit.entity.PufferFish
 import org.bukkit.entity.Rabbit
+import org.bukkit.entity.Sheep
+import org.bukkit.entity.Shulker
+import org.bukkit.entity.Sittable
+import org.bukkit.entity.Slime
+import org.bukkit.entity.Steerable
+import org.bukkit.entity.Villager
+import org.bukkit.entity.Wolf
+import org.bukkit.entity.Zombie
 import org.bukkit.inventory.MainHand
 
 /**
@@ -27,7 +50,7 @@ import org.bukkit.inventory.MainHand
  * ただし本スキーマは個別Entityへの書き込み専用であり、読み出しは #3 の責務です。
  */
 enum class EntityPropertyValueKind {
-    /** 真偽値です。Gesture上はCheckbox相当で直接切り替えます。 */
+    /** 真偽値です。Gesture上は選択→クリックの直接切替えで編集します。 */
     BOOLEAN,
 
     /** 有限候補です。内部IDと表示名の対応はスキーマ側で管理し、数値を直接入力させません。 */
@@ -35,6 +58,12 @@ enum class EntityPropertyValueKind {
 
     /** 自由文字列です。Dialog入力で編集します。 */
     TEXT,
+
+    /**
+     * 範囲付き整数です。Dialog入力で編集し、定義の [EntityPropertyDefinition.intRange]
+     * で検証します。スライムの大きさ等の段階値を扱います。
+     */
+    INTEGER,
 }
 
 /** ENUM値のstableな選択肢です。内部IDと表示の対応をここで固定します。 */
@@ -59,6 +88,8 @@ data class EntityPropertyDefinition(
     val entityTypes: Set<String>?,
     val requiresLiving: Boolean = false,
     val enumChoices: List<EntityPropertyChoice> = emptyList(),
+    /** INTEGER種別の許容範囲です。INTEGER以外では使いません。 */
+    val intRange: IntRange? = null,
     val optionKey: LocalizationKey<String>,
 )
 
@@ -69,6 +100,8 @@ sealed interface EntityPropertyValue {
     data class EnumValue(val choiceId: String) : EntityPropertyValue
 
     data class TextValue(val text: String) : EntityPropertyValue
+
+    data class IntegerValue(val value: Int) : EntityPropertyValue
 }
 
 /**
@@ -105,6 +138,35 @@ object EntityDataSchema {
     const val PROPERTY_ARMOR_STAND_MARKER = "armor_stand_marker"
     const val PROPERTY_ARMOR_STAND_BASE_PLATE = "armor_stand_base_plate"
     const val PROPERTY_RABBIT_TYPE = "rabbit_type"
+
+    // エンティティ固有項目です。対象確定時のみ表示し、和集合表示は行いません。
+    // 能力横断項目（幼体・おすわり）は対応EntityType集合で限定し、実行時の
+    // capability判定を最終判定とします。
+    const val PROPERTY_AGEABLE_BABY = "ageable_baby"
+    const val PROPERTY_SHEEP_COLOR = "sheep_color"
+    const val PROPERTY_SHEEP_SHEARED = "sheep_sheared"
+    const val PROPERTY_SLIME_SIZE = "slime_size"
+    const val PROPERTY_CREEPER_POWERED = "creeper_powered"
+    const val PROPERTY_SITTABLE_SITTING = "sittable_sitting"
+    const val PROPERTY_COLLAR_COLOR = "collar_color"
+    const val PROPERTY_CAT_TYPE = "cat_type"
+    const val PROPERTY_AXOLOTL_VARIANT = "axolotl_variant"
+    const val PROPERTY_FOX_TYPE = "fox_type"
+    const val PROPERTY_FROG_VARIANT = "frog_variant"
+    const val PROPERTY_VILLAGER_PROFESSION = "villager_profession"
+    const val PROPERTY_ZOMBIE_BABY = "zombie_baby"
+    const val PROPERTY_PIG_SADDLE = "pig_saddle"
+    const val PROPERTY_PUFFER_STATE = "puffer_state"
+    const val PROPERTY_VILLAGER_TYPE = "villager_type"
+    const val PROPERTY_MOOSHROOM_VARIANT = "mooshroom_variant"
+    const val PROPERTY_HORSE_COLOR = "horse_color"
+    const val PROPERTY_HORSE_STYLE = "horse_style"
+    const val PROPERTY_LLAMA_COLOR = "llama_color"
+    const val PROPERTY_PARROT_VARIANT = "parrot_variant"
+    const val PROPERTY_SHULKER_COLOR = "shulker_color"
+    const val PROPERTY_BOAT_TYPE = "boat_type"
+    const val PROPERTY_BEE_NECTAR = "bee_nectar"
+    const val PROPERTY_BEE_ANGER = "bee_anger"
 
     // Mannequin固有項目です。descriptionは設定不可とし、ここでは扱いません。
     // profileはスキンのプレイヤー名のみを受け付け、UUID・テクスチャ直接指定は行いません。
@@ -149,6 +211,129 @@ object EntityDataSchema {
     const val RABBIT_SALT_AND_PEPPER = "salt_and_pepper"
     const val RABBIT_KILLER_BUNNY = "killer_bunny"
 
+    // DyeColor共用選択肢のstableなIDです。BukkitのDyeColor名の小文字と対応します。
+    const val DYE_WHITE = "white"
+    const val DYE_ORANGE = "orange"
+    const val DYE_MAGENTA = "magenta"
+    const val DYE_LIGHT_BLUE = "light_blue"
+    const val DYE_YELLOW = "yellow"
+    const val DYE_LIME = "lime"
+    const val DYE_PINK = "pink"
+    const val DYE_GRAY = "gray"
+    const val DYE_LIGHT_GRAY = "light_gray"
+    const val DYE_CYAN = "cyan"
+    const val DYE_PURPLE = "purple"
+    const val DYE_BLUE = "blue"
+    const val DYE_BROWN = "brown"
+    const val DYE_GREEN = "green"
+    const val DYE_RED = "red"
+    const val DYE_BLACK = "black"
+
+    // 猫種類のstableな選択肢IDです。BukkitのCat.Type名と対応します。
+    const val CAT_TABBY = "tabby"
+    const val CAT_BLACK = "black"
+    const val CAT_RED = "red"
+    const val CAT_SIAMESE = "siamese"
+    const val CAT_BRITISH_SHORTHAIR = "british_shorthair"
+    const val CAT_CALICO = "calico"
+    const val CAT_PERSIAN = "persian"
+    const val CAT_RAGDOLL = "ragdoll"
+    const val CAT_WHITE = "white"
+    const val CAT_JELLIE = "jellie"
+    const val CAT_ALL_BLACK = "all_black"
+
+    // ウーパールーパー種類のstableな選択肢IDです。BukkitのAxolotl.Variant名と対応します。
+    const val AXOLOTL_LUCY = "lucy"
+    const val AXOLOTL_WILD = "wild"
+    const val AXOLOTL_GOLD = "gold"
+    const val AXOLOTL_CYAN = "cyan"
+    const val AXOLOTL_BLUE = "blue"
+
+    // キツネ種類のstableな選択肢IDです。BukkitのFox.Type名と対応します。
+    const val FOX_RED = "red"
+    const val FOX_SNOW = "snow"
+
+    // カエル種類のstableな選択肢IDです。BukkitのFrog.Variant名と対応します。
+    const val FROG_TEMPERATE = "temperate"
+    const val FROG_WARM = "warm"
+    const val FROG_COLD = "cold"
+
+    // 村人職業のstableな選択肢IDです。BukkitのVillager.Profession名の小文字と対応します。
+    const val VILLAGER_PROFESSION_NONE = "none"
+    const val VILLAGER_PROFESSION_ARMORER = "armorer"
+    const val VILLAGER_PROFESSION_BUTCHER = "butcher"
+    const val VILLAGER_PROFESSION_CARTOGRAPHER = "cartographer"
+    const val VILLAGER_PROFESSION_CLERIC = "cleric"
+    const val VILLAGER_PROFESSION_FARMER = "farmer"
+    const val VILLAGER_PROFESSION_FISHERMAN = "fisherman"
+    const val VILLAGER_PROFESSION_FLETCHER = "fletcher"
+    const val VILLAGER_PROFESSION_LEATHERWORKER = "leatherworker"
+    const val VILLAGER_PROFESSION_LIBRARIAN = "librarian"
+    const val VILLAGER_PROFESSION_MASON = "mason"
+    const val VILLAGER_PROFESSION_NITWIT = "nitwit"
+    const val VILLAGER_PROFESSION_SHEPHERD = "shepherd"
+    const val VILLAGER_PROFESSION_TOOLSMITH = "toolsmith"
+    const val VILLAGER_PROFESSION_WEAPONSMITH = "weaponsmith"
+
+    // 村人見た目のstableな選択肢IDです。BukkitのVillager.Type名と対応します。
+    const val VILLAGER_TYPE_DESERT = "desert"
+    const val VILLAGER_TYPE_JUNGLE = "jungle"
+    const val VILLAGER_TYPE_PLAINS = "plains"
+    const val VILLAGER_TYPE_SAVANNA = "savanna"
+    const val VILLAGER_TYPE_SNOW = "snow"
+    const val VILLAGER_TYPE_SWAMP = "swamp"
+    const val VILLAGER_TYPE_TAIGA = "taiga"
+
+    // ムーシュルーム種類のstableな選択肢IDです。BukkitのMushroomCow.Variant名と対応します。
+    const val MOOSHROOM_RED = "red"
+    const val MOOSHROOM_BROWN = "brown"
+
+    // 馬毛色のstableな選択肢IDです。BukkitのHorse.Color名と対応します。
+    const val HORSE_WHITE = "white"
+    const val HORSE_CREAMY = "creamy"
+    const val HORSE_CHESTNUT = "chestnut"
+    const val HORSE_BROWN = "brown"
+    const val HORSE_BLACK = "black"
+    const val HORSE_GRAY = "gray"
+    const val HORSE_DARK_BROWN = "dark_brown"
+
+    // 馬模様のstableな選択肢IDです。BukkitのHorse.Style名と対応します。
+    const val HORSE_STYLE_NONE = "none"
+    const val HORSE_STYLE_WHITE = "white"
+    const val HORSE_STYLE_WHITEFIELD = "whitefield"
+    const val HORSE_STYLE_WHITE_DOTS = "white_dots"
+    const val HORSE_STYLE_BLACK_DOTS = "black_dots"
+
+    // ラマ色のstableな選択肢IDです。BukkitのLlama.Color名と対応します。
+    const val LLAMA_CREAMY = "creamy"
+    const val LLAMA_WHITE = "white"
+    const val LLAMA_BROWN = "brown"
+    const val LLAMA_GRAY = "gray"
+
+    // オウム色のstableな選択肢IDです。BukkitのParrot.Variant名と対応します。
+    const val PARROT_RED = "red"
+    const val PARROT_BLUE = "blue"
+    const val PARROT_GREEN = "green"
+    const val PARROT_CYAN = "cyan"
+    const val PARROT_GRAY = "gray"
+
+    // ボート種類のstableな選択肢IDです。BukkitのBoat.Type名と対応します。
+    // Paper 26.1.2のBoat.TypeにPALE_OAKは存在しないため含めません。
+    const val BOAT_OAK = "oak"
+    const val BOAT_SPRUCE = "spruce"
+    const val BOAT_BIRCH = "birch"
+    const val BOAT_JUNGLE = "jungle"
+    const val BOAT_ACACIA = "acacia"
+    const val BOAT_DARK_OAK = "dark_oak"
+    const val BOAT_MANGROVE = "mangrove"
+    const val BOAT_CHERRY = "cherry"
+    const val BOAT_BAMBOO = "bamboo"
+
+    // フグ膨張段階のstableな選択肢IDです。PufferFishのint値（0／1／2）と対応します。
+    const val PUFFER_UNPUFFED = "unpuffed"
+    const val PUFFER_HALF_PUFFED = "half_puffed"
+    const val PUFFER_FULLY_PUFFED = "fully_puffed"
+
     private val rabbitChoices = listOf(
         EntityPropertyChoice(RABBIT_BROWN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_BROWN),
         EntityPropertyChoice(RABBIT_WHITE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_WHITE),
@@ -157,6 +342,143 @@ object EntityDataSchema {
         EntityPropertyChoice(RABBIT_GOLD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_GOLD),
         EntityPropertyChoice(RABBIT_SALT_AND_PEPPER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_SALT_AND_PEPPER),
         EntityPropertyChoice(RABBIT_KILLER_BUNNY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_KILLER_BUNNY),
+    )
+
+    // DyeColor共用選択肢です。羊・首輪・シュルカーで共有し、キー爆発を抑えます。
+    private val dyeChoices = listOf(
+        EntityPropertyChoice(DYE_WHITE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_WHITE),
+        EntityPropertyChoice(DYE_ORANGE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_ORANGE),
+        EntityPropertyChoice(DYE_MAGENTA, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_MAGENTA),
+        EntityPropertyChoice(DYE_LIGHT_BLUE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_LIGHT_BLUE),
+        EntityPropertyChoice(DYE_YELLOW, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_YELLOW),
+        EntityPropertyChoice(DYE_LIME, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_LIME),
+        EntityPropertyChoice(DYE_PINK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_PINK),
+        EntityPropertyChoice(DYE_GRAY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_GRAY),
+        EntityPropertyChoice(DYE_LIGHT_GRAY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_LIGHT_GRAY),
+        EntityPropertyChoice(DYE_CYAN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_CYAN),
+        EntityPropertyChoice(DYE_PURPLE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_PURPLE),
+        EntityPropertyChoice(DYE_BLUE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_BLUE),
+        EntityPropertyChoice(DYE_BROWN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_BROWN),
+        EntityPropertyChoice(DYE_GREEN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_GREEN),
+        EntityPropertyChoice(DYE_RED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_RED),
+        EntityPropertyChoice(DYE_BLACK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DYE_BLACK),
+    )
+
+    private val catChoices = listOf(
+        EntityPropertyChoice(CAT_TABBY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_TABBY),
+        EntityPropertyChoice(CAT_BLACK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_BLACK),
+        EntityPropertyChoice(CAT_RED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_RED),
+        EntityPropertyChoice(CAT_SIAMESE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_SIAMESE),
+        EntityPropertyChoice(CAT_BRITISH_SHORTHAIR, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_BRITISH_SHORTHAIR),
+        EntityPropertyChoice(CAT_CALICO, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_CALICO),
+        EntityPropertyChoice(CAT_PERSIAN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_PERSIAN),
+        EntityPropertyChoice(CAT_RAGDOLL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_RAGDOLL),
+        EntityPropertyChoice(CAT_WHITE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_WHITE),
+        EntityPropertyChoice(CAT_JELLIE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_JELLIE),
+        EntityPropertyChoice(CAT_ALL_BLACK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CAT_ALL_BLACK),
+    )
+
+    private val axolotlChoices = listOf(
+        EntityPropertyChoice(AXOLOTL_LUCY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_AXOLOTL_LUCY),
+        EntityPropertyChoice(AXOLOTL_WILD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_AXOLOTL_WILD),
+        EntityPropertyChoice(AXOLOTL_GOLD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_AXOLOTL_GOLD),
+        EntityPropertyChoice(AXOLOTL_CYAN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_AXOLOTL_CYAN),
+        EntityPropertyChoice(AXOLOTL_BLUE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_AXOLOTL_BLUE),
+    )
+
+    private val foxChoices = listOf(
+        EntityPropertyChoice(FOX_RED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FOX_RED),
+        EntityPropertyChoice(FOX_SNOW, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FOX_SNOW),
+    )
+
+    private val frogChoices = listOf(
+        EntityPropertyChoice(FROG_TEMPERATE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FROG_TEMPERATE),
+        EntityPropertyChoice(FROG_WARM, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FROG_WARM),
+        EntityPropertyChoice(FROG_COLD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FROG_COLD),
+    )
+
+    private val villagerProfessionChoices = listOf(
+        EntityPropertyChoice(VILLAGER_PROFESSION_NONE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_NONE),
+        EntityPropertyChoice(VILLAGER_PROFESSION_ARMORER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_ARMORER),
+        EntityPropertyChoice(VILLAGER_PROFESSION_BUTCHER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_BUTCHER),
+        EntityPropertyChoice(VILLAGER_PROFESSION_CARTOGRAPHER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_CARTOGRAPHER),
+        EntityPropertyChoice(VILLAGER_PROFESSION_CLERIC, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_CLERIC),
+        EntityPropertyChoice(VILLAGER_PROFESSION_FARMER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_FARMER),
+        EntityPropertyChoice(VILLAGER_PROFESSION_FISHERMAN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_FISHERMAN),
+        EntityPropertyChoice(VILLAGER_PROFESSION_FLETCHER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_FLETCHER),
+        EntityPropertyChoice(VILLAGER_PROFESSION_LEATHERWORKER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_LEATHERWORKER),
+        EntityPropertyChoice(VILLAGER_PROFESSION_LIBRARIAN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_LIBRARIAN),
+        EntityPropertyChoice(VILLAGER_PROFESSION_MASON, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_MASON),
+        EntityPropertyChoice(VILLAGER_PROFESSION_NITWIT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_NITWIT),
+        EntityPropertyChoice(VILLAGER_PROFESSION_SHEPHERD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_SHEPHERD),
+        EntityPropertyChoice(VILLAGER_PROFESSION_TOOLSMITH, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_TOOLSMITH),
+        EntityPropertyChoice(VILLAGER_PROFESSION_WEAPONSMITH, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_PROFESSION_WEAPONSMITH),
+    )
+
+    private val villagerTypeChoices = listOf(
+        EntityPropertyChoice(VILLAGER_TYPE_DESERT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_TYPE_DESERT),
+        EntityPropertyChoice(VILLAGER_TYPE_JUNGLE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_TYPE_JUNGLE),
+        EntityPropertyChoice(VILLAGER_TYPE_PLAINS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_TYPE_PLAINS),
+        EntityPropertyChoice(VILLAGER_TYPE_SAVANNA, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_TYPE_SAVANNA),
+        EntityPropertyChoice(VILLAGER_TYPE_SNOW, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_TYPE_SNOW),
+        EntityPropertyChoice(VILLAGER_TYPE_SWAMP, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_TYPE_SWAMP),
+        EntityPropertyChoice(VILLAGER_TYPE_TAIGA, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VILLAGER_TYPE_TAIGA),
+    )
+
+    private val mooshroomChoices = listOf(
+        EntityPropertyChoice(MOOSHROOM_RED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MOOSHROOM_RED),
+        EntityPropertyChoice(MOOSHROOM_BROWN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MOOSHROOM_BROWN),
+    )
+
+    private val horseColorChoices = listOf(
+        EntityPropertyChoice(HORSE_WHITE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_WHITE),
+        EntityPropertyChoice(HORSE_CREAMY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_CREAMY),
+        EntityPropertyChoice(HORSE_CHESTNUT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_CHESTNUT),
+        EntityPropertyChoice(HORSE_BROWN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_BROWN),
+        EntityPropertyChoice(HORSE_BLACK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_BLACK),
+        EntityPropertyChoice(HORSE_GRAY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_GRAY),
+        EntityPropertyChoice(HORSE_DARK_BROWN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_DARK_BROWN),
+    )
+
+    private val horseStyleChoices = listOf(
+        EntityPropertyChoice(HORSE_STYLE_NONE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_STYLE_NONE),
+        EntityPropertyChoice(HORSE_STYLE_WHITE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_STYLE_WHITE),
+        EntityPropertyChoice(HORSE_STYLE_WHITEFIELD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_STYLE_WHITEFIELD),
+        EntityPropertyChoice(HORSE_STYLE_WHITE_DOTS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_STYLE_WHITE_DOTS),
+        EntityPropertyChoice(HORSE_STYLE_BLACK_DOTS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_HORSE_STYLE_BLACK_DOTS),
+    )
+
+    private val llamaChoices = listOf(
+        EntityPropertyChoice(LLAMA_CREAMY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_LLAMA_CREAMY),
+        EntityPropertyChoice(LLAMA_WHITE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_LLAMA_WHITE),
+        EntityPropertyChoice(LLAMA_BROWN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_LLAMA_BROWN),
+        EntityPropertyChoice(LLAMA_GRAY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_LLAMA_GRAY),
+    )
+
+    private val parrotChoices = listOf(
+        EntityPropertyChoice(PARROT_RED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARROT_RED),
+        EntityPropertyChoice(PARROT_BLUE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARROT_BLUE),
+        EntityPropertyChoice(PARROT_GREEN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARROT_GREEN),
+        EntityPropertyChoice(PARROT_CYAN, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARROT_CYAN),
+        EntityPropertyChoice(PARROT_GRAY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PARROT_GRAY),
+    )
+
+    private val boatChoices = listOf(
+        EntityPropertyChoice(BOAT_OAK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_OAK),
+        EntityPropertyChoice(BOAT_SPRUCE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_SPRUCE),
+        EntityPropertyChoice(BOAT_BIRCH, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_BIRCH),
+        EntityPropertyChoice(BOAT_JUNGLE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_JUNGLE),
+        EntityPropertyChoice(BOAT_ACACIA, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_ACACIA),
+        EntityPropertyChoice(BOAT_DARK_OAK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_DARK_OAK),
+        EntityPropertyChoice(BOAT_MANGROVE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_MANGROVE),
+        EntityPropertyChoice(BOAT_CHERRY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_CHERRY),
+        EntityPropertyChoice(BOAT_BAMBOO, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_BOAT_BAMBOO),
+    )
+
+    private val pufferChoices = listOf(
+        EntityPropertyChoice(PUFFER_UNPUFFED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PUFFER_UNPUFFED),
+        EntityPropertyChoice(PUFFER_HALF_PUFFED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PUFFER_HALF_PUFFED),
+        EntityPropertyChoice(PUFFER_FULLY_PUFFED, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PUFFER_FULLY_PUFFED),
     )
 
     // 利き手の選択肢です。BukkitのMainHand名と1対1で対応付けます。
@@ -175,6 +497,84 @@ object EntityDataSchema {
         EntityPropertyChoice(MANNEQUIN_POSE_SITTING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_SITTING),
         EntityPropertyChoice(MANNEQUIN_POSE_FALL_FLYING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_FALL_FLYING),
         EntityPropertyChoice(MANNEQUIN_POSE_SPIN_ATTACK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_SPIN_ATTACK),
+    )
+
+    // ゾンビ系の幼体設定対象です。Ageableの幼体設定とは排他的に表示します。
+    private val ZOMBIE_BABY_TYPES = setOf(
+        EntityType.ZOMBIE.name,
+        EntityType.HUSK.name,
+        EntityType.DROWNED.name,
+        EntityType.ZOMBIE_VILLAGER.name,
+    )
+
+    // Sittable能力を持つ代表種別です。実行時は `is Sittable` を最終判定とします。
+    private val SITTABLE_TYPES = setOf(
+        EntityType.WOLF.name,
+        EntityType.CAT.name,
+        EntityType.PARROT.name,
+        EntityType.FOX.name,
+    )
+
+    // 非ゾンビ系のAgeable代表種別です。和集合表示を避けるため、幼体設定が
+    // 意味を持つ主要種別に限定します。実行時は `is Ageable` を最終判定とします。
+    private val AGEABLE_BABY_TYPES = setOf(
+        EntityType.COW.name,
+        EntityType.PIG.name,
+        EntityType.SHEEP.name,
+        EntityType.CHICKEN.name,
+        EntityType.VILLAGER.name,
+        EntityType.WOLF.name,
+        EntityType.CAT.name,
+        EntityType.HORSE.name,
+        EntityType.DONKEY.name,
+        EntityType.MULE.name,
+        EntityType.LLAMA.name,
+        EntityType.TRADER_LLAMA.name,
+        EntityType.RABBIT.name,
+        EntityType.FOX.name,
+        EntityType.FROG.name,
+        EntityType.AXOLOTL.name,
+        EntityType.BEE.name,
+        EntityType.GOAT.name,
+        EntityType.PANDA.name,
+        EntityType.PARROT.name,
+        EntityType.TURTLE.name,
+        EntityType.OCELOT.name,
+        EntityType.POLAR_BEAR.name,
+        EntityType.MOOSHROOM.name,
+        EntityType.STRIDER.name,
+        EntityType.HOGLIN.name,
+        EntityType.PIGLIN.name,
+        EntityType.SNIFFER.name,
+        EntityType.CAMEL.name,
+        EntityType.ARMADILLO.name,
+        EntityType.SKELETON_HORSE.name,
+        EntityType.ZOMBIE_HORSE.name,
+    )
+
+    // ボート系のEntityType集合です。現行Paperでは木材種別ごとに分かれています。
+    // Boat.Type（9種）とは別軸であり、ここでは対象絞り込みに使います。
+    private val BOAT_TYPES = setOf(
+        EntityType.OAK_BOAT.name,
+        EntityType.OAK_CHEST_BOAT.name,
+        EntityType.SPRUCE_BOAT.name,
+        EntityType.SPRUCE_CHEST_BOAT.name,
+        EntityType.BIRCH_BOAT.name,
+        EntityType.BIRCH_CHEST_BOAT.name,
+        EntityType.JUNGLE_BOAT.name,
+        EntityType.JUNGLE_CHEST_BOAT.name,
+        EntityType.ACACIA_BOAT.name,
+        EntityType.ACACIA_CHEST_BOAT.name,
+        EntityType.DARK_OAK_BOAT.name,
+        EntityType.DARK_OAK_CHEST_BOAT.name,
+        EntityType.MANGROVE_BOAT.name,
+        EntityType.MANGROVE_CHEST_BOAT.name,
+        EntityType.CHERRY_BOAT.name,
+        EntityType.CHERRY_CHEST_BOAT.name,
+        EntityType.PALE_OAK_BOAT.name,
+        EntityType.PALE_OAK_CHEST_BOAT.name,
+        EntityType.BAMBOO_RAFT.name,
+        EntityType.BAMBOO_CHEST_RAFT.name,
     )
 
     private val definitions: List<EntityPropertyDefinition> = listOf(
@@ -231,6 +631,151 @@ object EntityDataSchema {
             entityTypes = setOf(EntityType.RABBIT.name),
             enumChoices = rabbitChoices,
             optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_RABBIT_TYPE,
+        ),
+        // 以下はエンティティ固有項目です。対象確定時のみ表示し、和集合表示は行いません。
+        // 能力横断項目は対応EntityType集合で限定し、実行時のcapability判定を最終判定とします。
+        EntityPropertyDefinition(
+            PROPERTY_AGEABLE_BABY, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = AGEABLE_BABY_TYPES,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_AGEABLE_BABY,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_SHEEP_COLOR, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.SHEEP.name),
+            enumChoices = dyeChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_SHEEP_COLOR,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_SHEEP_SHEARED, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.SHEEP.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_SHEEP_SHEARED,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_SLIME_SIZE, EntityPropertyValueKind.INTEGER,
+            entityTypes = setOf(EntityType.SLIME.name, EntityType.MAGMA_CUBE.name),
+            intRange = 1..100,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_SLIME_SIZE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_CREEPER_POWERED, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.CREEPER.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_CREEPER_POWERED,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_SITTABLE_SITTING, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = SITTABLE_TYPES,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_SITTABLE_SITTING,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_COLLAR_COLOR, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.WOLF.name, EntityType.CAT.name),
+            enumChoices = dyeChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_COLLAR_COLOR,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_CAT_TYPE, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.CAT.name),
+            enumChoices = catChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_CAT_TYPE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_AXOLOTL_VARIANT, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.AXOLOTL.name),
+            enumChoices = axolotlChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_AXOLOTL_VARIANT,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_FOX_TYPE, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.FOX.name),
+            enumChoices = foxChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_FOX_TYPE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_FROG_VARIANT, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.FROG.name),
+            enumChoices = frogChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_FROG_VARIANT,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_VILLAGER_PROFESSION, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.VILLAGER.name),
+            enumChoices = villagerProfessionChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_VILLAGER_PROFESSION,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_ZOMBIE_BABY, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = ZOMBIE_BABY_TYPES,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_ZOMBIE_BABY,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_PIG_SADDLE, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.PIG.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_PIG_SADDLE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_PUFFER_STATE, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.PUFFERFISH.name),
+            enumChoices = pufferChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_PUFFER_STATE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_VILLAGER_TYPE, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.VILLAGER.name),
+            enumChoices = villagerTypeChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_VILLAGER_TYPE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MOOSHROOM_VARIANT, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.MOOSHROOM.name),
+            enumChoices = mooshroomChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MOOSHROOM_VARIANT,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_HORSE_COLOR, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.HORSE.name),
+            enumChoices = horseColorChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_HORSE_COLOR,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_HORSE_STYLE, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.HORSE.name),
+            enumChoices = horseStyleChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_HORSE_STYLE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_LLAMA_COLOR, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.LLAMA.name, EntityType.TRADER_LLAMA.name),
+            enumChoices = llamaChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_LLAMA_COLOR,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_PARROT_VARIANT, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.PARROT.name),
+            enumChoices = parrotChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_PARROT_VARIANT,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_SHULKER_COLOR, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.SHULKER.name),
+            enumChoices = dyeChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_SHULKER_COLOR,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_BOAT_TYPE, EntityPropertyValueKind.ENUM,
+            entityTypes = BOAT_TYPES,
+            enumChoices = boatChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_BOAT_TYPE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_BEE_NECTAR, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.BEE.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_BEE_NECTAR,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_BEE_ANGER, EntityPropertyValueKind.INTEGER,
+            entityTypes = setOf(EntityType.BEE.name),
+            intRange = 0..72000,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_BEE_ANGER,
         ),
         EntityPropertyDefinition(
             PROPERTY_MANNEQUIN_PROFILE_NAME, EntityPropertyValueKind.TEXT,
@@ -379,6 +924,10 @@ object EntityDataSchema {
             EntityPropertyValueKind.ENUM ->
                 definition.enumChoices.firstOrNull { it.id == raw }?.let { EntityPropertyValue.EnumValue(it.id) }
             EntityPropertyValueKind.TEXT -> EntityPropertyValue.TextValue(raw)
+            EntityPropertyValueKind.INTEGER -> {
+                val range = definition.intRange ?: return null
+                raw.trim().toIntOrNull()?.takeIf { it in range }?.let(EntityPropertyValue::IntegerValue)
+            }
         }
     }
 
@@ -392,7 +941,31 @@ object EntityDataSchema {
         val definition = byId[propertyId] ?: return false
         if (definition.entityTypes != null && entity.type.name !in definition.entityTypes) return false
         if (definition.requiresLiving && entity !is LivingEntity) return false
-        return true
+        // 種別集合だけでは表現できない能力横断項目は、実体の型で最終判定します。
+        return when (propertyId) {
+            PROPERTY_AGEABLE_BABY -> entity is Ageable && entity !is Zombie
+            PROPERTY_ZOMBIE_BABY -> entity is Zombie
+            PROPERTY_SITTABLE_SITTING -> entity is Sittable
+            PROPERTY_COLLAR_COLOR -> entity is CollarColorable
+            PROPERTY_SHEEP_COLOR, PROPERTY_SHEEP_SHEARED -> entity is Sheep
+            PROPERTY_SLIME_SIZE -> entity is Slime
+            PROPERTY_CREEPER_POWERED -> entity is Creeper
+            PROPERTY_CAT_TYPE -> entity is Cat
+            PROPERTY_AXOLOTL_VARIANT -> entity is Axolotl
+            PROPERTY_FOX_TYPE -> entity is Fox
+            PROPERTY_FROG_VARIANT -> entity is Frog
+            PROPERTY_VILLAGER_PROFESSION, PROPERTY_VILLAGER_TYPE -> entity is Villager
+            PROPERTY_PIG_SADDLE -> entity is Steerable
+            PROPERTY_PUFFER_STATE -> entity is PufferFish
+            PROPERTY_MOOSHROOM_VARIANT -> entity is MushroomCow
+            PROPERTY_HORSE_COLOR, PROPERTY_HORSE_STYLE -> entity is Horse
+            PROPERTY_LLAMA_COLOR -> entity is Llama
+            PROPERTY_PARROT_VARIANT -> entity is Parrot
+            PROPERTY_SHULKER_COLOR -> entity is Shulker
+            PROPERTY_BOAT_TYPE -> entity is Boat
+            PROPERTY_BEE_NECTAR, PROPERTY_BEE_ANGER -> entity is Bee
+            else -> true
+        }
     }
 
     /**
@@ -421,6 +994,21 @@ object EntityDataSchema {
         PROPERTY_MANNEQUIN_SKIN_RIGHT_PANTS,
         PROPERTY_MANNEQUIN_SKIN_HAT,
         -> applyMannequinSkinPart(entity, propertyId, value)
+        // エンティティ固有の真偽値です。適用前に[supports]で可否を判定してください。
+        PROPERTY_AGEABLE_BABY -> (entity as? Ageable)?.let {
+            if (value) it.setBaby() else it.setAdult()
+            true
+        } ?: false
+        PROPERTY_SHEEP_SHEARED -> (entity as? Sheep)?.let { it.isSheared = value; true } ?: false
+        PROPERTY_CREEPER_POWERED -> (entity as? Creeper)?.let { it.isPowered = value; true } ?: false
+        PROPERTY_SITTABLE_SITTING -> (entity as? Sittable)?.let { it.isSitting = value; true } ?: false
+        PROPERTY_ZOMBIE_BABY -> (entity as? Zombie)?.let {
+            // boolean引数版は非推奨のため、AgeableのsetBaby／setAdultを使い分けます。
+            if (value) it.setBaby() else it.setAdult()
+            true
+        } ?: false
+        PROPERTY_PIG_SADDLE -> (entity as? Steerable)?.let { it.setSaddle(value); true } ?: false
+        PROPERTY_BEE_NECTAR -> (entity as? Bee)?.let { it.setHasNectar(value); true } ?: false
         else -> false
     }
 
@@ -459,7 +1047,273 @@ object EntityDataSchema {
             if (valid != null && pose !in valid) return false
             return runCatching { mannequin.setPose(pose); true }.getOrDefault(false)
         }
+        // DyeColor共用選択肢です。羊・首輪・シュルカーで共有します。
+        if (propertyId == PROPERTY_SHEEP_COLOR) {
+            val sheep = entity as? Sheep ?: return false
+            val color = dyeColor(choiceId) ?: return false
+            return runCatching { sheep.color = color; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_COLLAR_COLOR) {
+            val collar = entity as? CollarColorable ?: return false
+            val color = dyeColor(choiceId) ?: return false
+            return runCatching { collar.collarColor = color; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_SHULKER_COLOR) {
+            val shulker = entity as? Shulker ?: return false
+            val color = dyeColor(choiceId) ?: return false
+            return runCatching { shulker.color = color; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_CAT_TYPE) {
+            val cat = entity as? Cat ?: return false
+            val type = catType(choiceId) ?: return false
+            return runCatching { cat.catType = type; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_AXOLOTL_VARIANT) {
+            val axolotl = entity as? Axolotl ?: return false
+            val variant = axolotlVariant(choiceId) ?: return false
+            return runCatching { axolotl.variant = variant; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_FOX_TYPE) {
+            val fox = entity as? Fox ?: return false
+            val type = foxType(choiceId) ?: return false
+            return runCatching { fox.foxType = type; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_FROG_VARIANT) {
+            val frog = entity as? Frog ?: return false
+            val variant = frogVariant(choiceId) ?: return false
+            return runCatching { frog.variant = variant; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_VILLAGER_PROFESSION) {
+            val villager = entity as? Villager ?: return false
+            val profession = villagerProfession(choiceId) ?: return false
+            return runCatching { villager.profession = profession; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_VILLAGER_TYPE) {
+            val villager = entity as? Villager ?: return false
+            val type = villagerType(choiceId) ?: return false
+            return runCatching { villager.villagerType = type; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_MOOSHROOM_VARIANT) {
+            val mooshroom = entity as? MushroomCow ?: return false
+            val variant = mooshroomVariant(choiceId) ?: return false
+            return runCatching { mooshroom.variant = variant; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_HORSE_COLOR) {
+            val horse = entity as? Horse ?: return false
+            val color = horseColor(choiceId) ?: return false
+            return runCatching { horse.color = color; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_HORSE_STYLE) {
+            val horse = entity as? Horse ?: return false
+            val style = horseStyle(choiceId) ?: return false
+            return runCatching { horse.style = style; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_LLAMA_COLOR) {
+            val llama = entity as? Llama ?: return false
+            val color = llamaColor(choiceId) ?: return false
+            return runCatching { llama.color = color; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_PARROT_VARIANT) {
+            val parrot = entity as? Parrot ?: return false
+            val variant = parrotVariant(choiceId) ?: return false
+            return runCatching { parrot.variant = variant; true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_BOAT_TYPE) {
+            val boat = entity as? Boat ?: return false
+            val type = boatType(choiceId) ?: return false
+            // Boat.Type系API自体が非推奨ですが代替手段がないため意図的に使用します。
+            @Suppress("DEPRECATION")
+            val applied = runCatching { boat.boatType = type; true }.getOrDefault(false)
+            return applied
+        }
+        if (propertyId == PROPERTY_PUFFER_STATE) {
+            val puffer = entity as? PufferFish ?: return false
+            val state = when (choiceId) {
+                PUFFER_UNPUFFED -> 0
+                PUFFER_HALF_PUFFED -> 1
+                PUFFER_FULLY_PUFFED -> 2
+                else -> return false
+            }
+            return runCatching { puffer.puffState = state; true }.getOrDefault(false)
+        }
         return false
+    }
+
+    /**
+     * 整数値を適用します。適用前に[supports]で可否を判定してください。
+     *
+     * 範囲検証は [parse] で担保し、ここではBukkit呼び出しの成否だけを扱います。
+     */
+    fun applyInteger(entity: Entity, propertyId: String, value: Int): Boolean = when (propertyId) {
+        PROPERTY_SLIME_SIZE -> (entity as? Slime)?.let {
+            runCatching { it.size = value; true }.getOrDefault(false)
+        } ?: false
+        PROPERTY_BEE_ANGER -> (entity as? Bee)?.let {
+            runCatching { it.anger = value; true }.getOrDefault(false)
+        } ?: false
+        else -> false
+    }
+
+    /** 選択肢IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun dyeColor(choiceId: String): DyeColor? = when (choiceId) {
+        DYE_WHITE -> DyeColor.WHITE
+        DYE_ORANGE -> DyeColor.ORANGE
+        DYE_MAGENTA -> DyeColor.MAGENTA
+        DYE_LIGHT_BLUE -> DyeColor.LIGHT_BLUE
+        DYE_YELLOW -> DyeColor.YELLOW
+        DYE_LIME -> DyeColor.LIME
+        DYE_PINK -> DyeColor.PINK
+        DYE_GRAY -> DyeColor.GRAY
+        DYE_LIGHT_GRAY -> DyeColor.LIGHT_GRAY
+        DYE_CYAN -> DyeColor.CYAN
+        DYE_PURPLE -> DyeColor.PURPLE
+        DYE_BLUE -> DyeColor.BLUE
+        DYE_BROWN -> DyeColor.BROWN
+        DYE_GREEN -> DyeColor.GREEN
+        DYE_RED -> DyeColor.RED
+        DYE_BLACK -> DyeColor.BLACK
+        else -> null
+    }
+
+    /** 猫種類IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun catType(choiceId: String): Cat.Type? = when (choiceId) {
+        CAT_TABBY -> Cat.Type.TABBY
+        CAT_BLACK -> Cat.Type.BLACK
+        CAT_RED -> Cat.Type.RED
+        CAT_SIAMESE -> Cat.Type.SIAMESE
+        CAT_BRITISH_SHORTHAIR -> Cat.Type.BRITISH_SHORTHAIR
+        CAT_CALICO -> Cat.Type.CALICO
+        CAT_PERSIAN -> Cat.Type.PERSIAN
+        CAT_RAGDOLL -> Cat.Type.RAGDOLL
+        CAT_WHITE -> Cat.Type.WHITE
+        CAT_JELLIE -> Cat.Type.JELLIE
+        CAT_ALL_BLACK -> Cat.Type.ALL_BLACK
+        else -> null
+    }
+
+    /** ウーパールーパー種類IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun axolotlVariant(choiceId: String): Axolotl.Variant? = when (choiceId) {
+        AXOLOTL_LUCY -> Axolotl.Variant.LUCY
+        AXOLOTL_WILD -> Axolotl.Variant.WILD
+        AXOLOTL_GOLD -> Axolotl.Variant.GOLD
+        AXOLOTL_CYAN -> Axolotl.Variant.CYAN
+        AXOLOTL_BLUE -> Axolotl.Variant.BLUE
+        else -> null
+    }
+
+    /** キツネ種類IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun foxType(choiceId: String): Fox.Type? = when (choiceId) {
+        FOX_RED -> Fox.Type.RED
+        FOX_SNOW -> Fox.Type.SNOW
+        else -> null
+    }
+
+    /** カエル種類IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun frogVariant(choiceId: String): Frog.Variant? = when (choiceId) {
+        FROG_TEMPERATE -> Frog.Variant.TEMPERATE
+        FROG_WARM -> Frog.Variant.WARM
+        FROG_COLD -> Frog.Variant.COLD
+        else -> null
+    }
+
+    /** 村人職業IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun villagerProfession(choiceId: String): Villager.Profession? = when (choiceId) {
+        VILLAGER_PROFESSION_NONE -> Villager.Profession.NONE
+        VILLAGER_PROFESSION_ARMORER -> Villager.Profession.ARMORER
+        VILLAGER_PROFESSION_BUTCHER -> Villager.Profession.BUTCHER
+        VILLAGER_PROFESSION_CARTOGRAPHER -> Villager.Profession.CARTOGRAPHER
+        VILLAGER_PROFESSION_CLERIC -> Villager.Profession.CLERIC
+        VILLAGER_PROFESSION_FARMER -> Villager.Profession.FARMER
+        VILLAGER_PROFESSION_FISHERMAN -> Villager.Profession.FISHERMAN
+        VILLAGER_PROFESSION_FLETCHER -> Villager.Profession.FLETCHER
+        VILLAGER_PROFESSION_LEATHERWORKER -> Villager.Profession.LEATHERWORKER
+        VILLAGER_PROFESSION_LIBRARIAN -> Villager.Profession.LIBRARIAN
+        VILLAGER_PROFESSION_MASON -> Villager.Profession.MASON
+        VILLAGER_PROFESSION_NITWIT -> Villager.Profession.NITWIT
+        VILLAGER_PROFESSION_SHEPHERD -> Villager.Profession.SHEPHERD
+        VILLAGER_PROFESSION_TOOLSMITH -> Villager.Profession.TOOLSMITH
+        VILLAGER_PROFESSION_WEAPONSMITH -> Villager.Profession.WEAPONSMITH
+        else -> null
+    }
+
+    /** 村人見た目IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun villagerType(choiceId: String): Villager.Type? = when (choiceId) {
+        VILLAGER_TYPE_DESERT -> Villager.Type.DESERT
+        VILLAGER_TYPE_JUNGLE -> Villager.Type.JUNGLE
+        VILLAGER_TYPE_PLAINS -> Villager.Type.PLAINS
+        VILLAGER_TYPE_SAVANNA -> Villager.Type.SAVANNA
+        VILLAGER_TYPE_SNOW -> Villager.Type.SNOW
+        VILLAGER_TYPE_SWAMP -> Villager.Type.SWAMP
+        VILLAGER_TYPE_TAIGA -> Villager.Type.TAIGA
+        else -> null
+    }
+
+    /** ムーシュルーム種類IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun mooshroomVariant(choiceId: String): MushroomCow.Variant? = when (choiceId) {
+        MOOSHROOM_RED -> MushroomCow.Variant.RED
+        MOOSHROOM_BROWN -> MushroomCow.Variant.BROWN
+        else -> null
+    }
+
+    /** 馬毛色IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun horseColor(choiceId: String): Horse.Color? = when (choiceId) {
+        HORSE_WHITE -> Horse.Color.WHITE
+        HORSE_CREAMY -> Horse.Color.CREAMY
+        HORSE_CHESTNUT -> Horse.Color.CHESTNUT
+        HORSE_BROWN -> Horse.Color.BROWN
+        HORSE_BLACK -> Horse.Color.BLACK
+        HORSE_GRAY -> Horse.Color.GRAY
+        HORSE_DARK_BROWN -> Horse.Color.DARK_BROWN
+        else -> null
+    }
+
+    /** 馬模様IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun horseStyle(choiceId: String): Horse.Style? = when (choiceId) {
+        HORSE_STYLE_NONE -> Horse.Style.NONE
+        HORSE_STYLE_WHITE -> Horse.Style.WHITE
+        HORSE_STYLE_WHITEFIELD -> Horse.Style.WHITEFIELD
+        HORSE_STYLE_WHITE_DOTS -> Horse.Style.WHITE_DOTS
+        HORSE_STYLE_BLACK_DOTS -> Horse.Style.BLACK_DOTS
+        else -> null
+    }
+
+    /** ラマ色IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun llamaColor(choiceId: String): Llama.Color? = when (choiceId) {
+        LLAMA_CREAMY -> Llama.Color.CREAMY
+        LLAMA_WHITE -> Llama.Color.WHITE
+        LLAMA_BROWN -> Llama.Color.BROWN
+        LLAMA_GRAY -> Llama.Color.GRAY
+        else -> null
+    }
+
+    /** オウム色IDとBukkitの値の対応です。不明IDはnullとします。 */
+    fun parrotVariant(choiceId: String): Parrot.Variant? = when (choiceId) {
+        PARROT_RED -> Parrot.Variant.RED
+        PARROT_BLUE -> Parrot.Variant.BLUE
+        PARROT_GREEN -> Parrot.Variant.GREEN
+        PARROT_CYAN -> Parrot.Variant.CYAN
+        PARROT_GRAY -> Parrot.Variant.GRAY
+        else -> null
+    }
+
+    /**
+     * ボート種類IDとBukkitの値の対応です。不明IDはnullとします。
+     *
+     * Boat.Type自体がPaper側で非推奨ですが、木材種別ごとのEntityType変換では
+     * 既存個体の種類変更ができないため、代替手段がありません。意図的に使用します。
+     */
+    @Suppress("DEPRECATION")
+    fun boatType(choiceId: String): Boat.Type? = when (choiceId) {
+        BOAT_OAK -> Boat.Type.OAK
+        BOAT_SPRUCE -> Boat.Type.SPRUCE
+        BOAT_BIRCH -> Boat.Type.BIRCH
+        BOAT_JUNGLE -> Boat.Type.JUNGLE
+        BOAT_ACACIA -> Boat.Type.ACACIA
+        BOAT_DARK_OAK -> Boat.Type.DARK_OAK
+        BOAT_MANGROVE -> Boat.Type.MANGROVE
+        BOAT_CHERRY -> Boat.Type.CHERRY
+        BOAT_BAMBOO -> Boat.Type.BAMBOO
+        else -> null
     }
 
     /**

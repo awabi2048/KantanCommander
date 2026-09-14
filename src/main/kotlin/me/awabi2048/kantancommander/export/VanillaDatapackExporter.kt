@@ -13,6 +13,8 @@ import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.DisplayTextTiming
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.ExecutionContextSpec
@@ -140,17 +142,23 @@ class VanillaDatapackExporter(
                     // ここでは扱いません。
                     else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
-                CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
-                    "tag" -> Unit
-                    "attribute" -> {
-                        if (!EntityAttributeSupport.isAttributeId(node.string(EntityAttributeSupport.PARAM_ATTRIBUTE))) {
+                CommandType.ENTITY_OPERATION -> when (val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))) {
+                    is EntityDataPath.Parsed.Tag -> {
+                        // 複数タグは単一バニラコマンドへ正確に変換できないため未対応とします。
+                        val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+                        if (entries == null || !EntityTagEntries.isValid(entries) || entries.size != 1) {
+                            errors += "${script.id}/${node.id}: 複数タグはバニラ出力に未対応です"
+                        }
+                    }
+                    is EntityDataPath.Parsed.Attribute -> {
+                        if (!EntityAttributeSupport.isAttributeId(parsed.attributeId)) {
                             errors += "${script.id}/${node.id}: バニラに存在しないattributeです"
                         }
                     }
                     // 型付きデータ編集はバニラの等価表現へ正確に変換できないため、
                     // 不正確な変換を行わず未対応として明示します。
-                    "data" -> errors += "${script.id}/${node.id}: データ編集はバニラ出力に未対応です"
-                    else -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
+                    is EntityDataPath.Parsed.Property -> errors += "${script.id}/${node.id}: データ編集はバニラ出力に未対応です"
+                    null -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
                 CommandType.PLACE_ITEM -> validatePlaceItemExport(script, node, errors)
                 CommandType.PARTICLE -> {
@@ -1471,9 +1479,11 @@ class VanillaDatapackExporter(
             "ride" -> "ride ${effectiveTarget(node)} mount ${singleSelector(requireNotNull(node.secondaryTargetSpec))}"
             else -> null
         }
-        CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
-            "tag" -> "tag ${effectiveTarget(node)} ${node.string("tagOperation", "add")} ${node.string("tag")}"
-            "attribute" -> attributeCommand(node)
+        CommandType.ENTITY_OPERATION -> when (val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))) {
+            // タグ一覧の先頭1件のみを出力します。複数件はバニラの等価表現へ
+            // 正確に変換できないため、事前検査で未対応を明示します。
+            is EntityDataPath.Parsed.Tag -> tagCommand(node)
+            is EntityDataPath.Parsed.Attribute -> attributeCommand(node, parsed.attributeId)
             // データ編集はバニラの等価表現へ正確に変換できないため出力しません（事前検査で未対応を明示します）。
             else -> null
         }
@@ -1827,33 +1837,28 @@ class VanillaDatapackExporter(
      * 展開します。複数対象セレクターをそのまま渡すと無効になるためです。
      * 外側の `store success` 包みと組で、実行側の「1件以上適用」と一致します。
      */
-    private fun attributeCommand(node: CommandNode): String? {
-        val attribute = node.string(EntityAttributeSupport.PARAM_ATTRIBUTE).takeIf(String::isNotBlank)
+    /**
+     * タグ一覧の先頭1件をバニラのtagコマンドへ変換します。
+     *
+     * 複数件の一括変換は行わず、2件以上ある場合はnullとして事前検査側で
+     * 未対応を明示します。単一タグの等価性は実行側と一致します。
+     */
+    private fun tagCommand(node: CommandNode): String? {
+        val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+            ?.takeIf(EntityTagEntries::isValid)
+            ?.takeIf { it.size == 1 }
+            ?: return null
+        val entry = entries.single()
+        return "tag ${effectiveTarget(node)} ${entry.mode} ${entry.tag}"
+    }
+
+    private fun attributeCommand(node: CommandNode, attributeId: String): String? {
+        val attribute = attributeId.takeIf(String::isNotBlank)
             ?: return null
         val target = effectiveTarget(node)
-        return when (node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)) {
-            EntityAttributeSupport.OPERATION_BASE_VALUE -> {
-                val value = node.string(EntityAttributeSupport.PARAM_AMOUNT).takeIf(String::isNotBlank)
-                    ?: return null
-                "execute as $target run attribute @s $attribute base set $value"
-            }
-            EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
-                val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
-                    ?: return null
-                val amount = node.string(EntityAttributeSupport.PARAM_AMOUNT).takeIf(String::isNotBlank)
-                    ?: return null
-                val operation = EntityAttributeSupport.vanillaModifierOperation(
-                    node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION),
-                ) ?: return null
-                "execute as $target run attribute @s $attribute modifier add $key $amount $operation"
-            }
-            EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
-                val key = node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY).takeIf(String::isNotBlank)
-                    ?: return null
-                "execute as $target run attribute @s $attribute modifier remove $key"
-            }
-            else -> null
-        }
+        val value = node.string(EntityAttributeSupport.PARAM_VALUE).takeIf(String::isNotBlank)
+            ?: return null
+        return "execute as $target run attribute @s $attribute base set $value"
     }
 
     private fun collectWarnings(graph: CommandGraph, path: String, warnings: MutableList<String>) {

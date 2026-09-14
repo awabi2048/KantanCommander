@@ -217,9 +217,9 @@ private val DIRECT_VARIABLE_FIELDS = setOf("variable")
 private val REGISTRY_FIELDS = setOf("summonEntity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
 private val NON_TEXT_FIELDS = setOf(
     "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot", "placeDestination",
-    "tagOperation", "soundScope", "soundOperation", "soundCategory",
+    "soundScope", "soundOperation", "soundCategory",
     "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
-    "attributeOperation", "modifierOperation", "property",
+    "entityDataPath",
 )
 
 internal data class PreparedProgram(

@@ -822,23 +822,18 @@ enum class CommandType(
         "motionZ" to "0.0",
     )),
     /**
-     * issue #32 の「エンティティを操作」です。
+     * 「エンティティを操作」です。
      *
-     * 旧ENTITY_ACTIONに同居していたtagを移行し、attribute操作と型付きデータ編集を
-     * 担います。即時的な移動・関係変化（ride／dismount／motion）はENTITY_ACTIONに残し、
+     * 統合選択形式で、設定対象は単一ID [EntityDataPath.PARAM_PATH] で表します。
+     * 旧形式の `operation` 3択・modifier操作は廃止し、タグは一覧管理、
+     * attributeはbase値設定のみ、データは型付き設定として扱います。
+     * 即時的な移動・関係変化（ride／dismount／motion）はENTITY_ACTIONに残し、
      * Entity自身の状態・データ変更はこちらへ分離します。
-     * 旧equipは #21 のPLACE_ITEMへの移行完了に伴いENTITY_ACTION側の互換を終了します。
      */
     ENTITY_OPERATION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_OPERATION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_OPERATION_DESCRIPTION, Material.NAME_TAG, mapOf(
-        "operation" to "tag",
-        "tagOperation" to "add",
-        "tag" to "",
-        EntityAttributeSupport.PARAM_ATTRIBUTE to "",
-        EntityAttributeSupport.PARAM_OPERATION to EntityAttributeSupport.OPERATION_BASE_VALUE,
-        EntityAttributeSupport.PARAM_MODIFIER_KEY to "",
-        EntityAttributeSupport.PARAM_AMOUNT to "0.0",
-        EntityAttributeSupport.PARAM_MODIFIER_OPERATION to EntityAttributeSupport.MODIFIER_ADD_NUMBER,
-        EntityDataSchema.PARAM_PROPERTY to "",
+        EntityDataPath.PARAM_PATH to "",
+        EntityTagEntries.PARAM_ENTRIES to "",
+        EntityAttributeSupport.PARAM_VALUE to "0.0",
         EntityDataSchema.PARAM_VALUE to "",
     )),
     DISPLAY_TEXT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_DISPLAY_TEXT_DESCRIPTION, Material.WRITABLE_BOOK, mapOf(

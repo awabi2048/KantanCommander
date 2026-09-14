@@ -14,8 +14,10 @@ import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.DiskArgument
 import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
@@ -117,15 +119,16 @@ enum class CommandSettingEditor {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
-    ENTITY_OPERATION,
-    ENTITY_ATTRIBUTE_OPERATION,
-    ENTITY_MODIFIER_OPERATION,
-    ENTITY_PROPERTY,
+    /** 統合選択画面（設定する項目の一覧）です。旧3択を置換します。 */
+    ENTITY_DATA_ROOT,
+    /** attribute子画面（設定可能なattributeの一覧）です。 */
+    ENTITY_ATTRIBUTE_SELECT,
+    /** タグ一覧画面（カード列挙・追加・モード切替・削除）です。 */
+    ENTITY_TAG_LIST,
     ENTITY_PROPERTY_VALUE,
     PLACE_DESTINATION,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
-    ENTITY_TAG_OPERATION,
     VARIABLE_SCOPE,
     VARIABLE_NAME,
     VARIABLE_PROPERTY,
@@ -351,49 +354,36 @@ object CommandSettingsModel {
                 // 旧tagは#32のENTITY_OPERATIONへ移行済みのため許可リストから外します。
                 else -> fields.filter { it.key in setOf("target", "action") }
             }
-            // issue #32: エンティティ操作の操作ごとに許可リストを明示します。
-            node.type == CommandType.ENTITY_OPERATION -> when (node.string("operation", "tag")) {
-                "tag" -> fields.filter { it.key in setOf("target", "operation", "tagOperation", "tag") }
-                "attribute" -> when (node.string(
-                    EntityAttributeSupport.PARAM_OPERATION,
-                    EntityAttributeSupport.OPERATION_BASE_VALUE,
-                )) {
-                    EntityAttributeSupport.OPERATION_MODIFIER_ADD -> fields.filter {
-                        it.key in setOf(
-                            "target", "operation",
-                            EntityAttributeSupport.PARAM_ATTRIBUTE,
-                            EntityAttributeSupport.PARAM_OPERATION,
-                            EntityAttributeSupport.PARAM_MODIFIER_KEY,
-                            EntityAttributeSupport.PARAM_AMOUNT,
-                            EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
-                        )
-                    }
-                    EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> fields.filter {
-                        it.key in setOf(
-                            "target", "operation",
-                            EntityAttributeSupport.PARAM_ATTRIBUTE,
-                            EntityAttributeSupport.PARAM_OPERATION,
-                            EntityAttributeSupport.PARAM_MODIFIER_KEY,
-                        )
-                    }
-                    else -> fields.filter {
-                        it.key in setOf(
-                            "target", "operation",
-                            EntityAttributeSupport.PARAM_ATTRIBUTE,
-                            EntityAttributeSupport.PARAM_OPERATION,
-                            EntityAttributeSupport.PARAM_AMOUNT,
-                        )
-                    }
-                }
-                // 設定値は項目選択後に種類別の編集へ進むため、親タブ列には出しません。
-                // 項目選択→値設定の2段階フローにします。
-                "data" -> fields.filter {
+            // 統合選択形式では設定対象IDで許可リストを切り替えます。
+            // 真偽値は統合選択画面のクリックで直接切り替えるため、値タブを持ちません。
+            // 有限候補は子画面、文字列・整数・attribute値はDialog入力へ進みます。
+            node.type == CommandType.ENTITY_OPERATION -> when (val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))) {
+                is EntityDataPath.Parsed.Tag -> fields.filter {
                     it.key in setOf(
-                        "target", "operation",
-                        EntityDataSchema.PARAM_PROPERTY,
+                        "target", EntityDataPath.PARAM_PATH,
+                        EntityTagEntries.PARAM_ENTRIES,
                     )
                 }
-                else -> fields.filter { it.key in setOf("target", "operation") }
+                is EntityDataPath.Parsed.Attribute -> fields.filter {
+                    it.key in setOf(
+                        "target", EntityDataPath.PARAM_PATH,
+                        EntityAttributeSupport.PARAM_VALUE,
+                    )
+                }
+                is EntityDataPath.Parsed.Property -> {
+                    val kind = EntityDataSchema.definition(parsed.propertyId)?.valueKind
+                    if (kind == EntityPropertyValueKind.TEXT || kind == EntityPropertyValueKind.INTEGER) {
+                        fields.filter {
+                            it.key in setOf(
+                                "target", EntityDataPath.PARAM_PATH,
+                                EntityDataSchema.PARAM_VALUE,
+                            )
+                        }
+                    } else {
+                        fields.filter { it.key in setOf("target", EntityDataPath.PARAM_PATH) }
+                    }
+                }
+                null -> fields.filter { it.key in setOf("target", EntityDataPath.PARAM_PATH) }
             }
             // 配置先で要求する対象が変わります。エンティティ系は対象欄、
             // ブロックコンテナ系は配置位置欄を使い、もう一方は出しません。
@@ -626,16 +616,16 @@ object CommandSettingsModel {
      */
     fun gestureVisibleFields(node: CommandNode): List<EditorField> =
         visibleFields(node).filter { field ->
-            // modifier追加時は量を演算選択画面の行から編集するため、量タブを出しません。
-            // Gestureの通常タブ列の上限（6件）に収めるためです。Inventory GUIには
-            // 上限がないため、visibleFields側（量タブ）は残します。
-            !(node.type == CommandType.ENTITY_OPERATION &&
-                node.string("operation", "tag") == "attribute" &&
-                node.string(
-                    EntityAttributeSupport.PARAM_OPERATION,
-                    EntityAttributeSupport.OPERATION_BASE_VALUE,
-                ) == EntityAttributeSupport.OPERATION_MODIFIER_ADD &&
-                field.key == EntityAttributeSupport.PARAM_AMOUNT)
+            // エンティティ操作の詳細（タグ一覧・attribute値・設定値）は
+            // 子画面で編集するため、タブ列には出しません。タブ列が選択で
+            // 増減すると表示と経路がずれるため、対象・項目・実行位置に固定します。
+            // Inventory GUIの直接編集行はvisibleFields側に残します。
+            node.type != CommandType.ENTITY_OPERATION ||
+                field.key !in setOf(
+                    EntityTagEntries.PARAM_ENTRIES,
+                    EntityAttributeSupport.PARAM_VALUE,
+                    EntityDataSchema.PARAM_VALUE,
+                )
         }.map { field ->
             if (node.type == CommandType.DISPLAY_TEXT &&
                 field.key == "staySeconds" &&
@@ -714,16 +704,7 @@ object CommandSettingsModel {
             }
             CommandType.ENTITY_OPERATION -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
-                "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
-                "tagOperation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG_OPERATION
-                "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAG
-                EntityAttributeSupport.PARAM_ATTRIBUTE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ATTRIBUTE
-                EntityAttributeSupport.PARAM_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
-                EntityAttributeSupport.PARAM_MODIFIER_KEY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODIFIER_KEY
-                EntityAttributeSupport.PARAM_AMOUNT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_MODIFIER_AMOUNT
-                EntityAttributeSupport.PARAM_MODIFIER_OPERATION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
-                EntityDataSchema.PARAM_PROPERTY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY
-                EntityDataSchema.PARAM_VALUE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PROPERTY_VALUE
+                EntityDataPath.PARAM_PATH -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY_DATA
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.PLACE_ITEM -> when (fieldKey) {
@@ -925,6 +906,15 @@ object CommandSettingsModel {
                 "entityId", "entity" -> "entity"
                 else -> validationFieldKey
             }
+            // 詳細タブを持たないため、検証結果は設定対象タブへ投影します。
+            CommandType.ENTITY_OPERATION -> when (validationFieldKey) {
+                EntityDataPath.PARAM_PATH,
+                EntityTagEntries.PARAM_ENTRIES,
+                EntityAttributeSupport.PARAM_VALUE,
+                EntityDataSchema.PARAM_VALUE,
+                -> EntityDataPath.PARAM_PATH
+                else -> validationFieldKey
+            }
             else -> validationFieldKey
         }
         return gestureVisibleFields(node).firstOrNull { it.key == visibleKey }?.key
@@ -959,23 +949,18 @@ object CommandSettingsModel {
         }
         CommandType.ENTITY_OPERATION -> when (fieldKey) {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
-            "operation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OPERATION)
-            "tagOperation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_TAG_OPERATION)
-            EntityAttributeSupport.PARAM_ATTRIBUTE -> text()
-            EntityAttributeSupport.PARAM_OPERATION ->
-                CommandSettingDescriptor(CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION)
-            EntityAttributeSupport.PARAM_MODIFIER_KEY -> text()
-            EntityAttributeSupport.PARAM_AMOUNT -> text()
-            EntityAttributeSupport.PARAM_MODIFIER_OPERATION ->
-                CommandSettingDescriptor(CommandSettingEditor.ENTITY_MODIFIER_OPERATION)
-            EntityDataSchema.PARAM_PROPERTY -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY)
-            // issue #32: 設定値の編集経路は項目の型で振り分けます。
-            // 文字列はDialog直結（TEXT）のため子画面を持たず、
-            // 真偽値・有限候補は専用画面で編集します。
+            EntityDataPath.PARAM_PATH -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_DATA_ROOT)
+            EntityTagEntries.PARAM_ENTRIES -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_TAG_LIST)
+            EntityAttributeSupport.PARAM_VALUE -> text()
+            // 設定値の編集経路は項目の型で振り分けます。
+            // 真偽値は統合選択画面のクリックで直接切り替えるため子画面を持たず、
+            // 有限候補は専用画面、文字列・整数はDialog直結で編集します。
             EntityDataSchema.PARAM_VALUE -> {
-                val kind = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))?.valueKind
-                if (kind == EntityPropertyValueKind.TEXT) text()
-                else CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY_VALUE)
+                val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
+                val kind = propertyId?.let { EntityDataSchema.definition(it)?.valueKind }
+                if (kind == EntityPropertyValueKind.ENUM) {
+                    CommandSettingDescriptor(CommandSettingEditor.ENTITY_PROPERTY_VALUE)
+                } else text()
             }
             else -> text()
         }

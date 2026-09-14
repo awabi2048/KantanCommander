@@ -107,11 +107,11 @@ class EditorMenuLayoutTest {
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DESTINATION_FACING, teleportFacing.descriptionKey)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DESTINATION_FACING, teleportFacing.actionKey)
 
-        // 旧tag欄はENTITY_OPERATIONへ移行済みのため、ENTITY_ACTION側には出しません。
-        val tagOperation = EditorMenuLayout.fields(CommandType.ENTITY_OPERATION).single { it.key == "tagOperation" }
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION, tagOperation.label)
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAG_OPERATION, tagOperation.descriptionKey)
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAG_OPERATION, tagOperation.actionKey)
+        // タグ一覧はENTITY_OPERATIONの統合選択配下で扱い、単一タグ欄は出しません。
+        val tagEntries = EditorMenuLayout.fields(CommandType.ENTITY_OPERATION).single { it.key == "tagEntries" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_ENTRIES, tagEntries.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAGS, tagEntries.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAGS, tagEntries.actionKey)
 
         val summonFields = EditorMenuLayout.fields(CommandType.SUMMON_ENTITY)
         val customName = summonFields.single { it.key == "customName" }
@@ -144,8 +144,12 @@ class EditorMenuLayoutTest {
         assertFalse(entityFields.any { it.key == "tag" || it.key == "tagOperation" })
         assertFalse(entityFields.any { it.key == "itemData" })
         assertEquals(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_TAG,
-            EditorMenuLayout.fields(CommandType.ENTITY_OPERATION).single { it.key == "tag" }.descriptionKey,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAGS,
+            EditorMenuLayout.fields(CommandType.ENTITY_OPERATION).single { it.key == "tagEntries" }.descriptionKey,
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA,
+            EditorMenuLayout.fields(CommandType.ENTITY_OPERATION).single { it.key == "entityDataPath" }.label,
         )
 
         val placeFields = EditorMenuLayout.fields(CommandType.PLACE_ITEM)
