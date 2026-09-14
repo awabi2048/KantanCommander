@@ -491,7 +491,8 @@ object DeclarativeSettings {
                 absolute = placed(frame, card.cx, card.cy, card.w, card.h),
             )
             card.icon?.let { icon ->
-                val iconSize = minOf(card.w, card.h) * 0.62
+                // 親タブ直下の小型セルでも視認できるよう、セル短辺の93%で表示します。
+                val iconSize = minOf(card.w, card.h) * 0.93
                 nodes += GestureGuiItem(
                     item = icon,
                     scale = iconSize,

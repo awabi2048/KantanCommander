@@ -184,8 +184,9 @@ class GestureLowerPanel(
      *
      * 子画面遷移は行いません。表示は使用頻度の高い [ResourcePresets] 24件に限定し、
      * プリセット外の値は入力カードからのDialog入力と候補検索でのみ指定します。
-     * 保存・検証の正本は全件のまま変えません。現在値がプリセット外のときは
-     * 入力カードを選択済みとして扱い、Nameへ生値を出しません。
+     * 保存・検証の正本は全件のまま変えません。一覧を上、入力カードを下に置き、
+     * 現在値がプリセット外のときは入力カードを選択済みとして扱います。
+     * Nameへ生値を出しません。
      * グリッド位置は呼び出し側が項目行に合わせて指定します。
      */
     private fun appendInlineResourcePicker(
@@ -204,6 +205,8 @@ class GestureLowerPanel(
         val currentRaw = CommandDialogSpecs.normalize(fieldKey, node.string(fieldKey))
         // プリセット外の現在値は入力カード側を選択済みにします。
         val isCurrentPreset = ResourcePresets.isPreset(kind, currentRaw)
+        // ホバー文言は一覧と重ならないよう、1枠分下げた位置へ表示します。
+        val hoverY = HOVER_SLOT_Y - INLINE_RESOURCE_GRID_PITCH_Y
         val cards = ids.mapIndexed { index, id ->
             val selected = CommandDialogSpecs.normalize(fieldKey, id) == currentRaw ||
                 id == node.string(fieldKey)
@@ -213,7 +216,7 @@ class GestureLowerPanel(
                 elementId = InlineResourcePicker.pickElementId(fieldKey, id),
                 icon = ItemStack(ResourcePickerIcons.resolve(kind, id)),
                 background = Bukkit.createBlockData(
-                    if (selected) Material.CYAN_TERRACOTTA else Material.GRAY_CONCRETE,
+                    if (selected) Material.CYAN_TERRACOTTA else Material.LIGHT_GRAY_CONCRETE,
                 ),
                 outline = if (selected) {
                     GestureSettingVisualPolicy.nonTabOutlineMaterial(true)?.let { Bukkit.createBlockData(it) }
@@ -230,13 +233,13 @@ class GestureLowerPanel(
                             Component.text(id),
                         ),
                         x = HOVER_SLOT_X,
-                        y = HOVER_SLOT_Y,
+                        y = hoverY,
                     )
                 } else {
                     multiLineHover(
                         listOf(ResourcePicker.displayName(kind, id), id),
                         x = HOVER_SLOT_X,
-                        y = HOVER_SLOT_Y,
+                        y = hoverY,
                     )
                 },
                 visualIndex = index,
@@ -263,7 +266,7 @@ class GestureLowerPanel(
                 hover = singleLineHover(
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_RESOURCE_ID_INPUT),
                     x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
+                    y = hoverY,
                 ),
                 visualTag = "lower-inline-input",
                 outline = if (!isCurrentPreset && currentRaw.isNotBlank()) {
@@ -1697,22 +1700,31 @@ class GestureLowerPanel(
             )
         }
             // 一時変数参照に対応したID項目（効果音・効果）は、直接値のとき
-            // プリセット一覧と入力カードを親タブ直下へ直接配置します。
+            // プリセット一覧を上、プレビューと入力カードを下へ直接配置します。
             // 子画面遷移は行いません。
             val literalPickerKind = if (selectedSource == CommandValueSource.LITERAL) {
                 ResourcePicker.kindForFieldKey(field.key)
             } else null
-            appendTypedValuePreview(
-                nodes, frame, node, field.key, selectedSource, state.scriptId, player,
-                compact = literalPickerKind != null,
-            )
             if (literalPickerKind != null) {
+                val inlineGridTopY = SETTING_INPUT_CENTER_Y - INLINE_RESOURCE_TYPED_GRID_TOP_DY
+                val inlinePreviewY =
+                    inlineGridTopY - 2 * INLINE_RESOURCE_GRID_PITCH_Y - INLINE_RESOURCE_INPUT_BELOW_DY
                 appendInlineResourcePicker(
                     nodes, frame, player, node, field.key, literalPickerKind,
-                    gridTopY = TYPED_VALUE_PREVIEW_CENTER_Y - INLINE_RESOURCE_TYPED_GRID_TOP_DY,
+                    gridTopY = inlineGridTopY,
                     inputCx = 0.58,
-                    inputCy = TYPED_VALUE_PREVIEW_CENTER_Y,
+                    inputCy = inlinePreviewY,
                     inputW = 0.56,
+                )
+                appendTypedValuePreview(
+                    nodes, frame, node, field.key, selectedSource, state.scriptId, player,
+                    compact = true,
+                    centerY = inlinePreviewY,
+                )
+            } else {
+                appendTypedValuePreview(
+                    nodes, frame, node, field.key, selectedSource, state.scriptId, player,
+                    compact = false,
                 )
             }
         } else if (heldMainHandSetting || dialogInputSetting) {
@@ -1724,11 +1736,13 @@ class GestureLowerPanel(
             // 直接配置します。子画面遷移は行いません。
             val pickerKind = ResourcePicker.kindForFieldKey(field.key)
             if (!heldMainHandSetting && pickerKind != null) {
+                // 一覧を上、入力カードを下に置きます。
+                val inlineGridTopY = inputCenterY - INLINE_RESOURCE_GRID_TOP_DY
                 appendInlineResourcePicker(
                     nodes, frame, player, node, field.key, pickerKind,
-                    gridTopY = inputCenterY - INLINE_RESOURCE_GRID_TOP_DY,
+                    gridTopY = inlineGridTopY,
                     inputCx = 0.28,
-                    inputCy = inputCenterY,
+                    inputCy = inlineGridTopY - 2 * INLINE_RESOURCE_GRID_PITCH_Y - INLINE_RESOURCE_INPUT_BELOW_DY,
                     inputW = 1.2,
                 )
             } else {
@@ -2047,6 +2061,8 @@ class GestureLowerPanel(
         player: Player,
         // issue #29: 一覧選択カードと並べるときは試聴カードを左半分へ寄せます。
         compact: Boolean = false,
+        // 親タブ直下の一覧の下へ置くときは、呼び出し側が行位置を指定します。
+        centerY: Double = TYPED_VALUE_PREVIEW_CENTER_Y,
     ) {
         if (source != CommandValueSource.LITERAL) return
         val mapping = when (fieldKey) {
@@ -2092,7 +2108,7 @@ class GestureLowerPanel(
                     if (configured) material else DisabledGuiVisualPolicy.material,
                 ),
                 cx = if (compact) -0.02 else TYPED_VALUE_PREVIEW_CENTER_X,
-                cy = TYPED_VALUE_PREVIEW_CENTER_Y,
+                cy = centerY,
                 w = if (compact) 0.56 else TYPED_VALUE_PREVIEW_WIDTH,
                 h = TYPED_VALUE_PREVIEW_HEIGHT,
                 labelSize = 0.0043,
@@ -4875,10 +4891,12 @@ class GestureLowerPanel(
         const val INLINE_RESOURCE_GRID_PITCH_X = 0.14
         const val INLINE_RESOURCE_GRID_PITCH_Y = 0.085
         const val INLINE_RESOURCE_GRID_LEFT_X = -0.27
-        // 通常入力行の下へ3行を置くための、入力行からの下げ幅です。
-        const val INLINE_RESOURCE_GRID_TOP_DY = 0.14
-        // 一時変数参照項目のプレビュー下へ3行を置くための、プレビュー行からの下げ幅です。
-        const val INLINE_RESOURCE_TYPED_GRID_TOP_DY = 0.105
+        // 通常入力行の直下へ3行を置くための、入力行からの下げ幅です。
+        const val INLINE_RESOURCE_GRID_TOP_DY = 0.03
+        // 一時変数参照項目の方式行の直下へ3行を置くための、方式行からの下げ幅です。
+        const val INLINE_RESOURCE_TYPED_GRID_TOP_DY = 0.115
+        // 一覧の下へ入力カードを置くための、グリッド2行分を超える下げ幅です。
+        const val INLINE_RESOURCE_INPUT_BELOW_DY = 0.115
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",

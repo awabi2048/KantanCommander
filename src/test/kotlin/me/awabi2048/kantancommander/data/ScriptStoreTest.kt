@@ -99,7 +99,7 @@ class ScriptStoreTest {
         store.save(script)
 
         val loaded = requireNotNull(store.load(script.id))
-        val copy = store.copyForPlacement(loaded)
+        val copy = requireNotNull(store.copyForPlacement(loaded))
         copy.graph.nodes[node.id]?.params?.set("text", "changed")
         assertEquals("", loaded.graph.nodes[node.id]?.string("text"))
         assertNotEquals(script.id, copy.id)
@@ -124,9 +124,26 @@ class ScriptStoreTest {
         // 折り畳み自体は実行内容のため、ディスク内容ありと判定する。
         assertTrue(loaded.hasDiskContent())
 
-        val copy = store.copyForPlacement(loaded)
+        val copy = requireNotNull(store.copyForPlacement(loaded))
         copy.graph.nodes.getValue(start.id).foldedGraph?.nodes?.getValue(body.id)?.params?.set("text", "changed")
         assertEquals("", loaded.graph.nodes.getValue(start.id).foldedGraph?.nodes?.getValue(body.id)?.string("text"))
+    }
+
+    @Test
+    fun `placement copy migrates embedded previous generation formats`() {
+        val store = ScriptStore(temp.resolve("embedded-migration"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "test")
+        val node = CommandType.DISPLAY_TEXT.newNode()
+        script.graph = CommandGraph(node.id, linkedMapOf(node.id to node))
+        store.save(script)
+
+        val loaded = requireNotNull(store.load(script.id))
+        // 直前世代の同梱スナップショットは移行して配置できる。
+        val migrated = requireNotNull(store.copyForPlacement(loaded.copy(formatVersion = 16)))
+        assertEquals(17, migrated.formatVersion)
+        assertNotEquals(loaded.id, migrated.id)
+        // 受付対象外の旧形式は例外を逃がさずnullとなり、設置側は正常に拒否できる。
+        assertNull(store.copyForPlacement(loaded.copy(formatVersion = 14)))
     }
 
     @Test

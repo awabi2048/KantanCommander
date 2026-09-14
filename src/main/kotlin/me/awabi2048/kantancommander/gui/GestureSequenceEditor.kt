@@ -5429,14 +5429,64 @@ class GestureSequenceEditor(
      *
      * VIBRATION／TRAILは終点XYZを1群として束ねた入力欄から単一詳細文字列へ
      * 合成します。保存形式は従来の1文字列のまま変えません。
+     * 種類欄は「候補を表示」による補完に対応し、候補確定時は種類欄だけを
+     * 置き換えて同じダイアログへ戻します。即時保存はしません。
      */
     private fun showParticleDialog(
         player: Player,
         context: CommandSettingContext,
         node: CommandNode,
+        particleOverride: String? = null,
+        particleCandidates: List<String> = emptyList(),
     ) {
-        val inputs = CommandDialogSpecs.particleInputs(node)
-        val particle = ParticleSettings.particle(node)
+        // 候補確定時は種類欄だけを置き換え、詳細欄の入力途中値は維持します。
+        // 確定せずに閉じた場合も残さないため、次回の新規表示は保存値から始まります。
+        val pending = pendingParticleDialogValues.remove(player.uniqueId).orEmpty()
+        val effectiveNode = if (particleOverride != null) {
+            node.copy(params = (node.params + mapOf(ParticleSettings.PARAM_PARTICLE to particleOverride)).toMutableMap())
+        } else node
+        val inputs = CommandDialogSpecs.particleInputs(effectiveNode)
+        val particle = ParticleSettings.particle(effectiveNode)
+        val candidateButtons = particleCandidates.take(12).map { candidate ->
+            MenuDialogButton(
+                Component.text(candidate),
+                MenuDialogHandler { target, response ->
+                    if (target.uniqueId != player.uniqueId ||
+                        !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                    ) {
+                        if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                        return@MenuDialogHandler MenuActionResult.Ignored
+                    }
+                    val current = nodeStringMap(response, inputs.map { it.id })
+                    pendingParticleDialogValues[player.uniqueId] = current
+                    showParticleDialog(player, context, node, particleOverride = candidate, particleCandidates = emptyList())
+                    MenuActionResult.Success(MenuUpdate.None)
+                },
+            )
+        }
+        val candidateFooterActions = listOf(MenuDialogButton(
+            KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
+            MenuDialogHandler { target, response ->
+                val ownerId = ownerIdFor(player)
+                if (target.uniqueId != player.uniqueId || !canOperateSharedActor(ownerId, target.uniqueId)) {
+                    if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                    return@MenuDialogHandler MenuActionResult.Ignored
+                }
+                // 候補判定は種類欄の内容だけを見ます。詳細欄はクエリに含めず、
+                // 入力途中の値も破棄しません。
+                val query = response.textValue(ParticleSettings.PARAM_PARTICLE).trim()
+                pendingParticleDialogValues[player.uniqueId] =
+                    nodeStringMap(response, inputs.map { it.id })
+                showParticleDialog(
+                    player,
+                    context,
+                    node,
+                    particleOverride = particleOverride,
+                    particleCandidates = CommandDialogSpecs.suggestionsFromInput(ParticleSettings.PARAM_PARTICLE, query),
+                )
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+        ))
         showInputDialog(
             player = player,
             body = if (particle != null && ParticleSettings.requiresData(particle)) {
@@ -5444,8 +5494,19 @@ class GestureSequenceEditor(
             } else {
                 emptyList()
             },
-            inputs = inputs.map { it.toMenuInput(player) },
+            inputs = inputs.map {
+                if (it.id == ParticleSettings.PARAM_PARTICLE && particleOverride != null) {
+                    it.copy(initial = particleOverride).toMenuInput(player)
+                } else {
+                    it.copy(initial = pending[it.id] ?: it.initial).toMenuInput(player)
+                }
+            },
+            additionalActions = candidateButtons,
+            footerActions = candidateFooterActions,
+            multiActionWithoutExit = true,
+            columns = 3,
         ) { response ->
+            pendingParticleDialogValues.remove(player.uniqueId)
             val rawValues = inputs.associate { it.id to CommandDialogSpecs.normalize(it.id, response.textValue(it.id)) }
             val validationError = inputs
                 .mapNotNull { it.spec.validateInput(rawValues.getValue(it.id)) }
@@ -5469,6 +5530,9 @@ class GestureSequenceEditor(
             null
         }
     }
+
+    /** 候補選択で開き直す間に、入力途中の値を保持する一時領域です。 */
+    private val pendingParticleDialogValues = mutableMapOf<UUID, Map<String, String>>()
 
     /** 図形数値を現形状ごとに一括検証して保存します。 */
     private fun showGeometryNumbersDialog(

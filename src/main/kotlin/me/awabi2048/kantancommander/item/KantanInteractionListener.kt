@@ -294,8 +294,16 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
 
         // 同梱データは参照UUIDではなく内容のスナップショットです。配置時に新しい
         // 正本へ複製することで、元アイテムや元配置の後続編集と独立させます。
+        // 旧形式で移行不能な同梱データは複製がnullとなり、例外を逃がさず
+        // バニラの巻き戻しで設置をなかったことにします。
         val placedScript = if (embeddedProgram != null) {
-            plugin.scripts.copyForPlacement(embeddedProgram)
+            plugin.scripts.copyForPlacement(embeddedProgram) ?: run {
+                plugin.logger.warning(
+                    "旧形式の埋め込みプログラムを移行できないため設置を拒否: " +
+                        "player=${player.name}, location=${block.location}",
+                )
+                return false
+            }
         } else {
             // 通常の空アイテムから置いた場合だけ、配置者を初期名へ使います。
             plugin.scripts.createPlacement(player.uniqueId, "${player.name}のプログラム")

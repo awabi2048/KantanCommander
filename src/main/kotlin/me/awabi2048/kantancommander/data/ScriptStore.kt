@@ -90,18 +90,60 @@ class ScriptStore(
         name: String,
     ): DiskScript = DiskScript(name = name, owner = owner, listed = false).also(::save)
 
-    fun copyForPlacement(source: DiskScript): DiskScript =
-        source.copy(
+    /**
+     * 埋め込みプログラム（アイテム同梱のスナップショット）を配置用に複製します。
+     *
+     * 同梱データは旧形式の場合があります。ファイル読込と同じく現行と直前2世代を
+     * 受け付けて移行し、それ以外はnullを返します。保存・検証・入出力の失敗も
+     * 含めて例外を逃がさず、呼び出し側は設置を正常に拒否します。
+     * イベント処理から例外を逃がすと、バニラ配置物だけが残る壊れた設置になります。
+     */
+    fun copyForPlacement(source: DiskScript): DiskScript? = runCatching {
+        val current = migrateEmbedded(source) ?: return null
+        current.copy(
             id = UUID.randomUUID(),
             createdAt = System.currentTimeMillis(),
             listed = false,
             revision = 0L,
-            graph = source.graph.deepCopy(),
+            graph = current.graph.deepCopy(),
             // 旧形式の折り畳み表示状態は新形式で不使用のため引き継ぎません。
             // 折り畳み自体はノード種別としてグラフ複製に含まれます。
             collapsedForStartIds = null,
             collapsedConditionIds = null,
         ).also(::save)
+    }.getOrNull()
+
+    /**
+     * 埋め込みスナップショットを現行形式へ移行します。
+     *
+     * ファイル読込（[read]）と同じ受付方針です。現行17と直前2世代（16・15）を
+     * 受け付け、それ以外は移行せずnullを返します。旧kind条件・旧equipは変換せず、
+     * 検証層で拒否されるため、移行後の検証に通らない内容もnullとします。
+     */
+    private fun migrateEmbedded(source: DiskScript): DiskScript? = runCatching {
+        val json = gson.toJsonTree(source).asJsonObject
+        val version = json["formatVersion"]
+            ?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }
+            ?.asInt
+            ?: return null
+        val migrated = when (version) {
+            STRUCTURED_FORMAT_VERSION -> json
+            STRUCTURED_FORMAT_VERSION - 1 -> migrateStructuredV16ToV17(json)
+            STRUCTURED_FORMAT_VERSION - 2 -> migrateStructuredV15ToV17(json)
+            else -> return null
+        }
+        if (PersistedScriptValidator.validate(migrated).isNotEmpty()) return null
+        val script = gson.fromJson(migrated, DiskScript::class.java) ?: return null
+        // 旧JSONには arguments 欄が存在しません。Gsonの復元ではKotlinの
+        // 非null境界が保証されないため、欠落時は空へ正規化します。
+        @Suppress("SENSELESS_COMPARISON")
+        if (script.arguments == null) {
+            script.arguments = emptyList()
+        }
+        if (script.formatVersion != STRUCTURED_FORMAT_VERSION) return null
+        if (validateRecursively(script.graph, UNBOUNDED_LIMITS).isNotEmpty()) return null
+        script
+    }.getOrNull()
 
     fun copyForItem(source: DiskScript): DiskScript =
         source.copy(
