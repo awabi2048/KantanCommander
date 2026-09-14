@@ -211,8 +211,9 @@ class GestureLowerPanel(
         val currentRaw = CommandDialogSpecs.normalize(fieldKey, node.string(fieldKey))
         // プリセット外の現在値は入力カード側を選択済みにします。
         val isCurrentPreset = ResourcePresets.isPreset(kind, currentRaw)
-        // ホバー文言は一覧と重ならないよう、1枠分下げた位置へ表示します。
-        val hoverY = HOVER_SLOT_Y - pitchY
+        // ホバー文言は一覧の上側へ表示します。一覧と重ならないよう、
+        // グリッド上端から1枠分上げた位置を使います。
+        val hoverY = gridTopY + cellH / 2 + INLINE_RESOURCE_HOVER_ABOVE_GAP
         val cards = ids.mapIndexed { index, id ->
             val selected = CommandDialogSpecs.normalize(fieldKey, id) == currentRaw ||
                 id == node.string(fieldKey)
@@ -231,22 +232,37 @@ class GestureLowerPanel(
                 cy = gridTopY - row * pitchY,
                 w = cellW,
                 h = cellH,
-                // 種別はバニラ翻訳で示します。IDは原文のまま併記します。
-                hover = if (kind == GestureResourcePickerKind.ENTITY_TYPE) {
-                    multiLineHoverComponents(
-                        listOf(
-                            me.awabi2048.kantancommander.model.EntityTypeDisplay.componentFor(id),
-                            Component.text(id),
-                        ),
-                        x = HOVER_SLOT_X,
-                        y = hoverY,
-                    )
-                } else {
-                    multiLineHover(
-                        listOf(ResourcePicker.displayName(kind, id), id),
-                        x = HOVER_SLOT_X,
-                        y = hoverY,
-                    )
+                // IDと表示名の示し方は種別ごとに固定します。パーティクルと
+                // 効果音はminecraft形式のID1行、召喚と効果は「表示名（ID）」1行です。
+                hover = when (kind) {
+                    GestureResourcePickerKind.ENTITY_TYPE ->
+                        multiLineHoverComponents(
+                            listOf(
+                                me.awabi2048.kantancommander.model.EntityTypeDisplay.labeledFor(id),
+                            ),
+                            x = HOVER_SLOT_X,
+                            y = hoverY,
+                        )
+                    GestureResourcePickerKind.EFFECT ->
+                        multiLineHoverComponents(
+                            listOf(
+                                me.awabi2048.kantancommander.model.EffectDisplay.labeledFor(id),
+                            ),
+                            x = HOVER_SLOT_X,
+                            y = hoverY,
+                        )
+                    GestureResourcePickerKind.PARTICLE ->
+                        multiLineHover(
+                            listOf(ResourcePicker.particleDisplayId(id)),
+                            x = HOVER_SLOT_X,
+                            y = hoverY,
+                        )
+                    GestureResourcePickerKind.SOUND ->
+                        multiLineHover(
+                            listOf(id),
+                            x = HOVER_SLOT_X,
+                            y = hoverY,
+                        )
                 },
                 visualIndex = index,
             )
@@ -4910,7 +4926,10 @@ class GestureLowerPanel(
         // 一時変数参照項目のグリッド左端です。対話分岐と左端を一致させます。
         const val INLINE_RESOURCE_TYPED_GRID_LEFT_X = -0.2325
         // 通常入力行の直下へ3行を置くための、入力行からの下げ幅です。
-        const val INLINE_RESOURCE_GRID_TOP_DY = 0.03
+        // 入力カードとの余白確保のため、グリッド全体はこの分だけ上に寄ります。
+        const val INLINE_RESOURCE_GRID_TOP_DY = -0.01
+        // ホバー文言をグリッド上側へ置くための、グリッド上端からの上げ幅です。
+        const val INLINE_RESOURCE_HOVER_ABOVE_GAP = 0.03
         // 一時変数参照項目の方式行の直下へ2行を置くための、方式行からの下げ幅です。
         const val INLINE_RESOURCE_TYPED_GRID_TOP_DY = 0.115
         // 一覧の下へ入力カードを置くための、グリッド最終行を超える下げ幅です。

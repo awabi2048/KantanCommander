@@ -112,6 +112,31 @@ class ResourcePickerTest {
     }
 
     @Test
+    fun `particle vanilla ids cover every preset explicitly`() {
+        // 推測変換は行わず、明示表がプリセットと一致することを固定します。
+        assertEquals(
+            ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).toSet(),
+            ResourcePicker.PARTICLE_VANILLA_IDS.keys,
+        )
+        ResourcePicker.PARTICLE_VANILLA_IDS.forEach { (enumName, vanillaId) ->
+            assertEquals("minecraft:${enumName.lowercase()}", vanillaId, enumName)
+        }
+        assertEquals("minecraft:flame", ResourcePicker.particleDisplayId("FLAME"))
+        assertEquals("UNKNOWN_PARTICLE", ResourcePicker.particleDisplayId("UNKNOWN_PARTICLE"))
+    }
+
+    @Test
+    fun `preset icons are unique within each picker grid`() {
+        // 一覧内で重複表示にならないことを固定します。
+        GestureResourcePickerKind.entries.forEach { kind ->
+            val materials = ResourcePresets.ids(kind).map { id ->
+                ResourcePickerIcons.resolve(kind, id)
+            }
+            assertEquals(materials.size, materials.distinct().size, kind.name)
+        }
+    }
+
+    @Test
     fun `isPreset matches normalized current values`() {
         assertTrue(ResourcePresets.isPreset(GestureResourcePickerKind.SOUND, "minecraft:block.note_block.harp"))
         assertTrue(ResourcePresets.isPreset(GestureResourcePickerKind.SOUND, "MINECRAFT:BLOCK.NOTE_BLOCK.HARP"))
@@ -134,9 +159,9 @@ class ResourcePickerTest {
         // Mannequinにスポーンエッグはないため頭で表示する。
         assertEquals(Material.PLAYER_HEAD, ResourcePickerIcons.resolve(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:mannequin"))
         assertEquals(Material.BLAZE_POWDER, ResourcePickerIcons.resolve(GestureResourcePickerKind.PARTICLE, "FLAME"))
-        assertEquals(Material.GUNPOWDER, ResourcePickerIcons.resolve(GestureResourcePickerKind.PARTICLE, "POOF"))
+        assertEquals(Material.FEATHER, ResourcePickerIcons.resolve(GestureResourcePickerKind.PARTICLE, "POOF"))
         assertEquals(Material.IRON_GOLEM_SPAWN_EGG, ResourcePickerIcons.resolve(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:iron_golem"))
-        assertEquals(Material.PLAYER_HEAD, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:entity.arrow.shoot"))
+        assertEquals(Material.ARROW, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:entity.arrow.shoot"))
         assertEquals(Material.NOTE_BLOCK, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:block.note_block.harp"))
         assertEquals(Material.MUSIC_DISC_13, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:music_disc.13"))
         // 対応表にない候補もフォールバック表示があります。

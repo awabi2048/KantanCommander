@@ -5347,25 +5347,29 @@ class GestureSequenceEditor(
         // 候補選択の開き直しで引き継いだ入力途中値は、ここで消費します。
         // 確定せずに閉じた場合も残さないため、次回の新規表示は保存値から始まります。
         val pending = pendingSoundDialogValues.remove(player.uniqueId).orEmpty()
-        val candidateButtons = soundCandidates.take(12).map { candidate ->
-            MenuDialogButton(
-                Component.text(candidate),
-                MenuDialogHandler { target, response ->
-                    if (target.uniqueId != player.uniqueId ||
-                        !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
-                    ) {
-                        if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
-                        return@MenuDialogHandler MenuActionResult.Ignored
-                    }
-                    // 候補の確定はサウンド欄だけを置き換え、他の欄は入力途中の
-                    // 値を維持して同じダイアログへ戻します。即時保存はしません。
-                    val current = nodeStringMap(response, inputs.map { it.id })
-                    pendingSoundDialogValues[player.uniqueId] = current
-                    showSoundSettingDialog(player, context, node, soundOverride = candidate, soundCandidates = emptyList())
-                    MenuActionResult.Success(MenuUpdate.None)
-                },
-            )
-        }
+        // 候補の確定はサウンド欄だけを置き換え、他の欄は入力途中の
+        // 値を維持して同じダイアログへ戻します。即時保存はしません。
+        fun presetButton(candidate: String) = MenuDialogButton(
+            Component.text(candidate),
+            MenuDialogHandler { target, response ->
+                if (target.uniqueId != player.uniqueId ||
+                    !canOperateSharedActor(ownerIdFor(player), target.uniqueId)
+                ) {
+                    if (target.uniqueId == player.uniqueId) invalidateInput(player.uniqueId)
+                    return@MenuDialogHandler MenuActionResult.Ignored
+                }
+                val current = nodeStringMap(response, inputs.map { it.id })
+                pendingSoundDialogValues[player.uniqueId] = current
+                showSoundSettingDialog(player, context, node, soundOverride = candidate, soundCandidates = emptyList())
+                MenuActionResult.Success(MenuUpdate.None)
+            },
+        )
+        val candidateButtons = soundCandidates.take(12).map(::presetButton)
+        // 検索候補がないときは、使用頻度の高いプリセット24件を並べます。
+        // プリセット外のIDはテキスト入力と候補検索で指定します。
+        val presetButtons = if (soundCandidates.isEmpty()) {
+            ResourcePresets.ids(GestureResourcePickerKind.SOUND).map(::presetButton)
+        } else emptyList()
         val candidateFooterActions = listOf(MenuDialogButton(
             KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_SHOW_DETAILS),
             MenuDialogHandler { target, response ->
@@ -5398,7 +5402,7 @@ class GestureSequenceEditor(
                     it.copy(initial = pending[it.id] ?: it.initial).toMenuInput(player)
                 }
             },
-            additionalActions = candidateButtons,
+            additionalActions = presetButtons + candidateButtons,
             footerActions = candidateFooterActions,
             multiActionWithoutExit = true,
             columns = 3,

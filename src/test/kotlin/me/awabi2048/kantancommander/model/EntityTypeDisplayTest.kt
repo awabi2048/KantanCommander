@@ -41,6 +41,19 @@ class EntityTypeDisplayTest {
     }
 
     @Test
+    fun `labeled format appends the raw id to the display name`() {
+        val pig = EntityTypeDisplay.labeledFor("minecraft:pig")
+        val translatable = assertInstanceOf(TranslatableComponent::class.java, pig)
+        assertEquals("entity.minecraft.pig", translatable.key())
+        assertEquals(1, translatable.children().size)
+        assertEquals(
+            "（minecraft:pig）",
+            assertInstanceOf(TextComponent::class.java, translatable.children().single()).content(),
+        )
+        assertEquals("", assertInstanceOf(TextComponent::class.java, EntityTypeDisplay.labeledFor("   ")).content())
+    }
+
+    @Test
     fun `color is applied to the translatable when specified`() {
         val colored = EntityTypeDisplay.componentFor("minecraft:pig", NamedTextColor.GRAY)
         assertEquals(NamedTextColor.GRAY, assertInstanceOf(TranslatableComponent::class.java, colored).color())

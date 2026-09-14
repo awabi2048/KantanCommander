@@ -51,6 +51,43 @@ object ResourcePicker {
         }
     }
 
+    /**
+     * プリセットのパーティクル表示名（バニラID表記）です。
+     *
+     * 保存形式のBukkit enum名とバニラ `/particle` のIDは一致しない場合があるため、
+     * 推測変換は行わず明示表で保持します。表外のIDは原文を返し、表示を欠落させません。
+     * 保存・検証・実行には使わず、表示専用です。
+     */
+    fun particleDisplayId(id: String): String = PARTICLE_VANILLA_IDS[id] ?: id
+
+    /** Bukkit enum名からバニラ `/particle` のID表記への明示対応です。 */
+    val PARTICLE_VANILLA_IDS: Map<String, String> = mapOf(
+        "FLAME" to "minecraft:flame",
+        "SMOKE" to "minecraft:smoke",
+        "LARGE_SMOKE" to "minecraft:large_smoke",
+        "HEART" to "minecraft:heart",
+        "NOTE" to "minecraft:note",
+        "PORTAL" to "minecraft:portal",
+        "ENCHANT" to "minecraft:enchant",
+        "CRIT" to "minecraft:crit",
+        "CLOUD" to "minecraft:cloud",
+        "DUST" to "minecraft:dust",
+        "FIREWORK" to "minecraft:firework",
+        "TOTEM_OF_UNDYING" to "minecraft:totem_of_undying",
+        "SOUL" to "minecraft:soul",
+        "DRAGON_BREATH" to "minecraft:dragon_breath",
+        "HAPPY_VILLAGER" to "minecraft:happy_villager",
+        "WITCH" to "minecraft:witch",
+        "POOF" to "minecraft:poof",
+        "EXPLOSION" to "minecraft:explosion",
+        "BUBBLE" to "minecraft:bubble",
+        "SPLASH" to "minecraft:splash",
+        "LAVA" to "minecraft:lava",
+        "END_ROD" to "minecraft:end_rod",
+        "SWEEP_ATTACK" to "minecraft:sweep_attack",
+        "SONIC_BOOM" to "minecraft:sonic_boom",
+    )
+
     /** 全ページ数です。空一覧は1ページとして扱います。 */
     fun pageCount(total: Int): Int = maxOf((total + PAGE_SIZE - 1) / PAGE_SIZE, 1)
 
@@ -299,6 +336,11 @@ object ResourcePickerIcons {
             -> Material.MINECART
             "ENDER_DRAGON" -> Material.DRAGON_EGG
             "WITHER" -> Material.NETHER_STAR
+            // スポーンエッグを持たない種類は、対応する代表素材へ明示します。
+            // 汎用フォールバックへ落とすと一覧内で重複表示になります。
+            "FIREWORK_ROCKET" -> Material.FIREWORK_ROCKET
+            "LIGHTNING_BOLT" -> Material.LIGHTNING_ROD
+            "EXPERIENCE_ORB" -> Material.EXPERIENCE_BOTTLE
             "PLAYER", "FISHING_BOBBER" -> Material.PLAYER_HEAD
             // Mannequinにスポーンエッグは存在しないため、発見可能性のために頭で表示します。
             "MANNEQUIN" -> Material.PLAYER_HEAD
@@ -320,68 +362,108 @@ object ResourcePickerIcons {
         }
     }
 
+    /**
+     * パーティクル候補の表示素材です。
+     *
+     * プリセット24件が一覧内で重複表示にならないよう、種類ごとに固有の
+     * 代表素材を割り当てます。表外の種類は従来の系統別解決へ縮退し、
+     * 最後は汎用フォールバックで表示を保証します。
+     */
     private fun particleIcon(id: String): Material? {
         val path = id.substringAfter(':').uppercase()
+        when (path) {
+            "FLAME" -> return Material.BLAZE_POWDER
+            "SMOKE" -> return Material.GUNPOWDER
+            "LARGE_SMOKE" -> return Material.CAMPFIRE
+            "HEART" -> return Material.POPPY
+            "NOTE" -> return Material.NOTE_BLOCK
+            "PORTAL" -> return Material.ENDER_PEARL
+            "ENCHANT" -> return Material.ENCHANTED_BOOK
+            "CRIT" -> return Material.IRON_SWORD
+            "CLOUD" -> return Material.GLASS
+            "DUST", "REDSTONE" -> return Material.REDSTONE
+            "FIREWORK", "FIREWORKS_SPARK" -> return Material.FIREWORK_ROCKET
+            "TOTEM_OF_UNDYING", "TOTEM" -> return Material.TOTEM_OF_UNDYING
+            "SOUL" -> return Material.SOUL_LANTERN
+            "DRAGON_BREATH" -> return Material.DRAGON_BREATH
+            "HAPPY_VILLAGER" -> return Material.EMERALD
+            "WITCH" -> return Material.CAULDRON
+            "POOF" -> return Material.FEATHER
+            "EXPLOSION", "EXPLOSION_EMITTER" -> return Material.TNT
+            "BUBBLE", "BUBBLE_POP", "BUBBLE_COLUMN_UP" -> return Material.WATER_BUCKET
+            "SPLASH" -> return Material.FISHING_ROD
+            "LAVA" -> return Material.LAVA_BUCKET
+            "END_ROD" -> return Material.END_ROD
+            "SWEEP_ATTACK" -> return Material.DIAMOND_SWORD
+            "SONIC_BOOM" -> return Material.ECHO_SHARD
+        }
         return when (path) {
-            "FLAME", "SMALL_FLAME", "LAVA", "CAMPFIRE_COSY_SMOKE", "CAMPFIRE_SIGNAL_SMOKE" -> Material.BLAZE_POWDER
-            "SMOKE", "LARGE_SMOKE", "POOF", "CLOUD" -> Material.GUNPOWDER
-            "BUBBLE", "BUBBLE_POP", "BUBBLE_COLUMN_UP", "SPLASH", "FISHING", "DRIPPING_WATER",
+            "SMALL_FLAME", "CAMPFIRE_COSY_SMOKE", "CAMPFIRE_SIGNAL_SMOKE" -> Material.BLAZE_POWDER
+            "FISHING", "DRIPPING_WATER",
             "FALLING_WATER", "RAIN",
             -> Material.WATER_BUCKET
-            "ENCHANT", "ENCHANTED_HIT", "WITCH" -> Material.ENCHANTED_BOOK
-            "CRIT", "CRIT_MAGIC", "SWEEP_ATTACK", "DAMAGE_INDICATOR" -> Material.IRON_SWORD
-            "HEART", "HAPPY_VILLAGER", "VILLAGER_HAPPY" -> Material.POPPY
-            "ANGRY_VILLAGER", "VILLAGER_ANGRY" -> Material.BARRIER
-            "NOTE" -> Material.NOTE_BLOCK
-            "PORTAL", "REVERSE_PORTAL", "END_ROD" -> Material.ENDER_PEARL
+            "ENCHANTED_HIT" -> Material.ENCHANTED_BOOK
+            "CRIT_MAGIC", "DAMAGE_INDICATOR" -> Material.IRON_SWORD
+            "VILLAGER_HAPPY" -> Material.EMERALD
+            "VILLAGER_ANGRY" -> Material.BARRIER
+            "REVERSE_PORTAL" -> Material.ENDER_PEARL
             "SPELL", "SPELL_MOB", "SPELL_MOB_AMBIENT", "SPELL_WITCH", "SPELL_INSTANT" -> Material.POTION
-            "REDSTONE", "DUST" -> Material.REDSTONE
             "SLIME" -> Material.SLIME_BALL
             "SNOWBALL", "SNOWFLAKE", "SNOW_SHOVEL" -> Material.SNOWBALL
-            "FIREWORK", "FIREWORKS_SPARK", "FLASH" -> Material.FIREWORK_ROCKET
-            "TOTEM_OF_UNDYING", "TOTEM" -> Material.TOTEM_OF_UNDYING
-            "SOUL", "SOUL_FIRE_FLAME", "SNIFFER_EGG", "SCULK_SOUL", "SCULK_CHARGE",
-            "SCULK_CHARGE_POP", "SHRIEK", "SONIC_BOOM",
+            "FLASH" -> Material.FIREWORK_ROCKET
+            "SOUL_FIRE_FLAME", "SNIFFER_EGG", "SCULK_SOUL", "SCULK_CHARGE",
+            "SCULK_CHARGE_POP", "SHRIEK",
             -> Material.SOUL_LANTERN
             else -> null
         }
     }
 
+    /**
+     * 効果候補の表示素材です。
+     *
+     * プリセット24件が一覧内で重複表示にならないよう、種類ごとに固有の
+     * 代表素材を割り当てます。表外の種類は従来の系統別解決へ縮退します。
+     */
     private fun effectIcon(id: String): Material? {
         val path = id.substringAfter(':').uppercase()
+        when (path) {
+            "SPEED", "SWIFTNESS" -> return Material.SUGAR
+            "SLOWNESS", "SLOW" -> return Material.SOUL_SAND
+            "HASTE" -> return Material.GOLDEN_PICKAXE
+            "MINING_FATIGUE" -> return Material.COBWEB
+            "STRENGTH" -> return Material.BLAZE_POWDER
+            "INSTANT_HEALTH" -> return Material.APPLE
+            "REGENERATION" -> return Material.GLISTERING_MELON_SLICE
+            "INSTANT_DAMAGE" -> return Material.FERMENTED_SPIDER_EYE
+            "JUMP_BOOST", "JUMP" -> return Material.RABBIT_FOOT
+            "RESISTANCE", "DAMAGE_RESISTANCE" -> return Material.IRON_CHESTPLATE
+            "FIRE_RESISTANCE" -> return Material.MAGMA_CREAM
+            "NIGHT_VISION" -> return Material.GOLDEN_CARROT
+            "INVISIBILITY" -> return Material.GLASS_BOTTLE
+            "POISON" -> return Material.SPIDER_EYE
+            "WITHER" -> return Material.WITHER_SKELETON_SKULL
+            "ABSORPTION" -> return Material.GOLDEN_APPLE
+            "SATURATION" -> return Material.COOKED_BEEF
+            "GLOWING" -> return Material.GLOWSTONE_DUST
+            "LEVITATION" -> return Material.SHULKER_SHELL
+            "LUCK" -> return Material.GOLD_NUGGET
+            "SLOW_FALLING" -> return Material.FEATHER
+            "CONDUIT_POWER" -> return Material.NAUTILUS_SHELL
+            "DOLPHINS_GRACE" -> return Material.COD
+            "DARKNESS" -> return Material.SCULK
+            "HERO_OF_THE_VILLAGE" -> return Material.EMERALD
+        }
         return when (path) {
-            "SPEED", "SWIFTNESS" -> Material.SUGAR
-            "SLOWNESS", "SLOW" -> Material.SOUL_SAND
-            "HASTE" -> Material.GOLDEN_PICKAXE
-            "MINING_FATIGUE" -> Material.COBWEB
-            "STRENGTH" -> Material.BLAZE_POWDER
-            "INSTANT_HEALTH", "HEALTH_BOOST", "REGENERATION" -> Material.APPLE
-            "INSTANT_DAMAGE", "HARM" -> Material.SPIDER_EYE
-            "JUMP_BOOST", "JUMP" -> Material.RABBIT_FOOT
+            "HEALTH_BOOST" -> Material.APPLE
+            "HARM" -> Material.SPIDER_EYE
             "NAUSEA", "CONFUSION" -> Material.PUFFERFISH
-            "RESISTANCE", "DAMAGE_RESISTANCE" -> Material.IRON_CHESTPLATE
-            "FIRE_RESISTANCE" -> Material.MAGMA_CREAM
             "WATER_BREATHING" -> Material.PUFFERFISH
-            "INVISIBILITY" -> Material.GLASS_BOTTLE
             "BLINDNESS" -> Material.BLACK_WOOL
-            "NIGHT_VISION" -> Material.GOLDEN_CARROT
             "HUNGER" -> Material.ROTTEN_FLESH
             "WEAKNESS" -> Material.FERMENTED_SPIDER_EYE
-            "POISON" -> Material.SPIDER_EYE
-            "WITHER" -> Material.WITHER_SKELETON_SKULL
-            "ABSORPTION" -> Material.GOLDEN_APPLE
-            "SATURATION" -> Material.COOKED_BEEF
-            "GLOWING" -> Material.GLOWSTONE_DUST
-            "LEVITATION" -> Material.SHULKER_SHELL
-            "LUCK" -> Material.RABBIT_FOOT
             "UNLUCK" -> Material.COAL
-            "SLOW_FALLING" -> Material.FEATHER
-            "CONDUIT_POWER" -> Material.NAUTILUS_SHELL
-            "DOLPHINS_GRACE" -> Material.COD
             "BAD_OMEN", "OMINOUS" -> Material.OMINOUS_BOTTLE
             "RAID_OMEN", "TRIAL_OMEN" -> Material.TRIAL_KEY
-            "DARKNESS" -> Material.SCULK
-            "HERO_OF_THE_VILLAGE" -> Material.EMERALD
             "WIND_CHARGED" -> Material.WIND_CHARGE
             "WEAVING" -> Material.COBWEB
             "OOZING" -> Material.SLIME_BALL
@@ -390,8 +472,40 @@ object ResourcePickerIcons {
         }
     }
 
+    /**
+     * 効果音候補の表示素材です。
+     *
+     * プリセット24件が一覧内で重複表示にならないよう、個別ID一致を
+     * 接頭辞判定より先に解決します。表外のIDは従来の接頭辞解決へ縮退します。
+     */
     private fun soundIcon(id: String): Material? {
         val path = id.substringAfter(':')
+        when (path) {
+            "block.note_block.harp" -> return Material.NOTE_BLOCK
+            "block.note_block.pling" -> return Material.AMETHYST_SHARD
+            "block.note_block.bell" -> return Material.BELL
+            "block.note_block.bass" -> return Material.DARK_OAK_PLANKS
+            "entity.player.levelup" -> return Material.EXPERIENCE_BOTTLE
+            "entity.experience_orb.pickup" -> return Material.GOLD_NUGGET
+            "entity.firework_rocket.launch" -> return Material.FIREWORK_ROCKET
+            "entity.firework_rocket.blast" -> return Material.FIRE_CHARGE
+            "entity.firework_rocket.twinkle" -> return Material.FIREWORK_STAR
+            "entity.generic.explode" -> return Material.TNT
+            "entity.tnt.primed" -> return Material.GUNPOWDER
+            "entity.lightning_bolt.thunder" -> return Material.LIGHTNING_ROD
+            "block.anvil.land" -> return Material.ANVIL
+            "block.chest.open" -> return Material.CHEST
+            "block.chest.close" -> return Material.TRAPPED_CHEST
+            "block.portal.travel" -> return Material.OBSIDIAN
+            "block.portal.trigger" -> return Material.FLINT_AND_STEEL
+            "entity.ender_pearl.throw" -> return Material.ENDER_PEARL
+            "entity.arrow.shoot" -> return Material.ARROW
+            "entity.ender_dragon.growl" -> return Material.DRAGON_HEAD
+            "entity.wither.spawn" -> return Material.NETHER_STAR
+            "block.beacon.activate" -> return Material.BEACON
+            "weather.rain" -> return Material.WATER_BUCKET
+            "weather.thunder" -> return Material.TRIDENT
+        }
         return when {
             path.startsWith("music.") || path.startsWith("music_disc") -> Material.MUSIC_DISC_13
             path.startsWith("block.note_block.") -> Material.NOTE_BLOCK

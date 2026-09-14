@@ -33,6 +33,18 @@ object EntityTypeDisplay {
         return if (color == null) base else base.color(color)
     }
 
+    /**
+     * 種別IDに対応する「表示名（ID）」形式の表示用Componentを返します。
+     *
+     * 一覧のホバーで名前とIDを1行にまとめて示します。IDが空欄のときは
+     * 空の表示を返し、他項目の未設定表示と揃えます。
+     */
+    fun labeledFor(rawId: String): Component {
+        val raw = rawId.trim()
+        if (raw.isEmpty()) return Component.text(raw)
+        return componentFor(raw).append(Component.text("（$raw）"))
+    }
+
     // ID文字列から実在する種別のキーを解決します。BukkitのRegistryとenumの
     // 両方を使い、サーバーなし試験ではenum直結へ縮退します。名前空間違いの
     // 誤解決を避けるため、キー一致だけを受け付けます。
