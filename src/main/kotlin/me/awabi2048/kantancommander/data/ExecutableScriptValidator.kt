@@ -632,7 +632,7 @@ object ExecutableScriptValidator {
             CommandType.FIREWORK_LAUNCH -> validateFirework(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.APPLY_EFFECT -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-                if (node.effectTempRef.isNullOrBlank() && !CommandValueRules.isEffectId(node.string("effect"))) {
+                if (!CommandValueRules.isEffectId(node.string("effect"))) {
                     errors += nodeError(node, path, setOf("effect"), "エフェクトが不正です")
                 }
                 validateIntegerRange(node, path, "level", 1..255, "エフェクトレベルは1〜255の範囲です", errors, variableDefinitions, temporaryDefinitions)
@@ -686,7 +686,7 @@ object ExecutableScriptValidator {
         }
         when (SoundSettings.operation(node)) {
             SoundOperation.PLAY -> {
-                if (node.soundTempRef.isNullOrBlank() && !CommandValueRules.isSoundId(node.string("sound"))) {
+                if (!CommandValueRules.isSoundId(node.string("sound"))) {
                     errors += nodeError(node, path, setOf("soundSetting"), "サウンドIDが不正です")
                 }
                 validateSettingRange(node, path, "volume", 0.0..34.0, "音量は0.0〜34.0の範囲です", "soundSetting", errors, variableDefinitions, temporaryDefinitions)
@@ -696,16 +696,12 @@ object ExecutableScriptValidator {
                 }
             }
             SoundOperation.STOP -> {
-                // 一時変数参照時は実行時に参照先の効果音IDへ解決するため、
-                // リテラル欄の検証を抑止します。
-                if (node.soundTempRef.isNullOrBlank()) {
-                    val sound = node.string("sound")
-                    if (sound.isNotBlank() && !CommandValueRules.isSoundId(sound)) {
-                        errors += nodeError(node, path, setOf("soundSetting"), "停止対象のサウンドIDが不正です")
-                    }
-                    if (!SoundSettings.isCategoryValue(node.string("soundCategory"))) {
-                        errors += nodeError(node, path, setOf("soundSetting"), "停止対象のカテゴリが不正です")
-                    }
+                val sound = node.string("sound")
+                if (sound.isNotBlank() && !CommandValueRules.isSoundId(sound)) {
+                    errors += nodeError(node, path, setOf("soundSetting"), "停止対象のサウンドIDが不正です")
+                }
+                if (!SoundSettings.isCategoryValue(node.string("soundCategory"))) {
+                    errors += nodeError(node, path, setOf("soundSetting"), "停止対象のカテゴリが不正です")
                 }
             }
         }
@@ -2146,8 +2142,6 @@ object ExecutableScriptValidator {
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
-            ValueType.SOUND,
-            ValueType.EFFECT,
             -> errors += nodeError(node, path, setOf("diskId"), "複合型の引数 ${argument.name} は変数で指定します")
         }
     }
@@ -2491,14 +2485,6 @@ object ExecutableScriptValidator {
             node.blockTempRef, ValueType.BLOCK,
             node.string("block").isBlank(), setOf("block"),
         )
-        checkRef(
-            node.soundTempRef, ValueType.SOUND,
-            node.string("sound").isBlank(), setOf("sound"),
-        )
-        checkRef(
-            node.effectTempRef, ValueType.EFFECT,
-            node.string("effect").isBlank(), setOf("effect"),
-        )
     }
 
     /** 「一時変数を設定」ノードを検証します。再設定は上書きのため重複検査しません。 */
@@ -2526,7 +2512,7 @@ object ExecutableScriptValidator {
      * issue #2 の型別値検証です。
      *
      * 一時変数の設定と変数操作コマンド（DEFINE／SET／CHANGE値）で共有します。
-     * NUMBER・STRING・BOOLEAN・VECTOR は値欄から、複合6型は型ごとの共通設定から
+     * NUMBER・STRING・BOOLEAN・VECTOR は値欄から、複合5型は型ごとの共通設定から
      * 検証します。実行時の [SequenceExecutor.resolveNodeValue] と同じ入力を
      * 受け付けることが契約です。
      */
@@ -2619,56 +2605,6 @@ object ExecutableScriptValidator {
                         // が異なるライフサイクルになるため、参照失敗の契約へ統一します。
                     }
                 }
-            }
-            ValueType.SOUND -> {
-                if (node.soundTempRef.isNullOrBlank() && !CommandValueRules.isSoundId(node.string("sound"))) {
-                    errors += nodeError(node, path, setOf("sound"), "サウンドIDが不正です")
-                }
-                validateTemporaryRange(
-                    node,
-                    path,
-                    field = "volume",
-                    raw = node.string("volume", "1.0"),
-                    range = 0.0..34.0,
-                    message = "音量は0.0〜34.0の範囲です",
-                    errors = errors,
-                    temporaryDefinitions = temporaryDefinitions,
-                )
-                validateTemporaryRange(
-                    node,
-                    path,
-                    field = "pitch",
-                    raw = node.string("pitch", "1.0"),
-                    range = 0.5..2.0,
-                    message = "ピッチは0.5〜2.0の範囲です",
-                    errors = errors,
-                    temporaryDefinitions = temporaryDefinitions,
-                )
-            }
-            ValueType.EFFECT -> {
-                if (node.effectTempRef.isNullOrBlank() && !CommandValueRules.isEffectId(node.string("effect"))) {
-                    errors += nodeError(node, path, setOf("effect"), "エフェクトが不正です")
-                }
-                validateTemporaryIntegerRange(
-                    node,
-                    path,
-                    field = "level",
-                    raw = node.string("level", "1"),
-                    range = 1..255,
-                    message = "エフェクトレベルは1〜255の範囲です",
-                    errors = errors,
-                    temporaryDefinitions = temporaryDefinitions,
-                )
-                validateTemporaryIntegerRange(
-                    node,
-                    path,
-                    field = "seconds",
-                    raw = node.string("seconds", "30"),
-                    range = 1..86_400,
-                    message = "エフェクトの持続時間は1〜86400秒の範囲です",
-                    errors = errors,
-                    temporaryDefinitions = temporaryDefinitions,
-                )
             }
         }
     }

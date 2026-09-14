@@ -9,10 +9,11 @@ import java.util.UUID
  *
  * EXECUTION／WORLD／ENTITY の全scopeで共有し、変数操作・条件・計算・DISK_CALL引数・
  * イベント引数のすべてがこの型で値をやり取りします。旧 `VariableType`
- * （NUMBER／STRINGのみ）と旧 `TemporaryVariableType`（8型）を統合した正本であり、
- * 保存文字列は両旧enumと互換（NUMBER／STRING／LOCATION／ITEM／BLOCK／ENTITY／
- * SOUND／EFFECT の8名は同一）です。`ValueType.ENTITY` は値の種類であり、
- * `VariableScope.ENTITY`（変数の所有主体）とは別概念として扱います。
+ * （NUMBER／STRINGのみ）と旧 `TemporaryVariableType` を統合した正本です。
+ * 音・効果の一時変数参照は廃止したため、SOUND／EFFECT 型は持ちません。
+ * 旧保存文字列の SOUND／EFFECT 指定は不正として扱います。
+ * `ValueType.ENTITY` は値の種類であり、`VariableScope.ENTITY`（変数の所有主体）とは
+ * 別概念として扱います。
  */
 enum class ValueType {
     NUMBER,
@@ -23,8 +24,6 @@ enum class ValueType {
     ITEM,
     BLOCK,
     ENTITY,
-    SOUND,
-    EFFECT,
     ;
 
     companion object {
@@ -78,14 +77,6 @@ data class TypedValue(
     val block: String? = null,
     /** ENTITY型の個体IDです。実体は保持しません。 */
     val entityId: UUID? = null,
-    /** SOUND型のIDと再生範囲です。 */
-    val sound: String? = null,
-    val volume: Double? = null,
-    val pitch: Double? = null,
-    /** EFFECT型のIDと強さ・秒数です。 */
-    val effect: String? = null,
-    val level: Int? = null,
-    val seconds: Int? = null,
 ) {
     /**
      * 型と構造の一致を検証します。
@@ -110,8 +101,6 @@ data class TypedValue(
         // ENTITY は定義時点で実体がなくても保持します。死亡・別ワールド・未ロードは
         // 参照時に解決不能として扱い、後続だけをスキップできるようにします。
         ValueType.ENTITY -> isClearExcept("entityId")
-        ValueType.SOUND -> sound != null && isClearExcept("sound", "volume", "pitch")
-        ValueType.EFFECT -> effect != null && isClearExcept("effect", "level", "seconds")
     }
 
     private fun isClearExcept(vararg keep: String): Boolean {
@@ -126,12 +115,6 @@ data class TypedValue(
         if ("amount" !in kept && amount != null) return false
         if ("block" !in kept && block != null) return false
         if ("entityId" !in kept && entityId != null) return false
-        if ("sound" !in kept && sound != null) return false
-        if ("volume" !in kept && volume != null) return false
-        if ("pitch" !in kept && pitch != null) return false
-        if ("effect" !in kept && effect != null) return false
-        if ("level" !in kept && level != null) return false
-        if ("seconds" !in kept && seconds != null) return false
         return true
     }
 
@@ -151,8 +134,6 @@ data class TypedValue(
             ValueType.ITEM -> TypedValue(type, item = "STONE")
             ValueType.BLOCK -> TypedValue(type, block = "STONE")
             ValueType.ENTITY -> TypedValue(type)
-            ValueType.SOUND -> TypedValue(type, sound = "minecraft:block.note_block.harp", volume = 1.0, pitch = 1.0)
-            ValueType.EFFECT -> TypedValue(type, effect = "SPEED", level = 1, seconds = 30)
         }
     }
 }

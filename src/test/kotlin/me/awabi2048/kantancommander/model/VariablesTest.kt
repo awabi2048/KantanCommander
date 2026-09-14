@@ -45,13 +45,6 @@ class VariablesTest {
         // ENTITY は実体なしでも保持します。解決不能は参照時に判定します。
         assertTrue(TypedValue(ValueType.ENTITY).isValid())
         assertTrue(TypedValue(ValueType.ENTITY, entityId = UUID.randomUUID()).isValid())
-        assertTrue(
-            TypedValue(ValueType.SOUND, sound = "minecraft:block.note_block.harp", volume = 1.0, pitch = 1.0)
-                .isValid(),
-        )
-        assertTrue(
-            TypedValue(ValueType.EFFECT, effect = "SPEED", level = 1, seconds = 30).isValid(),
-        )
     }
 
     @Test

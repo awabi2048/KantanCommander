@@ -974,8 +974,6 @@ internal object CommandDialogSpecs {
         ValueType.ITEM,
         ValueType.BLOCK,
         ValueType.ENTITY,
-        ValueType.SOUND,
-        ValueType.EFFECT,
         -> null
     }
 
@@ -989,8 +987,6 @@ internal object CommandDialogSpecs {
         ValueType.ITEM,
         ValueType.BLOCK,
         ValueType.ENTITY,
-        ValueType.SOUND,
-        ValueType.EFFECT,
         -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_COMPLEX_BODY
     }
 
@@ -1004,8 +1000,6 @@ internal object CommandDialogSpecs {
         ValueType.ITEM,
         ValueType.BLOCK,
         ValueType.ENTITY,
-        ValueType.SOUND,
-        ValueType.EFFECT,
         -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_WORLD_VARIABLE_VALUE_COMPLEX_BODY
     }
 
@@ -1756,7 +1750,7 @@ internal object CommandDialogSpecs {
     private val SUGGESTION_QUERY_DELIMITERS = Regex("[,、\\s\\u3000]+")
 
     /**
-     * issue #31: 「候補を表示」押下時の入力文字列を複数クエリへ分解します。
+     * issue #31: 「検索」押下時の入力文字列を複数クエリへ分解します。
      *
      * 空要素は除外し、大小無視で重複を除去して [MAX_SUGGESTION_QUERIES] 件で
      * 打ち切ります。保存値の仕様には触れず、検索専用の入力構文として扱います。
@@ -1778,7 +1772,7 @@ internal object CommandDialogSpecs {
     /**
      * 入力中の文字列に近い登録IDを最大12件返します。
      * Paperの入力画面はキー入力ごとのコールバックを提供しないため、呼び出し側は
-     * 「候補を表示」ボタン押下時の最新値を渡します。完全一致→前方一致→
+     * 「検索」ボタン押下時の最新値を渡します。完全一致→前方一致→
      * 部分一致→編集距離の順で安定ソートし、空欄では候補を返しません。
      * ランキングは [registeredIds] の取得と分離しています。
      */
@@ -1786,7 +1780,7 @@ internal object CommandDialogSpecs {
         suggestionsFromInput(fieldKey, query, limit)
 
     /**
-     * issue #31: 「候補を表示」押下時の入力文字列を複数クエリとしてOR検索します。
+     * issue #31: 「検索」押下時の入力文字列を複数クエリとしてOR検索します。
      *
      * 各クエリ内部では単一クエリと同一の一致度順ランキングを維持し、クエリ間の
      * 結果はラウンドロビンで統合します。先頭クエリだけで候補枠を使い切らず、

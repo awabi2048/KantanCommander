@@ -183,8 +183,6 @@ class EditorMenuLayoutTest {
             ValueType.ITEM to setOf("name", "tempType", "item"),
             ValueType.BLOCK to setOf("name", "tempType", "block"),
             ValueType.ENTITY to setOf("name", "tempType", "entity"),
-            ValueType.SOUND to setOf("name", "tempType", "sound", "soundParameters"),
-            ValueType.EFFECT to setOf("name", "tempType", "effect", "level", "seconds"),
         )
 
         expectedKeys.forEach { (type, keys) ->

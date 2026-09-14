@@ -7,7 +7,7 @@ import net.kyori.adventure.text.Component
 import org.bukkit.entity.Player
 
 /**
- * ITEM／BLOCK／SOUND／EFFECTの設定元表示を両GUIで共有します。
+ * ITEM／BLOCKの設定元表示を両GUIで共有します。
  *
  * 設定元の意味を画面ごとに文字列合成すると、日本語の改行位置や翻訳差分が
  * Inventory／Gestureでずれます。ローカライズ済みのTextListを唯一の正本として、
@@ -21,8 +21,6 @@ internal fun typedValueSourceLabelKey(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_TEMPORARY
     field == "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_ITEM_MAINHAND
     field == "block" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_BLOCK_MAINHAND
-    field == "sound" || field == "soundSetting" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_SOUND_DIALOG
-    field == "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_VALUE_SOURCE_EFFECT_DIALOG
     else -> error("設定元の表示に未対応のフィールドです: $field")
 }
 

@@ -916,28 +916,6 @@ class VanillaDatapackExporterTest {
         GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params.putAll(mapOf("name" to "label", "tempType" to ValueType.STRING.name, "value" to "prefix-%{copied}%"))
         }
-        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
-            params.putAll(
-                mapOf(
-                    "name" to "sound",
-                    "tempType" to ValueType.SOUND.name,
-                    "sound" to "minecraft:block.note_block.harp",
-                    "volume" to "%{amount}%",
-                    "pitch" to "1.0",
-                ),
-            )
-        }
-        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
-            params.putAll(
-                mapOf(
-                    "name" to "effect",
-                    "tempType" to ValueType.EFFECT.name,
-                    "effect" to "minecraft:speed",
-                    "level" to "%{copied}%",
-                    "seconds" to "30",
-                ),
-            )
-        }
 
         val success = assertInstanceOf(
             StandaloneCompilation.Success::class.java,
@@ -946,7 +924,6 @@ class VanillaDatapackExporterTest {
         val body = success.functions.values.joinToString("\n")
 
         assertTrue(body.contains("set from storage kantan:variables variables.temporary"))
-        assertTrue(body.contains("function kantan:") && body.contains("temporary_macro"))
         assertFalse(body.contains("%{amount}%"), "temporary references must be lowered before output")
     }
 
@@ -981,32 +958,6 @@ class VanillaDatapackExporterTest {
         assertTrue(body.contains("execute positioned ${'$'}(m_"), "dynamic LOCATION must use a macro function")
         assertTrue(body.contains("facing ${'$'}(m_"), "temporary facing must be resolved from LOCATION coordinates")
         assertFalse(body.contains("@{temp."), "internal marker syntax must not leak into the datapack")
-    }
-
-    @Test
-    fun `temporary effect integers are emitted as command-compatible integer tags`() {
-        val store = ScriptStore(temp.resolve("temporary-effect-export"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "temporary-effect-export")
-        GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
-            params.putAll(
-                mapOf(
-                    "name" to "effect",
-                    "tempType" to ValueType.EFFECT.name,
-                    "effect" to "minecraft:speed",
-                    "level" to "2.0",
-                    "seconds" to "30.0",
-                ),
-            )
-        }
-
-        val success = assertInstanceOf(
-            StandaloneCompilation.Success::class.java,
-            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
-        )
-        val body = success.functions.values.joinToString("\n")
-
-        assertTrue(body.contains("level:2,seconds:30"))
-        assertFalse(body.contains("level:2.0d,seconds:30.0d"))
     }
 
     @Test

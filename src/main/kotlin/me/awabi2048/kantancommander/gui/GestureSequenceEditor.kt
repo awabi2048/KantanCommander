@@ -3056,11 +3056,7 @@ class GestureSequenceEditor(
             showDisplayTimingSettingDialog(player, context, node)
             return
         }
-        if (fieldKey == "soundParameters" && (
-                node.type == CommandType.PLAY_SOUND ||
-                    (node.type == CommandType.TEMP_SET &&
-                        ValueType.parse(node.string("tempType")) == ValueType.SOUND)
-                )) {
+        if (fieldKey == "soundParameters" && node.type == CommandType.PLAY_SOUND) {
             showSoundParametersSettingDialog(player, context, node)
             return
         }
@@ -3410,41 +3406,6 @@ class GestureSequenceEditor(
             ?.takeUnless { it == Material.AIR || !it.isBlock }
             ?.let(::ItemStack)
 
-    private data class ConfiguredSound(
-        val name: String,
-        val volume: Float,
-        val pitch: Float,
-    )
-
-    private fun configuredSound(node: CommandNode): ConfiguredSound? {
-        val name = node.string("sound").takeIf(String::isNotBlank) ?: return null
-        if (NamespacedKey.fromString(name) == null) return null
-        val volume = node.string("volume", "1.0").toFloatOrNull()?.takeIf(Float::isFinite) ?: return null
-        val pitch = node.string("pitch", "1.0").toFloatOrNull()?.takeIf(Float::isFinite) ?: return null
-        return ConfiguredSound(name, volume, pitch)
-    }
-
-    private data class ConfiguredEffect(
-        val type: org.bukkit.potion.PotionEffectType,
-        val durationTicks: Int,
-        val amplifier: Int,
-    )
-
-    private fun configuredEffect(node: CommandNode): ConfiguredEffect? {
-        val key = NamespacedKey.fromString(node.string("effect")) ?: return null
-        val type = Registry.EFFECT.get(key) ?: return null
-        val seconds = node.string("seconds").toIntOrNull()?.takeIf { it > 0 } ?: return null
-        val level = node.string("level").toIntOrNull()?.takeIf { it > 0 } ?: return null
-        val durationTicks = runCatching { Math.multiplyExact(seconds, 20) }.getOrNull() ?: return null
-        return ConfiguredEffect(type, durationTicks, level - 1)
-    }
-
-    private fun playConfiguredSound(player: Player, node: CommandNode): Boolean {
-        val sound = configuredSound(node) ?: return false
-        player.playSound(player.location, sound.name, SoundCategory.MASTER, sound.volume, sound.pitch)
-        return true
-    }
-
     /**
      * 設定中の花火をその場で打ち上げます。
      *
@@ -3544,12 +3505,6 @@ class GestureSequenceEditor(
             )
         }
         return updated
-    }
-
-    private fun applyConfiguredEffect(player: Player, node: CommandNode): Boolean {
-        val effect = configuredEffect(node) ?: return false
-        player.addPotionEffect(PotionEffect(effect.type, effect.durationTicks, effect.amplifier))
-        return true
     }
 
     /** 条件等、設定元切替を持たない従来の確認ボタンも引き続き有効にします。 */
@@ -4927,8 +4882,6 @@ class GestureSequenceEditor(
                 ValueType.ITEM,
                 ValueType.BLOCK,
                 ValueType.ENTITY,
-                ValueType.SOUND,
-                ValueType.EFFECT,
                 -> return@showInputDialog KcI18n.text(
                     player,
                     CommandDialogSpecs.worldVariableValueBody(type),
@@ -5433,7 +5386,7 @@ class GestureSequenceEditor(
      *
      * VIBRATION／TRAILは終点XYZを1群として束ねた入力欄から単一詳細文字列へ
      * 合成します。保存形式は従来の1文字列のまま変えません。
-     * 種類欄は「候補を表示」による補完に対応し、候補確定時は種類欄だけを
+     * 種類欄は「検索」による補完に対応し、候補確定時は種類欄だけを
      * 置き換えて同じダイアログへ戻します。即時保存はしません。
      */
     private fun showParticleDialog(
@@ -7907,18 +7860,6 @@ class GestureSequenceEditor(
                 player.inventory.addItem(block.clone()).values.forEach { overflow ->
                     player.world.dropItemNaturally(player.location, overflow)
                 }
-            }
-            context.elementId == "lower-sound-preview" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                val script = plugin.scripts.load(state.scriptId) ?: return
-                val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
-                if (!isDirectTypedValuePreview(node, "sound")) return
-                playConfiguredSound(player, node)
-            }
-            context.elementId == "lower-effect-preview" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                val script = plugin.scripts.load(state.scriptId) ?: return
-                val node = state.selectedNodeId?.let { script.graph.nodes[it] } ?: return
-                if (!isDirectTypedValuePreview(node, "effect")) return
-                applyConfiguredEffect(player, node)
             }
             context.elementId == "lower-firework-preview" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 val script = plugin.scripts.load(state.scriptId) ?: return

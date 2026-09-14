@@ -211,9 +211,11 @@ class GestureLowerPanel(
         val currentRaw = CommandDialogSpecs.normalize(fieldKey, node.string(fieldKey))
         // プリセット外の現在値は入力カード側を選択済みにします。
         val isCurrentPreset = ResourcePresets.isPreset(kind, currentRaw)
-        // ホバー文言は一覧の上側へ表示します。一覧と重ならないよう、
-        // グリッド上端から1枠分上げた位置を使います。
-        val hoverY = gridTopY + cellH / 2 + INLINE_RESOURCE_HOVER_ABOVE_GAP
+        // グリッド全体を1マス高さの半分だけ上げ、最底辺を詰めます。
+        // 入力カード位置は変えず、間の余白を広げる方向です。
+        val topY = gridTopY + cellH / 2
+        // ホバー文言は一覧の上側へ、1マス高さの1/3だけ上げた位置へ表示します。
+        val hoverY = topY + cellH / 2 + INLINE_RESOURCE_HOVER_ABOVE_GAP - cellH / 3
         val cards = ids.mapIndexed { index, id ->
             val selected = CommandDialogSpecs.normalize(fieldKey, id) == currentRaw ||
                 id == node.string(fieldKey)
@@ -229,7 +231,7 @@ class GestureLowerPanel(
                     GestureSettingVisualPolicy.nonTabOutlineMaterial(true)?.let { Bukkit.createBlockData(it) }
                 } else null,
                 cx = gridLeftX + col * pitchX,
-                cy = gridTopY - row * pitchY,
+                cy = topY - row * pitchY,
                 w = cellW,
                 h = cellH,
                 // IDと表示名の示し方は種別ごとに固定します。パーティクルと
@@ -286,7 +288,7 @@ class GestureLowerPanel(
                 gestures = GestureGuiClickPolicy.CLICK,
                 guard = null,
                 hover = singleLineHover(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_RESOURCE_ID_INPUT),
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_RESOURCE_ID_INPUT_HOVER),
                     x = HOVER_SLOT_X,
                     y = hoverY,
                 ),
@@ -1721,40 +1723,13 @@ class GestureLowerPanel(
                 ),
             )
         }
-            // 一時変数参照に対応したID項目（効果音・効果）は、直接値のとき
-            // プリセット一覧を上、プレビューと入力カードを下へ直接配置します。
-            // 子画面遷移は行いません。
-            val literalPickerKind = if (selectedSource == CommandValueSource.LITERAL) {
-                ResourcePicker.kindForFieldKey(field.key)
-            } else null
-            if (literalPickerKind != null) {
-                val inlineGridTopY = SETTING_INPUT_CENTER_Y - INLINE_RESOURCE_TYPED_GRID_TOP_DY
-                val inlinePreviewY =
-                    inlineGridTopY - INLINE_RESOURCE_GRID_PITCH_Y - INLINE_RESOURCE_INPUT_BELOW_DY
-                appendInlineResourcePicker(
-                    nodes, frame, player, node, field.key, literalPickerKind,
-                    gridTopY = inlineGridTopY,
-                    inputCx = 0.58,
-                    inputCy = inlinePreviewY,
-                    inputW = 0.56,
-                    gridLeftX = INLINE_RESOURCE_TYPED_GRID_LEFT_X,
-                    columns = INLINE_RESOURCE_TYPED_COLUMNS,
-                    cellW = INLINE_RESOURCE_TYPED_CELL_W,
-                    cellH = INLINE_RESOURCE_TYPED_CELL_H,
-                    pitchX = INLINE_RESOURCE_TYPED_GRID_PITCH_X,
-                    pitchY = INLINE_RESOURCE_GRID_PITCH_Y,
-                )
-                appendTypedValuePreview(
-                    nodes, frame, node, field.key, selectedSource, state.scriptId, player,
-                    compact = true,
-                    centerY = inlinePreviewY,
-                )
-            } else {
-                appendTypedValuePreview(
-                    nodes, frame, node, field.key, selectedSource, state.scriptId, player,
-                    compact = false,
-                )
-            }
+            // 一時変数参照に対応した項目（ITEM／BLOCK）は、直接値のとき
+            // 試聴・取得カードを配置します。音・効果の一時変数参照は廃止したため、
+            // ここへ資源ピッカー項目は到達しません。
+            appendTypedValuePreview(
+                nodes, frame, node, field.key, selectedSource, state.scriptId, player,
+                compact = false,
+            )
         } else if (heldMainHandSetting || dialogInputSetting) {
             val editVisualText = if (heldMainHandSetting) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_EDIT_FROM_MAINHAND
@@ -2089,8 +2064,6 @@ class GestureLowerPanel(
         player: Player,
         // issue #29: 一覧選択カードと並べるときは試聴カードを左半分へ寄せます。
         compact: Boolean = false,
-        // 親タブ直下の一覧の下へ置くときは、呼び出し側が行位置を指定します。
-        centerY: Double = TYPED_VALUE_PREVIEW_CENTER_Y,
     ) {
         if (source != CommandValueSource.LITERAL) return
         val mapping = when (fieldKey) {
@@ -2103,21 +2076,6 @@ class GestureLowerPanel(
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_GET_CONFIGURED_BLOCK,
                 "lower-block-get",
                 Material.GRAY_CONCRETE,
-            )
-            "sound" -> Triple(
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
-                "lower-sound-preview",
-                Material.PURPLE_CONCRETE,
-            )
-            "soundSetting" -> Triple(
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_PLAY_CONFIGURED_SOUND,
-                "lower-sound-preview",
-                Material.PURPLE_CONCRETE,
-            )
-            "effect" -> Triple(
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_APPLY_CONFIGURED_EFFECT,
-                "lower-effect-preview",
-                Material.MAGENTA_CONCRETE,
             )
             else -> return
         }
@@ -2136,7 +2094,7 @@ class GestureLowerPanel(
                     if (configured) material else DisabledGuiVisualPolicy.material,
                 ),
                 cx = if (compact) -0.02 else TYPED_VALUE_PREVIEW_CENTER_X,
-                cy = centerY,
+                cy = TYPED_VALUE_PREVIEW_CENTER_Y,
                 w = if (compact) 0.56 else TYPED_VALUE_PREVIEW_WIDTH,
                 h = TYPED_VALUE_PREVIEW_HEIGHT,
                 labelSize = 0.0043,
@@ -2564,14 +2522,12 @@ class GestureLowerPanel(
         )
     }
 
-    internal fun typedValuePreviewConfigured(node: CommandNode, fieldKey: String): Boolean = when (fieldKey) {
-        "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
-        "block" -> Material.matchMaterial(node.string("block"))
-            ?.takeUnless { it == Material.AIR } != null
-        "sound", "effect" -> node.string(fieldKey).isNotBlank()
-        "soundSetting" -> node.string("sound").isNotBlank()
-        else -> false
-    }
+        internal fun typedValuePreviewConfigured(node: CommandNode, fieldKey: String): Boolean = when (fieldKey) {
+            "item" -> node.string("item").isNotBlank() || node.string("itemData").isNotBlank()
+            "block" -> Material.matchMaterial(node.string("block"))
+                ?.takeUnless { it == Material.AIR } != null
+            else -> false
+        }
 
     /**
      * 操作不能な設定候補は、候補専用の共通ポリシーで赤コンクリートへ変更します。
@@ -2830,8 +2786,6 @@ class GestureLowerPanel(
                 ValueType.VECTOR,
                 ValueType.ITEM,
                 ValueType.BLOCK,
-                ValueType.SOUND,
-                ValueType.EFFECT,
                 null -> null
             }
         }
@@ -4923,25 +4877,16 @@ class GestureLowerPanel(
         // 外縁-0.275〜0.835に対し余白が左右0.045ずつ均等となり、
         // グリッド＋余白の横幅はボタンの1.2と一致します。
         const val INLINE_RESOURCE_GRID_LEFT_X = -0.21
-        // 一時変数参照項目のグリッド左端です。対話分岐と左端を一致させます。
-        const val INLINE_RESOURCE_TYPED_GRID_LEFT_X = -0.2325
         // 通常入力行の直下へ3行を置くための、入力行からの下げ幅です。
         // 入力カードとの余白確保のため、グリッド全体はこの分だけ上に寄ります。
         const val INLINE_RESOURCE_GRID_TOP_DY = -0.01
         // ホバー文言をグリッド上側へ置くための、グリッド上端からの上げ幅です。
         const val INLINE_RESOURCE_HOVER_ABOVE_GAP = 0.03
-        // 一時変数参照項目の方式行の直下へ2行を置くための、方式行からの下げ幅です。
-        const val INLINE_RESOURCE_TYPED_GRID_TOP_DY = 0.115
         // 一覧の下へ入力カードを置くための、グリッド最終行を超える下げ幅です。
         const val INLINE_RESOURCE_INPUT_BELOW_DY = 0.13
-        // 一時変数参照項目の小型グリッド寸法です。方式行とプレビュー行の間に2行で収めます。
-        const val INLINE_RESOURCE_TYPED_COLUMNS = 12
-        const val INLINE_RESOURCE_TYPED_CELL_W = 0.085
-        const val INLINE_RESOURCE_TYPED_CELL_H = 0.085
-        const val INLINE_RESOURCE_TYPED_GRID_PITCH_X = 0.093
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
-            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
+            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundSetting", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
             "particleDensity", "burstHeight",
             "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "summonEntity", "diskId", "name",
             "condition", "variable", "value", "block", "sneaking",

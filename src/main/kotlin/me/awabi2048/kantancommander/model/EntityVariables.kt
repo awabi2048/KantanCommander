@@ -57,16 +57,6 @@ object EntityVariableCodec {
             ).joinToString(",")
             ValueType.BLOCK -> value.block.orEmpty()
             ValueType.ENTITY -> value.entityId?.toString().orEmpty()
-            ValueType.SOUND -> listOf(
-                value.sound.orEmpty(),
-                value.volume.toString(),
-                value.pitch.toString(),
-            ).joinToString(",")
-            ValueType.EFFECT -> listOf(
-                value.effect.orEmpty(),
-                value.level.toString(),
-                value.seconds.toString(),
-            ).joinToString(",")
         }
         return "${value.type.name}:$payload"
     }
@@ -122,26 +112,6 @@ object EntityVariableCodec {
                 TypedValue(
                     type,
                     entityId = runCatching { UUID.fromString(payload) }.getOrNull() ?: return null,
-                )
-            }
-            ValueType.SOUND -> {
-                val parts = payload.split(',')
-                if (parts.size != 3) return null
-                TypedValue(
-                    type,
-                    sound = parts[0].takeIf(String::isNotBlank) ?: return null,
-                    volume = parts[1].toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null,
-                    pitch = parts[2].toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null,
-                )
-            }
-            ValueType.EFFECT -> {
-                val parts = payload.split(',')
-                if (parts.size != 3) return null
-                TypedValue(
-                    type,
-                    effect = parts[0].takeIf(String::isNotBlank) ?: return null,
-                    level = parts[1].toIntOrNull() ?: return null,
-                    seconds = parts[2].toIntOrNull() ?: return null,
                 )
             }
         }

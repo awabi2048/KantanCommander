@@ -202,8 +202,6 @@ object GraphChangeClassifier {
         if (before.temporaryLocationFacingSpec != after.temporaryLocationFacingSpec) return false
         if (before.itemTempRef != after.itemTempRef) return false
         if (before.blockTempRef != after.blockTempRef) return false
-        if (before.soundTempRef != after.soundTempRef) return false
-        if (before.effectTempRef != after.effectTempRef) return false
         return true
     }
 }

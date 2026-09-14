@@ -69,8 +69,6 @@ class GraphEditorTest {
         assertNotSame(source.temporaryLocationFacingSpec, clone.temporaryLocationFacingSpec)
         assertEquals(source.itemTempRef, clone.itemTempRef)
         assertEquals(source.blockTempRef, clone.blockTempRef)
-        assertEquals(source.soundTempRef, clone.soundTempRef)
-        assertEquals(source.effectTempRef, clone.effectTempRef)
         assertEquals(source.snapshot, clone.snapshot)
         assertNotSame(source.snapshot, clone.snapshot)
         clone.params["custom"] = "changed"
@@ -1264,8 +1262,6 @@ class GraphEditorTest {
             node.temporaryLocationFacingSpec = FacingSpec(FacingKind.COORDINATES, 10.0, 11.0, 12.0)
             node.itemTempRef = "item"
             node.blockTempRef = "block"
-            node.soundTempRef = "sound"
-            node.effectTempRef = "effect"
             node.snapshot = CommandGraph(nested.id, linkedMapOf(nested.id to nested))
         }
     }

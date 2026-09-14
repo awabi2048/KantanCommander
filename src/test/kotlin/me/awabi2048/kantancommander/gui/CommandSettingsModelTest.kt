@@ -145,8 +145,6 @@ class CommandSettingsModelTest {
         assertEquals(listOf("name", "tempType", "value"), CommandSettingsModel.visibleFields(node).map { it.key })
         node.params["tempType"] = ValueType.LOCATION.name
         assertEquals(listOf("name", "tempType", "location"), CommandSettingsModel.visibleFields(node).map { it.key })
-        node.params["tempType"] = ValueType.SOUND.name
-        assertEquals(listOf("name", "tempType", "sound", "soundParameters"), CommandSettingsModel.visibleFields(node).map { it.key })
     }
 
     @Test
@@ -692,8 +690,6 @@ class CommandSettingsModelTest {
             CommandType.GIVE_ITEM.newNode() to "item",
             CommandType.PLACE_ITEM.newNode() to "item",
             CommandType.BLOCK_OPERATION.newNode() to "block",
-            CommandType.PLAY_SOUND.newNode() to "sound",
-            CommandType.APPLY_EFFECT.newNode() to "effect",
         )
 
         cases.forEach { (node, field) ->
@@ -712,29 +708,30 @@ class CommandSettingsModelTest {
 
     @Test
     fun `editing a typed literal clears an old temporary reference`() {
-        val sound = CommandType.PLAY_SOUND.newNode().apply {
-            soundTempRef = "soundValue"
-            configuredFields = linkedSetOf("soundTempRef")
+        val item = CommandType.GIVE_ITEM.newNode().apply {
+            itemTempRef = "giftValue"
+            configuredFields = linkedSetOf("itemTempRef")
         }
 
-        CommandSettingsModel.setParameter(sound, "sound", "minecraft:block.note_block.harp")
+        CommandSettingsModel.setParameter(item, "item", "minecraft:stone")
 
-        assertNull(sound.soundTempRef)
-        assertEquals(CommandValueSource.LITERAL, CommandSettingsModel.temporaryValueSource(sound, "sound"))
-        assertTrue(CommandSettingsModel.isFieldConfigured(sound, "sound"))
+        assertNull(item.itemTempRef)
+        assertEquals(CommandValueSource.LITERAL, CommandSettingsModel.temporaryValueSource(item, "item"))
+        assertTrue(CommandSettingsModel.isFieldConfigured(item, "item"))
     }
 
     @Test
-    fun `temporary sound and effect sources keep the bundled setting tab`() {
-        val sound = CommandType.PLAY_SOUND.newNode().apply { soundTempRef = "soundValue" }
-        val effect = CommandType.APPLY_EFFECT.newNode().apply { effectTempRef = "effectValue" }
+    fun `sound and effect settings stay visible without temporary sources`() {
+        val sound = CommandType.PLAY_SOUND.newNode()
+        val effect = CommandType.APPLY_EFFECT.newNode()
 
-        // 束ね設定タブは設定元切替の入口として残り、直接値のダイアログだけが
-        // 一時変数参照へ委譲されます。
+        // 一時変数参照の廃止により、束ね設定タブは直接値のダイアログだけへ進みます。
+        assertFalse(CommandSettingsModel.supportsTemporaryValueReference(sound, "soundSetting"))
+        assertFalse(CommandSettingsModel.supportsTemporaryValueReference(effect, "effect"))
         assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundSetting" })
         assertTrue(CommandSettingsModel.visibleFields(sound).any { it.key == "soundTargetPosition" })
-        assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "level" })
-        assertFalse(CommandSettingsModel.visibleFields(effect).any { it.key == "seconds" })
+        assertTrue(CommandSettingsModel.visibleFields(effect).any { it.key == "level" })
+        assertTrue(CommandSettingsModel.visibleFields(effect).any { it.key == "seconds" })
     }
 
     @Test

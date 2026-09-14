@@ -240,8 +240,6 @@ data class CommandNode(
     /** 非リテラル一時変数の参照名です。空でなければ対応するリテラル値を置き換えます。 */
     var itemTempRef: String? = null,
     var blockTempRef: String? = null,
-    var soundTempRef: String? = null,
-    var effectTempRef: String? = null,
     var snapshot: CommandGraph? = null,
     /**
      * 折り畳みノード（FOLDED_FOR／FOLDED_IF）が内包する構造全体です。
@@ -685,8 +683,6 @@ fun ValueType.displayKey(): LocalizationKey<String> = when (this) {
     ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
     ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
-    ValueType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
-    ValueType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
 }
 
 /**
@@ -859,7 +855,9 @@ enum class CommandType(
         "soundOperation" to SoundOperation.PLAY.name, "soundCategory" to ""
     )),
     PARTICLE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_DESCRIPTION, Material.FIREWORK_STAR, mapOf(
-        "particle" to "FLAME",
+        // 選択肢型に未選択と区別できない既定値は置きません。種類の未設定は
+        // 未設定表示・未設定検証とし、数値欄の実行用既定値とは区別します。
+        "particle" to "",
         "particleDeltaX" to "0.0",
         "particleDeltaY" to "0.0",
         "particleDeltaZ" to "0.0",
@@ -877,7 +875,8 @@ enum class CommandType(
      * バニラ出力は非対応とし、検証層で明示エラーにします。
      */
     PARTICLE_GEOMETRY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_GEOMETRY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PARTICLE_GEOMETRY_DESCRIPTION, Material.FILLED_MAP, mapOf(
-        "particle" to "FLAME",
+        // 選択肢型に未選択と区別できない既定値は置きません（PARTICLEと同一方針）。
+        "particle" to "",
         "particleData" to "",
         "particleShape" to ParticleShape.LINE.name,
         "particleDensity" to "0.5",

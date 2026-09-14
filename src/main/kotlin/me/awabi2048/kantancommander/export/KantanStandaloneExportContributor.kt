@@ -115,8 +115,6 @@ class KantanStandaloneExportContributor(
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
-            ValueType.SOUND,
-            ValueType.EFFECT,
             -> return "$world/$name: 複合型の変数は単体出力に未対応です"
         }
         return if (valid) null else "$world/$name: 変数初期値が不完全または有限値ではありません"
@@ -345,8 +343,6 @@ internal class PreparedKantanExport(
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
-            ValueType.SOUND,
-            ValueType.EFFECT,
             -> error("unsupported variable type for standalone export: ${value.type}")
         }
     }

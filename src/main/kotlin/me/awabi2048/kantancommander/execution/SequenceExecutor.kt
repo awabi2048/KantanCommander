@@ -994,8 +994,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
-            ValueType.SOUND,
-            ValueType.EFFECT,
             -> error("complex arguments require a variable")
         }
     }.getOrNull()
@@ -1274,17 +1272,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.PARTICLE_GEOMETRY -> executeParticleGeometry(node, session, effectiveContext, effectiveOrigin, targets, origins, attempts)
             CommandType.FIREWORK_LAUNCH -> executeFirework(node, session, effectiveContext, effectiveOrigin, origins, attempts)
             CommandType.APPLY_EFFECT -> {
-                val refTemp = node.effectTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
-                    ?.takeIf { it.type == ValueType.EFFECT }
-                val key = NamespacedKey.fromString(refTemp?.effect ?: node.string("effect")) ?: return false
+                val key = NamespacedKey.fromString(node.string("effect")) ?: return false
                 val effect = Registry.EFFECT.get(key) ?: return false
                 val applicable = targets.filterIsInstance<LivingEntity>()
                 if (applicable.isEmpty()) return false
-                val seconds = refTemp?.seconds
-                    ?: resolvePositiveInt(node.string("seconds"), session) ?: return false
-                val level = refTemp?.level
-                    ?: resolvePositiveInt(node.string("level"), session) ?: return false
+                val seconds = resolvePositiveInt(node.string("seconds"), session) ?: return false
+                val level = resolvePositiveInt(node.string("level"), session) ?: return false
                 applicable.forEach {
                     it.addPotionEffect(org.bukkit.potion.PotionEffect(
                         effect,
@@ -1526,14 +1519,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val receivers = soundReceivers(node, effectiveOrigin, targets)
         when (SoundSettings.operation(node)) {
             SoundOperation.PLAY -> {
-                val refTemp = node.soundTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
-                    ?.takeIf { it.type == ValueType.SOUND }
-                val sound = refTemp?.sound ?: node.string("sound")
+                val sound = node.string("sound")
                 if (NamespacedKey.fromString(sound) == null) return false
-                val volume = (refTemp?.volume ?: resolveNumber(node.string("volume", "1.0"), session))
+                val volume = resolveNumber(node.string("volume", "1.0"), session)
                     ?.toFloat() ?: return false
-                val pitch = (refTemp?.pitch ?: resolveNumber(node.string("pitch", "1.0"), session))
+                val pitch = resolveNumber(node.string("pitch", "1.0"), session)
                     ?.toFloat() ?: return false
                 if (node.string("soundScope", "POSITION") == "WORLD") {
                     // 全域指定は各プレイヤー位置を音源位置にするため、現行の
@@ -1554,10 +1544,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 return true
             }
             SoundOperation.STOP -> {
-                val refTemp = node.soundTempRef?.takeIf(String::isNotBlank)
-                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
-                    ?.takeIf { it.type == ValueType.SOUND }
-                val sound = (refTemp?.sound ?: node.string("sound")).takeIf(String::isNotBlank)
+                val sound = node.string("sound").takeIf(String::isNotBlank)
                 if (sound != null && NamespacedKey.fromString(sound) == null) return false
                 val category = SoundSettings.category(node.string("soundCategory"))
                 receivers.forEach { player ->
@@ -2406,8 +2393,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
-        ValueType.SOUND,
-        ValueType.EFFECT,
         -> null
     }
 
@@ -2814,24 +2799,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // 死亡・別ワールド・未ロードは参照時の「対象なし」と同じ契約で扱い、
                 // 後続ノードだけをスキップできるようにします。
                 TypedValue(type, entityId = entityId)
-            }
-            ValueType.SOUND -> {
-                if (!CommandValueRules.isSoundId(node.string("sound"))) error("invalid sound")
-                val volume = resolveNumber(node.string("volume", "1.0"), session)
-                    ?.takeIf { it.isFinite() && it in 0.0..34.0 } ?: error("invalid volume")
-                val pitch = resolveNumber(node.string("pitch", "1.0"), session)
-                    ?.takeIf { it.isFinite() && it in 0.5..2.0 } ?: error("invalid pitch")
-                TypedValue(type, sound = node.string("sound"), volume = volume, pitch = pitch)
-            }
-            ValueType.EFFECT -> {
-                if (!CommandValueRules.isEffectId(node.string("effect"))) error("invalid effect")
-                val level = resolveNumber(node.string("level", "1"), session)
-                    ?.takeIf { it == kotlin.math.floor(it) && it in 1.0..255.0 }
-                    ?.toInt() ?: error("invalid level")
-                val seconds = resolveNumber(node.string("seconds", "30"), session)
-                    ?.takeIf { it == kotlin.math.floor(it) && it in 1.0..86_400.0 }
-                    ?.toInt() ?: error("invalid seconds")
-                TypedValue(type, effect = node.string("effect"), level = level, seconds = seconds)
             }
         }
     }.getOrNull()
@@ -3483,8 +3450,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } || listOfNotNull(
             node.itemTempRef to ValueType.ITEM,
             node.blockTempRef to ValueType.BLOCK,
-            node.soundTempRef to ValueType.SOUND,
-            node.effectTempRef to ValueType.EFFECT,
         ).any { (name, expected) ->
             name?.takeIf(String::isNotBlank)?.let {
                 session.executionVariables.get(TemporaryTemplate.normalized(it))?.type != expected

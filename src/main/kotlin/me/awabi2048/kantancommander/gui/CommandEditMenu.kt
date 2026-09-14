@@ -3196,15 +3196,8 @@ sealed interface DisplayValue {
         val volume: String,
         val pitch: String,
         val category: String,
-        val tempRef: String?,
     ) : DisplayValue {
         override fun rows(player: Player): List<TimingRow> {
-            tempRef?.let {
-                return listOf(TimingRow(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND),
-                    it,
-                ))
-            }
             return when (operation) {
                 SoundOperation.PLAY -> listOf(
                     TimingRow(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND), sound.ifBlank {
@@ -3606,7 +3599,6 @@ object EditorMenuLayout {
                     volume = it.string("volume", "1.0"),
                     pitch = it.string("pitch", "1.0"),
                     category = it.string("soundCategory"),
-                    tempRef = it.soundTempRef?.takeIf(String::isNotBlank),
                 )
             },
             field("soundScope", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_SCOPE, Material.GLOBE_BANNER_PATTERN,
@@ -4003,30 +3995,6 @@ object EditorMenuLayout {
                     descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY,
                     actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY,
                 ) { it.temporaryEntityTargetSpec?.kind?.let(::displayTarget) ?: displayUnset() })
-            ValueType.SOUND -> {
-                add(field("sound", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND, Material.NOTE_BLOCK))
-                // PLAY_SOUNDと同じく、音量・ピッチは1つの共通入力画面へまとめます。
-                add(field(
-                    "soundParameters",
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_PARAMETERS,
-                    Material.JUKEBOX,
-                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SOUND_PARAMETERS,
-                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_SOUND_PARAMETERS,
-                ) { displaySoundParameters(it.string("volume", "1.0"), it.string("pitch", "1.0")) })
-            }
-            ValueType.EFFECT -> {
-                add(field("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT, Material.POTION))
-                add(field("level", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LEVEL, Material.COMPARATOR))
-                // seconds は TEMP_SET ではエフェクトの持続時間だけを表すため、
-                // WAIT などの待機時間向け説明へ誤って依存しないよう明示します。
-                add(field(
-                    "seconds",
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SECONDS,
-                    Material.CLOCK,
-                    descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_EFFECT_SECONDS,
-                    actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_EFFECT_SECONDS,
-                ))
-            }
         }
     }
 
@@ -4153,7 +4121,9 @@ private fun geometryShapeKey(shape: ParticleShape): LocalizationKey<String> = wh
 
 /** パーティクル種類と詳細データを、一つの設定欄で現在値として表示します。 */
 private fun displayParticle(node: CommandNode): DisplayValue {
-    val particle = ParticleSettings.particle(node)?.name ?: node.string(ParticleSettings.PARAM_PARTICLE)
+    // 種類はバニラID表記で示します。保存形式のenum名は使いません。
+    val particle = ParticleSettings.particle(node)?.let { ResourcePicker.particleDisplayId(it.name) }
+        ?: node.string(ParticleSettings.PARAM_PARTICLE)
     val data = node.string(ParticleSettings.PARAM_DATA).takeIf(String::isNotBlank)
     return displayLiteral(if (data == null) particle else "$particle + $data")
 }
@@ -4244,8 +4214,6 @@ private fun displayValueTypeLabel(type: ValueType): LocalizationKey<String> = wh
     ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
     ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
-    ValueType.SOUND -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
-    ValueType.EFFECT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
 }
 
 private fun displayValueType(value: String) = runCatching { ValueType.valueOf(value) }.getOrNull()?.let {

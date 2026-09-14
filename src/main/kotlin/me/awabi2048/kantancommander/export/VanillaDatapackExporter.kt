@@ -935,15 +935,9 @@ class VanillaDatapackExporter(
 
     private fun soundCommand(node: CommandNode): String {
         if (SoundSettings.operation(node) == SoundOperation.STOP) return stopSoundCommand(node)
-        val soundName = node.soundTempRef?.takeIf(String::isNotBlank)
-            ?.let { temporaryMarker(it, "sound") }
-            ?: node.string("sound")
-        val volume = node.soundTempRef?.takeIf(String::isNotBlank)
-            ?.let { temporaryMarker(it, "volume") }
-            ?: node.string("volume", "1.0")
-        val pitch = node.soundTempRef?.takeIf(String::isNotBlank)
-            ?.let { temporaryMarker(it, "pitch") }
-            ?: node.string("pitch", "1.0")
+        val soundName = node.string("sound")
+        val volume = node.string("volume", "1.0")
+        val pitch = node.string("pitch", "1.0")
         val receivers = soundReceiverSelector(node)
         val sound = "playsound $soundName master $receivers ~ ~ ~ $volume $pitch"
         if (node.string("soundScope", "POSITION") == "WORLD") {
@@ -976,9 +970,7 @@ class VanillaDatapackExporter(
      * source名へ写像します。
      */
     private fun stopSoundCommand(node: CommandNode): String {
-        val soundName = node.soundTempRef?.takeIf(String::isNotBlank)
-            ?.let { temporaryMarker(it, "sound") }
-            ?: node.string("sound").takeIf(String::isNotBlank)
+        val soundName = node.string("sound").takeIf(String::isNotBlank)
         val source = SoundSettings.category(node.string("soundCategory"))?.let(::vanillaSoundSource)
         val receivers = soundReceiverSelector(node)
         return listOfNotNull(
@@ -1198,14 +1190,6 @@ class VanillaDatapackExporter(
                 val value = uuid?.let { "{uuid:${uuidIntArray(it)}}" } ?: "{}"
                 "data modify storage kantan:variables $destination set value $value"
             }
-            ValueType.SOUND ->
-                "data modify storage kantan:variables $destination set value " +
-                    "{sound:\"${escape(node.string("sound"))}\",volume:${number(node.string("volume", "1.0"))}," +
-                    "pitch:${number(node.string("pitch", "1.0"))}}"
-            ValueType.EFFECT ->
-                "data modify storage kantan:variables $destination set value " +
-                    "{effect:\"${escape(node.string("effect"))}\",level:${integer(node.string("level", "1"), "1")}," +
-                    "seconds:${integer(node.string("seconds", "30"), "30")}}"
         }
     }
 
@@ -1230,10 +1214,9 @@ class VanillaDatapackExporter(
             ValueType.ENTITY -> temporaryEntitySetCommands(node, destination)
             else -> listOf(temporarySetCommand(node))
         }
-        // NUMBER/STRINGの値だけでなく、SOUNDの音量・ピッチ、EFFECTのレベル・
-        // 持続時間、LOCATIONの動的座標も同じmacro入口へ通します。テンプレートが
-        // なければprepareMacroCommandsが元の複数命令をそのまま返すため、静的値の
-        // 出力形式は変わりません。
+        // NUMBER/STRINGの値だけでなく、LOCATIONの動的座標も同じmacro入口へ
+        // 通します。テンプレートがなければprepareMacroCommandsが元の複数命令を
+        // そのまま返すため、静的値の出力形式は変わりません。
         val macro = prepareMacroCommands(
             node,
             commands,
@@ -1510,9 +1493,9 @@ class VanillaDatapackExporter(
         CommandType.FIREWORK_LAUNCH -> fireworkCommand(node)
         CommandType.APPLY_EFFECT ->
             "effect give ${effectiveTarget(node)} " +
-                (node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "effect") } ?: node.string("effect")) +
-                " ${node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "seconds") } ?: node.string("seconds", "30")} " +
-                effectAmplifier(node.effectTempRef?.takeIf(String::isNotBlank)?.let { temporaryMarker(it, "level") } ?: node.string("level", "1"))
+                node.string("effect") +
+                " ${node.string("seconds", "30")} " +
+                effectAmplifier(node.string("level", "1"))
         CommandType.CAMERA_SHAKE -> null
         CommandType.BLOCK_OPERATION -> blockOperationCommand(node)
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
@@ -2065,8 +2048,6 @@ class VanillaDatapackExporter(
             ValueType.ITEM,
             ValueType.BLOCK,
             ValueType.ENTITY,
-            ValueType.SOUND,
-            ValueType.EFFECT,
             -> return null
         }
         return if (operation == VariableOperation.DEFINE) {
@@ -2340,8 +2321,6 @@ class VanillaDatapackExporter(
                 }
                 add(node.itemTempRef)
                 add(node.blockTempRef)
-                add(node.soundTempRef)
-                add(node.effectTempRef)
                 listOfNotNull(
                     node.targetSpec,
                     node.secondaryTargetSpec,

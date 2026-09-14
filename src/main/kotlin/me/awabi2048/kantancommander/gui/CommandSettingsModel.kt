@@ -177,7 +177,8 @@ object CommandSettingsModel {
      *
      * CONDITIONのitem/blockは同名の保存欄を使いますが、ブロック判定は実行側が
      * blockTempRefを解決せず、条件詳細も独立した値入力画面です。そのため、ここへ
-     * 含めるのは実行処理・バニラ出力・既存UIが同じ意味を共有する4つの通常値です。
+     * 含めるのは実行処理・バニラ出力・既存UIが同じ意味を共有するitem・blockの
+     * 通常値です。音・効果の一時変数参照は廃止し、直接値だけを扱います。
      */
     private fun temporaryValueBinding(node: CommandNode, fieldKey: String): TemporaryValueBinding? {
         if (node.type == CommandType.TEMP_SET) return null
@@ -189,12 +190,6 @@ object CommandSettingsModel {
             }
             "block" -> if (node.type == CommandType.BLOCK_OPERATION) {
                 TemporaryValueBinding("blockTempRef", setOf("block"))
-            } else null
-            "sound", "volume", "pitch", "soundSetting" -> if (node.type == CommandType.PLAY_SOUND) {
-                TemporaryValueBinding("soundTempRef", setOf("sound", "volume", "pitch"))
-            } else null
-            "effect" -> if (node.type == CommandType.APPLY_EFFECT) {
-                TemporaryValueBinding("effectTempRef", setOf("effect", "level", "seconds"))
             } else null
             else -> null
         }
@@ -265,8 +260,6 @@ object CommandSettingsModel {
     private fun temporaryReference(node: CommandNode, referenceKey: String): String? = when (referenceKey) {
         "itemTempRef" -> node.itemTempRef
         "blockTempRef" -> node.blockTempRef
-        "soundTempRef" -> node.soundTempRef
-        "effectTempRef" -> node.effectTempRef
         else -> error("未定義の一時変数参照フィールドです: $referenceKey")
     }?.takeIf(String::isNotBlank)
 
@@ -274,8 +267,6 @@ object CommandSettingsModel {
         when (referenceKey) {
             "itemTempRef" -> node.itemTempRef = value
             "blockTempRef" -> node.blockTempRef = value
-            "soundTempRef" -> node.soundTempRef = value
-            "effectTempRef" -> node.effectTempRef = value
             else -> error("未定義の一時変数参照フィールドです: $referenceKey")
         }
     }
@@ -562,11 +553,7 @@ object CommandSettingsModel {
         CommandType.TELEPORT ->
             fieldKey != "destinationFacing" || node.destinationSpec?.kind != PositionKind.TEMPORARY
 
-        CommandType.PLAY_SOUND -> true
-
-        CommandType.APPLY_EFFECT ->
-            fieldKey !in setOf("level", "seconds") ||
-                temporaryValueSource(node, "effect") != CommandValueSource.TEMPORARY
+        CommandType.PLAY_SOUND, CommandType.APPLY_EFFECT -> true
 
         CommandType.PARTICLE -> true
 
@@ -626,8 +613,6 @@ object CommandSettingsModel {
             "item" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ITEM
             "block" -> mode == VariableChangeMode.ASSIGN && type == ValueType.BLOCK
             "entity" -> mode == VariableChangeMode.ASSIGN && type == ValueType.ENTITY
-            "sound", "soundParameters" -> mode == VariableChangeMode.ASSIGN && type == ValueType.SOUND
-            "effect", "level", "seconds" -> mode == VariableChangeMode.ASSIGN && type == ValueType.EFFECT
             else -> true
         }
     }
@@ -1136,7 +1121,7 @@ object CommandSettingsModel {
             return
         }
         // 通常値を直接入力した時点で、同じ値欄の一時変数参照を解除します。
-        // TEMP_SETのitem/sound等は「一時値そのもの」の入力であり、この切替を
+        // TEMP_SETのitemは「一時値そのもの」の入力であり、この切替を
         // 適用すると自分自身の保存経路を壊すため、temporaryValueBinding側で除外します。
         temporaryValueBinding(node, key)?.let { binding ->
             setTemporaryReference(node, binding.referenceKey, null)
@@ -1546,14 +1531,11 @@ object CommandSettingsModel {
                 isTargetSpecConfigured(node.targetSpec) || isPositionSpecConfigured(node.soundPositionSpec)
             }
             // 効果音設定は操作ごとに束ねます。再生はID・音量・ピッチ、停止は
-            // ID・カテゴリのいずれかがあれば設定済みです。一時変数参照も同様です。
+            // ID・カテゴリのいずれかがあれば設定済みです。
             "soundSetting" -> if (SoundSettings.operation(node) ==
                 SoundOperation.STOP
             ) {
-                node.string("sound").isNotBlank() || node.string("soundCategory").isNotBlank() ||
-                    !node.soundTempRef.isNullOrBlank()
-            } else if (temporaryValueSource(node, "soundSetting") == CommandValueSource.TEMPORARY) {
-                !node.soundTempRef.isNullOrBlank()
+                node.string("sound").isNotBlank() || node.string("soundCategory").isNotBlank()
             } else {
                 node.string("sound").isNotBlank() ||
                     listOf("volume", "pitch").any { key ->
@@ -1970,7 +1952,7 @@ object CommandSettingsModel {
         else -> fieldKey
     }
 
-    /** ITEM／BLOCK／SOUND／EFFECTの主値に対する完了判定を共通化します。 */
+    /** ITEM／BLOCKの主値に対する完了判定を共通化します。 */
     private fun typedValueConfigured(node: CommandNode, fieldKey: String): Boolean {
         return when (temporaryValueSource(node, fieldKey)) {
             CommandValueSource.TEMPORARY -> temporaryValueReference(node, fieldKey) != null

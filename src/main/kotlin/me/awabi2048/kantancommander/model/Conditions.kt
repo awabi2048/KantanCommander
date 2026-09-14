@@ -30,8 +30,6 @@ object ConditionComparison {
         ValueType.VECTOR,
         ValueType.ITEM,
         ValueType.BLOCK,
-        ValueType.SOUND,
-        ValueType.EFFECT,
         -> emptySet()
     }
 
@@ -89,8 +87,6 @@ object ConditionComparison {
             ValueType.VECTOR,
             ValueType.ITEM,
             ValueType.BLOCK,
-            ValueType.SOUND,
-            ValueType.EFFECT,
             -> null
         }
     }

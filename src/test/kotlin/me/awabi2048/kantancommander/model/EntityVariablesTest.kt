@@ -37,8 +37,6 @@ class EntityVariablesTest {
             TypedValue(ValueType.BLOCK, block = "STONE"),
             TypedValue(ValueType.ENTITY, entityId = UUID.randomUUID()),
             TypedValue(ValueType.ENTITY),
-            TypedValue(ValueType.SOUND, sound = "minecraft:block.note_block.harp", volume = 1.0, pitch = 1.0),
-            TypedValue(ValueType.EFFECT, effect = "SPEED", level = 2, seconds = 30),
         )
         values.forEach { value ->
             val encoded = EntityVariableCodec.encode(value)

@@ -997,8 +997,6 @@ object GraphEditor {
         head.temporaryLocationFacingSpec = wrapper.temporaryLocationFacingSpec?.copy()
         head.itemTempRef = wrapper.itemTempRef
         head.blockTempRef = wrapper.blockTempRef
-        head.soundTempRef = wrapper.soundTempRef
-        head.effectTempRef = wrapper.effectTempRef
     }
 
     private fun pairedForEnd(graph: CommandGraph, start: CommandNode): CommandNode? =

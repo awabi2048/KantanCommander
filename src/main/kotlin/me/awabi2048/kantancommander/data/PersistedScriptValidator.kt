@@ -91,7 +91,7 @@ object PersistedScriptValidator {
         listOf("next", "trueNext", "falseNext", "pairedNodeId").forEach {
             optionalUuid(node, it, path, errors)
         }
-        listOf("itemTempRef", "blockTempRef", "soundTempRef", "effectTempRef").forEach {
+        listOf("itemTempRef", "blockTempRef").forEach {
             optionalString(node, it, path, errors)
         }
 

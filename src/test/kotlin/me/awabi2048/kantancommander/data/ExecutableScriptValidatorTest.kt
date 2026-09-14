@@ -217,23 +217,35 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `temporary sound fields use their own validation keys and ranges`() {
-        val script = DiskScript(name = "temporary-sound-range", owner = UUID.randomUUID())
+    fun `removed temporary sound and effect types are rejected`() {
+        val script = DiskScript(name = "removed-temp-types", owner = UUID.randomUUID())
         val sound = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
             params.putAll(
                 mapOf(
                     "name" to "sound",
-                    "tempType" to ValueType.SOUND.name,
+                    "tempType" to "SOUND",
                     "sound" to "minecraft:block.note_block.harp",
                     "volume" to "35",
                     "pitch" to "1",
                 ),
             )
         }
+        val effect = GraphEditor.append(script.graph, CommandType.TEMP_SET).apply {
+            params.putAll(
+                mapOf(
+                    "name" to "effect",
+                    "tempType" to "EFFECT",
+                    "effect" to "minecraft:speed",
+                    "level" to "1",
+                    "seconds" to "30",
+                ),
+            )
+        }
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.nodeId == sound.id && it.fieldKeys == setOf("volume") })
+        assertTrue(errors.any { it.nodeId == sound.id && it.fieldKeys == setOf("tempType") })
+        assertTrue(errors.any { it.nodeId == effect.id && it.fieldKeys == setOf("tempType") })
     }
 
     @Test

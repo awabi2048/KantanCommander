@@ -44,7 +44,7 @@ object VariableTemplate {
     /**
      * 型付き値をテキストへ変換します。
      *
-     * NUMBER・STRING・BOOLEAN だけを埋め込み可能とし、複合6型は空文字にします。
+     * NUMBER・STRING・BOOLEAN だけを埋め込み可能とし、複合5型は空文字にします。
      * 複合値を空文字へ黙って変換して実行を続けると型エラーが成功に見えるため、
      * 呼び出し側は事前に型を確認してください。
      */
@@ -57,8 +57,6 @@ object VariableTemplate {
         ValueType.ITEM,
         ValueType.BLOCK,
         ValueType.ENTITY,
-        ValueType.SOUND,
-        ValueType.EFFECT,
         -> ""
     }
 
