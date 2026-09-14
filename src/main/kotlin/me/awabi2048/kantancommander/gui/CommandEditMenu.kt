@@ -571,6 +571,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderEntityDataRoot(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
+                    "page" to entityPageAction(),
                     "select" to MenuActionHandler { context ->
                         val selection = context.payload["selection"]
                             ?: return@MenuActionHandler MenuActionResult.Ignored
@@ -647,6 +648,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderEntityAttributeSelect(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
+                    "page" to entityPageAction(),
                     "select" to MenuActionHandler { context ->
                         val attributeId = context.payload["attribute"]
                             ?.takeIf(EntityAttributeSupport::isAttributeId)
@@ -674,6 +676,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderEntityTagList(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
+                    "page" to entityPageAction(),
                     "select" to MenuActionHandler { context ->
                         val payload = context.payload
                         // 新規タグ入力行です。入力値をaddモードで追記します。
@@ -1588,11 +1591,64 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
+     * 選択画面のページ送り行です。候補上限（14件）に収めるため、
+     * 8件ずつ区切って前後ページ行を付けます。呼び出し側は行数＋2行で
+     * レイアウトを組みます。
+     */
+    private fun appendEntityPager(
+        player: Player,
+        layout: ChoiceMenuLayout,
+        elements: MutableList<MenuElement>,
+        baseIndex: Int,
+        page: Int,
+        pageCount: Int,
+        pageKey: String,
+    ) {
+        if (pageCount <= 1) return
+        elements += choiceElement(
+            player,
+            layout.itemSlots[baseIndex],
+            Material.ARROW,
+            "◀",
+            "page",
+            mapOf("page" to (page - 1).toString(), "pageKey" to pageKey),
+            enabled = page > 0,
+        )
+        elements += choiceElement(
+            player,
+            layout.itemSlots[baseIndex + 1],
+            Material.ARROW,
+            "▶",
+            "page",
+            mapOf("page" to (page + 1).toString(), "pageKey" to pageKey),
+            enabled = page < pageCount - 1,
+        )
+    }
+
+    /**
+     * ページ送り操作です。同一画面内でページだけを切り替えます。
+     *
+     * 対象のページキーは操作側のpayloadで指定し、画面ごとの分岐を増やしません。
+     */
+    private fun entityPageAction() = MenuActionHandler { context ->
+        val page = context.payload["page"]?.toIntOrNull()
+            ?: return@MenuActionHandler MenuActionResult.Ignored
+        val pageKey = context.payload["pageKey"]?.takeIf(String::isNotBlank)
+            ?: return@MenuActionHandler MenuActionResult.Ignored
+        MenuActionResult.Success(
+            MenuUpdate.Navigate(
+                context.route.copy(payload = context.route.payload + (pageKey to page.toString())),
+            ),
+        )
+    }
+
+    /**
      * 統合選択の一覧です。
      *
      * タグ・attributeグループ・各データ項目を同じ階層に並べます。
      * 対象から確定できるEntityTypeで候補を絞り、種類不明時は汎用項目だけを
      * 提示します。選択肢の表示名はスキーマ定義の型付きキーを使います。
+     * 候補が多い場合は8件ずつページングします。
      */
     private fun renderEntityDataRoot(player: Player, route: MenuRoute): InventoryMenuView {
         val currentNode = node(route)
@@ -1624,8 +1680,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             }
         }
         // 現在選択中の項目が候補外の場合は未選択表示とし、表示から意味を推測しません。
-        val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
-        val elements = options.mapIndexed { index, option ->
+        val pageSize = 8
+        val pageCount = ((options.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["rootPage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        val rows = options.drop(page * pageSize).take(pageSize)
+        // 行＋ページャ2行で上限（14件）に収めます。
+        val layout = ChoiceMenuLayoutPolicy.layout((rows.size + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
+        val elements = rows.mapIndexed { index, option ->
             choiceElement(
                 player,
                 layout.itemSlots[index],
@@ -1635,6 +1696,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 mapOf("selection" to option.selection),
             )
         }.toMutableList()
+        appendEntityPager(player, layout, elements, rows.size, page, pageCount, "rootPage")
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,
@@ -1645,12 +1707,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     /**
      * attribute子画面の一覧です。選択→変更後の値入力フローであり、
-     * ID自体の自由入力欄は持ちません。
+     * ID自体の自由入力欄は持ちません。候補が多いため8件ずつページングします。
      */
     private fun renderEntityAttributeSelect(player: Player, route: MenuRoute): InventoryMenuView {
         val options = EntityAttributeSupport.allAttributeIds()
-        val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
-        val elements = options.mapIndexed { index, id ->
+        val pageSize = 8
+        val pageCount = ((options.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["attributePage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        val rows = options.drop(page * pageSize).take(pageSize)
+        // 行＋ページャ2行で上限（14件）に収めます。
+        val layout = ChoiceMenuLayoutPolicy.layout((rows.size + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
+        val elements = rows.mapIndexed { index, id ->
             choiceElement(
                 player,
                 layout.itemSlots[index],
@@ -1660,6 +1727,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 mapOf("attribute" to id),
             )
         }.toMutableList()
+        appendEntityPager(player, layout, elements, rows.size, page, pageCount, "attributePage")
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,
@@ -1677,7 +1745,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun renderEntityTagList(player: Player, route: MenuRoute): InventoryMenuView {
         val entries = node(route)?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }.orEmpty()
         data class TagRow(val material: Material, val label: String, val action: String, val payload: Map<String, String>)
-        val rows = buildList {
+        val allRows = buildList {
             add(TagRow(
                 Material.WRITABLE_BOOK,
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_ADD),
@@ -1704,10 +1772,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 ))
             }
         }
-        val layout = ChoiceMenuLayoutPolicy.layout(rows.size.coerceAtLeast(1))
+        // 追加行＋カード2行の並びを8件ずつページングし、上限（14件）に収めます。
+        val pageSize = 8
+        val pageCount = ((allRows.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["tagPage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        val rows = allRows.drop(page * pageSize).take(pageSize)
+        val layout = ChoiceMenuLayoutPolicy.layout((rows.size + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
         val elements = rows.mapIndexed { index, row ->
             choiceElement(player, layout.itemSlots[index], row.material, row.label, row.action, row.payload)
         }.toMutableList()
+        appendEntityPager(player, layout, elements, rows.size, page, pageCount, "tagPage")
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,

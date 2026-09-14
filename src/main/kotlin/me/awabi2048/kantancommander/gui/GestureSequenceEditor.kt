@@ -6963,6 +6963,8 @@ class GestureSequenceEditor(
                     }) showSettingScreen()
             }
             GestureSettingScreen.ENTITY_DATA_ROOT -> {
+                // 診断ログ：無反応報告の切り分け用。原因確定後に除去します。
+                plugin.logger.info("[EntityDataDiag] root click group=$group value=$value fieldKey=$fieldKey")
                 if (group != "entityData") return
                 // attributeグループは子画面への遷移であり、保存は行いません。
                 if (value == "attribute") {
@@ -7053,6 +7055,8 @@ class GestureSequenceEditor(
                 } else showSettingScreen()
             }
             GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT -> {
+                // 診断ログ：無反応報告の切り分け用。原因確定後に除去します。
+                plugin.logger.info("[EntityDataDiag] attribute click group=$group value=$value fieldKey=$fieldKey")
                 // 選択→変更後の値入力フローです。attribute IDを確定して値Dialogを開きます。
                 if (group != "attribute" || !EntityAttributeSupport.isAttributeId(value)) return
                 if (!updateSettingNode(player, settingContext) {
@@ -7088,6 +7092,8 @@ class GestureSequenceEditor(
                 }
             }
             GestureSettingScreen.ENTITY_TAG_LIST -> {
+                // 診断ログ：無反応報告の切り分け用。原因確定後に除去します。
+                plugin.logger.info("[EntityDataDiag] tag click group=$group value=$value fieldKey=$fieldKey")
                 when (group) {
                     // 新規タグ入力行です。入力値をaddモードで追記します。
                     "tagAdd" -> {
