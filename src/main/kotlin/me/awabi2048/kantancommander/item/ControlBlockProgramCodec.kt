@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.item
 
 import com.google.gson.GsonBuilder
+import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.data.LegacyEquipMigration
 import me.awabi2048.kantancommander.model.DiskScript
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -33,7 +35,16 @@ internal object ControlBlockProgramCodec {
             GZIPInputStream(ByteArrayInputStream(compressed)).use { gzip ->
                 val json = readAtMost(gzip, MAX_DECODED_LENGTH)
                     ?: return@runCatching null
-                val script = gson.fromJson(json.toString(Charsets.UTF_8), DiskScript::class.java)
+                val root = runCatching {
+                    JsonParser.parseString(json.toString(Charsets.UTF_8)).asJsonObject
+                }.getOrNull() ?: return@runCatching null
+                // issue #21: 旧装備操作を PLACE_ITEM へ正本化します。
+                // ファイル読込と同じ正規化を適用し、古い埋め込み内容も
+                // 現行の実行経路だけで扱います。
+                LegacyEquipMigration.normalizeGraph(
+                    root["graph"]?.takeIf { it.isJsonObject }?.asJsonObject,
+                )
+                val script = gson.fromJson(root, DiskScript::class.java)
                     ?: return@runCatching null
                 // issue #8: #8以前に符号化されたアイテムには arguments 欄がありません。
                 // Gsonの復元ではKotlinの非null境界が保証されないため、欠落時は空へ正規化します。

@@ -1176,9 +1176,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         targets.forEach { it.velocity = velocity.clone() }
                         true
                     }
-                    // 旧equipは#21のPLACE_ITEMへ移行済みのため実行しません。
+                    // 旧equipは読込時に PLACE_ITEM へ正本化済みのため到達しません。
                     // 旧tagは#32のENTITY_OPERATIONへ移行済みのためここでは扱いません。
-                    // いずれも検証層で移行漏れとして拒否されるため、到達時は失敗とします。
+                    // いずれも検証層で拒否されるため、到達時は失敗とします。
                     else -> false
                 }
             }

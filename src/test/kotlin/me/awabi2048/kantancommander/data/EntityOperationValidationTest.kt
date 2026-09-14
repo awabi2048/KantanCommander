@@ -72,8 +72,9 @@ class EntityOperationValidationTest {
     }
 
     @Test
-    fun `legacy equip under entity action is rejected with migration message`() {
-        // #21統合で旧equipの読み込み互換を終了し、PLACE_ITEMへの移行漏れとして拒否します。
+    fun `unmigrated equip action is rejected as unknown`() {
+        // #21: 旧equipは読込時に PLACE_ITEM へ正本化されるため、検証層へ
+        // 到達する手組み値は不明な操作として拒否します。
         val script = actionScriptWith {
             it.params["action"] = "equip"
             it.params["slot"] = "HAND"
@@ -81,7 +82,7 @@ class EntityOperationValidationTest {
             it.params["overwrite"] = "false"
         }
         val errors = ExecutableScriptValidator.validate(script)
-        assertTrue(errors.any { it.fieldKeys == setOf("action") && it.message.contains("アイテムを配置する") })
+        assertTrue(errors.any { it.fieldKeys == setOf("action") && it.message.contains("不明なエンティティ操作") })
     }
 
     @Test
