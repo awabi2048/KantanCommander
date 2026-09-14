@@ -1,6 +1,12 @@
 package me.awabi2048.kantancommander.gui
 
+import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
+import me.awabi2048.kantancommander.model.SoundOperation
+import me.awabi2048.kantancommander.model.SoundSettings
+import me.awabi2048.kantancommander.model.setConditionSubject
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -72,6 +78,58 @@ class GestureSettingTreeTest {
         // 経路なしでは何も変えません。
         val empty = applyPathSelectionExclusive(listOf(preset, detail), null)
         assertEquals(listOf(true, false), empty.map { it.selected })
+    }
+
+    @Test
+    fun `single item screens short circuit directly to the target screen`() {
+        fun frame(fieldKey: String, screen: GestureSettingScreen) = GestureSettingFrame(
+            CommandSettingContext(java.util.UUID.randomUUID(), java.util.UUID.randomUUID(), null),
+            fieldKey,
+            screen,
+        )
+
+        // 表示対象タブは常時、対象選択が唯一の掘り下げのため直行します。
+        val particle = CommandType.PARTICLE.newNode()
+        val particleDirect = requireNotNull(
+            shortCircuitTargetFrame(particle, frame("particleDisplay", GestureSettingScreen.PARTICLE_DISPLAY)),
+        )
+        assertSame(GestureSettingScreen.TARGET, particleDirect.screen)
+        assertEquals(CommandSettingRole.NODE_TARGET, particleDirect.context.role)
+        assertEquals("particleDisplay", particleDirect.fieldKey)
+
+        // 停止操作時は対象だけのため直行し、再生操作時は通常遷移します。
+        val stopped = CommandType.PLAY_SOUND.newNode()
+            .apply { params[SoundSettings.PARAM_OPERATION] = SoundOperation.STOP.name }
+        val stoppedDirect = requireNotNull(
+            shortCircuitTargetFrame(stopped, frame("soundTargetPosition", GestureSettingScreen.SOUND_TARGET_POSITION)),
+        )
+        assertSame(GestureSettingScreen.TARGET, stoppedDirect.screen)
+        assertEquals(CommandSettingRole.NODE_TARGET, stoppedDirect.context.role)
+
+        val playing = CommandType.PLAY_SOUND.newNode()
+            .apply { params[SoundSettings.PARAM_OPERATION] = SoundOperation.PLAY.name }
+        assertNull(
+            shortCircuitTargetFrame(playing, frame("soundTargetPosition", GestureSettingScreen.SOUND_TARGET_POSITION)),
+        )
+
+        // 他エンティティ対象時は対象設定だけで成立するため直行します。
+        val otherEntity = CommandType.CONDITION.newNode()
+            .apply { setConditionSubject(ConditionSubject.OTHER_ENTITY) }
+        val conditionDirect = requireNotNull(
+            shortCircuitTargetFrame(otherEntity, frame("condition", GestureSettingScreen.CONDITION_DETAIL)),
+        )
+        assertSame(GestureSettingScreen.TARGET, conditionDirect.screen)
+
+        val playerSubject = CommandType.CONDITION.newNode()
+            .apply { setConditionSubject(ConditionSubject.PLAYER) }
+        assertNull(
+            shortCircuitTargetFrame(playerSubject, frame("condition", GestureSettingScreen.CONDITION_DETAIL)),
+        )
+
+        // 対象画面自体や無関係な画面は直行しません。
+        assertNull(
+            shortCircuitTargetFrame(particle, frame("target", GestureSettingScreen.TARGET)),
+        )
     }
 
     @Test

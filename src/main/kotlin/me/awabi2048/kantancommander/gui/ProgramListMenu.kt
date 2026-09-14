@@ -6,6 +6,7 @@ import com.awabi2048.ccsystem.api.gui.GuiElementRole
 import com.awabi2048.ccsystem.api.gui.GuiMenuActionIntent
 import com.awabi2048.ccsystem.api.gui.GuiMenuEntryData
 import com.awabi2048.ccsystem.api.gui.GuiNameStyle
+import com.awabi2048.ccsystem.api.gui.GuiValueTone
 import com.awabi2048.ccsystem.api.gui.InventoryMenuDefinition
 import com.awabi2048.ccsystem.api.gui.InventoryMenuView
 import com.awabi2048.ccsystem.api.gui.MenuActionResult
@@ -15,7 +16,9 @@ import com.awabi2048.ccsystem.api.gui.MenuRoute
 import com.awabi2048.ccsystem.api.gui.MenuUpdate
 import java.util.UUID
 import me.awabi2048.kantancommander.KantanCommanderPlugin
+import me.awabi2048.kantancommander.data.ExecutableScriptValidator
 import me.awabi2048.kantancommander.item.KantanItemService
+import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.util.KcI18n
 import org.bukkit.Material
@@ -94,6 +97,9 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
                         TriggerDisplay.summary(player, script.effectiveTrigger()),
                     ),
+                    // 未設定の検証エラーを一覧へ投影し、設定の完了扱いと接続します。
+                    // 保存は構造検証だけを通すため、意味的な未完了はここで示します。
+                    programStatusEntry(player, script),
                 ),
                 role = GuiElementRole.CONTENT,
                 actions = listOf(
@@ -115,6 +121,30 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
             data = listOf(GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_PAGE), "${page + 1}/$total")),
         )
         return InventoryMenuView(layout.size, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_TITLE)), elements)
+    }
+
+    /**
+     * プログラムの完了状態を一覧へ投影します。
+     *
+     * 未設定・不正は実行前検証と同じ判定を使い、設定済み表示と検証エラーを
+     * 同じ未設定概念へ接続します。一覧表示のたびに検証するため、保存後に
+     * 放置された未完了もここで示します。
+     */
+    private fun programStatusEntry(player: Player, script: DiskScript): GuiMenuEntryData {
+        val invalid = ExecutableScriptValidator.validate(script).isNotEmpty()
+        return if (invalid) {
+            GuiMenuEntryData(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_STATUS),
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET),
+                GuiValueTone.DANGER,
+            )
+        } else {
+            GuiMenuEntryData(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_STATUS),
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CONFIGURED),
+                GuiValueTone.SUCCESS,
+            )
+        }
     }
 
     private fun navigationElement(player: Player, slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {

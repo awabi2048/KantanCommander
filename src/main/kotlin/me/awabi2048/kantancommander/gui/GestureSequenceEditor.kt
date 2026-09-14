@@ -2888,9 +2888,14 @@ class GestureSequenceEditor(
 
     /** タブから設定木のルートを開始します。 */
     private fun startSettingRoute(frame: GestureSettingFrame) {
-        state.settingRoute = listOf(frame)
+        // 単一項目経由の画面は対象画面へ直行し、経由画面を経路へ積みません。
+        // 判定に使う操作種別・対象種別はタブを開く時点で確定します。
+        val script = plugin.scripts.load(frame.context.scriptId)
+        val node = frame.context.nodeId.let { script?.graph?.nodes?.get(it) }
+        val effective = node?.let { shortCircuitTargetFrame(it, frame) } ?: frame
+        state.settingRoute = listOf(effective)
         state.detailVisitedKeys.remove(PresetSelectionDisplay.detailVisitKey(frame.fieldKey, frame.context.role))
-        activateSettingFrame(frame, emptyList())
+        activateSettingFrame(effective, emptyList())
     }
 
     /**
@@ -7162,26 +7167,10 @@ class GestureSequenceEditor(
                     }
                 }
             }
-            GestureSettingScreen.PARTICLE_DISPLAY -> when {
-                encoded == "particle-target" -> {
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
-                    val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
-                    rememberSettingNode(encoded)
-                    when (settingSelectionAction(wasSelected, hasChildren)) {
-                        GestureSettingSelectionAction.ENTER_CHILD -> {
-                            pushSettingFrame(
-                                player,
-                                GestureSettingFrame(
-                                    settingContext.copy(role = CommandSettingRole.NODE_TARGET),
-                                    fieldKey,
-                                    GestureSettingScreen.TARGET,
-                                ),
-                                encoded,
-                            )
-                        }
-                        GestureSettingSelectionAction.STAY_ON_FRAME -> showSettingScreen()
-                    }
-                }
+            GestureSettingScreen.PARTICLE_DISPLAY -> {
+                // 表示対象タブは対象画面へ直行するため、この画面には到達しません。
+                // 経路開始時の shortCircuitTargetFrame が対象画面へ置き換えます。
+                showSettingScreen()
             }
             GestureSettingScreen.PARTICLE_GEOMETRY -> when {
                 group == "shape" -> {

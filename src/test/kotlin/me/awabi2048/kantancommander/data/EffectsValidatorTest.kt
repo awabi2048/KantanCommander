@@ -61,6 +61,7 @@ class EffectsValidatorTest {
     fun `geometry circle passes with agreed density`() {
         // #30: 図形表示は独立したPARTICLE_GEOMETRY型で検証します。
         val script = scriptWith(CommandType.PARTICLE_GEOMETRY) {
+            params["particle"] = "FLAME"
             params["particleShape"] = ParticleShape.CIRCLE.name
             params["particleDensity"] = "0.5"
             params["geometryRadius"] = "3.0"

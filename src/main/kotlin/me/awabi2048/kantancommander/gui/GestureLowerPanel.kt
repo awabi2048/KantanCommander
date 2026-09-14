@@ -3092,21 +3092,7 @@ class GestureLowerPanel(
         detailVisited: Boolean = false,
     ): List<GestureSettingTreeNode> = when (screen) {
         GestureSettingScreen.TARGET -> targetChoices(node, context, player, detailVisited = detailVisited)
-        GestureSettingScreen.POSITION -> positionChoices(node, context, player, inChild, detailVisited).map { choice ->
-            if (choice.id == "position:${PositionKind.TARGET.name}" && context.role == CommandSettingRole.DESTINATION) {
-                // 移動先のインライン選択は、実体の分類（プレイヤー／プレイヤー以外）だけを
-                // 選ぶ画面契約です。一時変数は通常の対象設定経路に残し、この選択肢へ混在させません。
-                choice.copy(
-                    children = targetChoices(
-                        node,
-                        context.copy(role = CommandSettingRole.DESTINATION),
-                        player,
-                        includeTemporary = false,
-                        detailVisited = detailVisited,
-                    ),
-                )
-            } else choice
-        }
+        GestureSettingScreen.POSITION -> positionChoices(node, context, player, inChild, detailVisited)
         GestureSettingScreen.LOCATION -> listOf(
             GestureSettingTreeNode(
                 id = "location:position",

@@ -294,19 +294,21 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
 
         // 同梱データは参照UUIDではなく内容のスナップショットです。配置時に新しい
         // 正本へ複製することで、元アイテムや元配置の後続編集と独立させます。
-        // 旧形式で移行不能な同梱データは複製がnullとなり、例外を逃がさず
-        // バニラの巻き戻しで設置をなかったことにします。
-        val placedScript = if (embeddedProgram != null) {
-            plugin.scripts.copyForPlacement(embeddedProgram) ?: run {
-                plugin.logger.warning(
-                    "旧形式の埋め込みプログラムを移行できないため設置を拒否: " +
-                        "player=${player.name}, location=${block.location}",
-                )
-                return false
+        // 旧形式で移行不能・検証不正な同梱データは複製がnullとなり、例外を逃がさず
+        // バニラの巻き戻しで設置をなかったことにします。未設定の未完了扱いと一致します。
+        val placedScript = runCatching {
+            if (embeddedProgram != null) {
+                plugin.scripts.copyForPlacement(embeddedProgram)
+            } else {
+                // 通常の空アイテムから置いた場合だけ、配置者を初期名へ使います。
+                plugin.scripts.createPlacement(player.uniqueId, "${player.name}のプログラム")
             }
-        } else {
-            // 通常の空アイテムから置いた場合だけ、配置者を初期名へ使います。
-            plugin.scripts.createPlacement(player.uniqueId, "${player.name}のプログラム")
+        }.getOrNull() ?: run {
+            plugin.logger.warning(
+                "配置用プログラムを用意できないため設置を拒否: " +
+                    "player=${player.name}, location=${block.location}",
+            )
+            return false
         }
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
         if (!block.canPlace(Bukkit.createBlockData(material))) {

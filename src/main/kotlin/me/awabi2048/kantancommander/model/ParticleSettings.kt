@@ -28,8 +28,17 @@ object ParticleSettings {
     const val PARAM_COUNT = "particleCount"
     const val PARAM_DATA = "particleData"
 
+    /**
+     * 保存値のパーティクル種類を返します。
+     *
+     * 空欄・不正値は null とし、既定種類への推測フォールバックは行いません。
+     * 未設定とFLAME明示を区別できない推測は、未設定表示・未設定検証・選択表示の
+     * 不一致を起こすためです。入力欄の初期表示だけは呼び出し側で扱います。
+     */
     fun particle(node: CommandNode): Particle? =
-        runCatching { Particle.valueOf(node.string(PARAM_PARTICLE, Particle.FLAME.name)) }.getOrNull()
+        node.params[PARAM_PARTICLE]?.takeIf(String::isNotBlank)?.let { raw ->
+            runCatching { Particle.valueOf(raw.trim()) }.getOrNull()
+        }
 
     fun requiresData(particle: Particle): Boolean = particle.dataType != Void::class.java
 

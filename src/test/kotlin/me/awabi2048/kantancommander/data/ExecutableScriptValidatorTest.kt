@@ -522,13 +522,22 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `fresh particle node passes preflight`() {
+    fun `fresh particle node fails preflight until the kind is chosen`() {
         val script = DiskScript(name = "fresh-particle", owner = UUID.randomUUID())
         val particle = GraphEditor.append(script.graph, CommandType.PARTICLE)
 
+        // 選択肢型に既定値を置かないため、新規作成直後は未設定エラーになります。
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.nodeId == particle.id && it.fieldKeys == setOf("particle")
+            },
+            "未選択の粒子種類は検証を通らない",
+        )
+
+        particle.params[me.awabi2048.kantancommander.model.ParticleSettings.PARAM_PARTICLE] = "FLAME"
         assertTrue(
             ExecutableScriptValidator.validate(script).none { it.nodeId == particle.id },
-            "既定のFLAME散布設定は検証を通る",
+            "明示選択したFLAME散布設定は検証を通る",
         )
     }
 
