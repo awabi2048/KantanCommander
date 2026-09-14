@@ -4,6 +4,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.collapsedForStarts
 import me.awabi2048.kantancommander.model.collapsedConditions
@@ -35,9 +36,9 @@ class ScriptStoreTest {
     lateinit var temp: File
 
     @Test
-    fun `legacy kind-only condition loads without conversion and fails validation`() {
-        // issue #27: 旧 `kind` のみの保存は変換せず読み込み、判定対象の未設定として
-        // 検証層で拒否します。後方互換の変換処理は残しません。
+    fun `legacy kind-only condition migrates to its subject`() {
+        // issue #27: 旧 `kind` のみの保存は読込時に判定対象へ正本化し、
+        // 従来と同じ条件判定として実行・検証できるようにします。
         // v17受付（17・16・15）の範囲内で検証するため、形式番号は15を使います。
         val dir = temp.resolve("condition-subject").also(File::mkdirs)
         val scriptId = UUID.randomUUID()
@@ -79,11 +80,13 @@ class ScriptStoreTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         val loaded = requireNotNull(store.load(scriptId))
         val node = loaded.graph.nodes.getValue(conditionId)
-        // 変換も隔離もせず、そのまま読み込みます。
-        assertNull(node.conditionSubject())
-        assertEquals("TARGET_EXISTS", node.params["kind"])
-        // 実行前検証で判定対象タブの未設定として拒否します。
-        assertTrue(
+        // プレイヤー系対象の旧 TARGET_EXISTS は PLAYER へ正本化します。
+        assertEquals(ConditionSubject.PLAYER, node.conditionSubject())
+        assertTrue("kind" !in node.params)
+        // 反転指定は維持します。
+        assertEquals("false", node.string("inverted", ""))
+        // 実行前検証で判定対象タブの未設定として拒否しません。
+        assertFalse(
             ExecutableScriptValidator.validate(loaded).any {
                 it.nodeId == conditionId && it.fieldKeys == setOf("kind")
             },

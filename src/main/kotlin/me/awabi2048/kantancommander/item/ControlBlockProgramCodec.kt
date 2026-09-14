@@ -2,6 +2,7 @@ package me.awabi2048.kantancommander.item
 
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
+import me.awabi2048.kantancommander.data.LegacyConditionMigration
 import me.awabi2048.kantancommander.data.LegacyEquipMigration
 import me.awabi2048.kantancommander.model.DiskScript
 import java.io.ByteArrayInputStream
@@ -39,9 +40,13 @@ internal object ControlBlockProgramCodec {
                     JsonParser.parseString(json.toString(Charsets.UTF_8)).asJsonObject
                 }.getOrNull() ?: return@runCatching null
                 // issue #21: 旧装備操作を PLACE_ITEM へ正本化します。
+                // issue #27: 旧条件分類を判定対象へ正本化します。
                 // ファイル読込と同じ正規化を適用し、古い埋め込み内容も
                 // 現行の実行経路だけで扱います。
                 LegacyEquipMigration.normalizeGraph(
+                    root["graph"]?.takeIf { it.isJsonObject }?.asJsonObject,
+                )
+                LegacyConditionMigration.normalizeGraph(
                     root["graph"]?.takeIf { it.isJsonObject }?.asJsonObject,
                 )
                 val script = gson.fromJson(root, DiskScript::class.java)
