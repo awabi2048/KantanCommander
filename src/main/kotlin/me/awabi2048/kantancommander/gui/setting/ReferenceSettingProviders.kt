@@ -109,6 +109,7 @@ object ReferenceSettingProviders {
                 "entityType" -> spec.entityType
                 "distance" -> formatDistance(spec.minimumDistance, spec.maximumDistance)
                 "range" -> formatRange(spec.dx, spec.dy, spec.dz, text)
+                "region" -> CommandSettingsModel.formatRegionSummary(spec.region, text)
                 "limit" -> spec.limit?.toString()
                 "tag" -> spec.tag
                 else -> spec.name
@@ -118,6 +119,7 @@ object ReferenceSettingProviders {
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
             "range" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
+            "region" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REGION,
             "limit" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             "sort" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT,
             "gameMode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE,

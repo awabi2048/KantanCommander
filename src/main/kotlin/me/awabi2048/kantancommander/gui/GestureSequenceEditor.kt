@@ -83,6 +83,9 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.MyworldSpawnKind
+import me.awabi2048.kantancommander.model.RegionAnchorKind
+import me.awabi2048.kantancommander.model.RegionAnchorSpec
+import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
 import me.awabi2048.kantancommander.model.VariableChangeMode
@@ -6203,6 +6206,179 @@ class GestureSequenceEditor(
                     return
                 }
                 if (group != "filter") return
+                // issue #4: 明示領域の編集です。基準・範囲・距離・基準別参数・解除を
+                // `filter:region-` 派生IDで受け、既存の絞り込み保存経路へ載せます。
+                // 空になった領域は保持せず null へ戻します。
+                if (value == "region" || value.startsWith("region-")) {
+                    // 行自体のクリックは子選択肢へ委ね、保存しません。
+                    if (value == "region") {
+                        showSettingScreen()
+                        return
+                    }
+                    fun currentRegion(): RegionSpec =
+                        readFilterTarget(node)?.region?.takeIf { it.hasAnySetting() } ?: RegionSpec()
+                    fun writeRegion(target: CommandNode, region: RegionSpec?) {
+                        val latest = readFilterTarget(target) ?: TargetSpec(current.kind)
+                        writeFilterTarget(target, latest.copy(region = region?.takeIf { it.hasAnySetting() }))
+                    }
+                    if (value.startsWith("region-anchor:")) {
+                        val kind = runCatching {
+                            RegionAnchorKind.valueOf(value.removePrefix("region-anchor:"))
+                        }.getOrNull() ?: return
+                        if (updateSettingNode(player, settingContext) {
+                                val base = readFilterTarget(it)
+                                    ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
+                                // 基準切替えでは範囲・距離を引き継ぎ、基準固有参数だけを初期化します。
+                                // 空になった領域は保持しません。
+                                writeRegion(it, base.copy(anchor = RegionAnchorSpec(kind)))
+                            }) showSettingScreen()
+                        return
+                    }
+                    if (value == "region-range") {
+                        val base = currentRegion()
+                        beginSettingRangeInput(player, base.dx, base.dy, base.dz) { dx, dy, dz ->
+                            if (!updateSettingNode(player, settingContext) {
+                                    val latestRegion = readFilterTarget(it)
+                                        ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
+                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
+                                    writeFilterTarget(it, latest.copy(region = latestRegion.copy(dx = dx, dy = dy, dz = dz)))
+                                }) {
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                            } else null
+                        }
+                        return
+                    }
+                    if (value == "region-distance") {
+                        val base = currentRegion()
+                        beginSettingDistanceInput(
+                            player,
+                            base.minimumDistance,
+                            base.maximumDistance,
+                            maximumOnly = false,
+                        ) { minimum, maximum ->
+                            if (!updateSettingNode(player, settingContext) {
+                                    val latestRegion = readFilterTarget(it)
+                                        ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
+                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
+                                    writeFilterTarget(
+                                        it,
+                                        latest.copy(
+                                            region = latestRegion.copy(
+                                                minimumDistance = minimum,
+                                                maximumDistance = maximum,
+                                            ),
+                                        ),
+                                    )
+                                }) {
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                            } else null
+                        }
+                        return
+                    }
+                    if (value == "region-position") {
+                        val position = currentRegion().anchor.position
+                        showCoordinateSettingDialog(
+                            player,
+                            position?.x ?: player.location.x,
+                            position?.y ?: player.location.y,
+                            position?.z ?: player.location.z,
+                            semanticsX = position?.semanticsX ?: CoordinateSemantics.ABSOLUTE,
+                            semanticsY = position?.semanticsY ?: CoordinateSemantics.ABSOLUTE,
+                            semanticsZ = position?.semanticsZ ?: CoordinateSemantics.ABSOLUTE,
+                        ) { sx, x, sy, y, sz, z ->
+                            if (!updateSettingNode(player, settingContext) {
+                                    val latestRegion = readFilterTarget(it)
+                                        ?.region?.takeIf { region -> region.hasAnySetting() } ?: RegionSpec()
+                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
+                                    writeFilterTarget(
+                                        it,
+                                        latest.copy(
+                                            region = latestRegion.copy(
+                                                anchor = latestRegion.anchor.copy(
+                                                    kind = RegionAnchorKind.FIXED,
+                                                    position = PositionSpec(
+                                                        PositionKind.COORDINATES,
+                                                        x, y, z,
+                                                        semanticsX = sx, semanticsY = sy, semanticsZ = sz,
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    )
+                                }) {
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                            } else null
+                        }
+                        return
+                    }
+                    if (value == "region-temp") {
+                        val anchor = currentRegion().anchor
+                        editTemporaryVariableName(
+                            encodedChoice = "filter:region-temp",
+                            currentName = anchor.tempName,
+                            isTemporaryMode = anchor.kind == RegionAnchorKind.TEMPORARY,
+                            saveMode = {
+                                updateSettingNode(player, settingContext) {
+                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
+                                    val base = latest.region?.takeIf { region -> region.hasAnySetting() }
+                                        ?: RegionSpec()
+                                    writeFilterTarget(
+                                        it,
+                                        latest.copy(region = base.copy(anchor = RegionAnchorSpec(RegionAnchorKind.TEMPORARY))),
+                                    )
+                                }
+                            },
+                            saveName = { name ->
+                                updateSettingNode(player, settingContext) {
+                                    val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
+                                    val base = latest.region?.takeIf { region -> region.hasAnySetting() }
+                                        ?: RegionSpec()
+                                    writeFilterTarget(
+                                        it,
+                                        latest.copy(
+                                            region = base.copy(
+                                                anchor = base.anchor.copy(
+                                                    kind = RegionAnchorKind.TEMPORARY,
+                                                    tempName = name,
+                                                ),
+                                            ),
+                                        ),
+                                    )
+                                }
+                            },
+                        )
+                        return
+                    }
+                    if (value.startsWith("region-target-preset:")) {
+                        val preset = runCatching {
+                            SettingPresets.TargetPreset.valueOf(value.removePrefix("region-target-preset:"))
+                        }.getOrNull() ?: return
+                        if (updateSettingNode(player, settingContext) {
+                                val latest = readFilterTarget(it) ?: TargetSpec(current.kind)
+                                val base = latest.region?.takeIf { region -> region.hasAnySetting() }
+                                    ?: RegionSpec()
+                                writeFilterTarget(
+                                    it,
+                                    latest.copy(
+                                        region = base.copy(
+                                            anchor = base.anchor.copy(
+                                                kind = RegionAnchorKind.TARGET_ENTITY,
+                                                target = SettingPresets.targetSpecFor(preset),
+                                            ),
+                                        ),
+                                    ),
+                                )
+                            }) showSettingScreen()
+                        return
+                    }
+                    if (value == "region-clear") {
+                        if (updateSettingNode(player, settingContext) {
+                                writeRegion(it, null)
+                            }) showSettingScreen()
+                        return
+                    }
+                    return
+                }
                 when (value) {
                     "sort" -> updateSettingNode(player, settingContext) {
                         val next = TargetSort.entries[(current.sort.ordinal + 1) % TargetSort.entries.size]

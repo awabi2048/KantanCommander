@@ -4148,6 +4148,7 @@ class GestureLowerPanel(
                     "entityType" -> it.entityType
                     "distance" -> displayDistance(it.minimumDistance, it.maximumDistance)
                     "range" -> displayTargetRange(player, it.dx, it.dy, it.dz)
+                    "region" -> CommandSettingsModel.formatRegionSummary(it.region) { key -> KcI18n.text(player, key) }
                     "limit" -> it.limit?.toString()
                     "tag" -> it.tag
                     else -> it.name
@@ -4162,6 +4163,7 @@ class GestureLowerPanel(
             "entityType" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_TYPE,
             "distance" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE,
             "range" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE,
+            "region" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_REGION,
             "limit" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_LIMIT,
             "sort" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SORT,
             "gameMode" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_GAME_MODE,
@@ -4169,8 +4171,94 @@ class GestureLowerPanel(
             "name" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_NAME,
         )
             .filter { (id, _) -> id in CommandSettingsModel.visibleTargetFilterIds(spec.kind) }
-            .map { (id, label) -> SettingChoice("filter:$id", labeled(player, label, value(id))) }
+            .map { (id, label) ->
+                SettingChoice(
+                    "filter:$id",
+                    labeled(player, label, value(id)),
+                    children = if (id == "region") regionChildren(spec, player) else emptyList(),
+                )
+            }
         return filterChoices
+    }
+
+    /**
+     * issue #4 の領域編集の子選択肢です。
+     *
+     * 基準選択・範囲・距離・基準別参数・解除を一つの行へ集約し、
+     * 受付は既存の `filter:` 派生IDで共有します。基準別参数は現在の
+     * 基準のときだけ出し、無関係な入力欄を提示しません。
+     */
+    private fun regionChildren(
+        spec: me.awabi2048.kantancommander.model.TargetSpec,
+        player: Player,
+    ): List<SettingChoice> {
+        val region = spec.region?.takeIf { it.hasAnySetting() }
+        val anchor = region?.anchor?.kind
+        fun extents(): String? = region?.let {
+            displayTargetRange(player, it.dx, it.dy, it.dz)
+        }
+        fun distances(): String? = region?.let {
+            if (it.minimumDistance == null && it.maximumDistance == null) null
+            else displayDistance(it.minimumDistance, it.maximumDistance)
+        }
+        val children = mutableListOf(
+            SettingChoice(
+                "filter:region-clear",
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_CLEAR),
+                selected = false,
+            ),
+        )
+        // 基準選択は4択を常時提示します。選択時に範囲等は引き継ぎます。
+        me.awabi2048.kantancommander.model.RegionAnchorKind.entries.forEach { kind ->
+            children += SettingChoice(
+                "filter:region-anchor:${kind.name}",
+                KcI18n.text(player, CommandSettingsModel.regionAnchorNameKey(kind)),
+                selected = anchor == kind && region != null,
+            )
+        }
+        children += SettingChoice(
+            "filter:region-range",
+            labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_RANGE, extents()),
+        )
+        children += SettingChoice(
+            "filter:region-distance",
+            labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MINIMUM_DISTANCE, distances()),
+        )
+        if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.FIXED) {
+            children += SettingChoice(
+                "filter:region-position",
+                labeled(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_POSITION_COORDINATES,
+                    region?.anchor?.position?.let { position ->
+                        listOf(position.x, position.y, position.z).joinToString(" / ") { value ->
+                            value?.let {
+                                if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+                            }.orEmpty()
+                        }
+                    },
+                ),
+            )
+        }
+        if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.TEMPORARY) {
+            children += SettingChoice(
+                "filter:region-temp",
+                labeled(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REFERENCE_TEMPORARY,
+                    region?.anchor?.tempName,
+                ),
+            )
+        }
+        if (anchor == me.awabi2048.kantancommander.model.RegionAnchorKind.TARGET_ENTITY) {
+            children += embeddedTargetPresetChoices(
+                region?.anchor?.target,
+                player,
+                "filter:region-target-preset",
+                null,
+            )
+        }
+        return children
     }
 
     /**

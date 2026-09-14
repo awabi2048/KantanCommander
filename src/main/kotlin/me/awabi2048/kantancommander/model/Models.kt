@@ -346,6 +346,13 @@ data class TargetSpec(
     val dx: Double? = null,
     val dy: Double? = null,
     val dz: Double? = null,
+    /**
+     * issue #4 の明示領域による絞り込みです。未設定時は従来の dx/dy/dz と
+     * 距離指定だけを使います。設定時は基準（anchor）・範囲・距離を
+     * [RegionMath] と共通 resolver で解決し、Target・Condition・出力で
+     * 同じ判定を使います。旧保存には存在しないため欠落時は null です。
+     */
+    val region: RegionSpec? = null,
     val fixedEntityId: UUID? = null,
     /** 対象探索の基準位置です。未設定時は制御ブロック位置を用います。 */
     val searchOrigin: SearchOriginSpec? = null,
@@ -557,8 +564,9 @@ enum class RegionAnchorKind {
 }
 
 /**
- * 領域基準の指定です。将来そのまま移植できる形にするための骨組みで、
- * 現行コマンドへの本接続は行いません。
+ * 領域基準の指定です。Target絞り込み・Condition判定・出力の共通 resolver で
+ * 解決します。FIXEDは明示座標、CONTROL_BLOCKは制御ブロック位置、
+ * TARGET_ENTITYは対象実体位置、TEMPORARYはLOCATION型一時変数を指します。
  */
 data class RegionAnchorSpec(
     val kind: RegionAnchorKind = RegionAnchorKind.CONTROL_BLOCK,
@@ -574,9 +582,9 @@ data class RegionAnchorSpec(
 }
 
 /**
- * issue #4 の明示領域の骨組みです。現行の直方体（dx/dy/dz相当）と
- * 距離指定を同じ形で再表現でき、将来Target絞り込み・Condition判定へ
- * 移植できることを目的とします。yaw/pitchは持ちません。
+ * issue #4 の明示領域です。直方体（dx/dy/dz相当）と距離指定を持ち、
+ * Target絞り込み・Condition判定・出力で同じ resolver を使います。
+ * yaw/pitchは持ちません。SPHERE／CYLINDER は予約のため検証で拒否します。
  */
 data class RegionSpec(
     val kind: RegionKind = RegionKind.CUBOID,

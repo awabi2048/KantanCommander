@@ -1455,6 +1455,11 @@ object ExecutableScriptValidator {
             }
         }
         if (spec.limit?.let { it < 1 } == true) errors += nodeError(node, path, emptySet(), "対象数は1以上で指定してください")
+        // issue #4: 明示領域があれば共通の領域検証へ通します。未設定時は
+        // 従来の dx/dy/dz と距離指定だけを使い、保存互換を維持します。
+        spec.region?.takeIf { it.hasAnySetting() }?.let { region ->
+            validateRegionSpec(region, "$path/region", node, errors, temporaryDefinitions)
+        }
     }
 
     private fun validatePosition(
@@ -1612,7 +1617,7 @@ object ExecutableScriptValidator {
     }
 
     /**
-     * issue #4 の明示領域の検証骨組みです。設定方法は直方体＋距離を継続し、
+     * issue #4 の明示領域の検証です。設定方法は直方体＋距離を継続し、
      * SPHERE／CYLINDERは予約のため現行実行では拒否します。
      */
     fun validateRegionSpec(

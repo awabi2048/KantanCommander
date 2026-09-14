@@ -15,6 +15,10 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.RegionAnchorKind
+import me.awabi2048.kantancommander.model.RegionAnchorSpec
+import me.awabi2048.kantancommander.model.RegionKind
+import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.VariableOperation
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -1544,6 +1548,113 @@ class VanillaDatapackExporterTest {
             ),
         )
         assertTrue(trig.errors.any { it.contains("べき乗・三角関数") })
+    }
+
+    @Test
+    fun `control block cuboid region lowers to selector extents`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "region-export")
+        GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = TargetSpec(
+            TargetKind.ALL_PLAYERS,
+            region = RegionSpec(
+                kind = RegionKind.CUBOID,
+                anchor = RegionAnchorSpec(RegionAnchorKind.CONTROL_BLOCK),
+                dx = 2.0,
+                dy = 1.0,
+                dz = 2.0,
+                maximumDistance = 6.0,
+            ),
+        )
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+        assertTrue(body.contains("dx=2"), body)
+        assertTrue(body.contains("dy=1"), body)
+        assertTrue(body.contains("dz=2"), body)
+        assertTrue(body.contains("distance=..6"), body)
+    }
+
+    @Test
+    fun `non lowerable regions fail export with explicit reasons`() {
+        val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
+        val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
+
+        fun regionScript(name: String, spec: TargetSpec): me.awabi2048.kantancommander.model.DiskScript {
+            val script = store.create(UUID.randomUUID(), name)
+            GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT).targetSpec = spec
+            return script
+        }
+
+        // 制御ブロック以外の基準は出力できません。
+        val fixed = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                regionScript(
+                    "region-fixed",
+                    TargetSpec(
+                        TargetKind.ALL_PLAYERS,
+                        region = RegionSpec(
+                            anchor = RegionAnchorSpec(
+                                RegionAnchorKind.FIXED,
+                                position = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0),
+                            ),
+                            dx = 1.0,
+                        ),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(fixed.errors.any { it.contains("基準位置が制御ブロック以外") })
+
+        // 従来の範囲との併用は出力できません。
+        val mixed = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                regionScript(
+                    "region-mixed",
+                    TargetSpec(
+                        TargetKind.ALL_PLAYERS,
+                        dx = 1.0,
+                        region = RegionSpec(dx = 1.0),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(mixed.errors.any { it.contains("範囲指定と領域指定の併用") })
+
+        // 距離の二重指定は出力できません。
+        val distances = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                regionScript(
+                    "region-distances",
+                    TargetSpec(
+                        TargetKind.ALL_PLAYERS,
+                        maximumDistance = 10.0,
+                        region = RegionSpec(dx = 1.0, maximumDistance = 6.0),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(distances.errors.any { it.contains("距離指定と領域距離の併用") })
+
+        // 予約形状は出力できません。
+        val shape = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(
+                regionScript(
+                    "region-shape",
+                    TargetSpec(
+                        TargetKind.ALL_PLAYERS,
+                        region = RegionSpec(kind = RegionKind.SPHERE, dx = 1.0),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(shape.errors.any { it.contains("完全バニラ出力に未対応") })
     }
 
     @Test
