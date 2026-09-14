@@ -203,6 +203,15 @@ data class CommandNode(
     /** テレポート先へ適用するノード単位の向きです。 */
     var destinationFacingSpec: FacingSpec? = null,
     var conditionPositionSpec: PositionSpec? = null,
+    /**
+     * issue #5 の型付き条件比較で使う領域述語の領域です。
+     *
+     * VALUE subject＋領域演算子（`in_region`／`not_in_region`）のときだけ有効で、
+     * 左辺のLOCATION／ENTITY値がこの内側にあるかを判定します。解決・検証・出力は
+     * #4 の共通 resolver を使い、Condition側で独自の領域計算を持ちません。
+     * 旧JSONには存在しないため欠落時は null です。
+     */
+    var regionSpec: RegionSpec? = null,
     /** 制御ブロック状態条件で選択された判定項目です。複数選択時はAND評価します。 */
     var controlBlockStates: MutableSet<ControlBlockStateKind>? = null,
     /** ブロック操作の単一配置位置（setblock相当）。 */
@@ -267,6 +276,7 @@ data class CommandNode(
         destinationTargetSpec = destinationTargetSpec?.copy(),
         destinationFacingSpec = destinationFacingSpec?.copy(),
         conditionPositionSpec = conditionPositionSpec?.copy(),
+        regionSpec = regionSpec?.copy(),
         controlBlockStates = controlBlockStates?.toMutableSet(),
         blockPositionSpec = blockPositionSpec?.copy(),
         blockFromSpec = blockFromSpec?.copy(),
