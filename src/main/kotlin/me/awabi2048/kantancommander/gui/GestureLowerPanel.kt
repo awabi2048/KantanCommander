@@ -200,18 +200,23 @@ class GestureLowerPanel(
         inputCx: Double,
         inputCy: Double,
         inputW: Double,
+        columns: Int = INLINE_RESOURCE_COLUMNS,
+        cellW: Double = INLINE_RESOURCE_CELL_W,
+        cellH: Double = INLINE_RESOURCE_CELL_H,
+        pitchX: Double = INLINE_RESOURCE_GRID_PITCH_X,
+        pitchY: Double = INLINE_RESOURCE_GRID_PITCH_Y,
     ) {
         val ids = ResourcePresets.ids(kind)
         val currentRaw = CommandDialogSpecs.normalize(fieldKey, node.string(fieldKey))
         // プリセット外の現在値は入力カード側を選択済みにします。
         val isCurrentPreset = ResourcePresets.isPreset(kind, currentRaw)
         // ホバー文言は一覧と重ならないよう、1枠分下げた位置へ表示します。
-        val hoverY = HOVER_SLOT_Y - INLINE_RESOURCE_GRID_PITCH_Y
+        val hoverY = HOVER_SLOT_Y - pitchY
         val cards = ids.mapIndexed { index, id ->
             val selected = CommandDialogSpecs.normalize(fieldKey, id) == currentRaw ||
                 id == node.string(fieldKey)
-            val col = index % INLINE_RESOURCE_COLUMNS
-            val row = index / INLINE_RESOURCE_COLUMNS
+            val col = index % columns
+            val row = index / columns
             me.awabi2048.kantancommander.gui.declarative.ResourcePickerCard(
                 elementId = InlineResourcePicker.pickElementId(fieldKey, id),
                 icon = ItemStack(ResourcePickerIcons.resolve(kind, id)),
@@ -221,10 +226,10 @@ class GestureLowerPanel(
                 outline = if (selected) {
                     GestureSettingVisualPolicy.nonTabOutlineMaterial(true)?.let { Bukkit.createBlockData(it) }
                 } else null,
-                cx = INLINE_RESOURCE_GRID_LEFT_X + col * INLINE_RESOURCE_GRID_PITCH_X,
-                cy = gridTopY - row * INLINE_RESOURCE_GRID_PITCH_Y,
-                w = INLINE_RESOURCE_CELL_W,
-                h = INLINE_RESOURCE_CELL_H,
+                cx = INLINE_RESOURCE_GRID_LEFT_X + col * pitchX,
+                cy = gridTopY - row * pitchY,
+                w = cellW,
+                h = cellH,
                 // 種別はバニラ翻訳で示します。IDは原文のまま併記します。
                 hover = if (kind == GestureResourcePickerKind.ENTITY_TYPE) {
                     multiLineHoverComponents(
@@ -1708,13 +1713,18 @@ class GestureLowerPanel(
             if (literalPickerKind != null) {
                 val inlineGridTopY = SETTING_INPUT_CENTER_Y - INLINE_RESOURCE_TYPED_GRID_TOP_DY
                 val inlinePreviewY =
-                    inlineGridTopY - 2 * INLINE_RESOURCE_GRID_PITCH_Y - INLINE_RESOURCE_INPUT_BELOW_DY
+                    inlineGridTopY - INLINE_RESOURCE_GRID_PITCH_Y - INLINE_RESOURCE_INPUT_BELOW_DY
                 appendInlineResourcePicker(
                     nodes, frame, player, node, field.key, literalPickerKind,
                     gridTopY = inlineGridTopY,
                     inputCx = 0.58,
                     inputCy = inlinePreviewY,
                     inputW = 0.56,
+                    columns = INLINE_RESOURCE_TYPED_COLUMNS,
+                    cellW = INLINE_RESOURCE_TYPED_CELL_W,
+                    cellH = INLINE_RESOURCE_TYPED_CELL_H,
+                    pitchX = INLINE_RESOURCE_TYPED_GRID_PITCH_X,
+                    pitchY = INLINE_RESOURCE_GRID_PITCH_Y,
                 )
                 appendTypedValuePreview(
                     nodes, frame, node, field.key, selectedSource, state.scriptId, player,
@@ -4884,19 +4894,25 @@ class GestureLowerPanel(
         const val POSITION_TARGET_CHOICE_HEIGHT = 0.15
         const val POSITION_TARGET_CHOICE_Y = -0.25
         // 親タブ直下の資源プリセット配置です。子画面遷移は行いません。
-        // 右詳細域へ収まるよう、8列×3行で24件を小型寸法に収めます。
+        // 右詳細域へ収まるよう、8列×3行で24件を収めます。図柄のはみ出しを
+        // 防ぐため、セル寸法に対して図柄係数と行間を一体で調整します。
         const val INLINE_RESOURCE_COLUMNS = 8
-        const val INLINE_RESOURCE_CELL_W = 0.125
-        const val INLINE_RESOURCE_CELL_H = 0.065
+        const val INLINE_RESOURCE_CELL_W = 0.13
+        const val INLINE_RESOURCE_CELL_H = 0.085
         const val INLINE_RESOURCE_GRID_PITCH_X = 0.14
-        const val INLINE_RESOURCE_GRID_PITCH_Y = 0.085
+        const val INLINE_RESOURCE_GRID_PITCH_Y = 0.10
         const val INLINE_RESOURCE_GRID_LEFT_X = -0.27
         // 通常入力行の直下へ3行を置くための、入力行からの下げ幅です。
         const val INLINE_RESOURCE_GRID_TOP_DY = 0.03
-        // 一時変数参照項目の方式行の直下へ3行を置くための、方式行からの下げ幅です。
+        // 一時変数参照項目の方式行の直下へ2行を置くための、方式行からの下げ幅です。
         const val INLINE_RESOURCE_TYPED_GRID_TOP_DY = 0.115
-        // 一覧の下へ入力カードを置くための、グリッド2行分を超える下げ幅です。
-        const val INLINE_RESOURCE_INPUT_BELOW_DY = 0.115
+        // 一覧の下へ入力カードを置くための、グリッド最終行を超える下げ幅です。
+        const val INLINE_RESOURCE_INPUT_BELOW_DY = 0.13
+        // 一時変数参照項目の小型グリッド寸法です。方式行とプレビュー行の間に2行で収めます。
+        const val INLINE_RESOURCE_TYPED_COLUMNS = 12
+        const val INLINE_RESOURCE_TYPED_CELL_W = 0.085
+        const val INLINE_RESOURCE_TYPED_CELL_H = 0.085
+        const val INLINE_RESOURCE_TYPED_GRID_PITCH_X = 0.093
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
