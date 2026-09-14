@@ -1232,7 +1232,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             }
             CommandType.SUMMON_ENTITY -> {
                 if (!plugin.summonedEntities.canSummon(effectiveOrigin.world.uid)) return false
-                val key = NamespacedKey.fromString(node.string("entity")) ?: return false
+                val key = NamespacedKey.fromString(node.string("summonEntity")) ?: return false
                 val type = Registry.ENTITY_TYPE.get(key) ?: return false
                 // 召喚タグは単一値です。空欄はタグなしとして扱い、カンマを
                 // 複数タグの区切りに変換しないことでGUI・保存・実行の契約を揃えます。
@@ -1416,7 +1416,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * issue #32 の型付きデータ編集（#10スキーマ）を実行します。
      *
      * 任意NBTではなくスキーマ定義の項目だけを適用し、対応しない対象は
-     * 非適用として数えます。表示名は召喚時と同じ描画規則で適用します。
+     * 非適用として数えます。表示名は召喚時と同じ描画規則で適用し、
+     * Mannequinのスキン名は解決後のプレイヤー名で適用します。
      */
     private fun executeEntityData(
         node: CommandNode,
@@ -1427,7 +1428,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val definition = EntityDataSchema.definition(propertyId) ?: return false
         val raw = node.string(EntityDataSchema.PARAM_VALUE)
         val parsed = EntityDataSchema.parse(propertyId, raw) ?: return false
-        // 表示名はテンプレート参照を解決します。解決不能は失敗とします。
+        // 文字列項目はテンプレート参照を解決します。解決不能は失敗とします。
+        // 表示名とMannequinのスキン名のどちらも解決後の文字列で適用します。
         val resolvedText = if (parsed is EntityPropertyValue.TextValue) {
             resolveText(parsed.text, session) ?: return false
         } else null
@@ -1444,7 +1446,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     EntityDataSchema.applyBoolean(target, propertyId, parsed.value)
                 is EntityPropertyValue.EnumValue ->
                     EntityDataSchema.applyEnum(target, propertyId, parsed.choiceId)
-                is EntityPropertyValue.TextValue -> applyCustomName(target, propertyId, resolvedText.orEmpty())
+                is EntityPropertyValue.TextValue -> applyTextProperty(target, propertyId, resolvedText.orEmpty())
             }
             if (success) applied++ else failed++
         }
@@ -1459,8 +1461,37 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
+     * 文字列項目を適用します。表示名とMannequinのスキン名の振り分けを行います。
+     *
+     * Mannequinのスキン名はプレイヤー名のみを受け付け、名前のみの動的
+     * プロファイルとして適用します。descriptionは設定不可のため扱いません。
+     */
+    private fun applyTextProperty(target: Entity, propertyId: String, text: String): Boolean = when (propertyId) {
+        EntityDataSchema.PROPERTY_CUSTOM_NAME -> applyCustomName(target, propertyId, text)
+        EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME -> EntityDataSchema.applyMannequinProfile(target, text)
+        EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION -> applyMannequinDescription(target, text)
+        else -> false
+    }
+
+    /**
+     * Mannequinの説明文を適用します。召喚時の表示名と同じ描画規則を使い、
+     * 空欄は説明の除去（既定表示へ戻す）として扱います。
+     */
+    private fun applyMannequinDescription(target: Entity, text: String): Boolean {
+        val mannequin = target as? org.bukkit.entity.Mannequin ?: return false
+        return runCatching {
+            if (text.isBlank()) {
+                mannequin.setDescription(null)
+            } else {
+                mannequin.setDescription(legacyText(text))
+            }
+            true
+        }.getOrDefault(false)
+    }
+
+    /**
      * 表示名を適用します。召喚時の表示名と同じ規則であり、空欄は表示名の
-     * 消去として扱います。TEXT種別の項目は現行では表示名だけです。
+     * 消去として扱います。
      */
     private fun applyCustomName(target: Entity, propertyId: String, text: String): Boolean {
         if (propertyId != EntityDataSchema.PROPERTY_CUSTOM_NAME) return false
@@ -2006,7 +2037,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val stack = template.clone()
         if (count > stack.maxStackSize) return false
         stack.amount = count
-        val destination = PlaceItemDestination.from(node.string("destination")) ?: return false
+                val destination = PlaceItemDestination.from(node.string("placeDestination")) ?: return false
         val slot = node.string("slot")
         if (!PlaceItemDestination.isValidSlot(destination, slot)) return false
         val overwrite = node.boolean("overwrite")

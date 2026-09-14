@@ -98,7 +98,7 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("new-commands"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "commands")
         GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:pig"
+            params["summonEntity"] = "minecraft:pig"
             params["tags"] = "kc_test"
         }
         GraphEditor.append(script.graph, CommandType.PLAY_SOUND).params["sound"] = "minecraft:block.note_block.harp"
@@ -108,7 +108,7 @@ class VanillaDatapackExporterTest {
         }
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-            params["destination"] = "EQUIPMENT"
+            params["placeDestination"] = "EQUIPMENT"
             params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
             // 装備先の上書き禁止は等価出力不可のため、ここでは上書き許可で検証します。
@@ -184,7 +184,7 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("summon-position"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "summon position")
         GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:pig"
+            params["summonEntity"] = "minecraft:pig"
             summonPositionSpec = PositionSpec(PositionKind.COORDINATES, 4.0, 5.0, 6.0)
         }
 
@@ -197,6 +197,23 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `mannequin summon remains in vanilla output`() {
+        val store = ScriptStore(temp.resolve("mannequin-summon"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "mannequin summon")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["summonEntity"] = "minecraft:mannequin"
+            params["tags"] = "kc_mannequin"
+        }
+
+        val result = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = result.functions.values.joinToString("\n")
+        assertTrue(body.contains("summon minecraft:mannequin"), body)
+    }
+
+    @Test
     fun `bare target positions without embedded targets are rejected`() {
         val store = ScriptStore(temp.resolve("removed-target-position"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "removed target position")
@@ -205,7 +222,7 @@ class VanillaDatapackExporterTest {
             soundPositionSpec = PositionSpec(PositionKind.TARGET)
         }
         GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:pig"
+            params["summonEntity"] = "minecraft:pig"
             summonPositionSpec = PositionSpec(PositionKind.TARGET)
         }
 
@@ -221,7 +238,7 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("entity-derived-position"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "entity derived position")
         GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:pig"
+            params["summonEntity"] = "minecraft:pig"
             summonPositionSpec = PositionSpec(
                 PositionKind.TARGET,
                 target = TargetSpec(TargetKind.NEAREST_PLAYER),
@@ -293,7 +310,7 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("derived-skip-positioned"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "derived skip positioned")
         GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:pig"
+            params["summonEntity"] = "minecraft:pig"
             summonPositionSpec = PositionSpec(
                 PositionKind.TARGET,
                 target = TargetSpec(TargetKind.NEAREST_PLAYER),
@@ -316,7 +333,7 @@ class VanillaDatapackExporterTest {
         val store = ScriptStore(temp.resolve("disk-skip-positioned"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "disk skip positioned")
         GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
-            params["entity"] = "minecraft:pig"
+            params["summonEntity"] = "minecraft:pig"
             summonPositionSpec = PositionSpec(PositionKind.DISK)
             executionPositionSpec = PositionSpec(PositionKind.COORDINATES, x = 1.0, y = 2.0, z = 3.0)
         }
@@ -485,19 +502,19 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "place commands")
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "PLAYER_HOTBAR"
+            params["placeDestination"] = "PLAYER_HOTBAR"
             params["slot"] = "8"
             params["item"] = "minecraft:stone"
             params["count"] = "3"
         }
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-            params["destination"] = "ITEM_FRAME"
+            params["placeDestination"] = "ITEM_FRAME"
             params["slot"] = "CONTENTS"
             params["item"] = "minecraft:stone"
         }
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
-            params["destination"] = "BLOCK_CONTAINER"
+            params["placeDestination"] = "BLOCK_CONTAINER"
             params["slot"] = "0"
             params["item"] = "minecraft:stone"
             blockPositionSpec = PositionSpec(PositionKind.COORDINATES, 1.0, 2.0, 3.0)
@@ -520,7 +537,7 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "invalid place")
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "PLAYER_HOTBAR"
+            params["placeDestination"] = "PLAYER_HOTBAR"
             params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
         }
@@ -538,20 +555,20 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "no overwrite place")
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "PLAYER_HOTBAR"
+            params["placeDestination"] = "PLAYER_HOTBAR"
             params["slot"] = "8"
             params["item"] = "minecraft:stone"
             params["overwrite"] = "false"
         }
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-            params["destination"] = "ITEM_FRAME"
+            params["placeDestination"] = "ITEM_FRAME"
             params["slot"] = "CONTENTS"
             params["item"] = "minecraft:stone"
             params["overwrite"] = "false"
         }
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
-            params["destination"] = "BLOCK_CONTAINER"
+            params["placeDestination"] = "BLOCK_CONTAINER"
             params["slot"] = "0"
             params["item"] = "minecraft:stone"
             params["overwrite"] = "false"
@@ -576,7 +593,7 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "equip no overwrite")
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "EQUIPMENT"
+            params["placeDestination"] = "EQUIPMENT"
             params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
             params["overwrite"] = "false"
@@ -595,7 +612,7 @@ class VanillaDatapackExporterTest {
         val script = store.create(UUID.randomUUID(), "overwrite place")
         GraphEditor.append(script.graph, CommandType.PLACE_ITEM).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            params["destination"] = "EQUIPMENT"
+            params["placeDestination"] = "EQUIPMENT"
             params["slot"] = "HAND"
             params["item"] = "minecraft:stone"
             params["overwrite"] = "true"

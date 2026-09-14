@@ -156,7 +156,7 @@ class SuggestionQueriesTest {
     @Test
     fun `multi query search stays within the shared registry boundary`() {
         // サーバーなしではRegistryが使えないため空列ですが、契約は維持します。
-        listOf("entity", "sound", "effect").forEach { fieldKey ->
+        listOf("summonEntity", "sound", "effect").forEach { fieldKey ->
             assertTrue(CommandDialogSpecs.suggestions(fieldKey, listOf("flame", "smoke")).size <= 12, fieldKey)
             assertTrue(CommandDialogSpecs.suggestionsFromInput(fieldKey, "flame smoke").size <= 12, fieldKey)
             assertTrue(CommandDialogSpecs.suggestionsFromInput(fieldKey, "   ").isEmpty(), fieldKey)
@@ -168,7 +168,7 @@ class SuggestionQueriesTest {
     @Test
     fun `single query overload stays compatible with multi query search`() {
         // 区切り文字を含まない単一クエリは、従来と同じ1クエリ検索になります。
-        listOf("sound" to "note", "effect" to "speed", "entity" to "cow").forEach { (fieldKey, query) ->
+        listOf("sound" to "note", "effect" to "speed", "summonEntity" to "cow").forEach { (fieldKey, query) ->
             assertEquals(
                 CommandDialogSpecs.suggestions(fieldKey, listOf(query)),
                 CommandDialogSpecs.suggestions(fieldKey, query),

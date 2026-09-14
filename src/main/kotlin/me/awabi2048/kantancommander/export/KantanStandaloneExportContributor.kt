@@ -216,9 +216,9 @@ internal fun namespaceStandaloneExpression(raw: String, namespace: String): Stri
 
 private val TEMPLATE_REFERENCE = Regex("\\$\\{([a-z][a-z0-9_.-]{0,63})}")
 private val DIRECT_VARIABLE_FIELDS = setOf("variable")
-private val REGISTRY_FIELDS = setOf("entity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
+private val REGISTRY_FIELDS = setOf("summonEntity", "sound", "effect", "block", "item", "itemData", "diskId", "fireworkItem", "fireworkData")
 private val NON_TEXT_FIELDS = setOf(
-    "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot",
+    "name", "type", "operation", "changeMode", "action", "mode", "kind", "operator", "slot", "placeDestination",
     "tagOperation", "soundScope", "soundOperation", "soundCategory",
     "particleShape", "geometryWireframe", "shakeType", "overwrite", "inverted",
     "attributeOperation", "modifierOperation", "property",

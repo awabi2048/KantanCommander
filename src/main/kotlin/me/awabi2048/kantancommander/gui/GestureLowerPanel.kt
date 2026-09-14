@@ -210,7 +210,7 @@ class GestureLowerPanel(
         DeclarativeSettings.valueRowsSection(
             nodes,
             frame,
-            rows = listOf(SettingsValueRow("resource-title", fieldLabel, "${page + 1} / $pageCount", RESOURCE_TITLE_Y)),
+            rows = listOf(SettingsValueRow("resource-title", fieldLabel, Component.text("${page + 1} / $pageCount"), RESOURCE_TITLE_Y)),
             labelX = -0.08,
             valueX = 0.52,
         )
@@ -232,11 +232,23 @@ class GestureLowerPanel(
                 cy = RESOURCE_GRID_TOP_Y - row * RESOURCE_GRID_PITCH_Y,
                 w = RESOURCE_CELL_W,
                 h = RESOURCE_CELL_H,
-                hover = multiLineHover(
-                    listOf(ResourcePicker.displayName(kind, id), id),
-                    x = HOVER_SLOT_X,
-                    y = HOVER_SLOT_Y,
-                ),
+                // 種別はバニラ翻訳で示します。IDは原文のまま併記します。
+                hover = if (kind == GestureResourcePickerKind.ENTITY_TYPE) {
+                    multiLineHoverComponents(
+                        listOf(
+                            me.awabi2048.kantancommander.model.EntityTypeDisplay.componentFor(id),
+                            Component.text(id),
+                        ),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    )
+                } else {
+                    multiLineHover(
+                        listOf(ResourcePicker.displayName(kind, id), id),
+                        x = HOVER_SLOT_X,
+                        y = HOVER_SLOT_Y,
+                    )
+                },
                 visualIndex = index,
             )
         }
@@ -358,9 +370,9 @@ class GestureLowerPanel(
         }
         val fieldLabel = KcI18n.text(player, field.label)
         val fieldValue = if (CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)) {
-            field.value(node).render(player)
+            displayValueComponent(player, field.value(node))
         } else {
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET))
         }
         val pathLast = state.settingTreePath?.nodeIds?.lastOrNull()
         // スポーン種別の子画面では移動先選択の再掲ではなく、メンバー／ゲストの2択を示します。
@@ -548,9 +560,9 @@ class GestureLowerPanel(
         // 初期時点では全項目を未設定とするため、明示設定のない現在値欄は未設定表示にします。
         // 実行時の既定フォールバックは変えず、表示と完了状態だけを未完了扱いにします。
         val fieldValue = if (CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)) {
-            field.value(node).render(player)
+            displayValueComponent(player, field.value(node))
         } else {
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET))
         }
         // 経路末尾の選択は同階層へ排他的に適用し、保存値由来との二重選択を防ぎます。
         val choices = applyPathSelectionExclusive(
@@ -1424,13 +1436,14 @@ class GestureLowerPanel(
         } else {
             SETTING_INPUT_CENTER_Y
         }
-        val value = displayValue.render(player)
+        // 種別名はバニラ翻訳のComponentで渡し、各クライアントの言語で描画させます。
+        val valueComponent = displayValueComponent(player, displayValue)
         // 初期時点では全項目を未設定とするため、単行表示では明示設定のない現在値欄を
         // 未設定表示にします。複合表示は各項目の表示規則に従います。
         val singleValue = if (CommandSettingsModel.isFieldConfigured(node, field.key, descriptor.role)) {
-            value
+            valueComponent
         } else {
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET))
         }
         val settingScreen = gestureSettingScreenFor(descriptor.editor)
         // issue #18: Checkbox対象は親画面のトグルで直接操作するため、
@@ -1482,7 +1495,7 @@ class GestureLowerPanel(
                 nodes,
                 frame,
                 rows = compositeRows.mapIndexed { index, row ->
-                    SettingsValueRow("lower-setting-composite-$index", row.label, row.value, compositeLayout.rowCentersY[index])
+                    SettingsValueRow("lower-setting-composite-$index", row.label, Component.text(row.value), compositeLayout.rowCentersY[index])
                 },
             )
         } else {
@@ -1507,7 +1520,7 @@ class GestureLowerPanel(
         // 「アイテムを配置」の上書き設定は独立タブを持たず、配置先タブの
         // 中央下揃えトグルで編集します。配置先5択（上揃え）とは行を共有せず、
         // 下端基準の中央配置に置くため項目数の増減で位置がずれません。
-        if (node.type == CommandType.PLACE_ITEM && field.key == "destination") {
+        if (node.type == CommandType.PLACE_ITEM && field.key == "placeDestination") {
             appendCheckboxCard(
                 nodes, frame, node, "overwrite", inputCenterY, suppressHighlight,
                 centerX = SETTING_TOGGLE_CENTER_X,
@@ -1592,7 +1605,8 @@ class GestureLowerPanel(
                 cards = listOf(
                     SettingsChoiceCard(
                         elementId = "lower-setting-choice:${choice.id}",
-                        label = Component.text(choice.label, GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
+                        label = (choice.labelComponent ?: Component.text(choice.label))
+                            .color(GestureSettingVisualPolicy.settingChoiceTextColor(choice)),
                         background = Bukkit.createBlockData(settingChoiceMaterial(choice)),
                         outline = if (suppressHighlight) {
                             null
@@ -3075,6 +3089,19 @@ class GestureLowerPanel(
         replacesVisualId: String? = null,
     ): GestureGuiHoverText = hoverText(Component.text(text), x, y, replacesVisualId)
 
+    /** 複数の意味行（Component）を、空行を挿入せずに一つのホバーTextDisplayへ配置します。 */
+    internal fun multiLineHoverComponents(
+        lines: List<Component>,
+        x: Double,
+        y: Double,
+        replacesVisualId: String? = null,
+    ): GestureGuiHoverText {
+        val text = lines.foldIndexed(Component.empty() as Component) { index, result, line ->
+            if (index == 0) line else result.append(Component.newline()).append(line)
+        }
+        return hoverText(text, x, y, replacesVisualId)
+    }
+
     /** 複数の意味行を、空行を挿入せずに一つのホバーTextDisplayへ配置します。 */
     internal fun multiLineHover(
         lines: List<String>,
@@ -3327,7 +3354,7 @@ class GestureLowerPanel(
         choiceId.startsWith("propertyValue:") -> setOf(EntityDataSchema.PARAM_VALUE)
         choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
         // issue #21: 配置先の選択肢は配置先欄へ投影します。
-        choiceId.startsWith("placeDestination:") -> setOf("destination")
+        choiceId.startsWith("placeDestination:") -> setOf("placeDestination")
         choiceId.startsWith("equipmentSlot:") -> setOf("slot")
         choiceId.startsWith("overwrite:") -> setOf("overwrite")
         choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
@@ -3463,8 +3490,8 @@ class GestureLowerPanel(
                 node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
                 CommandSettingsModel.isFieldConfigured(node, "slot")
             id.startsWith("placeDestination:") -> choice.selected &&
-                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == id.removePrefix("placeDestination:") &&
-                CommandSettingsModel.isFieldConfigured(node, "destination")
+                node.string("placeDestination", PlaceItemDestination.EQUIPMENT.paramValue) == id.removePrefix("placeDestination:") &&
+                CommandSettingsModel.isFieldConfigured(node, "placeDestination")
             id.startsWith("overwrite:") -> choice.selected &&
                 node.boolean("overwrite") == id.removePrefix("overwrite:").toBoolean() &&
                 CommandSettingsModel.isFieldConfigured(node, "overwrite")
@@ -3675,7 +3702,7 @@ class GestureLowerPanel(
             SettingChoice(
                 "placeDestination:${destination.paramValue}",
                 KcI18n.text(player, destination.labelKey),
-                node.string("destination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue,
+                node.string("placeDestination", PlaceItemDestination.EQUIPMENT.paramValue) == destination.paramValue,
             )
         }
         GestureSettingScreen.ENTITY_EQUIPMENT_SLOT -> listOf(
@@ -4376,6 +4403,17 @@ class GestureLowerPanel(
         VariableOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE
     }
 
+    /**
+     * 表示値をComponentへ変換します。
+     *
+     * 種別名はバニラ翻訳のtranslatableで渡し、各クライアントの言語で
+     * 描画させます。独自翻訳は持ちません。
+     */
+    private fun displayValueComponent(player: Player, display: DisplayValue): Component = when (display) {
+        is DisplayValue.EntityTypeName -> display.entityComponent()
+        else -> Component.text(display.render(player))
+    }
+
     private fun settingCurrentValue(
         node: CommandNode,
         context: CommandSettingContext,
@@ -4941,7 +4979,7 @@ class GestureLowerPanel(
         val TEXT_EDITABLE_KEYS = setOf(
             "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
             "particleDensity", "burstHeight",
-            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "entity", "diskId", "name",
+            "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "summonEntity", "diskId", "name",
             "condition", "variable", "value", "block", "sneaking",
             "motionX", "motionY", "motionZ",
             EntityAttributeSupport.PARAM_ATTRIBUTE,

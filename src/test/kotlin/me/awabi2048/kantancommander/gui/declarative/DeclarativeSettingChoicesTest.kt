@@ -65,7 +65,7 @@ class DeclarativeSettingChoicesTest {
         DeclarativeSettings.valueRowsSection(
             nodes,
             frame(),
-            rows = listOf(SettingsValueRow("setting-header", "field", "value", 0.36)),
+            rows = listOf(SettingsValueRow("setting-header", "field", Component.text("value"), 0.36)),
             labelX = -0.53,
             valueX = 0.53,
         )

@@ -412,10 +412,10 @@ object CommandSettingsModel {
             // 上書き設定は独立タブを持たず、配置先タブの中央下トグルで編集します。
             // 保存・検証・実行側の params["overwrite"] は変更しません。
             node.type == CommandType.PLACE_ITEM -> {
-                val destination = PlaceItemDestination.from(node.string("destination"))
+                val destination = PlaceItemDestination.from(node.string("placeDestination"))
                 val allowed = buildSet {
                     if (destination == null || destination.requiresEntityTarget) add("target")
-                    add("destination")
+                    add("placeDestination")
                     if (destination != PlaceItemDestination.ITEM_FRAME) add("slot")
                     add("item")
                     add("count")
@@ -743,7 +743,7 @@ object CommandSettingsModel {
             }
             CommandType.PLACE_ITEM -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
-                "destination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_DESTINATION
+                "placeDestination" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_DESTINATION
                 "slot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_SLOT
                 "item" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_PLACE_ITEM
                 "count" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_COUNT
@@ -764,7 +764,7 @@ object CommandSettingsModel {
                 else -> undefinedWarningKey(node, fieldKey)
             }
             CommandType.SUMMON_ENTITY -> when (fieldKey) {
-                "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY
+                "summonEntity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY
                 "customName" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_NAME
                 "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAGS
                 "summonPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SUMMON_POSITION
@@ -924,7 +924,7 @@ object CommandSettingsModel {
             // 上書き設定は配置先タブの中央下トグルで編集するため、
             // 検証結果だけが存在しないタブを指さないようにします。
             CommandType.PLACE_ITEM -> when (validationFieldKey) {
-                "overwrite" -> "destination"
+                "overwrite" -> "placeDestination"
                 else -> validationFieldKey
             }
             // 折り畳みノードの注意タブ対応付けは折り畳み前の種別と共用します。
@@ -999,8 +999,8 @@ object CommandSettingsModel {
         // 額縁は固定のため欄自体を出しません。
         CommandType.PLACE_ITEM -> when (fieldKey) {
             "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
-            "destination" -> CommandSettingDescriptor(CommandSettingEditor.PLACE_DESTINATION)
-            "slot" -> if (PlaceItemDestination.from(node.string("destination")) == PlaceItemDestination.EQUIPMENT) {
+            "placeDestination" -> CommandSettingDescriptor(CommandSettingEditor.PLACE_DESTINATION)
+            "slot" -> if (PlaceItemDestination.from(node.string("placeDestination")) == PlaceItemDestination.EQUIPMENT) {
                 CommandSettingDescriptor(CommandSettingEditor.ENTITY_EQUIPMENT_SLOT)
             } else text()
             "overwrite" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_OVERWRITE)
@@ -1494,9 +1494,13 @@ object CommandSettingsModel {
         val effectiveRole = role ?: descriptor(node, fieldKey).role
         return when (fieldKey) {
             "target" -> isTargetSpecConfigured(targetSpec(node, effectiveRole))
+            // "entity" は一時対象指定の専用キーです。召喚の種類は v17 で
+            // "summonEntity" へ分離したため、ここでは扱いません（汎用分岐へ）。
             "entity" -> isTargetSpecConfigured(node.temporaryEntityTargetSpec)
             "location" -> isPositionSpecConfigured(node.temporaryLocationPositionSpec) &&
                 isFacingSpecConfigured(node.temporaryLocationFacingSpec)
+            // "destination" はテレポート移動先の専用キーです。配置先は v17 で
+            // "placeDestination" へ分離したため、ここでは扱いません（汎用分岐へ）。
             "destination" -> isPositionSpecConfigured(node.destinationSpec) ||
                 isTargetSpecConfigured(node.destinationTargetSpec)
             "other" -> isTargetSpecConfigured(node.secondaryTargetSpec)

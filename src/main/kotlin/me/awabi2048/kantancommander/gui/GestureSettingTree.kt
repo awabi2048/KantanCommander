@@ -34,6 +34,12 @@ data class GestureSettingTreeNode(
      * 下端からの行番号で定まるため、項目数の増減で位置がずれません。
      */
     val bottomAligned: Boolean = false,
+    /**
+     * バニラ翻訳などのComponent表示です。指定時は描画で優先します。
+     * 文字列のlabelはフォールバック・検証用に維持します。
+     * 位置引数の既存呼び出しを壊さないため末尾に置きます。
+     */
+    val labelComponent: net.kyori.adventure.text.Component? = null,
 ) {
     val hasChildren: Boolean
         get() = children.isNotEmpty()

@@ -126,9 +126,15 @@ object ReferenceSettingProviders {
         )
             .filter { (id, _) -> id in CommandSettingsModel.visibleTargetFilterIds(spec.kind, singleOnly) }
             .map { (id, label) ->
+                val rawValue = value(id)
                 GestureSettingTreeNode(
                     id = "filter:$id",
-                    label = "${text(label)} ${value(id) ?: text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)}",
+                    label = "${text(label)} ${rawValue ?: text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)}",
+                    // 種別はバニラ翻訳のComponentで示し、各クライアントの言語で描画させます。
+                    labelComponent = if (id == "entityType" && !rawValue.isNullOrBlank()) {
+                        net.kyori.adventure.text.Component.text("${text(label)} ")
+                            .append(me.awabi2048.kantancommander.model.EntityTypeDisplay.componentFor(rawValue))
+                    } else null,
                 )
             }
     }

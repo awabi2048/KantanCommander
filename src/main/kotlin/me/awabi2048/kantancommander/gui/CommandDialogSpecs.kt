@@ -1289,7 +1289,7 @@ internal object CommandDialogSpecs {
      * 配置先ごとの表示範囲だけを検証し、保存形式の正当性は検証側が担います。
      */
     fun placeSlot(node: CommandNode): Spec? {
-        val destination = PlaceItemDestination.from(node.string("destination")) ?: return null
+        val destination = PlaceItemDestination.from(node.string("placeDestination")) ?: return null
         val displayRange = when (destination) {
             PlaceItemDestination.PLAYER_HOTBAR -> 1..9
             PlaceItemDestination.PLAYER_INVENTORY -> 1..27
@@ -1456,7 +1456,7 @@ internal object CommandDialogSpecs {
             "fadeInSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN
             "staySeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY
             "fadeOutSeconds" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT
-            "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY
+            "summonEntity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY
             "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND
             "soundParameters" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SOUND_PARAMETERS
             "effect" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_EFFECT
@@ -1473,12 +1473,12 @@ internal object CommandDialogSpecs {
         }
         val maxLength = when (fieldKey) {
             "text", "subtitle", "customName", "itemData", "value" -> 512
-            "entity", "sound", "effect", "tags", "tag" -> 64
+            "summonEntity", "sound", "effect", "tags", "tag" -> 64
             else -> 16
         }
         val format = when (fieldKey) {
             "text", "subtitle", "customName", "itemData", "value", "shakeType" -> InputFormat.ANY_STRING
-            "entity", "sound", "effect" -> InputFormat.RESOURCE_ID
+            "summonEntity", "sound", "effect" -> InputFormat.RESOURCE_ID
             "tags", "tag" -> InputFormat.TAG
             "count" -> InputFormat.QUANTITY
             "level" -> InputFormat.INTEGER
@@ -1489,7 +1489,7 @@ internal object CommandDialogSpecs {
         val formatHintKey = when (fieldKey) {
             "text", "subtitle" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TEXT_BODY
             "value" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VALUE_BODY
-            "entity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_ENTITY_BODY
+            "summonEntity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_ENTITY_BODY
             "tags", "tag" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_TAGS_BODY
             "sound" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_SOUND_BODY
             "volume" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FIELD_VOLUME_BODY
@@ -1512,7 +1512,7 @@ internal object CommandDialogSpecs {
             else -> null
         }
         val required = fieldKey in setOf(
-            "block", "entity", "sound", "effect", "count", "level", "seconds",
+            "block", "summonEntity", "sound", "effect", "count", "level", "seconds",
             "volume", "pitch", "intensity", "shakeType", "tag",
             "fadeInSeconds", "staySeconds", "fadeOutSeconds",
         )
@@ -1520,7 +1520,7 @@ internal object CommandDialogSpecs {
             when {
                 positiveInteger && !isNumericTemplate(raw) && !isPositiveInteger(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_POSITIVE_INVALID
-                fieldKey in setOf("entity", "sound", "effect") && !registeredFieldId(fieldKey, raw) ->
+                fieldKey in setOf("summonEntity", "sound", "effect") && !registeredFieldId(fieldKey, raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
                 fieldKey in setOf("tags", "tag") && VariableTemplate.hasMalformedReference(raw) ->
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_TAG_FORMAT
@@ -1735,7 +1735,7 @@ internal object CommandDialogSpecs {
         }
 
     /** 一覧から選択できる入力項目だけを候補提示の対象にします。 */
-    fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("entity", "entityType", "sound", "effect", ParticleSettings.PARAM_PARTICLE)
+    fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("summonEntity", "entityType", "sound", "effect", ParticleSettings.PARAM_PARTICLE)
 
     /**
      * issue #28: Registry由来の全候補IDです。
@@ -1866,7 +1866,7 @@ internal object CommandDialogSpecs {
     }
 
     private fun registeredFieldId(fieldKey: String, raw: String): Boolean = when (fieldKey) {
-        "entity", "entityType" -> CommandValueRules.isEntityTypeId(raw)
+        "summonEntity", "entityType" -> CommandValueRules.isEntityTypeId(raw)
         "sound" -> CommandValueRules.isSoundId(raw)
         "effect" -> CommandValueRules.isEffectId(raw)
         ParticleSettings.PARAM_PARTICLE -> runCatching { org.bukkit.Particle.valueOf(raw.trim()) }.isSuccess
@@ -1877,7 +1877,7 @@ internal object CommandDialogSpecs {
         when (fieldKey) {
             // Registry.keyStream() は要素側の非推奨 Keyed.key プロパティを経由せず、
             // Paper 26.1.2 が提供する登録IDの公式ストリームをそのまま利用します。
-            "entity", "entityType" -> Registry.ENTITY_TYPE.keyStream().map { it.toString() }.toList()
+            "summonEntity", "entityType" -> Registry.ENTITY_TYPE.keyStream().map { it.toString() }.toList()
             "sound" -> Registry.SOUNDS.keyStream().map { it.toString() }.toList()
             "effect" -> Registry.EFFECT.keyStream().map { it.toString() }.toList()
             ParticleSettings.PARAM_PARTICLE -> org.bukkit.Particle.entries.map { it.name }
@@ -1907,7 +1907,7 @@ internal object CommandDialogSpecs {
 
     private const val MAX_EFFECT_SECONDS = 86_400
     private const val MULTI_VALUE_MAX_LENGTH = 64
-    private val NAMESPACED_ID_FIELDS = setOf("entity", "entityType", "sound", "effect")
+    private val NAMESPACED_ID_FIELDS = setOf("summonEntity", "entityType", "sound", "effect")
 
     /** 数値欄でも単一のワールド変数・一時変数を実行時に数値化できるようにします。 */
     private fun isNumericTemplate(raw: String): Boolean =

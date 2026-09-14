@@ -6,7 +6,7 @@ import org.bukkit.Material
 import java.util.Locale
 import java.util.UUID
 
-const val STRUCTURED_FORMAT_VERSION = 16
+const val STRUCTURED_FORMAT_VERSION = 17
 const val TICKS_PER_SECOND = 20
 const val MAX_TIMER_SECONDS = 86_400
 const val DEFAULT_TIMER_SECONDS = 1.0
@@ -808,7 +808,9 @@ enum class CommandType(
     TELEPORT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_TELEPORT_DESCRIPTION, Material.ENDER_PEARL, emptyMap()),
     GIVE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_GIVE_ITEM_DESCRIPTION, Material.CHEST, mapOf("count" to "1")),
     PLACE_ITEM(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLACE_ITEM, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLACE_ITEM_DESCRIPTION, Material.ITEM_FRAME, mapOf(
-        "destination" to PlaceItemDestination.EQUIPMENT.paramValue,
+        // v17で改名しました。テレポートの移動先（構造値）と言語上区別します。
+        // 旧 "destination" は読込時に移行します。
+        "placeDestination" to PlaceItemDestination.EQUIPMENT.paramValue,
         "slot" to PlaceItemDestination.defaultSlot(PlaceItemDestination.EQUIPMENT),
         "item" to "",
         "itemData" to "",
@@ -848,7 +850,9 @@ enum class CommandType(
     )),
     WAIT(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_WAIT_DESCRIPTION, Material.CLOCK, mapOf("seconds" to "1")),
     SUMMON_ENTITY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY_DESCRIPTION, Material.ZOMBIE_SPAWN_EGG, mapOf(
-        "entity" to "", "tags" to "", "customName" to ""
+        // v17で改名しました。一時対象指定の "entity" と言語上区別します。
+        // 旧 "entity" は読込時に移行します。
+        "summonEntity" to "", "tags" to "", "customName" to ""
     )),
     PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
         "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "POSITION",

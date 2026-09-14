@@ -2,13 +2,17 @@ package me.awabi2048.kantancommander.model
 
 import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import io.papermc.paper.datacomponent.item.ResolvableProfile
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
 import org.bukkit.entity.ArmorStand
 import org.bukkit.entity.Entity
 import org.bukkit.entity.EntityType
 import org.bukkit.entity.LivingEntity
+import org.bukkit.entity.Mannequin
+import org.bukkit.entity.Pose
 import org.bukkit.entity.Rabbit
+import org.bukkit.inventory.MainHand
 
 /**
  * issue #10 の型付きEntity設定スキーマです。
@@ -102,6 +106,40 @@ object EntityDataSchema {
     const val PROPERTY_ARMOR_STAND_BASE_PLATE = "armor_stand_base_plate"
     const val PROPERTY_RABBIT_TYPE = "rabbit_type"
 
+    // Mannequin固有項目です。descriptionは設定不可とし、ここでは扱いません。
+    // profileはスキンのプレイヤー名のみを受け付け、UUID・テクスチャ直接指定は行いません。
+    const val PROPERTY_MANNEQUIN_PROFILE_NAME = "mannequin_profile_name"
+    // スコア下に表示する説明文です。空欄は除去して既定表示に戻します。
+    const val PROPERTY_MANNEQUIN_DESCRIPTION = "mannequin_description"
+    const val PROPERTY_MANNEQUIN_IMMOVABLE = "mannequin_immovable"
+    const val PROPERTY_MANNEQUIN_MAIN_HAND = "mannequin_main_hand"
+    const val PROPERTY_MANNEQUIN_POSE = "mannequin_pose"
+    const val PROPERTY_MANNEQUIN_SKIN_CAPE = "mannequin_skin_cape"
+    const val PROPERTY_MANNEQUIN_SKIN_JACKET = "mannequin_skin_jacket"
+    const val PROPERTY_MANNEQUIN_SKIN_LEFT_SLEEVE = "mannequin_skin_left_sleeve"
+    const val PROPERTY_MANNEQUIN_SKIN_RIGHT_SLEEVE = "mannequin_skin_right_sleeve"
+    const val PROPERTY_MANNEQUIN_SKIN_LEFT_PANTS = "mannequin_skin_left_pants"
+    const val PROPERTY_MANNEQUIN_SKIN_RIGHT_PANTS = "mannequin_skin_right_pants"
+    const val PROPERTY_MANNEQUIN_SKIN_HAT = "mannequin_skin_hat"
+
+    /** 利き手のstableな選択肢IDです。BukkitのMainHand名と対応します。 */
+    const val MANNEQUIN_MAIN_HAND_LEFT = "left"
+    const val MANNEQUIN_MAIN_HAND_RIGHT = "right"
+
+    // ポーズのstableな選択肢IDです。BukkitのPose名の小文字と対応します。
+    // 静的一覧はプレイヤー系の代表的な候補に絞り、実行時にMannequin.validPoses()で最終判定します。
+    const val MANNEQUIN_POSE_STANDING = "standing"
+    const val MANNEQUIN_POSE_SNEAKING = "sneaking"
+    const val MANNEQUIN_POSE_SWIMMING = "swimming"
+    const val MANNEQUIN_POSE_SLEEPING = "sleeping"
+    const val MANNEQUIN_POSE_SITTING = "sitting"
+    const val MANNEQUIN_POSE_FALL_FLYING = "fall_flying"
+    const val MANNEQUIN_POSE_SPIN_ATTACK = "spin_attack"
+
+    // スキンのプレイヤー名は解決可能な名前のみを受け付けます。
+    // 空欄・長さ・文字種は編集時に検証し、存在確認はクライアント側の動的解決へ委ねます。
+    private val MANNEQUIN_PROFILE_NAME_PATTERN = Regex("[A-Za-z0-9_]{3,16}")
+
     /** ウサギ種類のstableな選択肢IDです。BukkitのRabbit.Type名と対応します。 */
     const val RABBIT_BROWN = "brown"
     const val RABBIT_WHITE = "white"
@@ -119,6 +157,24 @@ object EntityDataSchema {
         EntityPropertyChoice(RABBIT_GOLD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_GOLD),
         EntityPropertyChoice(RABBIT_SALT_AND_PEPPER, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_SALT_AND_PEPPER),
         EntityPropertyChoice(RABBIT_KILLER_BUNNY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RABBIT_KILLER_BUNNY),
+    )
+
+    // 利き手の選択肢です。BukkitのMainHand名と1対1で対応付けます。
+    private val mannequinMainHandChoices = listOf(
+        EntityPropertyChoice(MANNEQUIN_MAIN_HAND_LEFT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_MAIN_HAND_LEFT),
+        EntityPropertyChoice(MANNEQUIN_MAIN_HAND_RIGHT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_MAIN_HAND_RIGHT),
+    )
+
+    // ポーズの選択肢です。子画面での選択専用であり、直接入力させません。
+    // BukkitのPose名の小文字と対応し、実行時にMannequin.validPoses()で最終判定します。
+    private val mannequinPoseChoices = listOf(
+        EntityPropertyChoice(MANNEQUIN_POSE_STANDING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_STANDING),
+        EntityPropertyChoice(MANNEQUIN_POSE_SNEAKING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_SNEAKING),
+        EntityPropertyChoice(MANNEQUIN_POSE_SWIMMING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_SWIMMING),
+        EntityPropertyChoice(MANNEQUIN_POSE_SLEEPING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_SLEEPING),
+        EntityPropertyChoice(MANNEQUIN_POSE_SITTING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_SITTING),
+        EntityPropertyChoice(MANNEQUIN_POSE_FALL_FLYING, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_FALL_FLYING),
+        EntityPropertyChoice(MANNEQUIN_POSE_SPIN_ATTACK, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MANNEQUIN_POSE_SPIN_ATTACK),
     )
 
     private val definitions: List<EntityPropertyDefinition> = listOf(
@@ -175,6 +231,68 @@ object EntityDataSchema {
             entityTypes = setOf(EntityType.RABBIT.name),
             enumChoices = rabbitChoices,
             optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_RABBIT_TYPE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_PROFILE_NAME, EntityPropertyValueKind.TEXT,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_PROFILE_NAME,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_DESCRIPTION, EntityPropertyValueKind.TEXT,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_DESCRIPTION,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_IMMOVABLE, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_IMMOVABLE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_MAIN_HAND, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            enumChoices = mannequinMainHandChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_MAIN_HAND,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_POSE, EntityPropertyValueKind.ENUM,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            enumChoices = mannequinPoseChoices,
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_POSE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_SKIN_CAPE, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_SKIN_CAPE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_SKIN_JACKET, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_SKIN_JACKET,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_SKIN_LEFT_SLEEVE, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_SKIN_LEFT_SLEEVE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_SKIN_RIGHT_SLEEVE, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_SKIN_RIGHT_SLEEVE,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_SKIN_LEFT_PANTS, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_SKIN_LEFT_PANTS,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_SKIN_RIGHT_PANTS, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_SKIN_RIGHT_PANTS,
+        ),
+        EntityPropertyDefinition(
+            PROPERTY_MANNEQUIN_SKIN_HAT, EntityPropertyValueKind.BOOLEAN,
+            entityTypes = setOf(EntityType.MANNEQUIN.name),
+            optionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_PROPERTY_MANNEQUIN_SKIN_HAT,
         ),
     )
 
@@ -294,24 +412,109 @@ object EntityDataSchema {
         PROPERTY_ARMOR_STAND_SMALL -> (entity as? ArmorStand)?.let { it.setSmall(value); true } ?: false
         PROPERTY_ARMOR_STAND_MARKER -> (entity as? ArmorStand)?.let { it.setMarker(value); true } ?: false
         PROPERTY_ARMOR_STAND_BASE_PLATE -> (entity as? ArmorStand)?.let { it.setBasePlate(value); true } ?: false
+        PROPERTY_MANNEQUIN_IMMOVABLE -> (entity as? Mannequin)?.let { it.setImmovable(value); true } ?: false
+        PROPERTY_MANNEQUIN_SKIN_CAPE,
+        PROPERTY_MANNEQUIN_SKIN_JACKET,
+        PROPERTY_MANNEQUIN_SKIN_LEFT_SLEEVE,
+        PROPERTY_MANNEQUIN_SKIN_RIGHT_SLEEVE,
+        PROPERTY_MANNEQUIN_SKIN_LEFT_PANTS,
+        PROPERTY_MANNEQUIN_SKIN_RIGHT_PANTS,
+        PROPERTY_MANNEQUIN_SKIN_HAT,
+        -> applyMannequinSkinPart(entity, propertyId, value)
         else -> false
     }
 
     /** enum値を適用します。選択肢IDとBukkitのenum値の対応はここで管理します。 */
     fun applyEnum(entity: Entity, propertyId: String, choiceId: String): Boolean {
-        if (propertyId != PROPERTY_RABBIT_TYPE) return false
-        val rabbit = entity as? Rabbit ?: return false
-        val type = when (choiceId) {
-            RABBIT_BROWN -> Rabbit.Type.BROWN
-            RABBIT_WHITE -> Rabbit.Type.WHITE
-            RABBIT_BLACK -> Rabbit.Type.BLACK
-            RABBIT_BLACK_AND_WHITE -> Rabbit.Type.BLACK_AND_WHITE
-            RABBIT_GOLD -> Rabbit.Type.GOLD
-            RABBIT_SALT_AND_PEPPER -> Rabbit.Type.SALT_AND_PEPPER
-            RABBIT_KILLER_BUNNY -> Rabbit.Type.THE_KILLER_BUNNY
-            else -> return false
+        if (propertyId == PROPERTY_RABBIT_TYPE) {
+            val rabbit = entity as? Rabbit ?: return false
+            val type = when (choiceId) {
+                RABBIT_BROWN -> Rabbit.Type.BROWN
+                RABBIT_WHITE -> Rabbit.Type.WHITE
+                RABBIT_BLACK -> Rabbit.Type.BLACK
+                RABBIT_BLACK_AND_WHITE -> Rabbit.Type.BLACK_AND_WHITE
+                RABBIT_GOLD -> Rabbit.Type.GOLD
+                RABBIT_SALT_AND_PEPPER -> Rabbit.Type.SALT_AND_PEPPER
+                RABBIT_KILLER_BUNNY -> Rabbit.Type.THE_KILLER_BUNNY
+                else -> return false
+            }
+            rabbit.setRabbitType(type)
+            return true
         }
-        rabbit.setRabbitType(type)
-        return true
+        if (propertyId == PROPERTY_MANNEQUIN_MAIN_HAND) {
+            val mannequin = entity as? Mannequin ?: return false
+            val hand = when (choiceId) {
+                MANNEQUIN_MAIN_HAND_LEFT -> MainHand.LEFT
+                MANNEQUIN_MAIN_HAND_RIGHT -> MainHand.RIGHT
+                else -> return false
+            }
+            return runCatching { mannequin.setMainHand(hand); true }.getOrDefault(false)
+        }
+        if (propertyId == PROPERTY_MANNEQUIN_POSE) {
+            val mannequin = entity as? Mannequin ?: return false
+            val pose = mannequinPose(choiceId) ?: return false
+            // 静的一覧より狭い実行時制約があればそちらを優先します。
+            // 単体試験環境などBridge未初期化時は静的一覧の判定に留めます。
+            val valid = runCatching { Mannequin.validPoses() }.getOrNull()
+            if (valid != null && pose !in valid) return false
+            return runCatching { mannequin.setPose(pose); true }.getOrDefault(false)
+        }
+        return false
+    }
+
+    /**
+     * スキンのプレイヤー名が構文として正しいかを返します。
+     *
+     * 解決可能性の存在確認はクライアント側の動的解決へ委ね、ここでは
+     * 空欄・長さ・文字種のみを検証します。
+     */
+    fun isMannequinProfileName(raw: String): Boolean =
+        MANNEQUIN_PROFILE_NAME_PATTERN.matches(raw)
+
+    /**
+     * スキンのプレイヤー名を適用します。適用前に[supports]で可否を判定してください。
+     *
+     * 名前のみの動的プロファイルを作り、スキン解決をクライアントへ委ねます。
+     * メインスレッドを止める外部問い合わせは行いません。
+     */
+    fun applyMannequinProfile(entity: Entity, playerName: String): Boolean {
+        val mannequin = entity as? Mannequin ?: return false
+        if (!isMannequinProfileName(playerName)) return false
+        return runCatching {
+            mannequin.setProfile(ResolvableProfile.resolvableProfile().name(playerName).build())
+            true
+        }.getOrDefault(false)
+    }
+
+    // ポーズ選択肢IDとBukkitのPoseの対応です。不明IDはnullとします。
+    fun mannequinPose(choiceId: String): Pose? = when (choiceId) {
+        MANNEQUIN_POSE_STANDING -> Pose.STANDING
+        MANNEQUIN_POSE_SNEAKING -> Pose.SNEAKING
+        MANNEQUIN_POSE_SWIMMING -> Pose.SWIMMING
+        MANNEQUIN_POSE_SLEEPING -> Pose.SLEEPING
+        MANNEQUIN_POSE_SITTING -> Pose.SITTING
+        MANNEQUIN_POSE_FALL_FLYING -> Pose.FALL_FLYING
+        MANNEQUIN_POSE_SPIN_ATTACK -> Pose.SPIN_ATTACK
+        else -> null
+    }
+
+    // 肌部位の表示切替を適用します。部位IDとSkinParts.Mutableの対応はここで管理します。
+    private fun applyMannequinSkinPart(entity: Entity, propertyId: String, value: Boolean): Boolean {
+        val mannequin = entity as? Mannequin ?: return false
+        return runCatching {
+            val parts = mannequin.skinParts
+            when (propertyId) {
+                PROPERTY_MANNEQUIN_SKIN_CAPE -> parts.setCapeEnabled(value)
+                PROPERTY_MANNEQUIN_SKIN_JACKET -> parts.setJacketEnabled(value)
+                PROPERTY_MANNEQUIN_SKIN_LEFT_SLEEVE -> parts.setLeftSleeveEnabled(value)
+                PROPERTY_MANNEQUIN_SKIN_RIGHT_SLEEVE -> parts.setRightSleeveEnabled(value)
+                PROPERTY_MANNEQUIN_SKIN_LEFT_PANTS -> parts.setLeftPantsEnabled(value)
+                PROPERTY_MANNEQUIN_SKIN_RIGHT_PANTS -> parts.setRightPantsEnabled(value)
+                PROPERTY_MANNEQUIN_SKIN_HAT -> parts.setHatsEnabled(value)
+                else -> return false
+            }
+            mannequin.setSkinParts(parts)
+            true
+        }.getOrDefault(false)
     }
 }

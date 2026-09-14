@@ -228,6 +228,112 @@ class EntityOperationValidationTest {
     }
 
     @Test
+    fun `mannequin profile name validates player name syntax`() {
+        val valid = DiskScript(name = "mannequin-profile", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME
+                params[EntityDataSchema.PARAM_VALUE] = "Notch"
+            }
+        }
+        assertTrue(ExecutableScriptValidator.validate(valid).isEmpty())
+
+        val invalid = DiskScript(name = "mannequin-profile-invalid", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME
+                params[EntityDataSchema.PARAM_VALUE] = "has space"
+            }
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(invalid).any {
+                it.fieldKeys == setOf(EntityDataSchema.PARAM_VALUE)
+            },
+        )
+
+        val blank = DiskScript(name = "mannequin-profile-blank", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME
+                params[EntityDataSchema.PARAM_VALUE] = ""
+            }
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(blank).any {
+                it.fieldKeys == setOf(EntityDataSchema.PARAM_VALUE)
+            },
+        )
+    }
+
+    @Test
+    fun `mannequin pose validates child screen choices`() {
+        val valid = DiskScript(name = "mannequin-pose", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_POSE
+                params[EntityDataSchema.PARAM_VALUE] = EntityDataSchema.MANNEQUIN_POSE_STANDING
+            }
+        }
+        assertTrue(ExecutableScriptValidator.validate(valid).isEmpty())
+
+        val invalid = DiskScript(name = "mannequin-pose-invalid", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_POSE
+                params[EntityDataSchema.PARAM_VALUE] = "dancing"
+            }
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(invalid).any {
+                it.fieldKeys == setOf(EntityDataSchema.PARAM_VALUE)
+            },
+        )
+    }
+
+    @Test
+    fun `mannequin description accepts text including empty`() {
+        val empty = DiskScript(name = "mannequin-description-empty", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+                params[EntityDataSchema.PARAM_VALUE] = ""
+            }
+        }
+        assertTrue(ExecutableScriptValidator.validate(empty).isEmpty())
+
+        val text = DiskScript(name = "mannequin-description-text", owner = UUID.randomUUID()).also { script ->
+            GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
+                targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
+                params["operation"] = "data"
+                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+                params[EntityDataSchema.PARAM_VALUE] = "案内人"
+            }
+        }
+        assertTrue(ExecutableScriptValidator.validate(text).isEmpty())
+    }
+
+    @Test
+    fun `mannequin property is rejected for player target`() {
+        val script = scriptWith {
+            it.params["operation"] = "data"
+            it.params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_IMMOVABLE
+            it.params[EntityDataSchema.PARAM_VALUE] = "true"
+        }
+        // 対象はプレイヤー確定のため、Mannequin固有項目は編集時に検出する。
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any {
+                it.fieldKeys == setOf(EntityDataSchema.PARAM_PROPERTY)
+            },
+        )
+    }
+
+    @Test
     fun `unknown operation is rejected`() {
         val script = scriptWith {
             it.params["operation"] = "dance"

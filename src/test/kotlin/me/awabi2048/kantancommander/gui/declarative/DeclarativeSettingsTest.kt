@@ -273,7 +273,7 @@ class DeclarativeSettingsTest {
         DeclarativeSettings.valueRowsSection(
             nodes,
             frame(),
-            rows = listOf(SettingsValueRow("lower-setting", "label", "value", 0.27)),
+            rows = listOf(SettingsValueRow("lower-setting", "label", Component.text("value"), 0.27)),
         )
         val compiled = KantanLayoutBridge.compile(DeclarativeSettings.document(nodes, panel), onAction = {})
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")

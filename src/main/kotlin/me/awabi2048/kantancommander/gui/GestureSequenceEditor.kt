@@ -3139,7 +3139,7 @@ class GestureSequenceEditor(
             // 数値スロットは GUI 表示 (1始まり) で受け付け、保存形式 (0始まり) へ
             // 変換します。装備は選択画面、額縁は固定のためここへは到達しません。
             // 仕様と検証は CommandDialogSpecs.placeSlot へ一元化します。
-            val destination = PlaceItemDestination.from(node.string("destination")) ?: return
+            val destination = PlaceItemDestination.from(node.string("placeDestination")) ?: return
             val spec = CommandDialogSpecs.placeSlot(node) ?: return
             beginSettingInput(
                 player,
@@ -7097,7 +7097,7 @@ class GestureSequenceEditor(
             GestureSettingScreen.PLACE_DESTINATION -> {
                 val destination = PlaceItemDestination.from(value)?.takeIf { group == "placeDestination" } ?: return
                 if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "destination", destination.paramValue)
+                        CommandSettingsModel.setParameter(it, "placeDestination", destination.paramValue)
                         CommandSettingsModel.setParameter(it, "slot", PlaceItemDestination.defaultSlot(destination))
                     }) showSettingScreen()
             }

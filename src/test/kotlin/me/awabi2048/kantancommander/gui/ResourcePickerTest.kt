@@ -17,7 +17,7 @@ import org.junit.jupiter.api.Test
 class ResourcePickerTest {
     @Test
     fun `field keys map to picker kinds`() {
-        assertEquals(GestureResourcePickerKind.ENTITY_TYPE, ResourcePicker.kindForFieldKey("entity"))
+        assertEquals(GestureResourcePickerKind.ENTITY_TYPE, ResourcePicker.kindForFieldKey("summonEntity"))
         assertEquals(GestureResourcePickerKind.ENTITY_TYPE, ResourcePicker.kindForFieldKey("entityType"))
         assertEquals(GestureResourcePickerKind.PARTICLE, ResourcePicker.kindForFieldKey(ParticleSettings.PARAM_PARTICLE))
         assertEquals(GestureResourcePickerKind.SOUND, ResourcePicker.kindForFieldKey("sound"))
@@ -55,6 +55,8 @@ class ResourcePickerTest {
         // 対応表にある候補は代表素材へ解決します。
         assertEquals(Material.COW_SPAWN_EGG, ResourcePickerIcons.resolve(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:cow"))
         assertEquals(Material.ARMOR_STAND, ResourcePickerIcons.resolve(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:armor_stand"))
+        // Mannequinにスポーンエッグはないため頭で表示する。
+        assertEquals(Material.PLAYER_HEAD, ResourcePickerIcons.resolve(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:mannequin"))
         assertEquals(Material.BLAZE_POWDER, ResourcePickerIcons.resolve(GestureResourcePickerKind.PARTICLE, "FLAME"))
         assertEquals(Material.NOTE_BLOCK, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:block.note_block.harp"))
         assertEquals(Material.MUSIC_DISC_13, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:music_disc.13"))
@@ -81,7 +83,7 @@ class ResourcePickerTest {
     fun `suggestions stay within the shared registry boundary`() {
         // Dialog候補検索とPickerは同じ取得境界を使います。
         // サーバーなしでは空列ですが、契約（部分集合・空欄空列）は維持します。
-        listOf("entity", "sound", "effect", ParticleSettings.PARAM_PARTICLE).forEach { fieldKey ->
+        listOf("summonEntity", "sound", "effect", ParticleSettings.PARAM_PARTICLE).forEach { fieldKey ->
             val ids = CommandDialogSpecs.registeredIds(fieldKey)
             val found = CommandDialogSpecs.suggestions(fieldKey, "xyz-no-such-id")
             assertTrue(ids.containsAll(found), fieldKey)
