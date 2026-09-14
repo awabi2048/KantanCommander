@@ -3,78 +3,64 @@ package me.awabi2048.kantancommander.gui
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
- * issue #32 の設定モデル（操作分離）のテストです。
+ * 統合選択形式の設定モデルのテストです。
  *
- * 操作ごとの表示許可リスト、編集経路、警告キーの固定、実行位置の対応を固定します。
+ * 設定対象IDごとの表示許可リスト、編集経路、警告キーの固定、実行位置の対応を固定します。
  */
 class EntityOperationSettingsTest {
-    private fun operationNode(operation: String): CommandNode =
-        CommandType.ENTITY_OPERATION.newNode().apply { params["operation"] = operation }
+    private fun pathNode(path: String): CommandNode =
+        CommandType.ENTITY_OPERATION.newNode().apply { params[EntityDataPath.PARAM_PATH] = path }
 
     private fun keys(node: CommandNode): List<String> =
         CommandSettingsModel.visibleFields(node).map { it.key }
 
     @Test
-    fun `entity operation fields follow the selected operation allowlist`() {
+    fun `entity operation fields follow the selected path allowlist`() {
         assertEquals(
-            listOf("target", "operation", "tagOperation", "tag", "executionPosition"),
-            keys(operationNode("tag")),
+            listOf("target", EntityDataPath.PARAM_PATH, "executionPosition"),
+            keys(pathNode("")),
         )
-        val base = operationNode("attribute").apply {
-            params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_BASE_VALUE
-        }
         assertEquals(
             listOf(
-                "target", "operation",
-                EntityAttributeSupport.PARAM_ATTRIBUTE,
-                EntityAttributeSupport.PARAM_OPERATION,
-                EntityAttributeSupport.PARAM_AMOUNT,
-                "executionPosition",
+                "target", EntityDataPath.PARAM_PATH,
+                EntityTagEntries.PARAM_ENTRIES, "executionPosition",
             ),
-            keys(base),
+            keys(pathNode(EntityDataPath.TAG)),
         )
-        val add = operationNode("attribute").apply {
-            params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_ADD
-        }
         assertEquals(
             listOf(
-                "target", "operation",
-                EntityAttributeSupport.PARAM_ATTRIBUTE,
-                EntityAttributeSupport.PARAM_OPERATION,
-                EntityAttributeSupport.PARAM_MODIFIER_KEY,
-                EntityAttributeSupport.PARAM_AMOUNT,
-                EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
-                "executionPosition",
+                "target", EntityDataPath.PARAM_PATH,
+                EntityAttributeSupport.PARAM_VALUE, "executionPosition",
             ),
-            keys(add),
+            keys(pathNode(EntityDataPath.attributePath("minecraft:max_health"))),
         )
-        val remove = operationNode("attribute").apply {
-            params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_REMOVE
-        }
+        // 真偽値は統合選択画面のクリックで直接切り替えるため、値タブを持ちません。
+        assertEquals(
+            listOf("target", EntityDataPath.PARAM_PATH, "executionPosition"),
+            keys(pathNode(EntityDataPath.propertyPath("gravity"))),
+        )
+        // 文字列・整数は値タブを持ちます。
         assertEquals(
             listOf(
-                "target", "operation",
-                EntityAttributeSupport.PARAM_ATTRIBUTE,
-                EntityAttributeSupport.PARAM_OPERATION,
-                EntityAttributeSupport.PARAM_MODIFIER_KEY,
-                "executionPosition",
+                "target", EntityDataPath.PARAM_PATH,
+                EntityDataSchema.PARAM_VALUE, "executionPosition",
             ),
-            keys(remove),
+            keys(pathNode(EntityDataPath.propertyPath("custom_name"))),
         )
-        // 設定値は項目選択後に種類別の編集へ進むため、親タブ列には出しません。
         assertEquals(
             listOf(
-                "target", "operation",
-                EntityDataSchema.PARAM_PROPERTY,
-                "executionPosition",
+                "target", EntityDataPath.PARAM_PATH,
+                EntityDataSchema.PARAM_VALUE, "executionPosition",
             ),
-            keys(operationNode("data")),
+            keys(pathNode(EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_BEE_ANGER))),
         )
     }
 
@@ -84,64 +70,53 @@ class EntityOperationSettingsTest {
     }
 
     @Test
-    fun `gesture column tabs fit within six for every operation`() {
+    fun `gesture column tabs fit within six for every path`() {
         // 実行位置タブは固定行へ抽出するため、上限検査の対象外にします。
-        // modifier追加の8タブで設定画面が開かなくなる潜在不具合の回帰試験です。
-        // 量は演算選択画面の行から編集するため、量タブは出しません。
-        fun columnKeys(operation: String, attributeOperation: String): List<String> {
-            val node = operationNode(operation).apply {
-                params[EntityAttributeSupport.PARAM_OPERATION] = attributeOperation
-            }
-            return CommandSettingsModel.gestureVisibleFields(node)
+        fun columnKeys(path: String): List<String> =
+            CommandSettingsModel.gestureVisibleFields(pathNode(path))
                 .map { it.key }
                 .filter { it != "executionPosition" }
-        }
-        assertTrue(columnKeys("tag", EntityAttributeSupport.OPERATION_BASE_VALUE).size <= 6, "tag")
-        assertTrue(columnKeys("attribute", EntityAttributeSupport.OPERATION_BASE_VALUE).size <= 6, "base")
-        assertTrue(columnKeys("attribute", EntityAttributeSupport.OPERATION_MODIFIER_ADD).size <= 6, "add")
-        assertTrue(columnKeys("attribute", EntityAttributeSupport.OPERATION_MODIFIER_REMOVE).size <= 6, "remove")
-        assertTrue(columnKeys("data", EntityAttributeSupport.OPERATION_BASE_VALUE).size <= 6, "data")
-        val add = operationNode("attribute").apply {
-            params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_ADD
-        }
-        assertTrue(
-            CommandSettingsModel.gestureVisibleFields(add).none {
-                it.key == EntityAttributeSupport.PARAM_AMOUNT
-            },
-            "modifier add hides the amount tab",
-        )
+        assertTrue(columnKeys("").size <= 6, "unset")
+        assertTrue(columnKeys(EntityDataPath.TAG).size <= 6, "tag")
+        assertTrue(columnKeys(EntityDataPath.attributePath("minecraft:max_health")).size <= 6, "attribute")
+        assertTrue(columnKeys(EntityDataPath.propertyPath("gravity")).size <= 6, "boolean")
+        assertTrue(columnKeys(EntityDataPath.propertyPath("rabbit_type")).size <= 6, "enum")
+        assertTrue(columnKeys(EntityDataPath.propertyPath("custom_name")).size <= 6, "text")
     }
 
     @Test
     fun `descriptor maps entity operation fields to shared editors`() {
-        val node = operationNode("attribute")
+        val node = pathNode(EntityDataPath.TAG)
         assertEquals(
-            CommandSettingEditor.ENTITY_OPERATION,
-            CommandSettingsModel.descriptor(node, "operation").editor,
+            CommandSettingEditor.ENTITY_DATA_ROOT,
+            CommandSettingsModel.descriptor(node, EntityDataPath.PARAM_PATH).editor,
         )
         assertEquals(
-            CommandSettingEditor.ENTITY_ATTRIBUTE_OPERATION,
-            CommandSettingsModel.descriptor(node, EntityAttributeSupport.PARAM_OPERATION).editor,
+            CommandSettingEditor.ENTITY_TAG_LIST,
+            CommandSettingsModel.descriptor(node, EntityTagEntries.PARAM_ENTRIES).editor,
         )
         assertEquals(
-            CommandSettingEditor.ENTITY_MODIFIER_OPERATION,
-            CommandSettingsModel.descriptor(node, EntityAttributeSupport.PARAM_MODIFIER_OPERATION).editor,
-        )
-        assertEquals(
-            CommandSettingEditor.ENTITY_PROPERTY,
-            CommandSettingsModel.descriptor(node, EntityDataSchema.PARAM_PROPERTY).editor,
+            CommandSettingEditor.TEXT,
+            CommandSettingsModel.descriptor(node, EntityAttributeSupport.PARAM_VALUE).editor,
         )
         assertEquals(
             CommandSettingEditor.ENTITY_PROPERTY_VALUE,
             CommandSettingsModel.descriptor(
-                node.apply { params[EntityDataSchema.PARAM_PROPERTY] = "gravity" },
+                pathNode(EntityDataPath.propertyPath("rabbit_type")),
                 EntityDataSchema.PARAM_VALUE,
             ).editor,
         )
         assertEquals(
             CommandSettingEditor.TEXT,
             CommandSettingsModel.descriptor(
-                node.apply { params[EntityDataSchema.PARAM_PROPERTY] = "custom_name" },
+                pathNode(EntityDataPath.propertyPath("custom_name")),
+                EntityDataSchema.PARAM_VALUE,
+            ).editor,
+        )
+        assertEquals(
+            CommandSettingEditor.TEXT,
+            CommandSettingsModel.descriptor(
+                pathNode(EntityDataPath.propertyPath("gravity")),
                 EntityDataSchema.PARAM_VALUE,
             ).editor,
         )
@@ -149,30 +124,22 @@ class EntityOperationSettingsTest {
 
     @Test
     fun `incomplete warnings use fixed keys for entity operation tabs`() {
-        val node = operationNode("data")
+        val node = pathNode(EntityDataPath.TAG)
         assertEquals(
             "kantan_commander_clean.gui.gesture.warning.target",
             CommandSettingsModel.incompleteWarningKey(node, "target").id,
         )
         assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.operation",
-            CommandSettingsModel.incompleteWarningKey(node, "operation").id,
+            "kantan_commander_clean.gui.gesture.warning.entity_data",
+            CommandSettingsModel.incompleteWarningKey(node, EntityDataPath.PARAM_PATH).id,
         )
         assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.attribute",
-            CommandSettingsModel.incompleteWarningKey(node, EntityAttributeSupport.PARAM_ATTRIBUTE).id,
+            "kantan_commander_clean.gui.gesture.warning.tag_entries",
+            CommandSettingsModel.incompleteWarningKey(node, EntityTagEntries.PARAM_ENTRIES).id,
         )
         assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.modifier_key",
-            CommandSettingsModel.incompleteWarningKey(node, EntityAttributeSupport.PARAM_MODIFIER_KEY).id,
-        )
-        assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.modifier_amount",
-            CommandSettingsModel.incompleteWarningKey(node, EntityAttributeSupport.PARAM_AMOUNT).id,
-        )
-        assertEquals(
-            "kantan_commander_clean.gui.gesture.warning.property",
-            CommandSettingsModel.incompleteWarningKey(node, EntityDataSchema.PARAM_PROPERTY).id,
+            "kantan_commander_clean.gui.gesture.warning.attribute_value",
+            CommandSettingsModel.incompleteWarningKey(node, EntityAttributeSupport.PARAM_VALUE).id,
         )
         assertEquals(
             "kantan_commander_clean.gui.gesture.warning.property_value",
@@ -187,15 +154,18 @@ class EntityOperationSettingsTest {
 
     @Test
     fun `property value presentation follows the property kind`() {
-        val node = operationNode("data")
-        fun presentation(property: String): GesturePresentation {
-            node.params[EntityDataSchema.PARAM_PROPERTY] = property
+        fun presentation(path: String): GesturePresentation {
+            val node = pathNode(path)
             val descriptor = CommandSettingsModel.descriptor(node, EntityDataSchema.PARAM_VALUE)
             return SettingSpec.presentationFor(node, EntityDataSchema.PARAM_VALUE, descriptor)
         }
 
-        assertEquals(GesturePresentation.CHECKBOX, presentation("gravity"))
-        assertEquals(GesturePresentation.CHOICE, presentation("rabbit_type"))
-        assertEquals(GesturePresentation.INPUT_DIALOG, presentation("custom_name"))
+        assertEquals(GesturePresentation.INPUT_DIALOG, presentation(EntityDataPath.propertyPath("gravity")))
+        assertEquals(GesturePresentation.CHOICE, presentation(EntityDataPath.propertyPath("rabbit_type")))
+        assertEquals(GesturePresentation.INPUT_DIALOG, presentation(EntityDataPath.propertyPath("custom_name")))
+        assertEquals(
+            GesturePresentation.INPUT_DIALOG,
+            presentation(EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_SLIME_SIZE)),
+        )
     }
 }

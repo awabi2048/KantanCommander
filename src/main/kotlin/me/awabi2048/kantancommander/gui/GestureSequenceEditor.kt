@@ -66,8 +66,10 @@ import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -294,15 +296,13 @@ enum class GestureSettingScreen {
     CONDITION_DETAIL,
     DISPLAY_MODE,
     ENTITY_ACTION,
-    ENTITY_OPERATION,
-    ENTITY_ATTRIBUTE_OPERATION,
-    ENTITY_MODIFIER_OPERATION,
-    ENTITY_PROPERTY,
+    ENTITY_DATA_ROOT,
+    ENTITY_ATTRIBUTE_SELECT,
+    ENTITY_TAG_LIST,
     ENTITY_PROPERTY_VALUE,
     PLACE_DESTINATION,
     ENTITY_EQUIPMENT_SLOT,
     ENTITY_OVERWRITE,
-    ENTITY_TAG_OPERATION,
     VARIABLE_SCOPE,
     VARIABLE_NAME,
     VARIABLE_PROPERTY,
@@ -6962,69 +6962,54 @@ class GestureSequenceEditor(
                         CommandSettingsModel.setParameter(it, "action", value)
                     }) showSettingScreen()
             }
-            GestureSettingScreen.ENTITY_OPERATION -> {
-                if (group != "entityOperation" || value !in setOf("tag", "attribute", "data")) return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "operation", value)
-                    }) showSettingScreen()
-            }
-            GestureSettingScreen.ENTITY_ATTRIBUTE_OPERATION -> {
-                val allowed = setOf(
-                    EntityAttributeSupport.OPERATION_BASE_VALUE,
-                    EntityAttributeSupport.OPERATION_MODIFIER_ADD,
-                    EntityAttributeSupport.OPERATION_MODIFIER_REMOVE,
-                )
-                if (group != "attributeOperation" || value !in allowed) return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, EntityAttributeSupport.PARAM_OPERATION, value)
-                    }) showSettingScreen()
-            }
-            GestureSettingScreen.ENTITY_MODIFIER_OPERATION -> {
-                // modifier追加時は量タブを出さないため、この画面の量入力行から
-                // 量Dialogを開きます。通常タブ列の上限（6件）に収めるためです。
-                if (group == "modifierAmount") {
-                    beginSettingInput(
-                        player,
-                        requireNotNull(CommandDialogSpecs.field(node, EntityAttributeSupport.PARAM_AMOUNT)),
-                        node.string(EntityAttributeSupport.PARAM_AMOUNT, "0.0"),
-                    ) { raw ->
-                        val value = CommandDialogSpecs.normalize(EntityAttributeSupport.PARAM_AMOUNT, raw)
-                        val spec = requireNotNull(CommandDialogSpecs.field(node, EntityAttributeSupport.PARAM_AMOUNT))
-                        val validationError = spec.validateInput(value)
-                        if (validationError != null) {
-                            KcI18n.text(player, validationError)
-                        } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityAttributeSupport.PARAM_AMOUNT)) {
-                                CommandSettingsModel.setParameter(it, EntityAttributeSupport.PARAM_AMOUNT, value)
-                            }) {
-                            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                        } else null
-                    }
+            GestureSettingScreen.ENTITY_DATA_ROOT -> {
+                if (group != "entityData") return
+                // attributeグループは子画面への遷移であり、保存は行いません。
+                if (value == "attribute") {
+                    startSettingRoute(GestureSettingFrame(
+                        settingContext,
+                        EntityDataPath.PARAM_PATH,
+                        GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT,
+                    ))
+                    state.lowerMode = GestureLowerMode.SETTINGS
+                    updateLower(player)
                     return
                 }
-                val allowed = setOf(
-                    EntityAttributeSupport.MODIFIER_ADD_NUMBER,
-                    EntityAttributeSupport.MODIFIER_MULTIPLY_BASE,
-                    EntityAttributeSupport.MODIFIER_MULTIPLY_TOTAL,
-                )
-                if (group != "modifierOperation" || value !in allowed) return
+                if (value == "tag") {
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
+                        }) {
+                        startSettingRoute(GestureSettingFrame(
+                            settingContext,
+                            EntityTagEntries.PARAM_ENTRIES,
+                            GestureSettingScreen.ENTITY_TAG_LIST,
+                        ))
+                        state.lowerMode = GestureLowerMode.SETTINGS
+                        updateLower(player)
+                    } else showSettingScreen()
+                    return
+                }
+                if (!value.startsWith("property:")) return
+                val propertyId = value.removePrefix("property:")
+                val definition = EntityDataSchema.definition(propertyId) ?: return
+                val previous = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
                 if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, EntityAttributeSupport.PARAM_MODIFIER_OPERATION, value)
-                    }) showSettingScreen()
-            }
-            GestureSettingScreen.ENTITY_PROPERTY -> {
-                if (group != "property" || EntityDataSchema.definition(value) == null) return
-                val definition = requireNotNull(EntityDataSchema.definition(value))
-                val previous = node.string(EntityDataSchema.PARAM_PROPERTY)
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_PROPERTY, value)
+                        CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
                         // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
-                        if (previous != value) {
+                        if (previous != propertyId) {
                             CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, "")
                         }
                     }) {
-                    // 項目選択→値設定の2段階フローです。値の種類別に編集へ進みます。
                     when (definition.valueKind) {
-                        EntityPropertyValueKind.ENUM, EntityPropertyValueKind.BOOLEAN -> {
+                        // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
+                        EntityPropertyValueKind.BOOLEAN -> {
+                            val current = node.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull()
+                            val toggled = if (previous == propertyId && current != null) (!current).toString() else "true"
+                            if (updateSettingNode(player, settingContext) {
+                                    CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, toggled)
+                                }) showSettingScreen()
+                        }
+                        EntityPropertyValueKind.ENUM -> {
                             startSettingRoute(GestureSettingFrame(
                                 settingContext,
                                 EntityDataSchema.PARAM_VALUE,
@@ -7033,7 +7018,7 @@ class GestureSequenceEditor(
                             state.lowerMode = GestureLowerMode.SETTINGS
                             updateLower(player)
                         }
-                        EntityPropertyValueKind.TEXT -> {
+                        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
                             // 保存前のnode参照では項目が古いままになり、入力仕様が
                             // 解決できず例外になるため、保存後のノードを再取得します。
                             val fresh = plugin.scripts.load(settingContext.scriptId)
@@ -7067,17 +7052,112 @@ class GestureSequenceEditor(
                     }
                 } else showSettingScreen()
             }
+            GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT -> {
+                // 選択→変更後の値入力フローです。attribute IDを確定して値Dialogを開きます。
+                if (group != "attribute" || !EntityAttributeSupport.isAttributeId(value)) return
+                if (!updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.attributePath(value))
+                    }) {
+                    showSettingScreen()
+                    return
+                }
+                val fresh = plugin.scripts.load(settingContext.scriptId)
+                    ?.graph?.nodes?.get(settingContext.nodeId)
+                    ?: return
+                beginSettingInput(
+                    player,
+                    requireNotNull(CommandDialogSpecs.field(fresh, EntityAttributeSupport.PARAM_VALUE)),
+                    fresh.string(EntityAttributeSupport.PARAM_VALUE, "0.0"),
+                ) { raw ->
+                    val normalized = CommandDialogSpecs.normalize(EntityAttributeSupport.PARAM_VALUE, raw)
+                    val current = plugin.scripts.load(settingContext.scriptId)
+                        ?.graph?.nodes?.get(settingContext.nodeId)
+                    val spec = current?.let { CommandDialogSpecs.field(it, EntityAttributeSupport.PARAM_VALUE) }
+                        ?: return@beginSettingInput KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                        )
+                    val validationError = spec.validateInput(normalized)
+                    if (validationError != null) {
+                        KcI18n.text(player, validationError)
+                    } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityAttributeSupport.PARAM_VALUE)) {
+                            CommandSettingsModel.setParameter(it, EntityAttributeSupport.PARAM_VALUE, normalized)
+                        }) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else null
+                }
+            }
+            GestureSettingScreen.ENTITY_TAG_LIST -> {
+                when (group) {
+                    // 新規タグ入力行です。入力値をaddモードで追記します。
+                    "tagAdd" -> {
+                        beginSettingInput(
+                            player,
+                            requireNotNull(CommandDialogSpecs.field(node, EntityTagEntries.PARAM_ENTRIES)),
+                            "",
+                        ) { raw ->
+                            val normalized = raw.trim()
+                            val spec = requireNotNull(CommandDialogSpecs.field(node, EntityTagEntries.PARAM_ENTRIES))
+                            val validationError = spec.validateInput(normalized)
+                            if (validationError != null) {
+                                KcI18n.text(player, validationError)
+                            } else {
+                                val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+                                    ?: return@beginSettingInput KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                                    )
+                                val updated = current + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, normalized)
+                                if (!EntityTagEntries.isValid(updated)) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT)
+                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityTagEntries.PARAM_ENTRIES)) {
+                                        CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else null
+                            }
+                        }
+                        return
+                    }
+                    // カード端のモードボタンです。add⇔removeを切り替えます。
+                    "tagMode" -> {
+                        val index = value.toIntOrNull() ?: return
+                        val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+                            ?: return
+                        val target = current.getOrNull(index) ?: return
+                        val toggled = if (target.mode == EntityTagEntries.MODE_ADD) EntityTagEntries.MODE_REMOVE else EntityTagEntries.MODE_ADD
+                        val updated = current.toMutableList().also { it[index] = target.copy(mode = toggled) }
+                        if (!EntityTagEntries.isValid(updated)) return
+                        if (updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
+                            }) showSettingScreen()
+                    }
+                    // カード端の削除ボタンです。該当エントリのみ削除します。
+                    "tagDelete" -> {
+                        val index = value.toIntOrNull() ?: return
+                        val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+                            ?: return
+                        if (index !in current.indices) return
+                        val updated = current.toMutableList().also { it.removeAt(index) }
+                        if (updateSettingNode(player, settingContext) {
+                                CommandSettingsModel.setParameter(
+                                    it,
+                                    EntityTagEntries.PARAM_ENTRIES,
+                                    EntityTagEntries.encode(updated),
+                                )
+                            }) showSettingScreen()
+                    }
+                }
+            }
             GestureSettingScreen.ENTITY_PROPERTY_VALUE -> {
                 if (group != "propertyValue") return
-                val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
+                val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
                     ?: return
-                // 文字列はDialog入力だけを受け付け、選択適用はしません。
-                val valid = when (definition.valueKind) {
-                    EntityPropertyValueKind.BOOLEAN -> value == "true" || value == "false"
-                    EntityPropertyValueKind.ENUM -> definition.enumChoices.any { it.id == value }
-                    EntityPropertyValueKind.TEXT -> false
-                }
-                if (!valid) return
+                val definition = EntityDataSchema.definition(propertyId)
+                    ?: return
+                // 有限候補のみ選択適用します。真偽値・文字列・整数は別経路で編集します。
+                if (definition.valueKind != EntityPropertyValueKind.ENUM) return
+                if (definition.enumChoices.none { it.id == value }) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, value)
                     }) showSettingScreen()
@@ -7101,12 +7181,6 @@ class GestureSequenceEditor(
                 if (group != "overwrite" || value !in setOf("true", "false")) return
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "overwrite", value)
-                    }) showSettingScreen()
-            }
-            GestureSettingScreen.ENTITY_TAG_OPERATION -> {
-                if (group != "tagOperation" || value !in setOf("add", "remove")) return
-                if (updateSettingNode(player, settingContext) {
-                        CommandSettingsModel.setParameter(it, "tagOperation", value)
                     }) showSettingScreen()
             }
             GestureSettingScreen.CAMERA_SHAKE_TYPE -> {

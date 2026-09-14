@@ -27,7 +27,9 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.RegionAnchorKind
@@ -1092,9 +1094,9 @@ object ExecutableScriptValidator {
     }
 
     /**
-     * issue #32 の「エンティティを操作」を検証します。
+     * 「エンティティを操作」を検証します。
      *
-     * Entity自身の状態・データ変更（tag／attribute／data）を扱います。
+     * Entity自身の状態・データ変更（タグ一覧／attribute／型付きデータ）を扱います。
      * 即時的な移動・関係変化はENTITY_ACTION側の責務であり、ここでは扱いません。
      * capabilityの判定は「確実に不可能」だけを編集時エラーとし、
      * runtimeまで不明な対象は実行時の適用可否へ委ねます（#6・#18）。
@@ -1106,102 +1108,85 @@ object ExecutableScriptValidator {
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
         if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "対象が未設定です")
-        when (node.string("operation", "tag")) {
-            "tag" -> validateEntityTagValue(node, path, errors, temporaryDefinitions)
-            "attribute" -> validateEntityAttribute(node, path, errors)
-            "data" -> validateEntityData(node, path, errors, temporaryDefinitions)
-            else -> errors += nodeError(node, path, setOf("operation"), "不明なエンティティ操作です")
+        when (val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))) {
+            is EntityDataPath.Parsed.Tag -> validateEntityTagEntries(node, path, errors, temporaryDefinitions)
+            is EntityDataPath.Parsed.Attribute -> validateEntityAttribute(node, path, parsed.attributeId, errors)
+            is EntityDataPath.Parsed.Property -> validateEntityData(node, path, parsed.propertyId, errors, temporaryDefinitions)
+            null -> errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "設定する項目が未選択です")
         }
     }
 
     /**
-     * タグ設定の検証です。
+     * タグ一覧の検証です。
      *
-     * 旧ENTITY_ACTIONから移行した値と新規値を同じ規則で検証します。
-     * カンマを特別扱いせず、単一タグの通常の形式検証へ委ねます。
+     * 空一覧・不正形式・重複・不正タグを編集時エラーとします。
      * 一時変数 `%{name}%` の参照も文字列欄として許可します。
      */
-    private fun validateEntityTagValue(
+    private fun validateEntityTagEntries(
         node: CommandNode,
         path: String,
         errors: MutableList<ScriptValidationError>,
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
-        if (node.string("tagOperation", "add") !in setOf("add", "remove")) {
-            errors += nodeError(node, path, setOf("tagOperation"), "タグ操作が不正です")
+        val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+        if (entries == null || entries.isEmpty()) {
+            errors += nodeError(node, path, setOf(EntityTagEntries.PARAM_ENTRIES), "タグが未設定です")
+            return
         }
-        val tag = node.string("tag")
-        validateTemplate(tag, node, path, "tag", errors, null, temporaries = temporaryDefinitions)
-        if (VariableTemplate.references(tag).isEmpty() && TemporaryTemplate.references(tag).isEmpty() &&
-            !CommandValueRules.isTag(tag)
-        ) {
-            errors += nodeError(node, path, setOf("tag"), "タグが不正です")
+        if (!EntityTagEntries.isValid(entries)) {
+            errors += nodeError(node, path, setOf(EntityTagEntries.PARAM_ENTRIES), "タグが不正です")
+            return
+        }
+        for (entry in entries) {
+            validateTemplate(entry.tag, node, path, EntityTagEntries.PARAM_ENTRIES, errors, null, temporaries = temporaryDefinitions)
         }
     }
 
+    /**
+     * attribute基本値設定の検証です。
+     *
+     * modifier操作は廃止したため、IDの実在とbase値の有限性だけを検証します。
+     * 対象の種類が静的に確定し、LivingEntityでないことが明らかな場合だけ
+     * 非対応とします。種類不明の対象はruntime判定へ委ねます。
+     */
     private fun validateEntityAttribute(
         node: CommandNode,
         path: String,
+        attributeId: String,
         errors: MutableList<ScriptValidationError>,
     ) {
-        val attributeRaw = node.string(EntityAttributeSupport.PARAM_ATTRIBUTE)
-        val attributeKnown = EntityAttributeSupport.isAttributeId(attributeRaw)
-        if (!attributeKnown) {
-            errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_ATTRIBUTE), "attributeの指定が不正です")
-        }
-        val operation = node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)
-        if (!EntityAttributeSupport.isOperation(operation)) {
-            errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_OPERATION), "attributeの操作内容が不正です")
+        if (!EntityAttributeSupport.isAttributeId(attributeId)) {
+            errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "attributeの指定が不正です")
             return
         }
         // 対象の種類が静的に確定し、LivingEntityでないことが明らかな場合だけ
         // 非対応とします。種類不明の対象はruntime判定へ委ねます。
         val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
         if (knownType != null && !knownType.isAlive) {
-            errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_ATTRIBUTE), "この対象の種類にはattributeを適用できません")
+            errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "この対象の種類にはattributeを適用できません")
         }
-        when (operation) {
-            EntityAttributeSupport.OPERATION_BASE_VALUE -> {
-                if (CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT)) == null) {
-                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_AMOUNT), "基本値は有限な数値で指定してください")
-                }
-            }
-            EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
-                if (!EntityAttributeSupport.isModifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))) {
-                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_MODIFIER_KEY), "modifierキーが不正です")
-                }
-                if (CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT)) == null) {
-                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_AMOUNT), "量は有限な数値で指定してください")
-                }
-                if (!EntityAttributeSupport.isModifierOperation(node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION))) {
-                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_MODIFIER_OPERATION), "modifierの演算方法が不正です")
-                }
-            }
-            EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
-                if (!EntityAttributeSupport.isModifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))) {
-                    errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_MODIFIER_KEY), "modifierキーが不正です")
-                }
-            }
+        if (CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_VALUE)) == null) {
+            errors += nodeError(node, path, setOf(EntityAttributeSupport.PARAM_VALUE), "attribute値は有限な数値で指定してください")
         }
     }
 
     private fun validateEntityData(
         node: CommandNode,
         path: String,
+        propertyId: String,
         errors: MutableList<ScriptValidationError>,
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
-        val propertyId = node.string(EntityDataSchema.PARAM_PROPERTY)
         val definition = EntityDataSchema.definition(propertyId)
         if (definition == null) {
-            errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_PROPERTY), "不明な設定項目です")
+            errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "不明な設定項目です")
             return
         }
         // 確実に対象外の種類だけを編集時エラーとし、種類不明の対象は
         // 過剰に制限せずruntime判定へ委ねます（#10・#18）。
         val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
         if (EntityDataSchema.staticSupport(knownType, propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) {
-            errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_PROPERTY), "この対象の種類には適用できない設定項目です")
+            errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "この対象の種類には適用できない設定項目です")
         }
         val raw = node.string(EntityDataSchema.PARAM_VALUE)
         when (definition.valueKind) {
@@ -1215,10 +1200,17 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "設定値が不正です")
                 }
             }
+            EntityPropertyValueKind.INTEGER -> {
+                val range = definition.intRange
+                val value = raw.trim().toIntOrNull()
+                if (range == null || value == null || value !in range) {
+                    errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "設定値が範囲外です")
+                }
+            }
             // 表示名は召喚時の表示名と同じくテンプレート参照を許可します。
             // Mannequinのスキン名はプレイヤー名のみを受け付け、参照なしのリテラルは構文検証します。
             EntityPropertyValueKind.TEXT -> {
-                if (node.string(EntityDataSchema.PARAM_PROPERTY) == EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME) {
+                if (propertyId == EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME) {
                     validateMannequinProfileName(node, path, raw, errors, temporaryDefinitions)
                 } else {
                     validateTemplate(raw, node, path, EntityDataSchema.PARAM_VALUE, errors, null, temporaries = temporaryDefinitions)

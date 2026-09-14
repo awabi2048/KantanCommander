@@ -10,8 +10,10 @@ import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
 import me.awabi2048.kantancommander.model.MAX_TIMER_SECONDS
 import me.awabi2048.kantancommander.model.TemporaryTemplate
@@ -1147,15 +1149,14 @@ internal object CommandDialogSpecs {
         if (node.type == CommandType.ENTITY_ACTION && fieldKey in setOf("motionX", "motionY", "motionZ")) {
             return motionComponent(fieldKey)
         }
-        // issue #32: エンティティ操作の入力仕様です。
-        // 真偽値・有限候補はDialogを使わずCheckbox／選択木で編集するため、
-        // ここではID・数値・文字列の明示入力だけを定義します（#18）。
+        // エンティティ操作の入力仕様です。
+        // 真偽値・有限候補はDialogを使わず直接切替／選択木で編集するため、
+        // ここではタグ・attribute値・数値・文字列の明示入力だけを定義します。
+        // attribute ID自体は子画面選択が正本であり、自由入力欄を持ちません。
         if (node.type == CommandType.ENTITY_OPERATION) {
             return when (fieldKey) {
-                "tag" -> field("tag")
-                EntityAttributeSupport.PARAM_ATTRIBUTE -> entityAttributeId
-                EntityAttributeSupport.PARAM_MODIFIER_KEY -> attributeModifierKey
-                EntityAttributeSupport.PARAM_AMOUNT -> attributeModifierAmount
+                EntityTagEntries.PARAM_ENTRIES -> tagEntry
+                EntityAttributeSupport.PARAM_VALUE -> attributeBaseValue
                 EntityDataSchema.PARAM_VALUE -> entityPropertyValue(node)
                 else -> field(fieldKey)
             }
@@ -1360,35 +1361,22 @@ internal object CommandDialogSpecs {
         )
     }
 
-    /** issue #32: 操作するattributeのID入力です。実在確認は検証側と共有します。 */
-    private val entityAttributeId = Spec(
-        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ATTRIBUTE,
+    /** タグ一覧への追加入力です。単一タグの形式検証へ委ねます。 */
+    private val tagEntry = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_ENTRIES,
         64,
         validate = { raw ->
-            if (!EntityAttributeSupport.isAttributeId(raw)) {
+            if (!CommandValueRules.isTag(raw.trim())) {
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
             } else null
         },
         required = true,
-        format = InputFormat.RESOURCE_ID,
+        format = InputFormat.TAG,
     )
 
-    /** issue #32: modifier識別キーの入力です。NamespacedKey構文を要求します。 */
-    private val attributeModifierKey = Spec(
-        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_KEY,
-        64,
-        validate = { raw ->
-            if (!EntityAttributeSupport.isModifierKey(raw)) {
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
-            } else null
-        },
-        required = true,
-        format = InputFormat.RESOURCE_ID,
-    )
-
-    /** issue #32: 基本値・modifier量の数値入力です。有限数値を要求します。 */
-    private val attributeModifierAmount = Spec(
-        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_AMOUNT,
+    /** attribute基本値の数値入力です。有限数値を要求します。 */
+    private val attributeBaseValue = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ATTRIBUTE_VALUE,
         16,
         validate = { raw ->
             if (CommandValueRules.parseFiniteDouble(raw) == null) {
@@ -1400,21 +1388,40 @@ internal object CommandDialogSpecs {
     )
 
     /**
-     * issue #32: データ設定値の入力です。
+     * データ設定値の入力です。
      *
-     * 真偽値・有限候補はDialogを使わずCheckbox／選択木で編集するため、
-     * ここでは文字列項目（表示名）だけを定義します。空欄は表示名の消去であり、
-     * 必須にはしません。テンプレート参照は召喚時の表示名と同じ規則で許可します。
+     * 真偽値・有限候補はDialogを使わず直接切替／選択木で編集するため、
+     * ここでは文字列項目と整数項目だけを定義します。文字列の空欄は
+     * 表示名の消去であり、必須にはしません。テンプレート参照は召喚時の
+     * 表示名と同じ規則で許可します。
      */
     private fun entityPropertyValue(node: CommandNode): Spec? {
-        val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
+        val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
             ?: return null
-        if (definition.valueKind != EntityPropertyValueKind.TEXT) return null
-        return Spec(
-            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE,
-            512,
-            format = InputFormat.ANY_STRING,
-        )
+        val definition = EntityDataSchema.definition(propertyId)
+            ?: return null
+        return when (definition.valueKind) {
+            EntityPropertyValueKind.TEXT -> Spec(
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE,
+                512,
+                format = InputFormat.ANY_STRING,
+            )
+            EntityPropertyValueKind.INTEGER -> {
+                val range = definition.intRange ?: return null
+                Spec(
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE,
+                    16,
+                    validate = { raw ->
+                        if (raw.trim().toIntOrNull()?.takeIf { it in range } == null) {
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+                        } else null
+                    },
+                    required = true,
+                    format = InputFormat.NUMBER,
+                )
+            }
+            else -> null
+        }
     }
 
     /**

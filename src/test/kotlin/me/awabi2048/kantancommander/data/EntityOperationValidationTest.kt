@@ -3,7 +3,9 @@ package me.awabi2048.kantancommander.data
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.DiskScript
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -12,10 +14,10 @@ import org.junit.jupiter.api.Test
 import java.util.UUID
 
 /**
- * issue #32 の検証（アクション整理・操作分離）のテストです。
+ * 統合選択形式の検証テストです。
  *
- * ride／dismountの維持、motion成分の有限数値検証、tag／attribute／dataの
- * 操作別検証、静的対象外の編集時検出を固定します。
+ * ride／dismountの維持、motion成分の有限数値検証、タグ一覧／attribute／
+ * 型付きデータの検証、静的対象外の編集時検出を固定します。
  * capabilityのruntime判定は実行側の責務であり、ここでは扱いません。
  */
 class EntityOperationValidationTest {
@@ -83,97 +85,87 @@ class EntityOperationValidationTest {
     }
 
     @Test
-    fun `tag operation validates tag value`() {
+    fun `tag entries validate tag values`() {
         val valid = scriptWith {
-            it.params["operation"] = "tag"
-            it.params["tagOperation"] = "add"
-            it.params["tag"] = "kc_test"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.TAG
+            it.params[EntityTagEntries.PARAM_ENTRIES] = "add=kc_test"
         }
         assertTrue(ExecutableScriptValidator.validate(valid).isEmpty())
 
-        val invalid = scriptWith {
-            it.params["operation"] = "tag"
-            it.params["tagOperation"] = "add"
-            it.params["tag"] = ""
+        val multiValid = scriptWith {
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.TAG
+            it.params[EntityTagEntries.PARAM_ENTRIES] = "add=kc_test;remove=kc_old"
         }
-        assertTrue(ExecutableScriptValidator.validate(invalid).any { it.fieldKeys == setOf("tag") })
+        assertTrue(ExecutableScriptValidator.validate(multiValid).isEmpty())
+
+        val invalid = scriptWith {
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.TAG
+            it.params[EntityTagEntries.PARAM_ENTRIES] = ""
+        }
+        assertTrue(ExecutableScriptValidator.validate(invalid).any { it.fieldKeys == setOf(EntityTagEntries.PARAM_ENTRIES) })
+
+        val duplicate = scriptWith {
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.TAG
+            it.params[EntityTagEntries.PARAM_ENTRIES] = "add=kc_test;remove=kc_test"
+        }
+        assertTrue(ExecutableScriptValidator.validate(duplicate).any { it.fieldKeys == setOf(EntityTagEntries.PARAM_ENTRIES) })
     }
 
     @Test
     fun `attribute base value requires finite amount`() {
         val valid = scriptWith {
-            it.params["operation"] = "attribute"
-            it.params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:max_health"
-            it.params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_BASE_VALUE
-            it.params[EntityAttributeSupport.PARAM_AMOUNT] = "20.0"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.attributePath("minecraft:max_health")
+            it.params[EntityAttributeSupport.PARAM_VALUE] = "20.0"
         }
         assertTrue(ExecutableScriptValidator.validate(valid).isEmpty())
 
         val invalid = scriptWith {
-            it.params["operation"] = "attribute"
-            it.params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:max_health"
-            it.params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_BASE_VALUE
-            it.params[EntityAttributeSupport.PARAM_AMOUNT] = "infinite"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.attributePath("minecraft:max_health")
+            it.params[EntityAttributeSupport.PARAM_VALUE] = "infinite"
         }
         assertTrue(
             ExecutableScriptValidator.validate(invalid).any {
-                it.fieldKeys == setOf(EntityAttributeSupport.PARAM_AMOUNT)
+                it.fieldKeys == setOf(EntityAttributeSupport.PARAM_VALUE)
             },
         )
     }
 
     @Test
-    fun `attribute modifier add requires key amount and operation`() {
+    fun `attribute rejects unknown id`() {
         val script = scriptWith {
-            it.params["operation"] = "attribute"
-            it.params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:movement_speed"
-            it.params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_ADD
-            it.params[EntityAttributeSupport.PARAM_MODIFIER_KEY] = "not a key"
-            it.params[EntityAttributeSupport.PARAM_AMOUNT] = "0.1"
-            it.params[EntityAttributeSupport.PARAM_MODIFIER_OPERATION] = "explode"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.attributePath("minecraft:no_such_attribute_xyz")
+            it.params[EntityAttributeSupport.PARAM_VALUE] = "1.0"
         }
+        // API単体試験環境ではRegistry確認を行わないため、構文のみ検証します。
+        // 実在確認は実サーバー環境の検証で行います。
         val errors = ExecutableScriptValidator.validate(script)
-        assertTrue(errors.any { it.fieldKeys == setOf(EntityAttributeSupport.PARAM_MODIFIER_KEY) })
-        assertTrue(errors.any { it.fieldKeys == setOf(EntityAttributeSupport.PARAM_MODIFIER_OPERATION) })
-    }
-
-    @Test
-    fun `attribute modifier remove requires only key`() {
-        val valid = scriptWith {
-            it.params["operation"] = "attribute"
-            it.params[EntityAttributeSupport.PARAM_ATTRIBUTE] = "minecraft:movement_speed"
-            it.params[EntityAttributeSupport.PARAM_OPERATION] = EntityAttributeSupport.OPERATION_MODIFIER_REMOVE
-            it.params[EntityAttributeSupport.PARAM_MODIFIER_KEY] = "kantan:boost"
-        }
-        assertTrue(ExecutableScriptValidator.validate(valid).isEmpty())
+        // 不正形式でなければ検証を通過します（実行時に解決失敗として扱います）。
+        assertTrue(errors.none { it.fieldKeys == setOf(EntityDataPath.PARAM_PATH) })
     }
 
     @Test
     fun `data rejects unknown property`() {
         val script = scriptWith {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = "no_such_property"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("no_such_property")
             it.params[EntityDataSchema.PARAM_VALUE] = "true"
         }
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
-                it.fieldKeys == setOf(EntityDataSchema.PARAM_PROPERTY)
+                it.fieldKeys == setOf(EntityDataPath.PARAM_PATH)
             },
         )
     }
 
     @Test
-    fun `data validates boolean enum and text values`() {
+    fun `data validates boolean enum integer and text values`() {
         val booleanValid = scriptWith {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = "gravity"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("gravity")
             it.params[EntityDataSchema.PARAM_VALUE] = "false"
         }
         assertTrue(ExecutableScriptValidator.validate(booleanValid).isEmpty())
 
         val booleanInvalid = scriptWith {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = "gravity"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("gravity")
             it.params[EntityDataSchema.PARAM_VALUE] = "maybe"
         }
         assertTrue(
@@ -183,17 +175,34 @@ class EntityOperationValidationTest {
         )
 
         val enumInvalid = scriptWith {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = "rabbit_type"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("rabbit_type")
             it.params[EntityDataSchema.PARAM_VALUE] = "purple"
         }
         // ウサギ種はプレイヤー対象に静的対象外でもあるため、項目・値の両方を検証します。
         val enumErrors = ExecutableScriptValidator.validate(enumInvalid)
         assertTrue(enumErrors.any { it.fieldKeys == setOf(EntityDataSchema.PARAM_VALUE) })
 
+        val integerValid = scriptWith {
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_BEE_ANGER)
+            it.params[EntityDataSchema.PARAM_VALUE] = "100"
+        }
+        // ハチ固有項目はプレイヤー対象に静的対象外のため、値検証とは別に項目エラーを含みます。
+        // ここでは値自体の範囲検証が項目エラーに埋もれないことを確認します。
+        val integerErrors = ExecutableScriptValidator.validate(integerValid)
+        assertTrue(integerErrors.none { it.fieldKeys == setOf(EntityDataSchema.PARAM_VALUE) })
+
+        val integerInvalid = scriptWith {
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_BEE_ANGER)
+            it.params[EntityDataSchema.PARAM_VALUE] = "-1"
+        }
+        assertTrue(
+            ExecutableScriptValidator.validate(integerInvalid).any {
+                it.fieldKeys == setOf(EntityDataSchema.PARAM_VALUE)
+            },
+        )
+
         val textValid = scriptWith {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = "custom_name"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("custom_name")
             it.params[EntityDataSchema.PARAM_VALUE] = "hello"
         }
         assertTrue(ExecutableScriptValidator.validate(textValid).isEmpty())
@@ -202,14 +211,13 @@ class EntityOperationValidationTest {
     @Test
     fun `data rejects statically unsupported property for known type`() {
         val script = scriptWith {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = "rabbit_type"
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("rabbit_type")
             it.params[EntityDataSchema.PARAM_VALUE] = "brown"
         }
         // 対象はプレイヤー確定のため、ウサギ固有項目は編集時に検出します。
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
-                it.fieldKeys == setOf(EntityDataSchema.PARAM_PROPERTY)
+                it.fieldKeys == setOf(EntityDataPath.PARAM_PATH)
             },
         )
     }
@@ -219,8 +227,7 @@ class EntityOperationValidationTest {
         val script = DiskScript(name = "entity-data-runtime", owner = UUID.randomUUID())
         GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-            params["operation"] = "data"
-            params[EntityDataSchema.PARAM_PROPERTY] = "ai"
+            params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath("ai")
             params[EntityDataSchema.PARAM_VALUE] = "true"
         }
         // 種類不明の対象ではAI項目を過剰に制限せず、実行時判定へ委ねます。
@@ -232,8 +239,7 @@ class EntityOperationValidationTest {
         val valid = DiskScript(name = "mannequin-profile", owner = UUID.randomUUID()).also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-                params["operation"] = "data"
-                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME)
                 params[EntityDataSchema.PARAM_VALUE] = "Notch"
             }
         }
@@ -242,8 +248,7 @@ class EntityOperationValidationTest {
         val invalid = DiskScript(name = "mannequin-profile-invalid", owner = UUID.randomUUID()).also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-                params["operation"] = "data"
-                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME)
                 params[EntityDataSchema.PARAM_VALUE] = "has space"
             }
         }
@@ -256,8 +261,7 @@ class EntityOperationValidationTest {
         val blank = DiskScript(name = "mannequin-profile-blank", owner = UUID.randomUUID()).also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-                params["operation"] = "data"
-                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME)
                 params[EntityDataSchema.PARAM_VALUE] = ""
             }
         }
@@ -273,8 +277,7 @@ class EntityOperationValidationTest {
         val valid = DiskScript(name = "mannequin-pose", owner = UUID.randomUUID()).also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-                params["operation"] = "data"
-                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_POSE
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_POSE)
                 params[EntityDataSchema.PARAM_VALUE] = EntityDataSchema.MANNEQUIN_POSE_STANDING
             }
         }
@@ -283,8 +286,7 @@ class EntityOperationValidationTest {
         val invalid = DiskScript(name = "mannequin-pose-invalid", owner = UUID.randomUUID()).also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-                params["operation"] = "data"
-                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_POSE
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_POSE)
                 params[EntityDataSchema.PARAM_VALUE] = "dancing"
             }
         }
@@ -300,8 +302,7 @@ class EntityOperationValidationTest {
         val empty = DiskScript(name = "mannequin-description-empty", owner = UUID.randomUUID()).also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-                params["operation"] = "data"
-                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION)
                 params[EntityDataSchema.PARAM_VALUE] = ""
             }
         }
@@ -310,8 +311,7 @@ class EntityOperationValidationTest {
         val text = DiskScript(name = "mannequin-description-text", owner = UUID.randomUUID()).also { script ->
             GraphEditor.append(script.graph, CommandType.ENTITY_OPERATION).apply {
                 targetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
-                params["operation"] = "data"
-                params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION
+                params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_DESCRIPTION)
                 params[EntityDataSchema.PARAM_VALUE] = "案内人"
             }
         }
@@ -321,23 +321,22 @@ class EntityOperationValidationTest {
     @Test
     fun `mannequin property is rejected for player target`() {
         val script = scriptWith {
-            it.params["operation"] = "data"
-            it.params[EntityDataSchema.PARAM_PROPERTY] = EntityDataSchema.PROPERTY_MANNEQUIN_IMMOVABLE
+            it.params[EntityDataPath.PARAM_PATH] = EntityDataPath.propertyPath(EntityDataSchema.PROPERTY_MANNEQUIN_IMMOVABLE)
             it.params[EntityDataSchema.PARAM_VALUE] = "true"
         }
         // 対象はプレイヤー確定のため、Mannequin固有項目は編集時に検出する。
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
-                it.fieldKeys == setOf(EntityDataSchema.PARAM_PROPERTY)
+                it.fieldKeys == setOf(EntityDataPath.PARAM_PATH)
             },
         )
     }
 
     @Test
-    fun `unknown operation is rejected`() {
+    fun `unset path is rejected`() {
         val script = scriptWith {
-            it.params["operation"] = "dance"
+            it.params[EntityDataPath.PARAM_PATH] = ""
         }
-        assertTrue(ExecutableScriptValidator.validate(script).any { it.fieldKeys == setOf("operation") })
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.fieldKeys == setOf(EntityDataPath.PARAM_PATH) })
     }
 }

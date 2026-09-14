@@ -31,9 +31,11 @@ import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.CommandType
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyChoice
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
@@ -294,71 +296,29 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
-                        // issue #32: エンティティ操作の操作内容は3択で循環します。
-                        if (field == "operation" && node.type == CommandType.ENTITY_OPERATION) {
-                            if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    "operation",
-                                    when (it.string("operation", "tag")) {
-                                        "tag" -> "attribute"
-                                        "attribute" -> "data"
-                                        else -> "tag"
-                                    },
-                                )
-                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
-                        }
-                        // issue #32: attribute操作・modifier演算は候補内で循環します。
-                        if (field == EntityAttributeSupport.PARAM_OPERATION && node.type == CommandType.ENTITY_OPERATION) {
-                            if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    EntityAttributeSupport.PARAM_OPERATION,
-                                    when (it.string(
-                                        EntityAttributeSupport.PARAM_OPERATION,
-                                        EntityAttributeSupport.OPERATION_BASE_VALUE,
-                                    )) {
-                                        EntityAttributeSupport.OPERATION_BASE_VALUE ->
-                                            EntityAttributeSupport.OPERATION_MODIFIER_ADD
-                                        EntityAttributeSupport.OPERATION_MODIFIER_ADD ->
-                                            EntityAttributeSupport.OPERATION_MODIFIER_REMOVE
-                                        else -> EntityAttributeSupport.OPERATION_BASE_VALUE
-                                    },
-                                )
-                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
-                        }
-                        if (field == EntityAttributeSupport.PARAM_MODIFIER_OPERATION && node.type == CommandType.ENTITY_OPERATION) {
-                            if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
-                                    when (it.string(
-                                        EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
-                                        EntityAttributeSupport.MODIFIER_ADD_NUMBER,
-                                    )) {
-                                        EntityAttributeSupport.MODIFIER_ADD_NUMBER ->
-                                            EntityAttributeSupport.MODIFIER_MULTIPLY_BASE
-                                        EntityAttributeSupport.MODIFIER_MULTIPLY_BASE ->
-                                            EntityAttributeSupport.MODIFIER_MULTIPLY_TOTAL
-                                        else -> EntityAttributeSupport.MODIFIER_ADD_NUMBER
-                                    },
-                                )
-                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
-                        }
-                        // issue #32: 設定項目は対象から確定できる種類で絞った一覧から選びます。
-                        // 項目選択後は種類別の値編集へ進みます（項目選択→値設定の2段階）。
-                        if (field == EntityDataSchema.PARAM_PROPERTY && node.type == CommandType.ENTITY_OPERATION) {
+                        // 統合選択形式では設定対象の一覧画面へ遷移します。
+                        // 旧3択の循環・modifier循環は廃止しました。
+                        if (field == EntityDataPath.PARAM_PATH && node.type == CommandType.ENTITY_OPERATION) {
                             return@MenuActionHandler MenuActionResult.Success(
-                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_PROPERTY_ID)),
+                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_DATA_ROOT_ID)),
                             )
                         }
-                        // issue #32: 設定値の編集は項目の型で振り分けます。
-                        // 真偽値は直接切替、有限候補は一覧選択、文字列は入力画面です。
+                        // タグ一覧画面へ遷移します。追加・モード切替・削除は一覧画面で行います。
+                        if (field == EntityTagEntries.PARAM_ENTRIES && node.type == CommandType.ENTITY_OPERATION) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_TAG_LIST_ID)),
+                            )
+                        }
+                        // attribute値はDialog入力で編集します。ID自体は一覧選択が正本です。
+                        if (field == EntityAttributeSupport.PARAM_VALUE && node.type == CommandType.ENTITY_OPERATION) {
+                            showFieldForm(context.player, context.route, field, node)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
+                        }
+                        // 設定値の編集は項目の型で振り分けます。
+                        // 真偽値は直接切替、有限候補は一覧選択、文字列・整数は入力画面です。
                         if (field == EntityDataSchema.PARAM_VALUE && node.type == CommandType.ENTITY_OPERATION) {
-                            val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
+                            val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
+                            val definition = propertyId?.let { EntityDataSchema.definition(it) }
                             when (definition?.valueKind) {
                                 EntityPropertyValueKind.BOOLEAN -> {
                                     if (!updateNode(context.player, context.route) {
@@ -403,16 +363,6 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (field == "overwrite" && (node.type == CommandType.ENTITY_ACTION || node.type == CommandType.PLACE_ITEM)) {
                             if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
-                            }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
-                        }
-                        if (field == "tagOperation" && node.type == CommandType.ENTITY_OPERATION) {
-                            if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    "tagOperation",
-                                    if (it.string("tagOperation", "add") == "add") "remove" else "add",
-                                )
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
@@ -508,14 +458,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }
                         if (field in setOf(
                                 "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
-                                 "summonEntity", "tags", "tag", "sound",
+                                 "summonEntity", "tags", "sound",
                                 "soundParameters", "particle", "particleData", "particleDensity", "burstHeight",
                                 "effect", "level", "intensity", "volume", "pitch",
                                 "x", "y", "z", "entityId", "item",
                                 "motionX", "motionY", "motionZ",
-                                EntityAttributeSupport.PARAM_ATTRIBUTE,
-                                EntityAttributeSupport.PARAM_MODIFIER_KEY,
-                                EntityAttributeSupport.PARAM_AMOUNT,
+                                EntityTagEntries.PARAM_ENTRIES,
+                                EntityAttributeSupport.PARAM_VALUE,
                                 EntityDataSchema.PARAM_VALUE,
                             )) {
                             showFieldForm(context.player, context.route, field, node)
@@ -618,40 +567,160 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         runtime.register(
             InventoryMenuDefinition(
                 SequenceEditorMenu.OWNER,
-                ENTITY_PROPERTY_ID,
-                renderer = { renderEntityProperties(it.player, it.route) },
+                ENTITY_DATA_ROOT_ID,
+                renderer = { renderEntityDataRoot(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
                     "select" to MenuActionHandler { context ->
-                        val property = context.payload["property"]
-                            ?.takeIf { EntityDataSchema.definition(it) != null }
+                        val selection = context.payload["selection"]
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        val definition = requireNotNull(EntityDataSchema.definition(property))
-                        val previous = node(context.route)?.string(EntityDataSchema.PARAM_PROPERTY)
-                        if (!updateNode(context.player, context.route) {
-                                CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_PROPERTY, property)
-                                // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
-                                if (previous != null && previous != property) {
-                                    CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, "")
+                        val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        when {
+                            selection == "tag" -> {
+                                if (!updateNode(context.player, context.route) {
+                                        CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
+                                    }) {
+                                    return@MenuActionHandler MenuActionResult.Rejected(
+                                        KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                                    )
                                 }
+                                MenuActionResult.Success(
+                                    MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_TAG_LIST_ID)),
+                                )
+                            }
+                            selection == "attribute" -> MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_ATTRIBUTE_SELECT_ID)),
+                            )
+                            selection.startsWith("property:") -> {
+                                val propertyId = selection.removePrefix("property:")
+                                val definition = EntityDataSchema.definition(propertyId)
+                                    ?: return@MenuActionHandler MenuActionResult.Ignored
+                                val previous = EntityDataPath.propertyIdOf(current.string(EntityDataPath.PARAM_PATH))
+                                if (!updateNode(context.player, context.route) {
+                                        CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
+                                        // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
+                                        if (previous != null && previous != propertyId) {
+                                            CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, "")
+                                        }
+                                    }) {
+                                    return@MenuActionHandler MenuActionResult.Rejected(
+                                        KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                                    )
+                                }
+                                when (definition.valueKind) {
+                                    // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
+                                    EntityPropertyValueKind.BOOLEAN -> {
+                                        if (!updateNode(context.player, context.route) {
+                                                val toggled = if (previous == propertyId) {
+                                                    (!(it.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull() ?: false)).toString()
+                                                } else "true"
+                                                CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, toggled)
+                                            }) {
+                                            return@MenuActionHandler MenuActionResult.Rejected(
+                                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                                            )
+                                        }
+                                        MenuActionResult.Success(MenuUpdate.Refresh)
+                                    }
+                                    EntityPropertyValueKind.ENUM ->
+                                        MenuActionResult.Success(
+                                            MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_PROPERTY_VALUE_ID)),
+                                        )
+                                    EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
+                                        val fresh = node(context.route)
+                                            ?: return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
+                                        showFieldForm(context.player, context.route, EntityDataSchema.PARAM_VALUE, fresh)
+                                        MenuActionResult.Success(MenuUpdate.None)
+                                    }
+                                }
+                            }
+                            else -> MenuActionResult.Ignored
+                        }
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                ENTITY_ATTRIBUTE_SELECT_ID,
+                renderer = { renderEntityAttributeSelect(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val attributeId = context.payload["attribute"]
+                            ?.takeIf(EntityAttributeSupport::isAttributeId)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.attributePath(attributeId))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
                             )
                         }
-                        // 項目選択→値設定の2段階フローです。値の種類別に編集へ進みます。
-                        when (definition.valueKind) {
-                            EntityPropertyValueKind.ENUM, EntityPropertyValueKind.BOOLEAN ->
-                                MenuActionResult.Success(
-                                    MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_PROPERTY_VALUE_ID)),
-                                )
-                            EntityPropertyValueKind.TEXT -> {
-                                val fresh = node(context.route)
-                                    ?: return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
-                                showFieldForm(context.player, context.route, EntityDataSchema.PARAM_VALUE, fresh)
-                                MenuActionResult.Success(MenuUpdate.None)
-                            }
+                        // 選択→変更後の値入力フローです。値Dialogを直接開きます。
+                        val fresh = node(context.route)
+                            ?: return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
+                        showFieldForm(context.player, context.route, EntityAttributeSupport.PARAM_VALUE, fresh)
+                        MenuActionResult.Success(MenuUpdate.None)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                ENTITY_TAG_LIST_ID,
+                renderer = { renderEntityTagList(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val payload = context.payload
+                        // 新規タグ入力行です。入力値をaddモードで追記します。
+                        if (payload["add"] != null) {
+                            val current = node(context.route)
+                                ?: return@MenuActionHandler MenuActionResult.Ignored
+                            showTagEntryForm(context.player, context.route, current)
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
+                        // カードのモードボタンです。add⇔removeを切り替えます。
+                        val modeIndex = payload["mode"]?.toIntOrNull()
+                        if (modeIndex != null) {
+                            val current = node(context.route)
+                                ?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }
+                                ?: return@MenuActionHandler MenuActionResult.Ignored
+                            val target = current.getOrNull(modeIndex) ?: return@MenuActionHandler MenuActionResult.Ignored
+                            val toggled = if (target.mode == EntityTagEntries.MODE_ADD) EntityTagEntries.MODE_REMOVE else EntityTagEntries.MODE_ADD
+                            val updated = current.toMutableList().also { it[modeIndex] = target.copy(mode = toggled) }
+                            if (!EntityTagEntries.isValid(updated)) return@MenuActionHandler MenuActionResult.Ignored
+                            if (!updateNode(context.player, context.route) {
+                                    CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
+                                }) {
+                                return@MenuActionHandler MenuActionResult.Rejected(
+                                    KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                                )
+                            }
+                            return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        }
+                        MenuActionResult.Ignored
+                    },
+                    // カードの削除ボタンです。該当エントリのみ削除します。
+                    "delete" to MenuActionHandler { context ->
+                        val index = context.payload["index"]?.toIntOrNull()
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val current = node(context.route)
+                            ?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (index !in current.indices) return@MenuActionHandler MenuActionResult.Ignored
+                        val updated = current.toMutableList().also { it.removeAt(index) }
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Refresh)
                     },
                 ),
             )
@@ -666,16 +735,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "select" to MenuActionHandler { context ->
                         val choice = context.payload["choice"]
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        val current = node(context.route)
-                            ?.let { EntityDataSchema.definition(it.string(EntityDataSchema.PARAM_PROPERTY)) }
+                        val propertyId = node(context.route)
+                            ?.let { EntityDataPath.propertyIdOf(it.string(EntityDataPath.PARAM_PATH)) }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        // 真偽値はON／OFF選択、有限候補は名称選択、文字列は選択適用しません。
-                        val valid = when (current.valueKind) {
-                            EntityPropertyValueKind.BOOLEAN -> choice == "true" || choice == "false"
-                            EntityPropertyValueKind.ENUM -> current.enumChoices.any { it.id == choice }
-                            EntityPropertyValueKind.TEXT -> false
+                        val current = EntityDataSchema.definition(propertyId)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        // 有限候補のみ選択適用します。真偽値・文字列・整数は別経路で編集します。
+                        if (current.valueKind != EntityPropertyValueKind.ENUM) {
+                            return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (!valid) {
+                        if (current.enumChoices.none { it.id == choice }) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
                         if (!updateNode(context.player, context.route) {
@@ -1519,62 +1588,178 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #32: データ設定項目の一覧です。
+     * 統合選択の一覧です。
      *
+     * タグ・attributeグループ・各データ項目を同じ階層に並べます。
      * 対象から確定できるEntityTypeで候補を絞り、種類不明時は汎用項目だけを
-     * 提示します（#10）。選択肢の表示名はスキーマ定義の型付きキーを使います。
+     * 提示します。選択肢の表示名はスキーマ定義の型付きキーを使います。
      */
-    private fun renderEntityProperties(player: Player, route: MenuRoute): InventoryMenuView {
+    private fun renderEntityDataRoot(player: Player, route: MenuRoute): InventoryMenuView {
         val currentNode = node(route)
         val knownType = currentNode?.let { EntityDataSchema.knownEntityType(it.targetSpec) }
-        val options = EntityDataSchema.propertiesFor(knownType)
+        data class RootOption(val selection: String, val material: Material, val label: String)
+        val options = buildList {
+            add(RootOption(
+                "tag",
+                Material.NAME_TAG,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_TAG),
+            ))
+            if (knownType == null || knownType.isAlive) {
+                add(RootOption(
+                    "attribute",
+                    Material.ENCHANTED_BOOK,
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_ATTRIBUTE),
+                ))
+            }
+            EntityDataSchema.propertiesFor(knownType).forEach { definition ->
+                add(RootOption(
+                    "property:${definition.id}",
+                    when (definition.valueKind) {
+                        EntityPropertyValueKind.BOOLEAN -> Material.LIME_DYE
+                        EntityPropertyValueKind.ENUM -> Material.BOOK
+                        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> Material.PAPER
+                    },
+                    KcI18n.text(player, definition.optionKey),
+                ))
+            }
+        }
+        // 現在選択中の項目が候補外の場合は未選択表示とし、表示から意味を推測しません。
         val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
-        val elements = options.mapIndexed { index, definition ->
+        val elements = options.mapIndexed { index, option ->
             choiceElement(
                 player,
                 layout.itemSlots[index],
-                when (definition.valueKind) {
-                    EntityPropertyValueKind.BOOLEAN -> Material.LIME_DYE
-                    EntityPropertyValueKind.ENUM -> Material.BOOK
-                    EntityPropertyValueKind.TEXT -> Material.PAPER
-                },
-                KcI18n.text(player, definition.optionKey),
+                option.material,
+                option.label,
                 "select",
-                mapOf("property" to definition.id),
+                mapOf("selection" to option.selection),
             )
         }.toMutableList()
         elements += backElement(player, layout.backSlot)
         return InventoryMenuView(
             layout.size,
-            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY)),
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA)),
             elements,
         )
     }
 
     /**
-     * issue #32: 有限候補・真偽値の設定値一覧です。
+     * attribute子画面の一覧です。選択→変更後の値入力フローであり、
+     * ID自体の自由入力欄は持ちません。
+     */
+    private fun renderEntityAttributeSelect(player: Player, route: MenuRoute): InventoryMenuView {
+        val options = EntityAttributeSupport.allAttributeIds()
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
+        val elements = options.mapIndexed { index, id ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                Material.ENCHANTED_BOOK,
+                id,
+                "select",
+                mapOf("attribute" to id),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_ATTRIBUTE)),
+            elements,
+        )
+    }
+
+    /**
+     * タグ一覧画面です。入力で行を追加し、タグごとのカードへ列挙します。
+     *
+     * カードごとにモード切替行と削除行を並べ、2子ボタンの操作を
+     * インベントリGUIでも等価に到達できるようにします。
+     */
+    private fun renderEntityTagList(player: Player, route: MenuRoute): InventoryMenuView {
+        val entries = node(route)?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }.orEmpty()
+        data class TagRow(val material: Material, val label: String, val action: String, val payload: Map<String, String>)
+        val rows = buildList {
+            add(TagRow(
+                Material.WRITABLE_BOOK,
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_ADD),
+                "select",
+                mapOf("add" to "true"),
+            ))
+            entries.forEachIndexed { index, entry ->
+                val modeLabel = KcI18n.text(
+                    player,
+                    if (entry.mode == EntityTagEntries.MODE_ADD) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
+                    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE,
+                )
+                add(TagRow(
+                    Material.NAME_TAG,
+                    "${entry.tag} : $modeLabel",
+                    "select",
+                    mapOf("mode" to index.toString()),
+                ))
+                add(TagRow(
+                    Material.BARRIER,
+                    "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE)} : ${entry.tag}",
+                    "delete",
+                    mapOf("index" to index.toString()),
+                ))
+            }
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(rows.size.coerceAtLeast(1))
+        val elements = rows.mapIndexed { index, row ->
+            choiceElement(player, layout.itemSlots[index], row.material, row.label, row.action, row.payload)
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_ENTRIES)),
+            elements,
+        )
+    }
+
+    /**
+     * タグ一覧への追加入力です。入力値をaddモードで追記します。
+     *
+     * 重複タグは検証エラーとし、保存済み一覧を壊しません。
+     */
+    private fun showTagEntryForm(player: Player, route: MenuRoute, currentNode: CommandNode) {
+        val spec = CommandDialogSpecs.field(currentNode, EntityTagEntries.PARAM_ENTRIES) ?: return
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "field-tag-entry",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_TITLE),
+            fields = listOf(
+                FormTextField(
+                    EntityTagEntries.PARAM_ENTRIES,
+                    KcI18n.text(player, spec.labelKey),
+                    "",
+                    spec = spec,
+                ),
+            ),
+            save = { values ->
+                val tag = values.getValue(EntityTagEntries.PARAM_ENTRIES).trim()
+                val entries = EntityTagEntries.parse(currentNode.string(EntityTagEntries.PARAM_ENTRIES))
+                    ?: return@showTextForm false
+                val updated = entries + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, tag)
+                if (!EntityTagEntries.isValid(updated)) return@showTextForm false
+                updateNode(player, route) {
+                    CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
+                }
+            },
+        )
+    }
+
+    /**
+     * 有限候補の設定値一覧です。
      *
      * 内部IDと表示名の対応はスキーマ側で管理し、内部数値を直接入力させません。
-     * 文字列はこの画面を使わず、入力画面で編集します。
+     * 真偽値・文字列・整数はこの画面を使わず、直接切替・入力画面で編集します。
      */
     private fun renderEntityPropertyValues(player: Player, route: MenuRoute): InventoryMenuView {
-        val definition = node(route)?.let { EntityDataSchema.definition(it.string(EntityDataSchema.PARAM_PROPERTY)) }
-        val valueKind = definition?.valueKind
-        val booleanChoices = listOf(
-            EntityPropertyChoice(
-                "true",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED,
-            ),
-            EntityPropertyChoice(
-                "false",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED,
-            ),
-        )
-        val enumChoices: List<EntityPropertyChoice> =
-            definition?.enumChoices ?: emptyList()
+        val propertyId = node(route)?.let { EntityDataPath.propertyIdOf(it.string(EntityDataPath.PARAM_PATH)) }
+        val definition = propertyId?.let { EntityDataSchema.definition(it) }
         val options: List<EntityPropertyChoice> =
-            if (valueKind == EntityPropertyValueKind.BOOLEAN) booleanChoices
-            else if (valueKind == EntityPropertyValueKind.ENUM) enumChoices
+            if (definition?.valueKind == EntityPropertyValueKind.ENUM) definition.enumChoices
             else emptyList()
         val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
         val elements = options.mapIndexed { index, choice ->
@@ -2186,10 +2371,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             "slot" -> "HAND"
             "x", "y", "z" -> "0.0"
             "motionX", "motionY", "motionZ" -> "0.0"
-            EntityAttributeSupport.PARAM_ATTRIBUTE -> "minecraft:max_health"
-            EntityAttributeSupport.PARAM_MODIFIER_KEY -> ""
-            EntityAttributeSupport.PARAM_AMOUNT -> "0.0"
+            EntityAttributeSupport.PARAM_VALUE -> "0.0"
             EntityDataSchema.PARAM_VALUE -> ""
+            EntityTagEntries.PARAM_ENTRIES -> return
             "entityId", "item", "block" -> ""
             else -> return
         }
@@ -3014,7 +3198,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val PICKER_ID = "command_type"
         private const val SETTINGS_ID = "command_settings"
         private const val ENTITY_EQUIPMENT_SLOT_ID = "entity_equipment_slot"
-        private const val ENTITY_PROPERTY_ID = "entity_property"
+        private const val ENTITY_DATA_ROOT_ID = "entity_data_root"
+        private const val ENTITY_ATTRIBUTE_SELECT_ID = "entity_attribute_select"
+        private const val ENTITY_TAG_LIST_ID = "entity_tag_list"
         private const val ENTITY_PROPERTY_VALUE_ID = "entity_property_value"
         private const val PLACE_DESTINATION_ID = "place_destination"
         // 配置先画面の下段中央（45枠の下段中央）へ置く上書きトグル枠です。
@@ -3423,80 +3609,26 @@ object EditorMenuLayout {
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_ACTION_TARGET,
             ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
             field(
-                "operation",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION,
-                Material.SADDLE,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ACTION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ACTION,
-            ) { displayEntityOperation(it.string("operation", "tag")) },
-            field(
-                "tagOperation",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION,
-                Material.NAME_TAG,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAG_OPERATION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAG_OPERATION,
-            ) {
-                displayTagOperation(it.string("tagOperation", "add"))
-            },
-            field(
-                "tag",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS,
-                Material.NAME_TAG,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_TAG,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_TAG,
-            ),
-            field(
-                EntityAttributeSupport.PARAM_ATTRIBUTE,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ATTRIBUTE,
-                Material.ENCHANTED_BOOK,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ATTRIBUTE,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ATTRIBUTE,
-            ),
-            field(
-                EntityAttributeSupport.PARAM_OPERATION,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ATTRIBUTE_OPERATION,
-                Material.COMPARATOR,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ATTRIBUTE_OPERATION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ATTRIBUTE_OPERATION,
-            ) {
-                displayAttributeOperation(it.string(
-                    EntityAttributeSupport.PARAM_OPERATION,
-                    EntityAttributeSupport.OPERATION_BASE_VALUE,
-                ))
-            },
-            field(
-                EntityAttributeSupport.PARAM_MODIFIER_KEY,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_KEY,
-                Material.TRIPWIRE_HOOK,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_MODIFIER_KEY,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_MODIFIER_KEY,
-            ),
-            field(
-                EntityAttributeSupport.PARAM_AMOUNT,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_AMOUNT,
-                Material.GOLD_NUGGET,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_MODIFIER_AMOUNT,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_MODIFIER_AMOUNT,
-            ),
-            field(
-                EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_OPERATION,
-                Material.REPEATER,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_MODIFIER_OPERATION,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_MODIFIER_OPERATION,
-            ) {
-                displayModifierOperation(it.string(
-                    EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
-                    EntityAttributeSupport.MODIFIER_ADD_NUMBER,
-                ))
-            },
-            field(
-                EntityDataSchema.PARAM_PROPERTY,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY,
+                EntityDataPath.PARAM_PATH,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA,
                 Material.BOOK,
                 descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PROPERTY,
                 actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PROPERTY,
-            ) { displayEntityProperty(it) },
+            ) { displayEntityDataPath(it) },
+            field(
+                EntityTagEntries.PARAM_ENTRIES,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_ENTRIES,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAGS,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAGS,
+            ) { displayTagEntries(it) },
+            field(
+                EntityAttributeSupport.PARAM_VALUE,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ATTRIBUTE_VALUE,
+                Material.GOLD_NUGGET,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ATTRIBUTE,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ATTRIBUTE,
+            ),
             field(
                 EntityDataSchema.PARAM_VALUE,
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE,
@@ -4268,62 +4400,57 @@ private fun displayEntityAction(value: String) = DisplayValue.Localized(
     },
 )
 
-/** issue #32: エンティティ操作の操作内容表示です。 */
-private fun displayEntityOperation(value: String) = DisplayValue.Localized(
-    when (value) {
-        "attribute" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_OPERATION
-        "data" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EDIT_DATA
-        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET_TAG
-    },
-)
-
-/** issue #32: attribute操作の内容表示です。 */
-private fun displayAttributeOperation(value: String) = DisplayValue.Localized(
-    when (value) {
-        EntityAttributeSupport.OPERATION_MODIFIER_ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_MODIFIER_ADD
-        EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_MODIFIER_REMOVE
-        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_BASE_VALUE
-    },
-)
-
-/** issue #32: modifier演算方法の表示です。 */
-private fun displayModifierOperation(value: String) = DisplayValue.Localized(
-    when (value) {
-        EntityAttributeSupport.MODIFIER_MULTIPLY_BASE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_MULTIPLY_BASE
-        EntityAttributeSupport.MODIFIER_MULTIPLY_TOTAL -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_MULTIPLY_TOTAL
-        else -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_ADD_NUMBER
-    },
-)
-
 /**
- * issue #32: データ設定項目の表示です。
+ * 統合選択の設定対象表示です。
  *
- * 表示候補は対象から確定できるEntityTypeで絞ります。保存値が候補外の場合は
- * 未設定表示とし、表示文字列から意味を推測しません。
+ * 未選択・不明値は未設定表示とし、表示文字列から意味を推測しません。
+ * attribute IDは対象識別名として原文表示します。
  */
-private fun displayEntityProperty(node: CommandNode): DisplayValue {
-    val propertyId = node.string(EntityDataSchema.PARAM_PROPERTY)
-    val definition = EntityDataSchema.definition(propertyId) ?: return displayUnset()
-    val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
-    if (definition !in EntityDataSchema.propertiesFor(knownType)) return displayUnset()
-    return DisplayValue.Localized(definition.optionKey)
+private fun displayEntityDataPath(node: CommandNode): DisplayValue {
+    return when (val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))) {
+        is EntityDataPath.Parsed.Tag ->
+            DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_TAG)
+        is EntityDataPath.Parsed.Attribute -> displayLiteral(parsed.attributeId)
+        is EntityDataPath.Parsed.Property -> {
+            val definition = EntityDataSchema.definition(parsed.propertyId) ?: return displayUnset()
+            val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
+            if (definition !in EntityDataSchema.propertiesFor(knownType)) return displayUnset()
+            DisplayValue.Localized(definition.optionKey)
+        }
+        null -> displayUnset()
+    }
 }
 
 /**
- * issue #32: データ設定値の表示です。
+ * タグ一覧の表示です。件数のみを示し、個別タグは一覧画面で確認します。
  *
- * 真偽値は有効・無効の選択表示、有限候補は候補名、文字列は原文表示とし、
+ * Nameへ可変の件数・内容を含めない画面契約に従い、件数は値欄の
+ * リテラル表示に留めます。
+ */
+private fun displayTagEntries(node: CommandNode): DisplayValue {
+    val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+        ?: return displayUnset()
+    if (entries.isEmpty()) return displayUnset()
+    return displayLiteral(entries.size.toString())
+}
+
+/**
+ * データ設定値の表示です。
+ *
+ * 真偽値は有効・無効の選択表示、有限候補は候補名、文字列・整数は原文表示とし、
  * Nameへ現在値を混ぜない画面契約に従います。
  */
 private fun displayEntityPropertyValue(node: CommandNode): DisplayValue {
-    val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
+    val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
+        ?: return displayUnset()
+    val definition = EntityDataSchema.definition(propertyId)
         ?: return displayUnset()
     val raw = node.string(EntityDataSchema.PARAM_VALUE)
     return when (definition.valueKind) {
         EntityPropertyValueKind.BOOLEAN -> displayBoolean(raw.toBooleanStrictOrNull() ?: false)
         EntityPropertyValueKind.ENUM -> definition.enumChoices.firstOrNull { it.id == raw }
             ?.let { DisplayValue.Localized(it.optionKey) } ?: displayUnset()
-        EntityPropertyValueKind.TEXT -> displayLiteral(raw)
+        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> displayLiteral(raw)
     }
 }
 /**
@@ -4364,11 +4491,6 @@ private fun displayPlayerSneaking(value: String) = when (value) {
     "false" -> DisplayValue.Localized(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ON_GROUND)
     else -> displayUnset()
 }
-
-private fun displayTagOperation(value: String) = DisplayValue.Localized(
-    if (value == "remove") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE
-    else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD,
-)
 
 private fun displaySoundScope(value: String) = DisplayValue.Localized(
     if (value == "WORLD") KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_WORLD_WIDE

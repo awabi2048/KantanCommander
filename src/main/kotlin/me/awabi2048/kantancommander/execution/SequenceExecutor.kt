@@ -34,8 +34,10 @@ import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyValue
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.clampMinecraftPitch
 import me.awabi2048.kantancommander.model.wrapMinecraftYaw
 import me.awabi2048.kantancommander.model.PositionKind
@@ -1154,35 +1156,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     else -> false
                 }
             }
-            // issue #32 の「エンティティを操作」です。Entity自身の状態・データを変更します。
+            // 「エンティティを操作」です。Entity自身の状態・データを変更します。
             //
             // 混合対象では対応する対象にだけ適用し、件数は構造化結果へ残します
             // （#6のPARTIAL_APPLY方針、レビューF4対応）。表示への変換は共通の
             // 成功・失敗処理が行い、1件も適用できなかった場合は失敗とします。
-            // modifierの追加・削除はバニラの同名操作と等価です。
             CommandType.ENTITY_OPERATION -> {
                 if (targets.isEmpty()) return false
-                when (node.string("operation", "tag")) {
-                    // tag実行本体は#32の分岐を維持します（旧ENTITY_ACTIONの重複は置きません）。
-                    "tag" -> {
-                        val tag = resolveText(node.string("tag"), session) ?: return false
-                        // タグは単一値としてそのまま扱います。カンマを分割したり、
-                        // 複数タグとして順番に適用したりしません。
-                        if (!CommandValueRules.isTag(tag)) return false
-                        when (node.string("tagOperation", "add")) {
-                            // タグ追加は冪等な設定操作として扱います。既にタグを持つ対象が
-                            // 混在していても、対象全体の処理を失敗扱いにしません。
-                            "add" -> {
-                                targets.forEach { it.addScoreboardTag(tag) }
-                                true
-                            }
-                            "remove" -> targets.forEach { it.removeScoreboardTag(tag) }.let { true }
-                            else -> false
-                        }
-                    }
-                    "attribute" -> executeEntityAttribute(node, session, targets)
-                    "data" -> executeEntityData(node, session, targets)
-                    else -> false
+                when (val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))) {
+                    is EntityDataPath.Parsed.Tag -> executeEntityTags(node, session, targets)
+                    is EntityDataPath.Parsed.Attribute -> executeEntityAttribute(node, session, targets, parsed.attributeId)
+                    is EntityDataPath.Parsed.Property -> executeEntityData(node, session, targets, parsed.propertyId)
+                    null -> false
                 }
             }
             CommandType.PLACE_ITEM -> executePlaceItem(node, session, effectiveContext, targets, origins, attempts)
@@ -1343,10 +1328,50 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #32 のattribute操作を実行します。
+     * タグ一覧を適用します。
+     *
+     * タグ追加は冪等な設定操作として扱います。既にタグを持つ対象が
+     * 混在していても、対象全体の処理を失敗扱いにしません。
+     * 適用数が0件の場合は失敗とし、設定値自体の不正とも区別します。
+     */
+    private fun executeEntityTags(
+        node: CommandNode,
+        session: ExecutionSession,
+        targets: List<Entity>,
+    ): Boolean {
+        val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
+            ?.takeIf(EntityTagEntries::isValid)
+            ?: return false
+        var applied = 0
+        var failed = 0
+        targets.forEach { target ->
+            var targetOk = true
+            for (entry in entries) {
+                val tag = resolveText(entry.tag, session)
+                if (tag == null || !CommandValueRules.isTag(tag)) {
+                    targetOk = false
+                    break
+                }
+                runCatching {
+                    if (entry.mode == EntityTagEntries.MODE_ADD) target.addScoreboardTag(tag)
+                    else target.removeScoreboardTag(tag)
+                }.getOrNull() ?: run { targetOk = false; break }
+            }
+            if (targetOk) applied++ else failed++
+        }
+        session.lastPartial = PartialApplicability(
+            appliedCount = applied,
+            nonApplicableCount = 0,
+            failedCount = failed,
+        )
+        return applied > 0
+    }
+
+    /**
+     * attribute基本値を設定します。
      *
      * 対象がattributeを持つかはcapabilityとして判定し、対応しない対象は
-     * 非適用として数えます。基本値の設定・modifierの追加・削除を型付きで扱い、
+     * 非適用として数えます。
      * 曖昧な「デフォルトへ戻す」は用意しません。
      * 適用数が0件の場合は失敗とし、設定値自体の不正とも区別します。
      */
@@ -1354,11 +1379,12 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         node: CommandNode,
         session: ExecutionSession,
         targets: List<Entity>,
+        attributeId: String,
     ): Boolean {
-        val attribute = EntityAttributeSupport.resolve(node.string(EntityAttributeSupport.PARAM_ATTRIBUTE))
+        val attribute = EntityAttributeSupport.resolve(attributeId)
             ?: return false
-        val operation = node.string(EntityAttributeSupport.PARAM_OPERATION, EntityAttributeSupport.OPERATION_BASE_VALUE)
-        if (!EntityAttributeSupport.isOperation(operation)) return false
+        val value = CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_VALUE))
+            ?: return false
         var applied = 0
         var nonApplicable = 0
         var failed = 0
@@ -1368,32 +1394,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 nonApplicable++
                 return@forEach
             }
-            val success = when (operation) {
-                EntityAttributeSupport.OPERATION_BASE_VALUE -> {
-                    val value = CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT))
-                        ?: return@forEach run { failed++ }
-                    EntityAttributeSupport.setBaseValue(instance, value)
-                }
-                EntityAttributeSupport.OPERATION_MODIFIER_ADD -> {
-                    val key = EntityAttributeSupport.modifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))
-                        ?: return@forEach run { failed++ }
-                    val amount = CommandValueRules.parseFiniteDouble(node.string(EntityAttributeSupport.PARAM_AMOUNT))
-                        ?: return@forEach run { failed++ }
-                    val modifierOperation = EntityAttributeSupport.modifierOperation(
-                        node.string(EntityAttributeSupport.PARAM_MODIFIER_OPERATION),
-                    ) ?: return@forEach run { failed++ }
-                    EntityAttributeSupport.addModifier(instance, key, amount, modifierOperation)
-                }
-                EntityAttributeSupport.OPERATION_MODIFIER_REMOVE -> {
-                    val key = EntityAttributeSupport.modifierKey(node.string(EntityAttributeSupport.PARAM_MODIFIER_KEY))
-                        ?: return@forEach run { failed++ }
-                    // 削除対象の不在は失敗とします（バニラの `modifier remove` と等価）。
-                    // 対象自体がattributeを持たない場合だけが非適用です。
-                    EntityAttributeSupport.removeModifier(instance, key)
-                }
-                else -> false
-            }
-            if (success) applied++ else failed++
+            if (EntityAttributeSupport.setBaseValue(instance, value)) applied++ else failed++
         }
         // issue #32 のレビューF4対応：件数は構造化結果として保持し、
         // 詳細文字列への変換は共通成功処理へ委ねます。
@@ -1406,7 +1407,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #32 の型付きデータ編集（#10スキーマ）を実行します。
+     * 型付きデータ編集（#10スキーマ）を実行します。
      *
      * 任意NBTではなくスキーマ定義の項目だけを適用し、対応しない対象は
      * 非適用として数えます。表示名は召喚時と同じ描画規則で適用し、
@@ -1416,8 +1417,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         node: CommandNode,
         session: ExecutionSession,
         targets: List<Entity>,
+        propertyId: String,
     ): Boolean {
-        val propertyId = node.string(EntityDataSchema.PARAM_PROPERTY)
         val definition = EntityDataSchema.definition(propertyId) ?: return false
         val raw = node.string(EntityDataSchema.PARAM_VALUE)
         val parsed = EntityDataSchema.parse(propertyId, raw) ?: return false
@@ -1440,6 +1441,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 is EntityPropertyValue.EnumValue ->
                     EntityDataSchema.applyEnum(target, propertyId, parsed.choiceId)
                 is EntityPropertyValue.TextValue -> applyTextProperty(target, propertyId, resolvedText.orEmpty())
+                is EntityPropertyValue.IntegerValue ->
+                    EntityDataSchema.applyInteger(target, propertyId, parsed.value)
             }
             if (success) applied++ else failed++
         }

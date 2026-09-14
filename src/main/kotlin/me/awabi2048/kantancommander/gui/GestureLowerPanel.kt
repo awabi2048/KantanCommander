@@ -37,8 +37,10 @@ import me.awabi2048.kantancommander.model.ConditionSubject
 import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
+import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.TargetKind
@@ -1659,10 +1661,7 @@ class GestureLowerPanel(
         val isCheckboxPresentation = presentation == GesturePresentation.CHECKBOX &&
             (SettingSpec.isCheckbox(node.type, field.key) ||
                 descriptor.editor == CommandSettingEditor.ENTITY_OVERWRITE ||
-                descriptor.editor == CommandSettingEditor.CONDITION_INVERSION ||
-                (descriptor.editor == CommandSettingEditor.ENTITY_PROPERTY_VALUE &&
-                    EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))?.valueKind ==
-                    EntityPropertyValueKind.BOOLEAN))
+                descriptor.editor == CommandSettingEditor.CONDITION_INVERSION)
         if (sliderSpec != null) {
             appendSliderCards(
                 nodes,
@@ -3235,13 +3234,14 @@ class GestureLowerPanel(
         choiceId.startsWith("block:") -> setOf("operation")
         choiceId.startsWith("display:") -> setOf("mode")
         choiceId.startsWith("action:") -> setOf("action")
-        // issue #32: エンティティ操作の選択肢は変数操作と接頭辞を分け、
+        // エンティティ操作の選択肢は変数操作と接頭辞を分け、
         // 変数操作の説明解決へ混ざらないようにします。
-        choiceId.startsWith("entityOperation:") -> setOf("operation")
-        choiceId.startsWith("attributeOperation:") -> setOf(EntityAttributeSupport.PARAM_OPERATION)
-        choiceId.startsWith("modifierOperation:") -> setOf(EntityAttributeSupport.PARAM_MODIFIER_OPERATION)
-        // modifier追加時の量入力行は量欄へ投影します（量タブを出さない代替経路）。
-        choiceId.startsWith("modifierAmount:") -> setOf(EntityAttributeSupport.PARAM_AMOUNT)
+        choiceId.startsWith("entityData:") -> setOf(EntityDataPath.PARAM_PATH)
+        choiceId.startsWith("attribute:") -> setOf(EntityDataPath.PARAM_PATH)
+        choiceId.startsWith("tagAdd") -> setOf(EntityTagEntries.PARAM_ENTRIES)
+        choiceId.startsWith("tagEntry:") -> setOf(EntityTagEntries.PARAM_ENTRIES)
+        choiceId.startsWith("tagMode:") -> setOf(EntityTagEntries.PARAM_ENTRIES)
+        choiceId.startsWith("tagDelete:") -> setOf(EntityTagEntries.PARAM_ENTRIES)
         choiceId.startsWith("propertyValue:") -> setOf(EntityDataSchema.PARAM_VALUE)
         choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
         // issue #21: 配置先の選択肢は配置先欄へ投影します。
@@ -3508,86 +3508,34 @@ class GestureLowerPanel(
             // 旧equip／tagは新規選択肢に出さず、保存済み値の編集入口だけを残します（#21・#32）。
             SettingChoice("action:motion", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MOTION), node.string("action", "ride") == "motion"),
         )
-        GestureSettingScreen.ENTITY_OPERATION -> listOf(
-            SettingChoice("entityOperation:tag", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SET_TAG), node.string("operation", "tag") == "tag"),
-            SettingChoice("entityOperation:attribute", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_OPERATION), node.string("operation", "tag") == "attribute"),
-            SettingChoice("entityOperation:data", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_EDIT_DATA), node.string("operation", "tag") == "data"),
-        )
-        GestureSettingScreen.ENTITY_ATTRIBUTE_OPERATION -> listOf(
-            Triple(
-                EntityAttributeSupport.OPERATION_BASE_VALUE,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_BASE_VALUE,
-                "attributeOperation",
-            ),
-            Triple(
-                EntityAttributeSupport.OPERATION_MODIFIER_ADD,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_MODIFIER_ADD,
-                "attributeOperation",
-            ),
-            Triple(
-                EntityAttributeSupport.OPERATION_MODIFIER_REMOVE,
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ATTRIBUTE_MODIFIER_REMOVE,
-                "attributeOperation",
-            ),
-        ).map { (operation, label, group) ->
-            val current = node.string(
-                EntityAttributeSupport.PARAM_OPERATION,
-                EntityAttributeSupport.OPERATION_BASE_VALUE,
-            )
-            SettingChoice("$group:$operation", KcI18n.text(player, label), current == operation)
-        }
-        GestureSettingScreen.ENTITY_MODIFIER_OPERATION -> listOf(
-            EntityAttributeSupport.MODIFIER_ADD_NUMBER to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_ADD_NUMBER,
-            EntityAttributeSupport.MODIFIER_MULTIPLY_BASE to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_MULTIPLY_BASE,
-            EntityAttributeSupport.MODIFIER_MULTIPLY_TOTAL to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_MODIFIER_MULTIPLY_TOTAL,
-        ).map { (operation, label) ->
-            val current = node.string(
-                EntityAttributeSupport.PARAM_MODIFIER_OPERATION,
-                EntityAttributeSupport.MODIFIER_ADD_NUMBER,
-            )
-            SettingChoice("modifierOperation:$operation", KcI18n.text(player, label), current == operation)
-        } + listOf(
-            // modifier追加時は量タブを出さないため、この画面から量入力を開きます。
-            // 通常タブ列の上限（6件）に収めるためです。現在値は入力欄に初期表示します。
-            SettingChoice(
-                "modifierAmount:edit",
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MODIFIER_AMOUNT),
-                false,
-            ),
-        )
-        // issue #32: 設定項目は対象から確定できる種類で絞ります。
-        // 種類不明時は汎用項目だけを提示し、固有設定を広げません（#10）。
-        GestureSettingScreen.ENTITY_PROPERTY -> {
-            val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
-            EntityDataSchema.propertiesFor(knownType).map { definition ->
-                SettingChoice(
-                    "property:${definition.id}",
-                    KcI18n.text(player, definition.optionKey),
-                    node.string(EntityDataSchema.PARAM_PROPERTY) == definition.id,
-                )
+        // 統合選択画面です。データ種類の事前指定は行わず、全項目を
+        // NBTレイヤーの階層で選択します。対象種別が確定できる場合のみ
+        // 適用可能な項目を表示し、和集合表示は行いません。
+        GestureSettingScreen.ENTITY_DATA_ROOT -> entityDataRootChoices(node, player)
+        // attribute子画面です。選択→変更後の値入力フローであり、
+        // ID自体の自由入力欄は持ちません。
+        GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT -> {
+            val current = EntityDataPath.attributeIdOf(node.string(EntityDataPath.PARAM_PATH))
+            EntityAttributeSupport.allAttributeIds().map { id ->
+                SettingChoice("attribute:$id", id, current == id)
             }
         }
-        // issue #32: 真偽値はON／OFF選択とCheckbox直接切替を併用し（#18）、
-        // 有限候補は名称選択、文字列はDialog入力（親画面の入力カード）を使います。
+        // タグ一覧画面です。入力で行を追加し、カード端の2子ボタンで
+        // モード切替・削除を行います。
+        GestureSettingScreen.ENTITY_TAG_LIST -> tagListChoices(node, player)
+        // 有限候補の選択画面です。真偽値・文字列・整数は別経路で編集します。
         GestureSettingScreen.ENTITY_PROPERTY_VALUE -> {
-            val definition = EntityDataSchema.definition(node.string(EntityDataSchema.PARAM_PROPERTY))
-            when (definition?.valueKind) {
-                EntityPropertyValueKind.BOOLEAN -> {
-                    val current = node.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull() ?: false
-                    listOf(
-                        SettingChoice("propertyValue:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED), current),
-                        SettingChoice("propertyValue:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED), !current),
-                    )
-                }
-                EntityPropertyValueKind.ENUM -> definition.enumChoices.map { choice ->
+            val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
+            val definition = propertyId?.let { EntityDataSchema.definition(it) }
+            if (definition?.valueKind == EntityPropertyValueKind.ENUM) {
+                definition.enumChoices.map { choice ->
                     SettingChoice(
                         "propertyValue:${choice.id}",
                         KcI18n.text(player, choice.optionKey),
                         node.string(EntityDataSchema.PARAM_VALUE) == choice.id,
                     )
                 }
-                else -> emptyList()
-            }
+            } else emptyList()
         }
         GestureSettingScreen.PLACE_DESTINATION -> PlaceItemDestination.entries.map { destination ->
             SettingChoice(
@@ -3609,10 +3557,6 @@ class GestureLowerPanel(
         GestureSettingScreen.ENTITY_OVERWRITE -> listOf(
             SettingChoice("overwrite:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_ENABLED), explicitSelected(node, fieldKey, context.role, node.boolean("overwrite"))),
             SettingChoice("overwrite:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_DISABLED), explicitSelected(node, fieldKey, context.role, !node.boolean("overwrite"))),
-        )
-        GestureSettingScreen.ENTITY_TAG_OPERATION -> listOf(
-            SettingChoice("tagOperation:add", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD), explicitSelected(node, fieldKey, context.role, node.string("tagOperation", "add") == "add")),
-            SettingChoice("tagOperation:remove", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE), explicitSelected(node, fieldKey, context.role, node.string("tagOperation", "add") == "remove")),
         )
         GestureSettingScreen.CAMERA_SHAKE_TYPE -> listOf(
             SettingChoice("shake:positional", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_SHAKE_POSITIONAL), explicitSelected(node, fieldKey, context.role, node.string("shakeType", "positional") == "positional")),
@@ -3857,6 +3801,106 @@ class GestureLowerPanel(
         role: CommandSettingRole?,
         valueMatches: Boolean,
     ): Boolean = valueMatches && CommandSettingsModel.isFieldConfigured(node, fieldKey, role)
+
+    /**
+     * 統合選択画面の選択肢です。
+     *
+     * タグ・attributeグループ・各データ項目を同じ階層に並べます。
+     * attribute全種のフラット展開は行わず、attributeは子画面への親項目とします。
+     * 真偽値は選択→クリックの直接切替えであり、ON状態を選択表示します。
+     * 対象種別が確定できる場合のみ適用可能な項目を表示し、和集合表示は行いません。
+     */
+    private fun entityDataRootChoices(node: CommandNode, player: Player): List<SettingChoice> {
+        val parsed = EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH))
+        val currentProperty = (parsed as? EntityDataPath.Parsed.Property)?.propertyId
+        val currentValue = node.string(EntityDataSchema.PARAM_VALUE)
+        return buildList {
+            val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)).orEmpty()
+            add(
+                SettingChoice(
+                    "entityData:tag",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_TAG),
+                    parsed is EntityDataPath.Parsed.Tag && entries.isNotEmpty(),
+                ),
+            )
+            val knownType = EntityDataSchema.knownEntityType(node.targetSpec)
+            // 非Living確定時はattribute群を提示しません。種類不明時は全件提示し、
+            // 検証・実行時のcapability判定へ委ねます。
+            if (knownType == null || knownType.isAlive) {
+                add(
+                    SettingChoice(
+                        "entityData:attribute",
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_DATA_ATTRIBUTE),
+                        parsed is EntityDataPath.Parsed.Attribute,
+                    ),
+                )
+            }
+            EntityDataSchema.propertiesFor(knownType).forEach { definition ->
+                val targeted = currentProperty == definition.id
+                val selected = when (definition.valueKind) {
+                    // 真偽値はON状態を選択表示し、トグル操作と一致させます。
+                    EntityPropertyValueKind.BOOLEAN -> targeted && currentValue == "true"
+                    EntityPropertyValueKind.ENUM -> targeted
+                    EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER ->
+                        targeted && currentValue.isNotBlank()
+                }
+                add(
+                    SettingChoice(
+                        "entityData:property:${definition.id}",
+                        KcI18n.text(player, definition.optionKey),
+                        selected,
+                    ),
+                )
+            }
+        }
+    }
+
+    /**
+     * タグ一覧画面の選択肢です。
+     *
+     * 入力で行を追加し、タグごとのカードへ列挙します。カード端の2子ボタンで
+     * モード切替・削除を行います。Nameへ現在値を含めず、モードの現在値は
+     * Loreのデータ行へ表示します。
+     */
+    private fun tagListChoices(node: CommandNode, player: Player): List<SettingChoice> {
+        val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)).orEmpty()
+        return buildList {
+            add(
+                SettingChoice(
+                    "tagAdd",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_ADD),
+                    false,
+                ),
+            )
+            entries.forEachIndexed { index, entry ->
+                val modeLabel = labeled(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION,
+                    KcI18n.text(
+                        player,
+                        if (entry.mode == EntityTagEntries.MODE_ADD) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
+                        else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE,
+                    ),
+                )
+                add(
+                    GestureSettingTreeNode(
+                        // 一覧アイコンは個別対象（タグ）を識別する名前を使用できます。
+                        id = "tagEntry:$index",
+                        label = entry.tag,
+                        selected = false,
+                        children = listOf(
+                            SettingChoice("tagMode:$index", modeLabel, false),
+                            SettingChoice(
+                                "tagDelete:$index",
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE),
+                                false,
+                            ),
+                        ),
+                    ),
+                )
+            }
+        }
+    }
 
     /** 距離範囲は上下限を同じカードにまとめ、片側だけの既存データも欠落させません。 */
     private fun displayDistance(minimum: Double?, maximum: Double?): String? {
@@ -4872,14 +4916,13 @@ class GestureLowerPanel(
         const val INLINE_RESOURCE_INPUT_BELOW_DY = 0.13
         /** 構造化モデルを壊さず、paramsへ文字列として保存できる項目だけを許可します。 */
         val TEXT_EDITABLE_KEYS = setOf(
-            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "tag", "sound", "soundSetting", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
+            "item", "itemData", "count", "text", "subtitle", "customName", "tags", "sound", "soundSetting", "soundParameters", "volume", "pitch", "particle", "particleParameters", "particleData",
             "particleDensity", "burstHeight",
             "effect", "level", "seconds", "fadeInSeconds", "staySeconds", "fadeOutSeconds", "intensity", "slot", "summonEntity", "diskId", "name",
             "condition", "variable", "value", "block", "sneaking",
             "motionX", "motionY", "motionZ",
-            EntityAttributeSupport.PARAM_ATTRIBUTE,
-            EntityAttributeSupport.PARAM_MODIFIER_KEY,
-            EntityAttributeSupport.PARAM_AMOUNT,
+            EntityTagEntries.PARAM_ENTRIES,
+            EntityAttributeSupport.PARAM_VALUE,
             EntityDataSchema.PARAM_VALUE,
         )
     }
