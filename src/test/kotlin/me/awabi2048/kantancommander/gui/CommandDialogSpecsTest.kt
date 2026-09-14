@@ -146,7 +146,22 @@ class CommandDialogSpecsTest {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_OPERAND_REQUIRED,
             expressionSpec.validate("1 +"),
         )
-        assertNull(expressionSpec.validate("1 + 2"))
+        assertNull(expressionSpec.validate("\${a} + \${b}"))
+        assertNull(expressionSpec.validate("%{x}% * \${rate}"))
+        assertNull(expressionSpec.validate("sin(\${angle})"))
+        // issue #3: CALCULATE の入力画面では数値リテラルを被演算子に認めません。
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_LITERAL_OPERAND,
+            expressionSpec.validate("1 + 2"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_LITERAL_OPERAND,
+            expressionSpec.validate("\${counter} + 10 * 2"),
+        )
+        assertEquals(
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_LITERAL_OPERAND,
+            expressionSpec.validate("sin(30)"),
+        )
         val expressionErrors = listOf(
             "" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_EMPTY,
             "1 2" to KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_EXPRESSION_TRAILING_CHARACTERS,

@@ -847,6 +847,15 @@ object EntityDataSchema {
     fun definition(id: String): EntityPropertyDefinition? = byId[id]
 
     /**
+     * 全安定IDを返します。
+     *
+     * issue #3 との対応表（`EntityPropertyAlignmentTest`）が読み出し側
+     * レジストリとの衝突・分岐を検出するために公開します。IDの追加・改名は
+     * #10 の共通化方針に従い、対応表の更新と合わせて行います。
+     */
+    fun ids(): Set<String> = byId.keys
+
+    /**
      * 対象指定から静的に確定できるEntityTypeを返します。
      *
      * - 対象フィルターのentityTypeが有効なIDなら、その種類と確定します。

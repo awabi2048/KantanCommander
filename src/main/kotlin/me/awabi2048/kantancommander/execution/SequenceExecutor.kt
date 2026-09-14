@@ -196,6 +196,32 @@ class ExecutionHandle internal constructor() {
     }
 }
 
+/**
+ * issue #3 の乱数生成の純粋計算です。
+ *
+ * 範囲は両端を含む [min, max] で、min・max ともに整数値の場合は整数の一様乱数、
+ * それ以外は実数の一様乱数を返します。Bukkitへ依存しないため単体試験します。
+ * 実行層の [SequenceExecutor] はこの関数へ委譲します。
+ */
+internal fun generateRandomBoundsValue(
+    rawMin: String,
+    rawMax: String,
+    random: kotlin.random.Random,
+): TypedValue? {
+    val min = rawMin.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
+    val max = rawMax.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
+    if (min > max) return null
+    val integer = min == kotlin.math.floor(min) && max == kotlin.math.floor(max)
+    val value = if (integer) {
+        val range = (max - min + 1.0).takeIf { it.isFinite() && it <= Long.MAX_VALUE.toDouble() }
+            ?: return null
+        min + random.nextLong(range.toLong())
+    } else {
+        min + random.nextDouble() * (max - min)
+    }.takeIf(Double::isFinite) ?: return null
+    return TypedValue(ValueType.NUMBER, numberValue = value)
+}
+
 class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     private val timedActionBar = TimedActionBarService(plugin)
     private val systemEntityRegistry
@@ -2630,6 +2656,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     /** 数値計算式を評価します。変数同士の参照だけを使います。 */
     private fun evaluateVariableExpression(raw: String, session: ExecutionSession): TypedValue? {
         val expression = NumericExpression.parse(raw).expression ?: return null
+        // issue #3: 検証層で拒否済みのはずですが、実行層でもリテラル混じりを
+        // 実行せず失敗にします。黙って計算を通しません。
+        if (expression.hasLiteralOperand()) return null
         val result = expression.evaluate(
             { reference ->
                 if (SystemVariableNames.isSystemName(reference)) {
@@ -2655,20 +2684,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * 一様乱数を、それ以外は実数の一様乱数を返します。範囲不正・非有限値は
      * 失敗として扱います。
      */
-    private fun generateRandomValue(rawMin: String, rawMax: String): TypedValue? {
-        val min = rawMin.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
-        val max = rawMax.toDoubleOrNull()?.takeIf(Double::isFinite) ?: return null
-        if (min > max) return null
-        val integer = min == kotlin.math.floor(min) && max == kotlin.math.floor(max)
-        val value = if (integer) {
-            val range = (max - min + 1.0).takeIf { it.isFinite() && it <= Long.MAX_VALUE.toDouble() }
-                ?: return null
-            min + Random.nextLong(range.toLong())
-        } else {
-            min + Random.nextDouble() * (max - min)
-        }.takeIf(Double::isFinite) ?: return null
-        return TypedValue(ValueType.NUMBER, numberValue = value)
-    }
+    private fun generateRandomValue(rawMin: String, rawMax: String): TypedValue? =
+        generateRandomBoundsValue(rawMin, rawMax, Random)
 
     /**
      * WORLD scope を共通store契約へ接続します。
