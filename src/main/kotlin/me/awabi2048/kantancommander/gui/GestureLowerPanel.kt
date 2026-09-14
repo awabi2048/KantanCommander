@@ -214,8 +214,8 @@ class GestureLowerPanel(
         // グリッド全体を1マス高さの半分だけ上げ、最底辺を詰めます。
         // 入力カード位置は変えず、間の余白を広げる方向です。
         val topY = gridTopY + cellH / 2
-        // ホバー文言は一覧の上側へ、1マス高さの1/3だけ上げた位置へ表示します。
-        val hoverY = topY + cellH / 2 + INLINE_RESOURCE_HOVER_ABOVE_GAP - cellH / 3
+        // ホバー文言は一覧の上側へ、1マス高さの1/3＋1/2だけ上げた位置へ表示します。
+        val hoverY = topY + cellH * 2 / 3 + INLINE_RESOURCE_HOVER_ABOVE_GAP
         val cards = ids.mapIndexed { index, id ->
             val selected = CommandDialogSpecs.normalize(fieldKey, id) == currentRaw ||
                 id == node.string(fieldKey)
