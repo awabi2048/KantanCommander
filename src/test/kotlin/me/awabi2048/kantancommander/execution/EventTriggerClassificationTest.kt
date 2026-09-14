@@ -14,8 +14,8 @@ import java.lang.reflect.Proxy
  * issue #7 の信号変化の分類テストです。
  *
  * ボタン・レバーを素材名で区別し、感圧板は加重板または感圧板素材で判定します。
- * オン／オフの変化辺が対応するイベント種別へ写り、感圧板は離した時を提供しない
- * ことを固定します。サーバーなしで実行できます。
+ * 提供する変化辺が対応するイベント種別へ写り、ボタンは戻った時・感圧板は離した時を
+ * 提供しないことを固定します。サーバーなしで実行できます。
  */
 class EventTriggerClassificationTest {
     private fun data(vararg types: Class<*>): BlockData = Proxy.newProxyInstance(
@@ -69,10 +69,8 @@ class EventTriggerClassificationTest {
             EventTriggerKind.BUTTON_ON,
             EventTriggerClassification.eventFor(RedstoneTriggerCategory.BUTTON, on = true),
         )
-        assertEquals(
-            EventTriggerKind.BUTTON_OFF,
-            EventTriggerClassification.eventFor(RedstoneTriggerCategory.BUTTON, on = false),
-        )
+        // ボタンは押した時だけを提供し、戻った時は起動しません（issue #7 の初期一覧どおり）。
+        assertNull(EventTriggerClassification.eventFor(RedstoneTriggerCategory.BUTTON, on = false))
         assertEquals(
             EventTriggerKind.LEVER_ON,
             EventTriggerClassification.eventFor(RedstoneTriggerCategory.LEVER, on = true),

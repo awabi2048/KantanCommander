@@ -1021,7 +1021,7 @@ class GestureLowerPanel(
     /**
      * issue #7 のイベント種別の選択子画面を生成します。
      *
-     * 初期6種から一つを選び、選択時に起動方法として確定します。
+     * 初期10種から一つを選び、選択時に起動方法として確定します。
      */
     fun buildTriggerEventChild(
         state: GestureEditorState,
