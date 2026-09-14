@@ -30,6 +30,8 @@ import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.SystemVariableNames
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.RegionAnchorKind
+import me.awabi2048.kantancommander.model.RegionKind
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.ParticleSettings
@@ -431,6 +433,20 @@ class VanillaDatapackExporter(
             )
             if (embeddedTargets.any { it.kind == TargetKind.TEMPORARY }) {
                 errors += "${script.id}/${node.id}: 一時変数参照の対象由来は完全バニラ出力に未対応です"
+            }
+            // issue #4: 明示領域の出力可否を判定します。制御ブロック基準の直方体だけを
+            // selectorへ写像し、それ以外は黙って別意味へ変換せず明示エラーにします。
+            // 検証層を通過した正本だけが出力へ進むため、ここでは可否判定に専念します。
+            val regionTargets = listOfNotNull(
+                node.targetSpec,
+                node.secondaryTargetSpec,
+                node.destinationTargetSpec,
+                node.temporaryEntityTargetSpec,
+            ) + embeddedTargets
+            regionTargets.forEach { spec ->
+                regionExportRejection(spec)?.let { reason ->
+                    errors += "${script.id}/${node.id}: $reason"
+                }
             }
             val conditionTarget = node.conditionPositionSpec
                 ?.takeIf { it.kind == PositionKind.TARGET }?.target
@@ -2768,8 +2784,22 @@ class VanillaDatapackExporter(
         }
         val arguments = buildList {
             spec.entityType?.let { add("type=$it") }
-            if (spec.minimumDistance != null || spec.maximumDistance != null) {
-                add("distance=${spec.minimumDistance ?: ""}..${spec.maximumDistance ?: ""}")
+            // issue #4: 明示領域は検証層で出力可否を確定済みのため、ここでは
+            // 制御ブロック基準の直方体だけを従来の範囲・距離へ写像します。
+            val region = spec.region?.takeIf { it.hasAnySetting() }
+            if (region != null) {
+                region.dx?.let { add("dx=${selectorExtent(it)}") }
+                region.dy?.let { add("dy=${selectorExtent(it)}") }
+                region.dz?.let { add("dz=${selectorExtent(it)}") }
+            } else {
+                spec.dx?.let { add("dx=${selectorExtent(it)}") }
+                spec.dy?.let { add("dy=${selectorExtent(it)}") }
+                spec.dz?.let { add("dz=${selectorExtent(it)}") }
+            }
+            val minimumDistance = region?.minimumDistance ?: spec.minimumDistance
+            val maximumDistance = region?.maximumDistance ?: spec.maximumDistance
+            if (minimumDistance != null || maximumDistance != null) {
+                add("distance=${minimumDistance ?: ""}..${maximumDistance ?: ""}")
             } else {
                 // A non-empty distance predicate keeps @a selectors in the current dimension.
                 add("distance=0..")
@@ -2777,9 +2807,6 @@ class VanillaDatapackExporter(
             spec.gameMode?.let { add("gamemode=${it.lowercase()}") }
             spec.tag?.let { add("tag=$it") }
             spec.name?.let { add("name=$it") }
-            spec.dx?.let { add("dx=${selectorExtent(it)}") }
-            spec.dy?.let { add("dy=${selectorExtent(it)}") }
-            spec.dz?.let { add("dz=${selectorExtent(it)}") }
             val limit = spec.limit ?: when (spec.kind) {
                 TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY -> 1
                 else -> null
@@ -2795,6 +2822,24 @@ class VanillaDatapackExporter(
             sort?.let { add("sort=$it") }
         }
         return if (arguments.isEmpty()) base else "$base[${arguments.joinToString(",")}]"
+    }
+
+    /**
+     * issue #4 の明示領域の出力可否を返します。
+     *
+     * 制御ブロック基準の直方体だけを selector（dx／dy／dz・distance）へ写像します。
+     * 従来の範囲・距離との併用は単一 predicate へ正確に写せないため未対応とします。
+     * null は出力可能（領域未設定または写像可能）を表します。単体試験します。
+     */
+    internal fun regionExportRejection(spec: TargetSpec): String? {
+        val region = spec.region?.takeIf { it.hasAnySetting() } ?: return null
+        if (region.kind != RegionKind.CUBOID) return "領域形状は完全バニラ出力に未対応です"
+        if (region.anchor.kind != RegionAnchorKind.CONTROL_BLOCK) return "基準位置が制御ブロック以外の領域は完全バニラ出力に未対応です"
+        if (spec.dx != null || spec.dy != null || spec.dz != null) return "範囲指定と領域指定の併用は完全バニラ出力に未対応です"
+        val regionDistance = region.minimumDistance != null || region.maximumDistance != null
+        val targetDistance = spec.minimumDistance != null || spec.maximumDistance != null
+        if (regionDistance && targetDistance) return "距離指定と領域距離の併用は完全バニラ出力に未対応です"
+        return null
     }
 
     private fun singleSelector(spec: TargetSpec): String = selector(spec.copy(limit = 1))

@@ -44,8 +44,11 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.RegionAnchorKind
 import me.awabi2048.kantancommander.model.RegionKind
+import me.awabi2048.kantancommander.model.RegionMath
+import me.awabi2048.kantancommander.model.RegionResolution
 import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.SpatialVector
+import me.awabi2048.kantancommander.model.toSpatialVector
 import me.awabi2048.kantancommander.model.ParticleSettings
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
@@ -2925,21 +2928,65 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (spec.entityType != null && entity.type.key.toString() != spec.entityType) return false
         if (spec.name != null && entity.name != spec.name) return false
         if (spec.tag != null && spec.tag !in entity.scoreboardTags) return false
+        // issue #4: 明示領域があれば共通 resolver で判定します。未設定時は
+        // 従来の dx/dy/dz と距離指定だけを使い、保存互換を維持します。
+        spec.region?.takeIf { it.hasAnySetting() }?.let { region ->
+            return matchesRegion(entity, spec, region, session, context)
+        }
         val origin = searchOriginFor(spec, context, session) ?: return false
         val distance = entity.location.distance(origin)
         if (spec.minimumDistance != null && distance < spec.minimumDistance) return false
         if (spec.maximumDistance != null && distance > spec.maximumDistance) return false
-        if (!withinSelectorAxis(entity.location.x, origin.x, spec.dx)) return false
-        if (!withinSelectorAxis(entity.location.y, origin.y, spec.dy)) return false
-        if (!withinSelectorAxis(entity.location.z, origin.z, spec.dz)) return false
+        // 従来の範囲判定も共通の領域計算へ寄せ、独自の分岐を残しません。
+        if (!RegionMath.contains(entity.location.toSpatialVector(), origin.toSpatialVector(), spec.dx, spec.dy, spec.dz)) {
+            return false
+        }
         return spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
     }
 
-    /** dx/dy/dzは基準ブロックを含むバニラセレクターの直方体として判定します。 */
-    private fun withinSelectorAxis(value: Double, origin: Double, extent: Double?): Boolean {
-        if (extent == null) return true
-        val minimum = kotlin.math.floor(origin)
-        return value >= minimum && value < minimum + extent + 1.0
+    /**
+     * issue #4 の明示領域による絞り込みです。
+     *
+     * 正常な不一致と解決失敗を区別します。基準未解決は不一致、world不一致・
+     * 不正指定は警告を残して不一致とします（Target絞り込みは真偽しか返せないため、
+     * 明示性はログで担保します。Condition判定では #5 の INVALID へ接続します）。
+     * 領域側の距離とTarget側の距離は独立に適用します（AND）。
+     */
+    private fun matchesRegion(
+        entity: Entity,
+        spec: TargetSpec,
+        region: RegionSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+    ): Boolean = when (val resolution = resolveRegionResult(region, session, context)) {
+        is RegionResolution.Resolved -> {
+            val world = session.origin.world ?: return false
+            if (entity.location.world != world) return false
+            val origin = Location(world, resolution.origin.x, resolution.origin.y, resolution.origin.z)
+            val distance = entity.location.distance(origin)
+            if (resolution.minimumDistance != null && distance < resolution.minimumDistance) return false
+            if (resolution.maximumDistance != null && distance > resolution.maximumDistance) return false
+            if (spec.minimumDistance != null || spec.maximumDistance != null) {
+                val searchOrigin = searchOriginFor(spec, context, session) ?: return false
+                if (entity.location.world != searchOrigin.world) return false
+                val searchDistance = entity.location.distance(searchOrigin)
+                if (spec.minimumDistance != null && searchDistance < spec.minimumDistance) return false
+                if (spec.maximumDistance != null && searchDistance > spec.maximumDistance) return false
+            }
+            if (!RegionMath.contains(entity.location.toSpatialVector(), resolution.origin, resolution.dx, resolution.dy, resolution.dz)) {
+                return false
+            }
+            spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
+        }
+        RegionResolution.UnresolvedAnchor -> false
+        RegionResolution.WorldMismatch -> {
+            plugin.logger.warning("[KantanCommander] region world mismatch: anchor is outside the execution world")
+            false
+        }
+        RegionResolution.InvalidSpec -> {
+            plugin.logger.warning("[KantanCommander] invalid region spec: rejected by validation contract")
+            false
+        }
     }
 
     private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location? =
@@ -3220,23 +3267,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #4 の領域解決の骨組みです。現行コマンドへの本接続は行わず、
-     * 将来Target絞り込み・Condition判定へ移植できる形に留めます。
-     * worldを跨ぐ比較は呼び出し側で明示的に失敗させます。
-     */
-    internal data class ResolvedRegion(
-        val origin: Location,
-        val dx: Double?,
-        val dy: Double?,
-        val dz: Double?,
-        val minimumDistance: Double?,
-        val maximumDistance: Double?,
-    )
-
-    /**
      * 領域基準を解決します。FIXEDは明示位置、CONTROL_BLOCKは制御ブロック位置、
      * TEMPORARYはLOCATION型一時変数、TARGET_ENTITYは対象実体位置です。
-     * 未解決・world不一致はnullで返し、呼び出し側で区別できるようにします。
+     * 未解決はnullで返し、呼び出し側で [RegionResolution] へ変換します。
      */
     private fun resolveRegionAnchor(
         spec: RegionSpec,
@@ -3263,27 +3296,29 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * 直方体＋距離の骨組みを解決します。SPHERE／CYLINDERは予約のため、
-     * 現行実行では未対応としてnullを返します。呼び出し側でemptyと区別します。
+     * issue #4 の領域解決です。Target絞り込み・Condition判定・出力で共有します。
+     *
+     * 正常な不一致と解決失敗を [RegionResolution] で区別します。world不一致・
+     * 不正指定は null へ潰さず明示理由で返し、呼び出し側で失敗として扱います。
      */
-    private fun resolveRegion(
+    private fun resolveRegionResult(
         spec: RegionSpec,
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
-    ): ResolvedRegion? {
-        if (spec.kind != RegionKind.CUBOID) return null
-        val origin = resolveRegionAnchor(spec, session, context) ?: return null
-        if (origin.world != session.origin.world) return null
-        return ResolvedRegion(
-            origin = origin,
-            dx = spec.dx?.takeIf { it.isFinite() && it >= 0.0 } ?: spec.dx?.let { return null },
-            dy = spec.dy?.takeIf { it.isFinite() && it >= 0.0 } ?: spec.dy?.let { return null },
-            dz = spec.dz?.takeIf { it.isFinite() && it >= 0.0 } ?: spec.dz?.let { return null },
-            minimumDistance = spec.minimumDistance?.takeIf { it.isFinite() && it >= 0.0 }
-                ?: spec.minimumDistance?.let { return null },
-            maximumDistance = spec.maximumDistance?.takeIf { it.isFinite() && it >= 0.0 }
-                ?: spec.maximumDistance?.let { return null },
-        ).takeIf { it.minimumDistance == null || it.maximumDistance == null || it.minimumDistance <= it.maximumDistance }
+    ): RegionResolution {
+        if (spec.kind != RegionKind.CUBOID) return RegionResolution.InvalidSpec
+        val anchor = resolveRegionAnchor(spec, session, context) ?: return RegionResolution.UnresolvedAnchor
+        return RegionMath.resolve(
+            kind = spec.kind,
+            anchorWorldName = anchor.world?.name,
+            queryWorldName = session.origin.world?.name ?: return RegionResolution.UnresolvedAnchor,
+            origin = anchor.toSpatialVector(),
+            dx = spec.dx,
+            dy = spec.dy,
+            dz = spec.dz,
+            minimumDistance = spec.minimumDistance,
+            maximumDistance = spec.maximumDistance,
+        )
     }
 
     private fun applyFacing(

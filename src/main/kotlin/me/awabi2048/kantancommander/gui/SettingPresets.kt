@@ -86,7 +86,8 @@ object SettingPresets {
             spec.limit == null && spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
-            spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null
+            spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null &&
+            spec.region?.hasAnySetting() != true
 
     /**
      * 絞り込みなしの形状です。何らかの条件があれば正規内容から外れます。
@@ -103,7 +104,8 @@ object SettingPresets {
             spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
-            spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null
+            spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null &&
+            spec.region?.hasAnySetting() != true
 
     /**
      * プリセット相当の明示値を詳細初期値として指定します。

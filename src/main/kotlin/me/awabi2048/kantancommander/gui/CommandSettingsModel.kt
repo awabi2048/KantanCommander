@@ -32,6 +32,8 @@ import me.awabi2048.kantancommander.model.SoundSettings
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.RegionAnchorKind
+import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
 import me.awabi2048.kantancommander.model.VariableTemplate
 import me.awabi2048.kantancommander.model.TriggerKind
@@ -1610,6 +1612,34 @@ object CommandSettingsModel {
             "gameMode" -> !spec.gameMode.isNullOrBlank()
             "tag" -> !spec.tag.isNullOrBlank()
             "name" -> !spec.name.isNullOrBlank()
+            // issue #4: 明示領域（`region` 本体を含む）とその子選択肢は、
+            // 親の領域設定から導出する共有判定へ寄せます。
+            else -> isRegionFilterConfigured(spec, parameter)
+        }
+    }
+
+    /**
+     * issue #4: 領域の子選択肢の設定状態です。
+     *
+     * 子選択肢ID（`region-anchor:` 等）は親の領域設定から導出し、
+     * 親同様に表示・検証・実行の正本（TargetSpec.region）だけを見ます。
+     */
+    private fun isRegionFilterConfigured(spec: TargetSpec, parameter: String): Boolean {
+        val region = spec.region?.takeIf { it.hasAnySetting() }
+        return when {
+            parameter == "region" -> region != null
+            parameter.startsWith("region-anchor:") ->
+                region?.anchor?.kind?.name == parameter.removePrefix("region-anchor:")
+            parameter == "region-range" ->
+                region?.let { it.dx != null || it.dy != null || it.dz != null } == true
+            parameter == "region-distance" ->
+                region?.minimumDistance != null || region?.maximumDistance != null
+            parameter == "region-position" -> region?.anchor?.position != null
+            parameter == "region-temp" -> !region?.anchor?.tempName.isNullOrBlank()
+            parameter.startsWith("region-target-preset:") ->
+                region?.anchor?.kind == RegionAnchorKind.TARGET_ENTITY &&
+                    SettingPresets.matchTargetPreset(region.anchor.target)?.name ==
+                    parameter.removePrefix("region-target-preset:")
             else -> false
         }
     }
@@ -1696,7 +1726,7 @@ object CommandSettingsModel {
      * 対象種別ごとの適用可否に従います。表示順序は固定です。
      */
     fun visibleTargetFilterIds(kind: TargetKind?, singleOnly: Boolean = false): List<String> =
-        listOf("entityType", "distance", "range", "limit", "sort", "gameMode", "tag", "name")
+        listOf("entityType", "distance", "range", "region", "limit", "sort", "gameMode", "tag", "name")
             .filter { id -> !isNearbyKind(kind) || id == "distance" }
             .filter { id -> !singleOnly || id != "limit" }
             .filter { id -> targetFilterApplies(kind, id) }
@@ -1708,6 +1738,47 @@ object CommandSettingsModel {
      */
     fun targetSupportsDetailedFilters(kind: TargetKind?): Boolean =
         kind?.let { it in FILTERABLE_TARGET_KINDS } == true
+
+    /**
+     * issue #4 の領域基準の表示名キーです。
+     *
+     * Gesture・Inventoryの両系統で同じ名称を使い、基準名の分岐を増やしません。
+     * Name は固定ラベルの識別に使い、現在値・状態はLore側へ分離します。
+     */
+    fun regionAnchorNameKey(kind: RegionAnchorKind): LocalizationKey<String> = when (kind) {
+        RegionAnchorKind.CONTROL_BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_CONTROL_BLOCK
+        RegionAnchorKind.FIXED -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_FIXED
+        RegionAnchorKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_TEMPORARY
+        RegionAnchorKind.TARGET_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_TARGET_ENTITY
+    }
+
+    /**
+     * issue #4 の明示領域の要約文です。
+     *
+     * 基準名・範囲・距離を一つの表示へまとめ、Gesture・Inventoryの両系統で
+     * 同じ文面を使います。未設定時はnullを返し、空行を残しません。
+     */
+    fun formatRegionSummary(
+        region: RegionSpec?,
+        text: (LocalizationKey<String>) -> String,
+    ): String? {
+        val active = region?.takeIf { it.hasAnySetting() } ?: return null
+        fun format(value: Double?): String = value?.let {
+            if (it == it.toLong().toDouble()) it.toLong().toString() else it.toString()
+        }.orEmpty()
+        val unset = text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
+        val parts = mutableListOf(text(regionAnchorNameKey(active.anchor.kind)))
+        val extents = listOf(
+            "${text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX)}=${format(active.dx).ifBlank { unset }}",
+            "${text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY)}=${format(active.dy).ifBlank { unset }}",
+            "${text(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ)}=${format(active.dz).ifBlank { unset }}",
+        ).joinToString(" / ")
+        parts += extents
+        if (active.minimumDistance != null || active.maximumDistance != null) {
+            parts += "${format(active.minimumDistance)}..${format(active.maximumDistance)}"
+        }
+        return parts.joinToString(" / ")
+    }
 
     /**
      * プログラム全体の編集を共通保存境界へ通します。

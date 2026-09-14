@@ -13,6 +13,10 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
+import me.awabi2048.kantancommander.model.RegionAnchorKind
+import me.awabi2048.kantancommander.model.RegionAnchorSpec
+import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.ValueType
 import java.util.UUID
 import org.junit.jupiter.api.Test
@@ -629,6 +633,44 @@ class CommandSettingsModelTest {
         assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "distance"))
         assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "range"))
         assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "sort"))
+    }
+
+    @Test
+    fun `region filter state follows the explicit region`() {
+        val node = CommandType.GIVE_ITEM.newNode().apply {
+            targetSpec = TargetSpec(
+                TargetKind.NEAREST_ENTITY,
+                region = RegionSpec(
+                    anchor = RegionAnchorSpec(RegionAnchorKind.CONTROL_BLOCK),
+                    dx = 2.0,
+                ),
+            )
+        }
+
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region"))
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-anchor:CONTROL_BLOCK"))
+        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-anchor:FIXED"))
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-range"))
+        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "region-distance"))
+        // プリセット形状から外れるため、プリセット表示へ戻りません。
+        assertNull(SettingPresets.matchTargetPreset(node.targetSpec))
+
+        // 要約文は基準名と範囲を含みます。
+        val summary = CommandSettingsModel.formatRegionSummary(node.targetSpec?.region) { key ->
+            when (key) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REGION_ANCHOR_CONTROL_BLOCK -> "制御ブロック基準"
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DX -> "dx"
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DY -> "dy"
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DZ -> "dz"
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET -> "未設定"
+                else -> key.toString()
+            }
+        }
+        assertTrue(summary?.contains("制御ブロック基準") == true, summary)
+        assertTrue(summary?.contains("dx=2") == true, summary)
+        // 未設定の領域は要約しません。
+        assertNull(CommandSettingsModel.formatRegionSummary(null) { key -> key.toString() })
+        assertNull(CommandSettingsModel.formatRegionSummary(RegionSpec()) { key -> key.toString() })
     }
 
     @Test
