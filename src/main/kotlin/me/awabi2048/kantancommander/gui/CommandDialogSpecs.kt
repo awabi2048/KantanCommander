@@ -1738,10 +1738,11 @@ internal object CommandDialogSpecs {
     fun supportsSuggestions(fieldKey: String): Boolean = fieldKey in setOf("summonEntity", "entityType", "sound", "effect", ParticleSettings.PARAM_PARTICLE)
 
     /**
-     * issue #28: Registry由来の全候補IDです。
+     * Registry由来の全候補IDです。保存・検証・Dialog候補検索の正本です。
      *
-     * 検索ランキングを持たず、Dialogの候補検索とGesture Resource Pickerの
-     * 双方から利用する共通境界です。サーバーなしでは空列を返します。
+     * Gesture Resource Pickerの表示は [ResourcePresets] に限定しますが、
+     * プリセット外の値はこの全件に対する入力経路でのみ指定します。
+     * 検索ランキングを持たず、サーバーなしでは空列を返します。
      */
     fun registeredIds(fieldKey: String): List<String> = registeredValues(fieldKey)
 

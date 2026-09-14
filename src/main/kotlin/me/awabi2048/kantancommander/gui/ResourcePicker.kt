@@ -64,6 +64,130 @@ object ResourcePicker {
 }
 
 /**
+ * ピッカーに表示する使用頻度の高いプリセットIDの境界です。
+ *
+ * 大量にあるRegistry由来の全候補をそのまま並べると視認性・操作性が下がるため、
+ * ピッカー表示はこのプリセットに限定します。保存・検証・実行・データパック出力の
+ * 正本は [CommandDialogSpecs.registeredIds] の全件のままとし、プリセット外の値は
+ * Dialogのテキスト入力と候補検索による経路でのみ指定します。サーバーなしで検証
+ * できるよう、Registryへ触れない固定ID表として保持します。
+ */
+object ResourcePresets {
+    /** 召喚・対象絞り込みで頻用するエンティティ種別です。表示順に並べます。 */
+    val ENTITY_TYPE_IDS: List<String> = listOf(
+        "minecraft:pig",
+        "minecraft:cow",
+        "minecraft:sheep",
+        "minecraft:chicken",
+        "minecraft:villager",
+        "minecraft:zombie",
+        "minecraft:skeleton",
+        "minecraft:creeper",
+        "minecraft:spider",
+        "minecraft:enderman",
+        "minecraft:armor_stand",
+        "minecraft:item_frame",
+        "minecraft:tnt",
+        "minecraft:firework_rocket",
+        "minecraft:lightning_bolt",
+        "minecraft:experience_orb",
+    )
+
+    /**
+     * パーティクル表示で頻用する種類です。
+     *
+     * 保存形式のBukkit enum名（大文字）のまま保持し、正規化前の比較には使いません。
+     * 呼び出し側は [CommandDialogSpecs.normalize] 済みの現在値で照合します。
+     */
+    val PARTICLE_IDS: List<String> = listOf(
+        "FLAME",
+        "SMOKE",
+        "LARGE_SMOKE",
+        "HEART",
+        "NOTE",
+        "PORTAL",
+        "ENCHANT",
+        "CRIT",
+        "CLOUD",
+        "DUST",
+        "FIREWORK",
+        "TOTEM_OF_UNDYING",
+        "SOUL",
+        "DRAGON_BREATH",
+        "HAPPY_VILLAGER",
+        "WITCH",
+    )
+
+    /** 効果付与で頻用する効果IDです。表示順に並べます。 */
+    val EFFECT_IDS: List<String> = listOf(
+        "minecraft:speed",
+        "minecraft:slowness",
+        "minecraft:haste",
+        "minecraft:strength",
+        "minecraft:regeneration",
+        "minecraft:resistance",
+        "minecraft:fire_resistance",
+        "minecraft:night_vision",
+        "minecraft:invisibility",
+        "minecraft:jump_boost",
+        "minecraft:poison",
+        "minecraft:wither",
+        "minecraft:levitation",
+        "minecraft:glowing",
+        "minecraft:luck",
+        "minecraft:darkness",
+    )
+
+    /** 効果音再生で頻用するサウンドIDです。表示順に並べます。 */
+    val SOUND_IDS: List<String> = listOf(
+        "minecraft:block.note_block.harp",
+        "minecraft:block.note_block.pling",
+        "minecraft:block.note_block.bell",
+        "minecraft:entity.player.levelup",
+        "minecraft:entity.experience_orb.pickup",
+        "minecraft:entity.firework_rocket.launch",
+        "minecraft:entity.firework_rocket.blast",
+        "minecraft:entity.generic.explode",
+        "minecraft:entity.lightning_bolt.thunder",
+        "minecraft:block.anvil.land",
+        "minecraft:block.chest.open",
+        "minecraft:block.portal.travel",
+        "minecraft:entity.ender_dragon.growl",
+        "minecraft:entity.wither.spawn",
+        "minecraft:block.beacon.activate",
+        "minecraft:weather.rain",
+    )
+
+    /** 種別ごとのプリセットID一覧を返します。順序は表示順です。 */
+    fun ids(kind: GestureResourcePickerKind): List<String> = when (kind) {
+        GestureResourcePickerKind.ENTITY_TYPE -> ENTITY_TYPE_IDS
+        GestureResourcePickerKind.PARTICLE -> PARTICLE_IDS
+        GestureResourcePickerKind.EFFECT -> EFFECT_IDS
+        GestureResourcePickerKind.SOUND -> SOUND_IDS
+    }
+
+    /**
+     * 正規化済みの現在値がプリセットに含まれるかを返します。
+     *
+     * 呼び出し側は [CommandDialogSpecs.normalize] 済みの値を渡します。
+     * Namespaced ID系は小文字、パーティクルはBukkit enum名のまま照合します。
+     * 空欄は未設定であり、プリセット選択でも入力選択でもありません。
+     */
+    fun isPreset(kind: GestureResourcePickerKind, normalizedValue: String): Boolean {
+        if (normalizedValue.isBlank()) return false
+        return ids(kind).any { preset ->
+            // プリセット表自体が正規形のため、Namespaced ID系は小文字で比較します。
+            // パーティクルは大文字enum名のため、そのまま比較します。
+            if (kind == GestureResourcePickerKind.PARTICLE) {
+                preset == normalizedValue.trim()
+            } else {
+                preset == normalizedValue.trim().lowercase()
+            }
+        }
+    }
+}
+
+/**
  * issue #28 の候補アイコン解決です。
  *
  * 候補IDから表示用素材を解決します。直接対応する素材がない種類は
@@ -134,8 +258,8 @@ object ResourcePickerIcons {
             -> Material.WATER_BUCKET
             "ENCHANT", "ENCHANTED_HIT", "WITCH" -> Material.ENCHANTED_BOOK
             "CRIT", "CRIT_MAGIC", "SWEEP_ATTACK", "DAMAGE_INDICATOR" -> Material.IRON_SWORD
-            "HEART", "VILLAGER_HAPPY" -> Material.POPPY
-            "VILLAGER_ANGRY" -> Material.BARRIER
+            "HEART", "HAPPY_VILLAGER", "VILLAGER_HAPPY" -> Material.POPPY
+            "ANGRY_VILLAGER", "VILLAGER_ANGRY" -> Material.BARRIER
             "NOTE" -> Material.NOTE_BLOCK
             "PORTAL", "REVERSE_PORTAL", "END_ROD" -> Material.ENDER_PEARL
             "SPELL", "SPELL_MOB", "SPELL_MOB_AMBIENT", "SPELL_WITCH", "SPELL_INSTANT" -> Material.POTION

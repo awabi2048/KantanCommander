@@ -2,7 +2,9 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.model.ParticleSettings
 import org.bukkit.Material
+import org.bukkit.Particle
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -48,6 +50,54 @@ class ResourcePickerTest {
         assertEquals("Cow", ResourcePicker.displayName(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:cow"))
         assertEquals("Zombified Piglin", ResourcePicker.displayName(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:zombified_piglin"))
         assertEquals("Flame", ResourcePicker.displayName(GestureResourcePickerKind.PARTICLE, "FLAME"))
+    }
+
+    @Test
+    fun `presets fit on a single picker page`() {
+        // ピッカー表示はプリセットに限定し、ページ送りなしで視認性を保ちます。
+        GestureResourcePickerKind.entries.forEach { kind ->
+            val ids = ResourcePresets.ids(kind)
+            assertTrue(ids.isNotEmpty(), kind.name)
+            assertTrue(ids.size <= ResourcePicker.PAGE_SIZE, kind.name)
+            assertEquals(ids.size, ids.distinct().size, kind.name)
+            assertTrue(ids.all(String::isNotBlank), kind.name)
+        }
+        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.ENTITY_TYPE).size)
+        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).size)
+        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.EFFECT).size)
+        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.SOUND).size)
+    }
+
+    @Test
+    fun `presets use valid value forms`() {
+        // Namespaced ID系は小文字の正規形、パーティクルはBukkit enum名のまま保持します。
+        ResourcePresets.ids(GestureResourcePickerKind.ENTITY_TYPE).forEach { id ->
+            assertEquals(id.lowercase(), id, id)
+        }
+        ResourcePresets.ids(GestureResourcePickerKind.EFFECT).forEach { id ->
+            assertEquals(id.lowercase(), id, id)
+        }
+        ResourcePresets.ids(GestureResourcePickerKind.SOUND).forEach { id ->
+            assertEquals(id.lowercase(), id, id)
+        }
+        ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).forEach { id ->
+            runCatching { Particle.valueOf(id) }.getOrNull() ?: error("unknown particle preset: $id")
+        }
+    }
+
+    @Test
+    fun `isPreset matches normalized current values`() {
+        assertTrue(ResourcePresets.isPreset(GestureResourcePickerKind.SOUND, "minecraft:block.note_block.harp"))
+        assertTrue(ResourcePresets.isPreset(GestureResourcePickerKind.SOUND, "MINECRAFT:BLOCK.NOTE_BLOCK.HARP"))
+        assertFalse(ResourcePresets.isPreset(GestureResourcePickerKind.SOUND, "minecraft:block.note_block.didgeridoo"))
+        assertTrue(ResourcePresets.isPreset(GestureResourcePickerKind.PARTICLE, "FLAME"))
+        assertFalse(ResourcePresets.isPreset(GestureResourcePickerKind.PARTICLE, "FLAME_EXTRA"))
+        assertFalse(ResourcePresets.isPreset(GestureResourcePickerKind.PARTICLE, ""))
+        assertTrue(ResourcePresets.isPreset(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:pig"))
+        assertFalse(ResourcePresets.isPreset(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:warden"))
+        assertTrue(ResourcePresets.isPreset(GestureResourcePickerKind.EFFECT, "minecraft:speed"))
+        assertFalse(ResourcePresets.isPreset(GestureResourcePickerKind.EFFECT, "minecraft:wind_charged"))
+        assertFalse(ResourcePresets.isPreset(GestureResourcePickerKind.EFFECT, "   "))
     }
 
     @Test

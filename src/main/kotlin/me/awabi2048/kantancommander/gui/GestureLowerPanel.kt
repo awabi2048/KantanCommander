@@ -182,11 +182,12 @@ class GestureLowerPanel(
     ): GestureGuiView = buildSettingChoicesChildNew(state, player, attention, suppressHighlight)
 
     /**
-     * issue #28 のID候補一覧子画面です。
+     * ID候補一覧子画面です。使用頻度の高いプリセットのみを表示します。
      *
-     * 親の設定画面へ大量候補を置かず、正方形の小型アイコンを縦横に並べて
-     * 選択します。一覧選択とDialog入力は同じ保存値への別経路であり、
-     * 既存のテキスト入力によるID直接指定は残します。
+     * 大量のRegistry全件を並べると視認性・操作性が下がるため、表示は
+     * [ResourcePresets] に限定します。プリセット外の値はDialogのテキスト入力と
+     * 候補検索による経路でのみ指定し、保存・検証の正本は全件のまま変えません。
+     * 現在値がプリセット外のときは、下部の入力カードを選択済みとして扱います。
      */
     private fun buildResourcePicker(state: GestureEditorState, player: Player): GestureGuiView {
         val frame = contentFrame(GestureGuiPanel())
@@ -200,10 +201,12 @@ class GestureLowerPanel(
             DeclarativeSettings.backSection(nodes, frame, Component.text("戻る"), Bukkit.createBlockData(Material.BROWN_CONCRETE), 0.2, CHILD_BACK_WIDTH)
             return finishResourcePicker(nodes)
         }
-        val ids = CommandDialogSpecs.registeredIds(fieldKey)
+        val ids = ResourcePresets.ids(kind)
         val pageCount = maxOf(ResourcePicker.pageCount(ids.size), 1)
         val page = state.resourcePickerPage.coerceIn(0, pageCount - 1)
         val currentRaw = CommandDialogSpecs.normalize(fieldKey, node.string(fieldKey))
+        // プリセット外の現在値は入力カード側を選択済みにし、Nameへ生値を出しません。
+        val isCurrentPreset = ResourcePresets.isPreset(kind, currentRaw)
         val fieldLabel = state.settingFieldKey
             ?.let { key -> CommandSettingsModel.gestureVisibleFields(node).firstOrNull { it.key == key }?.label }
             ?.let { KcI18n.text(player, it) } ?: fieldKey
@@ -284,7 +287,9 @@ class GestureLowerPanel(
             SettingsActionCard(
                 elementId = "lower-resource-input",
                 label = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_DIALOG_INPUT_HOVER)),
-                background = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                background = Bukkit.createBlockData(
+                    if (!isCurrentPreset && currentRaw.isNotBlank()) Material.CYAN_TERRACOTTA else Material.CYAN_CONCRETE,
+                ),
                 cx = RESOURCE_BUTTON_LEFT_X,
                 cy = RESOURCE_BUTTON_Y,
                 w = RESOURCE_BUTTON_W,
@@ -299,6 +304,9 @@ class GestureLowerPanel(
                     y = HOVER_SLOT_Y,
                 ),
                 visualTag = "lower-resource-input",
+                outline = if (!isCurrentPreset && currentRaw.isNotBlank()) {
+                    GestureSettingVisualPolicy.nonTabOutlineMaterial(true)?.let { Bukkit.createBlockData(it) }
+                } else null,
             ),
         )
         DeclarativeSettings.actionCardSection(
