@@ -17,7 +17,8 @@ import java.util.logging.Logger
  * destination→placeDestination、値保持）を適用して読み込みます。
  * v15は#30の粒子移行に加えて同じ改名を適用します。v14以前は受付対象外
  * として隔離します。旧ENTITY_ACTION／ride／dismountは保存形式を変えずに読み込みます。
- * 旧equip・旧kindは変換せず、検証層で移行漏れ・未設定として拒否します。
+ * 旧equipは [LegacyEquipMigration] で PLACE_ITEM へ正本化します（#21）。
+ * 旧kindは変換せず、検証層で未設定として拒否します。
  */
 class EntityMigrationTest {
     @TempDir
@@ -157,5 +158,83 @@ class EntityMigrationTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         assertNull(store.load(scriptId))
         assertTrue(requireNotNull(dir.resolve("incompatible").listFiles()).isNotEmpty())
+    }
+
+    private fun equipNode(nodeId: UUID, slot: String, extraParams: String = ""): String = """
+        "$nodeId": {
+          "id": "$nodeId",
+          "type": "ENTITY_ACTION",
+          "targetSpec": {"kind": "NEAREST_PLAYER", "sort": "NEAREST"},
+          "params": {"action": "equip", "slot": "$slot", "item": "minecraft:stone", "overwrite": "true"$extraParams},
+          "configuredFields": ["action", "slot", "item", "overwrite"]
+        }
+        """.trimIndent()
+
+    @Test
+    fun `legacy equip migrates to place item keeping its meaning`() {
+        // #21: 旧装備操作は読み込み時に PLACE_ITEM へ正本化し、
+        // 従来と同じ装備操作として実行・検証・出力できるようにします。
+        val dir = temp.resolve("v17-equip").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(dir, scriptId, 17, nodeId, equipNode(nodeId, "OFF_HAND"))
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.PLACE_ITEM, migrated.type)
+        assertEquals("EQUIPMENT", migrated.string("placeDestination", ""))
+        assertEquals("OFF_HAND", migrated.string("slot", ""))
+        assertEquals("minecraft:stone", migrated.string("item", ""))
+        // 旧equipに個数指定はなく、装備品は単品として正規化します。
+        assertEquals("1", migrated.string("count", ""))
+        assertEquals("true", migrated.string("overwrite", ""))
+        assertTrue("action" !in migrated.params)
+        val marks = migrated.configuredFields ?: emptySet()
+        assertTrue("placeDestination" in marks)
+        assertTrue("action" !in marks)
+        assertTrue("slot" in marks)
+        assertEquals(17, loaded.formatVersion)
+        // 移行後は新 PLACE_ITEM の検証だけを通ります。
+        assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
+    }
+
+    @Test
+    fun `legacy equip in v16 migrates with the version upgrade`() {
+        // バージョン移行と旧装備正本化が合成されることを確認します。
+        val dir = temp.resolve("v16-equip").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(dir, scriptId, 16, nodeId, equipNode(nodeId, "HAND"))
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.PLACE_ITEM, migrated.type)
+        assertEquals("EQUIPMENT", migrated.string("placeDestination", ""))
+        assertEquals("HAND", migrated.string("slot", ""))
+        assertEquals("1", migrated.string("count", ""))
+        assertEquals(17, loaded.formatVersion)
+        assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
+    }
+
+    @Test
+    fun `legacy equip with an unknown slot migrates without silent remapping`() {
+        // 不正な旧 slot 値は推測で読み替えず、そのまま引き継いで
+        // 新検証層で明示エラーにします。
+        val dir = temp.resolve("v17-equip-slot").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(dir, scriptId, 17, nodeId, equipNode(nodeId, "NOPE"))
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.PLACE_ITEM, migrated.type)
+        assertEquals("NOPE", migrated.string("slot", ""))
+        assertTrue(
+            ExecutableScriptValidator.validate(loaded)
+                .any { it.nodeId == nodeId && it.fieldKeys == setOf("slot") },
+        )
     }
 }
