@@ -118,7 +118,7 @@ data class SettingsActionCard(
 
 /** ID候補一覧の1セルです。ID文字列は常時表示せず、ホバーで示します。 */
 data class ResourcePickerCard(
-    /** 要素 ID 全文です（例 lower-resource-pick:minecraft:cow）。 */
+    /** 要素 ID 全文です（例 lower-inline-pick:sound:minecraft:block.note_block.harp）。 */
     val elementId: String,
     val icon: ItemStack?,
     val background: BlockData,

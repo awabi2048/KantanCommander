@@ -3,6 +3,7 @@ package me.awabi2048.kantancommander.gui
 import me.awabi2048.kantancommander.model.ParticleSettings
 import org.bukkit.Material
 import org.bukkit.Particle
+import org.bukkit.entity.EntityType
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
@@ -62,10 +63,10 @@ class ResourcePickerTest {
             assertEquals(ids.size, ids.distinct().size, kind.name)
             assertTrue(ids.all(String::isNotBlank), kind.name)
         }
-        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.ENTITY_TYPE).size)
-        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).size)
-        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.EFFECT).size)
-        assertEquals(16, ResourcePresets.ids(GestureResourcePickerKind.SOUND).size)
+        assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.ENTITY_TYPE).size)
+        assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).size)
+        assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.EFFECT).size)
+        assertEquals(24, ResourcePresets.ids(GestureResourcePickerKind.SOUND).size)
     }
 
     @Test
@@ -83,6 +84,31 @@ class ResourcePickerTest {
         ResourcePresets.ids(GestureResourcePickerKind.PARTICLE).forEach { id ->
             runCatching { Particle.valueOf(id) }.getOrNull() ?: error("unknown particle preset: $id")
         }
+        ResourcePresets.ids(GestureResourcePickerKind.ENTITY_TYPE).forEach { id ->
+            val path = id.substringAfter(':').uppercase()
+            runCatching { EntityType.valueOf(path) }.getOrNull() ?: error("unknown entity preset: $id")
+        }
+    }
+
+    @Test
+    fun `inline element ids round trip field keys and ids`() {
+        // 親タブ直下の操作面IDは、設定項目キーと候補IDを欠落なく運びます。
+        // 候補ID自体のコロンはID側に残し、最初の区切りだけを項目キーとします。
+        val pick = InlineResourcePicker.pickElementId("sound", "minecraft:block.note_block.harp")
+        assertEquals("sound" to "minecraft:block.note_block.harp", InlineResourcePicker.parsePick(pick))
+        val particle = InlineResourcePicker.pickElementId("particle", "FLAME")
+        assertEquals("particle" to "FLAME", InlineResourcePicker.parsePick(particle))
+        assertEquals("effect", InlineResourcePicker.parseInput(InlineResourcePicker.inputElementId("effect")))
+        // 不正形式は受け付けません。
+        assertNull(InlineResourcePicker.parsePick("lower-inline-pick:"))
+        assertNull(InlineResourcePicker.parsePick("lower-inline-pick:sound:"))
+        assertNull(InlineResourcePicker.parsePick("lower-inline-pick::minecraft:pig"))
+        assertNull(InlineResourcePicker.parsePick("lower-inline-input:sound"))
+        assertNull(InlineResourcePicker.parsePick("lower-resource-pick:minecraft:pig"))
+        assertNull(InlineResourcePicker.parseInput("lower-inline-input:"))
+        assertNull(InlineResourcePicker.parseInput("lower-inline-pick:sound:minecraft:pig"))
+        // 選択と入力の接頭辞は互いに干渉しません。
+        assertEquals(8, InlineResourcePicker.COLUMNS)
     }
 
     @Test
@@ -108,6 +134,9 @@ class ResourcePickerTest {
         // Mannequinにスポーンエッグはないため頭で表示する。
         assertEquals(Material.PLAYER_HEAD, ResourcePickerIcons.resolve(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:mannequin"))
         assertEquals(Material.BLAZE_POWDER, ResourcePickerIcons.resolve(GestureResourcePickerKind.PARTICLE, "FLAME"))
+        assertEquals(Material.GUNPOWDER, ResourcePickerIcons.resolve(GestureResourcePickerKind.PARTICLE, "POOF"))
+        assertEquals(Material.IRON_GOLEM_SPAWN_EGG, ResourcePickerIcons.resolve(GestureResourcePickerKind.ENTITY_TYPE, "minecraft:iron_golem"))
+        assertEquals(Material.PLAYER_HEAD, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:entity.arrow.shoot"))
         assertEquals(Material.NOTE_BLOCK, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:block.note_block.harp"))
         assertEquals(Material.MUSIC_DISC_13, ResourcePickerIcons.resolve(GestureResourcePickerKind.SOUND, "minecraft:music_disc.13"))
         // 対応表にない候補もフォールバック表示があります。

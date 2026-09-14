@@ -91,6 +91,14 @@ object ResourcePresets {
         "minecraft:firework_rocket",
         "minecraft:lightning_bolt",
         "minecraft:experience_orb",
+        "minecraft:slime",
+        "minecraft:ghast",
+        "minecraft:blaze",
+        "minecraft:witch",
+        "minecraft:iron_golem",
+        "minecraft:wolf",
+        "minecraft:cat",
+        "minecraft:mannequin",
     )
 
     /**
@@ -116,6 +124,14 @@ object ResourcePresets {
         "DRAGON_BREATH",
         "HAPPY_VILLAGER",
         "WITCH",
+        "POOF",
+        "EXPLOSION",
+        "BUBBLE",
+        "SPLASH",
+        "LAVA",
+        "END_ROD",
+        "SWEEP_ATTACK",
+        "SONIC_BOOM",
     )
 
     /** 効果付与で頻用する効果IDです。表示順に並べます。 */
@@ -136,6 +152,14 @@ object ResourcePresets {
         "minecraft:glowing",
         "minecraft:luck",
         "minecraft:darkness",
+        "minecraft:instant_health",
+        "minecraft:instant_damage",
+        "minecraft:absorption",
+        "minecraft:saturation",
+        "minecraft:slow_falling",
+        "minecraft:conduit_power",
+        "minecraft:dolphins_grace",
+        "minecraft:hero_of_the_village",
     )
 
     /** 効果音再生で頻用するサウンドIDです。表示順に並べます。 */
@@ -156,6 +180,14 @@ object ResourcePresets {
         "minecraft:entity.wither.spawn",
         "minecraft:block.beacon.activate",
         "minecraft:weather.rain",
+        "minecraft:entity.arrow.shoot",
+        "minecraft:block.chest.close",
+        "minecraft:entity.tnt.primed",
+        "minecraft:block.portal.trigger",
+        "minecraft:entity.ender_pearl.throw",
+        "minecraft:block.note_block.bass",
+        "minecraft:entity.firework_rocket.twinkle",
+        "minecraft:weather.thunder",
     )
 
     /** 種別ごとのプリセットID一覧を返します。順序は表示順です。 */
@@ -184,6 +216,46 @@ object ResourcePresets {
                 preset == normalizedValue.trim().lowercase()
             }
         }
+    }
+}
+
+/**
+ * 親タブ直下へ配置するプリセット選択の要素ID境界です。
+ *
+ * 子画面遷移は行わず、保存・検証は子画面時代と同じ正本を使います。
+ * Registryへ触れない純粋処理のため、サーバーなしの単体テストで検証します。
+ */
+object InlineResourcePicker {
+    /** 親直下グリッドの列数です。24件を3行に収めます。 */
+    const val COLUMNS = 8
+
+    const val PICK_PREFIX = "lower-inline-pick:"
+    const val INPUT_PREFIX = "lower-inline-input:"
+
+    /** プリセット選択操作面の要素IDを返します。 */
+    fun pickElementId(fieldKey: String, id: String): String = "$PICK_PREFIX$fieldKey:$id"
+
+    /** ID直接入力操作面の要素IDを返します。 */
+    fun inputElementId(fieldKey: String): String = "$INPUT_PREFIX$fieldKey"
+
+    /**
+     * 選択要素IDを (設定項目キー, 候補ID) へ分解します。
+     *
+     * 候補ID自体に `:` を含むため、最初の区切りだけを設定項目キーとします。
+     * 不正形式はnullを返します。
+     */
+    fun parsePick(elementId: String): Pair<String, String>? {
+        if (!elementId.startsWith(PICK_PREFIX)) return null
+        val rest = elementId.removePrefix(PICK_PREFIX)
+        val fieldKey = rest.substringBefore(':').takeIf(String::isNotBlank) ?: return null
+        val id = rest.substringAfter(':', missingDelimiterValue = "").takeIf(String::isNotBlank) ?: return null
+        return fieldKey to id
+    }
+
+    /** 入力要素IDを設定項目キーへ分解します。不正形式はnullを返します。 */
+    fun parseInput(elementId: String): String? {
+        if (!elementId.startsWith(INPUT_PREFIX)) return null
+        return elementId.removePrefix(INPUT_PREFIX).takeIf(String::isNotBlank)
     }
 }
 

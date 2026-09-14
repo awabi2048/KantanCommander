@@ -188,15 +188,6 @@ data class GestureEditorState(
     var pendingWorldVariableType: ValueType? = null,
     /** ワールド内変数の削除確認で、確認対象として表示している名前です。 */
     var pendingWorldVariableDeleteName: String? = null,
-    /**
-     * issue #28: ID候補選択子画面の対象設定項目です。
-     *
-     * 親の設定画面へ大量候補を置かず、専用子画面で扱います。
-     * 設定木の選択経路とは状態を分離します。
-     */
-    var resourcePickerFieldKey: String? = null,
-    /** issue #28: ID候補選択子画面のページ番号です。 */
-    var resourcePickerPage: Int = 0,
     /** issue #8: ディスク呼び出し設定の引数ページ番号です。 */
     var diskCallArgsPage: Int = 0,
     /** issue #7: イベント種別の選択子画面のページ番号です。 */
@@ -212,13 +203,6 @@ enum class GestureLowerMode {
     SETTINGS,
     PICKER,
     SETTING_CHOICES,
-    /**
-     * issue #28: ID候補一覧専用の子画面です。
-     *
-     * 既存の SETTING_CHOICES とは分け、候補一覧の表示を主目的とする
-     * 専用レイアウトとして扱います。
-     */
-    RESOURCE_PICKER,
     WORLD_VARIABLES,
     WORLD_VARIABLE_TYPE,
     WORLD_VARIABLE_DELETE_CONFIRM,
@@ -2876,8 +2860,6 @@ class GestureSequenceEditor(
         state.detailVisitedKeys.clear()
         state.pendingWorldVariableType = null
         state.pendingWorldVariableDeleteName = null
-        state.resourcePickerFieldKey = null
-        state.resourcePickerPage = 0
     }
 
     /** アイテム／ブロック上書き確認の保留値を、確認画面の全終了経路で一括破棄します。 */
@@ -3967,48 +3949,30 @@ class GestureSequenceEditor(
     }
 
     /**
-     * issue #28: ID候補一覧子画面を開きます。
+     * 親タブ直下のプリセット選択でIDを保存します。
      *
-     * 親の設定画面へ大量候補を置かず、専用子画面で扱います。
-     * 設定木の選択経路とは状態を分離します。
-     */
-    private fun openResourcePicker(player: Player, fieldKey: String) {
-        if (fieldKey.isBlank() || ResourcePicker.kindForFieldKey(fieldKey) == null) return
-        val settingContext = state.settingContext ?: return
-        val script = plugin.scripts.load(settingContext.scriptId) ?: return
-        observedRevision = script.revision
-        if (script.graph.nodes[settingContext.nodeId] == null) return
-        state.resourcePickerFieldKey = fieldKey
-        state.resourcePickerPage = 0
-        state.lowerMode = GestureLowerMode.RESOURCE_PICKER
-        updateLower(player)
-    }
-
-    /**
-     * issue #28: 候補アイコンのクリックでIDを保存し、元の設定画面へ戻ります。
-     *
+     * 子画面遷移は行わず、親設定画面のまま保存・再描画します。
      * 一覧選択とDialog入力は同じ保存値への別経路であり、保存前には
-     * 共通の検証を通します。現在値と同じ候補も選択状態として表示しますが、
-     * クリック時は通常どおり保存します。
+     * 共通の検証を通します。一時変数参照方式の項目は、直接値選択時の
+     * 操作面だけが表示されるため、ここでも直接値以外は受け付けません。
      */
-    private fun applyResourcePick(player: Player, id: String) {
+    private fun applyInlineResourcePick(player: Player, elementId: String) {
+        val (fieldKey, id) = InlineResourcePicker.parsePick(elementId) ?: return
+        if (ResourcePicker.kindForFieldKey(fieldKey) == null) return
         if (id.isBlank()) return
         val settingContext = state.settingContext ?: return
-        val fieldKey = state.resourcePickerFieldKey ?: return
-        if (ResourcePicker.kindForFieldKey(fieldKey) == null) return
         val script = plugin.scripts.load(settingContext.scriptId) ?: return
         observedRevision = script.revision
         val node = script.graph.nodes[settingContext.nodeId] ?: return
+        if (CommandSettingsModel.supportsTemporaryValueReference(node, fieldKey) &&
+            CommandSettingsModel.temporaryValueSource(node, fieldKey) != CommandValueSource.LITERAL
+        ) return
         val normalized = CommandDialogSpecs.normalize(fieldKey, id)
         val spec = CommandDialogSpecs.field(node, fieldKey)
         if (spec != null && spec.validateInput(normalized) != null) return
         if (!updateSettingNode(player, settingContext, configuredFields = setOf(fieldKey)) {
                 CommandSettingsModel.setParameter(it, fieldKey, normalized)
             }) return
-        state.lowerMode = GestureLowerMode.SETTINGS
-        state.resourcePickerFieldKey = null
-        state.resourcePickerPage = 0
-        updateLower(player)
     }
 
     /**
@@ -7829,36 +7793,15 @@ class GestureSequenceEditor(
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 handleToggleAction(context, player)
             }
-            // issue #28: ID候補一覧子画面の操作です。一覧選択とDialog入力は
-            // 同じ保存値への別経路であり、既存のDialog入力は残します。
-            context.elementId.startsWith("lower-resource-open:") &&
+            // 親タブ直下のプリセット選択操作です。一覧選択とDialog入力は
+            // 同じ保存値への別経路であり、子画面遷移は行いません。
+            context.elementId.startsWith(InlineResourcePicker.PICK_PREFIX) &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                openResourcePicker(player, context.elementId.removePrefix("lower-resource-open:"))
+                applyInlineResourcePick(player, context.elementId)
             }
-            context.elementId.startsWith("lower-resource-page:") &&
+            context.elementId.startsWith(InlineResourcePicker.INPUT_PREFIX) &&
                 GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                state.resourcePickerPage =
-                    context.elementId.removePrefix("lower-resource-page:").toIntOrNull() ?: return
-                updateLower(player)
-            }
-            context.elementId.startsWith("lower-resource-pick:") &&
-                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                applyResourcePick(player, context.elementId.removePrefix("lower-resource-pick:"))
-            }
-            context.elementId == "lower-resource-back" &&
-                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                state.lowerMode = GestureLowerMode.SETTINGS
-                state.resourcePickerFieldKey = null
-                state.resourcePickerPage = 0
-                updateLower(player)
-            }
-            context.elementId == "lower-resource-input" &&
-                GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
-                val fieldKey = state.resourcePickerFieldKey ?: return
-                state.lowerMode = GestureLowerMode.SETTINGS
-                state.resourcePickerFieldKey = null
-                state.resourcePickerPage = 0
-                updateLower(player)
+                val fieldKey = InlineResourcePicker.parseInput(context.elementId) ?: return
                 beginSelectedFieldEdit(player, fieldKey)
             }
             context.elementId.startsWith("lower-setting-") &&
