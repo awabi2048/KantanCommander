@@ -342,6 +342,10 @@ class GestureLowerPanel(
             Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET))
         }
         val pathLast = state.settingTreePath?.nodeIds?.lastOrNull()
+        // タグ一覧はワールド変数子画面と同型の専用描画を使います。
+        if (screen == GestureSettingScreen.ENTITY_TAG_LIST) {
+            return buildEntityTagListChild(state, player)
+        }
         // スポーン種別の子画面では移動先選択の再掲ではなく、メンバー／ゲストの2択を示します。
         val choices = if (screen == GestureSettingScreen.POSITION &&
             pathLast == "position-preset:${SettingPresets.PositionPreset.MYWORLD_SPAWN.name}"
@@ -631,6 +635,94 @@ class GestureLowerPanel(
         state: GestureEditorState,
         player: Player,
     ): GestureGuiView = buildWorldVariablesNew(state, player)
+
+    /** タグ一覧の子画面を生成します（宣言実装）。 */
+    fun buildEntityTagListChild(
+        state: GestureEditorState,
+        player: Player,
+    ): GestureGuiView {
+        val context = state.settingContext
+        val node = context?.let { plugin.scripts.load(it.scriptId)?.graph?.nodes?.get(it.nodeId) }
+        val entries = node?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }.orEmpty()
+        val pageSize = TAG_PAGE_SIZE
+        val pageCount = ((entries.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = state.tagPage.coerceIn(0, pageCount - 1)
+        return finishTagListChild(
+            me.awabi2048.kantancommander.gui.declarative.DeclarativeTagEntries.tagDocument(
+                me.awabi2048.kantancommander.gui.declarative.TagListData(
+                    title = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_ENTRIES)),
+                    description = tagListDescription(player),
+                    emptyLabel = if (entries.isEmpty()) {
+                        Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET))
+                    } else null,
+                    entries = entries.drop(page * pageSize).take(pageSize).map { entry ->
+                        val adding = entry.mode == EntityTagEntries.MODE_ADD
+                        val modeText = KcI18n.text(
+                            player,
+                            if (adding) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
+                            else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE,
+                        )
+                        me.awabi2048.kantancommander.gui.declarative.TagListEntry(
+                            tag = entry.tag,
+                            modeGlyph = Component.text(if (adding) "＋" else "－", NamedTextColor.WHITE),
+                            modeBackground = Bukkit.createBlockData(
+                                if (adding) Material.GREEN_CONCRETE else Material.ORANGE_CONCRETE,
+                            ),
+                            hover = singleLineHover(
+                                labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION, modeText),
+                                0.0,
+                                CHILD_HOVER_Y,
+                                SETTING_DESCRIPTION_HOVER_ID,
+                            ),
+                            modeHover = singleLineHover(
+                                labeled(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION, modeText),
+                                0.0,
+                                CHILD_HOVER_Y,
+                                SETTING_DESCRIPTION_HOVER_ID,
+                            ),
+                            deleteHover = singleLineHover(
+                                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE),
+                                0.0,
+                                CHILD_HOVER_Y,
+                                SETTING_DESCRIPTION_HOVER_ID,
+                            ),
+                        )
+                    },
+                    // 行自体が入力であるため縁は一律空色とし、選択ハイライトは付けません。
+                    entryBackground = Bukkit.createBlockData(Material.LIGHT_GRAY_CONCRETE),
+                    edgeBackground = Bukkit.createBlockData(Material.LIGHT_BLUE_CONCRETE),
+                    deleteBackground = Bukkit.createBlockData(Material.RED_CONCRETE),
+                    page = page,
+                    pageCount = pageCount,
+                    pagerAvailableBackground = Bukkit.createBlockData(Material.CYAN_CONCRETE),
+                    pagerDisabledBackground = Bukkit.createBlockData(DisabledGuiVisualPolicy.material),
+                    createLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_ADD)),
+                    createBackground = Bukkit.createBlockData(Material.GREEN_CONCRETE),
+                    backLabel = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_COMMON_BACK)),
+                    backBackground = Bukkit.createBlockData(Material.BROWN_CONCRETE),
+                ),
+            ),
+        )
+    }
+
+    /** タグ一覧子画面の説明文です。言語キーの複数行をそのまま重ねます。 */
+    private fun tagListDescription(player: Player): Component =
+        KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_TAGS)
+            .foldIndexed(Component.empty()) { index, result, line ->
+                if (index == 0) Component.text(line) else result.append(Component.newline()).append(Component.text(line))
+            }
+
+    /** タグ一覧子画面の宣言区画を解決・変換し、既存の子画面定義へ載せます。 */
+    private fun finishTagListChild(document: GestureGuiDocument, tag: String = "[DeclarativeTagList]"): GestureGuiView {
+        val compiled = KantanLayoutBridge.compile(
+            document,
+            onAction,
+            onDiagnostics = { diagnostics ->
+                plugin.logger.warning("[KantanCommander]$tag $diagnostics")
+            },
+        )
+        return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
+    }
 
     /**
      * 変数一覧子画面の宣言実装です。旧 `buildWorldVariables` と同じ算出・文言・
@@ -1578,9 +1670,17 @@ class GestureLowerPanel(
                         outline = if (suppressHighlight) {
                             null
                         } else {
-                            GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)?.let {
-                                Bukkit.createBlockData(it)
+                            // エンティティ操作画面では設定済みを空色縁で表します。
+                            // 他機能の表示規則には波及させません。
+                            val outline = if (fieldKey == EntityDataPath.PARAM_PATH) {
+                                GestureSettingVisualPolicy.entityChoiceOutlineMaterial(
+                                    choice.selected,
+                                    choice.valueState == GestureSettingValueState.CONFIGURED,
+                                )
+                            } else {
+                                GestureSettingVisualPolicy.nonTabOutlineMaterial(choice.selected)
                             }
+                            outline?.let { Bukkit.createBlockData(it) }
                         },
                         enabled = choice.enabled,
                         cx = cx,
@@ -3396,6 +3496,31 @@ class GestureLowerPanel(
             id.startsWith("soundScope:") -> choice.selected &&
                 node.string("soundScope", "POSITION") == id.removePrefix("soundScope:") &&
                 CommandSettingsModel.isFieldConfigured(node, "soundScope")
+            // エンティティ操作の設定済みは入力存在で判定し、選択表示と分離します。
+            // 選択表示は排他的に1件ですが、設定済み表示は複数件に付き得ます。
+            // 真偽値は偽値も入力として扱います。
+            id == "entityData:tag" ->
+                EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)).orEmpty().isNotEmpty()
+            id == "entityData:attribute" ->
+                EntityDataPath.parse(node.string(EntityDataPath.PARAM_PATH)) is EntityDataPath.Parsed.Attribute
+            id.startsWith("entityData:property:") -> {
+                val propertyId = id.removePrefix("entityData:property:")
+                val raw = node.string(EntityDataSchema.PARAM_VALUE)
+                EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH)) == propertyId &&
+                    when (EntityDataSchema.definition(propertyId)?.valueKind) {
+                        EntityPropertyValueKind.BOOLEAN -> raw.toBooleanStrictOrNull() != null
+                        EntityPropertyValueKind.ENUM ->
+                            EntityDataSchema.definition(propertyId)?.enumChoices?.any { it.id == raw } == true
+                        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> raw.isNotBlank()
+                        null -> false
+                    }
+            }
+            id.startsWith("attribute:") ->
+                EntityDataPath.attributeIdOf(node.string(EntityDataPath.PARAM_PATH)) == id.removePrefix("attribute:")
+            id.startsWith("propertyValue:") ->
+                node.string(EntityDataSchema.PARAM_VALUE) == id.removePrefix("propertyValue:")
+            id == "tagAdd" -> false
+            id.startsWith("tagEntry:") || id.startsWith("tagMode:") || id.startsWith("tagDelete:") -> true
             else -> choice.selected && CommandSettingsModel.isFieldConfigured(node, fieldKey, context.role)
         }
     }
@@ -3521,9 +3646,9 @@ class GestureLowerPanel(
                 SettingChoice("attribute:$id", id, current == id)
             }
         }
-        // タグ一覧画面です。入力で行を追加し、カード端の2子ボタンで
-        // モード切替・削除を行います。
-        GestureSettingScreen.ENTITY_TAG_LIST -> tagListChoices(node, player)
+        // タグ一覧はワールド変数子画面と同型の専用描画を使うため、
+        // 汎用選択肢は出しません。操作は専用要素IDで振り分けます。
+        GestureSettingScreen.ENTITY_TAG_LIST -> emptyList()
         // 有限候補の選択画面です。真偽値・文字列・整数は別経路で編集します。
         GestureSettingScreen.ENTITY_PROPERTY_VALUE -> {
             val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
@@ -3899,46 +4024,6 @@ class GestureLowerPanel(
         }
         return entries.mapIndexed { index, entry ->
             SettingChoice("tagEntry:$index", entry.tag, false)
-        }
-    }
-
-    /**
-     * タグ一覧画面の選択肢です。
-     *
-     * 入力で行を追加し、タグごとにモード切替行と削除行を並べます。
-     * 子画面内での入れ子遷移は行わず、すべての行を単一クリックで確定します。
-     * Nameへ現在値を含めず、モードの現在値はLoreのデータ行へ表示します。
-     */
-    private fun tagListChoices(node: CommandNode, player: Player): List<SettingChoice> {
-        val entries = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)).orEmpty()
-        return buildList {
-            add(
-                SettingChoice(
-                    "tagAdd",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_ADD),
-                    false,
-                ),
-            )
-            entries.forEachIndexed { index, entry ->
-                val modeLabel = labeled(
-                    player,
-                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION,
-                    KcI18n.text(
-                        player,
-                        if (entry.mode == EntityTagEntries.MODE_ADD) KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ADD
-                        else KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_REMOVE,
-                    ),
-                )
-                // モード切替行にタグ名を含め、対象を識別できるようにします。
-                add(SettingChoice("tagMode:$index", "${entry.tag} : $modeLabel", false))
-                add(
-                    SettingChoice(
-                        "tagDelete:$index",
-                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE),
-                        false,
-                    ),
-                )
-            }
         }
     }
 
@@ -4922,6 +5007,13 @@ class GestureLowerPanel(
         const val WORLD_VARIABLE_CARD_WIDTH = 0.72
         const val WORLD_VARIABLE_DELETE_GAP = 0.05
         const val WORLD_VARIABLE_DELETE_WIDTH = 0.15
+        // タグ一覧の各列は「名札＋モード＋削除」で構成します。モード枠は削除枠と
+        // 同一寸法とし、3枠総幅（1.00）を列ピッチ（1.06）以内に収めます。
+        const val TAG_CARD_WIDTH = 0.60
+        const val TAG_ICON_GAP = 0.05
+        const val TAG_MODE_WIDTH = WORLD_VARIABLE_DELETE_WIDTH
+        // タグ一覧は変数一覧と同じく2列×3行に制限します。
+        const val TAG_PAGE_SIZE = 6
         const val ACTION_DESCRIPTION_Y = 0.36
         // 親画面のホバー説明は、常設の灰色説明（ACTION_DESCRIPTION_Y）と対になる
         // 画面下段のスロットへ表示します。操作行（-0.43）や対象カード（-0.25）と

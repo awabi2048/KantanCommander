@@ -128,6 +128,19 @@ internal object GestureSettingVisualPolicy {
         choice.hasChildren -> NamedTextColor.AQUA
         else -> NamedTextColor.GOLD
     }
+
+    /**
+     * エンティティ操作の設定済み縁色です。
+     *
+     * 「選択している状態」（排他的）と「値を設定済みである状態」（非排他的）を
+     * 別チャネルで表します。選択中は白縁、未選択の設定済みは空色縁とします。
+     * 真偽値の偽値も入力として扱い、設定済みに含めます。
+     */
+    fun entityChoiceOutlineMaterial(selected: Boolean, configured: Boolean): Material? = when {
+        selected -> nonTabOutlineMaterial(true)
+        configured -> Material.LIGHT_BLUE_CONCRETE
+        else -> null
+    }
 }
 
 /** 木構造上の現在位置。表示状態と戻る経路を同じ値から復元します。 */

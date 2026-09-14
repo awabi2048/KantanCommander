@@ -186,6 +186,8 @@ data class GestureEditorState(
     var detailVisitedKeys: MutableSet<String> = mutableSetOf(),
     /** ワールド内変数一覧だけに使うページ番号です。 */
     var variablePage: Int = 0,
+    /** タグ一覧子画面だけに使うページ番号です。 */
+    var tagPage: Int = 0,
     /** ワールド内変数の新規作成で、Dialogへ進む前にGestureGUIで選択した型です。 */
     var pendingWorldVariableType: ValueType? = null,
     /** ワールド内変数の削除確認で、確認対象として表示している名前です。 */
@@ -4766,8 +4768,97 @@ class GestureSequenceEditor(
     }
 
     /** ワールド内変数一覧の子画面を開きます。 */
-    private fun openWorldVariables(player: Player) {
-        if (resolveVariableWorldId() == null) return
+    /**
+     * タグ一覧子画面の操作対象ノードです。
+     *
+     * 一覧表示と同一世代のノードを取り直し、ページ送り後の古い行番号が
+     * 別世代の内容へ作用しないようにします。
+     */
+    private fun entityTagNode(): Pair<CommandSettingContext, CommandNode>? {
+        val settingContext = state.settingContext ?: return null
+        val node = plugin.scripts.load(settingContext.scriptId)?.graph?.nodes?.get(settingContext.nodeId)
+            ?: return null
+        return settingContext to node
+    }
+
+    /** タグ一覧を保存します。成功時は下部画面を更新します。 */
+    private fun saveEntityTagEntries(
+        player: Player,
+        settingContext: CommandSettingContext,
+        entries: List<EntityTagEntries.Entry>,
+    ): Boolean = updateSettingNode(
+        player,
+        settingContext,
+        configuredFields = setOf(EntityTagEntries.PARAM_ENTRIES),
+    ) {
+        CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(entries))
+    }
+
+    /** タグ一覧子画面の追加入力です。入力値をaddモードで追記します。 */
+    private fun showTagEntryDialog(player: Player) {
+        val (_, node) = entityTagNode() ?: return
+        beginSettingInput(
+            player,
+            requireNotNull(CommandDialogSpecs.field(node, EntityTagEntries.PARAM_ENTRIES)),
+            "",
+        ) { raw ->
+            val normalized = raw.trim()
+            val (_, current) = entityTagNode()
+                ?: return@beginSettingInput KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            val spec = CommandDialogSpecs.field(current, EntityTagEntries.PARAM_ENTRIES)
+                ?: return@beginSettingInput KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                )
+            val validationError = spec.validateInput(normalized)
+            if (validationError != null) {
+                KcI18n.text(player, validationError)
+            } else {
+                val entries = EntityTagEntries.parse(current.string(EntityTagEntries.PARAM_ENTRIES))
+                    ?: return@beginSettingInput KcI18n.text(
+                        player,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                    )
+                val updated = entries + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, normalized)
+                if (!EntityTagEntries.isValid(updated)) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT)
+                } else {
+                    val (settingContext, _) = entityTagNode()
+                        ?: return@beginSettingInput KcI18n.text(
+                            player,
+                            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                        )
+                    if (!saveEntityTagEntries(player, settingContext, updated)) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else null
+                }
+            }
+        }
+    }
+
+    /** タグ一覧子画面のモード切替です。add⇔removeを切り替えます。 */
+    private fun toggleEntityTagMode(player: Player, index: Int) {
+        val (settingContext, node) = entityTagNode() ?: return
+        val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)) ?: return
+        val target = current.getOrNull(index) ?: return
+        val toggled = if (target.mode == EntityTagEntries.MODE_ADD) EntityTagEntries.MODE_REMOVE else EntityTagEntries.MODE_ADD
+        val updated = current.toMutableList().also { it[index] = target.copy(mode = toggled) }
+        if (!EntityTagEntries.isValid(updated)) return
+        saveEntityTagEntries(player, settingContext, updated)
+    }
+
+    /** タグ一覧子画面の削除です。該当エントリのみ削除します。 */
+    private fun deleteEntityTagEntry(player: Player, index: Int) {
+        val (settingContext, node) = entityTagNode() ?: return
+        val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES)) ?: return
+        if (index !in current.indices) return
+        saveEntityTagEntries(player, settingContext, current.toMutableList().also { it.removeAt(index) })
+    }
+
+    private fun openWorldVariables(player: Player) {        if (resolveVariableWorldId() == null) return
         state.variablePage = 0
         state.pendingWorldVariableType = null
         state.pendingWorldVariableDeleteName = null
@@ -6965,13 +7056,15 @@ class GestureSequenceEditor(
             GestureSettingScreen.ENTITY_DATA_ROOT -> {
                 if (group != "entityData") return
                 // タグ・attribute・有限候補は子画面を持つ親項目であり、
-                // 選択済みの再クリックで入室します（コードベースの共通契約）。
+                // 同一項目への連続クリックで入室します。永続選択とのOR判定は
+                // 使わず、切替操作（別項目の選択）が誤入室しないようにします。
                 // 真偽値・文字列・整数は葉としてその場で確定します。
+                // 直前のクリック記憶は遷移専用であり、選択表示とは分離します。
+                val consecutive = state.settingTreePath?.nodeIds?.lastOrNull() == encoded
                 if (value == "attribute") {
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                     rememberSettingNode(encoded)
-                    if (settingSelectionAction(wasSelected, hasChildren) !=
+                    if (settingSelectionAction(consecutive, hasChildren) !=
                         GestureSettingSelectionAction.ENTER_CHILD
                     ) {
                         showSettingScreen()
@@ -6989,7 +7082,6 @@ class GestureSequenceEditor(
                     return
                 }
                 if (value == "tag") {
-                    val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                     val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                     rememberSettingNode(encoded)
                     if (!updateSettingNode(player, settingContext) {
@@ -6998,7 +7090,7 @@ class GestureSequenceEditor(
                         showSettingScreen()
                         return
                     }
-                    if (settingSelectionAction(wasSelected, hasChildren) !=
+                    if (settingSelectionAction(consecutive, hasChildren) !=
                         GestureSettingSelectionAction.ENTER_CHILD
                     ) {
                         showSettingScreen()
@@ -7013,13 +7105,13 @@ class GestureSequenceEditor(
                         ),
                         encoded,
                     )
+                    state.tagPage = 0
                     return
                 }
                 if (!value.startsWith("property:")) return
                 val propertyId = value.removePrefix("property:")
                 val definition = EntityDataSchema.definition(propertyId) ?: return
                 val previous = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
-                val wasSelected = lowerPanel.isSettingChoiceSelected(state, player, encoded)
                 val hasChildren = lowerPanel.hasSettingChoiceChildren(state, player, encoded)
                 rememberSettingNode(encoded)
                 if (updateSettingNode(player, settingContext) {
@@ -7039,7 +7131,7 @@ class GestureSequenceEditor(
                                 }) showSettingScreen()
                         }
                         EntityPropertyValueKind.ENUM -> {
-                            if (settingSelectionAction(wasSelected, hasChildren) !=
+                            if (settingSelectionAction(consecutive, hasChildren) !=
                                 GestureSettingSelectionAction.ENTER_CHILD
                             ) {
                                 showSettingScreen()
@@ -7124,68 +7216,9 @@ class GestureSequenceEditor(
                     } else null
                 }
             }
-            GestureSettingScreen.ENTITY_TAG_LIST -> {
-                when (group) {
-                    // 新規タグ入力行です。入力値をaddモードで追記します。
-                    "tagAdd" -> {
-                        beginSettingInput(
-                            player,
-                            requireNotNull(CommandDialogSpecs.field(node, EntityTagEntries.PARAM_ENTRIES)),
-                            "",
-                        ) { raw ->
-                            val normalized = raw.trim()
-                            val spec = requireNotNull(CommandDialogSpecs.field(node, EntityTagEntries.PARAM_ENTRIES))
-                            val validationError = spec.validateInput(normalized)
-                            if (validationError != null) {
-                                KcI18n.text(player, validationError)
-                            } else {
-                                val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
-                                    ?: return@beginSettingInput KcI18n.text(
-                                        player,
-                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
-                                    )
-                                val updated = current + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, normalized)
-                                if (!EntityTagEntries.isValid(updated)) {
-                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT)
-                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(EntityTagEntries.PARAM_ENTRIES)) {
-                                        CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
-                                    }) {
-                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
-                                } else null
-                            }
-                        }
-                        return
-                    }
-                    // カード端のモードボタンです。add⇔removeを切り替えます。
-                    "tagMode" -> {
-                        val index = value.toIntOrNull() ?: return
-                        val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
-                            ?: return
-                        val target = current.getOrNull(index) ?: return
-                        val toggled = if (target.mode == EntityTagEntries.MODE_ADD) EntityTagEntries.MODE_REMOVE else EntityTagEntries.MODE_ADD
-                        val updated = current.toMutableList().also { it[index] = target.copy(mode = toggled) }
-                        if (!EntityTagEntries.isValid(updated)) return
-                        if (updateSettingNode(player, settingContext) {
-                                CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
-                            }) showSettingScreen()
-                    }
-                    // カード端の削除ボタンです。該当エントリのみ削除します。
-                    "tagDelete" -> {
-                        val index = value.toIntOrNull() ?: return
-                        val current = EntityTagEntries.parse(node.string(EntityTagEntries.PARAM_ENTRIES))
-                            ?: return
-                        if (index !in current.indices) return
-                        val updated = current.toMutableList().also { it.removeAt(index) }
-                        if (updateSettingNode(player, settingContext) {
-                                CommandSettingsModel.setParameter(
-                                    it,
-                                    EntityTagEntries.PARAM_ENTRIES,
-                                    EntityTagEntries.encode(updated),
-                                )
-                            }) showSettingScreen()
-                    }
-                }
-            }
+            // タグ一覧は専用ドキュメントで描画し、専用要素IDで振り分けるため、
+            // 汎用選択の分岐は持ちません。網羅性のために空分岐を置きます。
+            GestureSettingScreen.ENTITY_TAG_LIST -> Unit
             GestureSettingScreen.ENTITY_PROPERTY_VALUE -> {
                 if (group != "propertyValue") return
                 val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
@@ -7764,6 +7797,23 @@ class GestureSequenceEditor(
             context.elementId.startsWith("lower-variables-page:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
                 state.variablePage = context.elementId.removePrefix("lower-variables-page:").toIntOrNull() ?: return
                 updateLower(player)
+            }
+            // タグ一覧子画面の操作です。ワールド変数子画面と同一の接頭辞方式を使い、
+            // 一覧カード・モード・削除の取り違えが起きない順序で判定します。
+            context.elementId.startsWith("lower-tag-page:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                state.tagPage = context.elementId.removePrefix("lower-tag-page:").toIntOrNull() ?: return
+                updateLower(player)
+            }
+            context.elementId.startsWith("lower-tag-delete:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val index = context.elementId.removePrefix("lower-tag-delete:").toIntOrNull() ?: return
+                deleteEntityTagEntry(player, index)
+            }
+            context.elementId.startsWith("lower-tag-mode:") && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                val index = context.elementId.removePrefix("lower-tag-mode:").toIntOrNull() ?: return
+                toggleEntityTagMode(player, index)
+            }
+            context.elementId == "lower-tag-create" && GestureGuiClickPolicy.isPrimaryClick(context.gesture) -> {
+                showTagEntryDialog(player)
             }
             // 「削除」要素は lower-variable: より先に判定します。共通接頭辞の後段を
             // 値編集の変数名として誤解釈すると、削除クリックでDialogが開いてしまいます。
