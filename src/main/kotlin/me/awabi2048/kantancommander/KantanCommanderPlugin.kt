@@ -68,6 +68,12 @@ class KantanCommanderPlugin : JavaPlugin() {
     /** issue #24 の Entity Group ストアです。群の所属・pivot・姿勢を永続管理します。 */
     lateinit var entityGroups: me.awabi2048.kantancommander.data.EntityGroupStore
         private set
+    /**
+     * issue #23 の高精度 Hit Test です。#14 の操作ツールが選択方法として
+     * 利用できる独立 API であり、操作ツールの session／UI とは結合しません。
+     */
+    lateinit var hitTest: me.awabi2048.kantancommander.hittest.HitTestEngine
+        private set
     lateinit var variables: WorldVariableStore
         private set
     /** issue #22 のEntity変数storeです。PDCを永続領域に使います。 */
@@ -199,6 +205,12 @@ class KantanCommanderPlugin : JavaPlugin() {
         entityGroups = me.awabi2048.kantancommander.data.EntityGroupStore(
             dataFolder.resolve("entity-groups.json"),
             logger,
+        )
+        hitTest = me.awabi2048.kantancommander.hittest.HitTestEngine(
+            exclusion = { entity ->
+                runCatching { CCSystem.getAPI().getSystemEntityRegistry().isSystemEntity(entity) }
+                    .getOrDefault(false)
+            },
         )
         variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
         entityVariables = me.awabi2048.kantancommander.model.EntityVariableStore(
