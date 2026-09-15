@@ -10,15 +10,20 @@ class CommandMenuPresentationTest {
     @Test
     fun `every command type has an explicit category`() {
         assertEquals(CommandType.entries.toSet(), CommandType.entries.groupBy(CommandPresentationPolicy::category).values.flatten().toSet())
-        assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.EXECUTION)
+        // issue #13: 実行系は頻度・領域別の6分類へ分割しました。
+        assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.BASIC)
+        assertTrue(CommandType.ENTITY_OPERATION.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
+        assertTrue(CommandType.BLOCK_OPERATION.let(CommandPresentationPolicy::category) == CommandCategory.BUILD)
+        assertTrue(CommandType.PARTICLE.let(CommandPresentationPolicy::category) == CommandCategory.EFFECT)
         assertTrue(CommandType.CONDITION.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
         assertTrue(CommandType.DISK_CALL.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
+        assertTrue(CommandType.VARIABLE.let(CommandPresentationPolicy::category) == CommandCategory.VARIABLE)
     }
 
     @Test
     fun `nested open branch picker retains normal commands and optional merge`() {
-        val executionTypes = CommandPickerTypePolicy.types(
-            category = CommandCategory.EXECUTION,
+        val basicTypes = CommandPickerTypePolicy.types(
+            category = CommandCategory.BASIC,
             mergeAvailable = true,
             insideForBody = false,
         )
@@ -28,13 +33,43 @@ class CommandMenuPresentationTest {
             insideForBody = false,
         )
 
-        assertTrue(CommandType.TELEPORT in executionTypes)
+        assertTrue(CommandType.TELEPORT in basicTypes)
         assertTrue(CommandType.CONDITION in controlTypes)
         assertTrue(CommandType.MERGE in controlTypes)
-        // Particle追加後は実行系が2ページになります。候補一覧全体ではなく、
-        // ページャーが返すページ数で収まることを検証します。
-        assertEquals(2, GestureCommandPickerLayoutPolicy.pageCount(executionTypes.size))
+        // issue #13: 分類ごとの候補は1ページに収め、ページングは将来の
+        // 増加時の補助手段として残します。
+        CommandCategory.entries.forEach { category ->
+            val types = CommandPickerTypePolicy.types(
+                category = category,
+                mergeAvailable = true,
+                insideForBody = false,
+            )
+            assertTrue(types.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE, "$category")
+        }
+        assertEquals(1, GestureCommandPickerLayoutPolicy.pageCount(basicTypes.size))
         assertTrue(controlTypes.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE)
+    }
+
+    @Test
+    fun `simple inventory picker fits every simple category`() {
+        // issue #13: 簡易選択画面は簡易分類のタブで候補を分けます。
+        // 旧来の全件固定表示は19件が14枠を超えていたため廃止しました。
+        val simpleCategories = CommandCategory.entries.filter { it.isSimple() }
+        assertEquals(
+            listOf(CommandCategory.BASIC, CommandCategory.ENTITY, CommandCategory.BUILD, CommandCategory.EFFECT),
+            simpleCategories,
+        )
+        simpleCategories.forEach { category ->
+            val types = CommandPresentationPolicy.SIMPLE_TYPES.filter { CommandPresentationPolicy.category(it) == category }
+            assertTrue(types.isNotEmpty(), "$category")
+            assertTrue(types.size <= CommandPickerLayoutPolicy.itemSlots.size, "$category")
+        }
+        assertEquals(CommandPickerLayoutPolicy.categorySlots.size, simpleCategories.size)
+        // 簡易集合は旧来の実行系＋待機と一致します。
+        assertEquals(19, CommandPresentationPolicy.SIMPLE_TYPES.size)
+        assertTrue(CommandType.WAIT in CommandPresentationPolicy.SIMPLE_TYPES)
+        assertFalse(CommandType.CONDITION in CommandPresentationPolicy.SIMPLE_TYPES)
+        assertFalse(CommandType.VARIABLE in CommandPresentationPolicy.SIMPLE_TYPES)
     }
 
     @Test

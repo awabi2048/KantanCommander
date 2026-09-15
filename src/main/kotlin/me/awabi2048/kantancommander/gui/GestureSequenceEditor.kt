@@ -532,6 +532,17 @@ class GestureSequenceEditor(
     }
 
     /**
+     * issue #13: presence 変更の反映です。
+     *
+     * 内容更新（refreshFromStore）とは別経路であり、revision を進めず
+     * 上部表示だけを作り直します。開閉時の即時更新に使います。
+     */
+    internal fun refreshPresence() {
+        val owner = sessionOwnerId?.let(Bukkit::getPlayer)?.takeIf(Player::isOnline) ?: return
+        updateUpper(owner)
+    }
+
+    /**
      * 保存通知による再同期です。
      *
      * issue #15 の差分同期として、自身の保存直後に届くbroadcastでは
@@ -1923,6 +1934,41 @@ class GestureSequenceEditor(
     }
 
     /**
+     * issue #13: 共同編集者の表示専用カードです。
+     *
+     * 自分以外の編集者がいる場合だけ文言付きカードを返し、いない場合は
+     * null です。操作面を持たず、ホバーで編集者名を示します。文言は
+     * 先頭2名までとし、全員はホバーで確認します。
+     */
+    private fun presenceCard(player: Player): SettingsActionCard? {
+        val others = plugin.gestureEditor.presenceFor(state.scriptId)
+            .filter { it != player.uniqueId }
+            .mapNotNull { Bukkit.getPlayer(it)?.name ?: Bukkit.getOfflinePlayer(it).name }
+        if (others.isEmpty()) return null
+        val label = others.take(2).joinToString(", ")
+        var hover = Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_EDITING))
+        others.forEach { name ->
+            hover = hover.append(Component.newline()).append(Component.text(name))
+        }
+        return SettingsActionCard(
+            elementId = null,
+            label = Component.text(label).color(NamedTextColor.YELLOW),
+            background = blockDataOf(Material.PLAYER_HEAD),
+            cx = GestureEditorLayout.PRESENCE_X,
+            cy = GestureEditorLayout.PRESENCE_Y,
+            w = GestureEditorLayout.PRESENCE_SIZE,
+            h = GestureEditorLayout.PRESENCE_SIZE,
+            labelSize = 0.008,
+            labelWidth = 90,
+            labelDy = -0.01,
+            gestures = emptySet(),
+            guard = null,
+            hover = navigationHoverText(hover),
+            visualTag = "presence",
+        )
+    }
+
+    /**
      * 上部画面の構築全体を保護します。
      *
      * レイアウト変換が成功しても、画面要素IDの重複やCC-Systemの画面定義検証で
@@ -2560,6 +2606,9 @@ class GestureSequenceEditor(
         val test = data.test
         val testActive = data.testActive
         val chrome = mutableListOf<SettingsActionCard>()
+        // issue #13: 同一 script の共同編集者を表示専用カードで示します。
+        // 自分以外の編集者がいる場合だけ出し、内容・revision へは触れません。
+        presenceCard(player)?.let { chrome += it }
         if (!testActive) {
             listOf(
                 Quad("nav-up", 0, 1, "▲"),

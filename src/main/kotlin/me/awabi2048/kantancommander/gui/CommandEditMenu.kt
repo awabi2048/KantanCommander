@@ -76,6 +76,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderPicker(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
+                    // issue #13: 簡易分類のタブ切替です。制御・変数系はフルGUIへ
+                    // 委ねるため、簡易分類以外の指定は無視します。
+                    "tab" to MenuActionHandler { context ->
+                        val category = context.payload[PICKER_CATEGORY]
+                            ?.let { runCatching { CommandCategory.valueOf(it) }.getOrNull() }
+                            ?.takeIf { it.isSimple() }
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        MenuActionResult.Success(
+                            MenuUpdate.Replace(
+                                context.route.copy(payload = context.route.payload + (PICKER_CATEGORY to category.name)),
+                            ),
+                        )
+                    },
                     "select" to MenuActionHandler { context ->
                         val script = script(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         val type = context.payload["type"]?.let { runCatching { CommandType.valueOf(it) }.getOrNull() }
@@ -1273,9 +1286,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun renderPicker(player: Player, route: MenuRoute): InventoryMenuView {
-        // 簡易GUIでは実行コマンドと待機だけを固定表示します。カテゴリ切替は
-        // 行わず、制御系コマンドの追加はフルGUI（ジェスチャーGUI）へ委ねます。
-        val types = CommandPresentationPolicy.SIMPLE_TYPES
+        // issue #13: 簡易GUIでは簡易分類（基礎・Entity・建築・演出）のタブで
+        // 選択します。分類ごとの候補は固定14枠に収まるため、ページングは
+        // 行いません。制御・変数系の追加はフルGUI（ジェスチャーGUI）へ委ねます。
+        // 旧来の全件固定表示は19件が14枠を超えて破綻していたため廃止します。
+        val categories = CommandCategory.entries.filter { it.isSimple() }
+        val selected = route.payload[PICKER_CATEGORY]
+            ?.let { runCatching { CommandCategory.valueOf(it) }.getOrNull() }
+            ?.takeIf { it.isSimple() }
+            ?: CommandCategory.BASIC
+        val types = CommandPresentationPolicy.SIMPLE_TYPES.filter { CommandPresentationPolicy.category(it) == selected }
         val elements = types.mapIndexed { index, type ->
             KcGui.menuEntry(
                 player = player,
@@ -1296,6 +1316,22 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 slot,
                 KcGui.elements.decoration(Material.WHITE_STAINED_GLASS_PANE),
                 GuiElementRole.DECORATION,
+            )
+        }
+        categories.forEachIndexed { index, category ->
+            val active = category == selected
+            elements += KcGui.menuEntry(
+                player = player,
+                slot = CommandPickerLayoutPolicy.categorySlots[index],
+                material = if (active) Material.LIME_CONCRETE else Material.GRAY_CONCRETE,
+                name = KcI18n.text(player, category.labelKey),
+                style = if (active) GuiNameStyle.PRIMARY else GuiNameStyle.MUTED,
+                description = KcI18n.list(player, category.descriptionKey),
+                actions = listOf(GuiMenuActionIntent.AnyClick(
+                    actionId = "tab",
+                    label = KcI18n.text(player, category.labelKey),
+                    payload = mapOf(PICKER_CATEGORY to category.name),
+                )),
             )
         }
         elements += backElement(player, CommandPickerLayoutPolicy.BACK_SLOT)
@@ -3468,6 +3504,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
 
     companion object {
         private const val PICKER_ID = "command_type"
+        /** issue #13: 簡易選択画面の分類タブの経路キーです。 */
+        private const val PICKER_CATEGORY = "category"
         private const val SETTINGS_ID = "command_settings"
         private const val ENTITY_EQUIPMENT_SLOT_ID = "entity_equipment_slot"
         private const val ENTITY_DATA_ROOT_ID = "entity_data_root"

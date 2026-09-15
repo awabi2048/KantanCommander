@@ -260,6 +260,14 @@ object GestureEditorLayout {
     const val CLIP_SIZE: Double = NAV_SIZE
 
     /**
+     * issue #13: 共同編集者の表示位置です。閉じるボタンの下方に置き、
+     * グラフ領域（右端は NAV 列の左）・ズーム列と重ならないようにします。
+     */
+    const val PRESENCE_X: Double = ZOOM_X
+    const val PRESENCE_Y: Double = CLOSE_Y - NAV_PITCH
+    const val PRESENCE_SIZE: Double = NAV_SIZE
+
+    /**
      * ナビゲーション操作案内を表示する共有領域です。
      * 添付モックアップの黄色枠に合わせ、十字キーの左端からズームキーの右端までを
      * 1つの説明欄として使います。個別ボタンの上へ文言を置かないことで、長い日本語も

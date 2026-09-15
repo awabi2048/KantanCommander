@@ -182,14 +182,47 @@ object KantanItemService {
         item.editMeta { meta ->
             val lore = CCSystem.getAPI().getLoreService().render(
                 GuiLoreSpec.Rich(
-                    listOf(
-                        GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROGRAM_NAME), script.name, "§f"),
-                        GuiLoreLine.Data(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size, "§f"),
-                    ),
+                    programLoreLines(script, player),
                     com.awabi2048.ccsystem.api.gui.GuiLoreFrame.NONE,
                 ),
             )
             meta.lore(lore)
         }
     }
+
+    /**
+     * issue #13: プログラム情報の lore 行です。所有者・作成日時を含め、
+     * 一覧表示と同じ [me.awabi2048.kantancommander.gui.ProgramMetadata] の
+     * 書式を使います。Bukkit 依存の名前解決だけを呼び出し側へ残し、
+     * 行組み立ては単体試験できます。
+     */
+    fun programLoreLines(script: DiskScript, player: Player): List<GuiLoreLine> = programLoreLines(
+        scriptName = script.name,
+        nodeCount = script.graph.nodes.size,
+        ownerName = me.awabi2048.kantancommander.gui.ProgramMetadata.ownerName(script.owner) {
+            org.bukkit.Bukkit.getOfflinePlayer(it).name
+        },
+        createdAt = me.awabi2048.kantancommander.gui.ProgramMetadata.formatCreatedAt(script.createdAt),
+        programNameLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_PROGRAM_NAME),
+        commandsLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS),
+        ownerLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_OWNER),
+        createdAtLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_CREATED_AT),
+    )
+
+    /** issue #13: lore 行組み立ての純粋部分です。表示文言の対応を固定します。 */
+    fun programLoreLines(
+        scriptName: String,
+        nodeCount: Int,
+        ownerName: String,
+        createdAt: String,
+        programNameLabel: String,
+        commandsLabel: String,
+        ownerLabel: String,
+        createdAtLabel: String,
+    ): List<GuiLoreLine> = listOf(
+        GuiLoreLine.Data(programNameLabel, scriptName, "§f"),
+        GuiLoreLine.Data(commandsLabel, nodeCount, "§f"),
+        GuiLoreLine.Data(ownerLabel, ownerName, "§f"),
+        GuiLoreLine.Data(createdAtLabel, createdAt, "§f"),
+    )
 }
