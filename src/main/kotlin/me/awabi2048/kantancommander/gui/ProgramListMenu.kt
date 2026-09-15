@@ -89,7 +89,7 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 name = script.name,
                 style = GuiNameStyle.PRIMARY,
                 description = KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_ENTRY_DESCRIPTION),
-                data = listOf(
+                data = listOfNotNull(
                     GuiMenuEntryData(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_COMMANDS), script.graph.nodes.size),
                     // issue #7: 起動条件は設定項目として廃止したため、一覧では
                     // 実行時に採用する起動方法の要約だけを示します。
@@ -97,9 +97,19 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                         KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TRIGGER),
                         TriggerDisplay.summary(player, script.effectiveTrigger()),
                     ),
+                    // issue #13: 所有者・作成日時・共同編集者を一覧へ投影します。
+                    GuiMenuEntryData(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_OWNER),
+                        ProgramMetadata.ownerName(script.owner),
+                    ),
+                    GuiMenuEntryData(
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_CREATED_AT),
+                        ProgramMetadata.formatCreatedAt(script.createdAt),
+                    ),
                     // 未設定の検証エラーを一覧へ投影し、設定の完了扱いと接続します。
                     // 保存は構造検証だけを通すため、意味的な未完了はここで示します。
                     programStatusEntry(player, script),
+                    presenceEntry(player, script),
                 ),
                 role = GuiElementRole.CONTENT,
                 actions = listOf(
@@ -145,6 +155,21 @@ class ProgramListMenu(private val plugin: KantanCommanderPlugin) {
                 GuiValueTone.SUCCESS,
             )
         }
+    }
+
+    /**
+     * issue #13: 共同編集者を一覧へ投影します。自分以外の編集者がいる場合だけ
+     * 行を出し、いない場合は行自体を作りません。
+     */
+    private fun presenceEntry(player: Player, script: DiskScript): GuiMenuEntryData? {
+        val others = plugin.gestureEditor.presenceFor(script.id)
+            .filter { it != player.uniqueId }
+            .mapNotNull { org.bukkit.Bukkit.getPlayer(it)?.name ?: org.bukkit.Bukkit.getOfflinePlayer(it).name }
+            .takeIf { it.isNotEmpty() } ?: return null
+        return GuiMenuEntryData(
+            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_PROGRAMS_EDITING),
+            others.joinToString(", "),
+        )
     }
 
     private fun navigationElement(player: Player, slot: Int, enabled: Boolean, name: String, actionId: String): MenuElement {

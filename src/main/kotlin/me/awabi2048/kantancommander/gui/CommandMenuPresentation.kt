@@ -31,19 +31,37 @@ internal object DisabledChoiceVisualPolicy {
         if (enabled) normal else disabled?.takeIf { it.isNotEmpty() } ?: normal
 }
 
-/** コマンド選択画面で、実処理と実行順序の制御を混在させないための表示分類です。 */
+/**
+ * issue #13: コマンド選択画面の表示分類です。
+ *
+ * 実行コマンドを頻度・領域で分け、高頻度／基礎コマンドを浅い階層へ置きます。
+ * 新CommandTypeの追加時は [CommandPresentationPolicy.category] の一箇所へ
+ * 分類を足すだけで、両GUIのタブ・候補・簡易編集可否へ反映します。
+ */
 internal enum class CommandCategory(
     val routeValue: String,
     val labelKey: LocalizationKey<String>,
     val descriptionKey: LocalizationKey<List<String>>,
 ) {
-    EXECUTION("execution", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_PROCESS_DESCRIPTION),
+    /** 移動・付与・表示などの基礎コマンドです。簡易GUIでも編集できます。 */
+    BASIC("basic", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BASIC, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BASIC_DESCRIPTION),
+    /** エンティティの選択・操作・群管理です。簡易GUIでも編集できます。 */
+    ENTITY("entity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_ENTITY_DESCRIPTION),
+    /** ブロック・建造物の配置です。簡易GUIでも編集できます。 */
+    BUILD("build", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BUILD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BUILD_DESCRIPTION),
+    /** 音・粒子・花火などの演出です。簡易GUIでも編集できます。 */
+    EFFECT("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EFFECT_DESCRIPTION),
     CONTROL("control", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL_DESCRIPTION),
+    /** 変数の定義・操作です。フルGUIでのみ編集します。 */
+    VARIABLE("variable", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_VARIABLE_DESCRIPTION),
     ;
 
     companion object {
-        fun fromRoute(value: String?): CommandCategory = entries.firstOrNull { it.routeValue == value } ?: EXECUTION
+        fun fromRoute(value: String?): CommandCategory = entries.firstOrNull { it.routeValue == value } ?: BASIC
     }
+
+    /** 簡易GUI（統合版専用インベントリ）で編集できる分類です。 */
+    fun isSimple(): Boolean = this == BASIC || this == ENTITY || this == BUILD || this == EFFECT
 }
 
 /**
@@ -51,60 +69,73 @@ internal enum class CommandCategory(
  * 全型の表示契約を網羅的なwhenで管理します。
  */
 internal object CommandPresentationPolicy {
+    /**
+     * issue #13: コマンド型と分類の一元対応表です。
+     *
+     * 新CommandTypeの追加時はこの一箇所へ分類を足すだけで、両GUIのタブ・
+     * 候補・簡易編集可否へ反映します。分類ごとの候補は10件以内に収め、
+     * ページングは将来の増加時の補助手段として残します。
+     */
     fun category(type: CommandType): CommandCategory = when (type) {
         CommandType.TELEPORT,
         CommandType.GIVE_ITEM,
-        CommandType.PLACE_ITEM,
+        CommandType.DISPLAY_TEXT,
+        CommandType.WAIT,
+        CommandType.SUMMON_ENTITY,
+        CommandType.APPLY_EFFECT,
+        -> CommandCategory.BASIC
+
         CommandType.ENTITY_ACTION,
         CommandType.ENTITY_OPERATION,
-        CommandType.DISPLAY_TEXT,
-        CommandType.SUMMON_ENTITY,
+        CommandType.ENTITY_DELETE,
+        // issue #24: 群操作はEntity分類です。簡易GUIでも編集できます。
+        CommandType.ENTITY_GROUP,
+        -> CommandCategory.ENTITY
+
+        CommandType.BLOCK_OPERATION,
+        CommandType.PLACE_ITEM,
+        // issue #11: 建造物は建築分類です。簡易GUIでも編集できます。
+        CommandType.STRUCTURE_SAVE,
+        CommandType.STRUCTURE_PLACE,
+        -> CommandCategory.BUILD
+
         CommandType.PLAY_SOUND,
         CommandType.PARTICLE,
         CommandType.PARTICLE_GEOMETRY,
         CommandType.FIREWORK_LAUNCH,
-        CommandType.APPLY_EFFECT,
         CommandType.CAMERA_SHAKE,
-        CommandType.BLOCK_OPERATION,
-        CommandType.ENTITY_DELETE,
-        // issue #11: 建造物は実行カテゴリです。簡易GUIでも編集できます。
-        CommandType.STRUCTURE_SAVE,
-        CommandType.STRUCTURE_PLACE,
-        // issue #24: 群操作は実行カテゴリです。簡易GUIでも編集できます。
-        CommandType.ENTITY_GROUP,
-        -> CommandCategory.EXECUTION
+        -> CommandCategory.EFFECT
 
-        CommandType.WAIT,
         CommandType.CONDITION,
         CommandType.DISK_CALL,
         // issue #8: 「値を返す」は呼出先の実行を打ち切る制御コマンドです。
         CommandType.RETURN_VALUE,
-        CommandType.VARIABLE,
-        CommandType.TEMP_SET,
         CommandType.MERGE,
         CommandType.FOR_START,
         CommandType.FOR_END,
         CommandType.BREAK,
         CommandType.CONTINUE,
-        // 折り畳みノードは折り畳み操作だけで生成するため、新規追加の分類には載せません。
+        // 折り畳みノードは折り畳み操作だけで生成するため、新規追加の候補に出しません。
         CommandType.FOLDED_FOR,
         CommandType.FOLDED_IF,
         -> CommandCategory.CONTROL
 
+        CommandType.VARIABLE,
+        CommandType.TEMP_SET,
+        -> CommandCategory.VARIABLE
     }
 
     /**
      * 簡易GUI（統合版専用インベントリ）で扱うコマンド種別です。
      *
-     * 実行カテゴリにWAITを加えた固定集合とし、制御構造（条件・変数・合流・
-     * 繰り返し等）はフルGUI（ジェスチャーGUI）でのみ編集します。内部の
-     * 構造化データはフル形式のまま保持し、ここでは表示・編集の入口だけを
-     * 制限します。
+     * 簡易分類（基礎・Entity・建築・演出）の固定集合とし、制御・変数系は
+     * フルGUI（ジェスチャーGUI）でのみ編集します。内部の構造化データは
+     * フル形式のまま保持し、ここでは表示・編集の入口だけを制限します。
      */
     val SIMPLE_TYPES: List<CommandType> =
-        CommandType.entries.filter { category(it) == CommandCategory.EXECUTION || it == CommandType.WAIT }
+        CommandType.entries.filter { category(it).isSimple() }
 
-    /** 簡易GUIで設定変更できるノードかを返します。制御系は表示のみです。 */
+    /** 簡易GUIで設定変更できるノードかを返します。制御・変数系は表示のみです。 */
     fun isSimpleEditable(type: CommandType): Boolean = type in SIMPLE_TYPES
 
 }

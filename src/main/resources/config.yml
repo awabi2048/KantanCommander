@@ -12,4 +12,10 @@ limits:
   max-branch-depth: 32
 timer:
   maximum-seconds: 86400
-config_version: 7
+# 制御ブロック注視表示です。有効化すると、制御ブロックを見ている
+# プレイヤーへ program 名・所有者を短時間だけ表示します。
+gaze:
+  enabled: false
+  distance: 8.0
+  interval-ticks: 10
+config_version: 8

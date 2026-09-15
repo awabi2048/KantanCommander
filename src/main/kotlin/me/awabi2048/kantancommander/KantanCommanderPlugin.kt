@@ -55,7 +55,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "df5174c26cacaf6744214396c5ff3dd64ba2a6bb4184ce0bd49375ac04e819dd"
+    "788ecb08e238a19babed9f250a87fcdf7c42a81fbaf38edb225714ecc5d4da89"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -73,6 +73,9 @@ class KantanCommanderPlugin : JavaPlugin() {
      * 利用できる独立 API であり、操作ツールの session／UI とは結合しません。
      */
     lateinit var hitTest: me.awabi2048.kantancommander.hittest.HitTestEngine
+        private set
+    /** issue #13 の制御ブロック注視表示です。設定で有効化すると program 情報を短時間表示します。 */
+    lateinit var gazeDisplay: me.awabi2048.kantancommander.display.ControlBlockGazeService
         private set
     lateinit var variables: WorldVariableStore
         private set
@@ -127,7 +130,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 7,
+                    currentVersion = 8,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -167,6 +170,13 @@ class KantanCommanderPlugin : JavaPlugin() {
                             // 削除します。上限はそのまま維持します。
                             config.set("timer.minimum-seconds", null)
                         },
+                        7 to ConfigMigration { config ->
+                            // issue #13: 制御ブロック注視表示の設定を既定値で補完します。
+                            // 既定は無効であり、既存環境の表示を変えません。
+                            config.set("gaze.enabled", false)
+                            config.set("gaze.distance", 8.0)
+                            config.set("gaze.interval-ticks", 10)
+                        },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.max-nodes-per-activation") >= 1)
@@ -180,11 +190,16 @@ class KantanCommanderPlugin : JavaPlugin() {
                         require(config.getInt("limits.max-map-width") >= 9)
                         require(config.getInt("limits.max-map-height") >= 3)
                         require(config.getInt("limits.max-branch-depth") >= 1)
+                        // issue #13: 注視表示の設定範囲です。距離・周期は正の有限値に限ります。
+                        require(config.getDouble("gaze.distance", 8.0) in 1.0..32.0)
+                        require(config.getLong("gaze.interval-ticks", 10L) >= 1L)
                     },
                     reloadAction = {
                         reloadConfig()
                         if (::testExecution.isInitialized) testExecution.abortAll()
                         if (::scripts.isInitialized) rebuildConfiguredServices()
+                        // issue #13: 注視表示の設定を再読込後に組み替えます。
+                        if (::gazeDisplay.isInitialized) gazeDisplay.reload()
                     }
                 )
             )
@@ -212,6 +227,9 @@ class KantanCommanderPlugin : JavaPlugin() {
                     .getOrDefault(false)
             },
         )
+        gazeDisplay = me.awabi2048.kantancommander.display.ControlBlockGazeService(this)
+        server.pluginManager.registerEvents(gazeDisplay, this)
+        gazeDisplay.reload()
         variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
         entityVariables = me.awabi2048.kantancommander.model.EntityVariableStore(
             me.awabi2048.kantancommander.model.PdcEntityVariableBackend(),
@@ -280,6 +298,7 @@ class KantanCommanderPlugin : JavaPlugin() {
     override fun onDisable() {
         runCatching { if (::testExecution.isInitialized) testExecution.shutdown() }
         runCatching { if (::gestureEditor.isInitialized) gestureEditor.closeAll() }
+        runCatching { if (::gazeDisplay.isInitialized) gazeDisplay.stop() }
         standaloneExportContributor?.let(StandaloneExportContributors::unregister)
         standaloneExportContributor = null
         if (::placements.isInitialized) {

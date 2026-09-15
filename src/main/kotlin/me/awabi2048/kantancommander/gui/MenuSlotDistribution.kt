@@ -8,9 +8,9 @@ internal object CommandPickerLayoutPolicy {
     const val SIZE = 54
     const val BACK_SLOT = 45
     val itemSlots: List<Int> = (19..25).toList() + (28..34).toList()
-    // 2カテゴリを中央寄せで配置し、将来のカテゴリ追加時も本文の
-    // コマンド候補位置が動かないようにします。
-    val categorySlots: List<Int> = listOf(48, 50)
+    // issue #13: 簡易分類4タブ（基礎・Entity・建築・演出）を下段中央へ
+    // 対称配置します。戻る枠（45）と重ならず、候補位置も動きません。
+    val categorySlots: List<Int> = listOf(47, 48, 50, 51)
 
     /** 候補数が減っても、固定6行の未使用枠を同じ描画経路で埋めます。 */
     fun emptyItemSlots(usedCount: Int): List<Int> {

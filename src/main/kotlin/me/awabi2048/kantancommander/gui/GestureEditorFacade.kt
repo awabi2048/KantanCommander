@@ -15,6 +15,11 @@ class GestureEditorFacade(
 ) {
     private val sessions = mutableMapOf<UUID, GestureSequenceEditor>()
     private val externalEditorSuppressions = mutableMapOf<UUID, PermissionAttachment>()
+    /**
+     * issue #13: 共同編集 presence です。内容更新（revision）とは別の
+     * ephemeral 状態であり、開閉だけで更新します。
+     */
+    private val presence = EditorPresenceTracker()
 
     fun open(player: Player, placement: DiskPlacement) {
         openPlacement(player, placement)
@@ -155,14 +160,40 @@ class GestureEditorFacade(
             false
         }
         if (opened) sessions[player.uniqueId] = editor
+        if (opened) {
+            // issue #13: 編集開始時は presence を即時更新します。
+            presence.open(state.scriptId, player.uniqueId)
+            refreshPresenceFor()
+        }
     }
+
+    /**
+     * issue #13: 指定 script を開いている Player の一覧を返します。
+     *
+     * 一覧表示・Gesture 上部の共有表示が参照します。順序は開放順であり、
+     * 内容の revision とは無関係です。
+     */
+    fun presenceFor(scriptId: UUID): List<UUID> = presence.editorsFor(scriptId)
 
     /** 旧セッションの終了通知が同一プレイヤーの新セッションへ干渉しないよう照合します。 */
     private fun onSessionClosed(editor: GestureSequenceEditor, ownerId: UUID, sessionId: UUID) {
         if (sessions[ownerId] === editor && editor.isCurrentSession(sessionId)) {
             sessions.remove(ownerId)
             releaseExternalEditorSuppression(ownerId)
+            // issue #13: セッション終了時は presence も即時更新します。
+            presence.close(ownerId)
+            refreshPresenceFor(editor)
         }
+    }
+
+    /**
+     * issue #13: presence 変更を同 script の編集者へ反映します。
+     *
+     * 内容更新（refreshForScript）とは別経路であり、revision を進めず
+     * 上部表示だけを作り直します。
+     */
+    private fun refreshPresenceFor(closed: GestureSequenceEditor? = null) {
+        sessions.values.toList().forEach { it.refreshPresence() }
     }
 
     fun handleGestureGesture(player: Player) {
@@ -172,6 +203,9 @@ class GestureEditorFacade(
     fun close(player: Player) {
         sessions.remove(player.uniqueId)?.closeImmediately(player.uniqueId)
         releaseExternalEditorSuppression(player.uniqueId)
+        // issue #13: 明示終了・退室時は presence も即時更新します。
+        presence.close(player.uniqueId)
+        refreshPresenceFor()
     }
 
     /** 配置ブロック破壊時に、その配置を編集中の全プレイヤーを即時終了させます。 */
@@ -179,7 +213,9 @@ class GestureEditorFacade(
         sessions.filterValues { it.isEditing(placement) }.keys.toList().forEach { playerId ->
             sessions.remove(playerId)?.closeImmediately(playerId)
             releaseExternalEditorSuppression(playerId)
+            presence.close(playerId)
         }
+        refreshPresenceFor()
     }
 
     fun closeAll() {
@@ -187,6 +223,7 @@ class GestureEditorFacade(
             sessions.remove(playerId)?.closeImmediately(playerId)
             releaseExternalEditorSuppression(playerId)
         }
+        presence.closeAll()
     }
 
     /**
