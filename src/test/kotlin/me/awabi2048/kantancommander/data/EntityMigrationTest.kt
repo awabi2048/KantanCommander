@@ -1,6 +1,8 @@
 package me.awabi2048.kantancommander.data
 
 import me.awabi2048.kantancommander.model.CommandType
+import me.awabi2048.kantancommander.model.EntityDataPath
+import me.awabi2048.kantancommander.model.EntityTagEntries
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -221,6 +223,82 @@ class EntityMigrationTest {
         val store = ScriptStore(dir, Logger.getAnonymousLogger())
         assertNull(store.load(scriptId))
         assertTrue(requireNotNull(dir.resolve("incompatible").listFiles()).isNotEmpty())
+    }
+
+    private fun tagNode(nodeId: UUID, operation: String?, tag: String): String {
+        val operationField = if (operation == null) "" else ",\n          \"tagOperation\": \"$operation\""
+        return """
+        "$nodeId": {
+          "id": "$nodeId",
+          "type": "ENTITY_ACTION",
+          "targetSpec": {"kind": "NEAREST_ENTITY", "sort": "NEAREST"},
+          "params": {"action": "tag"$operationField, "tag": "$tag"},
+          "configuredFields": ["action", "tag"]
+        }
+        """.trimIndent()
+    }
+
+    @Test
+    fun `legacy tag migrates to entity operation keeping its meaning`() {
+        // #32: 旧タグ操作は読み込み時に ENTITY_OPERATION へ正本化し、
+        // 従来と同じタグ操作として実行・検証・出力できるようにします。
+        val dir = temp.resolve("v17-tag").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(dir, scriptId, 17, nodeId, tagNode(nodeId, "remove", "kc_test"))
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.ENTITY_OPERATION, migrated.type)
+        assertEquals(EntityDataPath.TAG, migrated.string(EntityDataPath.PARAM_PATH, ""))
+        assertEquals("remove=kc_test", migrated.string(EntityTagEntries.PARAM_ENTRIES, ""))
+        assertTrue("action" !in migrated.params)
+        assertTrue("tagOperation" !in migrated.params)
+        assertTrue("tag" !in migrated.params)
+        val marks = migrated.configuredFields ?: emptySet()
+        assertTrue(EntityDataPath.PARAM_PATH in marks)
+        assertTrue(EntityTagEntries.PARAM_ENTRIES in marks)
+        assertTrue("action" !in marks)
+        assertEquals(17, loaded.formatVersion)
+        // 移行後は新 ENTITY_OPERATION の検証だけを通ります。
+        assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
+    }
+
+    @Test
+    fun `legacy tag without operation defaults to add`() {
+        // 旧実行の既定（欠落時は add）を引き継ぎます。
+        val dir = temp.resolve("v16-tag").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(dir, scriptId, 16, nodeId, tagNode(nodeId, null, "kc_test"))
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.ENTITY_OPERATION, migrated.type)
+        assertEquals("add=kc_test", migrated.string(EntityTagEntries.PARAM_ENTRIES, ""))
+        assertEquals(17, loaded.formatVersion)
+        assertTrue(ExecutableScriptValidator.validate(loaded).none { it.nodeId == nodeId })
+    }
+
+    @Test
+    fun `legacy tag with an unknown operation stays unmigrated`() {
+        // 不明な旧操作は推測で読み替えず、検証層の不明扱いに委ねます。
+        val dir = temp.resolve("v17-tag-unknown").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(dir, scriptId, 17, nodeId, tagNode(nodeId, "toggle", "kc_test"))
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val kept = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.ENTITY_ACTION, kept.type)
+        assertEquals("tag", kept.string("action", ""))
+        assertTrue(
+            ExecutableScriptValidator.validate(loaded)
+                .any { it.nodeId == nodeId && it.fieldKeys == setOf("action") },
+        )
     }
 
     private fun equipNode(nodeId: UUID, slot: String, extraParams: String = ""): String = """

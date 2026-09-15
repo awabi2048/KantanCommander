@@ -1083,11 +1083,8 @@ object ExecutableScriptValidator {
                     errors += nodeError(node, path, setOf("motionZ"), "動きのZ成分は有限な数値で指定してください")
                 }
             }
-            // 旧equipは読込時に PLACE_ITEM へ正本化するため、ここに残る値は
-            // 手組み等の不正値として不明扱いにします（#21）。
-            // 旧tagはv13→v14移行でENTITY_OPERATIONへ変換済みのため、
-            // ここに残る値は移行漏れとして明示エラーにします。
-            "tag" -> errors += nodeError(node, path, setOf("action"), "タグ操作は「エンティティを操作」へ移行しました")
+            // 旧equip／旧tagは読込時に正本化するため、ここに残る値は
+            // 手組み等の不正値として不明扱いにします（#21・#32）。
             else -> errors += nodeError(node, path, setOf("action"), "不明なエンティティ操作です")
         }
     }
