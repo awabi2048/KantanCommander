@@ -293,23 +293,9 @@ class WorldVariableStore(
         logger.log(Level.WARNING, "不正なワールド変数データを隔離しました: ${file.absolutePath}", error)
     }
 
+    /** issue #16: 原子書込は共通基盤へ委譲します。失敗意味は従来どおりです。 */
     private fun persist(worldId: UUID, state: WorldVariables) {
-        val target = file(worldId)
-        val temporary = target.resolveSibling("${target.name}.tmp")
-        temporary.writeText(gson.toJson(state), Charsets.UTF_8)
-        try {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
-        } catch (failure: AtomicMoveNotSupportedException) {
-            // 置換途中で正本を失う非原子的なフォールバックは行いません。
-            // 既存のワールド変数ファイルを保ったまま保存失敗として扱います。
-            runCatching { Files.deleteIfExists(temporary.toPath()) }
-            throw IllegalStateException("ワールド変数を原子的に保存できないファイルシステムです", failure)
-        }
+        AtomicFileWriter.write(file(worldId), gson.toJson(state), "ワールド変数")
     }
 
     private fun valid(value: TypedValue?): Boolean {

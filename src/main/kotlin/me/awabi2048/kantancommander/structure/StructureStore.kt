@@ -1,13 +1,16 @@
 package me.awabi2048.kantancommander.structure
 
-import me.awabi2048.kantancommander.KantanCommanderPlugin
 import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.block.structure.Mirror
 import org.bukkit.block.structure.StructureRotation
 import org.bukkit.structure.Structure
 import java.io.File
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.util.concurrent.locks.ReentrantLock
 import java.util.logging.Level
+import kotlin.concurrent.withLock
 
 /**
  * issue #11 の建造物ストアです。
@@ -21,7 +24,14 @@ import java.util.logging.Level
  * 変換するため、こちらで独自の座標変換を持ちません。設置はブロック更新を
  * 伴わない一括配置であり、BLOCK_OPERATION と同じく物理を発生させません。
  */
-class StructureStore(private val plugin: KantanCommanderPlugin, private val directory: File) {
+class StructureStore(private val logger: java.util.logging.Logger, private val directory: File) {
+    /**
+     * issue #16: ファイル置換を直列化するロックです。保存・除去の競合で
+     * 一時ファイルが残留しないようにします。Bukkit の Structure 読書自体は
+     * 呼び出し側スレッド（メイン）で行います。
+     */
+    private val lock = ReentrantLock()
+
     init {
         if (!directory.exists()) directory.mkdirs()
     }
@@ -29,6 +39,9 @@ class StructureStore(private val plugin: KantanCommanderPlugin, private val dire
     /**
      * 保存済み建造物を読み込みます。存在しない・壊れている場合は null を返し、
      * 呼び出し側（実行・GUI）がそれぞれの文言で扱えるようにします。
+     *
+     * issue #16: 壊れたファイルは `corrupt/` へ退避し、次回以降の読み込み・
+     * 一覧で繰り返し失敗しないようにします。
      */
     fun load(name: String): Structure? {
         val file = fileFor(name) ?: return null
@@ -36,7 +49,8 @@ class StructureStore(private val plugin: KantanCommanderPlugin, private val dire
         return runCatching {
             Bukkit.getStructureManager().loadStructure(file)
         }.getOrElse { failure ->
-            plugin.logger.log(Level.WARNING, "建造物の読み込みに失敗しました: name=$name", failure)
+            logger.log(Level.WARNING, "建造物の読み込みに失敗しました: name=$name", failure)
+            quarantine(file)
             null
         }
     }
@@ -72,27 +86,29 @@ class StructureStore(private val plugin: KantanCommanderPlugin, private val dire
                 true,
             )
         }.onFailure { failure ->
-            plugin.logger.log(Level.WARNING, "建造物の切り出しに失敗しました: name=$name", failure)
+            logger.log(Level.WARNING, "建造物の切り出しに失敗しました: name=$name", failure)
             return StructureSaveResult.Failed
         }
 
         val temporary = File(target.parentFile, "${target.name}.tmp")
-        return runCatching {
-            Bukkit.getStructureManager().saveStructure(temporary, structure)
-            if (target.exists() && !target.delete()) error("failed to replace existing structure file")
-            if (!temporary.renameTo(target)) {
-                // 一時ファイルを本体へ移せない環境（別ボリューム等）ではコピーで代替します。
-                temporary.copyTo(target, overwrite = true)
-                temporary.delete()
-            }
-        }.fold(
-            onSuccess = { StructureSaveResult.Saved },
-            onFailure = { failure ->
-                plugin.logger.log(Level.WARNING, "建造物の保存に失敗しました: name=$name", failure)
-                temporary.delete()
-                StructureSaveResult.Failed
-            },
-        )
+        return lock.withLock {
+            runCatching {
+                Bukkit.getStructureManager().saveStructure(temporary, structure)
+                if (target.exists() && !target.delete()) error("failed to replace existing structure file")
+                if (!temporary.renameTo(target)) {
+                    // 一時ファイルを本体へ移せない環境（別ボリューム等）ではコピーで代替します。
+                    temporary.copyTo(target, overwrite = true)
+                    temporary.delete()
+                }
+            }.fold(
+                onSuccess = { StructureSaveResult.Saved },
+                onFailure = { failure ->
+                    logger.log(Level.WARNING, "建造物の保存に失敗しました: name=$name", failure)
+                    temporary.delete()
+                    StructureSaveResult.Failed
+                },
+            )
+        }
     }
 
     /**
@@ -114,7 +130,7 @@ class StructureStore(private val plugin: KantanCommanderPlugin, private val dire
             // includeEntities=false とし、エンティティは建造物として複製しません。
             structure.place(location, false, rotation, mirror, 0, 1.0f, java.util.Random(0L))
         }.onFailure { failure ->
-            plugin.logger.log(Level.WARNING, "建造物の設置に失敗しました: name=$name", failure)
+            logger.log(Level.WARNING, "建造物の設置に失敗しました: name=$name", failure)
         }.isSuccess
     }
 
@@ -142,6 +158,41 @@ class StructureStore(private val plugin: KantanCommanderPlugin, private val dire
     private fun fileFor(name: String): File? {
         if (!NAME_PATTERN.matches(name)) return null
         return File(directory, "$name.$EXTENSION")
+    }
+
+    /**
+     * issue #16: 壊れた保存ファイルを `corrupt/` へ退避します。
+     * 他 store と同じく、繰り返し失敗と一覧汚染を防ぎます。
+     */
+    private fun quarantine(file: File) {
+        logger.log(Level.WARNING, "建造物の保存形式が壊れているため退避します: file=${file.path}")
+        runCatching {
+            val corrupt = File(directory, "corrupt").also { it.mkdirs() }
+            Files.move(
+                file.toPath(),
+                File(corrupt, "${file.nameWithoutExtension}-${System.currentTimeMillis()}.$EXTENSION").toPath(),
+                StandardCopyOption.REPLACE_EXISTING,
+            )
+        }.onFailure { failure ->
+            logger.log(Level.WARNING, "建造物の退避に失敗しました: file=${file.path}", failure)
+        }
+    }
+
+    /**
+     * issue #16: script から参照されない建造物を回収します。
+     *
+     * 実行中・編集中の asset を GC しないよう、自動実行はしません。
+     * [referenced] に含まれる建造物名は残し、それ以外を削除して名前を返します。
+     * 削除失敗分は残して次回に委ねます。
+     */
+    fun deleteUnreferenced(referenced: Set<String>): List<String> = lock.withLock {
+        list().filter { it !in referenced }.filter { name ->
+            val file = fileFor(name) ?: return@filter false
+            if (file.delete()) true else {
+                logger.log(Level.WARNING, "未参照建造物の削除に失敗しました: file=${file.path}")
+                false
+            }
+        }
     }
 
     private companion object {

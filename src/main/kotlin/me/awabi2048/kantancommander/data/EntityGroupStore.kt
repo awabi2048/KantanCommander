@@ -209,19 +209,28 @@ class EntityGroupStore(
         it.addProperty("z", vector.z)
     }
 
+    /** issue #16: 原子書込は共通基盤へ委譲します。失敗意味は従来どおりです。 */
     private fun atomicWrite(content: String) {
-        val temporary = File(file.parentFile, "${file.name}.tmp")
-        temporary.writeText(content)
-        try {
-            Files.move(
-                temporary.toPath(),
-                file.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
-        } catch (failure: AtomicMoveNotSupportedException) {
-            temporary.delete()
-            throw IllegalStateException("entity group store requires atomic move", failure)
+        AtomicFileWriter.write(file, content, "Entity Group")
+    }
+
+    /**
+     * issue #16: script から参照されない群を回収します。
+     *
+     * 実行中・編集中の群を GC しないよう、自動実行はしません。
+     * [referenced] に含まれる群名は残し、それ以外を削除して名前を返します。
+     */
+    fun deleteUnreferenced(referenced: Set<String>): List<String> = lock.withLock {
+        val removed = groups.keys.filter { it !in referenced }
+        if (removed.isEmpty()) return@withLock emptyList()
+        val previous = removed.associateWith { groups[it]!! }
+        removed.forEach { groups.remove(it) }
+        return@withLock try {
+            saveLocked()
+            removed
+        } catch (failure: Throwable) {
+            groups.putAll(previous)
+            throw failure
         }
     }
 

@@ -46,6 +46,12 @@ class ScriptStore(
      * JSONとキャッシュを消した削除確定時だけ呼び出します。
      */
     private val onScriptDeleted: (UUID) -> Unit = {},
+    /**
+     * issue #16: 配置で使われている script の判定です。orphan 解放・回収で
+     * 配置参照の正本を残すために使います。既定は参照なしであり、
+     * プラグインが配置台帳の判定を注入します。
+     */
+    private val isPlacedScript: (UUID) -> Boolean = { false },
 ) {
     private val gson = GsonBuilder().setPrettyPrinting().create()
     private val relationFile = dir.resolve("relations.json")
@@ -56,8 +62,17 @@ class ScriptStore(
      * 保存済み内容の正本キャッシュ。レッドストーン監視のようにtick単位で参照される
      * [load]が、参照ごとにJSON解析と構造検証を繰り返さないようにするためのもの。
      * 正本は検証に通った時点の内容のみを採用し、[load]経由では独立コピーを渡す。
+     *
+     * issue #16: LRU で [StorageLifecycle.MAX_CACHED_PROGRAMS] 件まで保持します。
+     * 追い出しはメモリ複写を捨てるだけで disk が正本のため、保存内容が古い世代へ
+     * 戻ることはありません。楽観排他の検出は cache 命中時に行うため、追い出し後は
+     * 再起動直後と同じ扱い（disk 世代を基準にする）になります。
      */
-    private val cache = ConcurrentHashMap<UUID, DiskScript>()
+    private val cache: MutableMap<UUID, DiskScript> =
+        Collections.synchronizedMap(object : LinkedHashMap<UUID, DiskScript>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<UUID, DiskScript>): Boolean =
+                size > StorageLifecycle.MAX_CACHED_PROGRAMS
+        })
     /**
      * 隔離先へ移動できなかったファイルの負のキャッシュです。監視処理や一覧更新が
      * 同じ不正ファイルを毎回解析してログを繰り返さないようにします。ファイルの
@@ -323,6 +338,13 @@ class ScriptStore(
             // LinkedHashSetの末尾を最新編集位置として利用します。版管理は行いません。
             entries.remove(scriptId)
             entries += scriptId
+            // issue #16: 履歴は上限まで保持し、超過分は古い方から外します。
+            // 外れた記録の正本は、他関係・配置の参照がなければ解放します。
+            while (entries.size > StorageLifecycle.MAX_HISTORY_PER_PLAYER) {
+                val evicted = entries.first()
+                entries.remove(evicted)
+                releaseIfOrphan(evicted)
+            }
             writeRelationsLocked()
             true
         }
@@ -349,6 +371,54 @@ class ScriptStore(
         }
     }
 
+    /**
+     * issue #16: どの関係・配置からも参照されない正本ファイルを回収します。
+     *
+     * 実行中・編集中の script を GC しないよう、自動実行はしません。
+     * 履歴上限による解放・起動時の整理・管理操作から明示的に呼び出します。
+     * 回収した件数を返します。
+     */
+    fun pruneOrphans(): Int = relationLock.withLock {
+        val referenced = libraryPrograms.values.flatten().toSet() +
+            historyPrograms.values.flatten().toSet()
+        var removed = 0
+        dir.listFiles { file -> file.isFile && file.extension.equals("json", true) }
+            ?.mapNotNull { file ->
+                runCatching { UUID.fromString(file.nameWithoutExtension) }.getOrNull()?.to(file)
+            }
+            ?.filter { (id, _) -> id !in referenced && !isPlacedScript(id) }
+            ?.forEach { (id, file) ->
+                if (file.delete()) {
+                    cache.remove(id)
+                    rejectedFiles.remove(id)
+                    removed++
+                } else {
+                    logger.log(Level.WARNING, "orphanプログラムの削除に失敗しました: file=${file.path}")
+                }
+            }
+        removed
+    }
+
+    /**
+     * issue #16: 関係から外れた正本を、他参照がなければ解放します。
+     *
+     * 配置で使われている script・他 Player の関係に残る script は残します。
+     * 呼び出し側は relationLock 内で呼ぶため、ここでは排他しません。
+     */
+    private fun releaseIfOrphan(id: UUID) {
+        val referenced = libraryPrograms.values.any { id in it } ||
+            historyPrograms.values.any { id in it } ||
+            isPlacedScript(id)
+        if (referenced) return
+        val target = file(id)
+        if (target.isFile && !target.delete()) {
+            logger.log(Level.WARNING, "orphanプログラムの削除に失敗しました: file=${target.path}")
+            return
+        }
+        cache.remove(id)
+        rejectedFiles.remove(id)
+    }
+
     /** 一覧から取得するディスクは正本UUIDを維持し、履歴の同一プログラム関係を壊しません。 */
     fun referenceForItem(source: DiskScript): DiskScript = source.deepCopy()
 
@@ -365,6 +435,27 @@ class ScriptStore(
             logger.warning("プログラムのライブラリ／履歴関係を読み込めないため空として扱います: ${relationFile.absolutePath}: ${error.message}")
             libraryPrograms.clear()
             historyPrograms.clear()
+        }
+        // issue #16: 正本ファイルのない関係 ID は起動時に除外して自己修復します。
+        // 履歴 tombstone は正本ファイルを残すため、ここで消えるのは外部改変分だけです。
+        pruneDanglingRelations()
+    }
+
+    /**
+     * issue #16: 関係 ID のうち正本ファイルを持たないものを除外します。
+     * 呼び出し側は relationLock 内または起動直後の一時停止中に呼ぶため、
+     * ここでは排他しません。
+     */
+    private fun pruneDanglingRelations() {
+        var repaired = false
+        (libraryPrograms.values + historyPrograms.values).forEach { ids ->
+            if (ids.removeIf { !file(it).isFile }) repaired = true
+        }
+        libraryPrograms.entries.removeIf { it.value.isEmpty() }
+        historyPrograms.entries.removeIf { it.value.isEmpty() }
+        if (repaired) {
+            writeRelationsLocked()
+            logger.warning("正本のないライブラリ／履歴関係を除外しました")
         }
     }
 
@@ -475,23 +566,9 @@ class ScriptStore(
 
     private fun file(id: UUID) = dir.resolve("$id.json")
 
+    /** issue #16: 原子書込は共通基盤へ委譲します。失敗意味は従来どおりです。 */
     private fun atomicWrite(target: File, content: String) {
-        val temporary = target.resolveSibling("${target.name}.tmp")
-        temporary.writeText(content, Charsets.UTF_8)
-        try {
-            Files.move(
-                temporary.toPath(),
-                target.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
-        } catch (failure: AtomicMoveNotSupportedException) {
-            // 正本を通常のREPLACE_EXISTINGで上書きすると、途中停止時に正本が
-            // 消失／部分書込みになるため、非原子的な代替は行いません。
-            // 一時ファイルだけを破棄して既存正本を保ち、呼び出し側へ失敗を返します。
-            runCatching { Files.deleteIfExists(temporary.toPath()) }
-            throw IllegalStateException("プログラムディスクを原子的に保存できないファイルシステムです", failure)
-        }
+        AtomicFileWriter.write(target, content, "プログラムディスク")
     }
 
     private fun read(file: File): DiskScript? = try {
