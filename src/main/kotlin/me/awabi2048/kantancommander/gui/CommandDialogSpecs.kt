@@ -1149,7 +1149,13 @@ internal object CommandDialogSpecs {
         if (node.type == CommandType.ENTITY_ACTION && fieldKey in setOf("motionX", "motionY", "motionZ")) {
             return motionComponent(fieldKey)
         }
-        // エンティティ操作の入力仕様です。
+        // issue #10: 召喚時個別設定の入力仕様です。項目ごとの保存キー
+        // （`summonData_<propertyId>`）から定義を引き、既存Entity編集と
+        // 同じ型・範囲契約を使います。真偽値・有限候補は直接切替／選択木で
+        // 編集するため、ここでは文字列・整数の明示入力だけを定義します。
+        if (node.type == CommandType.SUMMON_ENTITY && fieldKey.startsWith(EntityDataSchema.SUMMON_DATA_PREFIX)) {
+            return summonDataValue(fieldKey)
+        }
         // 真偽値・有限候補はDialogを使わず直接切替／選択木で編集するため、
         // ここではタグ・attribute値・数値・文字列の明示入力だけを定義します。
         // attribute ID自体は子画面選択が正本であり、自由入力欄を持ちません。
@@ -1398,6 +1404,30 @@ internal object CommandDialogSpecs {
     private fun entityPropertyValue(node: CommandNode): Spec? {
         val propertyId = EntityDataPath.propertyIdOf(node.string(EntityDataPath.PARAM_PATH))
             ?: return null
+        return propertyValueSpec(propertyId)
+    }
+
+    /**
+     * issue #10: 召喚時個別設定値の入力です。
+     *
+     * 保存キー（`summonData_<propertyId>`）から定義を引き、既存Entity編集と
+     * 同じ型・範囲契約を使います。真偽値・有限候補は直接切替／選択木で
+     * 編集するため、ここでは文字列項目と整数項目だけを定義します。
+     */
+    fun summonDataValue(fieldKey: String): Spec? {
+        val propertyId = EntityDataSchema.summonDataIdOf(fieldKey) ?: return null
+        return propertyValueSpec(propertyId)
+    }
+
+    /**
+     * 型付き設定値の入力仕様です。
+     *
+     * 真偽値・有限候補はDialogを使わず直接切替／選択木で編集するため、
+     * ここでは文字列項目と整数項目だけを定義します。文字列の空欄は
+     * 表示名の消去であり、必須にはしません。テンプレート参照は召喚時の
+     * 表示名と同じ規則で許可します。
+     */
+    private fun propertyValueSpec(propertyId: String): Spec? {
         val definition = EntityDataSchema.definition(propertyId)
             ?: return null
         return when (definition.valueKind) {

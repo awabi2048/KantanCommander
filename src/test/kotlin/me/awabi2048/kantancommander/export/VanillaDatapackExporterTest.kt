@@ -238,6 +238,57 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `summon data maps the common properties to nbt`() {
+        val store = ScriptStore(temp.resolve("summon-data"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "summon data")
+        GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY).apply {
+            params["summonEntity"] = "minecraft:zombie"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("custom_name")] = "Boss"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("silent")] = "true"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("ai")] = "false"
+        }
+
+        val success = assertInstanceOf(
+            StandaloneCompilation.Success::class.java,
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script),
+        )
+        val body = success.functions.values.joinToString("\n")
+        assertTrue(body.contains("CustomName:"), body)
+        assertTrue(body.contains("Silent:1b"), body)
+        assertTrue(body.contains("NoAI:1b"), body)
+    }
+
+    @Test
+    fun `summon data without vanilla mapping fails export explicitly`() {
+        val store = ScriptStore(temp.resolve("summon-data-unsupported"), Logger.getAnonymousLogger())
+        val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
+
+        // 型固有項目は黙って欠落させず明示エラーにします。
+        val typed = store.create(UUID.randomUUID(), "summon typed")
+        GraphEditor.append(typed.graph, CommandType.SUMMON_ENTITY).apply {
+            params["summonEntity"] = "minecraft:rabbit"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("rabbit_type")] = "brown"
+        }
+        val typedFailure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(typed),
+        )
+        assertTrue(typedFailure.errors.any { it.contains("完全バニラ出力に未対応") })
+
+        // テンプレート参照を含む表示名は静的に確定できないため未対応とします。
+        val templated = store.create(UUID.randomUUID(), "summon template")
+        GraphEditor.append(templated.graph, CommandType.SUMMON_ENTITY).apply {
+            params["summonEntity"] = "minecraft:zombie"
+            params[me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("custom_name")] = "\${title}"
+        }
+        val templateFailure = assertInstanceOf(
+            StandaloneCompilation.Failure::class.java,
+            exporter.compileForStandalone(templated, mapOf("title" to ValueType.STRING)),
+        )
+        assertTrue(templateFailure.errors.any { it.contains("完全バニラ出力に未対応") })
+    }
+
+    @Test
     fun `entity derived positions export with execute at wrapping`() {
         val store = ScriptStore(temp.resolve("entity-derived-position"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "entity derived position")

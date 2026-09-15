@@ -847,6 +847,35 @@ object EntityDataSchema {
     fun definition(id: String): EntityPropertyDefinition? = byId[id]
 
     /**
+     * issue #10 の召喚時個別設定の保存接頭辞です。
+     *
+     * SUMMONノードは複数項目を持つため、単一キーではなく項目ごとに
+     * `summonData_<propertyId>` 形式のキーで保存します。既存Entity編集の
+     * 単一項目形式（`entityDataPath`＋`propertyValue`）とは保存形が異なりますが、
+     * 項目ID・型・検証・adapterは同一スキーマを共有し、二重定義しません。
+     * 空値は未設定と同等に扱い、読み取り時に除外します。
+     */
+    const val SUMMON_DATA_PREFIX = "summonData_"
+
+    /** 召喚時個別設定の保存キーを返します。 */
+    fun summonDataKey(propertyId: String): String = "$SUMMON_DATA_PREFIX$propertyId"
+
+    /** 保存キーから設定項目IDを取り出します。召喚時個別設定以外はnullです。 */
+    fun summonDataIdOf(key: String): String? =
+        key.removePrefix(SUMMON_DATA_PREFIX).takeIf { key.startsWith(SUMMON_DATA_PREFIX) && it.isNotBlank() }
+
+    /**
+     * 召喚時個別設定の一覧を返します。
+     *
+     * 空値は未設定と同等に扱い除外します。未知IDは除外せず呼び出し側
+     * （検証層）が不正として扱います。順序は保存順を維持しません。
+     */
+    fun summonDataEntries(params: Map<String, String>): Map<String, String> =
+        params.mapNotNull { (key, value) ->
+            summonDataIdOf(key)?.takeIf { value.isNotBlank() }?.let { it to value }
+        }.toMap()
+
+    /**
      * 全安定IDを返します。
      *
      * issue #3 との対応表（`EntityPropertyAlignmentTest`）が読み出し側
@@ -854,6 +883,20 @@ object EntityDataSchema {
      * #10 の共通化方針に従い、対応表の更新と合わせて行います。
      */
     fun ids(): Set<String> = byId.keys
+
+    /**
+     * 召喚種類IDから静的に確定できるEntityTypeを返します。
+     *
+     * Paper Registryはサーバー起動前のAPI単体テスト環境では初期化できないため、
+     * 解決失敗時は不明として扱います。実行時と同じRegistryを使う点は維持します。
+     * 不明時は過剰に制限せずruntime判定へ委ねます（#10・#18）。
+     */
+    fun knownSummonType(rawId: String): EntityType? {
+        if (rawId.isBlank()) return null
+        return runCatching {
+            NamespacedKey.fromString(rawId)?.let { Registry.ENTITY_TYPE.get(it) }
+        }.getOrNull()
+    }
 
     /**
      * 対象指定から静的に確定できるEntityTypeを返します。
@@ -916,6 +959,29 @@ object EntityDataSchema {
         if (definition.requiresLiving && !entityType.isAlive) {
             return EntityPropertySupport.STATICALLY_UNSUPPORTED
         }
+        return EntityPropertySupport.STATICALLY_SUPPORTED
+    }
+
+    /**
+     * 種類ID文字列に対する静的対応状況を返します。
+     *
+     * 召喚種類のように文字列IDしかない場合に、Registryなしで判定します。
+     * 種類集合で確定できる項目は静的に判定し、生存条件など名前だけでは
+     * 確定できない項目はruntime-dependentとして実行時へ委ねます。
+     * 未知IDは検証層の種類検査が別途扱うため、ここでは対象外にしません。
+     */
+    fun staticSupportByName(typeName: String?, propertyId: String): EntityPropertySupport {
+        val definition = byId[propertyId] ?: return EntityPropertySupport.STATICALLY_UNSUPPORTED
+        if (typeName.isNullOrBlank()) return EntityPropertySupport.RUNTIME_DEPENDENT
+        if (definition.entityTypes != null) {
+            val normalized = typeName.substringAfter(':').trim().uppercase()
+            return if (normalized in definition.entityTypes) {
+                EntityPropertySupport.STATICALLY_SUPPORTED
+            } else {
+                EntityPropertySupport.STATICALLY_UNSUPPORTED
+            }
+        }
+        if (definition.requiresLiving) return EntityPropertySupport.RUNTIME_DEPENDENT
         return EntityPropertySupport.STATICALLY_SUPPORTED
     }
 

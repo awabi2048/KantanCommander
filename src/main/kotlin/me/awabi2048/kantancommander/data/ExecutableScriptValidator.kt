@@ -626,7 +626,7 @@ object ExecutableScriptValidator {
                 if (tag.isNotBlank() && !isTemplateOrTag(tag, variableDefinitions, temporaryDefinitions)) {
                     errors += nodeError(node, path, setOf("tags"), "タグが不正です")
                 }
-                validateTemplate(node.string("customName"), node, path, "customName", errors, variableDefinitions, temporaries = temporaryDefinitions)
+                validateSummonData(node, path, errors, temporaryDefinitions)
             }
             CommandType.PLAY_SOUND -> validateSound(node, path, errors, variableDefinitions, temporaryDefinitions)
             CommandType.PARTICLE -> validateParticle(node, path, errors, variableDefinitions, temporaryDefinitions)
@@ -1188,33 +1188,88 @@ object ExecutableScriptValidator {
             errors += nodeError(node, path, setOf(EntityDataPath.PARAM_PATH), "この対象の種類には適用できない設定項目です")
         }
         val raw = node.string(EntityDataSchema.PARAM_VALUE)
+        validatePropertyValue(node, path, EntityDataSchema.PARAM_VALUE, propertyId, raw, errors, temporaryDefinitions)
+    }
+
+    /**
+     * issue #10 の型付き設定値の検証です。
+     *
+     * 既存Entity編集と召喚時個別設定で同じ型・候補・範囲契約を使い、
+     * 保存キーの違い（単一値／召喚時複数）だけを呼び出し側で吸収します。
+     * 空値は未設定と同等に扱い検査しません。
+     */
+    private fun validatePropertyValue(
+        node: CommandNode,
+        path: String,
+        fieldKey: String,
+        propertyId: String,
+        raw: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, ValueType>? = null,
+    ) {
+        val definition = EntityDataSchema.definition(propertyId) ?: return
         when (definition.valueKind) {
             EntityPropertyValueKind.BOOLEAN -> {
                 if (raw.toBooleanStrictOrNull() == null) {
-                    errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "設定値はtrueまたはfalseで指定してください")
+                    errors += nodeError(node, path, setOf(fieldKey), "設定値はtrueまたはfalseで指定してください")
                 }
             }
             EntityPropertyValueKind.ENUM -> {
                 if (definition.enumChoices.none { it.id == raw }) {
-                    errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "設定値が不正です")
+                    errors += nodeError(node, path, setOf(fieldKey), "設定値が不正です")
                 }
             }
             EntityPropertyValueKind.INTEGER -> {
                 val range = definition.intRange
                 val value = raw.trim().toIntOrNull()
                 if (range == null || value == null || value !in range) {
-                    errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "設定値が範囲外です")
+                    errors += nodeError(node, path, setOf(fieldKey), "設定値が範囲外です")
                 }
             }
             // 表示名は召喚時の表示名と同じくテンプレート参照を許可します。
             // Mannequinのスキン名はプレイヤー名のみを受け付け、参照なしのリテラルは構文検証します。
             EntityPropertyValueKind.TEXT -> {
                 if (propertyId == EntityDataSchema.PROPERTY_MANNEQUIN_PROFILE_NAME) {
-                    validateMannequinProfileName(node, path, raw, errors, temporaryDefinitions)
+                    validateMannequinProfileName(node, path, fieldKey, raw, errors, temporaryDefinitions)
                 } else {
-                    validateTemplate(raw, node, path, EntityDataSchema.PARAM_VALUE, errors, null, temporaries = temporaryDefinitions)
+                    validateTemplate(raw, node, path, fieldKey, errors, null, temporaries = temporaryDefinitions)
                 }
             }
+        }
+    }
+
+    /**
+     * issue #10 の召喚時個別設定を検証します。
+     *
+     * 既存Entity編集と同じ項目ID・型・検証を使い、保存キーの違いだけを吸収します。
+     * 旧 `customName` 欄が残る手組み値は個別設定への移行漏れとして拒否します
+     * （読込時は正規化済みのため到達しません）。
+     * 確実に対象外の種類だけを編集時エラーとし、種類不明の対象は
+     * 過剰に制限せずruntime判定へ委ねます（#10・#18）。
+     */
+    private fun validateSummonData(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, ValueType>? = null,
+    ) {
+        if (node.string("customName").isNotBlank()) {
+            errors += nodeError(node, path, setOf("customName"), "表示名は「個別データの設定」へ移行しました")
+        }
+        val knownType = EntityDataSchema.knownSummonType(node.string("summonEntity"))
+        EntityDataSchema.summonDataEntries(node.params).forEach { (propertyId, raw) ->
+            val key = EntityDataSchema.summonDataKey(propertyId)
+            if (EntityDataSchema.definition(propertyId) == null) {
+                errors += nodeError(node, path, setOf(key), "不明な設定項目です: $propertyId")
+                return@forEach
+            }
+            // 種類ID文字列で静的に判定します。Registryなしで確定できる項目は
+            // 編集時に検出し、それ以外は実行時のcapability判定へ委ねます。
+            if (EntityDataSchema.staticSupportByName(node.string("summonEntity"), propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) {
+                errors += nodeError(node, path, setOf(key), "この種類には適用できない設定項目です: $propertyId")
+                return@forEach
+            }
+            validatePropertyValue(node, path, key, propertyId, raw, errors, temporaryDefinitions)
         }
     }
 
@@ -1228,14 +1283,15 @@ object ExecutableScriptValidator {
     private fun validateMannequinProfileName(
         node: CommandNode,
         path: String,
+        fieldKey: String,
         raw: String,
         errors: MutableList<ScriptValidationError>,
         temporaryDefinitions: Map<String, ValueType>?,
     ) {
-        validateTemplate(raw, node, path, EntityDataSchema.PARAM_VALUE, errors, null, temporaries = temporaryDefinitions)
+        validateTemplate(raw, node, path, fieldKey, errors, null, temporaries = temporaryDefinitions)
         if (VariableTemplate.references(raw).isNotEmpty() || TemporaryTemplate.references(raw).isNotEmpty()) return
         if (!EntityDataSchema.isMannequinProfileName(raw)) {
-            errors += nodeError(node, path, setOf(EntityDataSchema.PARAM_VALUE), "スキンのプレイヤー名が不正です")
+            errors += nodeError(node, path, setOf(fieldKey), "スキンのプレイヤー名が不正です")
         }
     }
 

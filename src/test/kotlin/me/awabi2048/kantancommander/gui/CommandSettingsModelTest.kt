@@ -13,6 +13,7 @@ import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
+import me.awabi2048.kantancommander.model.EntityDataSchema
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.model.RegionAnchorKind
 import me.awabi2048.kantancommander.model.RegionAnchorSpec
@@ -913,6 +914,29 @@ class CommandSettingsModelTest {
                 FacingSpec(FacingKind.TARGET, target = TargetSpec(TargetKind.NEAREST_PLAYER)),
             ),
         )
+    }
+
+    @Test
+    fun `summon type change drops unsupported summon data`() {
+        // issue #10: 種類変更時に新しい種類で利用できない個別設定を残しません。
+        // EntityTypeの解決はサーバー側で行い、ここでは除去規則を固定します。
+        val node = CommandType.SUMMON_ENTITY.newNode().apply {
+            params["summonEntity"] = "minecraft:rabbit"
+            params[EntityDataSchema.summonDataKey("silent")] = "true"
+            params[EntityDataSchema.summonDataKey(EntityDataSchema.PROPERTY_RABBIT_TYPE)] = "brown"
+            markConfigured(EntityDataSchema.summonDataKey(EntityDataSchema.PROPERTY_RABBIT_TYPE))
+        }
+        CommandSettingsModel.pruneSummonData(node, org.bukkit.entity.EntityType.PLAYER)
+        // 共通項目は残し、型固有項目だけを除去します。
+        assertEquals("true", node.string(EntityDataSchema.summonDataKey("silent")))
+        assertFalse(node.params.containsKey(EntityDataSchema.summonDataKey(EntityDataSchema.PROPERTY_RABBIT_TYPE)))
+        assertFalse(
+            node.configuredFields?.contains(EntityDataSchema.summonDataKey(EntityDataSchema.PROPERTY_RABBIT_TYPE)) == true,
+        )
+
+        // 種類設定自体は通常の保存経路で行います。
+        CommandSettingsModel.setSummonEntity(node, "minecraft:player")
+        assertEquals("minecraft:player", node.string("summonEntity"))
     }
 
 }

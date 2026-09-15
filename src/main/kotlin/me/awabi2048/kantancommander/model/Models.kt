@@ -862,7 +862,9 @@ enum class CommandType(
     SUMMON_ENTITY(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_SUMMON_ENTITY_DESCRIPTION, Material.ZOMBIE_SPAWN_EGG, mapOf(
         // v17で改名しました。一時対象指定の "entity" と言語上区別します。
         // 旧 "entity" は読込時に移行します。
-        "summonEntity" to "", "tags" to "", "customName" to ""
+        // issue #10: 表示名は共通スキーマの個別設定（`summonData_custom_name`）へ
+        // 統合し、独立 `customName` は新規保存に含めません。旧値は読込時に移行します。
+        "summonEntity" to "", "tags" to ""
     )),
     PLAY_SOUND(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_PLAY_SOUND_DESCRIPTION, Material.NOTE_BLOCK, mapOf(
         "sound" to "", "volume" to "1.0", "pitch" to "1.0", "soundScope" to "POSITION",

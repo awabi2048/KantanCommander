@@ -224,6 +224,7 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.DISPLAY_MODE -> GestureSettingScreen.DISPLAY_MODE
     CommandSettingEditor.ENTITY_ACTION -> GestureSettingScreen.ENTITY_ACTION
     CommandSettingEditor.ENTITY_DATA_ROOT -> GestureSettingScreen.ENTITY_DATA_ROOT
+    CommandSettingEditor.SUMMON_DATA_ROOT -> GestureSettingScreen.SUMMON_DATA_ROOT
     CommandSettingEditor.ENTITY_ATTRIBUTE_SELECT -> GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT
     CommandSettingEditor.ENTITY_TAG_LIST -> GestureSettingScreen.ENTITY_TAG_LIST
     CommandSettingEditor.ENTITY_PROPERTY_VALUE -> GestureSettingScreen.ENTITY_PROPERTY_VALUE

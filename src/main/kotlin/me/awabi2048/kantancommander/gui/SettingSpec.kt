@@ -201,6 +201,7 @@ object SettingSpec {
             CommandSettingEditor.DISPLAY_MODE,
             CommandSettingEditor.ENTITY_ACTION,
             CommandSettingEditor.ENTITY_DATA_ROOT,
+            CommandSettingEditor.SUMMON_DATA_ROOT,
             CommandSettingEditor.ENTITY_ATTRIBUTE_SELECT,
             CommandSettingEditor.ENTITY_TAG_LIST,
             CommandSettingEditor.PLACE_DESTINATION,

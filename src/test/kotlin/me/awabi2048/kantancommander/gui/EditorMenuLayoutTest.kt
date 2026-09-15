@@ -114,10 +114,12 @@ class EditorMenuLayoutTest {
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_TAGS, tagEntries.actionKey)
 
         val summonFields = EditorMenuLayout.fields(CommandType.SUMMON_ENTITY)
-        val customName = summonFields.single { it.key == "customName" }
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DISPLAY_NAME, customName.label)
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_DISPLAY_NAME, customName.descriptionKey)
-        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_DISPLAY_NAME, customName.actionKey)
+        // issue #10: 表示名は共通スキーマの個別設定へ統合し、独立欄を出しません。
+        assertFalse(summonFields.any { it.key == "customName" })
+        val summonData = summonFields.single { it.key == "summonData" }
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA, summonData.label)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PROPERTY, summonData.descriptionKey)
+        assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PROPERTY, summonData.actionKey)
         val summonPosition = summonFields.single { it.key == "summonPosition" }
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_SUMMON_POSITION, summonPosition.label)
         assertEquals(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_SUMMON_POSITION, summonPosition.descriptionKey)
