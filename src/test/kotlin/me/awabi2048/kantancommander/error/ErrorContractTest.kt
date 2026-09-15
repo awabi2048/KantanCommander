@@ -25,7 +25,7 @@ class ErrorContractTest {
         assertEquals(ValidationPhase.PERSISTED_STRUCTURAL, ErrorCode.GRAPH_CYCLE.defaultPhase)
         assertEquals(ValidationPhase.PERSISTED_STRUCTURAL, ErrorCode.PERSISTED_SHAPE_INVALID.defaultPhase)
         assertEquals(ValidationPhase.PREFLIGHT, ErrorCode.REQUIRED_PROGRAM_MISSING.defaultPhase)
-        assertEquals(ValidationPhase.RUNTIME, ErrorCode.FIXED_ENTITY_UNRESOLVED.defaultPhase)
+        // issue #35-3: 固定実体（FIXED_ENTITY_UNRESOLVED）は撤去しました。
         assertEquals(ValidationPhase.RUNTIME, ErrorCode.TRIGGER_CONTEXT_MISSING.defaultPhase)
     }
 
@@ -33,7 +33,7 @@ class ErrorContractTest {
     fun `empty unresolved mismatch invalid map to different policies`() {
         assertEquals(FailurePolicy.EMPTY_RESULT, ErrorCode.TARGET_EMPTY.defaultPolicy)
         assertEquals(FailurePolicy.SKIP_COMMAND, ErrorCode.TEMPORARY_UNRESOLVED.defaultPolicy)
-        assertEquals(FailurePolicy.STOP_PROGRAM, ErrorCode.FIXED_ENTITY_UNRESOLVED.defaultPolicy)
+        // issue #35-3: 固定実体（FIXED_ENTITY_UNRESOLVED）は撤去しました。
         assertEquals(FailurePolicy.PARTIAL_APPLY, ErrorCode.CAPABILITY_MISMATCH.defaultPolicy)
         assertEquals(FailurePolicy.RETURN_ERROR, ErrorCode.CONDITION_UNRESOLVED.defaultPolicy)
         assertEquals(FailurePolicy.RETURN_ERROR, ErrorCode.VARIABLE_UNDEFINED.defaultPolicy)

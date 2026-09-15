@@ -463,16 +463,8 @@ class VanillaDatapackExporter(
                 errors += "${script.id}/${node.id}: 条件分岐の複数位置は完全バニラ出力に未対応です"
             }
             validateFacing(script, node, node.destinationFacingSpec, errors)
-            if (listOfNotNull(
-                    node.targetSpec,
-                    node.secondaryTargetSpec,
-                    node.destinationTargetSpec,
-                    node.temporaryEntityTargetSpec,
-                )
-                    .any { it.kind == TargetKind.FIXED_ENTITY }
-            ) {
-                errors += "${script.id}/${node.id}: 固定エンティティ参照は完全バニラ出力できません"
-            }
+            // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+            // 旧保存データは読込時の型検証で隔離するため、出力側の拒否分岐は不要です。
             val temporaryArgumentNames = listOfNotNull(
                 node.targetSpec,
                 node.secondaryTargetSpec,
@@ -1113,9 +1105,7 @@ class VanillaDatapackExporter(
                     errors += "${script.id}/${node.id}: 一時LOCATIONのMyWorldスポーン位置は完全バニラ出力に未対応です"
                 }
             }
-            ValueType.ENTITY -> if (node.temporaryEntityTargetSpec?.kind == TargetKind.FIXED_ENTITY) {
-                errors += "${script.id}/${node.id}: 一時ENTITYの固定エンティティ参照は完全バニラ出力できません"
-            }
+            // issue #35-3: 一時ENTITYの固定実体参照は撤去に伴い不要です。
             else -> Unit
         }
     }
@@ -1331,7 +1321,7 @@ class VanillaDatapackExporter(
                     "data modify storage $destinationStorage set from storage kantan:variables ${temporaryStoragePath(sourceName)}",
                 )
             }
-            TargetKind.FIXED_ENTITY -> error("fixed entity is not supported by vanilla temporary ENTITY")
+            // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
             else -> listOf(
                 // 対象が0体でも定義ノード自体は成功し、空のENTITYとして保存します。
                 // 後続の対象解決はUUID未設定を「対象なし」として扱います。
@@ -2864,7 +2854,7 @@ class VanillaDatapackExporter(
 
     private fun selector(spec: TargetSpec): String {
         if (spec.kind == TargetKind.TEMPORARY) return "@s"
-        if (spec.kind == TargetKind.FIXED_ENTITY) return "@e[limit=0]"
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
         val base = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER -> "@a"
             else -> "@e"

@@ -148,7 +148,8 @@ object PersistedScriptValidator {
             optionalFiniteNumber(spec, it, path, errors)
         }
         optionalInteger(spec, "limit", path, errors)
-        optionalUuid(spec, "fixedEntityId", path, errors)
+        // issue #35-3: 旧FIXED_ENTITYの個体識別欄は撤去しました。
+        // 旧保存データの kind 検証で隔離するため、欄自体の検証は不要です。
         optionalObject(spec, "searchOrigin", path, errors)?.let { origin ->
             val originPath = "$path/searchOrigin"
             optionalString(origin, "positionTemp", originPath, errors)

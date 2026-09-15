@@ -731,6 +731,46 @@ class ScriptStoreTest {
         assertTrue(tagsOf(nodeId).any { it.tag == "tag-a" })
         assertTrue(tagsOf(nodeId).any { it.tag == "tag-b" })
     }
+
+    @Test
+    fun `removed fixed entity kind is quarantined on load`() {
+        // issue #35-3: 旧FIXED_ENTITYの保存データは読込時の型検証で隔離し、
+        // 黙って別意味へ変換しません。サーバーは停止せず、理由を残します。
+        val dir = temp.resolve("fixed-legacy").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        dir.resolve("$scriptId.json").writeText(
+            """
+            {
+              "formatVersion": 17,
+              "id": "$scriptId",
+              "name": "fixed-legacy",
+              "owner": "${UUID.randomUUID()}",
+              "createdAt": 0,
+              "activation": "NEEDS_REDSTONE",
+              "timer": {"enabled": false, "intervalSeconds": 1.0},
+              "graph": {
+                "entryNodeId": "$nodeId",
+                "nodes": {
+                  "$nodeId": {
+                    "id": "$nodeId",
+                    "type": "ENTITY_DELETE",
+                    "params": {},
+                    "targetSpec": {"kind": "FIXED_ENTITY", "fixedEntityId": "${UUID.randomUUID()}"}
+                  }
+                }
+              },
+              "revision": 0
+            }
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+
+        assertNull(store.load(scriptId))
+        assertFalse(dir.resolve("$scriptId.json").exists())
+        assertTrue(dir.walkTopDown().filter(File::isFile).any { it.name.startsWith(scriptId.toString()) })
+    }
 }
 
 private class RecordingLogHandler : Handler() {

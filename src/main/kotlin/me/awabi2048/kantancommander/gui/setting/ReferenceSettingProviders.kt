@@ -144,13 +144,13 @@ object ReferenceSettingProviders {
     /**
      * 単一体参照の完全性を返します。向き注視・複写の完了判定が使います。
      *
-     * 固定実体はID必須、一時変数は変数名必須、それ以外は存在のみで完了とします。
+     * 一時変数は変数名必須、それ以外は存在のみで完了とします。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
     fun isSingleEntityConfigured(spec: TargetSpec?): Boolean {
         if (spec == null) return false
         if ((spec.limit ?: 1) != 1) return false
         return when (spec.kind) {
-            TargetKind.FIXED_ENTITY -> spec.fixedEntityId != null
             TargetKind.TEMPORARY -> false
             else -> true
         }

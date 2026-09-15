@@ -319,16 +319,18 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `fixed targets and rotation orientations require complete values`() {
+    fun `temporary targets and rotation orientations require complete values`() {
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        // 未完了の単一参照は一時変数参照で固定します。
         val script = DiskScript(name = "target-shape", owner = UUID.randomUUID())
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
-        teleport.targetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+        teleport.targetSpec = TargetSpec(TargetKind.TEMPORARY)
         teleport.destinationSpec = PositionSpec(PositionKind.CAPTURED, 1.0, 2.0, 3.0, null, null)
         teleport.destinationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = null, pitch = null)
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.message.contains("固定エンティティが未設定") })
+        assertTrue(errors.any { it.message.contains("一時変数") })
         assertTrue(errors.any { it.message.contains("向きが未設定") })
     }
 

@@ -304,7 +304,6 @@ object CommandSettingsModel {
     private val ENTITY_KINDS = setOf(
         TargetKind.NEAREST_ENTITY,
         TargetKind.NEARBY_ENTITIES,
-        TargetKind.FIXED_ENTITY,
     )
 
     /** 実行時の細分類を、GUIで表示する対象大分類へ写像します。 */
@@ -335,7 +334,6 @@ object CommandSettingsModel {
         TargetCategory.NON_PLAYER_ENTITY -> listOf(
             TargetKind.NEAREST_ENTITY,
             TargetKind.NEARBY_ENTITIES,
-            TargetKind.FIXED_ENTITY,
         )
         TargetCategory.TEMPORARY -> listOf(TargetKind.TEMPORARY)
     }
@@ -1361,9 +1359,9 @@ object CommandSettingsModel {
      * 未知または用途不適合の役割を通常対象へ流さず明示的に拒否します。
      * 内包対象の役割は [setEmbeddedTargetSpec] を利用してください。
      *
-     * issue #34-4: 固定実体・一時変数参照の詳細条件は保存時に除去します。
-     * 実行側はこれらの取得元に絞り込みを適用しないため、残存条件を
-     * 保持したままにせず、GUI・保存・実行の契約を一致させます。
+     * issue #34-4: 一時変数参照の詳細条件は保存時に除去します。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+     * 実行側が適用しない絞り込みを残さず、GUI・保存・実行の契約を一致させます。
      */
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
         // TEMP_SET ENTITYは対象を複数保持できないTemporaryValueへ変換するため、
@@ -1439,13 +1437,14 @@ object CommandSettingsModel {
     /**
      * issue #34-4: 単一参照の取得元に適用されない詳細条件を除去します。
      *
-     * 固定実体は実体ID、一時変数参照は変数名だけで解決し、種類・距離・範囲・
-     * 領域・タグ・名・基準位置などの絞り込みは実行時に適用されません。
+     * 一時変数参照は変数名だけで解決し、種類・距離・範囲・領域・タグ・名・
+     * 基準位置などの絞り込みは実行時に適用されません。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      * 残したままにすると保持した条件を黙って無視することになるため、
      * 保存の共通入口で除去します。上限数・並べ替え・来歴は触りません。
      */
     fun pruneSingleReferenceFilters(spec: TargetSpec): TargetSpec {
-        if (spec.kind != TargetKind.FIXED_ENTITY && spec.kind != TargetKind.TEMPORARY) return spec
+        if (spec.kind != TargetKind.TEMPORARY) return spec
         return spec.copy(
             entityType = null,
             minimumDistance = null,
@@ -1867,9 +1866,8 @@ object CommandSettingsModel {
                     (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
             }
 
-    /** 固定エンティティだけは、種別を選んだだけでは実行対象が確定しません。 */
+    /** 一時変数参照だけは、変数名がなければ実行対象が確定しません。 */
     internal fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {
-        TargetKind.FIXED_ENTITY -> spec.fixedEntityId != null
         TargetKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
         else -> true
@@ -1918,12 +1916,13 @@ object CommandSettingsModel {
      * 実行側の解決（matches）に合わせ、プレイヤー種別へentityType、
      * エンティティの種類へgameModeを指定しても解決しないため、GUIでは提示しません。
      *
-     * issue #34-4: 固定実体・一時変数参照は詳細条件を使いません。実行側は
-     * これらの取得元に絞り込みを適用しないため、GUIでも提示しません。
-     * 保存時には残存条件を除去し、保持した条件を黙って無視しないようにします。
+     * issue #34-4: 一時変数参照は詳細条件を使いません。実行側はこの取得元に
+     * 絞り込みを適用しないため、GUIでも提示しません。保存時には残存条件を
+     * 除去し、保持した条件を黙って無視しないようにします。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
     fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean {
-        if (kind == TargetKind.FIXED_ENTITY || kind == TargetKind.TEMPORARY) {
+        if (kind == TargetKind.TEMPORARY) {
             return parameter == "kind"
         }
         return when (parameter) {
@@ -1959,11 +1958,11 @@ object CommandSettingsModel {
      * 親画面の種別選択後に詳細子画面へ進めるかを、描画側と入力状態遷移側で
      * 別々に持つと、表示された「詳細設定」が開けない対象が生まれるためです。
      *
-     * issue #34-4: 固定実体は詳細条件を持たないため、詳細子画面へ進めません。
-     * 一時変数参照も同様です（従来どおり）。
+     * issue #34-4: 一時変数参照は詳細条件を持たないため、詳細子画面へ進めません。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
     fun targetSupportsDetailedFilters(kind: TargetKind?): Boolean =
-        kind != null && kind != TargetKind.FIXED_ENTITY && kind != TargetKind.TEMPORARY &&
+        kind != null && kind != TargetKind.TEMPORARY &&
             kind in FILTERABLE_TARGET_KINDS
 
     /**

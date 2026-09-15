@@ -403,9 +403,17 @@ enum class StructureMirror(val value: String) {
     }
 }
 
+/**
+ * issue #35-3: 対象種別です。
+ *
+ * 「見ているエンティティ」（旧FIXED_ENTITY）は設定時の個体識別情報を保存し
+ * 実行時に同じ個体を参照する機能であり、実行時の視線選択ではなかったため、
+ * 対象選択肢から削除しました。特定個体の参照は一時変数（TEMPORARY）で行います。
+ * 旧保存データの FIXED_ENTITY は読込時の型検証で隔離します。
+ */
 enum class TargetKind {
     NEAREST_PLAYER, NEARBY_PLAYERS,
-    ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, FIXED_ENTITY, TEMPORARY,
+    ALL_PLAYERS, RANDOM_PLAYER, NEAREST_ENTITY, NEARBY_ENTITIES, TEMPORARY,
 }
 
 enum class TargetSort { NEAREST, FURTHEST, RANDOM }
@@ -438,7 +446,8 @@ data class TargetSpec(
      * 同じ判定を使います。旧保存には存在しないため欠落時は null です。
      */
     val region: RegionSpec? = null,
-    val fixedEntityId: UUID? = null,
+    // issue #35-3: 旧FIXED_ENTITYの個体識別欄は撤去しました。旧保存データは
+    // 読込時の型検証で隔離します。新規保存はこの欄を書きません。
     /** 対象探索の基準位置です。未設定時は制御ブロック位置を用います。 */
     val searchOrigin: SearchOriginSpec? = null,
     /** 一時変数参照時の変数名です。kind=TEMPORARY のときだけ有効です。 */
@@ -465,7 +474,6 @@ data class TargetSpec(
             TargetKind.NEAREST_PLAYER,
             TargetKind.NEAREST_ENTITY,
             TargetKind.RANDOM_PLAYER,
-            TargetKind.FIXED_ENTITY,
             TargetKind.TEMPORARY,
             -> true
             TargetKind.NEARBY_PLAYERS,

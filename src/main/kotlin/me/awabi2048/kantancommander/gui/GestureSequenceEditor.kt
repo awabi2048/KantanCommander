@@ -6456,18 +6456,14 @@ class GestureSequenceEditor(
                     val selectedKind = CommandSettingsModel.targetKinds(category)
                         .firstOrNull { it.name == value }
                         ?: return
-                    val fixedId = if (selectedKind == TargetKind.FIXED_ENTITY) {
-                        current.fixedEntityId ?: player.getTargetEntity(32)?.uniqueId ?: run {
-                            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_NO_ENTITY_IN_SIGHT))
-                            return
-                        }
-                    } else null
+                    // issue #35-3: 固定実体（旧FIXED_ENTITY）は撤去しました。
+                    // 視線取得の保存導線も持ちません。特定個体の参照は
+                    // 一時変数（TEMPORARY）で行います。
                     if (updateSettingNode(player, settingContext) {
                             writeFilterTarget(
                                 it,
                                 current.copy(
                                     kind = selectedKind,
-                                    fixedEntityId = fixedId,
                                     entityType = if (selectedKind in setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)) current.entityType else null,
                                 ),
                             )

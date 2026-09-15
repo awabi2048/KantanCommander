@@ -3431,10 +3431,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * issue #34-4: 対象の取得と絞り込み適用の契約です。
      *
      * 通常検索（プレイヤー系・付近系）は matches で種類・名・タグ・距離・
-     * 領域等を検査します。一方、固定実体は実体ID、一時変数参照は変数値だけで
-     * 解決し、詳細条件は適用しません。これは仕様であり、取得元によらず
-     * 一貫させるため、GUI（非提示）・保存（除去）・実行（非適用）で
-     * 一致させた契約です。既存保存データの残存条件も適用しません。
+     * 領域等を検査します。一方、一時変数参照は変数値だけで解決し、
+     * 詳細条件は適用しません。これは仕様であり、GUI（非提示）・保存（除去）・
+     * 実行（非適用）で一致させた契約です。既存保存データの残存条件も適用しません。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
     private fun resolveTargetSpecs(
         spec: TargetSpec,
@@ -3485,7 +3485,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ?: return classifySelectionOriginFailure(context)
         return when (resolvedSpec.kind) {
             TargetKind.TEMPORARY -> resolveTemporaryTarget(resolvedSpec, session)
-            TargetKind.FIXED_ENTITY -> resolveFixedTarget(resolvedSpec, session)
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS,
             TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES,
             -> resolveMatchingTargets(resolvedSpec, session, context, selectionOrigin)
@@ -3522,16 +3521,6 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
         val entity = value.entityId?.let(session.origin.world::getEntity)
             ?: return TargetResolution.Unresolved(ErrorCode.TEMPORARY_UNRESOLVED, "一時変数の実体が存在しません: $name")
-        if (entity.world != session.origin.world || systemEntityRegistry.isSystemEntity(entity)) return TargetResolution.Resolved(emptyList())
-        return TargetResolution.Resolved(listOf(entity))
-    }
-
-    /** issue #34-5: 固定実体の単一解決です。未設定と実体消失を区別します。 */
-    private fun resolveFixedTarget(spec: TargetSpec, session: ExecutionSession): TargetResolution {
-        val id = spec.fixedEntityId
-            ?: return TargetResolution.Invalid(ErrorCode.TARGET_SPEC_INVALID, "固定エンティティが未設定です")
-        val entity = id.let(session.origin.world::getEntity)
-            ?: return TargetResolution.Unresolved(ErrorCode.FIXED_ENTITY_UNRESOLVED, "固定エンティティが存在しません: $id")
         if (entity.world != session.origin.world || systemEntityRegistry.isSystemEntity(entity)) return TargetResolution.Resolved(emptyList())
         return TargetResolution.Resolved(listOf(entity))
     }

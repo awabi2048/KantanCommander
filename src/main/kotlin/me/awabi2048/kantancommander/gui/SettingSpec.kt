@@ -261,7 +261,6 @@ object RuntimeDependentPolicy {
         TargetKind.TEMPORARY,
         TargetKind.NEAREST_ENTITY,
         TargetKind.NEARBY_ENTITIES,
-        TargetKind.FIXED_ENTITY,
         -> true
         else -> false
     }

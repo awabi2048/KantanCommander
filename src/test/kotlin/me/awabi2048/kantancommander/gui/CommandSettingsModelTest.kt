@@ -78,9 +78,11 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `fixed target is incomplete until an entity is captured`() {
+    fun `temporary target is incomplete until a name is supplied`() {
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        // 単一参照の完了判定は一時変数参照で固定します。
         val node = CommandType.ENTITY_DELETE.newNode()
-        val incomplete = TargetSpec(TargetKind.FIXED_ENTITY)
+        val incomplete = TargetSpec(TargetKind.TEMPORARY)
 
         CommandSettingsModel.setTargetSpec(node, CommandSettingRole.NODE_TARGET, incomplete)
 
@@ -90,7 +92,7 @@ class CommandSettingsModelTest {
         CommandSettingsModel.setTargetSpec(
             node,
             CommandSettingRole.NODE_TARGET,
-            incomplete.copy(fixedEntityId = UUID.randomUUID()),
+            incomplete.copy(tempName = "foe"),
         )
 
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET))
@@ -522,8 +524,8 @@ class CommandSettingsModelTest {
 
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEARBY_ENTITIES))
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEAREST_PLAYER))
-        // issue #34-4: 固定実体・一時変数参照は詳細条件を使いません。
-        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
+        // issue #34-4: 一時変数参照は詳細条件を使いません。
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
         assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.TEMPORARY))
         assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(null))
         assertEquals(
@@ -1120,49 +1122,23 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `fixed and temporary references expose no detail filters`() {
-        // issue #34-4: 固定実体・一時変数参照は詳細条件を使いません。
+    fun `temporary references expose no detail filters`() {
+        // issue #34-4: 一時変数参照は詳細条件を使いません。
         // 実行側が適用しない条件をGUIで提示しないことを固定します。
-        assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(TargetKind.FIXED_ENTITY))
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
         assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(TargetKind.TEMPORARY))
-        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "tag"))
-        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "distance"))
-        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "entityType"))
         assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "tag"))
         assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "distance"))
-        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "kind"))
+        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "kind"))
         // 通常検索の契約は変えません。
         assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.NEAREST_ENTITY, "tag"))
         assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_ENTITY).contains("tag"))
     }
 
     @Test
-    fun `saving fixed and temporary references prunes detail filters`() {
+    fun `saving temporary references prunes detail filters`() {
         // issue #34-4: 保存時に残存条件を除去し、保持した条件を黙って無視しません。
-        val fixed = TargetSpec(
-            TargetKind.FIXED_ENTITY,
-            entityType = "minecraft:zombie",
-            minimumDistance = 1.0,
-            maximumDistance = 8.0,
-            gameMode = "SURVIVAL",
-            tag = "mark",
-            name = "bob",
-            dx = 2.0,
-            fixedEntityId = UUID.randomUUID(),
-        )
-        val fixedNode = CommandType.ENTITY_DELETE.newNode()
-        CommandSettingsModel.setTargetSpec(fixedNode, CommandSettingRole.NODE_TARGET, fixed)
-        val savedFixed = requireNotNull(fixedNode.targetSpec)
-        assertEquals(TargetKind.FIXED_ENTITY, savedFixed.kind)
-        assertEquals(fixed.fixedEntityId, savedFixed.fixedEntityId)
-        assertNull(savedFixed.entityType)
-        assertNull(savedFixed.minimumDistance)
-        assertNull(savedFixed.maximumDistance)
-        assertNull(savedFixed.gameMode)
-        assertNull(savedFixed.tag)
-        assertNull(savedFixed.name)
-        assertNull(savedFixed.dx)
-
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
         val temporary = TargetSpec(TargetKind.TEMPORARY, tempName = "foe", tag = "mark", maximumDistance = 8.0)
         val tempNode = CommandType.ENTITY_DELETE.newNode()
         CommandSettingsModel.setTargetSpec(tempNode, CommandSettingRole.NODE_TARGET, temporary)

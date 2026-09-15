@@ -1640,9 +1640,8 @@ object ExecutableScriptValidator {
         insideForBody: Boolean,
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
-        if (spec.kind == TargetKind.FIXED_ENTITY && spec.fixedEntityId == null) {
-            errors += nodeError(node, path, emptySet(), "固定エンティティが未設定です")
-        }
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        // 旧保存データは読込時の型検証で隔離するため、ここでの分岐は不要です。
         if (spec.kind == TargetKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, ValueType.ENTITY, temporaryDefinitions, node, path, emptySet(), errors)
         }
