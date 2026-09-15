@@ -403,7 +403,9 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `actionbar durations are validated like title durations`() {
+    fun `actionbar validates only the single display duration`() {
+        // issue #35-2: アクションバーは単独の表示時間だけを使い、
+        // フェード値は検証対象にしません。
         val script = DiskScript(name = "actionbar-duration", owner = UUID.randomUUID())
         val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         actionbar.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
@@ -415,6 +417,14 @@ class ExecutableScriptValidatorTest {
                 "fadeOutSeconds" to "1",
             )
         )
+
+        assertFalse(
+            ExecutableScriptValidator.validate(script).any {
+            it.message.contains("表示時間は0秒以上")
+            }
+        )
+
+        actionbar.params["staySeconds"] = "-2"
 
         assertTrue(
             ExecutableScriptValidator.validate(script).any {

@@ -827,10 +827,17 @@ class VanillaDatapackExporter(
                     } ?: atCommand
                     if (node.type == CommandType.DISPLAY_TEXT && DisplayTextTimingPolicy.supports(node)) {
                         val timing = DisplayTextTiming.from(node)
+                        // issue #35-2: アクションバーは単独の表示時間だけを出力し、
+                        // フェード値は加算しません。times命令にフェード相当はないため0とします。
+                        val (fadeIn, stay, fadeOut) = if (node.string("mode", "tellraw") == "actionbar") {
+                            Triple(0L, timing.stayTicks, 0L)
+                        } else {
+                            Triple(timing.fadeInTicks, timing.stayTicks, timing.fadeOutTicks)
+                        }
                         val times = "title ${effectiveTarget(node)} times " +
-                            "${timing.fadeInTicks} " +
-                            "${timing.stayTicks} " +
-                            "${timing.fadeOutTicks}"
+                            "$fadeIn " +
+                            "$stay " +
+                            "$fadeOut"
                         val primaryTarget = temporaryReferences.firstOrNull { it.role == "primary" }
                         val targetedTimes = primaryTarget?.let { reference ->
                             temporaryEntitySelection(reference, times)

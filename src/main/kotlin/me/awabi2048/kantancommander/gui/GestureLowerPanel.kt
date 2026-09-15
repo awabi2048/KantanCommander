@@ -1477,6 +1477,7 @@ class GestureLowerPanel(
         val displayValue = field.value(node)
         val compositeRows = when (displayValue) {
             is DisplayValue.Timing -> displayValue.rows(player)
+            is DisplayValue.Duration -> displayValue.rows(player)
             is DisplayValue.ParticleParameters -> displayValue.rows(player)
             is DisplayValue.SoundTargetPosition -> displayValue.rows(player)
             is DisplayValue.SoundSetting -> displayValue.rows(player)

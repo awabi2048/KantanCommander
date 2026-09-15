@@ -5327,12 +5327,18 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    /** DISPLAY_TEXTの3つの時間設定を、インベントリGUIと同じ仕様で編集します。 */
+    /**
+     * DISPLAY_TEXTの時間設定を、インベントリGUIと同じ仕様で編集します。
+     *
+     * issue #35-2: タイトル・サブタイトルは3項目、アクションバーは単独の
+     * 表示時間1項目です。
+     */
     private fun showDisplayTimingSettingDialog(
         player: Player,
         context: CommandSettingContext,
         node: me.awabi2048.kantancommander.model.CommandNode,
     ) {
+        val isActionbar = node.string("mode", "tellraw") == "actionbar"
         val fadeIn = node.string("fadeInSeconds", "1")
         val stay = node.string("staySeconds", "3")
         val fadeOut = node.string("fadeOutSeconds", "1")
@@ -5344,9 +5350,14 @@ class GestureSequenceEditor(
                 player,
                 node.string("mode", "tellraw"),
             ),
-            inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),
+            inputs = if (isActionbar) {
+                CommandDialogSpecs.actionbarDurationInputs(player, stay)
+            } else {
+                CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut)
+            },
         ) { response ->
-            val rawValues = listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").associateWith { key ->
+            val keys = if (isActionbar) listOf("staySeconds") else listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
+            val rawValues = keys.associateWith { key ->
                 response.textValue(key).trim()
             }
             val validationError = rawValues.values

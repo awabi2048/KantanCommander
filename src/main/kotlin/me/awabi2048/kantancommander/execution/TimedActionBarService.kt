@@ -1,7 +1,6 @@
 package me.awabi2048.kantancommander.execution
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
-import me.awabi2048.kantancommander.model.DisplayTextTiming
 import net.kyori.adventure.text.Component
 import org.bukkit.entity.Player
 import org.bukkit.scheduler.BukkitTask
@@ -12,7 +11,9 @@ import java.util.UUID
  *
  * AdventureのsendActionBarにはTitle.Timesのようなフェード設定がなく、クライアント
  * の既定表示時間を超えて表示し続けることもできません。そのため表示中は一定間隔で
- * 再送し、fadeIn/stay/fadeOutの合計時間が経過したら空のアクションバーを送ります。
+ * 再送し、指定の表示時間が経過したら空のアクションバーを送ります。
+ * issue #35-2: 表示時間は単独の表示時間（stay）だけを受け取ります。
+ * フェード値は加算しません。
  * プレイヤー単位の世代番号で、古いタイマーが後から新しい表示を消さないようにします。
  */
 internal class TimedActionBarService(private val plugin: KantanCommanderPlugin) {
@@ -25,13 +26,13 @@ internal class TimedActionBarService(private val plugin: KantanCommanderPlugin) 
     private val clearTasks = mutableMapOf<UUID, BukkitTask>()
 
     /** 新しい表示を開始し、同じプレイヤーの前回表示を終了させます。 */
-    fun show(player: Player, text: Component, timing: DisplayTextTiming) {
+    fun show(player: Player, text: Component, displayTicks: Long) {
         val playerId = player.uniqueId
         cancel(player, clear = false)
         val generation = nextGeneration(playerId)
         player.sendActionBar(text)
 
-        if (timing.totalTicks <= 0L) {
+        if (displayTicks <= 0L) {
             val clearTask = plugin.server.scheduler.runTaskLater(plugin, Runnable {
                 if (!isCurrent(player, generation)) return@Runnable
                 if (player.isOnline) player.sendActionBar(Component.empty())
@@ -66,7 +67,7 @@ internal class TimedActionBarService(private val plugin: KantanCommanderPlugin) 
             if (!isCurrent(player, generation)) return@Runnable
             if (player.isOnline) player.sendActionBar(Component.empty())
             finish(playerId, generation)
-        }, timing.totalTicks)
+        }, displayTicks)
         clearTasks[playerId] = clearTask
     }
 

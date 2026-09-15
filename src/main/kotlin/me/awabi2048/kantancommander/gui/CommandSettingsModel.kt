@@ -668,24 +668,38 @@ object CommandSettingsModel {
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)
             ) {
-                field.copy(
-                    value = { currentNode ->
-                        DisplayValue.Timing(
-                            fadeInSeconds = currentNode.string(
-                                "fadeInSeconds",
-                                currentNode.type.defaults["fadeInSeconds"].orEmpty(),
-                            ),
-                            staySeconds = currentNode.string(
-                                "staySeconds",
-                                currentNode.type.defaults["staySeconds"].orEmpty(),
-                            ),
-                            fadeOutSeconds = currentNode.string(
-                                "fadeOutSeconds",
-                                currentNode.type.defaults["fadeOutSeconds"].orEmpty(),
-                            ),
-                        )
-                    },
-                )
+                // issue #35-2: アクションバーは単独の表示時間だけを示します。
+                if (node.string("mode", "tellraw") == "actionbar") {
+                    field.copy(
+                        value = { currentNode ->
+                            DisplayValue.Duration(
+                                seconds = currentNode.string(
+                                    "staySeconds",
+                                    currentNode.type.defaults["staySeconds"].orEmpty(),
+                                ),
+                            )
+                        },
+                    )
+                } else {
+                    field.copy(
+                        value = { currentNode ->
+                            DisplayValue.Timing(
+                                fadeInSeconds = currentNode.string(
+                                    "fadeInSeconds",
+                                    currentNode.type.defaults["fadeInSeconds"].orEmpty(),
+                                ),
+                                staySeconds = currentNode.string(
+                                    "staySeconds",
+                                    currentNode.type.defaults["staySeconds"].orEmpty(),
+                                ),
+                                fadeOutSeconds = currentNode.string(
+                                    "fadeOutSeconds",
+                                    currentNode.type.defaults["fadeOutSeconds"].orEmpty(),
+                                ),
+                            )
+                        },
+                    )
+                }
             } else if (node.type == CommandType.PARTICLE && field.key == "particleParameters") {
                 field.copy(
                     value = { currentNode ->
@@ -2154,7 +2168,8 @@ object CommandSettingsModel {
      * 起動方法の変更は、読み込み・検証・保存・実行時登録更新・表示更新を
      * 一つの操作として扱います。明示の起動方法を保存し、従来欄（`timer`／
      * `activation`）も整合させるため、旧来の実行経路・表示・出力が
-     * 読み替えなしに追従します。間隔は小数秒（tick境界）で受け付け、下限は設けません。
+     * 読み替えなしに追従します。間隔は小数秒（tick境界）で受け付け、
+     * 0秒は受け付けません。上限は86400秒です。
      */
     fun updateTrigger(
         plugin: KantanCommanderPlugin,

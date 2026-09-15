@@ -143,7 +143,7 @@ data class TimerSetting(
     var intervalSeconds: Double = DEFAULT_TIMER_SECONDS,
 ) {
     /**
-     * 保存・実行へ渡す秒数をモデル内で許す範囲へ寄せます。下限は設けないため、
+     * 保存・実行へ渡す秒数をモデル内で許す範囲へ寄せます。
      * 非有限・0以下は既定値へ、上限超過は上限へ丸めます。tick境界の整合性は
      * 保存・実行前検証（CommandValueRules.isTimerSeconds）が担保します。
      */
@@ -784,7 +784,8 @@ fun ValueType.displayKey(): LocalizationKey<String> = when (this) {
     ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
     ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
-    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    // issue #35-3: 固定実体の表示キーは撤去したため、汎用のエンティティ表示を使う。
+    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY
 }
 
 /**

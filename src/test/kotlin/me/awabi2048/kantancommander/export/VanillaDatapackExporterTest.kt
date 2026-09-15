@@ -1513,7 +1513,9 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `actionbar export preserves configured durations`() {
+    fun `actionbar export uses the single display duration`() {
+        // issue #35-2: アクションバーは単独の表示時間だけを使い、
+        // フェード値は加算しません。
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "actionbar")
         val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
@@ -1528,10 +1530,10 @@ class VanillaDatapackExporterTest {
         val function = success.directory
             .resolve("data/kantan/function")
             .walkTopDown()
-            .first { it.isFile && it.readText().contains("title @a[distance=0..,limit=1,sort=nearest] times 40 120 60") }
+            .first { it.isFile && it.readText().contains("title @a[distance=0..,limit=1,sort=nearest] times 0 120 0") }
             .readText()
 
-        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] times 40 120 60"))
+        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] times 0 120 0"))
         assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] actionbar"))
     }
 

@@ -1401,7 +1401,14 @@ object ExecutableScriptValidator {
         validateTemplate(node.string("text"), node, path, "text", errors, variableDefinitions, temporaries = temporaryDefinitions)
         validateTemplate(node.string("subtitle"), node, path, "subtitle", errors, variableDefinitions, temporaries = temporaryDefinitions)
         if (DisplayTextTimingPolicy.supports(node)) {
-            listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").forEach { field ->
+            // issue #35-2: アクションバーは単独の表示時間だけを検証します。
+            // フェード値は表示時間に加算しないため、検証対象にしません。
+            val fields = if (node.string("mode", "tellraw") == "actionbar") {
+                listOf("staySeconds")
+            } else {
+                listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
+            }
+            fields.forEach { field ->
                 validateTickAlignedTime(
                     node = node,
                     path = path,

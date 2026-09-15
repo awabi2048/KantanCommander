@@ -3661,33 +3661,52 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
+    /**
+     * issue #35-2: 表示時間の入力画面です。
+     *
+     * タイトル・サブタイトルは3項目、アクションバーは単独の表示時間1項目です。
+     * アクションバーのフェード値は表示時間に加算しないため、入力欄を出しません。
+     */
     private fun showDisplayTimingForm(player: Player, route: MenuRoute, node: CommandNode) {
         val durationSpec = requireNotNull(CommandDialogSpecs.field(node, "staySeconds"))
-        showTextForm(
-            player = player,
-            route = route,
-            formId = "display-timing",
-            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
-            fields = listOf(
+        val stayField = FormTextField(
+            "staySeconds",
+            KcI18n.text(
+                player,
+                if (node.string("mode", "tellraw") == "actionbar") {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ACTIONBAR_DURATION
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY
+                },
+            ),
+            node.string("staySeconds", "3"),
+            spec = durationSpec,
+        )
+        val fields = if (node.string("mode", "tellraw") == "actionbar") {
+            listOf(stayField)
+        } else {
+            listOf(
                 FormTextField(
                     "fadeInSeconds",
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
                     node.string("fadeInSeconds", "1"),
                     spec = durationSpec,
                 ),
-                FormTextField(
-                    "staySeconds",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
-                    node.string("staySeconds", "3"),
-                    spec = durationSpec,
-                ),
+                stayField,
                 FormTextField(
                     "fadeOutSeconds",
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
                     node.string("fadeOutSeconds", "1"),
                     spec = durationSpec,
                 ),
-            ),
+            )
+        }
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "display-timing",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
+            fields = fields,
             save = { values, openRevision ->
                 updateNode(player, route, expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
@@ -3956,6 +3975,22 @@ sealed interface DisplayValue {
         )
     }
 
+    /**
+     * issue #35-2: アクションバーの単独表示時間を意味付きで表示します。
+     *
+     * フェード値は表示時間に加算しないため、行に出しません。
+     */
+    data class Duration(
+        val seconds: String,
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> = listOf(
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ACTIONBAR_DURATION),
+                seconds,
+            ),
+        )
+    }
+
     /** パーティクルの範囲3軸・速度・個数を、設定画面の現在値にも意味付きで表示します。 */
     data class ParticleParameters(
         val deltaX: String,
@@ -4065,6 +4100,7 @@ sealed interface DisplayValue {
         is Localized -> KcI18n.text(player, key)
         is EntityTypeName -> rawId
         is Timing -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
+        is Duration -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is ParticleParameters -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is SoundTargetPosition -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is SoundSetting -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
@@ -5110,7 +5146,8 @@ private fun displayValueTypeLabel(type: ValueType): LocalizationKey<String> = wh
     ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
     ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
-    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    // issue #35-3: 固定実体の表示キーは撤去したため、汎用のエンティティ表示を使う。
+    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY
 }
 
 private fun displayValueType(value: String) = runCatching { ValueType.valueOf(value) }.getOrNull()?.let {
@@ -5126,9 +5163,10 @@ private fun displayTemporaryType(value: String) =
 /** issue #2 の変数scopeを、既存の表示キーで解決します。 */
 private fun displayVariableScope(value: String) = VariableScope.parse(value)?.let {
     DisplayValue.Localized(when (it) {
-        VariableScope.EXECUTION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION
-        VariableScope.WORLD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD
-        VariableScope.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    VariableScope.EXECUTION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION
+    VariableScope.WORLD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD
+    // issue #35-3: 固定実体の表示キーは撤去したため、汎用のエンティティ表示を使う。
+    VariableScope.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY
     })
 } ?: displayUnset()
 

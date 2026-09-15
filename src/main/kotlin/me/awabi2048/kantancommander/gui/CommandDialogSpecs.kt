@@ -161,7 +161,7 @@ internal object CommandDialogSpecs {
 
     /**
      * プログラムタイマーの入力契約を両GUIで共有します。
-     * 小数秒（tick境界）を受け付け、下限は設けません。
+     * 小数秒（tick境界）を受け付け、0秒は受け付けません。上限は86400秒です。
      */
     val timerSeconds = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_INTERVAL,
@@ -182,7 +182,9 @@ internal object CommandDialogSpecs {
         format = InputFormat.TIME,
         formatHintKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIME_FORMAT_HINT,
         // issue #18: 範囲の共有正本です。検証クロージャと一致させます。
-        numericRange = NumericRange(0.0, MAX_TIMER_SECONDS.toDouble(), step = 1.0, exclusiveMin = true),
+        // issue #35-1: 刻みは0.05秒（1tick）です。整数刻みの段階操作へ使うと
+        // 検証落ちするため、復活時はここから導出します。
+        numericRange = NumericRange(0.0, MAX_TIMER_SECONDS.toDouble(), step = 0.05, exclusiveMin = true),
     )
 
     /** 検証済みのタイマー入力文字列を、保存用の秒数へ変換します。 */
@@ -198,9 +200,8 @@ internal object CommandDialogSpecs {
     }.getOrDefault(seconds.toString())
 
     /** タイマー入力の方法だけを表示します。現在の秒数は入力欄に表示します。 */
-    fun timerBody(player: Player): List<Component> = listOf(
-        KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_BODY),
-    )
+    fun timerBody(player: Player): List<Component> =
+        KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_TIMER_BODY).map(Component::text)
 
     fun timerInput(player: Player, seconds: Double): MenuDialogInput.Text =
         input(
@@ -826,6 +827,23 @@ internal object CommandDialogSpecs {
                 fadeOut,
                 requireNotNull(field("fadeOutSeconds")),
                 KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
+            ),
+        )
+    }
+
+    /**
+     * issue #35-2: アクションバーの単独表示時間の入力欄です。
+     *
+     * フェード値は表示時間に加算しないため、入力欄を出しません。
+     */
+    fun actionbarDurationInputs(player: Player, stay: String): List<MenuDialogInput.Text> {
+        return listOf(
+            input(
+                player,
+                "staySeconds",
+                stay,
+                requireNotNull(field("staySeconds")),
+                KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ACTIONBAR_DURATION),
             ),
         )
     }

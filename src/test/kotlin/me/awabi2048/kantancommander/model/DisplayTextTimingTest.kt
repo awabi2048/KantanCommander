@@ -22,6 +22,8 @@ class DisplayTextTimingTest {
         assertEquals(120L, timing.stayTicks)
         assertEquals(60L, timing.fadeOutTicks)
         assertEquals(220L, timing.totalTicks)
+        // issue #35-2: アクションバーは単独の表示時間だけを使います。
+        assertEquals(120L, timing.actionBarTicks)
         assertTrue(DisplayTextTimingPolicy.supports(node))
         assertTrue(DisplayTextTimingPolicy.supports("title"))
         assertFalse(DisplayTextTimingPolicy.supports("tellraw"))
