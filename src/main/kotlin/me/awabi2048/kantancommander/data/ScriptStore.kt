@@ -138,6 +138,8 @@ class ScriptStore(
         LegacyEquipMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         // issue #27: 旧条件分類を判定対象へ正本化します。
         LegacyConditionMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
+        // issue #10: 旧召喚時表示名を個別設定へ正本化します。
+        LegacySummonMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         if (PersistedScriptValidator.validate(migrated).isNotEmpty()) return null
         val script = gson.fromJson(migrated, DiskScript::class.java) ?: return null
         // 旧JSONには arguments 欄が存在しません。Gsonの復元ではKotlinの
@@ -527,6 +529,8 @@ class ScriptStore(
         LegacyEquipMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         // issue #27: 旧条件分類を判定対象へ正本化します。適用範囲は同じです。
         LegacyConditionMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
+        // issue #10: 旧召喚時表示名を個別設定へ正本化します。
+        LegacySummonMigration.normalizeGraph(migrated["graph"]?.takeIf { it.isJsonObject }?.asJsonObject)
         val schemaViolations = PersistedScriptValidator.validate(migrated)
         require(schemaViolations.isEmpty()) {
             "保存データの型・enum検証に失敗しました: ${schemaViolations.joinToString("; ")}"

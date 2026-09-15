@@ -46,6 +46,8 @@ class EntityDataSchemaTest {
         val ids = EntityDataSchema.propertiesFor(EntityType.ARMOR_STAND).map { it.id }
         assertTrue(ids.containsAll(listOf("armor_stand_arms", "armor_stand_small", "armor_stand_marker", "armor_stand_base_plate")))
         assertFalse(ids.contains("rabbit_type"))
+        // ArmorStandの部位ポーズ等の複合値は初期対象に含めません（#10の判断を固定）。
+        assertTrue(ids.none { it.startsWith("armor_stand_pose") || it.startsWith("pose") })
     }
 
     @Test

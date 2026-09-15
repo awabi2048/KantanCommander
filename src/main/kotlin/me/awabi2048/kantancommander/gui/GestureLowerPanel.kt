@@ -3347,6 +3347,9 @@ class GestureLowerPanel(
         choiceId.startsWith("property:") -> setOf(EntityDataSchema.PARAM_PROPERTY)
         // issue #21: 配置先の選択肢は配置先欄へ投影します。
         choiceId.startsWith("placeDestination:") -> setOf("placeDestination")
+        // issue #10: 召喚時個別設定の選択肢は個別設定欄へ投影します。
+        choiceId.startsWith("summonDataValue:") -> setOf("summonData")
+        choiceId.startsWith("summonData:") -> setOf("summonData")
         choiceId.startsWith("equipmentSlot:") -> setOf("slot")
         choiceId.startsWith("overwrite:") -> setOf("overwrite")
         choiceId.startsWith("tagOperation:") -> setOf("tagOperation")
@@ -3487,6 +3490,20 @@ class GestureLowerPanel(
             id.startsWith("changeMode:") -> choice.selected &&
                 node.string("changeMode", "ASSIGN") == id.removePrefix("changeMode:") &&
                 CommandSettingsModel.isFieldConfigured(node, "changeMode")
+            // issue #10: 召喚時個別設定の選択状態です。値の有無で判定し、
+            // 有限候補の選択肢は現在の保存値との一致で判定します。
+            id.startsWith("summonDataValue:") -> {
+                val remainder = id.removePrefix("summonDataValue:")
+                val separator = remainder.indexOf(':')
+                if (separator <= 0) false
+                else {
+                    val propertyId = remainder.substring(0, separator)
+                    val choice = remainder.substring(separator + 1)
+                    node.string(EntityDataSchema.summonDataKey(propertyId)) == choice
+                }
+            }
+            id.startsWith("summonData:") -> choice.selected &&
+                node.string(EntityDataSchema.summonDataKey(id.removePrefix("summonData:"))).isNotBlank()
             id.startsWith("equipmentSlot:") -> choice.selected &&
                 node.string("slot", "HAND") == id.removePrefix("equipmentSlot:") &&
                 CommandSettingsModel.isFieldConfigured(node, "slot")
@@ -3647,6 +3664,9 @@ class GestureLowerPanel(
         // NBTレイヤーの階層で選択します。対象種別が確定できる場合のみ
         // 適用可能な項目を表示し、和集合表示は行いません。
         GestureSettingScreen.ENTITY_DATA_ROOT -> entityDataRootChoices(node, player)
+        // issue #10: 召喚時個別設定の一覧画面です。召喚種類が確定できる場合のみ
+        // 適用可能な項目を表示し、和集合表示は行いません。
+        GestureSettingScreen.SUMMON_DATA_ROOT -> summonDataRootChoices(node, player)
         // attribute子画面です。選択→変更後の値入力フローであり、
         // ID自体の自由入力欄は持ちません。
         GestureSettingScreen.ENTITY_ATTRIBUTE_SELECT -> {
@@ -4006,6 +4026,60 @@ class GestureLowerPanel(
                             "entityData:property:${definition.id}",
                             KcI18n.text(player, definition.optionKey),
                             targeted && currentValue.isNotBlank(),
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * issue #10: 召喚時個別設定の選択肢です。
+     *
+     * 既存Entity編集の統合選択画面と同じ階層・操作契約で、保存先だけを
+     * 召喚時個別設定（`summonData_<propertyId>`）へ振り替えます。
+     * 真偽値は選択→クリックの直接切替え、有限候補は子画面を持たず
+     * 行内に選択肢を展開します。文字列・整数はDialog入力へ進みます。
+     * 召喚種類が確定できる場合のみ適用可能な項目を表示します。
+     */
+    private fun summonDataRootChoices(node: CommandNode, player: Player): List<SettingChoice> {
+        val summonType = me.awabi2048.kantancommander.model.EntityDataSchema
+            .knownSummonType(node.string("summonEntity"))
+        val entries = me.awabi2048.kantancommander.model.EntityDataSchema.summonDataEntries(node.params)
+        return buildList {
+            me.awabi2048.kantancommander.model.EntityDataSchema.propertiesFor(summonType).forEach { definition ->
+                val key = me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey(definition.id)
+                val current = entries[definition.id]
+                when (definition.valueKind) {
+                    // 真偽値はON状態を選択表示し、トグル操作と一致させます。子画面を持ちません。
+                    me.awabi2048.kantancommander.model.EntityPropertyValueKind.BOOLEAN -> add(
+                        SettingChoice(
+                            "summonData:${definition.id}",
+                            KcI18n.text(player, definition.optionKey),
+                            current == "true",
+                        ),
+                    )
+                    me.awabi2048.kantancommander.model.EntityPropertyValueKind.ENUM -> add(
+                        GestureSettingTreeNode(
+                            id = "summonData:${definition.id}",
+                            label = KcI18n.text(player, definition.optionKey),
+                            selected = current != null,
+                            children = definition.enumChoices.map { choice ->
+                                SettingChoice(
+                                    "summonDataValue:${definition.id}:${choice.id}",
+                                    KcI18n.text(player, choice.optionKey),
+                                    current == choice.id,
+                                )
+                            },
+                        ),
+                    )
+                    me.awabi2048.kantancommander.model.EntityPropertyValueKind.TEXT,
+                    me.awabi2048.kantancommander.model.EntityPropertyValueKind.INTEGER,
+                    -> add(
+                        SettingChoice(
+                            "summonData:${definition.id}",
+                            KcI18n.text(player, definition.optionKey),
+                            !current.isNullOrBlank(),
                         ),
                     )
                 }

@@ -34,6 +34,7 @@ import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyChoice
+import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.FacingKind
@@ -340,6 +341,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                     return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                                 }
                             }
+                        }
+                        // issue #10: 召喚時個別設定の一覧画面へ遷移します。
+                        if (field == "summonData" && node.type == CommandType.SUMMON_ENTITY) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, SUMMON_DATA_ROOT_ID)),
+                            )
                         }
                         // 旧equipのスロット選択はPLACE_ITEMへ移行したため削除します。
                         // 配置スロットは配置先で入力経路が変わります。装備は既存の
@@ -752,6 +759,97 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         }
                         if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, choice)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                SUMMON_DATA_ROOT_ID,
+                renderer = { renderSummonDataRoot(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "page" to entityPageAction(),
+                    "select" to MenuActionHandler { context ->
+                        val propertyId = context.payload["property"]
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (current.type != CommandType.SUMMON_ENTITY) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        val definition = EntityDataSchema.definition(propertyId)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        // 召喚種類の変更後に残った非対応項目は選択できません。
+                        // 検証層でも静的対象外として検出します。
+                        val summonType = EntityDataSchema.knownSummonType(current.string("summonEntity"))
+                        if (EntityDataSchema.staticSupport(summonType, propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        val key = EntityDataSchema.summonDataKey(propertyId)
+                        when (definition.valueKind) {
+                            // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
+                            EntityPropertyValueKind.BOOLEAN -> {
+                                if (!updateNode(context.player, context.route) {
+                                        val toggled = (!(it.string(key).toBooleanStrictOrNull() ?: false)).toString()
+                                        CommandSettingsModel.setParameter(it, key, toggled)
+                                    }) {
+                                    return@MenuActionHandler MenuActionResult.Rejected(
+                                        KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                                    )
+                                }
+                                MenuActionResult.Success(MenuUpdate.Refresh)
+                            }
+                            EntityPropertyValueKind.ENUM -> MenuActionResult.Success(
+                                MenuUpdate.Navigate(
+                                    choiceRoute(context.route, SUMMON_PROPERTY_VALUE_ID)
+                                        .copy(payload = context.route.payload + ("summonProperty" to propertyId)),
+                                ),
+                            )
+                            EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
+                                val fresh = node(context.route)
+                                    ?: return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
+                                showFieldForm(context.player, context.route, key, fresh)
+                                MenuActionResult.Success(MenuUpdate.None)
+                            }
+                        }
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                SUMMON_PROPERTY_VALUE_ID,
+                renderer = { renderSummonPropertyValues(it.player, it.route) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val choice = context.payload["choice"]
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val propertyId = context.route.payload["summonProperty"]
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (current.type != CommandType.SUMMON_ENTITY) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        val definition = EntityDataSchema.definition(propertyId)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        // 有限候補のみ選択適用します。真偽値・文字列・整数は別経路で編集します。
+                        if (definition.valueKind != EntityPropertyValueKind.ENUM) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        if (definition.enumChoices.none { it.id == choice }) {
+                            return@MenuActionHandler MenuActionResult.Ignored
+                        }
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, EntityDataSchema.summonDataKey(propertyId), choice)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
@@ -1854,6 +1952,99 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
+    /**
+     * issue #10: 召喚時個別設定の一覧です。
+     *
+     * 召喚種類が確定できる場合は共通項目に加えて型固有項目を示し、
+     * 確定できない場合は汎用項目だけを示します。現在値は各行に添え、
+     * 値の編集は項目の型で振り分けます。
+     */
+    private fun renderSummonDataRoot(player: Player, route: MenuRoute): InventoryMenuView {
+        val currentNode = node(route)
+        val summonType = currentNode?.let { EntityDataSchema.knownSummonType(it.string("summonEntity")) }
+        val entries = currentNode?.let { EntityDataSchema.summonDataEntries(it.params) }.orEmpty()
+        data class SummonRow(val selection: String, val material: Material, val label: String, val value: String?)
+        val options = EntityDataSchema.propertiesFor(summonType).map { definition ->
+            SummonRow(
+                definition.id,
+                when (definition.valueKind) {
+                    EntityPropertyValueKind.BOOLEAN -> Material.LIME_DYE
+                    EntityPropertyValueKind.ENUM -> Material.BOOK
+                    EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> Material.PAPER
+                },
+                    KcI18n.text(player, definition.optionKey),
+                    entries[definition.id]?.let { displaySummonPropertyValue(player, definition, it) },
+            )
+        }
+        val pageSize = 8
+        val pageCount = ((options.size + pageSize - 1) / pageSize).coerceAtLeast(1)
+        val page = route.payload["summonPage"]?.toIntOrNull()?.coerceIn(0, pageCount - 1) ?: 0
+        val rows = options.drop(page * pageSize).take(pageSize)
+        val layout = ChoiceMenuLayoutPolicy.layout((rows.size + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
+        val elements = rows.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.material,
+                option.label,
+                "select",
+                mapOf("property" to option.selection),
+                dataLabel = option.label,
+                dataValue = option.value,
+            )
+        }.toMutableList()
+        appendEntityPager(player, layout, elements, rows.size, page, pageCount, "summonPage")
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA)),
+            elements,
+        )
+    }
+
+    /** 召喚時個別設定の現在値を表示します。未設定は省略し、値欄の空白と区別します。 */
+    private fun displaySummonPropertyValue(
+        player: Player,
+        definition: me.awabi2048.kantancommander.model.EntityPropertyDefinition,
+        raw: String,
+    ): String? = when (definition.valueKind) {
+        EntityPropertyValueKind.BOOLEAN -> raw.toBooleanStrictOrNull()?.toString()
+        EntityPropertyValueKind.ENUM -> definition.enumChoices.firstOrNull { it.id == raw }
+            ?.let { KcI18n.text(player, it.optionKey) }
+        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> raw.takeIf(String::isNotBlank)
+    }
+
+    /**
+     * 召喚時個別設定の有限候補の一覧です。
+     *
+     * 内部IDと表示名の対応はスキーマ側で管理し、内部数値を直接入力させません。
+     * 対象項目は経路で受け取り、保存形式（単一選択）を汚染しません。
+     */
+    private fun renderSummonPropertyValues(player: Player, route: MenuRoute): InventoryMenuView {
+        val propertyId = route.payload["summonProperty"]
+        val definition = propertyId?.let { EntityDataSchema.definition(it) }
+        val options: List<EntityPropertyChoice> =
+            if (definition?.valueKind == EntityPropertyValueKind.ENUM) definition.enumChoices
+            else emptyList()
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size.coerceAtLeast(1))
+        val elements = options.mapIndexed { index, choice ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                Material.BOOK,
+                KcI18n.text(player, choice.optionKey),
+                "select",
+                mapOf("choice" to choice.id),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_PROPERTY_VALUE)),
+            elements,
+        )
+    }
+
     private fun settingsFields(node: CommandNode): List<EditorField> {
         // 簡易GUIでは向き指定を扱わないため、設定入口から除外します。
         // 保存済みの向き値は変更せず保持し、実行時の既定解決へ委ねます。
@@ -2449,7 +2640,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             EntityDataSchema.PARAM_VALUE -> ""
             EntityTagEntries.PARAM_ENTRIES -> return
             "entityId", "item", "block" -> ""
-            else -> return
+            // issue #10: 召喚時個別設定値は項目別の検証仕様で初期表示します。
+            // ここでは空欄初期表示とし、範囲・書式は入力仕様が担います。
+            else -> if (field.startsWith(EntityDataSchema.SUMMON_DATA_PREFIX)) "" else return
         }
         val spec = CommandDialogSpecs.field(node, field) ?: return
         val currentValue = node.string(field, defaultValue)
@@ -2470,7 +2663,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             ),
             save = { values ->
                 updateNode(player, route) {
-                    CommandSettingsModel.setParameter(it, field, values.getValue(field))
+                    // issue #10: 召喚種類の変更時は非対応の個別設定を残しません。
+                    if (field == "summonEntity" && it.type == CommandType.SUMMON_ENTITY) {
+                        CommandSettingsModel.setSummonEntity(it, values.getValue(field))
+                    } else {
+                        CommandSettingsModel.setParameter(it, field, values.getValue(field))
+                    }
                 }
             },
         )
@@ -3276,6 +3474,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val ENTITY_ATTRIBUTE_SELECT_ID = "entity_attribute_select"
         private const val ENTITY_TAG_LIST_ID = "entity_tag_list"
         private const val ENTITY_PROPERTY_VALUE_ID = "entity_property_value"
+        /** issue #10: 召喚時個別設定の一覧画面です。適用可能な項目だけを列挙します。 */
+        private const val SUMMON_DATA_ROOT_ID = "summon_data_root"
+        /** issue #10: 召喚時個別設定の有限候補の一覧画面です。対象項目は経路で受け取ります。 */
+        private const val SUMMON_PROPERTY_VALUE_ID = "summon_property_value"
         private const val PLACE_DESTINATION_ID = "place_destination"
         // 配置先画面の下段中央（45枠の下段中央）へ置く上書きトグル枠です。
         // 戻る枠（36）と配置先5択（19〜23）と重なりません。
@@ -3756,12 +3958,12 @@ object EditorMenuLayout {
                 displayEntityTypeName(it.string("summonEntity"))
             },
             field(
-                "customName",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DISPLAY_NAME,
-                Material.NAME_TAG,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_ENTITY_DISPLAY_NAME,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_ENTITY_DISPLAY_NAME,
-            ),
+                "summonData",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_DATA,
+                Material.BOOK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_PROPERTY,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_PROPERTY,
+            ) { displaySummonData(it) },
             field("tags", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAGS, Material.NAME_TAG),
             field(
                 "summonPosition",
@@ -4506,6 +4708,18 @@ private fun displayTagEntries(node: CommandNode): DisplayValue {
         ?: return displayUnset()
     if (entries.isEmpty()) return displayUnset()
     return displayLiteral(entries.size.toString())
+}
+
+/**
+ * issue #10 の召喚時個別設定の表示です。
+ *
+ * 設定件数を値欄のリテラル表示に留め、Nameへ件数・内容を含めません。
+ * 項目ごとの値は一覧画面で編集します。
+ */
+private fun displaySummonData(node: CommandNode): DisplayValue {
+    val count = EntityDataSchema.summonDataEntries(node.params).size
+    if (count == 0) return displayUnset()
+    return displayLiteral(count.toString())
 }
 
 /**

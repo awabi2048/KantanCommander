@@ -75,6 +75,69 @@ class EntityMigrationTest {
     }
 
     @Test
+    fun `v16 summon custom name migrates to shared summon data`() {
+        // issue #10: 旧独立 `customName` は共通スキーマの個別設定へ正本化します。
+        val dir = temp.resolve("v16-summon-name").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(
+            dir,
+            scriptId,
+            16,
+            nodeId,
+            """
+            "$nodeId": {
+              "id": "$nodeId",
+              "type": "SUMMON_ENTITY",
+              "params": {"entity": "minecraft:zombie", "tags": "", "customName": "Boss"},
+              "configuredFields": ["entity", "customName"]
+            }
+            """.trimIndent(),
+        )
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertEquals(CommandType.SUMMON_ENTITY, migrated.type)
+        assertEquals("Boss", migrated.string(me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("custom_name"), ""))
+        assertTrue("customName" !in migrated.params)
+        val marks = migrated.configuredFields ?: emptySet()
+        assertTrue(me.awabi2048.kantancommander.model.EntityDataSchema.summonDataKey("custom_name") in marks)
+        assertTrue("customName" !in marks)
+        assertEquals(17, loaded.formatVersion)
+    }
+
+    @Test
+    fun `v16 blank summon custom name is dropped as unset`() {
+        // 空の表示名は未設定と同等のため、移行で除去します。
+        val dir = temp.resolve("v16-summon-blank").also(File::mkdirs)
+        val scriptId = UUID.randomUUID()
+        val nodeId = UUID.randomUUID()
+        writeRaw(
+            dir,
+            scriptId,
+            16,
+            nodeId,
+            """
+            "$nodeId": {
+              "id": "$nodeId",
+              "type": "SUMMON_ENTITY",
+              "params": {"entity": "minecraft:zombie", "tags": "", "customName": ""},
+              "configuredFields": ["entity"]
+            }
+            """.trimIndent(),
+        )
+
+        val store = ScriptStore(dir, Logger.getAnonymousLogger())
+        val loaded = requireNotNull(store.load(scriptId))
+        val migrated = loaded.graph.nodes.getValue(nodeId)
+        assertTrue("customName" !in migrated.params)
+        assertTrue(
+            me.awabi2048.kantancommander.model.EntityDataSchema.summonDataEntries(migrated.params).isEmpty(),
+        )
+    }
+
+    @Test
     fun `v16 summon entity key migrates keeping its value`() {
         // v17改名の移行試験です。旧キーの値は新キーへ引き継ぎます。
         val dir = temp.resolve("v16-summon").also(File::mkdirs)

@@ -4,6 +4,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import me.awabi2048.kantancommander.data.LegacyConditionMigration
 import me.awabi2048.kantancommander.data.LegacyEquipMigration
+import me.awabi2048.kantancommander.data.LegacySummonMigration
 import me.awabi2048.kantancommander.model.DiskScript
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -47,6 +48,9 @@ internal object ControlBlockProgramCodec {
                     root["graph"]?.takeIf { it.isJsonObject }?.asJsonObject,
                 )
                 LegacyConditionMigration.normalizeGraph(
+                    root["graph"]?.takeIf { it.isJsonObject }?.asJsonObject,
+                )
+                LegacySummonMigration.normalizeGraph(
                     root["graph"]?.takeIf { it.isJsonObject }?.asJsonObject,
                 )
                 val script = gson.fromJson(root, DiskScript::class.java)

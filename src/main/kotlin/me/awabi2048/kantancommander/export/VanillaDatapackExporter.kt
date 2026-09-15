@@ -163,6 +163,7 @@ class VanillaDatapackExporter(
                     null -> errors += "${script.id}/${node.id}: プラグイン固有のエンティティ操作です"
                 }
                 CommandType.PLACE_ITEM -> validatePlaceItemExport(script, node, errors)
+                CommandType.SUMMON_ENTITY -> validateSummonExport(script, node, errors)
                 CommandType.PARTICLE -> {
                     val particle = ParticleSettings.particle(node)
                     if (particle == null) {
@@ -1559,9 +1560,9 @@ class VanillaDatapackExporter(
         // 入力中のカンマを複数タグの区切りとして再解釈しません。
         val tag = node.string("tags").takeIf(String::isNotBlank)
         val tagNbt = tag?.let { "Tags:[\\\"${escape(it)}\\\"]" }.orEmpty()
-        val customName = node.string("customName").takeIf(String::isNotBlank)
-            ?.let { "CustomName:\"{\\\"text\\\":\\\"${escape(it.replace('&', '§'))}\\\"}\"" }
-        val nbtFields = listOfNotNull(tagNbt.takeIf(String::isNotBlank), customName)
+        val nbtFields = mutableListOf<String>()
+        if (tagNbt.isNotBlank()) nbtFields += tagNbt
+        nbtFields += summonDataNbt(node)
         val nbt = nbtFields.takeIf { it.isNotEmpty() }?.let { " {${it.joinToString(",")}}" }.orEmpty()
         val entity = node.string("summonEntity")
         val summon = { coordinates: String -> "summon $entity $coordinates$nbt" }
@@ -1585,6 +1586,61 @@ class VanillaDatapackExporter(
                 PositionKind.MYWORLD_SPAWN -> error("unsupported summon position")
             }
         }
+    }
+
+    /**
+     * issue #10 の召喚時個別設定をsummonのNBTへ変換します。
+     *
+     * 共通7項目（AI／重力／無音／無敵／発光／永続／表示名）だけを正確に写像し、
+     * それ以外の項目は黙って欠落させず明示エラーにします。テンプレート参照を
+     * 含む表示名は静的に確定できないため未対応とします。
+     */
+    private fun summonDataNbt(node: CommandNode): List<String> =
+        me.awabi2048.kantancommander.model.EntityDataSchema.summonDataEntries(node.params).map { (propertyId, raw) ->
+            summonDataNbtEntry(propertyId, raw)
+        }
+
+    /** 個別設定1件をNBTへ変換します。写像不能は呼び出し側が明示エラーにします。 */
+    private fun summonDataNbtEntry(propertyId: String, raw: String): String = when (propertyId) {
+        me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_AI ->
+            "NoAI:${booleanNbt(raw, propertyId, inverted = true)}"
+        me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_GRAVITY ->
+            "NoGravity:${booleanNbt(raw, propertyId, inverted = true)}"
+        me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_SILENT ->
+            "Silent:${booleanNbt(raw, propertyId)}"
+        me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_INVULNERABLE ->
+            "Invulnerable:${booleanNbt(raw, propertyId)}"
+        me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_GLOWING ->
+            "Glowing:${booleanNbt(raw, propertyId)}"
+        me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_PERSISTENT ->
+            "PersistenceRequired:${booleanNbt(raw, propertyId)}"
+        me.awabi2048.kantancommander.model.EntityDataSchema.PROPERTY_CUSTOM_NAME -> {
+            if (raw.contains("\${") || raw.contains("%{")) {
+                error("召喚時表示名の変数参照は完全バニラ出力に未対応です")
+            }
+            "CustomName:\"{\\\"text\\\":\\\"${escape(raw.replace('&', '§'))}\"}\""
+        }
+        else -> error("召喚時個別設定は完全バニラ出力に未対応です: $propertyId")
+    }
+
+    /**
+     * issue #10 の召喚時個別設定の出力可否を検証します。
+     *
+     * 写像不能な項目は lowering 時の例外にせず、ここで明示エラーにします。
+     */
+    private fun validateSummonExport(script: DiskScript, node: CommandNode, errors: MutableList<String>) {
+        me.awabi2048.kantancommander.model.EntityDataSchema.summonDataEntries(node.params).forEach { (propertyId, raw) ->
+            runCatching { summonDataNbtEntry(propertyId, raw) }.exceptionOrNull()?.let { failure ->
+                errors += "${script.id}/${node.id}: ${failure.message}"
+            }
+        }
+    }
+
+    /** 真偽値をNBTの0b／1bへ変換します。不正値は検証層で事前に検出します。 */
+    private fun booleanNbt(raw: String, propertyId: String, inverted: Boolean = false): String {
+        val value = raw.toBooleanStrictOrNull() ?: error("召喚時個別設定の真偽値が不正です: $propertyId")
+        val effective = if (inverted) !value else value
+        return if (effective) "1b" else "0b"
     }
 
     /** FIREWORK_LAUNCHをsummon firework_rocketへ変換します。 */

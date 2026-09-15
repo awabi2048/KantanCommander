@@ -1263,13 +1263,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         val entity = summonOrigin.world.spawnEntity(spawn, type)
                         try {
                             if (tag.isNotBlank()) entity.addScoreboardTag(tag)
-                            val rawCustomName = node.string("customName")
-                            val customName = resolveText(rawCustomName, session)
-                                ?: error("custom name is unavailable")
-                            if (customName.isNotEmpty()) {
-                                entity.customName(legacyText(customName))
-                                entity.isCustomNameVisible = true
-                            }
+                            // issue #10: 型付き個別設定を共通adapterから適用します。
+                            // 1件でも失敗したら生成体を残さず、全体を失敗にします。
+                            applySummonData(node, session, entity) || error("summon data is unavailable")
                             plugin.summonedEntities.register(entity, session.rootId)
                         } catch (failure: Throwable) {
                             // 台帳へ登録できない召喚体をワールドへ残すと、制限をすり抜けた
@@ -1483,6 +1479,42 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             failedCount = failed,
         )
         return applied > 0
+    }
+
+    /**
+     * issue #10 の召喚時個別設定を適用します。
+     *
+     * 既存Entity編集と同じ項目ID・検証・adapterを使い、保存キーの違いだけを
+     * 吸収します。文字列項目はテンプレート参照を解決します。全件の適用に
+     * 成功した場合だけ真を返し、呼び出し側は失敗時に生成体を削除します。
+     * 個別設定なしは成功として扱います。
+     */
+    private fun applySummonData(
+        node: CommandNode,
+        session: ExecutionSession,
+        entity: Entity,
+    ): Boolean {
+        val entries = me.awabi2048.kantancommander.model.EntityDataSchema.summonDataEntries(node.params)
+        entries.forEach { (propertyId, raw) ->
+            val parsed = me.awabi2048.kantancommander.model.EntityDataSchema.parse(propertyId, raw)
+                ?: return false
+            val resolvedText = if (parsed is me.awabi2048.kantancommander.model.EntityPropertyValue.TextValue) {
+                resolveText(parsed.text, session) ?: return false
+            } else null
+            if (!me.awabi2048.kantancommander.model.EntityDataSchema.supports(entity, propertyId)) return false
+            val success = when (parsed) {
+                is me.awabi2048.kantancommander.model.EntityPropertyValue.BooleanValue ->
+                    me.awabi2048.kantancommander.model.EntityDataSchema.applyBoolean(entity, propertyId, parsed.value)
+                is me.awabi2048.kantancommander.model.EntityPropertyValue.EnumValue ->
+                    me.awabi2048.kantancommander.model.EntityDataSchema.applyEnum(entity, propertyId, parsed.choiceId)
+                is me.awabi2048.kantancommander.model.EntityPropertyValue.TextValue ->
+                    applyTextProperty(entity, propertyId, resolvedText.orEmpty())
+                is me.awabi2048.kantancommander.model.EntityPropertyValue.IntegerValue ->
+                    me.awabi2048.kantancommander.model.EntityDataSchema.applyInteger(entity, propertyId, parsed.value)
+            }
+            if (!success) return false
+        }
+        return true
     }
 
     /**

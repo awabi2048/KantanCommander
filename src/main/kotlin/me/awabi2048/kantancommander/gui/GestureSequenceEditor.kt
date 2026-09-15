@@ -68,6 +68,7 @@ import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.PositionKind
@@ -302,6 +303,8 @@ enum class GestureSettingScreen {
     DISPLAY_MODE,
     ENTITY_ACTION,
     ENTITY_DATA_ROOT,
+    /** issue #10: 召喚時個別設定の一覧画面です。 */
+    SUMMON_DATA_ROOT,
     ENTITY_ATTRIBUTE_SELECT,
     ENTITY_TAG_LIST,
     ENTITY_PROPERTY_VALUE,
@@ -3178,7 +3181,14 @@ class GestureSequenceEditor(
                     plugin,
                     context,
                     configuredFields = setOf(fieldKey),
-                    change = { CommandSettingsModel.setParameter(it, fieldKey, value) },
+                    change = {
+                        // issue #10: 召喚種類の変更時は非対応の個別設定を残しません。
+                        if (fieldKey == "summonEntity" && it.type == me.awabi2048.kantancommander.model.CommandType.SUMMON_ENTITY) {
+                            CommandSettingsModel.setSummonEntity(it, value)
+                        } else {
+                            CommandSettingsModel.setParameter(it, fieldKey, value)
+                        }
+                    },
                 )
                 if (updated == null) {
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
@@ -7587,6 +7597,73 @@ class GestureSequenceEditor(
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, value)
                     }) showSettingScreen()
+            }
+            // issue #10: 召喚時個別設定の一覧画面です。既存Entity編集と同じ
+            // 操作契約で、保存先だけを召喚時個別設定へ振り替えます。
+            // 真偽値は選択→クリックで直接切り替え、有限候補は行内の選択肢で
+            // 確定し、文字列・整数はDialog入力へ進みます。
+            GestureSettingScreen.SUMMON_DATA_ROOT -> {
+                if (group == "summonData") {
+                    val definition = EntityDataSchema.definition(value) ?: return
+                    // 召喚種類の変更後に残った非対応項目は選択できません。
+                    val summonType = EntityDataSchema.knownSummonType(node.string("summonEntity"))
+                    if (EntityDataSchema.staticSupport(summonType, value) == EntityPropertySupport.STATICALLY_UNSUPPORTED) return
+                    when (definition.valueKind) {
+                        EntityPropertyValueKind.BOOLEAN -> {
+                            val key = EntityDataSchema.summonDataKey(value)
+                            val toggled = (!(node.string(key).toBooleanStrictOrNull() ?: false)).toString()
+                            if (updateSettingNode(player, settingContext) {
+                                    CommandSettingsModel.setParameter(it, key, toggled)
+                                }) showSettingScreen()
+                        }
+                        EntityPropertyValueKind.TEXT, EntityPropertyValueKind.INTEGER -> {
+                            val key = EntityDataSchema.summonDataKey(value)
+                            val fresh = plugin.scripts.load(settingContext.scriptId)
+                                ?.graph?.nodes?.get(settingContext.nodeId)
+                                ?: return
+                            beginSettingInput(
+                                player,
+                                requireNotNull(CommandDialogSpecs.field(fresh, key)),
+                                fresh.string(key, ""),
+                            ) { raw ->
+                                val normalized = CommandDialogSpecs.normalize(key, raw)
+                                val current = plugin.scripts.load(settingContext.scriptId)
+                                    ?.graph?.nodes?.get(settingContext.nodeId)
+                                val spec = current?.let { CommandDialogSpecs.field(it, key) }
+                                    ?: return@beginSettingInput KcI18n.text(
+                                        player,
+                                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
+                                    )
+                                val validationError = spec.validateInput(normalized)
+                                if (validationError != null) {
+                                    KcI18n.text(player, validationError)
+                                } else if (!updateSettingNode(player, settingContext, configuredFields = setOf(key)) {
+                                        CommandSettingsModel.setParameter(it, key, normalized)
+                                    }) {
+                                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                                } else null
+                            }
+                        }
+                        // 有限候補は行内の選択肢で確定し、行自体のクリックでは保存しません。
+                        EntityPropertyValueKind.ENUM -> showSettingScreen()
+                    }
+                    return
+                }
+                if (group == "summonDataValue") {
+                    val separator = value.indexOf(':')
+                    if (separator <= 0) return
+                    val propertyId = value.substring(0, separator)
+                    val choice = value.substring(separator + 1)
+                    val definition = EntityDataSchema.definition(propertyId) ?: return
+                    if (definition.valueKind != EntityPropertyValueKind.ENUM) return
+                    if (definition.enumChoices.none { it.id == choice }) return
+                    val summonType = EntityDataSchema.knownSummonType(node.string("summonEntity"))
+                    if (EntityDataSchema.staticSupport(summonType, propertyId) == EntityPropertySupport.STATICALLY_UNSUPPORTED) return
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, EntityDataSchema.summonDataKey(propertyId), choice)
+                        }) showSettingScreen()
+                    return
+                }
             }
             // 配置先の切替えで要求対象が変わるため、スロットは既定値へ戻して
             // 不正な組合せを残しません。額縁は内容固定のためスロット欄を隠します。

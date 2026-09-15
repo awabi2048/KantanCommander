@@ -123,6 +123,8 @@ enum class CommandSettingEditor {
     ENTITY_ACTION,
     /** 統合選択画面（設定する項目の一覧）です。旧3択を置換します。 */
     ENTITY_DATA_ROOT,
+    /** issue #10: 召喚時個別設定の一覧画面です。適用可能な項目だけを列挙します。 */
+    SUMMON_DATA_ROOT,
     /** attribute子画面（設定可能なattributeの一覧）です。 */
     ENTITY_ATTRIBUTE_SELECT,
     /** タグ一覧画面（カード列挙・追加・モード切替・削除）です。 */
@@ -733,7 +735,7 @@ object CommandSettingsModel {
             }
             CommandType.SUMMON_ENTITY -> when (fieldKey) {
                 "summonEntity" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY
-                "customName" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_NAME
+                "summonData" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_ENTITY_DATA
                 "tags" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TAGS
                 "summonPosition" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_SUMMON_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
@@ -987,6 +989,9 @@ object CommandSettingsModel {
         CommandType.WAIT -> text()
         CommandType.SUMMON_ENTITY -> when (fieldKey) {
             "summonPosition" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.SUMMON_POSITION)
+            // issue #10: 個別設定は一覧画面で編集します。真偽値・有限候補・
+            // 文字列・整数の入力経路は画面側で項目の型に合わせます。
+            "summonData" -> CommandSettingDescriptor(CommandSettingEditor.SUMMON_DATA_ROOT)
             else -> text()
         }
         CommandType.PLAY_SOUND -> when (fieldKey) {
@@ -1184,6 +1189,39 @@ object CommandSettingsModel {
     /** 複数の文字列パラメータを同じ明示設定契約で保存します。 */
     fun setParameters(node: CommandNode, values: Map<String, String>) {
         values.forEach { (key, value) -> setParameter(node, key, value) }
+    }
+
+    /**
+     * issue #10: 召喚種類の設定です。
+     *
+     * 種類変更時に新しい種類で利用できない個別設定を残さず、
+     * staleな値を実行時まで持ち越しません。種類が確定できない場合
+     * （空欄・不正ID）は検証層へ委ね、個別設定を削除しません。
+     * 両GUIの召喚種類保存はこの入口を使い、分岐させません。
+     */
+    fun setSummonEntity(node: CommandNode, raw: String) {
+        require(node.type == CommandType.SUMMON_ENTITY) { "召喚種類を持たないノードです: ${node.type}" }
+        setParameter(node, "summonEntity", raw)
+        val type = EntityDataSchema.knownSummonType(raw) ?: return
+        pruneSummonData(node, type)
+    }
+
+    /**
+     * issue #10: 指定種類で利用できない個別設定を除去します。
+     *
+     * 共通項目は種類を問わず残し、型固有項目だけを対象にします。
+     * 明示設定の記録も同時に除去し、表示上の設定済み残骸を残しません。
+     */
+    fun pruneSummonData(node: CommandNode, entityType: org.bukkit.entity.EntityType) {
+        val allowed = EntityDataSchema.propertiesFor(entityType).map { it.id }.toSet()
+        node.params.keys
+            .mapNotNull { key ->
+                EntityDataSchema.summonDataIdOf(key)?.takeIf { it !in allowed }?.let { key }
+            }
+            .forEach { key ->
+                node.params.remove(key)
+                node.clearConfigured(key)
+            }
     }
 
     fun targetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? = when (role) {
