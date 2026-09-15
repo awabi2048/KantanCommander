@@ -272,17 +272,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             // 表示と同じ共通フィールド集合を保存入口でも適用します。
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (CommandSettingsModel.supportsTemporaryValueReference(node, field)) {
-                            // 簡易GUIでは一時変数参照を扱いません。直接値へ切り替えて
-                            // 下の通常値入力へ進みます。既存の参照は解除されます。
-                            if (!updateNode(context.player, context.route, configuredFields = emptySet()) {
-                                    CommandSettingsModel.selectLiteralValueSource(it, field)
-                                }) {
-                                return@MenuActionHandler MenuActionResult.Rejected(
-                                    KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
-                                )
-                            }
-                        }
+                        // issue #33-2: 画面を開く操作では永続値を変更しません。
+                        // 一時変数参照の解除は直接値の確定時（setParameter）にのみ行い、
+                        // キャンセル・戻る・切断・入力失敗では元の参照と値を保ちます。
+                        // 直接値の保存入口（showFieldForm・選択確定・手持ち設定）は
+                        // いずれも setParameter 経由で参照解除を伴うため、ここでの
+                        // 事前保存は不要です。
                         if (field == "item" && (node.type == CommandType.GIVE_ITEM ||
                                 node.type == CommandType.PLACE_ITEM)) {
                             // 付与アイテムはインベントリ内の実物をクリックして選択する

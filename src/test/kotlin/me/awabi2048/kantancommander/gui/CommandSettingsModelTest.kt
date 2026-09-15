@@ -1042,4 +1042,39 @@ class CommandSettingsModelTest {
         // 通常対象側にタグ条件はないため、内包側の設定が漏れません。
         assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "tag"))
     }
+
+    @Test
+    fun `read only model access never clears a temporary reference`() {
+        // issue #33-2: 画面を開く操作（表示・判定のための読込）では、永続値・
+        // 一時変数参照・明示設定が変化しません。参照解除は直接値の確定時だけです。
+        val node = CommandType.GIVE_ITEM.newNode().apply {
+            params["item"] = "minecraft:stone"
+            markConfigured("item")
+            itemTempRef = "gift"
+            markConfigured("itemTempRef")
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        }
+        val paramsBefore = node.params.toMap()
+        val configuredBefore = node.configuredFields?.toSet().orEmpty()
+        val refBefore = node.itemTempRef
+        val targetBefore = node.targetSpec
+
+        CommandSettingsModel.visibleFields(node)
+        CommandSettingsModel.gestureVisibleFields(node)
+        CommandSettingsModel.descriptor(node, "item")
+        CommandSettingsModel.isFieldConfigured(node, "item")
+        CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET)
+        CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "kind")
+        CommandSettingsModel.temporaryValueSource(node, "item")
+        CommandSettingsModel.temporaryValueReference(node, "item")
+        CommandSettingsModel.supportsTemporaryValueReference(node, "item")
+        CommandSettingsModel.targetSpec(node, CommandSettingRole.NODE_TARGET)
+        CommandSettingsModel.incompleteWarningKey(node, "item")
+        CommandSettingsModel.visibleAttentionFieldKey(node, "item")
+
+        assertEquals(paramsBefore, node.params.toMap())
+        assertEquals(configuredBefore, node.configuredFields?.toSet().orEmpty())
+        assertEquals(refBefore, node.itemTempRef)
+        assertEquals(targetBefore, node.targetSpec)
+    }
 }
