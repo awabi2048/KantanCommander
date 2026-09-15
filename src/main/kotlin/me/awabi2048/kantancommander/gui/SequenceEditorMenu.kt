@@ -36,6 +36,7 @@ import me.awabi2048.kantancommander.model.ValueType
 import me.awabi2048.kantancommander.model.displayKey
 import me.awabi2048.kantancommander.model.CommandValueRules
 import me.awabi2048.kantancommander.model.PositionKind
+import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.util.KcI18n
@@ -437,6 +438,14 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         CommandType.VARIABLE -> node.string("name").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
         CommandType.FOR_START ->
             "×${node.string("count", "1")}"
+        // issue #11: 建造物の概要は「名前＋回転度＋反転有無」とし、対象の多い
+        // 設置位置は概要から外します（詳細画面で確認します）。
+        CommandType.STRUCTURE_SAVE ->
+            node.string("structure").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+        CommandType.STRUCTURE_PLACE -> {
+            val name = node.string("structure").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+            "$name ${node.string("rotation", StructureRotation.NONE.value)}°"
+        }
         else -> KcI18n.text(player, node.type.key)
     }
 

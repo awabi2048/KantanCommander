@@ -80,6 +80,8 @@ import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.FireworkSettings
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
+import me.awabi2048.kantancommander.model.StructureMirror
+import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TargetSort
@@ -326,6 +328,10 @@ enum class GestureSettingScreen {
     PARTICLE_DISPLAY,
     PARTICLE_GEOMETRY,
     BLOCK_OPERATION,
+    /** issue #11: 建造物名・回転・反転の選択画面です。 */
+    STRUCTURE_NAME,
+    STRUCTURE_ROTATION,
+    STRUCTURE_MIRROR,
 }
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -7411,6 +7417,39 @@ class GestureSequenceEditor(
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "operation", value)
                     }) showSettingScreen()
+            }
+            // issue #11: 建造物の回転・反転は定数IDだけを受け付けます。未知値は
+            // 検証層が拒否するため、ここでは何もせず画面維持にします。
+            GestureSettingScreen.STRUCTURE_ROTATION -> {
+                if (group != "rotation" || StructureRotation.from(value) == null) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "rotation", StructureRotation.from(value)!!.value)
+                    }) showSettingScreen()
+            }
+            GestureSettingScreen.STRUCTURE_MIRROR -> {
+                if (group != "mirror" || StructureMirror.from(value) == null) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "mirror", StructureMirror.from(value)!!.value)
+                    }) showSettingScreen()
+            }
+            // issue #11: 建造物名は保存済み一覧からの選択と、直接入力の両方を
+            // 受け付けます。直接入力は検証層の形式チェックへ委ねます。
+            GestureSettingScreen.STRUCTURE_NAME -> {
+                if (group == "structureName" && value.isNotBlank()) {
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "structure", value)
+                        }) showSettingScreen()
+                    return
+                }
+                if (encoded != "structure-name-direct") return
+                val spec = CommandDialogSpecs.structureNameSpec()
+                beginSettingInput(player, spec, node.string("structure")) { raw ->
+                    if (!updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "structure", raw)
+                        }) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else null
+                }
             }
             GestureSettingScreen.ENTITY_ACTION -> {
                 // 旧equipはPLACE_ITEM、旧tagはENTITY_OPERATIONへ移行済みのため受け付けません。

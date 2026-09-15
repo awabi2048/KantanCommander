@@ -219,6 +219,13 @@ data class CommandNode(
     /** ブロック操作の範囲始点・終点（fill相当）。 */
     var blockFromSpec: PositionSpec? = null,
     var blockToSpec: PositionSpec? = null,
+    /**
+     * issue #11 の建造物保存範囲です。BLOCK_OPERATION の blockFromSpec／blockToSpec を
+     * そのまま流用するため、専用の保存フィールドは持ちません。設置位置だけを
+     * 次の structurePlacePositionSpec で保持します。
+     */
+    /** issue #11 の建造物設置位置です。未設定時は制御ブロック位置を使用します。 */
+    var structurePlacePositionSpec: PositionSpec? = null,
     /** PLAY_SOUNDで「マイワールド内全域」以外を選んだ場合の再生位置です。 */
     var soundPositionSpec: PositionSpec? = null,
     /** PARTICLEの散布中心です。未設定時は実行コンテキストの位置を使用します。 */
@@ -281,6 +288,7 @@ data class CommandNode(
         blockPositionSpec = blockPositionSpec?.copy(),
         blockFromSpec = blockFromSpec?.copy(),
         blockToSpec = blockToSpec?.copy(),
+        structurePlacePositionSpec = structurePlacePositionSpec?.copy(),
         soundPositionSpec = soundPositionSpec?.copy(),
         particlePositionSpec = particlePositionSpec?.copy(),
         particleEndPositionSpec = particleEndPositionSpec?.copy(),
@@ -325,6 +333,45 @@ enum class BlockOperationMode(val value: String) {
 
     companion object {
         fun from(value: String?): BlockOperationMode? = entries.firstOrNull { it.value == value }
+    }
+}
+
+/**
+ * issue #11 の建造物回転です。保存値は度数の小文字文字列とし、
+ * Bukkit の StructureRotation へは実行時に写像します。
+ */
+enum class StructureRotation(val value: String, val degrees: Int) {
+    NONE("none", 0),
+    CLOCKWISE_90("clockwise_90", 90),
+    CLOCKWISE_180("clockwise_180", 180),
+    COUNTERCLOCKWISE_90("counterclockwise_90", 270),
+    ;
+
+    /** Bukkit の回転enumへの写像です。保存値と実行値の対応を一箇所に保ちます。 */
+    fun toBukkit(): org.bukkit.block.structure.StructureRotation =
+        org.bukkit.block.structure.StructureRotation.valueOf(name)
+
+    companion object {
+        fun from(value: String?): StructureRotation? = entries.firstOrNull { it.value == value }
+    }
+}
+
+/**
+ * issue #11 の建造物反転です。保存値は小文字文字列とし、
+ * Bukkit の Mirror へは実行時に写像します。NONE は反転なしです。
+ */
+enum class StructureMirror(val value: String) {
+    NONE("none"),
+    LEFT_RIGHT("left_right"),
+    FRONT_BACK("front_back"),
+    ;
+
+    /** Bukkit の反転enumへの写像です。保存値と実行値の対応を一箇所に保ちます。 */
+    fun toBukkit(): org.bukkit.block.structure.Mirror =
+        org.bukkit.block.structure.Mirror.valueOf(name)
+
+    companion object {
+        fun from(value: String?): StructureMirror? = entries.firstOrNull { it.value == value }
     }
 }
 
@@ -918,6 +965,26 @@ enum class CommandType(
     )),
     BLOCK_OPERATION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BLOCK_OPERATION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_BLOCK_OPERATION_DESCRIPTION, Material.BRICKS, mapOf(
         "operation" to "setblock", "block" to ""
+    )),
+    /**
+     * issue #11 の建造物保存です。範囲は blockFromSpec／blockToSpec を流用し、
+     * 建造物名 structure を保存します。非空・名前空間安全な名前だけを許可し、
+     * 保存先はプラグイン管理下の構造物ストアです。
+     */
+    STRUCTURE_SAVE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_STRUCTURE_SAVE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_STRUCTURE_SAVE_DESCRIPTION, Material.STRUCTURE_BLOCK, mapOf(
+        // 選択肢型に未選択と区別できない既定値は置きません（BLOCK_OPERATIONと同一方針）。
+        "structure" to "",
+    )),
+    /**
+     * issue #11 の建造物設置です。structure の名前で保存済み建造物を引き当て、
+     * 設置位置（structurePlacePositionSpec）へ回転・反転を適用して配置します。
+     * physics抑制と保護判定は BLOCK_OPERATION と同じ経路を使います。
+     */
+    STRUCTURE_PLACE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_STRUCTURE_PLACE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_STRUCTURE_PLACE_DESCRIPTION, Material.STRUCTURE_VOID, mapOf(
+        // 選択肢型に未選択と区別できない既定値は置きません（BLOCK_OPERATIONと同一方針）。
+        "structure" to "",
+        "rotation" to StructureRotation.NONE.value,
+        "mirror" to StructureMirror.NONE.value,
     )),
     ENTITY_DELETE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONDITION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(

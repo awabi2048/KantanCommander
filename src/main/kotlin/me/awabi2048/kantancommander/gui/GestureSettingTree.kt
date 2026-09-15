@@ -246,6 +246,10 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.PARTICLE_DISPLAY -> GestureSettingScreen.PARTICLE_DISPLAY
     CommandSettingEditor.PARTICLE_GEOMETRY -> GestureSettingScreen.PARTICLE_GEOMETRY
     CommandSettingEditor.BLOCK_OPERATION -> GestureSettingScreen.BLOCK_OPERATION
+    // issue #11: 建造物名・回転・反転の各編集経路を意味画面へ結びます。
+    CommandSettingEditor.STRUCTURE_NAME -> GestureSettingScreen.STRUCTURE_NAME
+    CommandSettingEditor.STRUCTURE_ROTATION -> GestureSettingScreen.STRUCTURE_ROTATION
+    CommandSettingEditor.STRUCTURE_MIRROR -> GestureSettingScreen.STRUCTURE_MIRROR
     CommandSettingEditor.TEXT -> null
 }
 

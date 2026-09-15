@@ -506,6 +506,49 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `structure save requires a name and a bounded range`() {
+        val script = DiskScript(name = "structure-save-check", owner = UUID.randomUUID())
+        val save = GraphEditor.append(script.graph, CommandType.STRUCTURE_SAVE)
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.nodeId == save.id && it.fieldKeys == setOf("structure") })
+        assertTrue(errors.any { it.nodeId == save.id && it.fieldKeys == setOf("from") })
+        assertTrue(errors.any { it.nodeId == save.id && it.fieldKeys == setOf("to") })
+
+        save.params["structure"] = "Invalid Name!"
+        assertTrue(
+            ExecutableScriptValidator.validate(script).any { it.nodeId == save.id && it.fieldKeys == setOf("structure") },
+        )
+
+        save.params["structure"] = "my_house-01"
+        save.blockFromSpec = PositionSpec(PositionKind.COORDINATES, 0.0, 0.0, 0.0)
+        save.blockToSpec = PositionSpec(PositionKind.COORDINATES, 100.0, 100.0, 100.0)
+        assertTrue(ExecutableScriptValidator.validate(script).any { it.message.contains("32768") })
+    }
+
+    @Test
+    fun `structure place requires a valid name and known rotation and mirror`() {
+        val script = DiskScript(name = "structure-place-check", owner = UUID.randomUUID())
+        val place = GraphEditor.append(script.graph, CommandType.STRUCTURE_PLACE)
+
+        val errors = ExecutableScriptValidator.validate(script)
+
+        assertTrue(errors.any { it.nodeId == place.id && it.fieldKeys == setOf("structure") })
+
+        place.params["structure"] = "my_house-01"
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none { it.nodeId == place.id },
+        )
+
+        place.params["rotation"] = "sideways"
+        place.params["mirror"] = "upside_down"
+        val invalid = ExecutableScriptValidator.validate(script)
+        assertTrue(invalid.any { it.nodeId == place.id && it.fieldKeys == setOf("rotation") })
+        assertTrue(invalid.any { it.nodeId == place.id && it.fieldKeys == setOf("mirror") })
+    }
+
+    @Test
     fun `summon tags are validated as one string rather than a comma-separated list`() {        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY)
         summon.params["summonEntity"] = "minecraft:pig"

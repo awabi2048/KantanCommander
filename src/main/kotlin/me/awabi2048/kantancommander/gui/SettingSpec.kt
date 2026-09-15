@@ -220,6 +220,10 @@ object SettingSpec {
             CommandSettingEditor.PARTICLE_DISPLAY,
             CommandSettingEditor.PARTICLE_GEOMETRY,
             CommandSettingEditor.BLOCK_OPERATION,
+            // issue #11: 建造物名・回転・反転はいずれも選択木（CHOICE）です。
+            CommandSettingEditor.STRUCTURE_NAME,
+            CommandSettingEditor.STRUCTURE_ROTATION,
+            CommandSettingEditor.STRUCTURE_MIRROR,
             -> GesturePresentation.CHOICE
         }
     }

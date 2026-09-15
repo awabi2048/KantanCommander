@@ -29,6 +29,8 @@ import me.awabi2048.kantancommander.model.ParticleGeometry
 import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
+import me.awabi2048.kantancommander.model.StructureMirror
+import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSort
 import me.awabi2048.kantancommander.model.TargetSpec
@@ -61,6 +63,8 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     BLOCK_POSITION("block_position", "position"),
     BLOCK_FROM("block_from", "from"),
     BLOCK_TO("block_to", "to"),
+    /** issue #11: 建造物設置位置です。BLOCK_POSITION と同じ位置設定木を使います。 */
+    STRUCTURE_PLACE_POSITION("structure_place_position", "structurePlace"),
     SOUND_POSITION("sound_position", "soundPosition"),
     PARTICLE_POSITION("particle_position", "position"),
     PARTICLE_END("particle_end", "particleEnd"),
@@ -148,6 +152,12 @@ enum class CommandSettingEditor {
     PARTICLE_DISPLAY,
     PARTICLE_GEOMETRY,
     BLOCK_OPERATION,
+    /** issue #11: 建造物名の確認・選択画面です。保存済み建造物を候補として列挙します。 */
+    STRUCTURE_NAME,
+    /** issue #11: 建造物の回転選択です。 */
+    STRUCTURE_ROTATION,
+    /** issue #11: 建造物の反転選択です。 */
+    STRUCTURE_MIRROR,
 }
 
 /**
@@ -789,6 +799,20 @@ object CommandSettingsModel {
                 "to" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_TO
                 else -> undefinedWarningKey(node, fieldKey)
             }
+            // issue #11: 建造物は名前・回転・反転・位置の警告を示します。位置系は
+            // ブロック操作と同じ警告キーを再利用し、新規キーを増やしません。
+            CommandType.STRUCTURE_SAVE -> when (fieldKey) {
+                "structure" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK
+                "from" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_FROM
+                "to" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_TO
+                else -> undefinedWarningKey(node, fieldKey)
+            }
+            CommandType.STRUCTURE_PLACE -> when (fieldKey) {
+                "structure" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK
+                "rotation", "mirror" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_OPERATION
+                "structurePlace" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
+                else -> undefinedWarningKey(node, fieldKey)
+            }
             CommandType.ENTITY_DELETE -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 else -> undefinedWarningKey(node, fieldKey)
@@ -1038,6 +1062,21 @@ object CommandSettingsModel {
             "position" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_POSITION)
             "from" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_FROM)
             "to" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_TO)
+            else -> text()
+        }
+        // issue #11: 建造物は名前・回転・反転を専用画面で編集し、設置位置だけは
+        // 既存の位置設定木を再利用します（BLOCK_OPERATION と同じ扱い）。
+        CommandType.STRUCTURE_SAVE -> when (fieldKey) {
+            "structure" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_NAME)
+            "from" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_FROM)
+            "to" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.BLOCK_TO)
+            else -> text()
+        }
+        CommandType.STRUCTURE_PLACE -> when (fieldKey) {
+            "structure" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_NAME)
+            "rotation" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_ROTATION)
+            "mirror" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_MIRROR)
+            "structurePlace" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.STRUCTURE_PLACE_POSITION)
             else -> text()
         }
         CommandType.ENTITY_DELETE -> if (fieldKey == "target") {
@@ -1375,6 +1414,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
         CommandSettingRole.BLOCK_TO -> node.blockToSpec
+        CommandSettingRole.STRUCTURE_PLACE_POSITION -> node.structurePlacePositionSpec
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec
         CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec
         else -> null
@@ -1403,6 +1443,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec?.kind
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
+        CommandSettingRole.STRUCTURE_PLACE_POSITION -> node.structurePlacePositionSpec?.kind
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec?.kind
         CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec?.kind
         else -> null
@@ -1423,6 +1464,7 @@ object CommandSettingsModel {
             CommandSettingRole.BLOCK_POSITION -> node.blockPositionSpec = spec
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
+            CommandSettingRole.STRUCTURE_PLACE_POSITION -> node.structurePlacePositionSpec = spec
             CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec = spec
             CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec = spec
             else -> error("${node.type} の位置設定役割が不正です: $role")
@@ -1436,6 +1478,7 @@ object CommandSettingsModel {
                 CommandSettingRole.FIREWORK_POSITION -> "fireworkPosition"
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
                 CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
+                CommandSettingRole.STRUCTURE_PLACE_POSITION -> "structurePlacePosition"
                 else -> "position"
             },
             role,
@@ -1530,6 +1573,7 @@ object CommandSettingsModel {
             }
             "from" -> isPositionSpecConfigured(node.blockFromSpec)
             "to" -> isPositionSpecConfigured(node.blockToSpec)
+            "structurePlace" -> isPositionSpecConfigured(node.structurePlacePositionSpec)
             "destinationFacing" -> isFacingSpecConfigured(node.destinationFacingSpec)
             "facing" -> if (effectiveRole == CommandSettingRole.DESTINATION_FACING) {
                 isFacingSpecConfigured(node.destinationFacingSpec)
@@ -1546,6 +1590,13 @@ object CommandSettingsModel {
             "summonPosition" -> isPositionSpecConfigured(node.summonPositionSpec)
             "fireworkPosition" -> isPositionSpecConfigured(node.fireworkPositionSpec)
             "executionPosition" -> isPositionSpecConfigured(node.executionPositionSpec)
+            // issue #11: 建造物名・回転・反転・設置位置の明示設定です。
+            // 回転・反転は明示記録の有無で判定します。既定値は保存用であり、
+            // 未操作の新規ノードは未設定です（新規ノード可視性試験の契約）。
+            "structure" -> node.string("structure").isNotBlank() && node.isExplicitlyConfigured("structure")
+            "rotation" -> node.isExplicitlyConfigured("rotation")
+            "mirror" -> node.isExplicitlyConfigured("mirror")
+            "structurePlace" -> isPositionSpecConfigured(node.structurePlacePositionSpec)
             // 再生位置と対象は、対象と再生位置のどちらかが揃えば設定済みです。
             // 停止操作では再生位置を使用しないため、対象だけを確認します。
             "soundTargetPosition" -> if (SoundSettings.operation(node) ==

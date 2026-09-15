@@ -1246,6 +1246,9 @@ internal object CommandDialogSpecs {
             return conditionNumberValue
         }
         if (node.type == CommandType.PLACE_ITEM && fieldKey == "slot") return placeSlot(node)
+        if ((node.type == CommandType.STRUCTURE_SAVE || node.type == CommandType.STRUCTURE_PLACE) && fieldKey == "structure") {
+            return structureNameSpec()
+        }
         return when (node.type) {
             CommandType.BLOCK_OPERATION -> if (fieldKey == "block") placementBlock else field(fieldKey)
             CommandType.WAIT -> if (fieldKey == "seconds") {
@@ -1570,6 +1573,26 @@ internal object CommandDialogSpecs {
     }
 
     /** 有限の座標値を受け付ける仕様です。座標・回転の各入力欄で共有します。 */
+
+    /**
+     * issue #11: 建造物名の入力仕様です。検証層と同一の文字種・長さを要求し、
+     * 形式違反は GUI共通の形式エラーにします。実在確認は設置時の実行層が行い、
+     * 保存時は存在しない名前も受け付けます。
+     */
+    fun structureNameSpec(): Spec = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STRUCTURE,
+        64,
+        validate = { raw ->
+            if (raw.isNotBlank() && !STRUCTURE_NAME_DIALOG_PATTERN.matches(raw)) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        // 必須性は検証層が担い、入力途中でも画面を開けるようにします。
+        required = false,
+        format = InputFormat.ANY_STRING,
+        formatHintKey = null,
+        numericRange = null,
+    )
     private fun finiteCoordinate(axis: String, allowNotation: Boolean = true): Spec = Spec(
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_VALUE,
         MULTI_VALUE_MAX_LENGTH,
@@ -1955,6 +1978,8 @@ internal object CommandDialogSpecs {
 
     private const val MAX_EFFECT_SECONDS = 86_400
     private const val MULTI_VALUE_MAX_LENGTH = 64
+    /** issue #11: 建造物名の入力仕様と検証層が同じ形式を指すための正規表現です。 */
+    private val STRUCTURE_NAME_DIALOG_PATTERN = Regex("[a-z0-9_-]{1,64}")
     private val NAMESPACED_ID_FIELDS = setOf("summonEntity", "entityType", "sound", "effect")
 
     /** 数値欄でも単一のワールド変数・一時変数を実行時に数値化できるようにします。 */
