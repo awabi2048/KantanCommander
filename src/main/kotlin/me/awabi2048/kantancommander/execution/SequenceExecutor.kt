@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.EntityGroupMath
 import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.error.ErrorCode
+import me.awabi2048.kantancommander.error.displayKey
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -3408,6 +3409,25 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): Entity? = resolveTargetSpecs(spec, session, context).firstOrNull()
 
     /**
+     * issue #34-5: 対象解決の型付き結果です。
+     *
+     * 成功（対象あり）・正常な0件・未解決・不正を区別し、#6の共通エラー体系へ
+     * 接続します。呼び出し側は空一覧へ潰さず、コード・原因・対象設定を
+     * ログとセッションへ保持します。正常な不一致を異常にせず、異常を
+     * 正常な0件へ変換しません。Target絞り込みの領域判定は Condition判定と
+     * 同じ [RegionResolution] の意味付け（基準未解決→未解決、world不一致・
+     * 不正指定→不正）を使います。
+     */
+    private sealed interface TargetResolution {
+        /** 解決成功です。条件に合う対象がない正常な0件を含みます。 */
+        data class Resolved(val entities: List<Entity>) : TargetResolution
+        /** 設定は正しいが実行時に解決できない状態です（変数未定義等）。 */
+        data class Unresolved(val code: ErrorCode, val detail: String) : TargetResolution
+        /** 設定自体が不正で解決できない状態です。 */
+        data class Invalid(val code: ErrorCode, val detail: String) : TargetResolution
+    }
+
+    /**
      * issue #34-4: 対象の取得と絞り込み適用の契約です。
      *
      * 通常検索（プレイヤー系・付近系）は matches で種類・名・タグ・距離・
@@ -3420,21 +3440,145 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         spec: TargetSpec,
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
-    ): List<Entity> {
-        val resolvedSpec = resolveTargetFilter(spec, session) ?: return emptyList()
-        val selectionOrigin = selectionOrigin(context, session) ?: return emptyList()
-        val candidates: List<Entity> = when (resolvedSpec.kind) {
-            TargetKind.TEMPORARY -> listOfNotNull(
-                resolvedSpec.tempName
-                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
-                    ?.takeIf { it.type == ValueType.ENTITY }
-                    ?.entityId?.let(session.origin.world::getEntity),
+    ): List<Entity> = when (val resolution = resolveTargetSpecsResult(spec, session, context)) {
+        is TargetResolution.Resolved -> resolution.entities
+        is TargetResolution.Unresolved -> {
+            // issue #34-5: 未解決は空一覧へ潰さず、コード・原因をログと
+            // セッションへ保持します。既存の失敗通知経路で利用者へ伝わります。
+            plugin.logger.warning(
+                "[KantanCommander] target unresolved: code=${resolution.code.code} " +
+                    "detail=${resolution.detail} kind=${spec.kind}",
             )
+            session.lastFailureReason = session.lastFailureReason ?: resolution.code.code
+            session.lastFailureCode = session.lastFailureCode ?: resolution.code
+            emptyList()
+        }
+        is TargetResolution.Invalid -> {
+            plugin.logger.warning(
+                "[KantanCommander] target invalid: code=${resolution.code.code} " +
+                    "detail=${resolution.detail} kind=${spec.kind}",
+            )
+            session.lastFailureReason = session.lastFailureReason ?: resolution.code.code
+            session.lastFailureCode = session.lastFailureCode ?: resolution.code
+            emptyList()
+        }
+    }
+
+    /**
+     * issue #34-5: 対象解決の型付き本体です。
+     *
+     * 呼び出し側の振る舞い（空一覧）は変えず、解決不能の原因だけを分類します。
+     * 分類は #34-4 の取得契約（固定・一時参照は単一解決、通常検索は絞り込み）と
+     * 一致させ、正常系の空結果と混同しません。
+     */
+    private fun resolveTargetSpecsResult(
+        spec: TargetSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec? = session.context,
+    ): TargetResolution {
+        val resolvedSpec = resolveTargetFilter(spec, session)
+            ?: return TargetResolution.Unresolved(
+                ErrorCode.TARGET_SPEC_INVALID,
+                "target.tag/target.nameの変数解決に失敗しました",
+            )
+        val selectionOrigin = selectionOrigin(context, session)
+            ?: return classifySelectionOriginFailure(context)
+        return when (resolvedSpec.kind) {
+            TargetKind.TEMPORARY -> resolveTemporaryTarget(resolvedSpec, session)
+            TargetKind.FIXED_ENTITY -> resolveFixedTarget(resolvedSpec, session)
+            TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS,
+            TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES,
+            -> resolveMatchingTargets(resolvedSpec, session, context, selectionOrigin)
+        }
+    }
+
+    /** issue #34-5: 探索基準位置の解決失敗を原因別に分類します。 */
+    private fun classifySelectionOriginFailure(context: ExecutionContextSpec?): TargetResolution {
+        val failure = TargetFailureClassification.selectionOriginFailure(context?.position?.kind)
+        val detail = when (context?.position?.kind) {
+            PositionKind.TARGET -> "探索基準位置にTARGETは使えません"
+            PositionKind.TEMPORARY ->
+                "探索基準の一時変数位置を解決できません: ${context?.position?.tempName.orEmpty()}"
+            else -> "探索基準位置を解決できません: ${context?.position?.kind?.name ?: "未設定"}"
+        }
+        return if (failure.unresolved) {
+            TargetResolution.Unresolved(failure.code, detail)
+        } else {
+            TargetResolution.Invalid(failure.code, detail)
+        }
+    }
+
+    /** issue #34-5: 一時変数参照の単一解決です。変数未定義・型不一致・実体消失を区別します。 */
+    private fun resolveTemporaryTarget(spec: TargetSpec, session: ExecutionSession): TargetResolution {
+        val name = spec.tempName?.takeIf(String::isNotBlank)
+            ?: return TargetResolution.Invalid(ErrorCode.TARGET_SPEC_INVALID, "一時変数名が未設定です")
+        val value = session.executionVariables.get(TemporaryTemplate.normalized(name))
+            ?: return TargetResolution.Unresolved(ErrorCode.TEMPORARY_UNRESOLVED, "一時変数が未定義です: $name")
+        if (value.type != ValueType.ENTITY) {
+            return TargetResolution.Invalid(
+                ErrorCode.VARIABLE_TYPE_MISMATCH,
+                "一時変数がENTITYではありません: $name",
+            )
+        }
+        val entity = value.entityId?.let(session.origin.world::getEntity)
+            ?: return TargetResolution.Unresolved(ErrorCode.TEMPORARY_UNRESOLVED, "一時変数の実体が存在しません: $name")
+        if (entity.world != session.origin.world || systemEntityRegistry.isSystemEntity(entity)) return TargetResolution.Resolved(emptyList())
+        return TargetResolution.Resolved(listOf(entity))
+    }
+
+    /** issue #34-5: 固定実体の単一解決です。未設定と実体消失を区別します。 */
+    private fun resolveFixedTarget(spec: TargetSpec, session: ExecutionSession): TargetResolution {
+        val id = spec.fixedEntityId
+            ?: return TargetResolution.Invalid(ErrorCode.TARGET_SPEC_INVALID, "固定エンティティが未設定です")
+        val entity = id.let(session.origin.world::getEntity)
+            ?: return TargetResolution.Unresolved(ErrorCode.FIXED_ENTITY_UNRESOLVED, "固定エンティティが存在しません: $id")
+        if (entity.world != session.origin.world || systemEntityRegistry.isSystemEntity(entity)) return TargetResolution.Resolved(emptyList())
+        return TargetResolution.Resolved(listOf(entity))
+    }
+
+    /**
+     * issue #34-5: 通常検索の解決です。
+     *
+     * 領域指定時は基準解決を先に分類し、基準未解決・world不一致・不正指定を
+     * 条件判定と同じ意味付け（未解決・不正）で返します。探索基準が必要な
+     * 絞り込み（距離・範囲）を持つ場合も、基準未解決を分類します。
+     * 条件に合う対象がない場合は正常な0件として解決成功にします。
+     */
+    private fun resolveMatchingTargets(
+        spec: TargetSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        selectionOrigin: Location,
+    ): TargetResolution {
+        if (spec.region?.hasAnySetting() == true) {
+            // issue #34-5: 基準解決の分類は Condition判定と同じ意味付けを使います。
+            val region = resolveRegionResult(spec.region, session, context)
+            val failure = TargetFailureClassification.regionFailure(region, spec.region.anchor.kind)
+            if (failure != null) {
+                val detail = when (region) {
+                    is RegionResolution.Resolved -> error("領域解決の成功は分類対象外です")
+                    RegionResolution.UnresolvedAnchor -> "領域の基準を解決できません"
+                    RegionResolution.WorldMismatch -> "領域の基準が実行ワールドと異なります"
+                    RegionResolution.InvalidSpec -> "領域の指定が不正です"
+                }
+                return if (failure.unresolved) {
+                    TargetResolution.Unresolved(failure.code, detail)
+                } else {
+                    TargetResolution.Invalid(failure.code, detail)
+                }
+            }
+        }
+        // issue #34-5: 明示の探索基準が解決できない場合は、絞り込みの有無に
+        // かかわらず未解決とします。基準なしでは距離判定自体ができないため、
+        // 条件不一致の0件へ変換しません。未指定時は選択原点へ退行します。
+        if (spec.searchOrigin?.hasAnySetting() == true && searchOriginFor(spec, context, session) == null) {
+            return classifySearchOriginFailure(spec)
+        }
+        val candidates: List<Entity> = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER ->
-                session.origin.world.players.filter { matches(it, resolvedSpec, session, context) }
-            TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES ->
-                session.origin.world.entities.filter { matches(it, resolvedSpec, session, context) }
-            TargetKind.FIXED_ENTITY -> listOfNotNull(resolvedSpec.fixedEntityId?.let(session.origin.world::getEntity))
+                session.origin.world.players.filter { matches(it, spec, session, context) }
+            else ->
+                session.origin.world.entities.filter { matches(it, spec, session, context) }
         }
         // 対象種別・固定UUID・一時変数の全経路をここで同じように検閲します。
         // 個別の操作実装で除外すると、新しいコマンド種別の追加時に抜け道になります。
@@ -3442,18 +3586,33 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             .filter { it.world == session.origin.world }
             .filterNot(systemEntityRegistry::isSystemEntity)
         val sorted = when {
-            resolvedSpec.kind == TargetKind.RANDOM_PLAYER || resolvedSpec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
+            spec.kind == TargetKind.RANDOM_PLAYER || spec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
                 inMyWorld.shuffled()
-            resolvedSpec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
+            spec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
                 inMyWorld.sortedByDescending { it.location.distanceSquared(selectionOrigin) }
             else -> inMyWorld.sortedBy { it.location.distanceSquared(selectionOrigin) }
         }
-        val defaultLimit = when (resolvedSpec.kind) {
-            TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY,
-            TargetKind.FIXED_ENTITY, TargetKind.TEMPORARY -> 1
+        val defaultLimit = when (spec.kind) {
+            TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY -> 1
             else -> Int.MAX_VALUE
         }
-        return sorted.take((resolvedSpec.limit ?: defaultLimit).coerceAtLeast(1))
+        return TargetResolution.Resolved(sorted.take((spec.limit ?: defaultLimit).coerceAtLeast(1)))
+    }
+
+    /** issue #34-5: 絞り込み用探索基準の解決失敗を原因別に分類します。 */
+    private fun classifySearchOriginFailure(spec: TargetSpec): TargetResolution {
+        val failure = TargetFailureClassification.searchOriginFailure(spec.searchOrigin)
+        val temp = spec.searchOrigin?.positionTemp?.takeIf(String::isNotBlank)
+        val detail = if (temp != null) {
+            "探索基準の一時変数位置を解決できません: $temp"
+        } else {
+            "探索基準位置を解決できません"
+        }
+        return if (failure.unresolved) {
+            TargetResolution.Unresolved(failure.code, detail)
+        } else {
+            TargetResolution.Invalid(failure.code, detail)
+        }
     }
 
     /** 対象名・タグだけを実行直前に補間し、Registry IDや構造化値は型を保ちます。 */
@@ -3499,8 +3658,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * issue #4 の明示領域による絞り込みです。
      *
      * 正常な不一致と解決失敗を区別します。基準未解決は不一致、world不一致・
-     * 不正指定は警告を残して不一致とします（Target絞り込みは真偽しか返せないため、
-     * 明示性はログで担保します。Condition判定では #5 の INVALID へ接続します）。
+     * 不正指定は不一致とします（Target絞り込みは真偽しか返せないため）。
+     * issue #34-5: 原因の分類と通知は解決単位で [resolveTargetSpecsResult] が
+     * 行うため、ここでは実体ごとのログを出しません。Condition判定では #5 の
+     * INVALID／UNRESOLVED へ接続し、同じ原因に矛盾した意味付けをしません。
      * 領域側の距離とTarget側の距離は独立に適用します（AND）。
      */
     private fun matchesRegion(
@@ -3530,14 +3691,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
         }
         RegionResolution.UnresolvedAnchor -> false
-        RegionResolution.WorldMismatch -> {
-            plugin.logger.warning("[KantanCommander] region world mismatch: anchor is outside the execution world")
-            false
-        }
-        RegionResolution.InvalidSpec -> {
-            plugin.logger.warning("[KantanCommander] invalid region spec: rejected by validation contract")
-            false
-        }
+        // issue #34-5: 実体ごとの警告は出しません。原因は解決単位で分類・通知します。
+        RegionResolution.WorldMismatch -> false
+        RegionResolution.InvalidSpec -> false
     }
 
     private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location? =
@@ -4139,12 +4295,19 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * DISK_CALLの入れ子や非同期WAITから同じ失敗経路へ戻っても、作成者への通知が
      * 重複しないようセッション単位で抑制します。オフラインの場合は送信先がないため、
      * 実行ログだけを正本として通知を捨てます。
+     *
+     * issue #34-5: セッションに記録されたエラーコードがある場合は、原因の表示名も
+     * 伝えます。対象解決の未解決・不正など、修正すべき設定を判断できるようにします。
      */
     private fun notifyCreatorOfFailure(session: ExecutionSession) {
         if (session.failureNotified) return
         session.failureNotified = true
         val creator = plugin.server.getPlayer(session.creatorId) ?: return
-        creator.sendMessage("§cかんたんコマンダープログラム【${session.programName}】の実行に失敗しました。")
+        val cause = (session.lastFailureCode ?: session.failureCode)
+            ?.let { KcI18n.text(creator, it.displayKey()) }
+            ?.takeIf(String::isNotBlank)
+            ?.let { "（原因: $it）" }.orEmpty()
+        creator.sendMessage("§cかんたんコマンダープログラム【${session.programName}】の実行に失敗しました。$cause")
         creator.playSound(
             creator.location,
             "minecraft:block.note_block.bit",
