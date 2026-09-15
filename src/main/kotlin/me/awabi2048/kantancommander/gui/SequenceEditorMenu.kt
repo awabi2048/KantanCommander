@@ -446,6 +446,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
             val name = node.string("structure").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
             "$name ${node.string("rotation", StructureRotation.NONE.value)}°"
         }
+        // issue #24: 群操作の概要は「操作＋群名」とします。軸入力の詳細は
+        // 詳細画面で確認します。
+        CommandType.ENTITY_GROUP -> {
+            val operation = node.string("operation").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+            val name = node.string("group").ifBlank { KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET) }
+            "$operation $name"
+        }
         else -> KcI18n.text(player, node.type.key)
     }
 

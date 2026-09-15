@@ -67,6 +67,7 @@ import me.awabi2048.kantancommander.model.FacingSpec
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
+import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
@@ -332,6 +333,9 @@ enum class GestureSettingScreen {
     STRUCTURE_NAME,
     STRUCTURE_ROTATION,
     STRUCTURE_MIRROR,
+    /** issue #24: 群操作・群名の選択画面です。 */
+    ENTITY_GROUP_OPERATION,
+    ENTITY_GROUP_NAME,
 }
 
 private data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
@@ -7417,6 +7421,33 @@ class GestureSequenceEditor(
                 if (updateSettingNode(player, settingContext) {
                         CommandSettingsModel.setParameter(it, "operation", value)
                     }) showSettingScreen()
+            }
+            // issue #24: 群操作は定数IDだけを受け付けます。未知値は検証層が
+            // 拒否するため、ここでは何もせず画面維持にします。
+            GestureSettingScreen.ENTITY_GROUP_OPERATION -> {
+                if (group != "groupOperation" || EntityGroupOperation.from(value) == null) return
+                if (updateSettingNode(player, settingContext) {
+                        CommandSettingsModel.setParameter(it, "operation", EntityGroupOperation.from(value)!!.value)
+                    }) showSettingScreen()
+            }
+            // issue #24: 群名は保存済み一覧からの選択と、直接入力の両方を
+            // 受け付けます。直接入力は検証層の形式チェックへ委ねます。
+            GestureSettingScreen.ENTITY_GROUP_NAME -> {
+                if (group == "groupName" && value.isNotBlank()) {
+                    if (updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "group", value)
+                        }) showSettingScreen()
+                    return
+                }
+                if (encoded != "group-name-direct") return
+                val spec = CommandDialogSpecs.entityGroupNameSpec()
+                beginSettingInput(player, spec, node.string("group")) { raw ->
+                    if (!updateSettingNode(player, settingContext) {
+                            CommandSettingsModel.setParameter(it, "group", raw)
+                        }) {
+                        KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
+                    } else null
+                }
             }
             // issue #11: 建造物の回転・反転は定数IDだけを受け付けます。未知値は
             // 検証層が拒否するため、ここでは何もせず画面維持にします。

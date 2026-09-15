@@ -36,6 +36,8 @@ class UnsetConsistencyTest {
         RequiredField(CommandType.SUMMON_ENTITY, "summonEntity", "summonEntity", "minecraft:pig"),
         RequiredField(CommandType.APPLY_EFFECT, "effect", "effect", "minecraft:speed"),
         RequiredField(CommandType.PLAY_SOUND, "soundSetting", "soundSetting", "minecraft:block.note_block.harp", checkDisplay = false),
+        // issue #24: 群名は未設定表示・注意喚起・検証の三者一致を固定します。
+        RequiredField(CommandType.ENTITY_GROUP, "group", "group", "my_group-01"),
     )
 
     private fun blankNode(type: CommandType): CommandNode = type.newNode()

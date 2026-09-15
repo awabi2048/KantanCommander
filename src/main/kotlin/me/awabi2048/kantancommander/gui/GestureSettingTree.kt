@@ -250,6 +250,9 @@ internal fun gestureSettingScreenFor(editor: CommandSettingEditor): GestureSetti
     CommandSettingEditor.STRUCTURE_NAME -> GestureSettingScreen.STRUCTURE_NAME
     CommandSettingEditor.STRUCTURE_ROTATION -> GestureSettingScreen.STRUCTURE_ROTATION
     CommandSettingEditor.STRUCTURE_MIRROR -> GestureSettingScreen.STRUCTURE_MIRROR
+    // issue #24: 群操作・群名の各編集経路を意味画面へ結びます。
+    CommandSettingEditor.ENTITY_GROUP_OPERATION -> GestureSettingScreen.ENTITY_GROUP_OPERATION
+    CommandSettingEditor.ENTITY_GROUP_NAME -> GestureSettingScreen.ENTITY_GROUP_NAME
     CommandSettingEditor.TEXT -> null
 }
 

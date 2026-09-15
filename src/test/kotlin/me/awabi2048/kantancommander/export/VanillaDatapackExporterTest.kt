@@ -362,6 +362,20 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
+    fun `entity group commands are rejected by the vanilla export validation`() {
+        val store = ScriptStore(temp.resolve("entity-group-export"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "entity group export")
+        GraphEditor.append(script.graph, CommandType.ENTITY_GROUP).apply {
+            params["operation"] = "move"
+            params["group"] = "my_group-01"
+        }
+        assertTrue(
+            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(script)
+                is StandaloneCompilation.Failure,
+        )
+    }
+
+    @Test
     fun `multi capable embedded targets are rejected for single only roles`() {
         val store = ScriptStore(temp.resolve("multi-embedded-target"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "multi embedded target")

@@ -549,6 +549,46 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `entity group requires its operation name and per-operation inputs`() {
+        val script = DiskScript(name = "entity-group-check", owner = UUID.randomUUID())
+        val group = GraphEditor.append(script.graph, CommandType.ENTITY_GROUP)
+
+        val blank = ExecutableScriptValidator.validate(script)
+        assertTrue(blank.any { it.nodeId == group.id && it.fieldKeys == setOf("operation") })
+        assertTrue(blank.any { it.nodeId == group.id && it.fieldKeys == setOf("group") })
+
+        group.params["operation"] = "create"
+        group.params["group"] = "Invalid Name!"
+        val badName = ExecutableScriptValidator.validate(script)
+        assertTrue(badName.any { it.nodeId == group.id && it.fieldKeys == setOf("group") })
+        assertTrue(badName.any { it.nodeId == group.id && it.fieldKeys == setOf("target") })
+
+        group.params["operation"] = "move"
+        group.params["group"] = "my_group-01"
+        group.params["moveX"] = "100"
+        group.params["moveY"] = "~0"
+        group.params["moveZ"] = "^5"
+        val badMove = ExecutableScriptValidator.validate(script)
+        assertTrue(badMove.any { it.nodeId == group.id && it.fieldKeys == setOf("moveZ") })
+        assertTrue(badMove.none { it.nodeId == group.id && it.fieldKeys == setOf("moveX") })
+
+        group.params["operation"] = "rotate"
+        group.params["moveX"] = ""
+        group.params["moveY"] = ""
+        group.params["moveZ"] = ""
+        group.params["rotateX"] = "~0"
+        group.params["rotateY"] = "~45"
+        group.params["rotateZ"] = "0"
+        assertTrue(
+            ExecutableScriptValidator.validate(script).none { it.nodeId == group.id },
+        )
+
+        group.params["operation"] = "set_pivot"
+        val missingPivot = ExecutableScriptValidator.validate(script)
+        assertTrue(missingPivot.any { it.nodeId == group.id && it.fieldKeys == setOf("pivot") })
+    }
+
+    @Test
     fun `summon tags are validated as one string rather than a comma-separated list`() {        val script = DiskScript(name = "single-tag", owner = UUID.randomUUID())
         val summon = GraphEditor.append(script.graph, CommandType.SUMMON_ENTITY)
         summon.params["summonEntity"] = "minecraft:pig"

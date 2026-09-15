@@ -29,6 +29,8 @@ import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityGroupMath
+import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
@@ -107,6 +109,12 @@ object ExecutableScriptValidator {
      * そのまま使うため、英小文字・数字・アンダースコア・ハイフンだけを許可します。
      */
     private val STRUCTURE_NAME_PATTERN = Regex("[a-z0-9_-]{1,64}")
+
+    /**
+     * issue #24: 群名として許可する形式です。ストアの参照キーへそのまま使うため、
+     * 建造物名と同じ文字種・長さに制限します。
+     */
+    private val ENTITY_GROUP_NAME_PATTERN = Regex("[a-z0-9_-]{1,64}")
 
     /**
      * issue #7/#8: 実行開始時に定義済みとなるEXECUTION変数の型表です。
@@ -659,6 +667,7 @@ object ExecutableScriptValidator {
             CommandType.BLOCK_OPERATION -> validateBlockOperation(node, path, errors, temporaryDefinitions)
             CommandType.STRUCTURE_SAVE -> validateStructureSave(node, path, errors, temporaryDefinitions)
             CommandType.STRUCTURE_PLACE -> validateStructurePlace(node, path, errors, temporaryDefinitions)
+            CommandType.ENTITY_GROUP -> validateEntityGroup(node, path, errors, temporaryDefinitions)
             CommandType.ENTITY_DELETE -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
             }
@@ -1520,6 +1529,92 @@ object ExecutableScriptValidator {
     }
 
     /**
+     * issue #24: Entity Group の検証です。操作ごと に必要な項目だけを検証し、
+     * 無関係な操作の値は無視します（ENTITY_ACTION と同一方針）。
+     * 群名はストアの参照キーへそのまま使うため、英小文字・数字・
+     * アンダースコア・ハイフンだけを許可します。
+     */
+    private fun validateEntityGroup(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, ValueType>? = null,
+    ) {
+        val operation = EntityGroupOperation.from(node.string("operation"))
+        if (operation == null) {
+            errors += nodeError(node, path, setOf("operation"), "群操作が未設定または不正です")
+        }
+        val name = node.string("group")
+        if (name.isBlank()) {
+            errors += nodeError(node, path, setOf("group"), "群が未設定です")
+        } else if (!ENTITY_GROUP_NAME_PATTERN.matches(name)) {
+            errors += nodeError(node, path, setOf("group"), "群名は英数字・アンダースコア・ハイフンで指定してください")
+        }
+        when (operation) {
+            EntityGroupOperation.CREATE,
+            EntityGroupOperation.ADD,
+            EntityGroupOperation.REMOVE,
+            -> if (node.targetSpec == null) {
+                errors += nodeError(node, path, setOf("target"), "群の対象が未設定です")
+            }
+            EntityGroupOperation.SET_PIVOT -> {
+                // CREATE では未設定時に所属中心を pivot とするため必須にしません。
+                if (node.groupPivotPositionSpec == null) {
+                    errors += nodeError(node, path, setOf("pivot"), "pivotが未設定です")
+                }
+            }
+            EntityGroupOperation.MOVE -> validateGroupAxes(
+                node,
+                path,
+                errors,
+                listOf("moveX", "moveY", "moveZ"),
+                EntityGroupMath::parseMoveAxis,
+                "移動",
+            )
+            EntityGroupOperation.ROTATE -> validateGroupAxes(
+                node,
+                path,
+                errors,
+                listOf("rotateX", "rotateY", "rotateZ"),
+                EntityGroupMath::parseRotateAxis,
+                "回転",
+            )
+            EntityGroupOperation.CREATE,
+            EntityGroupOperation.DELETE,
+            EntityGroupOperation.CLEANUP,
+            null,
+            -> Unit
+        }
+        // pivot は CREATE／SET_PIVOT でのみ使い、指定がある場合は共通の位置検証へ通します。
+        if (operation == EntityGroupOperation.CREATE || operation == EntityGroupOperation.SET_PIVOT) {
+            node.groupPivotPositionSpec?.let { validatePosition(it, path, node, errors, temporaryDefinitions) }
+        }
+    }
+
+    /**
+     * issue #24: 移動・回転の軸入力を検証します。3軸すべて必須であり、
+     * 無印は絶対、`~` は相対です。移動にローカル（`^`）は基準が定義できないため
+     * 拒否し、回転は parse 側で同じく拒否します。
+     */
+    private fun validateGroupAxes(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        keys: List<String>,
+        parse: (String) -> Pair<CoordinateSemantics, Double>?,
+        label: String,
+    ) {
+        keys.forEach { key ->
+            val parsed = parse(node.string(key))
+            if (parsed == null) {
+                errors += nodeError(node, path, setOf(key), "${label}の指定が不正です")
+            } else if (parsed.first == CoordinateSemantics.LOCAL) {
+                errors += nodeError(node, path, setOf(key), "${label}にローカルは指定できません")
+            }
+        }
+    }
+
+    /**
      * issue #11: 建造物名の共通検証です。変数・一時変数参照は保存時に解決できないため
      * 建造物名はリテラル固定とし、ファイル名へ展開する安全な文字だけを許可します。
      */
@@ -1641,19 +1736,22 @@ object ExecutableScriptValidator {
         insideForBody: Boolean,
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
-        listOfNotNull(
-            node.destinationSpec?.target,
-            node.conditionPositionSpec?.target,
-            node.blockPositionSpec?.target,
-            node.blockFromSpec?.target,
-            node.blockToSpec?.target,
-            node.soundPositionSpec?.target,
-            node.particlePositionSpec?.target,
-            node.particleEndPositionSpec?.target,
-            node.fireworkPositionSpec?.target,
-            node.summonPositionSpec?.target,
-            node.executionPositionSpec?.target,
-            node.temporaryLocationPositionSpec?.target,
+                listOfNotNull(
+                    node.destinationSpec?.target,
+                    node.conditionPositionSpec?.target,
+                    node.blockPositionSpec?.target,
+                    node.blockFromSpec?.target,
+                    node.blockToSpec?.target,
+                    node.soundPositionSpec?.target,
+                    node.particlePositionSpec?.target,
+                    node.particleEndPositionSpec?.target,
+                    node.fireworkPositionSpec?.target,
+                    node.summonPositionSpec?.target,
+                    node.executionPositionSpec?.target,
+                    node.temporaryLocationPositionSpec?.target,
+                    // issue #24: 群 pivot の内包対象も通常の対象検証へ通します。
+                    // #11 の設置位置と同じ扱いであり、旧データには存在しません。
+                    node.groupPivotPositionSpec?.target,
         ).forEach {
             validateTarget(it, path, node, errors, variableDefinitions, insideForBody, temporaryDefinitions)
         }
@@ -1682,6 +1780,8 @@ object ExecutableScriptValidator {
             node.blockToSpec,
             node.particleEndPositionSpec,
             node.temporaryLocationPositionSpec,
+            // issue #24: pivot は単一位置であり、対象由来の複数位置は指定できません。
+            node.groupPivotPositionSpec,
         ).filter { it.kind == PositionKind.TARGET && (it.target == null || it.target.isMultiCapable()) }
             .forEach { errors += nodeError(node, path, setOf("position"), "この位置に対象由来の複数位置は指定できません") }
         // issue #26・#29: fillの始点終点は単一へ定まる実行起点だけを既定値とします。
@@ -1722,6 +1822,8 @@ object ExecutableScriptValidator {
             node.summonPositionSpec,
             node.executionPositionSpec,
             node.temporaryLocationPositionSpec,
+            // issue #24: pivot の対象由来も内包対象なしでは解決不能です。
+            node.groupPivotPositionSpec,
         ).filter { it.kind == PositionKind.TARGET && it.target == null }
             .forEach { errors += nodeError(node, path, setOf("position"), "対象由来位置に対象の指定がありません") }
     }
