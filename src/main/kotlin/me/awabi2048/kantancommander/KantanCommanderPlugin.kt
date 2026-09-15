@@ -40,6 +40,7 @@ import me.awabi2048.kantancommander.item.ControlBlockInventorySync
 import me.awabi2048.kantancommander.item.KantanItemGrantProvider
 import me.awabi2048.kantancommander.item.KantanItemGrantService
 import me.awabi2048.kantancommander.placement.PlacementProtectionListener
+import me.awabi2048.kantancommander.placement.WorldEditControlBlockSyncListener
 import me.awabi2048.kantancommander.item.ItemSelectionListener
 import me.awabi2048.kantancommander.security.PlacementAccessPolicy
 import me.awabi2048.kantancommander.security.LuckPermsRecalculateAdapter
@@ -55,7 +56,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "788ecb08e238a19babed9f250a87fcdf7c42a81fbaf38edb225714ecc5d4da89"
+    "155fb2577dcb7db29e7b219265594da87487ce0aa8665c48cc39d8444abda54e"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -116,6 +117,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     private lateinit var triggerListener: RedstoneTriggerListener
     private lateinit var eventTriggerListener: EventTriggerListener
+    private var worldEditSync: WorldEditControlBlockSyncListener? = null
     private var standaloneExportContributor: KantanStandaloneExportContributor? = null
 
     override fun onEnable() {
@@ -296,6 +298,8 @@ class KantanCommanderPlugin : JavaPlugin() {
     }
 
     override fun onDisable() {
+        runCatching { worldEditSync?.stopSweep() }
+        worldEditSync = null
         runCatching { if (::testExecution.isInitialized) testExecution.shutdown() }
         runCatching { if (::gestureEditor.isInitialized) gestureEditor.closeAll() }
         runCatching { if (::gazeDisplay.isInitialized) gazeDisplay.stop() }
@@ -325,6 +329,13 @@ class KantanCommanderPlugin : JavaPlugin() {
         pm.registerEvents(me.awabi2048.kantancommander.gui.GestureHeldRefreshListener(this), this)
         pm.registerEvents(me.awabi2048.kantancommander.gui.GestureSessionCleanupListener(this), this)
         pm.registerEvents(controlBlockSync, this)
+        // WorldEdit系の有無に関わらず登録します。WorldEdit操作は内部の可用性判定で
+        // 守り、バニラ一括操作の警告とゴースト掃除は常時有効にします。
+        WorldEditControlBlockSyncListener(this).also {
+            pm.registerEvents(it, this)
+            it.startSweep()
+            worldEditSync = it
+        }
         if (!LuckPermsRecalculateAdapter.register(this, logger) { playerUuid ->
                 server.scheduler.runTask(this, Runnable {
                     server.getPlayer(playerUuid)?.let { controlBlockSync.normalize(it) }
