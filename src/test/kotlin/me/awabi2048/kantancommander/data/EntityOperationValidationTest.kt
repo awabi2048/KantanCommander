@@ -62,13 +62,15 @@ class EntityOperationValidationTest {
     }
 
     @Test
-    fun `legacy tag under entity action is rejected with migration message`() {
+    fun `unmigrated tag action is rejected as unknown`() {
+        // #32: 旧tagは読込時に ENTITY_OPERATION へ正本化されるため、検証層へ
+        // 到達する手組み値は不明な操作として拒否します。
         val script = actionScriptWith {
             it.params["action"] = "tag"
             it.params["tag"] = "kc_test"
         }
         val errors = ExecutableScriptValidator.validate(script)
-        assertTrue(errors.any { it.fieldKeys == setOf("action") && it.message.contains("エンティティを操作") })
+        assertTrue(errors.any { it.fieldKeys == setOf("action") && it.message.contains("不明なエンティティ操作") })
     }
 
     @Test
