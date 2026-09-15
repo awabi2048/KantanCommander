@@ -2639,8 +2639,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         field.spec.validateInput(values.getValue(field.id))
                     } ?: extraValidate(values)
                     if (validationError != null) {
-                        player.sendMessage(KcI18n.component(player, validationError))
-                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        // issue #34-3: 検証失敗はRejectedで返し、送信値を保持した
+                        // 再表示を共通契約（CC-System側）に委ねます。画面ごとに
+                        // 再実装せず、Gesture Dialogと同じ復旧方法にします。
+                        return@MenuFormHandler MenuActionResult.Rejected(
+                            KcI18n.component(player, validationError),
+                        )
                     }
                     if (!save(values, openRevision)) {
                         player.sendMessage(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
