@@ -214,7 +214,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(itemGrantService))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
         structures = me.awabi2048.kantancommander.structure.StructureStore(
-            this,
+            logger,
             dataFolder.resolve("structures"),
         )
         entityGroups = me.awabi2048.kantancommander.data.EntityGroupStore(
@@ -384,6 +384,10 @@ class KantanCommanderPlugin : JavaPlugin() {
                 }
             },
             onScriptDeleted = { scriptId -> forgetEventTriggerScript(scriptId) },
+            // issue #16: orphan 解放・回収で配置参照の正本を残します。
+            isPlacedScript = { scriptId ->
+                ::placements.isInitialized && placements.findByScript(scriptId).isNotEmpty()
+            },
         )
         exporter = VanillaDatapackExporter(
             scripts,

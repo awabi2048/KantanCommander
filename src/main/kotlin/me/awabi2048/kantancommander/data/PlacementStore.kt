@@ -277,22 +277,9 @@ class PlacementStore(private val plugin: KantanCommanderPlugin, private val file
                 .getOrElse { error("invalid UUID in $field: $raw") }
     }
 
+    /** issue #16: 原子書込は共通基盤へ委譲します。失敗意味は従来どおりです。 */
     private fun save() {
-        val temporary = file.resolveSibling("${file.name}.tmp")
-        temporary.writeText(gson.toJson(placements.values.toList()), Charsets.UTF_8)
-        try {
-            Files.move(
-                temporary.toPath(),
-                file.toPath(),
-                StandardCopyOption.REPLACE_EXISTING,
-                StandardCopyOption.ATOMIC_MOVE,
-            )
-        } catch (failure: AtomicMoveNotSupportedException) {
-            // 正本を通常置換へ落とすと、プロセス停止／IO障害の瞬間に
-            // placements.jsonが失われるため、非原子的なフォールバックは行いません。
-            runCatching { Files.deleteIfExists(temporary.toPath()) }
-            throw IllegalStateException("配置台帳を原子的に保存できないファイルシステムです", failure)
-        }
+        AtomicFileWriter.write(file, gson.toJson(placements.values.toList()), "配置台帳")
     }
 
     private fun key(world: String, x: Int, y: Int, z: Int): String = "$world,$x,$y,$z"
