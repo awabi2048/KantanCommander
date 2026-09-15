@@ -4273,6 +4273,82 @@ object EditorMenuLayout {
                 it.structurePlacePositionSpec?.kind?.let(::displayPosition) ?: displayUnset()
             },
         )
+        // issue #24: 群操作は操作・群名・対象・pivot・軸入力です。
+        // 対象・pivot は既存の位置・対象設定木を流用します。
+        CommandType.ENTITY_GROUP -> listOf(
+            field(
+                "operation",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION,
+                Material.ARMOR_STAND,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "operation") },
+            field(
+                "group",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_GROUP,
+                Material.NAME_TAG,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_NAME,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_NAME,
+            ) { displayTypedValue(it, "group") },
+            field(
+                "target",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TARGET,
+                Material.PLAYER_HEAD,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_DISPLAY_TARGET,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_DISPLAY_TARGET,
+            ) { it.targetSpec?.kind?.let(::displayTarget) ?: displayUnset() },
+            field(
+                "pivot",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_GROUP_PIVOT,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_POSITION,
+            ) {
+                it.groupPivotPositionSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+            field(
+                "moveX",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_X,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "moveX") },
+            field(
+                "moveY",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Y,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "moveY") },
+            field(
+                "moveZ",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Z,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "moveZ") },
+            field(
+                "rotateX",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_X,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "rotateX") },
+            field(
+                "rotateY",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Y,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "rotateY") },
+            field(
+                "rotateZ",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Z,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "rotateZ") },
+        )
         CommandType.ENTITY_DELETE -> listOf(
             field(
                 "target",

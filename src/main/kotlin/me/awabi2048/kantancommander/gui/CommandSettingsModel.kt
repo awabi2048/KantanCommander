@@ -16,6 +16,7 @@ import me.awabi2048.kantancommander.model.DisplayTextTimingPolicy
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.FacingKind
@@ -65,6 +66,8 @@ enum class CommandSettingRole(val routeValue: String, val tabFieldKey: String) {
     BLOCK_TO("block_to", "to"),
     /** issue #11: 建造物設置位置です。BLOCK_POSITION と同じ位置設定木を使います。 */
     STRUCTURE_PLACE_POSITION("structure_place_position", "structurePlace"),
+    /** issue #24: 群 pivot です。位置設定木を再利用します。 */
+    GROUP_PIVOT("group_pivot", "pivot"),
     SOUND_POSITION("sound_position", "soundPosition"),
     PARTICLE_POSITION("particle_position", "position"),
     PARTICLE_END("particle_end", "particleEnd"),
@@ -158,6 +161,10 @@ enum class CommandSettingEditor {
     STRUCTURE_ROTATION,
     /** issue #11: 建造物の反転選択です。 */
     STRUCTURE_MIRROR,
+    /** issue #24: 群操作の選択画面です。 */
+    ENTITY_GROUP_OPERATION,
+    /** issue #24: 群名の確認・選択画面です。保存済み群を候補として列挙します。 */
+    ENTITY_GROUP_NAME,
 }
 
 /**
@@ -433,6 +440,24 @@ object CommandSettingsModel {
                 } else {
                     fields.filterNot { it.key == "from" || it.key == "to" }
                 }
+            // issue #24: 群操作ごと に必要な項目だけを表示します。対象・pivot・
+            // 移動軸・回転軸は操作で切り替えます。群名と操作自体は常に表示します。
+            node.type == CommandType.ENTITY_GROUP -> {
+                val allowed = when (EntityGroupOperation.from(node.string("operation"))) {
+                    EntityGroupOperation.CREATE -> setOf("operation", "group", "target", "pivot")
+                    EntityGroupOperation.ADD,
+                    EntityGroupOperation.REMOVE,
+                    -> setOf("operation", "group", "target")
+                    EntityGroupOperation.SET_PIVOT -> setOf("operation", "group", "pivot")
+                    EntityGroupOperation.MOVE -> setOf("operation", "group", "moveX", "moveY", "moveZ")
+                    EntityGroupOperation.ROTATE -> setOf("operation", "group", "rotateX", "rotateY", "rotateZ")
+                    EntityGroupOperation.DELETE,
+                    EntityGroupOperation.CLEANUP,
+                    null,
+                    -> setOf("operation", "group")
+                }
+                fields.filter { it.key in allowed }
+            }
             // 効果音は操作（再生／停止）を先頭タブで切り替え、以降のタブを組み替えます。
             // 除外リスト方式では、別操作へ追加した項目が無関係な操作へ漏れるため、
             // 操作ごとの許可リストを明示します。
@@ -813,6 +838,17 @@ object CommandSettingsModel {
                 "structurePlace" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_BLOCK_POSITION
                 else -> undefinedWarningKey(node, fieldKey)
             }
+            // issue #24: 群操作の警告を示します。群名・操作・軸入力は汎用警告を
+            // 再利用し、対象・pivot は既存の位置系警告を使います。
+            CommandType.ENTITY_GROUP -> when (fieldKey) {
+                "operation" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_OPERATION
+                "group" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_NAME
+                "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
+                "pivot" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_POSITION
+                "moveX", "moveY", "moveZ", "rotateX", "rotateY", "rotateZ" ->
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_VALUE
+                else -> undefinedWarningKey(node, fieldKey)
+            }
             CommandType.ENTITY_DELETE -> when (fieldKey) {
                 "target" -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_WARNING_TARGET
                 else -> undefinedWarningKey(node, fieldKey)
@@ -1077,6 +1113,15 @@ object CommandSettingsModel {
             "rotation" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_ROTATION)
             "mirror" -> CommandSettingDescriptor(CommandSettingEditor.STRUCTURE_MIRROR)
             "structurePlace" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.STRUCTURE_PLACE_POSITION)
+            else -> text()
+        }
+        // issue #24: 群操作は操作・群名を専用画面で編集し、対象・pivot・軸入力は
+        // 既存の編集経路を再利用します。軸入力は数値 Dialog です。
+        CommandType.ENTITY_GROUP -> when (fieldKey) {
+            "operation" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_GROUP_OPERATION)
+            "group" -> CommandSettingDescriptor(CommandSettingEditor.ENTITY_GROUP_NAME)
+            "target" -> CommandSettingDescriptor(CommandSettingEditor.TARGET, CommandSettingRole.NODE_TARGET)
+            "pivot" -> CommandSettingDescriptor(CommandSettingEditor.POSITION, CommandSettingRole.GROUP_PIVOT)
             else -> text()
         }
         CommandType.ENTITY_DELETE -> if (fieldKey == "target") {
@@ -1415,6 +1460,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec
         CommandSettingRole.BLOCK_TO -> node.blockToSpec
         CommandSettingRole.STRUCTURE_PLACE_POSITION -> node.structurePlacePositionSpec
+        CommandSettingRole.GROUP_PIVOT -> node.groupPivotPositionSpec
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec
         CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec
         else -> null
@@ -1444,6 +1490,7 @@ object CommandSettingsModel {
         CommandSettingRole.BLOCK_FROM -> node.blockFromSpec?.kind
         CommandSettingRole.BLOCK_TO -> node.blockToSpec?.kind
         CommandSettingRole.STRUCTURE_PLACE_POSITION -> node.structurePlacePositionSpec?.kind
+        CommandSettingRole.GROUP_PIVOT -> node.groupPivotPositionSpec?.kind
         CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec?.kind
         CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec?.kind
         else -> null
@@ -1465,6 +1512,7 @@ object CommandSettingsModel {
             CommandSettingRole.BLOCK_FROM -> node.blockFromSpec = spec
             CommandSettingRole.BLOCK_TO -> node.blockToSpec = spec
             CommandSettingRole.STRUCTURE_PLACE_POSITION -> node.structurePlacePositionSpec = spec
+            CommandSettingRole.GROUP_PIVOT -> node.groupPivotPositionSpec = spec
             CommandSettingRole.TEMPORARY_LOCATION_POSITION -> node.temporaryLocationPositionSpec = spec
             CommandSettingRole.EXECUTION_POSITION -> node.executionPositionSpec = spec
             else -> error("${node.type} の位置設定役割が不正です: $role")
@@ -1479,6 +1527,7 @@ object CommandSettingsModel {
                 CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
                 CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
                 CommandSettingRole.STRUCTURE_PLACE_POSITION -> "structurePlacePosition"
+                CommandSettingRole.GROUP_PIVOT -> "pivotPosition"
                 else -> "position"
             },
             role,
@@ -1573,7 +1622,6 @@ object CommandSettingsModel {
             }
             "from" -> isPositionSpecConfigured(node.blockFromSpec)
             "to" -> isPositionSpecConfigured(node.blockToSpec)
-            "structurePlace" -> isPositionSpecConfigured(node.structurePlacePositionSpec)
             "destinationFacing" -> isFacingSpecConfigured(node.destinationFacingSpec)
             "facing" -> if (effectiveRole == CommandSettingRole.DESTINATION_FACING) {
                 isFacingSpecConfigured(node.destinationFacingSpec)
@@ -1597,6 +1645,10 @@ object CommandSettingsModel {
             "rotation" -> node.isExplicitlyConfigured("rotation")
             "mirror" -> node.isExplicitlyConfigured("mirror")
             "structurePlace" -> isPositionSpecConfigured(node.structurePlacePositionSpec)
+            // issue #24: 群名・群操作の明示設定です。既定値は保存用であり、
+            // 未操作の新規ノードは未設定です（#11 と同一契約）。
+            "group" -> node.string("group").isNotBlank() && node.isExplicitlyConfigured("group")
+            "pivot" -> isPositionSpecConfigured(node.groupPivotPositionSpec)
             // 再生位置と対象は、対象と再生位置のどちらかが揃えば設定済みです。
             // 停止操作では再生位置を使用しないため、対象だけを確認します。
             "soundTargetPosition" -> if (SoundSettings.operation(node) ==

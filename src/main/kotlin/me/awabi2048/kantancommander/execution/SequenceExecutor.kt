@@ -1,6 +1,9 @@
 package me.awabi2048.kantancommander.execution
 
+import me.awabi2048.kantancommander.data.EntityGroupStore
 import me.awabi2048.kantancommander.data.ExecutableScriptValidator
+import me.awabi2048.kantancommander.model.EntityGroupMath
+import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.error.ErrorCode
 import me.awabi2048.kantancommander.model.CommandGraph
@@ -67,10 +70,12 @@ import me.awabi2048.kantancommander.error.PartialApplicability
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
 import net.kyori.adventure.title.Title
+import org.bukkit.Bukkit
 import org.bukkit.Location
 import org.bukkit.NamespacedKey
 import org.bukkit.Registry
 import org.bukkit.SoundCategory
+import org.bukkit.World
 import org.bukkit.entity.Entity
 import org.bukkit.entity.ItemFrame
 import org.bukkit.entity.LivingEntity
@@ -1315,6 +1320,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             CommandType.BLOCK_OPERATION -> executeBlockOperation(node, session, effectiveContext, origins, attempts)
             CommandType.STRUCTURE_SAVE -> executeStructureSave(node, session, effectiveContext, origins)
             CommandType.STRUCTURE_PLACE -> executeStructurePlace(node, session, effectiveContext, origins, attempts)
+            CommandType.ENTITY_GROUP -> executeEntityGroup(node, session, effectiveContext, attempts)
             CommandType.ENTITY_DELETE -> {
                 if (targets.isEmpty()) return false
                 targets.forEach(Entity::remove)
@@ -2352,6 +2358,350 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val placed = plugin.structures.place(name, location, rotation, mirror)
         attempts.record(placed)
         return attempts.overall
+    }
+
+    /**
+     * issue #24: Entity Group 操作を実行します。
+     *
+     * 群の所属・pivot・姿勢は [EntityGroupStore] が永続管理し、ここでは対象解決・
+     * 座標解決・変形適用だけを行います。変形（MOVE／ROTATE）は対象 member だけを
+     * 処理し、解決不能な所属は件数に残して部分適用とします。群自体の作成・削除・
+     * 所属変更・pivot 変更・掃除は単一記録の原子操作です。
+     */
+    private fun executeEntityGroup(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        attempts: MultiAttemptRecorder,
+    ): Boolean {
+        val operation = EntityGroupOperation.from(node.string("operation")) ?: return false
+        val name = node.string("group")
+        return when (operation) {
+            EntityGroupOperation.CREATE -> executeEntityGroupCreate(node, session, context, name)
+            EntityGroupOperation.ADD -> executeEntityGroupMembership(node, session, context, name, add = true)
+            EntityGroupOperation.REMOVE -> executeEntityGroupMembership(node, session, context, name, add = false)
+            EntityGroupOperation.DELETE -> plugin.entityGroups.delete(name)
+            EntityGroupOperation.SET_PIVOT -> executeEntityGroupSetPivot(node, session, context, name)
+            EntityGroupOperation.MOVE -> executeEntityGroupMove(node, session, context, name, attempts)
+            EntityGroupOperation.ROTATE -> executeEntityGroupRotate(node, session, context, name, attempts)
+            EntityGroupOperation.CLEANUP -> executeEntityGroupCleanup(name)
+        }
+    }
+
+    /**
+     * issue #24: 群を作成します。pivot 未設定時は所属中心を採用します。
+     *
+     * 同名群がある場合は上書きせず失敗します。所属が空・ワールド不一致の場合も
+     * 失敗し、部分的な群を残しません。
+     */
+    private fun executeEntityGroupCreate(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        name: String,
+    ): Boolean {
+        if (plugin.entityGroups.exists(name)) return false
+        val members = resolveTargets(context, node.targetSpec, session)
+        if (members.isEmpty()) return false
+        val world = members.first().world
+        if (members.any { it.world != world }) return false
+        val pivot = node.groupPivotPositionSpec
+            ?.let { resolveSinglePosition(it, session, context) }
+            ?: groupCentroidLocation(world, members.map { it.location })
+            ?: return false
+        if (pivot.world != world) return false
+        val now = System.currentTimeMillis()
+        return plugin.entityGroups.create(
+            EntityGroupStore.GroupRecord(
+                id = UUID.randomUUID(),
+                name = name,
+                worldName = world.name,
+                members = members.map {
+                    EntityGroupStore.MemberRecord(it.uniqueId, it.location.toSpatialVector())
+                },
+                pivot = pivot.toSpatialVector(),
+                orientation = Triple(0.0, 0.0, 0.0),
+                createdAt = now,
+                updatedAt = now,
+            ),
+        )
+    }
+
+    /**
+     * issue #24: 群へ追加・群から除外します。群自体の削除は DELETE が担い、
+     * ここでは所属 UUID の集合だけを変更します。実体自体は削除しません。
+     */
+    private fun executeEntityGroupMembership(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        name: String,
+        add: Boolean,
+    ): Boolean {
+        val group = plugin.entityGroups.get(name) ?: return false
+        val world = Bukkit.getWorld(group.worldName) ?: return false
+        val candidates = resolveTargets(context, node.targetSpec, session)
+        if (candidates.isEmpty()) return false
+        // 異なるワールドの実体を同一群へ入れません。解決済み対象が群ワールドと
+        // 異なる場合は全体を失敗させ、部分的な所属変更を残しません。
+        if (candidates.any { it.world != world }) return false
+        val memberIds = group.members.map { it.entityId }.toMutableSet()
+        if (add) {
+            memberIds += candidates.map { it.uniqueId }
+        } else {
+            val removals = candidates.map { it.uniqueId }.toSet()
+            memberIds.removeAll(removals)
+        }
+        val known = candidates.associateBy({ it.uniqueId }, { it.location.toSpatialVector() })
+        val members = memberIds.map { entityId ->
+            EntityGroupStore.MemberRecord(entityId, known[entityId] ?: group.members.firstOrNull { it.entityId == entityId }?.lastKnown)
+        }
+        return plugin.entityGroups.update(group.copy(members = members, updatedAt = System.currentTimeMillis()))
+    }
+
+    /**
+     * issue #24: pivot だけを変更します。member の位置は維持し、
+     * 追従移動は MOVE で行います。
+     */
+    private fun executeEntityGroupSetPivot(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        name: String,
+    ): Boolean {
+        val group = plugin.entityGroups.get(name) ?: return false
+        val world = Bukkit.getWorld(group.worldName) ?: return false
+        val pivot = node.groupPivotPositionSpec
+            ?.let { resolveSinglePosition(it, session, context) } ?: return false
+        if (pivot.world != world) return false
+        return plugin.entityGroups.update(
+            group.copy(pivot = pivot.toSpatialVector(), updatedAt = System.currentTimeMillis()),
+        )
+    }
+
+    /**
+     * issue #24: pivot を目的地へ移動し、所属を同じ差分だけ平行移動します。
+     *
+     * 3軸は無印＝絶対、`~`＝現在 pivot からの相対です。解決不能な所属は
+     * 飛ばして件数に残し、1件以上の適用で成功とします（部分適用）。
+     */
+    private fun executeEntityGroupMove(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        name: String,
+        attempts: MultiAttemptRecorder,
+    ): Boolean {
+        val group = plugin.entityGroups.get(name) ?: return false
+        val world = Bukkit.getWorld(group.worldName) ?: return false
+        val destination = resolveGroupDestination(node, group) ?: return false
+        val delta = SpatialVector(
+            destination.x - group.pivot.x,
+            destination.y - group.pivot.y,
+            destination.z - group.pivot.z,
+        )
+        val members = resolveGroupMembers(world, group)
+        if (members.isEmpty()) return false
+        var applied = 0
+        var failed = 0
+        val moved = members.mapNotNull { (record, entity) ->
+            runCatching {
+                val location = entity.location.add(delta.x, delta.y, delta.z)
+                entity.teleport(location)
+                record.copy(lastKnown = location.toSpatialVector())
+            }.getOrNull().also { outcome ->
+                if (outcome != null) {
+                    applied++
+                    attempts.record(true)
+                } else {
+                    failed++
+                    attempts.record(false)
+                }
+            }
+        }
+        if (applied == 0) return false
+        session.lastPartial = PartialApplicability(applied, 0, failed)
+        return plugin.entityGroups.update(
+            group.copy(
+                pivot = destination,
+                members = mergeGroupMembers(group.members, moved),
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /**
+     * issue #24: pivot を原点として所属位置を回転します。
+     *
+     * 3軸は無印＝群の絶対姿勢、`~`＝現在姿勢からの相対差分です。回転順序は
+     * X→Y→Z の固定であり、数学は [EntityGroupMath] に一元化します。
+     * 向き反映は LivingEntity の facing だけに行い、ArmorStand の body pose 等の
+     * 複合姿勢には触れません。解決不能な所属は件数に残して部分適用とします。
+     */
+    private fun executeEntityGroupRotate(
+        node: CommandNode,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        name: String,
+        attempts: MultiAttemptRecorder,
+    ): Boolean {
+        val group = plugin.entityGroups.get(name) ?: return false
+        val world = Bukkit.getWorld(group.worldName) ?: return false
+        val deltas = resolveGroupRotation(node, group) ?: return false
+        val members = resolveGroupMembers(world, group)
+        if (members.isEmpty()) return false
+        var applied = 0
+        var failed = 0
+        val rotated = members.mapNotNull { (record, entity) ->
+            runCatching {
+                val current = entity.location
+                val offset = SpatialVector(
+                    current.x - group.pivot.x,
+                    current.y - group.pivot.y,
+                    current.z - group.pivot.z,
+                )
+                val turned = EntityGroupMath.rotateOffset(offset, deltas)
+                val location = Location(
+                    world,
+                    group.pivot.x + turned.x,
+                    group.pivot.y + turned.y,
+                    group.pivot.z + turned.z,
+                    current.yaw,
+                    current.pitch,
+                )
+                // 向き反映は種別 adapter へ分離します。LivingEntity は回転後の
+                // facing を採用し、それ以外は現在値を維持します。Display の
+                // transformation や ArmorStand の body pose は触りません。
+                if (entity is LivingEntity) {
+                    val facing = current.direction
+                    val turnedFacing = EntityGroupMath.rotateOffset(
+                        SpatialVector(facing.x, facing.y, facing.z),
+                        deltas,
+                    )
+                    location.setDirection(Vector(turnedFacing.x, turnedFacing.y, turnedFacing.z))
+                }
+                entity.teleport(location)
+                record.copy(lastKnown = location.toSpatialVector())
+            }.getOrNull().also { outcome ->
+                if (outcome != null) {
+                    applied++
+                    attempts.record(true)
+                } else {
+                    failed++
+                    attempts.record(false)
+                }
+            }
+        }
+        if (applied == 0) return false
+        session.lastPartial = PartialApplicability(applied, 0, failed)
+        val (orientationX, orientationY, orientationZ) = group.orientation
+        return plugin.entityGroups.update(
+            group.copy(
+                orientation = Triple(
+                    EntityGroupMath.normalizeDegrees(orientationX + deltas.first),
+                    EntityGroupMath.normalizeDegrees(orientationY + deltas.second),
+                    EntityGroupMath.normalizeDegrees(orientationZ + deltas.third),
+                ),
+                members = mergeGroupMembers(group.members, rotated),
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    /**
+     * issue #24: 恒久的に消失した所属だけを除去します。
+     *
+     * 最終既知チャンクが未読込の所属は unload 中とみなして維持し、
+     * 読込済みで解決できない所属だけを削除します。群ワールド自体が
+     * 未読込の場合は判断できないため失敗します。
+     */
+    private fun executeEntityGroupCleanup(name: String): Boolean {
+        val group = plugin.entityGroups.get(name) ?: return false
+        val world = Bukkit.getWorld(group.worldName) ?: return false
+        val retained = group.members.filter { member ->
+            val entity = world.getEntity(member.entityId)
+            if (entity != null && entity.isValid && !entity.isDead) return@filter true
+            val chunkLoaded = member.lastKnown?.let {
+                world.isChunkLoaded(it.x.toInt() shr 4, it.z.toInt() shr 4)
+            }
+            EntityGroupMath.shouldRetainUnresolved(chunkLoaded)
+        }
+        if (retained.size == group.members.size) return true
+        return plugin.entityGroups.update(
+            group.copy(members = retained, updatedAt = System.currentTimeMillis()),
+        )
+    }
+
+    /**
+     * issue #24: 群所属をワールドから再解決します。対象 member だけを処理し、
+     * ワールド全実体を走査しません。解決不能・無効・死亡・system 実体は除外します。
+     */
+    private fun resolveGroupMembers(
+        world: World,
+        group: EntityGroupStore.GroupRecord,
+    ): List<Pair<EntityGroupStore.MemberRecord, Entity>> = group.members.mapNotNull { member ->
+        val entity = world.getEntity(member.entityId)
+            ?.takeIf { it.isValid && !it.isDead && !systemEntityRegistry.isSystemEntity(it) }
+            ?: return@mapNotNull null
+        member to entity
+    }
+
+    /** issue #24: 所属中心を群ワールドの位置として求めます。 */
+    private fun groupCentroidLocation(world: World, locations: List<Location>): Location? {
+        val centroid = EntityGroupMath.centroid(locations.map { it.toSpatialVector() }) ?: return null
+        if (!centroid.isFinite()) return null
+        return Location(world, centroid.x, centroid.y, centroid.z)
+    }
+
+    /**
+     * issue #24: 移動目的地を解決します。無印は絶対座標、`~` は現在 pivot からの
+     * 相対差分です。検証済みの3軸をここで再検証し、不正時は失敗します。
+     */
+    private fun resolveGroupDestination(node: CommandNode, group: EntityGroupStore.GroupRecord): SpatialVector? {
+        val axes = listOf(
+            EntityGroupMath.parseMoveAxis(node.string("moveX")),
+            EntityGroupMath.parseMoveAxis(node.string("moveY")),
+            EntityGroupMath.parseMoveAxis(node.string("moveZ")),
+        )
+        if (axes.any { it == null || it.first == CoordinateSemantics.LOCAL }) return null
+        val (x, y, z) = axes.map { it!! }
+        return SpatialVector(
+            if (x.first == CoordinateSemantics.RELATIVE) group.pivot.x + x.second else x.second,
+            if (y.first == CoordinateSemantics.RELATIVE) group.pivot.y + y.second else y.second,
+            if (z.first == CoordinateSemantics.RELATIVE) group.pivot.z + z.second else z.second,
+        ).takeIf { it.isFinite() }
+    }
+
+    /**
+     * issue #24: 回転差分を解決します。無印は群の絶対姿勢、`~` は現在姿勢からの
+     * 相対差分です。検証済みの3軸をここで再検証し、不正時は失敗します。
+     */
+    private fun resolveGroupRotation(
+        node: CommandNode,
+        group: EntityGroupStore.GroupRecord,
+    ): Triple<Double, Double, Double>? {
+        val axes = listOf(
+            EntityGroupMath.parseRotateAxis(node.string("rotateX")),
+            EntityGroupMath.parseRotateAxis(node.string("rotateY")),
+            EntityGroupMath.parseRotateAxis(node.string("rotateZ")),
+        )
+        if (axes.any { it == null || it.first == CoordinateSemantics.LOCAL }) return null
+        val (x, y, z) = axes.map { it!! }
+        val (orientationX, orientationY, orientationZ) = group.orientation
+        return Triple(
+            if (x.first == CoordinateSemantics.RELATIVE) x.second else x.second - orientationX,
+            if (y.first == CoordinateSemantics.RELATIVE) y.second else y.second - orientationY,
+            if (z.first == CoordinateSemantics.RELATIVE) z.second else z.second - orientationZ,
+        )
+    }
+
+    /** issue #24: 変形後の所属記録を、未適用の所属を残したまま統合します。 */
+    private fun mergeGroupMembers(
+        previous: List<EntityGroupStore.MemberRecord>,
+        applied: List<EntityGroupStore.MemberRecord>,
+    ): List<EntityGroupStore.MemberRecord> {
+        val appliedById = applied.associateBy { it.entityId }
+        return previous.map { member -> appliedById[member.entityId] ?: member }
     }
 
     private fun evaluateCondition(

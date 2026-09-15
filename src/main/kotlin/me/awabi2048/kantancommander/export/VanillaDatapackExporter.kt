@@ -236,6 +236,10 @@ class VanillaDatapackExporter(
                 // 表現できないため、PARTICLE_GEOMETRY と同じく検証層で拒否します。
                 CommandType.STRUCTURE_SAVE, CommandType.STRUCTURE_PLACE ->
                     errors += "${script.id}/${node.id}: 建造物の操作は完全バニラ出力に未対応です"
+                // issue #24: 群管理はバニラのデータパック単体で同等概念を持たないため、
+                // 同じく検証層で拒否します。
+                CommandType.ENTITY_GROUP ->
+                    errors += "${script.id}/${node.id}: 群の操作は完全バニラ出力に未対応です"
                 CommandType.ENTITY_DELETE -> Unit
                 CommandType.TELEPORT -> if (node.string("world").isNotBlank()) {
                     errors += "${script.id}/${node.id}: 出力先ワールドを検証できない固定ワールド参照です"
@@ -1546,6 +1550,8 @@ class VanillaDatapackExporter(
         CommandType.BLOCK_OPERATION -> blockOperationCommand(node)
         // issue #11: 建造物は検証層で拒否し、ここでは無出力とします。
         CommandType.STRUCTURE_SAVE, CommandType.STRUCTURE_PLACE -> null
+        // issue #24: 群操作は検証層で拒否し、ここでは無出力とします。
+        CommandType.ENTITY_GROUP -> null
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"
         CommandType.DISK_CALL -> null
         // issue #8: 「値を返す」は呼出構造の制御であり、単体のバニラ命令へ変換しません。
@@ -2443,6 +2449,8 @@ class VanillaDatapackExporter(
                     node.summonPositionSpec,
                     // issue #11: 建造物設置位置も一時変数を参照し得るため収集対象に含めます。
                     node.structurePlacePositionSpec,
+                    // issue #24: 群 pivot も一時変数を参照し得るため収集対象に含めます。
+                    node.groupPivotPositionSpec,
                 ).forEach { position -> if (position.kind == PositionKind.TEMPORARY) add(position.tempName) }
                 listOfNotNull(
                     node.temporaryLocationPositionSpec,

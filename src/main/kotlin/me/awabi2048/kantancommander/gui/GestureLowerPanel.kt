@@ -38,6 +38,7 @@ import me.awabi2048.kantancommander.model.conditionSubject
 import me.awabi2048.kantancommander.model.ControlBlockStateKind
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
+import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.model.EntityDataSchema
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.EntityTagEntries
@@ -3978,6 +3979,46 @@ class GestureLowerPanel(
                     id = "structure-name-direct",
                     label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE),
                     selected = node.string("structure").isNotBlank() && node.string("structure") !in existing,
+                ),
+            )
+        }
+        // issue #24: 群操作は8操作の明示選択肢です。保存値は小文字文字列のため、
+        // ここで各操作へ解決し直して選択表示と照合します。
+        GestureSettingScreen.ENTITY_GROUP_OPERATION -> EntityGroupOperation.entries.map { operation ->
+            val labelKey = when (operation) {
+                EntityGroupOperation.CREATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_CREATE
+                EntityGroupOperation.ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_ADD
+                EntityGroupOperation.REMOVE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_REMOVE
+                EntityGroupOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_DELETE
+                EntityGroupOperation.SET_PIVOT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_SET_PIVOT
+                EntityGroupOperation.MOVE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_MOVE
+                EntityGroupOperation.ROTATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_ROTATE
+                EntityGroupOperation.CLEANUP -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_CLEANUP
+            }
+            SettingChoice(
+                "groupOperation:${operation.value}",
+                KcI18n.text(player, labelKey),
+                explicitSelected(node, fieldKey, context.role, node.string("operation") == operation.value),
+            )
+        }
+        GestureSettingScreen.ENTITY_GROUP_NAME -> buildList {
+            // 保存済みの群を候補として列挙します。存在しない場合は新規作成用の
+            // 固定項目だけを出し、直接入力へ進めます。
+            val existing = plugin.entityGroups.names()
+            existing.forEach { name ->
+                add(
+                    SettingChoice(
+                        "groupName:$name",
+                        name,
+                        explicitSelected(node, fieldKey, context.role, node.string("group") == name),
+                    ),
+                )
+            }
+            add(
+                GestureSettingTreeNode(
+                    id = "group-name-direct",
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE),
+                    selected = node.string("group").isNotBlank() && node.string("group") !in existing,
                 ),
             )
         }

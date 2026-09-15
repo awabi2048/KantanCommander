@@ -12,6 +12,7 @@ import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.EntityAttributeSupport
 import me.awabi2048.kantancommander.model.EntityDataPath
 import me.awabi2048.kantancommander.model.EntityDataSchema
+import me.awabi2048.kantancommander.model.EntityGroupMath
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.EntityTagEntries
 import me.awabi2048.kantancommander.model.MAX_COMMAND_TIME_SECONDS
@@ -1249,6 +1250,16 @@ internal object CommandDialogSpecs {
         if ((node.type == CommandType.STRUCTURE_SAVE || node.type == CommandType.STRUCTURE_PLACE) && fieldKey == "structure") {
             return structureNameSpec()
         }
+        // issue #24: 群名・移動軸・回転軸は専用の入力仕様を使います。
+        if (node.type == CommandType.ENTITY_GROUP) {
+            if (fieldKey == "group") return entityGroupNameSpec()
+            if (fieldKey == "moveX") return entityGroupMoveAxisSpec(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_X)
+            if (fieldKey == "moveY") return entityGroupMoveAxisSpec(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Y)
+            if (fieldKey == "moveZ") return entityGroupMoveAxisSpec(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Z)
+            if (fieldKey == "rotateX") return entityGroupRotateAxisSpec(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_X)
+            if (fieldKey == "rotateY") return entityGroupRotateAxisSpec(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Y)
+            if (fieldKey == "rotateZ") return entityGroupRotateAxisSpec(KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_MOTION_Z)
+        }
         return when (node.type) {
             CommandType.BLOCK_OPERATION -> if (fieldKey == "block") placementBlock else field(fieldKey)
             CommandType.WAIT -> if (fieldKey == "seconds") {
@@ -1588,6 +1599,61 @@ internal object CommandDialogSpecs {
             } else null
         },
         // 必須性は検証層が担い、入力途中でも画面を開けるようにします。
+        required = false,
+        format = InputFormat.ANY_STRING,
+        formatHintKey = null,
+        numericRange = null,
+    )
+
+    /**
+     * issue #24: 群名の入力仕様です。検証層と同一の文字種・長さを要求し、
+     * 形式違反は GUI共通の形式エラーにします。実在確認は実行層が行います。
+     */
+    fun entityGroupNameSpec(): Spec = Spec(
+        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ENTITY_GROUP,
+        64,
+        validate = { raw ->
+            if (raw.isNotBlank() && !STRUCTURE_NAME_DIALOG_PATTERN.matches(raw)) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        // 必須性は検証層が担い、入力途中でも画面を開けるようにします。
+        required = false,
+        format = InputFormat.ANY_STRING,
+        formatHintKey = null,
+        numericRange = null,
+    )
+
+    /**
+     * issue #24: 群移動の軸入力仕様です。無印は絶対座標、`~` は現在 pivot からの
+     * 相対差分です。ローカル（`^`）は基準が定義できないため拒否します。
+     */
+    fun entityGroupMoveAxisSpec(labelKey: LocalizationKey<String>): Spec = Spec(
+        labelKey,
+        MULTI_VALUE_MAX_LENGTH,
+        validate = { raw ->
+            if (raw.isNotBlank() && EntityGroupMath.parseMoveAxis(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
+        required = false,
+        format = InputFormat.ANY_STRING,
+        formatHintKey = null,
+        numericRange = null,
+    )
+
+    /**
+     * issue #24: 群回転の軸入力仕様です。無印は群の絶対姿勢、`~` は現在姿勢からの
+     * 相対差分です。ローカル（`^`）は基準が定義できないため拒否します。
+     */
+    fun entityGroupRotateAxisSpec(labelKey: LocalizationKey<String>): Spec = Spec(
+        labelKey,
+        MULTI_VALUE_MAX_LENGTH,
+        validate = { raw ->
+            if (raw.isNotBlank() && EntityGroupMath.parseRotateAxis(raw) == null) {
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_INPUT_FORMAT
+            } else null
+        },
         required = false,
         format = InputFormat.ANY_STRING,
         formatHintKey = null,

@@ -226,6 +226,12 @@ data class CommandNode(
      */
     /** issue #11 の建造物設置位置です。未設定時は制御ブロック位置を使用します。 */
     var structurePlacePositionSpec: PositionSpec? = null,
+    /**
+     * issue #24 の Entity Group の pivot です。CREATE では未設定時に所属実体の
+     * 中心を採用し、SET_PIVOT では必須です。member の位置は維持したまま pivot
+     * だけを変更します（追従移動は MOVE で行います）。
+     */
+    var groupPivotPositionSpec: PositionSpec? = null,
     /** PLAY_SOUNDで「マイワールド内全域」以外を選んだ場合の再生位置です。 */
     var soundPositionSpec: PositionSpec? = null,
     /** PARTICLEの散布中心です。未設定時は実行コンテキストの位置を使用します。 */
@@ -289,6 +295,7 @@ data class CommandNode(
         blockFromSpec = blockFromSpec?.copy(),
         blockToSpec = blockToSpec?.copy(),
         structurePlacePositionSpec = structurePlacePositionSpec?.copy(),
+        groupPivotPositionSpec = groupPivotPositionSpec?.copy(),
         soundPositionSpec = soundPositionSpec?.copy(),
         particlePositionSpec = particlePositionSpec?.copy(),
         particleEndPositionSpec = particleEndPositionSpec?.copy(),
@@ -333,6 +340,27 @@ enum class BlockOperationMode(val value: String) {
 
     companion object {
         fun from(value: String?): BlockOperationMode? = entries.firstOrNull { it.value == value }
+    }
+}
+
+/**
+ * issue #24 の Entity Group 操作です。保存値は小文字文字列とし、単一の
+ * ENTITY_GROUP コマンドで作成・所属変更・pivot・変形・削除・掃除を扱います。
+ * BLOCK_OPERATION の配置方式と同じく、操作ごとの許可項目は GUI と検証で切り替えます。
+ */
+enum class EntityGroupOperation(val value: String) {
+    CREATE("create"),
+    ADD("add"),
+    REMOVE("remove"),
+    DELETE("delete"),
+    SET_PIVOT("set_pivot"),
+    MOVE("move"),
+    ROTATE("rotate"),
+    CLEANUP("cleanup"),
+    ;
+
+    companion object {
+        fun from(value: String?): EntityGroupOperation? = entries.firstOrNull { it.value == value }
     }
 }
 
@@ -985,6 +1013,22 @@ enum class CommandType(
         "structure" to "",
         "rotation" to StructureRotation.NONE.value,
         "mirror" to StructureMirror.NONE.value,
+    )),
+    /**
+     * issue #24 の Entity Group 操作です。対象（targetSpec）・pivot
+     * （groupPivotPositionSpec）・移動／回転の軸入力を使い分けます。
+     * 群名 group は一意な参照キーであり、実体は UUID で永続管理します。
+     */
+    ENTITY_GROUP(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_GROUP, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_GROUP_DESCRIPTION, Material.ARMOR_STAND, mapOf(
+        // 選択肢型に未選択と区別できない既定値は置きません（BLOCK_OPERATIONと同一方針）。
+        "operation" to "",
+        "group" to "",
+        "moveX" to "",
+        "moveY" to "",
+        "moveZ" to "",
+        "rotateX" to "",
+        "rotateY" to "",
+        "rotateZ" to "",
     )),
     ENTITY_DELETE(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_ENTITY_DELETE_DESCRIPTION, Material.BARRIER, emptyMap()),
     CONDITION(KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION, KcKeys.KANTAN_COMMANDER_CLEAN_COMMAND_CONDITION_DESCRIPTION, Material.COMPARATOR, mapOf(

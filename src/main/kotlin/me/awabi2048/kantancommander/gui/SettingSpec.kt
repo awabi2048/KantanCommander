@@ -224,6 +224,9 @@ object SettingSpec {
             CommandSettingEditor.STRUCTURE_NAME,
             CommandSettingEditor.STRUCTURE_ROTATION,
             CommandSettingEditor.STRUCTURE_MIRROR,
+            // issue #24: 群操作・群名はいずれも選択木（CHOICE）です。
+            CommandSettingEditor.ENTITY_GROUP_OPERATION,
+            CommandSettingEditor.ENTITY_GROUP_NAME,
             -> GesturePresentation.CHOICE
         }
     }

@@ -70,6 +70,8 @@ internal object CommandPresentationPolicy {
         // issue #11: 建造物は実行カテゴリです。簡易GUIでも編集できます。
         CommandType.STRUCTURE_SAVE,
         CommandType.STRUCTURE_PLACE,
+        // issue #24: 群操作は実行カテゴリです。簡易GUIでも編集できます。
+        CommandType.ENTITY_GROUP,
         -> CommandCategory.EXECUTION
 
         CommandType.WAIT,

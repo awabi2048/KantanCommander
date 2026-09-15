@@ -189,6 +189,9 @@ object GraphChangeClassifier {
         if (before.blockPositionSpec != after.blockPositionSpec) return false
         if (before.blockFromSpec != after.blockFromSpec) return false
         if (before.blockToSpec != after.blockToSpec) return false
+        // issue #24: 群 pivot も値差分です。追加し忘れるとNONEへ誤分類され、
+        // 検証・表示更新が抑止されるため注意します。
+        if (before.groupPivotPositionSpec != after.groupPivotPositionSpec) return false
         if (before.soundPositionSpec != after.soundPositionSpec) return false
         if (before.particlePositionSpec != after.particlePositionSpec) return false
         if (before.particleEndPositionSpec != after.particleEndPositionSpec) return false
