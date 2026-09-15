@@ -1308,11 +1308,19 @@ object CommandSettingsModel {
             }
     }
 
+    /**
+     * issue #34-1: 通常対象の読込先です。
+     *
+     * 内包対象の役割（位置・向き仕様の内部対象）はここでは扱いません。
+     * 用途不適合の役割を通常対象へ流すと別フィールドの書き換えになるため、
+     * 内包役割・未知役割は明示的に拒否し、[embeddedTargetSpec] の利用を強制します。
+     */
     fun targetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? = when (role) {
+        null, CommandSettingRole.NODE_TARGET -> node.targetSpec
         CommandSettingRole.DESTINATION -> node.destinationTargetSpec
         CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec
         CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec
-        else -> node.targetSpec
+        else -> error("${node.type} の通常対象として不適合な役割です: $role")
     }
 
     /**
@@ -1347,6 +1355,12 @@ object CommandSettingsModel {
         node.markConfigured(key)
     }
 
+    /**
+     * issue #34-1: 通常対象の保存先です。
+     *
+     * 未知または用途不適合の役割を通常対象へ流さず明示的に拒否します。
+     * 内包対象の役割は [setEmbeddedTargetSpec] を利用してください。
+     */
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
         // TEMP_SET ENTITYは対象を複数保持できないTemporaryValueへ変換するため、
         // 共通TargetSpecの詳細条件はそのまま利用しつつ、解決数だけ1体へ正規化します。
@@ -1354,13 +1368,14 @@ object CommandSettingsModel {
             spec.copy(limit = 1)
         } else spec
         when (role) {
+            null, CommandSettingRole.NODE_TARGET -> node.targetSpec = normalizedSpec
             CommandSettingRole.DESTINATION -> {
                 node.destinationTargetSpec = normalizedSpec
                 node.destinationSpec = null
             }
             CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = normalizedSpec
             CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec = normalizedSpec
-            else -> node.targetSpec = normalizedSpec
+            else -> error("${node.type} の通常対象として不適合な役割です: $role")
         }
         val configuredKey = configuredFieldKey("target", role)
         if (isTargetSpecConfigured(normalizedSpec)) {
@@ -1379,12 +1394,18 @@ object CommandSettingsModel {
      * 位置・向きの各役割は対象指定を内部に持ち、通常対象画面へ進む経路を
      * 持ちません。TARGET_FILTERS画面はこれらの役割では内包対象を編集します。
      * 移動先は旧来の対象移動経路のため除外します。
+     * issue #34-1: STRUCTURE_PLACE_POSITION（建造物設置位置）・GROUP_PIVOT
+     * （群pivot）も位置設定木の内部に対象を持ちます。旧来の対象移動経路では
+     * ないため内包対象として扱い、通常の targetSpec への読み書きを禁止します。
      */
     fun isEmbeddedTargetRole(role: CommandSettingRole?): Boolean = when (role) {
         CommandSettingRole.CONDITION_POSITION,
         CommandSettingRole.BLOCK_POSITION,
         CommandSettingRole.BLOCK_FROM,
         CommandSettingRole.BLOCK_TO,
+        // issue #34-1: 建造物設置位置・群pivotも内包対象です。
+        CommandSettingRole.STRUCTURE_PLACE_POSITION,
+        CommandSettingRole.GROUP_PIVOT,
         CommandSettingRole.SOUND_POSITION,
         CommandSettingRole.PARTICLE_POSITION,
         CommandSettingRole.PARTICLE_END,
@@ -1595,7 +1616,14 @@ object CommandSettingsModel {
         // InventoryとGestureで同じ値を表示していても選択状態だけがずれます。
         val effectiveRole = role ?: descriptor(node, fieldKey).role
         return when (fieldKey) {
-            "target" -> isTargetSpecConfigured(targetSpec(node, effectiveRole))
+            // issue #34-1: 内包役割の "target" は位置・向き仕様の内部対象を見ます。
+            // targetSpec へ流すと別フィールド（ノード本体の対象）を参照するため、
+            // 内包対象と通常対象をここで分岐します。
+            "target" -> if (isEmbeddedTargetRole(effectiveRole)) {
+                isTargetSpecConfigured(embeddedTargetSpec(node, effectiveRole))
+            } else {
+                isTargetSpecConfigured(targetSpec(node, effectiveRole))
+            }
             // "entity" は一時対象指定の専用キーです。召喚の種類は v17 で
             // "summonEntity" へ分離したため、ここでは扱いません（汎用分岐へ）。
             "entity" -> isTargetSpecConfigured(node.temporaryEntityTargetSpec)
@@ -1611,6 +1639,13 @@ object CommandSettingsModel {
                     isTargetSpecConfigured(node.destinationTargetSpec)
                 CommandSettingRole.CONDITION_POSITION -> isPositionSpecConfigured(node.conditionPositionSpec)
                 CommandSettingRole.BLOCK_POSITION -> isPositionSpecConfigured(node.blockPositionSpec)
+                CommandSettingRole.BLOCK_FROM -> isPositionSpecConfigured(node.blockFromSpec)
+                CommandSettingRole.BLOCK_TO -> isPositionSpecConfigured(node.blockToSpec)
+                // issue #34-1: 建造物設置位置・群pivotも位置仕様の完全性で判定します。
+                // 従来の else -> false では汎用 "position" キー経路の選択表示が
+                // 未完了に固定されるため、保存先と同じ仕様を参照します。
+                CommandSettingRole.STRUCTURE_PLACE_POSITION -> isPositionSpecConfigured(node.structurePlacePositionSpec)
+                CommandSettingRole.GROUP_PIVOT -> isPositionSpecConfigured(node.groupPivotPositionSpec)
                 CommandSettingRole.SOUND_POSITION -> isPositionSpecConfigured(node.soundPositionSpec)
                 CommandSettingRole.PARTICLE_POSITION -> isPositionSpecConfigured(node.particlePositionSpec)
                 CommandSettingRole.PARTICLE_END -> isPositionSpecConfigured(node.particleEndPositionSpec)
@@ -2131,26 +2166,43 @@ object CommandSettingsModel {
 
     private fun text() = CommandSettingDescriptor(CommandSettingEditor.TEXT)
 
-    /** 構造化フィールドの明示設定キーを、保存先の役割ごとに名前空間化します。 */
-    private fun configuredFieldKey(fieldKey: String, role: CommandSettingRole?): String = when (role) {
-        CommandSettingRole.CONDITION_POSITION -> "condition.position"
-        CommandSettingRole.SOUND_POSITION -> "soundPosition"
-        CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
-        CommandSettingRole.PARTICLE_END -> "particleEnd"
-        CommandSettingRole.SUMMON_POSITION -> "summonPosition"
-        CommandSettingRole.FIREWORK_POSITION -> "fireworkPosition"
-        CommandSettingRole.TEMPORARY_ENTITY -> "entity"
-        CommandSettingRole.TEMPORARY_LOCATION -> "location"
-        CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
-        CommandSettingRole.TEMPORARY_LOCATION_FACING -> "locationFacing"
-        CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
-        CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
-            "destination.$fieldKey"
-        } else "destination"
-        CommandSettingRole.SECONDARY_TARGET -> if (fieldKey.startsWith("target.")) {
-            "other.$fieldKey"
-        } else "other"
-        else -> fieldKey
+    /**
+     * 構造化フィールドの明示設定キーを、保存先の役割ごとに名前空間化します。
+     *
+     * issue #34-1: 内包対象の詳細条件キー（target.xxx）は通常対象と名前空間を
+     * 分離します。分離しないと pivot／設置位置の対象条件と群・ノード本体の
+     * 対象条件が同じ明示設定フラグを共有し、設定済み表示が相互に汚染されます。
+     */
+    private fun configuredFieldKey(fieldKey: String, role: CommandSettingRole?): String {
+        fun namespaced(prefix: String): String =
+            if (fieldKey.startsWith("target.")) "$prefix.$fieldKey" else prefix
+        return when (role) {
+            CommandSettingRole.CONDITION_POSITION -> if (fieldKey.startsWith("target.")) {
+                "condition.$fieldKey"
+            } else "condition.position"
+            CommandSettingRole.SOUND_POSITION -> namespaced("soundPosition")
+            CommandSettingRole.PARTICLE_POSITION -> namespaced("particlePosition")
+            CommandSettingRole.PARTICLE_END -> namespaced("particleEnd")
+            CommandSettingRole.SUMMON_POSITION -> namespaced("summonPosition")
+            CommandSettingRole.FIREWORK_POSITION -> namespaced("fireworkPosition")
+            CommandSettingRole.TEMPORARY_ENTITY -> "entity"
+            CommandSettingRole.TEMPORARY_LOCATION -> "location"
+            CommandSettingRole.TEMPORARY_LOCATION_POSITION -> namespaced("locationPosition")
+            CommandSettingRole.TEMPORARY_LOCATION_FACING -> "locationFacing"
+            CommandSettingRole.EXECUTION_POSITION -> namespaced("executionPosition")
+            CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
+                "destination.$fieldKey"
+            } else "destination"
+            CommandSettingRole.SECONDARY_TARGET -> if (fieldKey.startsWith("target.")) {
+                "other.$fieldKey"
+            } else "other"
+            CommandSettingRole.STRUCTURE_PLACE_POSITION -> namespaced("structurePlace")
+            CommandSettingRole.GROUP_PIVOT -> namespaced("pivot")
+            CommandSettingRole.BLOCK_POSITION -> namespaced("blockPosition")
+            CommandSettingRole.BLOCK_FROM -> namespaced("blockFrom")
+            CommandSettingRole.BLOCK_TO -> namespaced("blockTo")
+            else -> fieldKey
+        }
     }
 
     /** ITEM／BLOCKの主値に対する完了判定を共通化します。 */

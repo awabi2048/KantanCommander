@@ -941,4 +941,105 @@ class CommandSettingsModelTest {
         assertEquals("minecraft:player", node.string("summonEntity"))
     }
 
+    @Test
+    fun `structure place and group pivot are embedded target roles`() {
+        // issue #34-1: 建造物設置位置・群pivotは位置設定木の内部に対象を持ちます。
+        // 内包対象として扱わないと、対象詳細の編集が通常対象へ流れます。
+        assertTrue(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.STRUCTURE_PLACE_POSITION))
+        assertTrue(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.GROUP_PIVOT))
+        // 通常対象の役割は内包扱いにしません。
+        assertFalse(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.NODE_TARGET))
+        assertFalse(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.DESTINATION))
+        assertFalse(CommandSettingsModel.isEmbeddedTargetRole(null))
+    }
+
+    @Test
+    fun `plain target access rejects embedded roles instead of falling back`() {
+        // issue #34-1: 未知または用途不適合の役割を通常対象へ流さず明示的に拒否します。
+        val node = CommandType.STRUCTURE_PLACE.newNode()
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.targetSpec(node, CommandSettingRole.STRUCTURE_PLACE_POSITION)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.setTargetSpec(
+                node,
+                CommandSettingRole.STRUCTURE_PLACE_POSITION,
+                TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+        }
+        val group = CommandType.ENTITY_GROUP.newNode()
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.targetSpec(group, CommandSettingRole.GROUP_PIVOT)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.setTargetSpec(group, CommandSettingRole.GROUP_PIVOT, TargetSpec(TargetKind.NEAREST_PLAYER))
+        }
+        // 通常対象の役割は従来どおり読み書きできます。
+        CommandSettingsModel.setTargetSpec(group, CommandSettingRole.NODE_TARGET, TargetSpec(TargetKind.NEAREST_PLAYER))
+        assertEquals(TargetKind.NEAREST_PLAYER, CommandSettingsModel.targetSpec(group, CommandSettingRole.NODE_TARGET)?.kind)
+        assertEquals(TargetKind.NEAREST_PLAYER, CommandSettingsModel.targetSpec(group, null)?.kind)
+    }
+
+    @Test
+    fun `editing pivot target keeps the group target unchanged`() {
+        // issue #34-1: Pivotの対象詳細を編集しても、群の所属対象は変わりません。
+        // 編集したフィールド以外が変化しないことの回帰試験です。
+        val node = CommandType.ENTITY_GROUP.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            groupPivotPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_ENTITY),
+            )
+        }
+        val before = node.targetSpec
+
+        CommandSettingsModel.setEmbeddedTargetSpec(
+            node,
+            CommandSettingRole.GROUP_PIVOT,
+            TargetSpec(TargetKind.NEAREST_PLAYER),
+        )
+
+        assertEquals(before, node.targetSpec)
+        assertEquals(TargetKind.NEAREST_PLAYER, node.groupPivotPositionSpec?.target?.kind)
+        assertEquals(TargetKind.NEAREST_PLAYER, CommandSettingsModel.embeddedTargetSpec(node, CommandSettingRole.GROUP_PIVOT)?.kind)
+    }
+
+    @Test
+    fun `editing structure place target keeps the node target unchanged`() {
+        // issue #34-1: 設置位置の対象詳細を編集しても、通常の対象設定は変わりません。
+        val node = CommandType.STRUCTURE_PLACE.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            structurePlacePositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_ENTITY),
+            )
+        }
+        val before = node.targetSpec
+
+        CommandSettingsModel.setEmbeddedTargetSpec(
+            node,
+            CommandSettingRole.STRUCTURE_PLACE_POSITION,
+            TargetSpec(TargetKind.ALL_PLAYERS),
+        )
+
+        assertEquals(before, node.targetSpec)
+        assertEquals(TargetKind.ALL_PLAYERS, node.structurePlacePositionSpec?.target?.kind)
+    }
+
+    @Test
+    fun `embedded target configured state does not pollute the node target`() {
+        // issue #34-1: 内包対象と通常対象の明示設定フラグは名前空間を分離します。
+        val node = CommandType.ENTITY_GROUP.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            groupPivotPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "pivot-tag"),
+            )
+        }
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.GROUP_PIVOT))
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.GROUP_PIVOT, "tag"))
+        // 通常対象側にタグ条件はないため、内包側の設定が漏れません。
+        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "tag"))
+    }
 }

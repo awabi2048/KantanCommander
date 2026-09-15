@@ -204,14 +204,23 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         // プリセット選択は絞り込み条件を引き継がず、種別の既定値から
                         // 作り直します。簡易GUIでは隠れた条件を表示・編集できないため、
                         // 見えている選択と保存値がずれないことを優先します。
+                        // issue #34-1: 内包役割へは内包対象として保存します。
                         if (!updateNode(context.player, context.route) { node ->
-                                CommandSettingsModel.setTargetSpec(
-                                    node,
-                                    routeRole,
-                                    SettingPresets.targetSpecFor(preset),
-                                )
+                                if (CommandSettingsModel.isEmbeddedTargetRole(routeRole)) {
+                                    CommandSettingsModel.setEmbeddedTargetSpec(
+                                        node,
+                                        routeRole,
+                                        SettingPresets.withoutPresetConversion(SettingPresets.targetSpecFor(preset)),
+                                    )
+                                } else {
+                                    CommandSettingsModel.setTargetSpec(
+                                        node,
+                                        routeRole,
+                                        SettingPresets.targetSpecFor(preset),
+                                    )
+                                }
                             }) {
-                            return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                                return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Replace(context.route))
                     },
@@ -3423,12 +3432,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun backElement(player: Player, slot: Int = 36) =
         KcGui.elements.backEntry(player, slot)
 
+    /**
+     * issue #34-1: 対象選択画面の通常対象です。
+     *
+     * 内包役割が ROLE へ直接入った場合も通常対象へ流さず、位置・向き仕様の
+     * 内部対象を返します。保存先の取り違えを入口で防ぐための一元化です。
+     */
     private fun selectedTargetSpec(route: MenuRoute): TargetSpec? {
         val node = node(route) ?: return null
-        return CommandSettingsModel.targetSpec(
-            node,
-            CommandSettingRole.fromRoute(route.payload[ROLE]),
-        )
+        val role = CommandSettingRole.fromRoute(route.payload[ROLE])
+        return if (CommandSettingsModel.isEmbeddedTargetRole(role)) {
+            CommandSettingsModel.embeddedTargetSpec(node, role)
+        } else {
+            CommandSettingsModel.targetSpec(node, role)
+        }
     }
 
     /**
@@ -3455,15 +3472,24 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         SettingPresets.TargetPreset.NEARBY_ENTITIES -> TargetKind.NEARBY_ENTITIES
     }
 
+    /**
+     * issue #34-1: 対象選択画面の保存入口です。
+     *
+     * 内包役割へは [CommandSettingsModel.setEmbeddedTargetSpec] で保存し、
+     * 通常対象への取り違えを防ぎます。編集したフィールド以外は維持されます。
+     */
     private fun updateTargetSpec(player: Player, route: MenuRoute, change: (TargetSpec) -> TargetSpec): Boolean =
         updateNode(player, route) { node ->
-            val current = selectedTargetSpec(route) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
-            val updated = change(current)
-            CommandSettingsModel.setTargetSpec(
-                node,
-                CommandSettingRole.fromRoute(route.payload[ROLE]),
-                updated,
-            )
+            val role = CommandSettingRole.fromRoute(route.payload[ROLE])
+            if (CommandSettingsModel.isEmbeddedTargetRole(role)) {
+                val current = CommandSettingsModel.embeddedTargetSpec(node, role)
+                    ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                CommandSettingsModel.setEmbeddedTargetSpec(node, role, change(current))
+            } else {
+                val current = CommandSettingsModel.targetSpec(node, role) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                val updated = change(current)
+                CommandSettingsModel.setTargetSpec(node, role, updated)
+            }
         }
 
     private fun script(route: MenuRoute) = scriptId(route)?.let(plugin.scripts::load)

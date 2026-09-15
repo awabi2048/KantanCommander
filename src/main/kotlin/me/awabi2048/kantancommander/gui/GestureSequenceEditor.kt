@@ -6288,7 +6288,15 @@ class GestureSequenceEditor(
             // エンティティ系はプリセットと詳細設定へ集約しました。
             if (runCatching { TargetCategory.valueOf(categoryValue) }.getOrNull() != TargetCategory.TEMPORARY) return
             val role = settingContext.role
-            val current = CommandSettingsModel.targetSpec(node, role)
+            // issue #34-1: 内包役割では位置・向き仕様の内部対象を読み書きします。
+            // 通常の targetSpec へ流すと別フィールド（ノード本体の対象）を
+            // 書き換えるため、ここで分岐します。
+            val embedded = CommandSettingsModel.isEmbeddedTargetRole(role)
+            val current = if (embedded) {
+                CommandSettingsModel.embeddedTargetSpec(node, role)
+            } else {
+                CommandSettingsModel.targetSpec(node, role)
+            }
             // 一時変数は通常の選択肢と同じく、1回目は方式の選択だけにします。
             // 値未入力のTargetSpecを設定済み扱いにしないため、明示的に
             // configuredFieldsを空集合へ指定します。
@@ -6302,16 +6310,28 @@ class GestureSequenceEditor(
                         settingContext.copy(role = role),
                         configuredFields = emptySet(),
                     ) {
-                        CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                        if (embedded) {
+                            CommandSettingsModel.setEmbeddedTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                        } else {
+                            CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                        }
                     }
                 },
                 saveName = { name ->
                     updateSettingNode(player, settingContext.copy(role = role)) {
-                        CommandSettingsModel.setTargetSpec(
-                            it,
-                            role,
-                            TargetSpec(TargetKind.TEMPORARY, tempName = name),
-                        )
+                        if (embedded) {
+                            CommandSettingsModel.setEmbeddedTargetSpec(
+                                it,
+                                role,
+                                TargetSpec(TargetKind.TEMPORARY, tempName = name),
+                            )
+                        } else {
+                            CommandSettingsModel.setTargetSpec(
+                                it,
+                                role,
+                                TargetSpec(TargetKind.TEMPORARY, tempName = name),
+                            )
+                        }
                     }
                 },
             )

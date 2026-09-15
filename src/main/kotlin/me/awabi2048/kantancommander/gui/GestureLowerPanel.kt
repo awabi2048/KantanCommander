@@ -3437,8 +3437,16 @@ class GestureLowerPanel(
                 CommandSettingsModel.facingSpec(node, context.role)?.kind == FacingKind.COPY_ORIENTATION &&
                 CommandSettingsModel.isFacingSpecComplete(CommandSettingsModel.facingSpec(node, context.role))
             id.startsWith("myworld-spawn:") -> choice.selected
+            // issue #34-1: 内包役割では位置・向き仕様の内部対象を参照します。
+            // targetSpec へ流すと別フィールドを参照するため、ここで分岐します。
             id.startsWith("target:") -> choice.selected &&
-                CommandSettingsModel.targetCategory(CommandSettingsModel.targetSpec(node, context.role)?.kind) ==
+                CommandSettingsModel.targetCategory(
+                    (if (CommandSettingsModel.isEmbeddedTargetRole(context.role)) {
+                        CommandSettingsModel.embeddedTargetSpec(node, context.role)
+                    } else {
+                        CommandSettingsModel.targetSpec(node, context.role)
+                    })?.kind,
+                ) ==
                 targetCategoryFromChoice(id) &&
                 CommandSettingsModel.isFieldConfigured(node, "target", context.role)
             id.startsWith("kind:") -> choice.selected &&
@@ -4778,7 +4786,12 @@ class GestureLowerPanel(
         player: Player,
     ): String = when (screen) {
         // enum名を直接見せず、インベントリGUIと同じ日本語表示へ統一します。
-        GestureSettingScreen.TARGET -> CommandSettingsModel.targetSpec(node, context.role)?.kind
+        // issue #34-1: 内包役割では位置・向き仕様の内部対象を表示します。
+        GestureSettingScreen.TARGET -> (if (CommandSettingsModel.isEmbeddedTargetRole(context.role)) {
+            CommandSettingsModel.embeddedTargetSpec(node, context.role)
+        } else {
+            CommandSettingsModel.targetSpec(node, context.role)
+        })?.kind
             ?.let { targetKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.POSITION -> CommandSettingsModel.positionKind(node, context.role)
             ?.let { positionKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
