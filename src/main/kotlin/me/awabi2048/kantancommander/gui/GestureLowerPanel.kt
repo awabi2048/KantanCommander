@@ -57,6 +57,8 @@ import me.awabi2048.kantancommander.model.ParticleShape
 import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
+import me.awabi2048.kantancommander.model.StructureMirror
+import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.hasDiskContent
 import me.awabi2048.kantancommander.model.effectiveTrigger
 import me.awabi2048.kantancommander.model.TriggerKind
@@ -3935,6 +3937,48 @@ class GestureLowerPanel(
             listOf(
                 SettingChoice("invert:true", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_ON), explicitSelected(node, fieldKey, context.role, node.boolean(fieldKey, false))),
                 SettingChoice("invert:false", KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CHOICE_INVERT_OFF), explicitSelected(node, fieldKey, context.role, !node.boolean(fieldKey, false))),
+            )
+        }
+        // issue #11: 建造物の回転・反転は明示選択肢です。保存値は小文字文字列のため、
+        // ここで各enumへ解決し直して選択表示と照合します。
+        GestureSettingScreen.STRUCTURE_ROTATION -> StructureRotation.entries.map { rotation ->
+            SettingChoice(
+                "rotation:${rotation.value}",
+                "${rotation.degrees}°",
+                explicitSelected(node, fieldKey, context.role, node.string("rotation", StructureRotation.NONE.value) == rotation.value),
+            )
+        }
+        GestureSettingScreen.STRUCTURE_MIRROR -> StructureMirror.entries.map { mirror ->
+            val labelKey = when (mirror) {
+                StructureMirror.NONE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_NONE
+                StructureMirror.LEFT_RIGHT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_LEFT_RIGHT
+                StructureMirror.FRONT_BACK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_FRONT_BACK
+            }
+            SettingChoice(
+                "mirror:${mirror.value}",
+                KcI18n.text(player, labelKey),
+                explicitSelected(node, fieldKey, context.role, node.string("mirror", StructureMirror.NONE.value) == mirror.value),
+            )
+        }
+        GestureSettingScreen.STRUCTURE_NAME -> buildList {
+            // 保存済みの建造物を候補として列挙します。存在しない場合は追加保存の
+            // 手順を示すため、空候補には新規作成用の固定項目だけを出します。
+            val existing = plugin.structures.list()
+            existing.forEach { name ->
+                add(
+                    SettingChoice(
+                        "structureName:$name",
+                        name,
+                        explicitSelected(node, fieldKey, context.role, node.string("structure") == name),
+                    ),
+                )
+            }
+            add(
+                GestureSettingTreeNode(
+                    id = "structure-name-direct",
+                    label = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_DIRECT_VALUE),
+                    selected = node.string("structure").isNotBlank() && node.string("structure") !in existing,
+                ),
             )
         }
     }

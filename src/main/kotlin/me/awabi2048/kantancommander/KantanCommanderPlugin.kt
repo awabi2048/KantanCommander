@@ -55,12 +55,15 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "d502f0252a45e4e5bd1d2a83cbb10c2b05bbb5a3b6287931b1c25abb1dbd33a5"
+    "a638dfe07e4096432de2ab920eaea2cae303fd8bb9e7532078f45432897d9522"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
         private set
     lateinit var placements: PlacementStore
+        private set
+    /** issue #11 の建造物ストアです。バニラ構造物形式を単一正本とします。 */
+    lateinit var structures: me.awabi2048.kantancommander.structure.StructureStore
         private set
     lateinit var variables: WorldVariableStore
         private set
@@ -186,6 +189,10 @@ class KantanCommanderPlugin : JavaPlugin() {
         itemGrantService = KantanItemGrantService(this)
         CCSystem.getAPI().getItemGrantService().register(KantanItemGrantProvider(itemGrantService))
         placements = PlacementStore(this, dataFolder.resolve("placements.json"))
+        structures = me.awabi2048.kantancommander.structure.StructureStore(
+            this,
+            dataFolder.resolve("structures"),
+        )
         variables = WorldVariableStore(dataFolder.resolve("world-variables"), logger)
         entityVariables = me.awabi2048.kantancommander.model.EntityVariableStore(
             me.awabi2048.kantancommander.model.PdcEntityVariableBackend(),

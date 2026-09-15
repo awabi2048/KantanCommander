@@ -38,6 +38,8 @@ import me.awabi2048.kantancommander.model.RegionSpec
 import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
+import me.awabi2048.kantancommander.model.StructureMirror
+import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.TargetKind
 import me.awabi2048.kantancommander.model.TargetSpec
 import me.awabi2048.kantancommander.model.TemporaryTemplate
@@ -100,6 +102,12 @@ data class ScriptValidationError(
 
 /** 保存・実行・出力で共通利用するコマンド設定検証です。 */
 object ExecutableScriptValidator {
+    /**
+     * issue #11: 建造物名として許可する形式です。ストアのファイル名と照合キーへ
+     * そのまま使うため、英小文字・数字・アンダースコア・ハイフンだけを許可します。
+     */
+    private val STRUCTURE_NAME_PATTERN = Regex("[a-z0-9_-]{1,64}")
+
     /**
      * issue #7/#8: 実行開始時に定義済みとなるEXECUTION変数の型表です。
      *
@@ -649,6 +657,8 @@ object ExecutableScriptValidator {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "カメラシェイクの対象が未設定です")
             }
             CommandType.BLOCK_OPERATION -> validateBlockOperation(node, path, errors, temporaryDefinitions)
+            CommandType.STRUCTURE_SAVE -> validateStructureSave(node, path, errors, temporaryDefinitions)
+            CommandType.STRUCTURE_PLACE -> validateStructurePlace(node, path, errors, temporaryDefinitions)
             CommandType.ENTITY_DELETE -> {
                 if (node.targetSpec == null) errors += nodeError(node, path, setOf("target"), "削除対象が未設定です")
             }
@@ -1457,6 +1467,72 @@ object ExecutableScriptValidator {
                 }
             }
             null -> Unit
+        }
+    }
+
+    /**
+     * issue #11: 建造物保存の検証です。保存範囲は BLOCK_OPERATION の fill と同じ
+     * blockFromSpec／blockToSpec を流用し、体積上限も同じ
+     * [MAX_BLOCK_OPERATION_VOLUME] で判定します。建造物名はストアを安全に扱うため
+     * 英語小文字・数字・アンダースコア・ハイフンのみを許可します。
+     */
+    private fun validateStructureSave(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, ValueType>? = null,
+    ) {
+        validateStructureName(node, path, errors)
+        val from = node.blockFromSpec
+        val to = node.blockToSpec
+        if (from == null && node.executionPositionSpec == null) {
+            errors += nodeError(node, path, setOf("from"), "保存範囲の始点が未設定です")
+        }
+        if (to == null && node.executionPositionSpec == null) {
+            errors += nodeError(node, path, setOf("to"), "保存範囲の終点が未設定です")
+        }
+        val effectiveFrom = from ?: node.executionPositionSpec
+        val effectiveTo = to ?: node.executionPositionSpec
+        if (effectiveFrom != null && effectiveTo != null &&
+            blockVolume(effectiveFrom, effectiveTo)?.let { it > MAX_BLOCK_OPERATION_VOLUME } == true
+        ) {
+            errors += nodeError(node, path, setOf("from", "to"), "保存範囲は${MAX_BLOCK_OPERATION_VOLUME}ブロック以内で指定してください")
+        }
+    }
+
+    /**
+     * issue #11: 建造物設置の検証です。建造物名の存在確認は実行時のストア照合で
+     * 行い、ここでは名前形式・回転・反転・設置位置の指定だけを検証します。
+     */
+    private fun validateStructurePlace(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+        temporaryDefinitions: Map<String, ValueType>? = null,
+    ) {
+        validateStructureName(node, path, errors)
+        if (StructureRotation.from(node.string("rotation", StructureRotation.NONE.value)) == null) {
+            errors += nodeError(node, path, setOf("rotation"), "回転の指定が不正です")
+        }
+        if (StructureMirror.from(node.string("mirror", StructureMirror.NONE.value)) == null) {
+            errors += nodeError(node, path, setOf("mirror"), "反転の指定が不正です")
+        }
+    }
+
+    /**
+     * issue #11: 建造物名の共通検証です。変数・一時変数参照は保存時に解決できないため
+     * 建造物名はリテラル固定とし、ファイル名へ展開する安全な文字だけを許可します。
+     */
+    private fun validateStructureName(
+        node: CommandNode,
+        path: String,
+        errors: MutableList<ScriptValidationError>,
+    ) {
+        val name = node.string("structure")
+        if (name.isBlank()) {
+            errors += nodeError(node, path, setOf("structure"), "建造物が未設定です")
+        } else if (!STRUCTURE_NAME_PATTERN.matches(name)) {
+            errors += nodeError(node, path, setOf("structure"), "建造物名は英数字・アンダースコア・ハイフンで指定してください")
         }
     }
 

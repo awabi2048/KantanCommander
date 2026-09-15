@@ -475,6 +475,8 @@ class CommandSettingsModelTest {
         val compositeKeys = setOf(
             "soundSetting", "particleDisplay", "condition", "geometrySettings", "particleParameters",
             "fireworkContents",
+            // issue #11: 設置位置（structurePlace）は構造値のため表示試験の対象外です。
+            "structurePlace",
         )
         for (type in CommandType.entries) {
             val keys = CommandSettingsModel.visibleFields(type.newNode()).map { it.key }.toSet()

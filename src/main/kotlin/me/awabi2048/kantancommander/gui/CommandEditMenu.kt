@@ -4212,6 +4212,67 @@ object EditorMenuLayout {
                 it.blockToSpec?.kind?.let(::displayPosition) ?: displayUnset()
             },
         )
+        // issue #11: 保存は名前＋範囲、設置は名前＋回転・反転＋位置です。
+        // 範囲・位置は BLOCK_OPERATION と同じ位置設定木を流用します。
+        CommandType.STRUCTURE_SAVE -> listOf(
+            field(
+                "structure",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STRUCTURE,
+                Material.STRUCTURE_BLOCK,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK,
+            ) { displayTypedValue(it, "structure") },
+            field(
+                "from",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_FROM,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_FROM,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_FROM,
+            ) {
+                it.blockFromSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+            field(
+                "to",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_TO,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_TO,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_TO,
+            ) {
+                it.blockToSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+        )
+        CommandType.STRUCTURE_PLACE -> listOf(
+            field(
+                "structure",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STRUCTURE,
+                Material.STRUCTURE_VOID,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK,
+            ) { displayTypedValue(it, "structure") },
+            field(
+                "rotation",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "rotation") },
+            field(
+                "mirror",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_OPERATION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_OPERATION,
+            ) { displayTypedValue(it, "mirror") },
+            field(
+                "structurePlace",
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_POSITION,
+                Material.COMPASS,
+                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_POSITION,
+                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_POSITION,
+            ) {
+                it.structurePlacePositionSpec?.kind?.let(::displayPosition) ?: displayUnset()
+            },
+        )
         CommandType.ENTITY_DELETE -> listOf(
             field(
                 "target",

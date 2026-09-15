@@ -67,6 +67,9 @@ internal object CommandPresentationPolicy {
         CommandType.CAMERA_SHAKE,
         CommandType.BLOCK_OPERATION,
         CommandType.ENTITY_DELETE,
+        // issue #11: 建造物は実行カテゴリです。簡易GUIでも編集できます。
+        CommandType.STRUCTURE_SAVE,
+        CommandType.STRUCTURE_PLACE,
         -> CommandCategory.EXECUTION
 
         CommandType.WAIT,
