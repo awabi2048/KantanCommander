@@ -1880,9 +1880,23 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
      * カードごとにモード切替行と削除行を並べ、2子ボタンの操作を
      * インベントリGUIでも等価に到達できるようにします。
      */
+    /**
+     * タグ一覧画面です。
+     *
+     * issue #33-3: 共通UI規則に従い、Nameへ対象識別（タグ名）または固定の
+     * 操作名だけを入れ、状態（追加／削除）・対象名の補足はLoreのデータ行へ
+     * 分離します。Nameへの状態混入は行いません。
+     */
     private fun renderEntityTagList(player: Player, route: MenuRoute): InventoryMenuView {
         val entries = node(route)?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }.orEmpty()
-        data class TagRow(val material: Material, val label: String, val action: String, val payload: Map<String, String>)
+        data class TagRow(
+            val material: Material,
+            val label: String,
+            val action: String,
+            val payload: Map<String, String>,
+            val dataLabel: String? = null,
+            val dataValue: String? = null,
+        )
         val allRows = buildList {
             add(TagRow(
                 Material.WRITABLE_BOOK,
@@ -1898,15 +1912,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 )
                 add(TagRow(
                     Material.NAME_TAG,
-                    "${entry.tag} : $modeLabel",
+                    entry.tag,
                     "select",
                     mapOf("mode" to index.toString()),
+                    dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION),
+                    dataValue = modeLabel,
                 ))
                 add(TagRow(
                     Material.BARRIER,
-                    "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE)} : ${entry.tag}",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE),
                     "delete",
                     mapOf("index" to index.toString()),
+                    dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG),
+                    dataValue = entry.tag,
                 ))
             }
         }
@@ -1917,7 +1935,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val rows = allRows.drop(page * pageSize).take(pageSize)
         val layout = ChoiceMenuLayoutPolicy.layout((rows.size + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
         val elements = rows.mapIndexed { index, row ->
-            choiceElement(player, layout.itemSlots[index], row.material, row.label, row.action, row.payload)
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                row.material,
+                row.label,
+                row.action,
+                row.payload,
+                dataLabel = row.dataLabel,
+                dataValue = row.dataValue,
+            )
         }.toMutableList()
         appendEntityPager(player, layout, elements, rows.size, page, pageCount, "tagPage")
         elements += backElement(player, layout.backSlot)
