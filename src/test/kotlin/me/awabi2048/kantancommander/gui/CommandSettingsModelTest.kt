@@ -522,7 +522,9 @@ class CommandSettingsModelTest {
 
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEARBY_ENTITIES))
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEAREST_PLAYER))
-        assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
+        // issue #34-4: 固定実体・一時変数参照は詳細条件を使いません。
+        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
+        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.TEMPORARY))
         assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(null))
         assertEquals(
             listOf(
@@ -1115,5 +1117,65 @@ class CommandSettingsModelTest {
                 CommandSettingsModel.incompleteWarningKey(node, field.key)
             }
         }
+    }
+
+    @Test
+    fun `fixed and temporary references expose no detail filters`() {
+        // issue #34-4: 固定実体・一時変数参照は詳細条件を使いません。
+        // 実行側が適用しない条件をGUIで提示しないことを固定します。
+        assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(TargetKind.FIXED_ENTITY))
+        assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(TargetKind.TEMPORARY))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "tag"))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "distance"))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "entityType"))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "tag"))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "distance"))
+        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.FIXED_ENTITY, "kind"))
+        // 通常検索の契約は変えません。
+        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.NEAREST_ENTITY, "tag"))
+        assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_ENTITY).contains("tag"))
+    }
+
+    @Test
+    fun `saving fixed and temporary references prunes detail filters`() {
+        // issue #34-4: 保存時に残存条件を除去し、保持した条件を黙って無視しません。
+        val fixed = TargetSpec(
+            TargetKind.FIXED_ENTITY,
+            entityType = "minecraft:zombie",
+            minimumDistance = 1.0,
+            maximumDistance = 8.0,
+            gameMode = "SURVIVAL",
+            tag = "mark",
+            name = "bob",
+            dx = 2.0,
+            fixedEntityId = UUID.randomUUID(),
+        )
+        val fixedNode = CommandType.ENTITY_DELETE.newNode()
+        CommandSettingsModel.setTargetSpec(fixedNode, CommandSettingRole.NODE_TARGET, fixed)
+        val savedFixed = requireNotNull(fixedNode.targetSpec)
+        assertEquals(TargetKind.FIXED_ENTITY, savedFixed.kind)
+        assertEquals(fixed.fixedEntityId, savedFixed.fixedEntityId)
+        assertNull(savedFixed.entityType)
+        assertNull(savedFixed.minimumDistance)
+        assertNull(savedFixed.maximumDistance)
+        assertNull(savedFixed.gameMode)
+        assertNull(savedFixed.tag)
+        assertNull(savedFixed.name)
+        assertNull(savedFixed.dx)
+
+        val temporary = TargetSpec(TargetKind.TEMPORARY, tempName = "foe", tag = "mark", maximumDistance = 8.0)
+        val tempNode = CommandType.ENTITY_DELETE.newNode()
+        CommandSettingsModel.setTargetSpec(tempNode, CommandSettingRole.NODE_TARGET, temporary)
+        val savedTemporary = requireNotNull(tempNode.targetSpec)
+        assertEquals("foe", savedTemporary.tempName)
+        assertNull(savedTemporary.tag)
+        assertNull(savedTemporary.maximumDistance)
+
+        // 通常検索の条件は除去しません。
+        val normal = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "mark", maximumDistance = 8.0)
+        val normalNode = CommandType.ENTITY_DELETE.newNode()
+        CommandSettingsModel.setTargetSpec(normalNode, CommandSettingRole.NODE_TARGET, normal)
+        assertEquals("mark", requireNotNull(normalNode.targetSpec).tag)
+        assertEquals(8.0, requireNotNull(normalNode.targetSpec).maximumDistance)
     }
 }

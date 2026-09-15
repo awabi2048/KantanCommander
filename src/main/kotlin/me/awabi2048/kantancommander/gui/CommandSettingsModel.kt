@@ -1360,13 +1360,19 @@ object CommandSettingsModel {
      *
      * 未知または用途不適合の役割を通常対象へ流さず明示的に拒否します。
      * 内包対象の役割は [setEmbeddedTargetSpec] を利用してください。
+     *
+     * issue #34-4: 固定実体・一時変数参照の詳細条件は保存時に除去します。
+     * 実行側はこれらの取得元に絞り込みを適用しないため、残存条件を
+     * 保持したままにせず、GUI・保存・実行の契約を一致させます。
      */
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
         // TEMP_SET ENTITYは対象を複数保持できないTemporaryValueへ変換するため、
         // 共通TargetSpecの詳細条件はそのまま利用しつつ、解決数だけ1体へ正規化します。
         val normalizedSpec = if (role == CommandSettingRole.TEMPORARY_ENTITY) {
-            spec.copy(limit = 1)
-        } else spec
+            pruneSingleReferenceFilters(spec.copy(limit = 1))
+        } else {
+            pruneSingleReferenceFilters(spec)
+        }
         when (role) {
             null, CommandSettingRole.NODE_TARGET -> node.targetSpec = normalizedSpec
             CommandSettingRole.DESTINATION -> {
@@ -1431,11 +1437,37 @@ object CommandSettingsModel {
     }
 
     /**
+     * issue #34-4: 単一参照の取得元に適用されない詳細条件を除去します。
+     *
+     * 固定実体は実体ID、一時変数参照は変数名だけで解決し、種類・距離・範囲・
+     * 領域・タグ・名・基準位置などの絞り込みは実行時に適用されません。
+     * 残したままにすると保持した条件を黙って無視することになるため、
+     * 保存の共通入口で除去します。上限数・並べ替え・来歴は触りません。
+     */
+    fun pruneSingleReferenceFilters(spec: TargetSpec): TargetSpec {
+        if (spec.kind != TargetKind.FIXED_ENTITY && spec.kind != TargetKind.TEMPORARY) return spec
+        return spec.copy(
+            entityType = null,
+            minimumDistance = null,
+            maximumDistance = null,
+            gameMode = null,
+            tag = null,
+            name = null,
+            dx = null,
+            dy = null,
+            dz = null,
+            region = null,
+            searchOrigin = null,
+        )
+    }
+    /**
      * issue #29: 内包対象だけを書き換えます。
      *
      * 種別・座標等の他要素は維持し、保存形式（PositionSpec/FacingSpecの
      * target部）は変えません。検証・実行・出力への影響はありません。
      * 向きでは注視・複写の種別を保持し、単一体に正規化します。
+     *
+     * issue #34-4: 固定実体・一時変数参照の詳細条件は保存時に除去します。
      *
      * @param facingKind 向き役割で種別を明示する場合に指定します（TARGET／COPY_ORIENTATION）。
      */
@@ -1446,6 +1478,8 @@ object CommandSettingsModel {
         facingKind: FacingKind? = null,
     ) {
         check(isEmbeddedTargetRole(role)) { "${node.type} の内包対象の役割が不正です: $role" }
+        // issue #34-4: 内包対象も通常対象と同じ単一参照契約で除去します。
+        val pruned = pruneSingleReferenceFilters(spec)
         when (role) {
             CommandSettingRole.DESTINATION_FACING,
             CommandSettingRole.TEMPORARY_LOCATION_FACING,
@@ -1459,12 +1493,12 @@ object CommandSettingsModel {
                 }
                 val base = facingSpec(node, role)
                     ?.takeIf { it.kind == resolvedKind } ?: FacingSpec(resolvedKind)
-                setFacingSpec(node, base.copy(kind = resolvedKind, target = spec.copy(limit = 1)), role)
+                setFacingSpec(node, base.copy(kind = resolvedKind, target = pruned.copy(limit = 1)), role)
             }
             else -> {
                 val base = positionSpec(node, role)
                     ?.takeIf { it.kind == PositionKind.TARGET } ?: PositionSpec(PositionKind.TARGET)
-                setPositionSpec(node, role, base.copy(kind = PositionKind.TARGET, target = spec))
+                setPositionSpec(node, role, base.copy(kind = PositionKind.TARGET, target = pruned))
             }
         }
     }
@@ -1883,12 +1917,21 @@ object CommandSettingsModel {
      * 対象種別に対して詳細条件が意味を持つかを判定します。
      * 実行側の解決（matches）に合わせ、プレイヤー種別へentityType、
      * エンティティの種類へgameModeを指定しても解決しないため、GUIでは提示しません。
+     *
+     * issue #34-4: 固定実体・一時変数参照は詳細条件を使いません。実行側は
+     * これらの取得元に絞り込みを適用しないため、GUIでも提示しません。
+     * 保存時には残存条件を除去し、保持した条件を黙って無視しないようにします。
      */
-    fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean = when (parameter) {
-        "kind" -> kind != null
-        "entityType" -> kind in ENTITY_KINDS
-        "gameMode" -> kind in PLAYER_KINDS
-        else -> true
+    fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean {
+        if (kind == TargetKind.FIXED_ENTITY || kind == TargetKind.TEMPORARY) {
+            return parameter == "kind"
+        }
+        return when (parameter) {
+            "kind" -> kind != null
+            "entityType" -> kind in ENTITY_KINDS
+            "gameMode" -> kind in PLAYER_KINDS
+            else -> true
+        }
     }
 
     /**
@@ -1915,9 +1958,13 @@ object CommandSettingsModel {
      * 対象種別と詳細条件の境界を共有します。
      * 親画面の種別選択後に詳細子画面へ進めるかを、描画側と入力状態遷移側で
      * 別々に持つと、表示された「詳細設定」が開けない対象が生まれるためです。
+     *
+     * issue #34-4: 固定実体は詳細条件を持たないため、詳細子画面へ進めません。
+     * 一時変数参照も同様です（従来どおり）。
      */
     fun targetSupportsDetailedFilters(kind: TargetKind?): Boolean =
-        kind?.let { it in FILTERABLE_TARGET_KINDS } == true
+        kind != null && kind != TargetKind.FIXED_ENTITY && kind != TargetKind.TEMPORARY &&
+            kind in FILTERABLE_TARGET_KINDS
 
     /**
      * issue #4 の領域基準の表示名キーです。

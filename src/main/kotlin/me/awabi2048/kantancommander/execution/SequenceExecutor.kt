@@ -3407,6 +3407,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec? = session.context,
     ): Entity? = resolveTargetSpecs(spec, session, context).firstOrNull()
 
+    /**
+     * issue #34-4: 対象の取得と絞り込み適用の契約です。
+     *
+     * 通常検索（プレイヤー系・付近系）は matches で種類・名・タグ・距離・
+     * 領域等を検査します。一方、固定実体は実体ID、一時変数参照は変数値だけで
+     * 解決し、詳細条件は適用しません。これは仕様であり、取得元によらず
+     * 一貫させるため、GUI（非提示）・保存（除去）・実行（非適用）で
+     * 一致させた契約です。既存保存データの残存条件も適用しません。
+     */
     private fun resolveTargetSpecs(
         spec: TargetSpec,
         session: ExecutionSession,
