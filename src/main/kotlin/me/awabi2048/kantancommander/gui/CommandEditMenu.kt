@@ -184,7 +184,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ) {
                                 return@MenuActionHandler MenuActionResult.Ignored
                             }
-                            if (!updateNode(context.player, context.route) { node ->
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                     val base = CommandSettingsModel.positionSpec(node, embedRole)
                                         ?.takeIf { base -> base.kind == PositionKind.TARGET }
                                         ?: PositionSpec(PositionKind.TARGET)
@@ -208,7 +208,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         // 作り直します。簡易GUIでは隠れた条件を表示・編集できないため、
                         // 見えている選択と保存値がずれないことを優先します。
                         // issue #34-1: 内包役割へは内包対象として保存します。
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 if (CommandSettingsModel.isEmbeddedTargetRole(routeRole)) {
                                     CommandSettingsModel.setEmbeddedTargetSpec(
                                         node,
@@ -303,7 +303,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         if (field == "action" && node.type == CommandType.ENTITY_ACTION) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "action",
@@ -342,7 +342,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             val definition = propertyId?.let { EntityDataSchema.definition(it) }
                             when (definition?.valueKind) {
                                 EntityPropertyValueKind.BOOLEAN -> {
-                                    if (!updateNode(context.player, context.route) {
+                                    if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         CommandSettingsModel.setParameter(
                                             it,
                                             EntityDataSchema.PARAM_VALUE,
@@ -388,13 +388,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         if (field == "overwrite" && (node.type == CommandType.ENTITY_ACTION || node.type == CommandType.PLACE_ITEM)) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "soundScope" && node.type == CommandType.PLAY_SOUND) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "soundScope",
@@ -404,7 +404,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "soundOperation" && node.type == CommandType.PLAY_SOUND) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "soundOperation",
@@ -488,7 +488,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         if (field == "shakeType" && node.type == CommandType.CAMERA_SHAKE) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "shakeType",
@@ -560,7 +560,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val mode = context.payload["mode"]
                             ?.takeIf { it in setOf("tellraw", "title", "subtitle", "actionbar") }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "mode", mode)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -581,7 +581,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val operation = context.payload["operation"]
                             ?.takeIf { it == "setblock" || it == "fill" }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "operation", operation)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -607,7 +607,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val rotation = context.payload["rotation"]
                             ?.let(StructureRotation::from)
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "rotation", rotation.value)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -630,7 +630,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val mirror = context.payload["mirror"]
                             ?.let(StructureMirror::from)
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "mirror", mirror.value)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -653,7 +653,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val operation = context.payload["operation"]
                             ?.let(EntityGroupOperation::from)
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "operation", operation.value)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -676,7 +676,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val slot = context.payload["slot"]
                             ?.takeIf { it in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET") }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "slot", slot)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -702,7 +702,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         when {
                             selection == "tag" -> {
-                                if (!updateNode(context.player, context.route) {
+                                if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
                                     }) {
                                     return@MenuActionHandler MenuActionResult.Rejected(
@@ -721,7 +721,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 val definition = EntityDataSchema.definition(propertyId)
                                     ?: return@MenuActionHandler MenuActionResult.Ignored
                                 val previous = EntityDataPath.propertyIdOf(current.string(EntityDataPath.PARAM_PATH))
-                                if (!updateNode(context.player, context.route) {
+                                if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
                                         // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
                                         if (previous != null && previous != propertyId) {
@@ -735,7 +735,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 when (definition.valueKind) {
                                     // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
                                     EntityPropertyValueKind.BOOLEAN -> {
-                                        if (!updateNode(context.player, context.route) {
+                                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                                 val toggled = if (previous == propertyId) {
                                                     (!(it.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull() ?: false)).toString()
                                                 } else "true"
@@ -777,7 +777,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val attributeId = context.payload["attribute"]
                             ?.takeIf(EntityAttributeSupport::isAttributeId)
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.attributePath(attributeId))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -820,7 +820,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             val toggled = if (target.mode == EntityTagEntries.MODE_ADD) EntityTagEntries.MODE_REMOVE else EntityTagEntries.MODE_ADD
                             val updated = current.toMutableList().also { it[modeIndex] = target.copy(mode = toggled) }
                             if (!EntityTagEntries.isValid(updated)) return@MenuActionHandler MenuActionResult.Ignored
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                     CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
                                 }) {
                                 return@MenuActionHandler MenuActionResult.Rejected(
@@ -840,7 +840,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (index !in current.indices) return@MenuActionHandler MenuActionResult.Ignored
                         val updated = current.toMutableList().also { it.removeAt(index) }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -874,7 +874,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (current.enumChoices.none { it.id == choice }) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, choice)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -913,7 +913,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         when (definition.valueKind) {
                             // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
                             EntityPropertyValueKind.BOOLEAN -> {
-                                if (!updateNode(context.player, context.route) {
+                                if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         val toggled = (!(it.string(key).toBooleanStrictOrNull() ?: false)).toString()
                                         CommandSettingsModel.setParameter(it, key, toggled)
                                     }) {
@@ -965,7 +965,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (definition.enumChoices.none { it.id == choice }) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityDataSchema.summonDataKey(propertyId), choice)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -985,7 +985,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 actions = mapOf(
                     "back" to back(),
                     "toggleOverwrite" to MenuActionHandler { context ->
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -998,7 +998,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "select" to MenuActionHandler { context ->
                         val destination = PlaceItemDestination.from(context.payload["placeDestination"])
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 // 配置先の切替えで要求対象が変わるため、スロットは
                                 // 既定値へ戻して不正な組合せを残しません。
                                 CommandSettingsModel.setParameter(it, "placeDestination", destination.paramValue)
@@ -1042,7 +1042,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         } else {
                             VariableScope.WORLD.name
                         }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 it.params["returnScope"] = next
                                 it.markConfigured("returnScope")
                             }
@@ -1095,7 +1095,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "disk" to MenuActionHandler { context ->
                         val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(node, role, PositionSpec(PositionKind.DISK))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -1169,7 +1169,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             } else {
                                 SettingPresets.TargetPreset.NEAREST_PLAYER
                             }
-                            if (!updateNode(context.player, context.route) { node ->
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                     CommandSettingsModel.setTargetSpec(
                                         node,
                                         role,
@@ -1182,7 +1182,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
                         }
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(
                                     node,
                                     role,
@@ -1201,7 +1201,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val spawn = context.payload["spawn"]
                             ?.let { runCatching { MyworldSpawnKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(
                                     node,
                                     role,
@@ -1252,7 +1252,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val spawn = context.payload["spawn"]
                             ?.let { runCatching { MyworldSpawnKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(
                                     node,
                                     role,
@@ -1311,7 +1311,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?.let { runCatching { ParticleShape.valueOf(it) }.getOrNull() }
                             ?.takeIf { it != ParticleShape.POINT_SCATTER }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_SHAPE, shape.name)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -1650,7 +1650,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             return MenuActionResult.Ignored
         }
-        if (!updateNode(context.player, context.route, configuredFields = setOf("diskId")) {
+        if (!updateNode(
+                context.player,
+                context.route,
+                configuredFields = setOf("diskId"),
+                expectedRevision = script(context.route)?.revision,
+            ) {
                 it.applyCalledDisk(diskId, disk)
             }
         ) {
@@ -1702,7 +1707,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             return MenuActionResult.Success(MenuUpdate.None)
         }
-        if (!updateNode(player, route) {
+        if (!updateNode(player, route, expectedRevision = script(route)?.revision) {
                 CommandSettingsModel.setParameter(it, "block", blockId)
             }) {
             return MenuActionResult.Rejected(
@@ -2059,6 +2064,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
      * タグ一覧への追加入力です。入力値をaddモードで追記します。
      *
      * 重複タグは検証エラーとし、保存済み一覧を壊しません。
+     * issue #34-2: 保存時には最新の一覧へ追記します。開始時のスナップショットへ
+     * 追記すると、入力中 cast に別の編集者が追加したタグを失います。競合時は
+     * 保存自体を拒否し、再読込を案内します。
      */
     private fun showTagEntryForm(player: Player, route: MenuRoute, currentNode: CommandNode) {
         val spec = CommandDialogSpecs.field(currentNode, EntityTagEntries.PARAM_ENTRIES) ?: return
@@ -2075,15 +2083,22 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val tag = values.getValue(EntityTagEntries.PARAM_ENTRIES).trim()
-                val entries = EntityTagEntries.parse(currentNode.string(EntityTagEntries.PARAM_ENTRIES))
-                    ?: return@showTextForm false
-                val updated = entries + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, tag)
-                if (!EntityTagEntries.isValid(updated)) return@showTextForm false
-                updateNode(player, route) {
+                // 最新一覧の事前検証です。保存時にも最新値で再検証します。
+                val preview = node(route)?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }
+                val previewed = preview?.let { it + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, tag) }
+                if (previewed == null || !EntityTagEntries.isValid(previewed)) return@showTextForm false
+                var applied = false
+                val saved = updateNode(player, route, expectedRevision = openRevision) {
+                    val latest = EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES))
+                        ?: return@updateNode
+                    val updated = latest + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, tag)
+                    if (!EntityTagEntries.isValid(updated)) return@updateNode
                     CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
+                    applied = true
                 }
+                saved && applied
             },
         )
     }
@@ -2470,10 +2485,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         spec = spec,
                     ),
                 ),
-                save = { values ->
+                save = { values, openRevision ->
                     val raw = values.getValue("value").trim()
                     if (raw.isEmpty() || !CommandValueRules.isVariableName(raw)) return@showTextForm false
-                    updateNode(player, route) {
+                    updateNode(player, route, expectedRevision = openRevision) {
                         it.params["argvar_${argument.name}"] = raw
                         it.params.remove("arg_${argument.name}")
                         it.clearConfigured("arg_${argument.name}")
@@ -2504,12 +2519,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val raw = values.getValue("value").trim()
                 if (raw.isEmpty() || !CommandSettingsModel.isCallArgumentLiteralValid(argument.type, raw)) {
                     return@showTextForm false
                 }
-                updateNode(player, route) {
+                updateNode(player, route, expectedRevision = openRevision) {
                     it.params["arg_${argument.name}"] = raw
                     it.params.remove("argvar_${argument.name}")
                     it.clearConfigured("argvar_${argument.name}")
@@ -2537,10 +2552,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val raw = values.getValue("value").trim()
                 if (raw.isNotEmpty() && !CommandValueRules.isVariableName(raw)) return@showTextForm false
-                updateNode(player, route) {
+                updateNode(player, route, expectedRevision = openRevision) {
                     if (raw.isEmpty()) {
                         it.params.remove("returnName")
                         it.params.remove("returnScope")
@@ -2583,6 +2598,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val spec: CommandDialogSpecs.Spec,
     )
 
+    /**
+     * issue #34-2: 簡易GUI用のテキスト入力画面です。
+     *
+     * 入力開始時の保存世代を編集セッションとして保持し、確定時にはその世代を
+     * 保存入口へ渡します。入力中に別の編集が成功していた場合は保存せず、
+     * 他の編集者の変更を黙って上書きしません。保存失敗時は最新値を再読込して
+     * 表示し、古い入力の再送信を繰り返さないようにします。
+     * キャンセル時には編集中の値を破棄し、永続値は変更しません。
+     */
     private fun showTextForm(
         player: Player,
         route: MenuRoute,
@@ -2590,13 +2614,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         title: String,
         fields: List<FormTextField>,
         extraValidate: (Map<String, String>) -> LocalizationKey<String>? = { null },
-        save: (Map<String, String>) -> Boolean,
+        save: (values: Map<String, String>, openRevision: Long?) -> Boolean,
     ) {
         val forms = CCSystem.getAPI().getMenuFormService()
         if (!forms.isAvailable(player)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_FORM_UNAVAILABLE))
             return
         }
+        val openRevision = script(route)?.revision
         forms.show(
             player,
             MenuCustomFormRequest(
@@ -2617,9 +2642,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         player.sendMessage(KcI18n.component(player, validationError))
                         return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Refresh)
                     }
-                    if (!save(values)) {
+                    if (!save(values, openRevision)) {
                         player.sendMessage(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Resume)
+                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Replace(route))
                     }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 },
@@ -2637,13 +2662,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         content: String,
         confirmLabel: String,
         cancelLabel: String,
-        onConfirm: () -> Boolean,
+        onConfirm: (openRevision: Long?) -> Boolean,
     ) {
         val forms = CCSystem.getAPI().getMenuFormService()
         if (!forms.isAvailable(player)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_FORM_UNAVAILABLE))
             return
         }
+        // issue #34-2: 確認画面の表示時点の保存世代を保持し、確定時に競合を検出します。
+        val openRevision = script(route)?.revision
         forms.show(
             player,
             MenuSimpleFormRequest(
@@ -2659,9 +2686,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     if (response.textValue("button") != "confirm") {
                         return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Resume)
                     }
-                    if (!onConfirm()) {
+                    if (!onConfirm(openRevision)) {
                         player.sendMessage(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Resume)
+                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Replace(route))
                     }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 },
@@ -2703,9 +2730,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_MINIMUM_ABOVE_MAXIMUM
                 } else null
             },
-            save = { values ->
+            save = { values, openRevision ->
                 if (embedRole != null) {
-                    updateNode(player, route) { node ->
+                    updateNode(player, route, expectedRevision = openRevision) { node ->
                         val base = CommandSettingsModel.positionSpec(node, embedRole)
                             ?.takeIf { base -> base.kind == PositionKind.TARGET }
                             ?: PositionSpec(PositionKind.TARGET)
@@ -2725,8 +2752,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         )
                     }
                 } else {
-                    updateTargetSpec(player, route) { _ ->
-                        currentSpec.copy(
+                    // issue #34-2: 最新の対象指定へ距離差分だけを適用します。
+                    // 開始時のスナップショットで上書きしないため、入力中の
+                    // 他の絞り込み条件変更を失いません。
+                    updateTargetSpec(player, route, expectedRevision = openRevision) { latest ->
+                        latest.copy(
                             minimumDistance = values.getValue("minimum").trim().takeIf(String::isNotEmpty)
                                 ?.let(CommandDialogSpecs::finiteDouble),
                             maximumDistance = values.getValue("maximum").trim().takeIf(String::isNotEmpty)
@@ -2754,12 +2784,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = CommandDialogSpecs.variableName,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val raw = values.getValue("tempName").trim()
                 if (raw.isEmpty()) {
                     false
                 } else {
-                    updateNode(player, route) { node ->
+                    updateNode(player, route, expectedRevision = openRevision) { node ->
                         CommandSettingsModel.setPositionSpec(
                             node,
                             role,
@@ -2808,14 +2838,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = CommandDialogSpecs.coordinateSpec(axis),
                 )
             },
-            save = { values ->
+            save = { values, openRevision ->
                 val x = CommandDialogSpecs.parseCoordinateComponent(values.getValue("x"))
                 val y = CommandDialogSpecs.parseCoordinateComponent(values.getValue("y"))
                 val z = CommandDialogSpecs.parseCoordinateComponent(values.getValue("z"))
                 if (x == null || y == null || z == null) {
                     false
                 } else {
-                    updateNode(player, route) { command ->
+                    updateNode(player, route, expectedRevision = openRevision) { command ->
                         // Dialog記法の意味付けを保存します。向き成分は本欄で扱わないため保持します。
                         val kept = CommandSettingsModel.positionSpec(command, role)
                             ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
@@ -2857,10 +2887,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val saved = PlaceItemDestination.fromDisplay(destination, values.getValue("slot"))
                     ?: return@showTextForm false
-                updateNode(player, route) {
+                updateNode(player, route, expectedRevision = openRevision) {
                     CommandSettingsModel.setParameter(it, "slot", saved)
                 }
             },
@@ -2935,8 +2965,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
-                updateNode(player, route) {
+            save = { values, openRevision ->
+                updateNode(player, route, expectedRevision = openRevision) {
                     // issue #10: 召喚種類の変更時は非対応の個別設定を残しません。
                     if (field == "summonEntity" && it.type == CommandType.SUMMON_ENTITY) {
                         CommandSettingsModel.setSummonEntity(it, values.getValue(field))
@@ -2971,8 +3001,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = pitchSpec,
                 ),
             ),
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("soundParameters")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("soundParameters"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -3009,8 +3039,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = specs.getValue(key),
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("particleParameters")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("particleParameters"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -3033,8 +3063,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = input.spec,
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("soundSetting")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("soundSetting"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -3062,8 +3092,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = input.spec,
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("particle", "particleData")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("particle", "particleData"), expectedRevision = openRevision) { command ->
                     val composed = mutableMapOf<String, String>()
                     composed[ParticleSettings.PARAM_PARTICLE] =
                         values.getValue(ParticleSettings.PARAM_PARTICLE)
@@ -3097,8 +3127,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = input.spec,
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("geometrySettings")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("geometrySettings"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -3135,14 +3165,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = CommandDialogSpecs.coordinateSpec(axis),
                 )
             },
-            save = { values ->
+            save = { values, openRevision ->
                 val x = CommandDialogSpecs.parseCoordinateComponent(values.getValue("x"))
                 val y = CommandDialogSpecs.parseCoordinateComponent(values.getValue("y"))
                 val z = CommandDialogSpecs.parseCoordinateComponent(values.getValue("z"))
                 if (x == null || y == null || z == null) {
                     false
                 } else {
-                    updateNode(player, route) { command ->
+                    updateNode(player, route, expectedRevision = openRevision) { command ->
                         val kept = CommandSettingsModel.positionSpec(command, role)
                             ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
                             ?: PositionSpec(PositionKind.COORDINATES)
@@ -3186,11 +3216,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 content = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN),
                 confirmLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
                 cancelLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
-                onConfirm = {
+                onConfirm = { openRevision ->
                     updateNode(
                         player,
                         route,
                         configuredFields = setOf("fireworkContents"),
+                        expectedRevision = openRevision,
                     ) { command ->
                         CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_ITEM, itemKey)
                         CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_DATA, itemData)
@@ -3199,7 +3230,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             return MenuActionResult.Success(MenuUpdate.None)
         }
-        if (!updateNode(player, route, configuredFields = setOf("fireworkContents")) { command ->
+        if (!updateNode(
+                player,
+                route,
+                configuredFields = setOf("fireworkContents"),
+                expectedRevision = script(route)?.revision,
+            ) { command ->
                 CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_ITEM, itemKey)
                 CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_DATA, itemData)
             }
@@ -3462,8 +3498,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_MINIMUM_ABOVE_MAXIMUM
                 } else null
             },
-            save = { values ->
-                updateNode(player, route) { node ->
+            save = { values, openRevision ->
+                updateNode(player, route, expectedRevision = openRevision) { node ->
                     val base = CommandSettingsModel.positionSpec(node, role)
                         ?.takeIf { base -> base.kind == PositionKind.TARGET }
                         ?: PositionSpec(PositionKind.TARGET)
@@ -3648,8 +3684,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = durationSpec,
                 ),
             ),
-            save = { values ->
-                updateNode(player, route) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -3702,13 +3738,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
-     * issue #34-1: 対象選択画面の保存入口です。
+     * issue #34-2: 対象選択画面の保存入口です。
      *
-     * 内包役割へは [CommandSettingsModel.setEmbeddedTargetSpec] で保存し、
-     * 通常対象への取り違えを防ぎます。編集したフィールド以外は維持されます。
+     * 開始時revisionを必須とし、最新の対象指定へ差分だけを適用します。
+     * 開始時のスナップショット全体で上書きしないため、入力中に別の編集者が
+     * 変更した絞り込み条件を失いません。
      */
-    private fun updateTargetSpec(player: Player, route: MenuRoute, change: (TargetSpec) -> TargetSpec): Boolean =
-        updateNode(player, route) { node ->
+    private fun updateTargetSpec(
+        player: Player,
+        route: MenuRoute,
+        expectedRevision: Long?,
+        change: (TargetSpec) -> TargetSpec,
+    ): Boolean =
+        updateNode(player, route, expectedRevision = expectedRevision) { node ->
             val role = CommandSettingRole.fromRoute(route.payload[ROLE])
             if (CommandSettingsModel.isEmbeddedTargetRole(role)) {
                 val current = CommandSettingsModel.embeddedTargetSpec(node, role)
@@ -3729,11 +3771,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return script.graph.nodes[id]
     }
 
+    /**
+     * issue #34-2: 簡易GUI用のノード保存入口です。
+     *
+     * 開始時revisionを必須とし、入力開始後に別の編集が成功していた場合は
+     * 保存せず false を返します。他の編集者の変更を黙って上書きしません。
+     * 即時確定の操作では呼び出し時点の世代を渡し、入力画面の確定時には
+     * 入力開始時に捕捉した世代を渡します。管理処理等の更新入口とは分離し、
+     * この入口からの保存は必ず操作者と開始時revisionを伴います。
+     */
     private fun updateNode(
         player: Player,
         route: MenuRoute,
         configuredFields: Set<String> = emptySet(),
-        expectedRevision: Long? = null,
+        expectedRevision: Long?,
         change: (CommandNode) -> Unit,
     ): Boolean {
         val context = CommandSettingContext.from(route) ?: return false

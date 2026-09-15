@@ -676,6 +676,61 @@ class ScriptStoreTest {
         logger.addHandler(handler)
         return logger to handler
     }
+
+    @Test
+    fun `concurrent tag additions keep both editors changes`() {
+        // issue #34-2 の再現確認です。Aがタグ追加入力を開く→Bが別のタグを追加して
+        // 保存する→Aが入力を確定する、の順序でBの追加分が失われないことを固定します。
+        // GUIの保存入口は開始時revisionを必須とし、競合時は保存せず再読込を案内します。
+        val store = ScriptStore(temp.resolve("concurrent-tags"), Logger.getAnonymousLogger())
+        val script = store.create(UUID.randomUUID(), "concurrent-tags")
+        val nodeId = requireNotNull(
+            store.update(script.id) { current ->
+                val node = GraphEditor.append(current.graph, CommandType.ENTITY_OPERATION)
+                node.params[me.awabi2048.kantancommander.model.EntityDataPath.PARAM_PATH] =
+                    me.awabi2048.kantancommander.model.EntityDataPath.TAG
+                node.id
+            },
+        )
+
+        fun tagsOf(id: UUID): List<me.awabi2048.kantancommander.model.EntityTagEntries.Entry> =
+            me.awabi2048.kantancommander.model.EntityTagEntries.parse(
+                requireNotNull(store.load(script.id)).graph.nodes.getValue(id)
+                    .params.getValue(me.awabi2048.kantancommander.model.EntityTagEntries.PARAM_ENTRIES),
+            ).orEmpty()
+
+        fun addTag(tag: String, expectedRevision: Long?): Boolean =
+            store.update(script.id, expectedRevision = expectedRevision) { current ->
+                val node = current.graph.nodes.getValue(nodeId)
+                val latest =
+                    me.awabi2048.kantancommander.model.EntityTagEntries.parse(
+                        node.params.getValue(me.awabi2048.kantancommander.model.EntityTagEntries.PARAM_ENTRIES),
+                    ) ?: return@update null
+                val updated =
+                    latest + me.awabi2048.kantancommander.model.EntityTagEntries.Entry(
+                        me.awabi2048.kantancommander.model.EntityTagEntries.MODE_ADD,
+                        tag,
+                    )
+                if (!me.awabi2048.kantancommander.model.EntityTagEntries.isValid(updated)) return@update null
+                node.params[me.awabi2048.kantancommander.model.EntityTagEntries.PARAM_ENTRIES] =
+                    me.awabi2048.kantancommander.model.EntityTagEntries.encode(updated)
+                true
+            } == true
+
+        // Aが入力画面を開いた時点の世代を保持します。
+        val openRevision = requireNotNull(store.load(script.id)).revision
+        // Bが別のタグを追加して保存します。
+        assertTrue(addTag("tag-b", requireNotNull(store.load(script.id)).revision))
+        assertTrue(tagsOf(nodeId).any { it.tag == "tag-b" })
+        // Aが古い世代で確定しても、Bの追加分は失われません。
+        assertFalse(addTag("tag-a", openRevision))
+        assertTrue(tagsOf(nodeId).any { it.tag == "tag-b" })
+        assertFalse(tagsOf(nodeId).any { it.tag == "tag-a" })
+        // Aが最新を再読込して再確定すると、両方が残ります。
+        assertTrue(addTag("tag-a", requireNotNull(store.load(script.id)).revision))
+        assertTrue(tagsOf(nodeId).any { it.tag == "tag-a" })
+        assertTrue(tagsOf(nodeId).any { it.tag == "tag-b" })
+    }
 }
 
 private class RecordingLogHandler : Handler() {
