@@ -1077,4 +1077,43 @@ class CommandSettingsModelTest {
         assertEquals(refBefore, node.itemTempRef)
         assertEquals(targetBefore, node.targetSpec)
     }
+
+    @Test
+    fun `structure and group visible fields all have an edit path`() {
+        // issue #33-1: 表示される設定項目に操作・保存経路がない接続漏れを検出します。
+        // 新設定の追加時は、表示定義・編集経路・警告キーの三者を同時に更新しなければ
+        // この試験が失敗します。対象・位置は保存先の役割、テキストは入力仕様を要求します。
+        val groupOperations = listOf(
+            null, "create", "add", "remove", "delete", "set_pivot", "move", "rotate", "cleanup",
+        )
+        val cases = buildList {
+            add(CommandType.STRUCTURE_SAVE.newNode())
+            add(CommandType.STRUCTURE_PLACE.newNode())
+            groupOperations.forEach { operation ->
+                add(CommandType.ENTITY_GROUP.newNode().apply {
+                    if (operation != null) params["operation"] = operation
+                })
+            }
+        }
+        val roleEditors = setOf(CommandSettingEditor.TARGET, CommandSettingEditor.POSITION, CommandSettingEditor.FACING)
+        for (node in cases) {
+            for (field in CommandSettingsModel.visibleFields(node)) {
+                val descriptor = CommandSettingsModel.descriptor(node, field.key)
+                if (descriptor.editor in roleEditors) {
+                    assertTrue(
+                        descriptor.role != null,
+                        "${node.type}.${field.key} は保存先の役割を持たなければなりません",
+                    )
+                }
+                if (descriptor.editor == CommandSettingEditor.TEXT) {
+                    assertTrue(
+                        CommandDialogSpecs.field(node, field.key) != null,
+                        "${node.type}.${field.key} には汎用入力の仕様が必要です",
+                    )
+                }
+                // 警告キーの未定義は error で失敗し、表示と警告の対応漏れを示します。
+                CommandSettingsModel.incompleteWarningKey(node, field.key)
+            }
+        }
+    }
 }

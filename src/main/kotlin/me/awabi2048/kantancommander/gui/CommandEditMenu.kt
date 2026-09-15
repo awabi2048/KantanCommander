@@ -37,8 +37,11 @@ import me.awabi2048.kantancommander.model.EntityPropertyChoice
 import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.EntityTagEntries
+import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.StructureMirror
+import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -466,6 +469,24 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(genericPositionRoute(context.route, "execution_position"))
                             )
                         }
+                        // issue #33-1: 建造物・群操作の設定項目へ操作・保存経路を接続します。
+                        // 表示されるのに操作が Ignored へ落ちる接続漏れを解消します。
+                        // 選択肢項目は専用子画面、名前・軸入力は汎用入力へ進めます。
+                        if (field == "rotation" && node.type == CommandType.STRUCTURE_PLACE) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, STRUCTURE_ROTATION_ID))
+                            )
+                        }
+                        if (field == "mirror" && node.type == CommandType.STRUCTURE_PLACE) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, STRUCTURE_MIRROR_ID))
+                            )
+                        }
+                        if (field == "operation" && node.type == CommandType.ENTITY_GROUP) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_GROUP_OPERATION_ID))
+                            )
+                        }
                         if (field == "shakeType" && node.type == CommandType.CAMERA_SHAKE) {
                             if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(
@@ -480,17 +501,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             showParticleParametersForm(context.player, context.route, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
-                        if (field in setOf(
-                                "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
-                                 "summonEntity", "tags", "sound",
-                                "soundParameters", "particle", "particleData", "particleDensity", "burstHeight",
-                                "effect", "level", "intensity", "volume", "pitch",
-                                "x", "y", "z", "entityId", "item",
-                                "motionX", "motionY", "motionZ",
-                                EntityTagEntries.PARAM_ENTRIES,
-                                EntityAttributeSupport.PARAM_VALUE,
-                                EntityDataSchema.PARAM_VALUE,
-                            )) {
+                        // issue #33-1: 汎用テキスト入力の受付は入力仕様の有無で判定します。
+                        // 項目名の手動列挙と入力仕様が別管理だと、新設定の追加時に
+                        // 表示だけ増えて操作が Ignored へ落ちる接続漏れが起きます。
+                        // 専用画面・直接操作を持つ項目は上流の分岐で処理済みのため、
+                        // ここへ届くのは汎用入力だけです。建造物名・群名・軸入力・
+                        // 表示時間などもこの経路で編集します。
+                        if (CommandDialogSpecs.field(node, field) != null) {
                             showFieldForm(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -514,6 +531,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "position" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) ->
                                 genericPositionRoute(context.route, "particle_position")
                             field == "summonPosition" -> genericPositionRoute(context.route, "summon_position")
+                            // issue #33-1: 建造物の範囲・設置位置、群pivotも汎用位置画面へ進みます。
+                            // 保存先の役割は汎用位置画面側で解決し、通常対象への取り違えは
+                            // #34-1 の役割厳密化で防ぎます。
+                            field == "from" && node.type == CommandType.STRUCTURE_SAVE ->
+                                genericPositionRoute(context.route, CommandSettingRole.BLOCK_FROM.routeValue)
+                            field == "to" && node.type == CommandType.STRUCTURE_SAVE ->
+                                genericPositionRoute(context.route, CommandSettingRole.BLOCK_TO.routeValue)
+                            field == "structurePlace" && node.type == CommandType.STRUCTURE_PLACE ->
+                                genericPositionRoute(context.route, CommandSettingRole.STRUCTURE_PLACE_POSITION.routeValue)
+                            field == "pivot" && node.type == CommandType.ENTITY_GROUP ->
+                                genericPositionRoute(context.route, CommandSettingRole.GROUP_PIVOT.routeValue)
                             else -> null
                         } ?: return@MenuActionHandler MenuActionResult.Ignored
                         MenuActionResult.Success(MenuUpdate.Navigate(target))
@@ -555,6 +583,78 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (!updateNode(context.player, context.route) {
                                 CommandSettingsModel.setParameter(it, "operation", operation)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        // issue #33-1: 建造物の回転・反転、群操作の選択子画面です。
+        // 表示される設定項目に操作・保存経路がない接続漏れを解消します。
+        // 保存規則はジェスチャーGUIと同一（定数IDのみ受付）です。
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                STRUCTURE_ROTATION_ID,
+                renderer = { renderStructureRotations(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val rotation = context.payload["rotation"]
+                            ?.let(StructureRotation::from)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "rotation", rotation.value)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                STRUCTURE_MIRROR_ID,
+                renderer = { renderStructureMirrors(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val mirror = context.payload["mirror"]
+                            ?.let(StructureMirror::from)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "mirror", mirror.value)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                ENTITY_GROUP_OPERATION_ID,
+                renderer = { renderEntityGroupOperations(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val operation = context.payload["operation"]
+                            ?.let(EntityGroupOperation::from)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route) {
+                                CommandSettingsModel.setParameter(it, "operation", operation.value)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
@@ -2159,6 +2259,107 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
+     * issue #33-1: 建造物の回転選択子画面です（簡易GUI）。
+     *
+     * 選択肢・保存値（小文字文字列）はジェスチャーGUIと同一であり、
+     * 検証層が拒否する未知値は受け付けません。
+     */
+    private fun renderStructureRotations(player: Player): InventoryMenuView {
+        val options = StructureRotation.entries.map { rotation ->
+            Triple(rotation.value, Material.COMPASS, "${rotation.degrees}°")
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("rotation" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION)),
+            elements,
+        )
+    }
+
+    /**
+     * issue #33-1: 建造物の反転選択子画面です（簡易GUI）。
+     *
+     * 選択肢・保存値はジェスチャーGUIと同一です。
+     */
+    private fun renderStructureMirrors(player: Player): InventoryMenuView {
+        val options = StructureMirror.entries.map { mirror ->
+            val labelKey = when (mirror) {
+                StructureMirror.NONE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_NONE
+                StructureMirror.LEFT_RIGHT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_LEFT_RIGHT
+                StructureMirror.FRONT_BACK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_FRONT_BACK
+            }
+            Triple(mirror.value, Material.GLASS, KcI18n.text(player, labelKey))
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("mirror" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION)),
+            elements,
+        )
+    }
+
+    /**
+     * issue #33-1: 群操作の選択子画面です（簡易GUI）。
+     *
+     * 8操作の選択肢・保存値はジェスチャーGUIと同一です。操作変更で
+     * 表示タブが切り替わるため、保存後は設定一覧へ戻します。
+     */
+    private fun renderEntityGroupOperations(player: Player): InventoryMenuView {
+        val options = EntityGroupOperation.entries.map { operation ->
+            val labelKey = when (operation) {
+                EntityGroupOperation.CREATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_CREATE
+                EntityGroupOperation.ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_ADD
+                EntityGroupOperation.REMOVE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_REMOVE
+                EntityGroupOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_DELETE
+                EntityGroupOperation.SET_PIVOT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_SET_PIVOT
+                EntityGroupOperation.MOVE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_MOVE
+                EntityGroupOperation.ROTATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_ROTATE
+                EntityGroupOperation.CLEANUP -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_CLEANUP
+            }
+            Triple(operation.value, Material.ARMOR_STAND, KcI18n.text(player, labelKey))
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("operation" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION)),
+            elements,
+        )
+    }
+
+    /**
      * issue #8 の呼び出し設定子画面です（簡易GUI）。
      *
      * 引数の値（複合型は変数名、スカラー型はリテラル）と戻り値の受取先を編集します。
@@ -2707,9 +2908,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             EntityDataSchema.PARAM_VALUE -> ""
             EntityTagEntries.PARAM_ENTRIES -> return
             "entityId", "item", "block" -> ""
+            // issue #33-1: 建造物名・群名・群の軸入力の初期表示です。
+            // 検証仕様は入力仕様が担い、ここでは空欄または数値既定を示します。
+            "structure", "group" -> ""
+            "moveX", "moveY", "moveZ", "rotateX", "rotateY", "rotateZ" -> "0.0"
             // issue #10: 召喚時個別設定値は項目別の検証仕様で初期表示します。
             // ここでは空欄初期表示とし、範囲・書式は入力仕様が担います。
-            else -> if (field.startsWith(EntityDataSchema.SUMMON_DATA_PREFIX)) "" else return
+            // issue #33-1: 入力仕様を持つ新しい設定項目は保存値の初期表示へ
+            // 落とします。仕様のない項目は上流で除外済みのため到達しません。
+            else -> node.string(field, "")
         }
         val spec = CommandDialogSpecs.field(node, field) ?: return
         val currentValue = node.string(field, defaultValue)
@@ -3570,6 +3777,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val PLACE_OVERWRITE_TOGGLE_SLOT = 40
         private const val DISPLAY_MODE_ID = "display_mode"
         private const val BLOCK_OPERATION_ID = "block_operation"
+        // issue #33-1: 建造物の回転・反転、群操作の選択子画面です。
+        // 表示される設定項目に操作・保存経路がない接続漏れを解消します。
+        private const val STRUCTURE_ROTATION_ID = "structure_rotation"
+        private const val STRUCTURE_MIRROR_ID = "structure_mirror"
+        private const val ENTITY_GROUP_OPERATION_ID = "entity_group_operation"
         private const val DELETE_ID = "delete_command"
         private const val TARGET_ID = "target_settings"
         private const val SOUND_TARGET_POSITION_ID = "sound_target_position"
