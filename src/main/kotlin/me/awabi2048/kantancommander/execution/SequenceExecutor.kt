@@ -301,7 +301,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             MyWorldManagerApi.getWorldRepository()?.findByWorldName(origin.world.name)
         } else null
         if (worldData == null) {
-            plugin.logger.warning("[KantanCommander] rejected disk=${script.id} reason=outside_myworld world=${origin.world.name}")
+            // 起動拒否は実行者の異常系通知へ一本化し、コンソールへ出しません。
+            // テスト実行（actor=null）は結果 reason を返すため通知しません。
+            notifyActorOfRejection(actor, script, ErrorCode.OUTSIDE_MYWORLD)
             return completeWithoutSession(
                 handle,
                 options,
@@ -315,10 +317,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             plugin.variables.definitions(worldData.uuid),
         )
         if (validationErrors.isNotEmpty()) {
-            plugin.logger.warning(
-                "[KantanCommander] rejected disk=${script.id} reason=invalid_script " +
-                    "errors=${validationErrors.joinToString(" | ") { it.rendered() }}"
-            )
+            // 起動拒否は実行者の異常系通知へ一本化し、コンソールへ出しません。
+            notifyActorOfRejection(actor, script, ErrorCode.INVALID_SCRIPT)
             return completeWithoutSession(
                 handle,
                 options,
@@ -948,7 +948,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      */
     private fun runDiskCall(node: CommandNode, session: ExecutionSession, depth: Int, done: (Boolean) -> Unit) {
         if (!ExecutionSemantics.withinCallDepth(depth, session.maxDepth)) {
-            plugin.logger.warning("[KantanCommander] disk-call-depth root=${session.rootId} node=${node.id} depth=$depth max=${session.maxDepth}")
+            // 深さ超過はセッションの原因コードへ一本化し、コンソールへ出しません。
+            // 呼出元の汎用失敗表示と作成者通知が原因名を伝えます。
+            session.lastFailureReason = ErrorCode.COMMAND_FAILED.code
+            session.lastFailureCode = ErrorCode.COMMAND_FAILED
             return done(false)
         }
         val snapshot = node.snapshot ?: return done(false)
@@ -956,7 +959,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
         // 循環呼出しは深さ上限の前に検出します。diskId のない旧ノードは深さ制限に委ねます。
         if (diskId != null && session.callFrames.any { it.diskId == diskId }) {
-            plugin.logger.warning("[KantanCommander] disk-call-circular root=${session.rootId} node=${node.id} disk=$diskId")
+            // 循環呼出しはセッション記録へ一本化し、コンソールへ出しません。
             session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_CIRCULAR_CALL)
             session.lastFailureReason = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH.code
             session.lastFailureCode = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
@@ -1149,7 +1152,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_FAILED_REASON,
             mapOf("detail" to immediateDetail(node, session), "reason" to reason),
         ) + partialDetailSuffix(session.actor, session.lastPartial)
-        plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
+        // ノード失敗はセッション記録と作成者通知へ一本化し、コンソールへ出しません。
         ImmediateExecutionResult.FAILED
     }
 
@@ -3505,21 +3508,13 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ): List<Entity> = when (val resolution = resolveTargetSpecsResult(spec, session, context)) {
         is TargetResolution.Resolved -> resolution.entities
         is TargetResolution.Unresolved -> {
-            // issue #34-5: 未解決は空一覧へ潰さず、コード・原因をログと
-            // セッションへ保持します。既存の失敗通知経路で利用者へ伝わります。
-            plugin.logger.warning(
-                "[KantanCommander] target unresolved: code=${resolution.code.code} " +
-                    "detail=${resolution.detail} kind=${spec.kind}",
-            )
+            // issue #34-5: 未解決は空一覧へ潰さず、コード・原因をセッションへ
+            // 保持します。既存の失敗通知経路で利用者へ伝わるため、コンソールへ出しません。
             session.lastFailureReason = session.lastFailureReason ?: resolution.code.code
             session.lastFailureCode = session.lastFailureCode ?: resolution.code
             emptyList()
         }
         is TargetResolution.Invalid -> {
-            plugin.logger.warning(
-                "[KantanCommander] target invalid: code=${resolution.code.code} " +
-                    "detail=${resolution.detail} kind=${spec.kind}",
-            )
             session.lastFailureReason = session.lastFailureReason ?: resolution.code.code
             session.lastFailureCode = session.lastFailureCode ?: resolution.code
             emptyList()
@@ -4358,14 +4353,32 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     ) {
         if (session.failureReason == null) session.failureReason = reason
         if (depth == 0 && session.failedNodeId == null) session.failedNodeId = nodeId
-        plugin.logger.warning(
-            "[KantanCommander] forced-stop root=${session.rootId} disk=${script.id} node=$nodeId " +
-                "reason=$reason executed=${session.executed} limit=${session.budget} depth=$depth " +
-                "world=${session.origin.world.name} " +
-                "location=${session.origin.blockX},${session.origin.blockY},${session.origin.blockZ}"
-        )
+        // 強制停止は作成者通知（抑制時はセッション記録）へ一本化し、コンソールへ出しません。
         if (!session.options.suppressCreatorFailureNotification) notifyCreatorOfFailure(session)
         done(false)
+    }
+
+    /**
+     * セッション開始前の起動拒否を、実行者への異常系通知へ一本化します。
+     *
+     * セッションが存在しないため作成者通知は使えず、起動を起こした実行者へ直接
+     * 知らせます。テスト実行（actor=null）は結果 reason を返すため通知しません。
+     * 通知文は直書きせず、型付き言語カタログの既存キーを使います。
+     */
+    private fun notifyActorOfRejection(actor: Player?, script: DiskScript, code: ErrorCode) {
+        val player = actor?.takeIf { it.isOnline } ?: return
+        val cause = KcI18n.text(
+            player,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_EXECUTION_FAILED_CAUSE,
+            mapOf("cause" to KcI18n.text(player, code.displayKey())),
+        )
+        player.sendMessage(
+            "§c" + KcI18n.text(
+                player,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_EXECUTION_FAILED,
+                mapOf("program" to script.name, "cause" to cause),
+            ),
+        )
     }
 
     /**

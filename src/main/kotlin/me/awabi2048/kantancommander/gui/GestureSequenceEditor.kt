@@ -389,6 +389,8 @@ class GestureSequenceEditor(
     private var layoutFailureNoticeSent = false
     /** 現在の画面生成中に描画失敗が発生したかを、成功時の通知解除判定へ渡します。 */
     private var layoutFailureDuringCurrentRender = false
+    /** 下部画面の再描画失敗でチャットを連続送信しないための通知済みフラグです。 */
+    private var lowerRefreshNoticeSent = false
     /**
      * 外部Dialogは操作者ごとに独立させます。同じ共有画面でAが入力中にBが別の
      * Dialogを開いても、Aの入力を閉じてしまうと「同時編集」ではなく、入力開始順
@@ -795,16 +797,20 @@ class GestureSequenceEditor(
     fun updateLower(player: Player): Boolean {
         val owner = ownerPlayerFor(player)
         return runCatching {
-            updateScreen(owner, buildCurrentLowerView(owner), RenderTarget.LOWER)
-        }.getOrElse { failure ->
+            updateScreen(owner, buildCurrentLowerView(owner), RenderTarget.LOWER).also { updated ->
+                // 再描画の成功で通知抑制を解除します。
+                if (updated) lowerRefreshNoticeSent = false
+            }
+        }.getOrElse {
             // 下部画面の再描画は保存処理の成功条件ではありません。保存済みデータの
             // 破損でここが失敗しても、入力を「形式不正」と誤判定しないよう、GUI境界で
-            // 失敗をBooleanへ閉じ込め、原因だけをログへ残します。
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "ジェスチャーGUI下部画面の生成または更新に失敗しました: script=${state.scriptId} mode=${state.lowerMode}",
-                failure,
-            )
+            // 失敗をBooleanへ閉じ込めます。再描画の失敗自体は操作者への通知へ
+            // 一本化します。連続操作で重複通知にならないよう成功まで抑制し、
+            // コンソールへ出しません。
+            if (!lowerRefreshNoticeSent) {
+                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
+                lowerRefreshNoticeSent = true
+            }
             false
         }
     }
@@ -1041,11 +1047,8 @@ class GestureSequenceEditor(
         val snapshot = api.snapshot(ownerIdFor(player))
         val sessionId = gestureSessionId
         if (sessionId == null || snapshot?.sessionId != sessionId) return
+        // セッション競合の更新拒否は定常のためコンソールへ出しません。
         if (snapshot.state != GestureGuiSessionState.OPENING) {
-            plugin.logger.warning(
-                "ジェスチャーGUIの画面更新が拒否されました: target=$target state=${snapshot.state} " +
-                    "session=$sessionId",
-            )
             return
         }
         if (renderRetryTask != null && renderRetrySessionId == sessionId) return
@@ -1067,9 +1070,7 @@ class GestureSequenceEditor(
         if (snapshot.state != GestureGuiSessionState.ACTIVE) {
             renderRetryAttempts++
             if (renderRetryAttempts >= MAX_RENDER_RETRY_TICKS) {
-                plugin.logger.warning(
-                    "ジェスチャーGUIの画面更新を再試行上限で打ち切りました: session=$sessionId state=${snapshot.state}",
-                )
+                // 再試行の打切りは定常のためコンソールへ出しません。
                 cancelRenderRetry()
             }
             return
@@ -1087,8 +1088,7 @@ class GestureSequenceEditor(
         if (!pendingUpperRender && !pendingLowerRender) {
             cancelRenderRetry(clearPending = false)
         } else {
-            // ACTIVE後も対象画面が見つからない場合は、毎tick無限再試行せず異常を残します。
-            plugin.logger.warning("ACTIVE後もジェスチャーGUIの画面更新に失敗しました: session=$sessionId")
+            // ACTIVE後の更新失敗は定常のためコンソールへ出しません。
             cancelRenderRetry()
         }
     }
@@ -1249,12 +1249,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "テスト実行確認子画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -1656,12 +1653,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "確認子画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -1691,12 +1685,8 @@ class GestureSequenceEditor(
     ): Boolean {
         val opened = api.openChild(ownerId, childView, options)
         if (!opened) return false
-        if (!api.updateScreen(ownerId, parentView)) {
-            plugin.logger.warning(
-                "子画面の親ビューからハイライトを解除できませんでした: " +
-                    "parent=${parentView.definition.screenId} child=${childView.definition.screenId}",
-            )
-        }
+        // 親ハイライトの解除失敗は装飾残留のみのためコンソールへ出しません。
+        api.updateScreen(ownerId, parentView)
         return true
     }
 
@@ -1727,13 +1717,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            // 子画面が開かない原因（screenId重複・深度上限など）を現場で可視化します。
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "個別設定子画面のオープンに失敗しました: script=${state.scriptId} screenId=${lowerPanel.SETTING_CHILD_SCREEN_ID}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -1776,6 +1762,7 @@ class GestureSequenceEditor(
         val ownerId = sessionOwnerId
         if (sessionId != null && ownerId != null) {
             Bukkit.getPlayer(playerId)?.let { player ->
+                // 終了時の後片付けの失敗は定常のためコンソールへ出しません。
                 runCatching {
                     api.closeExternalDialogIfCurrent(
                         ownerId,
@@ -1784,8 +1771,6 @@ class GestureSequenceEditor(
                         DIALOG_OWNER,
                         input.dialogId,
                     )
-                }.onFailure { failure ->
-                    plugin.logger.warning("Kantan Commanderの入力画面終了に失敗しました: ${failure.message}")
                 }
             }
         }
@@ -1839,12 +1824,10 @@ class GestureSequenceEditor(
         layoutFailureNoticeSent = false
         layoutFailureDuringCurrentRender = false
         if (sessionId != null) {
+            // Facade側の通知失敗でエディター自身のセッションIDを残すと、
+            // 後続の入力を現行セッションと誤認するため、通知例外を隔離します。
+            // 終了時の後片付けの失敗は定常のためコンソールへ出しません。
             runCatching { onSessionClosed(this, ownerId, sessionId) }
-                .onFailure { failure ->
-                    // Facade側の通知失敗でエディター自身のセッションIDを残すと、
-                    // 後続の入力を現行セッションと誤認するため、通知例外を隔離します。
-                    plugin.logger.warning("Kantan Commanderのセッション終了通知に失敗しました: ${failure.message}")
-                }
         }
         gestureSessionId = null
         sessionOwnerId = null
@@ -2872,7 +2855,7 @@ class GestureSequenceEditor(
                 handleUpperAction(context.copy(elementId = DeclarativeUpper.stripGraphPrefix(context.elementId)))
             },
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeUpper] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeUpper] $diagnostics")
             },
             extraActionIds = graphOutput.elements.map { it.elementId }.toSet(),
             customRenderers = mapOf(
@@ -3626,12 +3609,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "アイテム上書き確認子画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -3675,12 +3655,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "ブロック上書き確認子画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -3727,12 +3704,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "花火上書き確認子画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -4243,12 +4217,8 @@ class GestureSequenceEditor(
                     player.uniqueId,
                     expectedRevision = expectedMutationRevision(player),
                 )
-            }.getOrElse { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "プログラム名を保存できませんでした: script=${state.scriptId}",
-                    failure,
-                )
+            }.getOrElse {
+                // Dialog内に保存失敗を表示するため、コンソールへ出しません。
                 return@showTextInputDialog KcI18n.text(
                     player,
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
@@ -4291,12 +4261,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "起動方法の選択画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -4331,12 +4298,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "ディスク設定画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -4369,12 +4333,8 @@ class GestureSequenceEditor(
                 expectedRevision = expectedMutationRevision(player),
                 change = change,
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "引数定義を保存できませんでした: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // チャットへ保存失敗を通知するため、コンソールへ出しません。
             player.sendMessage(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
             )
@@ -4486,12 +4446,8 @@ class GestureSequenceEditor(
                 editorId = player.uniqueId,
                 expectedRevision = expectedMutationRevision(player),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "起動方法を保存できませんでした: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // チャットへ保存失敗を通知するため、コンソールへ出しません。
             player.sendMessage(
                 KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
             )
@@ -4532,12 +4488,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "呼び出し設定画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -4777,34 +4730,17 @@ class GestureSequenceEditor(
         runCatching {
             Bukkit.getScheduler().runTask(plugin, Runnable {
                 if (!player.isOnline) return@Runnable
-                val updated = runCatching { updateLower(player) }
-                    .getOrElse { failure ->
-                        plugin.logger.log(
-                            java.util.logging.Level.WARNING,
-                            "ワールド内変数の${operation}後の一覧更新に失敗しました: script=${state.scriptId}",
-                            failure,
-                        )
-                        // 保存は成功しているため入力エラー・保存失敗ではなく、
-                        // 一覧更新だけが失敗した別事象として利用者へ通知します。
-                        player.sendMessage(
-                            KcI18n.text(
-                                player,
-                                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_LIST_REFRESH_FAILED,
-                            ),
-                        )
-                        false
-                    }
-                if (!updated) {
-                    plugin.logger.warning(
-                        "ワールド内変数の${operation}後の一覧更新が拒否されました: script=${state.scriptId}",
-                    )
-                }
+                // 失敗時の通知はupdateLower側へ一本化しています。
+                updateLower(player)
             })
-        }.onFailure { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "ワールド内変数の${operation}後の一覧更新を予約できませんでした: script=${state.scriptId}",
-                failure,
+        }.onFailure {
+            // 保存は成功しているため、一覧更新の予約失敗は別事象の通知へ
+            // 一本化し、コンソールへ出しません。
+            player.sendMessage(
+                KcI18n.text(
+                    player,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_LIST_REFRESH_FAILED,
+                ),
             )
         }
     }
@@ -4952,12 +4888,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "ワールド内変数一覧のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -5056,12 +4989,8 @@ class GestureSequenceEditor(
                 )
             }
             val saved = runCatching { plugin.variables.set(worldId, name, value); true }
-                .getOrElse { failure ->
-                    plugin.logger.log(
-                        java.util.logging.Level.WARNING,
-                        "ワールド内変数を保存できませんでした: world=$worldId name=$name",
-                        failure,
-                    )
+                .getOrElse {
+                    // Dialog内に保存失敗を表示するため、コンソールへ出しません。
                     false
                 }
             if (!saved) {
@@ -5099,12 +5028,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "ワールド内変数の型選択画面のオープンに失敗しました: script=${state.scriptId}",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -5164,12 +5090,8 @@ class GestureSequenceEditor(
                 KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
             )
             val alreadyDefined = runCatching { name in plugin.variables.definitions(worldId) }
-                .getOrElse { failure ->
-                    plugin.logger.log(
-                        java.util.logging.Level.WARNING,
-                        "ワールド内変数の定義を確認できませんでした: world=$worldId name=$name",
-                        failure,
-                    )
+                .getOrElse {
+                    // Dialog内に保存失敗を表示するため、コンソールへ出しません。
                     return@showInputDialog KcI18n.text(
                         player,
                         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
@@ -5182,12 +5104,8 @@ class GestureSequenceEditor(
                 )
             }
             val defined = runCatching { plugin.variables.define(worldId, name, type) }
-                .getOrElse { failure ->
-                    plugin.logger.log(
-                        java.util.logging.Level.WARNING,
-                        "ワールド内変数を定義できませんでした: world=$worldId name=$name type=$type",
-                        failure,
-                    )
+                .getOrElse {
+                    // Dialog内に保存失敗を表示するため、コンソールへ出しません。
                     return@showInputDialog KcI18n.text(
                         player,
                         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED,
@@ -5215,13 +5133,10 @@ class GestureSequenceEditor(
     private fun openWorldVariableDeleteConfirmation(player: Player, name: String) {
         val worldId = resolveVariableWorldId() ?: return
         val exists = runCatching { plugin.variables.get(worldId, name) != null }
-            .getOrElse { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "ワールド内変数の削除対象を確認できませんでした: world=$worldId name=$name",
-                    failure,
-                )
-                false
+            .getOrElse {
+                // 確認できない場合は一覧を再描画し、コンソールへ出しません。
+                updateLower(player)
+                return
             }
         if (!exists) {
             updateLower(player)
@@ -5248,12 +5163,9 @@ class GestureSequenceEditor(
                     animated = false,
                 ),
             )
-        }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "ワールド内変数の削除確認画面のオープンに失敗しました: script=${state.scriptId} name=$name",
-                failure,
-            )
+        }.getOrElse {
+            // 子画面のオープン失敗は操作者への通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (!opened) {
@@ -5286,13 +5198,11 @@ class GestureSequenceEditor(
         }
         val result: me.awabi2048.kantancommander.data.WorldVariableRemovalResult? =
             runCatching { plugin.removeWorldVariable(worldId, worldName, name) }
-            .getOrElse { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "ワールド内変数を削除できませんでした: world=$worldId name=$name",
-                    failure,
-                )
-                null
+            .getOrElse {
+                // 確認画面に保存失敗を表示するため、コンソールへ出しません。
+                // 下のnull分岐と重複通知にならないよう、ここで終えます。
+                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                return
             }
         if (result == null) {
             // 確認画面を残して再試行・キャンセルを可能にし、保存失敗を黙って
@@ -5756,15 +5666,11 @@ class GestureSequenceEditor(
                                 return@MenuDialogHandler MenuActionResult.Ignored
                             }
                             val error = runCatching { onSubmit(response) }
-                                .getOrElse { failure ->
+                                .getOrElse {
                                     // 入力検証の戻り値と、保存・データ処理の例外を分離します。
                                     // 後者を入力形式エラーへ変換すると、保存済みの変数だけが
                                     // 残ったままDialogをキャンセルできる今回の不整合を再発させます。
-                                    plugin.logger.log(
-                                        java.util.logging.Level.WARNING,
-                                        "入力ダイアログの確定処理に失敗しました: dialog=$dialogId",
-                                        failure,
-                                    )
+                                    // Dialog内に保存失敗を表示するため、コンソールへ出しません。
                                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED)
                                 }
                             if (error != null) {
@@ -5776,14 +5682,8 @@ class GestureSequenceEditor(
                             }
                             clearInputState(player.uniqueId, token)
                             // 保存成功後の表示更新は、確定成功を覆さない別処理です。
+                            // 確定成功後の副作用の失敗は定常のためコンソールへ出しません。
                             runCatching { afterSubmit?.invoke() }
-                                .onFailure { failure ->
-                                    plugin.logger.log(
-                                        java.util.logging.Level.WARNING,
-                                        "入力ダイアログ確定後の後処理に失敗しました: dialog=$dialogId",
-                                        failure,
-                                    )
-                                }
                             MenuActionResult.Success(MenuUpdate.Close)
                         },
                     ),
@@ -9127,7 +9027,8 @@ class GestureSequenceEditor(
      * 画面生成が一度成功するまで通知を抑制し、エラー画面自体は毎回返します。
      */
     private fun reportLayoutFailure(player: Player, operation: String, failure: Throwable) {
-        plugin.logger.log(java.util.logging.Level.WARNING, operation, failure)
+        // 描画失敗はチャット通知とエラー画面へ一本化し、コンソールへ出しません。
+        // 引数は呼び出し側との funnel 契約のため維持します。
         layoutFailureDuringCurrentRender = true
         if (!layoutFailureNoticeSent) {
             GraphLayoutFailureFeedback.sendRenderFailure(player)
@@ -9140,7 +9041,7 @@ class GestureSequenceEditor(
         if (GraphLayoutFailureFeedback.isLayoutFailure(failure)) {
             reportLayoutFailure(player, operation, failure)
         } else {
-            plugin.logger.log(java.util.logging.Level.WARNING, operation, failure)
+            // 保存失敗はチャット通知へ一本化し、コンソールへ出しません。
             player.sendMessage(GraphLayoutFailureFeedback.saveMessage(player))
         }
     }

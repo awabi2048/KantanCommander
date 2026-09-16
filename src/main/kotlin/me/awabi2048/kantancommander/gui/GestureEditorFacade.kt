@@ -2,6 +2,8 @@ package me.awabi2048.kantancommander.gui
 
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.model.DiskPlacement
+import me.awabi2048.kantancommander.util.KcI18n
+import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import org.bukkit.entity.Player
 import org.bukkit.permissions.PermissionAttachment
 import java.util.UUID
@@ -146,17 +148,13 @@ class GestureEditorFacade(
         val opened = runCatching {
             editor.open(player)
             true
-        }.getOrElse { failure ->
+        }.getOrElse {
             releaseExternalEditorSuppression(player.uniqueId)
             // PlayerInteractEventから呼ばれる編集入口で例外を再送すると、ブロック操作
             // イベント全体がサーバーERRORになり、次のクリックまで同じ競合を繰り返します。
-            // 入力claim競合はCC-System側で所有者を保護したうえで失敗するため、ここでは
-            // 画面を開けなかった事実をログへ残し、イベントへ例外を漏らしません。
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "Gesture GUIを開けませんでした: player=${player.uniqueId}, script=${state.scriptId}",
-                failure,
-            )
+            // 入力claim競合はCC-System側で所有者を保護したうえで失敗するため、開けなかった
+            // 事実は操作者への通知へ一本化し、コンソールへ出さずイベントへ例外を漏らしません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_REOPEN_HINT))
             false
         }
         if (opened) sessions[player.uniqueId] = editor
@@ -257,10 +255,8 @@ class GestureEditorFacade(
     private fun releaseExternalEditorSuppression(playerId: UUID) {
         val attachment = externalEditorSuppressions.remove(playerId) ?: return
         val player = org.bukkit.Bukkit.getPlayer(playerId) ?: return
+        // 終了時の後片付けの失敗は定常のためコンソールへ出しません。
         runCatching { player.removeAttachment(attachment) }
-            .onFailure { failure ->
-                plugin.logger.warning("外部エンティティ編集権限の復元に失敗しました: player=$playerId: ${failure.message}")
-            }
     }
 
     private companion object {

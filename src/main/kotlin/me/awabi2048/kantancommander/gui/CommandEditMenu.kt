@@ -124,11 +124,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 )
                             }
                         }.getOrElse { failure ->
-                            plugin.logger.log(
-                                java.util.logging.Level.WARNING,
-                                "コマンド挿入を保存できませんでした: script=${script.id} type=$type",
-                                failure,
-                            )
+                            // 保存失敗はGUI内の拒否表示へ一本化し、コンソールへ出しません。
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 GraphLayoutFailureFeedback.operationMessage(context.player, failure),
                             )
@@ -1364,11 +1360,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                         }
                             .getOrElse { failure ->
-                                plugin.logger.log(
-                                    java.util.logging.Level.WARNING,
-                                    "コマンド削除を保存できませんでした: script=${script.id} node=$nodeId",
-                                    failure,
-                                )
+                                // 保存失敗はGUI内の拒否表示へ一本化し、コンソールへ出しません。
                                 return@MenuActionHandler MenuActionResult.Rejected(
                                     GraphLayoutFailureFeedback.operationMessage(context.player, failure),
                                 )
@@ -3821,13 +3813,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 change = change,
             ) != null
         }
-            .onFailure { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "コマンド設定の保存に失敗しました: script=${context.scriptId} node=${context.nodeId}",
-                    failure,
-                )
-            }
+            // 保存失敗は呼出元が拒否表示を出すため、ここではコンソールへ出しません。
             .getOrDefault(false)
     }
 

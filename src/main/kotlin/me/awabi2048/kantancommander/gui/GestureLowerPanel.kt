@@ -456,7 +456,7 @@ class GestureLowerPanel(
             DeclarativeSettings.document(nodes),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeSettingChoices] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeSettingChoices] $diagnostics")
             },
         )
         return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
@@ -627,7 +627,7 @@ class GestureLowerPanel(
             DeclarativeSettings.document(nodes),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeSettingChoicesParent] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeSettingChoicesParent] $diagnostics")
             },
         )
         return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = false)
@@ -721,7 +721,7 @@ class GestureLowerPanel(
             document,
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander]$tag $diagnostics")
+                plugin.logger.fine("[KantanCommander]$tag $diagnostics")
             },
         )
         return view(GestureLowerMode.SETTING_CHOICES, compiled.elements, compiled.visuals, child = true)
@@ -839,7 +839,7 @@ class GestureLowerPanel(
             document,
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander]$tag $diagnostics")
+                plugin.logger.fine("[KantanCommander]$tag $diagnostics")
             },
         )
         return view(mode, compiled.elements, compiled.visuals, child = true)
@@ -1236,7 +1236,7 @@ class GestureLowerPanel(
             ),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeTestConfirm] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeTestConfirm] $diagnostics")
             },
         )
         return view(GestureLowerMode.TEST_CONFIRM, compiled.elements, compiled.visuals, child = child)
@@ -1283,7 +1283,7 @@ class GestureLowerPanel(
             ),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeTestStatus] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeTestStatus] $diagnostics")
             },
         )
         return view(GestureLowerMode.TEST_STATUS, compiled.elements, compiled.visuals)
@@ -1379,7 +1379,7 @@ class GestureLowerPanel(
             ),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeTestResult] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeTestResult] $diagnostics")
             },
         )
         return view(GestureLowerMode.TEST_RESULT, compiled.elements, compiled.visuals)
@@ -1604,7 +1604,7 @@ class GestureLowerPanel(
             DeclarativeSettings.document(nodes),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeSettings] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeSettings] $diagnostics")
             },
         )
         return view(GestureLowerMode.SETTINGS, compiled.elements, compiled.visuals)
@@ -2479,7 +2479,7 @@ class GestureLowerPanel(
             ),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeScriptSettings] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeScriptSettings] $diagnostics")
             },
         )
         return view(GestureLowerMode.SETTINGS, compiled.elements, compiled.visuals)
@@ -5041,7 +5041,7 @@ class GestureLowerPanel(
             DeclarativePicker.document(data),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativePicker] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativePicker] $diagnostics")
             },
         )
         return view(GestureLowerMode.PICKER, compiled.elements, compiled.visuals)
@@ -5085,7 +5085,7 @@ class GestureLowerPanel(
             ),
             onAction,
             onDiagnostics = { diagnostics ->
-                plugin.logger.warning("[KantanCommander][DeclarativeConfirm] $diagnostics")
+                plugin.logger.fine("[KantanCommander][DeclarativeConfirm] $diagnostics")
             },
         )
         return view(GestureLowerMode.CONFIRM, compiled.elements, compiled.visuals, child = true)

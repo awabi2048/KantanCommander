@@ -114,19 +114,6 @@ class WorldEditControlBlockSyncListener(
         val maxHeight: Int,
         val entries: List<UndoLedgerEntry>,
         var lastOutcome: UndoOutcome? = null,
-        /**
-         * 照合の実行回数です。
-         *
-         * デバッグ用に保持し、編集開始前の早期確定（FAWEの非同期適用前に
-         * 変化なしと判定する誤収束）の切り分けに使います。
-         */
-        var checks: Int = 0,
-        /** ログ済みの照合結果です。変化時のみ記録し毎tickの出力を抑えます。 */
-        var lastLoggedOutcome: UndoOutcome? = null,
-        /** ログ済みの消失キー一覧です。結果と合わせて変化検出に使います。 */
-        var lastLoggedLostKeys: List<String> = emptyList(),
-        /** ログ済みの出現セル数です。走査上限超過時は -1 とします。 */
-        var lastLoggedAppearedCount: Int = -2,
     )
 
     /** undo／redo 確定時の照合結果です。確定系だけ安定確認の対象にします。 */
@@ -303,9 +290,6 @@ class WorldEditControlBlockSyncListener(
             )
             return
         }
-        plugin.logger.info(
-            "[KantanCommander] undo/redo を検出しました: player=${event.player.name} command=${event.message}",
-        )
         captureUndo(event.player, event.message)
     }
 
@@ -344,10 +328,7 @@ class WorldEditControlBlockSyncListener(
                 mapOf("command" to commandName),
             ),
         )
-        plugin.logger.warning(
-            "対象外の一括操作を検出しました: command=$commandName player=${player.name} " +
-                "placements=${threatened.map { it.key }}",
-        )
+        // 検出は操作者への通知へ一本化し、コンソールへ出しません。
     }
 
     @EventHandler
@@ -395,11 +376,9 @@ class WorldEditControlBlockSyncListener(
                         removeCutSourcePlacements(player.uniqueId)
                     }
                 },
-                onTimeout = { attempts ->
-                    plugin.logger.warning(
-                        "[KantanCommander] //cut の移動元確定を期限切れで見送りました: " +
-                            "player=${player.name} attempt=$attempts",
-                    )
+                onTimeout = {
+                    // 確定見送りは操作者への異常系通知へ一本化し、コンソールへ出しません。
+                    player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                 },
                 maxAttempts = MOVE_MAX_ATTEMPTS,
             )
@@ -461,9 +440,8 @@ class WorldEditControlBlockSyncListener(
             plugin.placements.removeDisplay(world, removed.displayId)
         }
         if (failedKeys > 0) {
-            plugin.logger.warning(
-                "[KantanCommander] //cut の移動元確定を見送りました: player=${player.name} failed=$failedKeys",
-            )
+            // 部分確定の見送りは操作者への異常系通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
             return
         }
         pending.sourceRemoved = true
@@ -635,11 +613,7 @@ class WorldEditControlBlockSyncListener(
             placements = relatives,
         )
         pendingMoves[player.uniqueId] = pending
-        plugin.logger.info(
-            "[KantanCommander] //move を追跡します: player=${player.name} command=$rawCommand " +
-                "offset=(${offset.x},${offset.y},${offset.z}) " +
-                "sources=${relatives.map { sourcePointOf(capture.origin, it).toKeyString() }}",
-        )
+        // 追跡開始は定常のためコンソールへ出しません。
         // PlayerCommandPreprocessEventはコマンド実行前に発生するため、実ブロックの
         // 移動が完了するまで再確認し、成功したものだけ台帳へ反映します。
         // FAWEの低速編集に備えて試行上限を既定より延ばします。
@@ -1027,10 +1001,7 @@ class WorldEditControlBlockSyncListener(
             entries = entries,
         )
         pendingUndos[player.uniqueId] = pending
-        plugin.logger.info(
-            "[KantanCommander] undo/redo を追跡します: player=${player.name} command=$rawCommand " +
-                "placements=${entries.size}",
-        )
+        // 追跡開始は定常のためコンソールへ出しません。
         WorldEditReconciler.runUntilReady(
             plugin = plugin,
             isStillCurrent = { pendingUndos[player.uniqueId] === pending },
@@ -1054,46 +1025,14 @@ class WorldEditControlBlockSyncListener(
      *
      * 照合結果が確定系（変化なし・追従可能）で2回連続一致した場合だけ
      * 進めます。曖昧な間は低速編集中の可能性があるため待機し、期限切れで
-     * 猶予経路へ回します。照合の内訳は初回と変化時のみ記録します。
+     * 猶予経路へ回します。確定の内訳はコンソールへ出しません。
      */
     private fun isUndoSettled(pending: PendingUndo): Boolean {
-        pending.checks++
         val evaluation = computeUndoOutcome(pending)
         val outcome = evaluation.outcome
         val previous = pending.lastOutcome
         pending.lastOutcome = outcome
-        logUndoEvaluation(pending, evaluation)
         return (outcome is UndoOutcome.Noop || outcome is UndoOutcome.Accept) && outcome == previous
-    }
-
-    /**
-     * 照合の内訳を診断ログへ記録します。
-     *
-     * 毎tickの出力にならないよう、初回と結果・消失・出現の変化時のみ
-     * 記録します。編集開始前の早期確定（FAWE適用前の変化なし判定）の
-     * 切り分けに、実行回数も含めます。
-     */
-    private fun logUndoEvaluation(pending: PendingUndo, evaluation: UndoEvaluation) {
-        val outcome = evaluation.outcome
-        val changed = outcome != pending.lastLoggedOutcome ||
-            evaluation.lostKeys != pending.lastLoggedLostKeys ||
-            evaluation.appearedCount != pending.lastLoggedAppearedCount
-        if (pending.checks > 1 && !changed) return
-        pending.lastLoggedOutcome = outcome
-        pending.lastLoggedLostKeys = evaluation.lostKeys
-        pending.lastLoggedAppearedCount = evaluation.appearedCount
-        val detail = when (outcome) {
-            is UndoOutcome.Noop -> "変化なし"
-            is UndoOutcome.Accept ->
-                "追従可能 translation=(${outcome.translation.x},${outcome.translation.y},${outcome.translation.z}) " +
-                    "pairs=${outcome.pairs.map { (entry, target) -> "${entry.placementKey}->${target.toKeyString()}" }}"
-            is UndoOutcome.Ambiguous ->
-                "未確定 lost=${evaluation.lostKeys} appeared=${evaluation.appearedCount}" +
-                    if (evaluation.scanSkipped) " 走査上限超過" else ""
-        }
-        plugin.logger.info(
-            "[KantanCommander] undo/redo の照合[${pending.checks}回目]: command=${pending.rawCommand} $detail",
-        )
     }
 
     /** 実行前台帳と現在状態の差分から照合結果を求めます。 */
@@ -1179,12 +1118,7 @@ class WorldEditControlBlockSyncListener(
     private fun applyUndoRematch(pending: PendingUndo) {
         val accept = pending.lastOutcome as? UndoOutcome.Accept
         if (accept == null) {
-            // 変化なし確定の到達を可視化します。編集開始前の早期確定の
-            // 疑いがある場合、この直前の照合ログと合わせて判定します。
-            plugin.logger.info(
-                "[KantanCommander] undo/redo の追跡を終了します（台帳不変・照合${pending.checks}回）: " +
-                    "command=${pending.rawCommand}",
-            )
+            // 変化なし確定は何もしない正常終了のため、コンソールへ出しません。
             return
         }
         val world = Bukkit.getWorld(pending.worldName) ?: return
@@ -1239,11 +1173,7 @@ class WorldEditControlBlockSyncListener(
             )
             return
         }
-        plugin.logger.info(
-            "[KantanCommander] undo/redo に台帳を追従しました: command=${pending.rawCommand} " +
-                "translation=(${accept.translation.x},${accept.translation.y},${accept.translation.z}) " +
-                "count=${accept.pairs.size}",
-        )
+        // 追従成功は定常のためコンソールへ出しません。
     }
 
     /**
@@ -1302,12 +1232,7 @@ class WorldEditControlBlockSyncListener(
             runCatching {
                 removePlacementFully(world, placement)
             }.onSuccess {
-                // 掃除による破棄を可視化します。undo／redo 後の消失が
-                // この経路か追従失敗かを切り分ける診断に使います。
-                plugin.logger.info(
-                    "[KantanCommander] 消失した配置を掃除しました: placement=${placement.key} " +
-                        "script=${placement.scriptId}",
-                )
+                // 掃除による破棄は定常のためコンソールへ出しません。
             }.onFailure { failure ->
                 plugin.logger.log(
                     Level.WARNING,

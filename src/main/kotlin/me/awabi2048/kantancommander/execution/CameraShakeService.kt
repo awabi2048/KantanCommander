@@ -11,8 +11,9 @@ object CameraShakeService {
         if (!plugin.server.pluginManager.isPluginEnabled("Geyser-Spigot")) return
         val connection = try {
             GeyserApi.api().connectionByUuid(player.uniqueId)
-        } catch (error: LinkageError) {
-            plugin.logger.warning("[KantanCommander] Geyser APIにアクセスできませんでした: ${error.message}")
+        } catch (_: LinkageError) {
+            // Geyser API不整合は実行のたびに起きる環境要因であり、コンソールへ出しません。
+            // Java版と同様にno-opとして扱い、プログラムの失敗にはしません。
             return
         } ?: return
         val kind = if (type == "rotational") CameraShake.ROTATIONAL else CameraShake.POSITIONAL

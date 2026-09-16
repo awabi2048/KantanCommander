@@ -89,13 +89,8 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
                     }
                 }
             }
-        }.onFailure { failure ->
+        }.onFailure {
             selections.remove(player.uniqueId)
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "アイテム／素材選択の保存に失敗しました: script=${selection.scriptId} node=${selection.nodeId}",
-                failure,
-            )
         }.getOrNull()
         if (savedNode == null) {
             // 保存失敗（競合を含む）は選択を破棄し、最新状態へ戻します。
