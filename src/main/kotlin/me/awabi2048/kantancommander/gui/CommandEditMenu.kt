@@ -79,7 +79,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 renderer = { renderPicker(it.player, it.route) },
                 actions = mapOf(
                     "back" to back(),
-                    // issue #13: 簡易分類のタブ切替です。制御・変数系はフルGUIへ
+                    // 簡易分類のタブ切替です。制御系・変数の操作はフルGUIへ
                     // 委ねるため、簡易分類以外の指定は無視します。
                     "tab" to MenuActionHandler { context ->
                         val category = context.payload[PICKER_CATEGORY]
@@ -1390,15 +1390,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     private fun renderPicker(player: Player, route: MenuRoute): InventoryMenuView {
-        // issue #13: 簡易GUIでは簡易分類（基礎・Entity・建築・演出）のタブで
+        // 簡易GUIでは簡易分類（エンティティ関連・ブロックの操作・演出）のタブで
         // 選択します。分類ごとの候補は固定14枠に収まるため、ページングは
-        // 行いません。制御・変数系の追加はフルGUI（ジェスチャーGUI）へ委ねます。
-        // 旧来の全件固定表示は19件が14枠を超えて破綻していたため廃止します。
+        // 行いません。制御系・変数の操作の追加はフルGUI（ジェスチャーGUI）へ委ねます。
+        // 待機は制御系へ移したため、簡易GUIの候補は18件です。
         val categories = CommandCategory.entries.filter { it.isSimple() }
         val selected = route.payload[PICKER_CATEGORY]
             ?.let { runCatching { CommandCategory.valueOf(it) }.getOrNull() }
             ?.takeIf { it.isSimple() }
-            ?: CommandCategory.BASIC
+            ?: CommandCategory.ENTITY
         val types = CommandPresentationPolicy.SIMPLE_TYPES.filter { CommandPresentationPolicy.category(it) == selected }
         val elements = types.mapIndexed { index, type ->
             KcGui.menuEntry(

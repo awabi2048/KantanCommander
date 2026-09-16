@@ -10,8 +10,13 @@ class CommandMenuPresentationTest {
     @Test
     fun `every command type has an explicit category`() {
         assertEquals(CommandType.entries.toSet(), CommandType.entries.groupBy(CommandPresentationPolicy::category).values.flatten().toSet())
-        // issue #13: 実行系は頻度・領域別の6分類へ分割しました。
-        assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.BASIC)
+        // 基礎タブ廃止後の5分類です。旧基礎コマンドは意味の近い分類へ移しました。
+        assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
+        assertTrue(CommandType.GIVE_ITEM.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
+        assertTrue(CommandType.SUMMON_ENTITY.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
+        assertTrue(CommandType.DISPLAY_TEXT.let(CommandPresentationPolicy::category) == CommandCategory.EFFECT)
+        assertTrue(CommandType.APPLY_EFFECT.let(CommandPresentationPolicy::category) == CommandCategory.EFFECT)
+        assertTrue(CommandType.WAIT.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
         assertTrue(CommandType.ENTITY_OPERATION.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
         assertTrue(CommandType.BLOCK_OPERATION.let(CommandPresentationPolicy::category) == CommandCategory.BUILD)
         assertTrue(CommandType.PARTICLE.let(CommandPresentationPolicy::category) == CommandCategory.EFFECT)
@@ -22,8 +27,8 @@ class CommandMenuPresentationTest {
 
     @Test
     fun `nested open branch picker retains normal commands and optional merge`() {
-        val basicTypes = CommandPickerTypePolicy.types(
-            category = CommandCategory.BASIC,
+        val entityTypes = CommandPickerTypePolicy.types(
+            category = CommandCategory.ENTITY,
             mergeAvailable = true,
             insideForBody = false,
         )
@@ -33,10 +38,11 @@ class CommandMenuPresentationTest {
             insideForBody = false,
         )
 
-        assertTrue(CommandType.TELEPORT in basicTypes)
+        assertTrue(CommandType.TELEPORT in entityTypes)
         assertTrue(CommandType.CONDITION in controlTypes)
         assertTrue(CommandType.MERGE in controlTypes)
-        // issue #13: 分類ごとの候補は1ページに収め、ページングは将来の
+        assertTrue(CommandType.WAIT in controlTypes)
+        // 分類ごとの候補は1ページに収め、ページングは将来の
         // 増加時の補助手段として残します。
         CommandCategory.entries.forEach { category ->
             val types = CommandPickerTypePolicy.types(
@@ -46,17 +52,17 @@ class CommandMenuPresentationTest {
             )
             assertTrue(types.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE, "$category")
         }
-        assertEquals(1, GestureCommandPickerLayoutPolicy.pageCount(basicTypes.size))
+        assertEquals(1, GestureCommandPickerLayoutPolicy.pageCount(entityTypes.size))
         assertTrue(controlTypes.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE)
     }
 
     @Test
     fun `simple inventory picker fits every simple category`() {
-        // issue #13: 簡易選択画面は簡易分類のタブで候補を分けます。
-        // 旧来の全件固定表示は19件が14枠を超えていたため廃止しました。
+        // 簡易選択画面は簡易分類のタブで候補を分けます。
+        // 基礎タブ廃止後の簡易3タブとし、待機は制御系へ移しました。
         val simpleCategories = CommandCategory.entries.filter { it.isSimple() }
         assertEquals(
-            listOf(CommandCategory.BASIC, CommandCategory.ENTITY, CommandCategory.BUILD, CommandCategory.EFFECT),
+            listOf(CommandCategory.ENTITY, CommandCategory.BUILD, CommandCategory.EFFECT),
             simpleCategories,
         )
         simpleCategories.forEach { category ->
@@ -65,9 +71,10 @@ class CommandMenuPresentationTest {
             assertTrue(types.size <= CommandPickerLayoutPolicy.itemSlots.size, "$category")
         }
         assertEquals(CommandPickerLayoutPolicy.categorySlots.size, simpleCategories.size)
-        // 簡易集合は旧来の実行系＋待機と一致します。
-        assertEquals(19, CommandPresentationPolicy.SIMPLE_TYPES.size)
-        assertTrue(CommandType.WAIT in CommandPresentationPolicy.SIMPLE_TYPES)
+        // 簡易集合は待機を除く18件です。
+        assertEquals(18, CommandPresentationPolicy.SIMPLE_TYPES.size)
+        assertTrue(CommandType.TELEPORT in CommandPresentationPolicy.SIMPLE_TYPES)
+        assertFalse(CommandType.WAIT in CommandPresentationPolicy.SIMPLE_TYPES)
         assertFalse(CommandType.CONDITION in CommandPresentationPolicy.SIMPLE_TYPES)
         assertFalse(CommandType.VARIABLE in CommandPresentationPolicy.SIMPLE_TYPES)
     }

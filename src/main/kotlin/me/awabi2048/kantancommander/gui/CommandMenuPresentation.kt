@@ -32,36 +32,37 @@ internal object DisabledChoiceVisualPolicy {
 }
 
 /**
- * issue #13: コマンド選択画面の表示分類です。
+ * コマンド選択画面の表示分類です。
  *
- * 実行コマンドを頻度・領域で分け、高頻度／基礎コマンドを浅い階層へ置きます。
- * 新CommandTypeの追加時は [CommandPresentationPolicy.category] の一箇所へ
- * 分類を足すだけで、両GUIのタブ・候補・簡易編集可否へ反映します。
+ * 基礎タブを廃止した5分類とし、対象・領域の意味で分けます。エンティティ関連・
+ * ブロックの操作・演出は簡易GUIでも編集でき、制御系・変数の操作はフルGUIでのみ
+ * 編集します。新CommandTypeの追加時は [CommandPresentationPolicy.category] の
+ * 一箇所へ分類を足すだけで、両GUIのタブ・候補・簡易編集可否へ反映します。
  */
 internal enum class CommandCategory(
     val routeValue: String,
     val labelKey: LocalizationKey<String>,
     val descriptionKey: LocalizationKey<List<String>>,
 ) {
-    /** 移動・付与・表示などの基礎コマンドです。簡易GUIでも編集できます。 */
-    BASIC("basic", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BASIC, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BASIC_DESCRIPTION),
-    /** エンティティの選択・操作・群管理です。簡易GUIでも編集できます。 */
+    /** 移動・召喚・付与を含むエンティティ関連コマンドです。簡易GUIでも編集できます。 */
     ENTITY("entity", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_ENTITY, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_ENTITY_DESCRIPTION),
-    /** ブロック・建造物の配置です。簡易GUIでも編集できます。 */
+    /** ブロック・建造物の操作です。簡易GUIでも編集できます。 */
     BUILD("build", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BUILD, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_BUILD_DESCRIPTION),
-    /** 音・粒子・花火などの演出です。簡易GUIでも編集できます。 */
+    /** テキスト表示・効果付与を含む演出です。簡易GUIでも編集できます。 */
     EFFECT("effect", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EFFECT, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_EFFECT_DESCRIPTION),
+    /** 待機を含む実行の流れの制御です。フルGUIでのみ編集します。 */
     CONTROL("control", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_CONTROL_DESCRIPTION),
-    /** 変数の定義・操作です。フルGUIでのみ編集します。 */
+    /** 変数の操作です。フルGUIでのみ編集します。 */
     VARIABLE("variable", KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_VARIABLE, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_CATEGORY_VARIABLE_DESCRIPTION),
     ;
 
     companion object {
-        fun fromRoute(value: String?): CommandCategory = entries.firstOrNull { it.routeValue == value } ?: BASIC
+        // 廃止した基礎タブを示す旧経路は、先頭の簡易タブへ読み替えます。
+        fun fromRoute(value: String?): CommandCategory = entries.firstOrNull { it.routeValue == value } ?: ENTITY
     }
 
     /** 簡易GUI（統合版専用インベントリ）で編集できる分類です。 */
-    fun isSimple(): Boolean = this == BASIC || this == ENTITY || this == BUILD || this == EFFECT
+    fun isSimple(): Boolean = this == ENTITY || this == BUILD || this == EFFECT
 }
 
 /**
@@ -70,8 +71,10 @@ internal enum class CommandCategory(
  */
 internal object CommandPresentationPolicy {
     /**
-     * issue #13: コマンド型と分類の一元対応表です。
+     * コマンド型と分類の一元対応表です。
      *
+     * 基礎タブ廃止後の5分類とし、旧基礎コマンドは意味の近い分類へ移しました。
+     * 移動・召喚・付与はエンティティ関連、表示・効果付与は演出、待機は制御系です。
      * 新CommandTypeの追加時はこの一箇所へ分類を足すだけで、両GUIのタブ・
      * 候補・簡易編集可否へ反映します。分類ごとの候補は10件以内に収め、
      * ページングは将来の増加時の補助手段として残します。
@@ -79,12 +82,7 @@ internal object CommandPresentationPolicy {
     fun category(type: CommandType): CommandCategory = when (type) {
         CommandType.TELEPORT,
         CommandType.GIVE_ITEM,
-        CommandType.DISPLAY_TEXT,
-        CommandType.WAIT,
         CommandType.SUMMON_ENTITY,
-        CommandType.APPLY_EFFECT,
-        -> CommandCategory.BASIC
-
         CommandType.ENTITY_ACTION,
         CommandType.ENTITY_OPERATION,
         CommandType.ENTITY_DELETE,
@@ -99,6 +97,8 @@ internal object CommandPresentationPolicy {
         CommandType.STRUCTURE_PLACE,
         -> CommandCategory.BUILD
 
+        CommandType.DISPLAY_TEXT,
+        CommandType.APPLY_EFFECT,
         CommandType.PLAY_SOUND,
         CommandType.PARTICLE,
         CommandType.PARTICLE_GEOMETRY,
@@ -106,6 +106,7 @@ internal object CommandPresentationPolicy {
         CommandType.CAMERA_SHAKE,
         -> CommandCategory.EFFECT
 
+        CommandType.WAIT,
         CommandType.CONDITION,
         CommandType.DISK_CALL,
         // issue #8: 「値を返す」は呼出先の実行を打ち切る制御コマンドです。
@@ -128,8 +129,8 @@ internal object CommandPresentationPolicy {
     /**
      * 簡易GUI（統合版専用インベントリ）で扱うコマンド種別です。
      *
-     * 簡易分類（基礎・Entity・建築・演出）の固定集合とし、制御・変数系は
-     * フルGUI（ジェスチャーGUI）でのみ編集します。内部の構造化データは
+     * 簡易分類（エンティティ関連・ブロックの操作・演出）の固定集合とし、制御系・
+     * 変数の操作はフルGUI（ジェスチャーGUI）でのみ編集します。内部の構造化データは
      * フル形式のまま保持し、ここでは表示・編集の入口だけを制限します。
      */
     val SIMPLE_TYPES: List<CommandType> =
