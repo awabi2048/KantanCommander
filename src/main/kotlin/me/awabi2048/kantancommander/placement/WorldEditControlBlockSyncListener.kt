@@ -36,6 +36,9 @@ import java.util.logging.Level
  * 相対化・遅延確定）を使い、配置台帳・スクリプト・表示・起動索引を追従させます。
  * 対象外の一括操作は警告と周期的掃除へ委ね、自動追従しません。
  * 向き（`facing`）は貼付け時の回転・反転でも維持します。
+ * `//undo`・`//redo` は専用イベントを持たないため、実行前台帳の
+ * スナップショットと確定後の世界状態を照合し、単一平行移動で結ばれる
+ * 場合だけ台帳を追従させます。確定できない場合は掃除を猶予します。
  */
 class WorldEditControlBlockSyncListener(
     private val plugin: KantanCommanderPlugin,
@@ -88,8 +91,52 @@ class WorldEditControlBlockSyncListener(
         val glass: Map<Triple<Int, Int, Int>, Boolean>,
     )
 
+    /**
+     * undo／redo 実行前の台帳項目です。
+     *
+     * WorldEditの履歴APIへ触れず、実行前後の差分だけで追従するため、
+     * 確定時の照合基準として保持します。
+     */
+    private data class UndoLedgerEntry(
+        val placementKey: String,
+        val x: Int,
+        val y: Int,
+        val z: Int,
+        val scriptId: UUID,
+        val facing: String,
+    )
+
+    /** undo／redo の追跡保留です。確定まで台帳スナップショットを保持します。 */
+    private data class PendingUndo(
+        val worldName: String,
+        val rawCommand: String,
+        val minHeight: Int,
+        val maxHeight: Int,
+        val entries: List<UndoLedgerEntry>,
+        var lastOutcome: UndoOutcome? = null,
+    )
+
+    /** undo／redo 確定時の照合結果です。確定系だけ安定確認の対象にします。 */
+    private sealed interface UndoOutcome {
+        data object Noop : UndoOutcome
+        data class Accept(
+            val translation: WorldEditMoveOffset,
+            val pairs: List<Pair<UndoLedgerEntry, Triple<Int, Int, Int>>>,
+        ) : UndoOutcome
+        data object Ambiguous : UndoOutcome
+    }
+
     private val pendingClipboards = ConcurrentHashMap<UUID, PendingClipboard>()
     private val pendingMoves = ConcurrentHashMap<UUID, PendingMove>()
+    private val pendingUndos = ConcurrentHashMap<UUID, PendingUndo>()
+
+    /**
+     * 掃除猶予中の台帳キーと猶予期限（epoch millis）です。
+     *
+     * undo／redo の照合が確定しない項目を周期的掃除から除外し、
+     * プログラム消失を防ぎます。期限切れは掃除時に破棄します。
+     */
+    private val undoGrace = ConcurrentHashMap<String, Long>()
     private var sweepTaskId: Int = -1
 
     /**
@@ -213,6 +260,21 @@ class WorldEditControlBlockSyncListener(
     }
 
     /**
+     * `//undo`・`//redo` を検出して台帳追跡を開始します。
+     *
+     * undo／redo 専用イベントは存在しないため、コマンド実行前の台帳を
+     * 記録し、編集完了後に差分照合します。redo も対称な一括編集として
+     * 同一経路で扱います。コンソール・コマンドブロック・API直呼びの
+     * 履歴操作は検知対象外です。
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onWorldEditUndoRedoCommand(event: PlayerCommandPreprocessEvent) {
+        if (!WorldEditCommands.isUndoCommand(event.message) && !WorldEditCommands.isRedoCommand(event.message)) return
+        if (!WorldEditAvailability.isAvailable()) return
+        captureUndo(event.player, event.message)
+    }
+
+    /**
      * 対象外の一括操作を検出して警告します。
      *
      * WorldEdit式（`//`始まり）は選択範囲との包含で、バニラ式は引数座標の
@@ -257,6 +319,7 @@ class WorldEditControlBlockSyncListener(
     fun onPlayerQuit(event: PlayerQuitEvent) {
         pendingClipboards.remove(event.player.uniqueId)
         pendingMoves.remove(event.player.uniqueId)
+        pendingUndos.remove(event.player.uniqueId)
     }
 
     private fun captureClipboard(player: Player, mode: WorldEditClipboardOperation) {
@@ -903,15 +966,245 @@ class WorldEditControlBlockSyncListener(
             .coerceAtMost(FALLBACK_HALF_EDGE_MAX)
 
     /**
+     * undo／redo 実行前の台帳を記録し、編集完了後の照合へ回します。
+     *
+     * `PlayerCommandPreprocessEvent` はコマンド実行前に発生するため、
+     * 台帳のあるワールドでの undo／redo だけを追跡します。履歴引数
+     * （回数・世界）は無視し、実際の差分で照合するため結果に影響しません。
+     */
+    private fun captureUndo(player: Player, rawCommand: String) {
+        val world = player.world
+        val entries = plugin.placements.all()
+            .filter { it.world == world.name }
+            .map { UndoLedgerEntry(it.key, it.x, it.y, it.z, it.scriptId, it.facing) }
+        if (entries.isEmpty()) return
+        val pending = PendingUndo(
+            worldName = world.name,
+            rawCommand = rawCommand,
+            minHeight = world.minHeight,
+            maxHeight = world.maxHeight,
+            entries = entries,
+        )
+        pendingUndos[player.uniqueId] = pending
+        plugin.logger.info(
+            "[KantanCommander] undo/redo を追跡します: player=${player.name} command=$rawCommand " +
+                "placements=${entries.size}",
+        )
+        WorldEditReconciler.runUntilReady(
+            plugin = plugin,
+            isStillCurrent = { pendingUndos[player.uniqueId] === pending },
+            isReady = { isUndoSettled(pending) },
+            onReady = {
+                if (pendingUndos.remove(player.uniqueId, pending)) {
+                    applyUndoRematch(pending)
+                }
+            },
+            onTimeout = { attempts ->
+                if (pendingUndos.remove(player.uniqueId, pending)) {
+                    graceUndoRematch(pending, attempts)
+                }
+            },
+            maxAttempts = MOVE_MAX_ATTEMPTS,
+        )
+    }
+
+    /**
+     * undo／redo の確定条件です。
+     *
+     * 照合結果が確定系（変化なし・追従可能）で2回連続一致した場合だけ
+     * 進めます。曖昧な間は低速編集中の可能性があるため待機し、期限切れで
+     * 猶予経路へ回します。
+     */
+    private fun isUndoSettled(pending: PendingUndo): Boolean {
+        val outcome = computeUndoOutcome(pending)
+        val previous = pending.lastOutcome
+        pending.lastOutcome = outcome
+        return (outcome is UndoOutcome.Noop || outcome is UndoOutcome.Accept) && outcome == previous
+    }
+
+    /** 実行前台帳と現在状態の差分から照合結果を求めます。 */
+    private fun computeUndoOutcome(pending: PendingUndo): UndoOutcome {
+        val world = Bukkit.getWorld(pending.worldName) ?: return UndoOutcome.Ambiguous
+        val registered = plugin.placements.all()
+            .filter { it.world == pending.worldName }
+            .map { Triple(it.x, it.y, it.z) }
+            .toSet()
+        val lost = findUndoLost(world, pending)
+        if (lost.isEmpty()) return UndoOutcome.Noop
+        val lostCells = lost.map { Triple(it.x, it.y, it.z) }
+        val appeared = scanUndoAppeared(world, pending, lostCells, registered)
+            ?: return UndoOutcome.Ambiguous
+        val translation = WorldEditUndoRematch.matchTranslation(lostCells, appeared)
+            ?: return UndoOutcome.Ambiguous
+        // 照合器と同じ座標順で整列し、対応付けを一致させます。
+        val orderedLost = lost.sortedWith(compareBy({ it.x }, { it.y }, { it.z }))
+        val orderedAppeared = appeared.sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
+        return UndoOutcome.Accept(translation, orderedLost.zip(orderedAppeared))
+    }
+
+    /**
+     * 台帳に残るのに実体を失った項目を返します。
+     *
+     * 処理中の移動・複写の移動元と、GUI等で置換・削除済みの台帳は
+     * 対象外とします。
+     */
+    private fun findUndoLost(world: World, pending: PendingUndo): List<UndoLedgerEntry> =
+        pending.entries.filter { entry ->
+            if (isMoveInFlight(entry.placementKey)) return@filter false
+            val current = findByKey(entry.placementKey)
+            if (current == null || current.scriptId != entry.scriptId) return@filter false
+            !PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(entry.x, entry.y, entry.z).type)
+        }
+
+    /**
+     * 失われたセル群の周辺で未登録の配置セルを探します。
+     *
+     * 失われたセル群の外接に余白を付けた一括走査とし、セル数上限を
+     * 超える場合は主スレッド負荷を避けて null（曖昧扱い）とします。
+     */
+    private fun scanUndoAppeared(
+        world: World,
+        pending: PendingUndo,
+        lost: List<Triple<Int, Int, Int>>,
+        registered: Set<Triple<Int, Int, Int>>,
+    ): List<Triple<Int, Int, Int>>? {
+        val minX = lost.minOf { it.first } - UNDO_SEARCH_MARGIN
+        val maxX = lost.maxOf { it.first } + UNDO_SEARCH_MARGIN
+        val minY = (lost.minOf { it.second } - UNDO_SEARCH_MARGIN).coerceAtLeast(pending.minHeight)
+        val maxY = (lost.maxOf { it.second } + UNDO_SEARCH_MARGIN).coerceAtMost(pending.maxHeight)
+        val minZ = lost.minOf { it.third } - UNDO_SEARCH_MARGIN
+        val maxZ = lost.maxOf { it.third } + UNDO_SEARCH_MARGIN
+        val volume = (maxX - minX + 1L) * (maxY - minY + 1L) * (maxZ - minZ + 1L)
+        if (volume > UNDO_SCAN_CELL_CAP) return null
+        val found = mutableListOf<Triple<Int, Int, Int>>()
+        for (x in minX..maxX) {
+            for (y in minY..maxY) {
+                for (z in minZ..maxZ) {
+                    val cell = Triple(x, y, z)
+                    if (cell in registered) continue
+                    if (!PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(x, y, z).type)) continue
+                    found.add(cell)
+                }
+            }
+        }
+        return found
+    }
+
+    /**
+     * 照合済み変位で台帳を追従させます。
+     *
+     * 失われた台帳セルを除去し、出現セルへ同一スクリプトで再登録します。
+     * 失敗時は除去分を復元し、消失を防ぐため猶予へ回します。
+     */
+    private fun applyUndoRematch(pending: PendingUndo) {
+        val accept = pending.lastOutcome as? UndoOutcome.Accept ?: return
+        val world = Bukkit.getWorld(pending.worldName) ?: return
+        undoGrace.keys.removeAll(accept.pairs.map { it.first.placementKey }.toSet())
+        val registeredTargets = mutableListOf<Triple<Int, Int, Int>>()
+        val removedSources = mutableListOf<DiskPlacement>()
+        var failed = false
+        for ((entry, target) in accept.pairs) {
+            val moved = findByKey(entry.placementKey)
+            if (moved != null) {
+                releaseRuntimeState(moved)
+                val removed = runCatching {
+                    plugin.placements.remove(world, moved.x, moved.y, moved.z)
+                }.getOrNull()
+                if (removed == null) {
+                    failed = true
+                    break
+                }
+                plugin.placements.removeDisplay(world, removed.displayId)
+                removedSources.add(removed)
+            }
+            val registered = registerPlacement(
+                world, target.first, target.second, target.third,
+                entry.scriptId, entry.facing, rollbackOnFailure = false,
+            )
+            if (registered) {
+                registeredTargets.add(target)
+                plugin.refreshRedstoneTopologyAround(world.getBlockAt(target.first, target.second, target.third))
+            } else {
+                failed = true
+                break
+            }
+        }
+        if (failed) {
+            for (target in registeredTargets) {
+                runCatching { plugin.placements.remove(world, target.first, target.second, target.third) }
+            }
+            for (removed in removedSources) {
+                runCatching {
+                    plugin.placements.add(removed)
+                    plugin.placements.spawnDisplay(world, removed)
+                }
+            }
+            val expiry = System.currentTimeMillis() + UNDO_GRACE_MILLIS
+            removedSources.forEach { undoGrace[it.key] = expiry }
+            plugin.logger.warning(
+                "[KantanCommander] undo/redo の台帳追従に失敗したため復元し掃除を猶予します: " +
+                    "command=${pending.rawCommand}",
+            )
+            return
+        }
+        plugin.logger.info(
+            "[KantanCommander] undo/redo に台帳を追従しました: command=${pending.rawCommand} " +
+                "translation=(${accept.translation.x},${accept.translation.y},${accept.translation.z}) " +
+                "count=${accept.pairs.size}",
+        )
+    }
+
+    /**
+     * 期限切れ時に失われた項目の掃除を猶予します。
+     *
+     * 低速編集の完了待ちと曖昧な差分のどちらでも、台帳・スクリプトを
+     * 消さずに警告だけ残し、手動確認の時間を確保します。
+     */
+    private fun graceUndoRematch(pending: PendingUndo, attempts: Int) {
+        val world = Bukkit.getWorld(pending.worldName)
+        val lostKeys = if (world == null) {
+            pending.entries.map { it.placementKey }
+        } else {
+            findUndoLost(world, pending).map { it.placementKey }
+        }
+        if (lostKeys.isEmpty()) {
+            plugin.logger.fine(
+                "[KantanCommander] undo/redo の追跡を終了します（台帳不変）: command=${pending.rawCommand}",
+            )
+            return
+        }
+        val expiry = System.currentTimeMillis() + UNDO_GRACE_MILLIS
+        lostKeys.forEach { undoGrace[it] = expiry }
+        plugin.logger.warning(
+            "[KantanCommander] undo/redo の台帳追従を確定できないため掃除を猶予します: " +
+                "command=${pending.rawCommand} attempt=$attempts placements=$lostKeys",
+        )
+    }
+
+    /**
+     * 掃除猶予中かを返します。
+     *
+     * 期限切れの猶予はここで破棄し、掃除対象へ戻します。
+     */
+    private fun isUndoGraceActive(placementKey: String): Boolean {
+        val expiry = undoGrace[placementKey] ?: return false
+        if (expiry >= System.currentTimeMillis()) return true
+        undoGrace.remove(placementKey, expiry)
+        return false
+    }
+
+    /**
      * 実体だけが消えた配置を整理します。
      *
      * 台帳・表示・スクリプトをまとめて削除し、起動索引と隣接ダスト形状も
      * 戻します。ワールド未読込時は対象外とします。処理中の移動・複写の
-     * 移動元は除外し、低速編集中のスクリプト消失を防ぎます。
+     * 移動元と、undo／redo 猶予中の項目は除外し、低速編集中や未確定差分の
+     * スクリプト消失を防ぎます。
      */
     private fun sweepOnce() {
         for (placement in plugin.placements.all()) {
             if (isMoveInFlight(placement.key)) continue
+            if (isUndoGraceActive(placement.key)) continue
             val world = Bukkit.getWorld(placement.world) ?: continue
             if (PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(placement.x, placement.y, placement.z).type)) continue
             runCatching {
@@ -1071,5 +1364,19 @@ class WorldEditControlBlockSyncListener(
 
         /** 実測変位探索の最大半辺です。主スレッド負荷を抑える上限です。 */
         const val FALLBACK_HALF_EDGE_MAX = 12
+
+        /**
+         * undo／redo 照合の探索余白です。
+         *
+         * 失われたセル群の外接へ付ける片側余白であり、典型的な移動距離を
+         * 収めます。走査セル上限と併せて主スレッド負荷を抑えます。
+         */
+        const val UNDO_SEARCH_MARGIN = 32
+
+        /** undo／redo 照合の一括走査セル上限です。超過時は曖昧扱いにします。 */
+        const val UNDO_SCAN_CELL_CAP = 300_000L
+
+        /** undo／redo 未確定時の掃除猶予です。期限切れ後は通常掃除へ戻します。 */
+        const val UNDO_GRACE_MILLIS = 30L * 60L * 1000L
     }
 }
