@@ -28,9 +28,9 @@ class DeclarativePickerTest {
     )
 
     private fun cards() = listOf(
-        PickerCard("SAY", "Say", "says", -0.10, 0.29),
-        PickerCard("WAIT", "Wait", "waits", 0.67, 0.29),
-        PickerCard("JUMP", "Jump", "jumps", -0.10, 0.0),
+        PickerCard("SAY", "Say", listOf("says"), -0.10, 0.29),
+        PickerCard("WAIT", "Wait", listOf("waits"), 0.67, 0.29),
+        PickerCard("JUMP", "Jump", listOf("jumps"), -0.10, 0.0),
     )
 
     private fun data(page: Int = 0, pageCount: Int = 1) = PickerData(
@@ -114,7 +114,7 @@ class DeclarativePickerTest {
 
     @Test
     fun `hover coordinates pass through to card elements`() {
-        val five = (0 until 5).map { PickerCard("K$it", "k$it", "h$it", 0.28, -0.38) }
+        val five = (0 until 5).map { PickerCard("K$it", "k$it", listOf("h$it"), 0.28, -0.38) }
         val full = data().copy(cards = five, cardBackgrounds = (0 until 5).map { blockData() })
         val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(full), onAction = {})
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")

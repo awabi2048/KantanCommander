@@ -75,4 +75,18 @@ object DisplayTextTimingPolicy {
     fun supports(mode: String): Boolean = mode in TIMED_MODES
 
     fun supports(node: CommandNode): Boolean = supports(node.string("mode", "tellraw"))
+
+    /**
+     * issue #review P2-7: 有効な時間項目の定義です。
+     *
+     * アクションバーは単独の表示時間だけを使い、フェード値は加算しません。
+     * 検証・参照チェック・実行でこの定義を共有し、非表示項目の残存値で
+     * 動作が変わらないようにします。
+     */
+    fun effectiveTimeFields(mode: String): Set<String> =
+        if (mode == "actionbar") setOf("staySeconds")
+        else setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
+
+    fun effectiveTimeFields(node: CommandNode): Set<String> =
+        effectiveTimeFields(node.string("mode", "tellraw"))
 }

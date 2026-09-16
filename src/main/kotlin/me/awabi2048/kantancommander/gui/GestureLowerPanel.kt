@@ -3165,6 +3165,42 @@ class GestureLowerPanel(
     }
 
     /**
+     * issue #review P2-10: 行構造を保つ複数行版です。
+     *
+     * 配置規則は [parallelButtonHover] と同一で、本文だけ複数行結合にします。
+     * PICKERのコマンド説明2行構成用であり、既存の単行呼び出し側は変えません。
+     */
+    internal fun parallelButtonHoverLines(
+        lines: List<String>,
+        x: Double,
+        y: Double,
+        row: Int,
+        rowCount: Int,
+        height: Double,
+        descriptionX: Double,
+        descriptionY: Double,
+        replacesDescription: Boolean,
+        parallel: Boolean,
+    ): GestureGuiHoverText = when {
+        parallel && row == 0 -> multiLineHover(
+            lines,
+            x = x,
+            y = y + height / 2.0 + HOVER_BUTTON_GAP,
+        )
+        parallel && rowCount > 1 && row == rowCount - 1 -> multiLineHover(
+            lines,
+            x = x,
+            y = y - height / 2.0 - HOVER_BUTTON_GAP,
+        )
+        else -> multiLineHover(
+            lines,
+            x = descriptionX,
+            y = descriptionY,
+            replacesVisualId = if (replacesDescription) SETTING_DESCRIPTION_HOVER_ID else null,
+        )
+    }
+
+    /**
      * 現在の設定経路における直下の木ノードを返します。
      *
      * `TARGET` の対象種別、`POSITION` の移動先種別、条件の
@@ -4963,11 +4999,12 @@ class GestureLowerPanel(
                 val row = index / GestureCommandPickerLayoutPolicy.COLUMNS
                 val cx = GestureCommandPickerLayoutPolicy.columnX(column)
                 val cy = GestureCommandPickerLayoutPolicy.rowY(row)
-                val hoverText = KcI18n.list(player, type.descriptionKey)
+                // issue #review P2-10: 説明の2行構成（機能説明・バニラ対応）を
+                // 空白結合で潰さず、行構造のままカードへ渡します。
+                val hoverLines = KcI18n.list(player, type.descriptionKey)
                     .filter(String::isNotBlank)
-                    .joinToString(" ")
-                val hover = parallelButtonHover(
-                    hoverText,
+                val hover = parallelButtonHoverLines(
+                    hoverLines,
                     cx,
                     cy,
                     row,
@@ -4978,7 +5015,7 @@ class GestureLowerPanel(
                     replacesDescription = false,
                     parallel = parallel,
                 )
-                PickerCard(type.name, KcI18n.text(player, type.key), hoverText, hover.x, hover.y)
+                PickerCard(type.name, KcI18n.text(player, type.key), hoverLines, hover.x, hover.y)
             },
             cardBackgrounds = pageTypes.map { Bukkit.createBlockData(Material.CYAN_TERRACOTTA) },
             pager = if (pageCount > 1) PickerPager(

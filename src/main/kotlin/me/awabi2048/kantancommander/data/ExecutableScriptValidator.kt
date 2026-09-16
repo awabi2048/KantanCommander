@@ -1403,12 +1403,8 @@ object ExecutableScriptValidator {
         if (DisplayTextTimingPolicy.supports(node)) {
             // issue #35-2: アクションバーは単独の表示時間だけを検証します。
             // フェード値は表示時間に加算しないため、検証対象にしません。
-            val fields = if (node.string("mode", "tellraw") == "actionbar") {
-                listOf("staySeconds")
-            } else {
-                listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
-            }
-            fields.forEach { field ->
+            // 有効項目の定義は DisplayTextTimingPolicy で共有します。
+            DisplayTextTimingPolicy.effectiveTimeFields(node).forEach { field ->
                 validateTickAlignedTime(
                     node = node,
                     path = path,
@@ -1651,6 +1647,12 @@ object ExecutableScriptValidator {
         // 旧保存データは読込時の型検証で隔離するため、ここでの分岐は不要です。
         if (spec.kind == TargetKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, ValueType.ENTITY, temporaryDefinitions, node, path, emptySet(), errors)
+            // issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
+            // 残存条件の形式検査を行いません。保存時の除去・GUIの非提示・
+            // 実行の非適用と合わせ、同じ禁止規則を検証にも適用します。
+            // 探索基準位置だけは構造検査の対象に残します。
+            spec.searchOrigin?.let { validateSearchOrigin(it, path, node, errors, temporaryDefinitions) }
+            return
         }
         // 対象は各コマンドのTargetSpecだけで解決し、未設定の対象を
         // 前段ノードから暗黙に継承する経路は検証しません。

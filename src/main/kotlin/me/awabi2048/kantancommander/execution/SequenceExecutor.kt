@@ -2848,12 +2848,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // UNRESOLVEDにします。実行起点集合がある場合は既定値に使います。
                 val candidates = node.conditionPositionSpec?.let { spec ->
                     val resolved = resolvePositions(spec, session, context)
+                        ?: return ConditionEvaluation.UNRESOLVED
                     if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
                         return ConditionEvaluation.UNRESOLVED
                     }
                     resolved
                 } ?: executionOrigins ?: context?.position?.let { spec ->
                     val resolved = resolvePositions(spec, session, context)
+                        ?: return ConditionEvaluation.UNRESOLVED
                     if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
                         return ConditionEvaluation.UNRESOLVED
                     }
@@ -3664,8 +3666,15 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         }
     }
 
-    /** 対象名・タグだけを実行直前に補間し、Registry IDや構造化値は型を保ちます。 */
+    /**
+     * 対象名・タグだけを実行直前に補間し、Registry IDや構造化値は型を保ちます。
+     *
+     * issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
+     * 名前・タグの補間を行いません。保存時の除去とGUIの非提示と合わせ、
+     * 残存条件の変数不足で失敗しないようにします。
+     */
     private fun resolveTargetFilter(spec: TargetSpec, session: ExecutionSession): TargetSpec? {
+        if (spec.kind == TargetKind.TEMPORARY) return spec
         fun resolve(value: String?): String? {
             if (value == null || value.isBlank()) return null
             return resolveText(value, session)
@@ -3814,7 +3823,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 ?: session.origin
             return listOf(base)
         }
-        val resolved = resolvePositions(spec, session, ambient)
+        val resolved = resolvePositions(spec, session, ambient) ?: return null
         if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) return null
         return resolved
     }
@@ -3903,7 +3912,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
     ): List<Location>? {
         if (spec == null) return null
-        val resolved = resolvePositions(spec, session, context)
+        val resolved = resolvePositions(spec, session, context) ?: return null
         if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) return null
         return resolved
     }
@@ -3913,17 +3922,28 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      *
      * 対象内包位置（TARGET）は選択エンティティそれぞれの位置へ0..N件解決し、
      * それ以外は単一解決の0..1件です。各コマンド側で重複実装しません。
+     * issue #review P2-6: TARGET内包の解決失敗（未解決・不正）はnullで返し、
+     * 正常な0件（空一覧）と区別します。呼び出し側はnullを失敗として扱い、
+     * 空集合は従来どおり対象なしの成功として扱います。
      */
     private fun resolvePositions(
         spec: PositionSpec,
         session: ExecutionSession,
         context: ExecutionContextSpec?,
-    ): List<Location> {
+    ): List<Location>? {
         if (spec.kind == PositionKind.TARGET) {
             val target = spec.target ?: return emptyList()
-            return resolveTargetSpecs(target, session, context).map { it.location.clone() }
+            return when (val resolution = resolveTargetSpecsResult(target, session, context)) {
+                is TargetResolution.Resolved -> resolution.entities.map { it.location.clone() }
+                is TargetResolution.Unresolved, is TargetResolution.Invalid -> {
+                    // 原因の記録と通知は resolveTargetSpecs 側へ一元化します。
+                    // 解決本体の再計算は失敗時のみであり、通常系の負荷は変えません。
+                    resolveTargetSpecs(target, session, context)
+                    null
+                }
+            }
         }
-        return resolvePosition(spec, session, context)?.let { listOf(it) } ?: emptyList()
+        return resolvePosition(spec, session, context)?.let { listOf(it) }
     }
 
     /**
@@ -4198,7 +4218,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
         // テキスト／数値欄に現れる `%{name}%` はスカラーだけを許可します。
         // POSITION等を空文字へ変換して実行を続けると、型エラーが成功に見えます。
-        if (node.params.values.any { !scalarReferencesAvailable(it) }) return true
+        // issue #review P2-7: 表示方式で使わない時間項目（アクションバーの
+        // フェード値等）は検査対象から外します。有効項目の定義は検証と共有し、
+        // 非表示項目の残存値でコマンド全体がスキップされないようにします。
+        val ignoredParams = if (node.type == CommandType.DISPLAY_TEXT) {
+            setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds") -
+                me.awabi2048.kantancommander.model.DisplayTextTimingPolicy.effectiveTimeFields(node)
+        } else {
+            emptySet()
+        }
+        if (node.params.filterKeys { it !in ignoredParams }.values.any { !scalarReferencesAvailable(it) }) return true
 
         fun entityAvailable(name: String?): Boolean {
             val value = name?.takeIf(String::isNotBlank)
