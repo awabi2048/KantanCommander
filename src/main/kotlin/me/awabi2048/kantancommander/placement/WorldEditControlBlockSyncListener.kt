@@ -40,24 +40,6 @@ import java.util.logging.Level
 class WorldEditControlBlockSyncListener(
     private val plugin: KantanCommanderPlugin,
 ) : Listener {
-    /**
-     * 基準点からの相対差分で保持する配置項目です。
-     *
-     * `placementKey` は `"$world,$x,$y,$z"` 形式の台帳キーであり、移動元の
-     * 特定に使います。`scriptId` と `facing` は移動先への再登録に使います。
-     * `sourceWasGlass` は確保時に移動元が配置素材だったかを表し、既に drift
-     * している台帳残存を移動判定から除外するために使います。
-     */
-    private data class RelativePlacement(
-        val placementKey: String,
-        val scriptId: UUID,
-        val facing: String,
-        val relativeX: Int,
-        val relativeY: Int,
-        val relativeZ: Int,
-        val sourceWasGlass: Boolean,
-    )
-
     private data class PendingClipboard(
         val mode: WorldEditClipboardOperation,
         val sourceWorldName: String,
@@ -79,13 +61,6 @@ class WorldEditControlBlockSyncListener(
         val placements: List<RelativePlacement>,
     )
 
-    /**
-     * 確保時点の周辺ガラス配置です。
-     *
-     * 予測移動先の不一致（方向解釈の差異等）に備え、移動元周辺の配置素材の
-     * 有無だけを保持します。確保後に非ガラス→ガラスへ遷移した台帳未登録セルを
-     * 実際の移動先として採用し、既存のずれガラスを誤採用しません。
-     */
     private data class MoveGlassSnapshot(
         val halfEdge: Int,
         val glass: Map<Triple<Int, Int, Int>, Boolean>,
@@ -353,17 +328,24 @@ class WorldEditControlBlockSyncListener(
     /**
      * 移動完了条件（高速 path）です。
      *
-     * 移動先だけが先に配置された途中状態で確定すると、移動元のUUIDを早く解放して
-     * 重複登録を招くため、移動元の実体消去も完了条件に含めます。確保時に既に
+     * 移動写像として一括評価します。重なり移動では中間の移動元に前任者の
+     * 到達が残るため、「移動元が消えた」だけでなく「移動元が自バッチの
+     * 別項目の移動先と一致する」場合も確定済みとします。確保時に既に
      * 実体がなかった項目は判定から除外し、掃除へ委ねます。
      */
     private fun isMoveCompleted(pending: PendingMove): Boolean {
         val world = Bukkit.getWorld(pending.sourceWorldName) ?: return false
-        return pending.placements.filter { it.sourceWasGlass }.all { relative ->
+        val live = pending.placements.filter { it.sourceWasGlass }
+        if (live.isEmpty()) return true
+        val targets = live.mapTo(mutableSetOf()) { targetPoint(sourcePoint(pending, it), pending.offset) }
+        return live.all { relative ->
             val source = sourcePoint(pending, relative)
             val target = targetPoint(source, pending.offset)
-            !PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(source.first, source.second, source.third).type) &&
-                PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(target.first, target.second, target.third).type)
+            if (!PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(target.first, target.second, target.third).type)) {
+                return@all false
+            }
+            !PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(source.first, source.second, source.third).type) ||
+                source in targets
         }
     }
 
@@ -429,55 +411,173 @@ class WorldEditControlBlockSyncListener(
     /**
      * 台帳の移動確定です。
      *
-     * [offset] には予測変位または実測変位を渡します。移動元の実体が消えて
-     * いれば同じスクリプトを移し、残っていればコピー相当として新しい
-     * スクリプトを発行します。facingは維持します。
+     * [offset] には予測変位または実測変位を渡します。移動写像を一括評価してから、
+     * 第1相で移動元・重なり既存の台帳除去、第2相で移動先登録を行います。
+     * 第2相の失敗時は第1相の除去を placementKey 単位で復元し、スクリプトの
+     * 削除は全登録の成功後に遅延して行います。重なり移動では中間セルを
+     * 二重に扱わないため、完了条件の成立しない配置消失が起きません。
      */
     private fun applyPendingMove(pending: PendingMove, offset: WorldEditMoveOffset) {
         // 呼び出し側で保留の同一性を確認・除去済みのため、ここでは再確認しません。
         val world = Bukkit.getWorld(pending.sourceWorldName) ?: return
-        for (relative in pending.placements) {
-            if (!relative.sourceWasGlass) continue
-            val source = sourcePoint(pending, relative)
-            val target = targetPoint(source, offset)
-            val sourceStillPlaced = PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(source.first, source.second, source.third).type)
-            val targetPlaced = PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(target.first, target.second, target.third).type)
-            if (targetPlaced) {
-                val existing = plugin.placements.find(world, target.first, target.second, target.third)
-                if (existing != null) {
-                    if (existing.scriptId == relative.scriptId) continue
-                    removePlacementFully(world, existing)
+        val live = pending.placements.filter { it.sourceWasGlass }
+        if (live.isEmpty()) return
+        val batchSourceKeys = live.mapTo(mutableSetOf()) {
+            val source = sourcePoint(pending, it)
+            keyOf(pending.sourceWorldName, source.first, source.second, source.third)
+        }
+        // 世界状態の読み取りは計画確定前に一括して行い、確定中の変化に引きずられません。
+        val glassNow = mutableMapOf<Triple<Int, Int, Int>, Boolean>()
+        fun isGlass(point: Triple<Int, Int, Int>): Boolean = glassNow.getOrPut(point) {
+            PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(point.first, point.second, point.third).type)
+        }
+        val ledgerNow = mutableMapOf<Triple<Int, Int, Int>, DiskPlacement?>()
+        fun existingAt(point: Triple<Int, Int, Int>): DiskPlacement? = ledgerNow.getOrPut(point) {
+            plugin.placements.find(world, point.first, point.second, point.third)
+        }
+        val plans = WorldEditMovePlanner.planMoveBatch(
+            items = live,
+            sourceOf = { sourcePoint(pending, it) },
+            targetOf = { targetPoint(it, offset) },
+            inHeight = { (_, y, _) -> y in world.minHeight..world.maxHeight },
+            isGlass = ::isGlass,
+            existingAt = ::existingAt,
+            batchSourceKeys = batchSourceKeys,
+        )
+        // 第1相：移動元・重なり既存の台帳除去（スクリプト削除は遅延します）。
+        val removedSources = mutableListOf<DiskPlacement>()
+        val removedOverlapped = mutableListOf<DiskPlacement>()
+        // 消去確定した項目のスクリプトは、成功確定後に遅延して削除します。
+        // 同一スクリプトの複数貼付けがあり得るため、他に生存参照がなければ消します。
+        val erasedScriptIds = mutableListOf<Pair<UUID, String>>()
+        fun deleteScriptIfOrphaned(scriptId: UUID, placementKey: String) {
+            if (plugin.placements.all().any { it.scriptId == scriptId }) return
+            runCatching { plugin.scripts.delete(scriptId) }
+                .onFailure { failure ->
+                    plugin.logger.log(
+                        Level.WARNING,
+                        "[KantanCommander] 移動確定後の不要スクリプト削除に失敗しました: script=$scriptId, placement=$placementKey",
+                        failure,
+                    )
                 }
-                // 移動元の実体が消えていれば同じスクリプトを移し、残っていれば
-                // コピー相当として新しいスクリプトを発行します。facingは維持します。
-                if (!sourceStillPlaced) {
-                    val moved = findByKey(relative.placementKey)
+        }
+        var phaseFailed = false
+        outer@ for (plan in plans) {
+            when (plan.action) {
+                MoveItemAction.MOVE_SAME, MoveItemAction.ERASE -> {
+                    val moved = findByKey(plan.relative.placementKey)
                     if (moved != null) {
                         releaseRuntimeState(moved)
-                        runCatching {
+                        val removed = runCatching {
                             plugin.placements.remove(world, moved.x, moved.y, moved.z)
-                        }.getOrNull()?.let { plugin.placements.removeDisplay(world, it.displayId) }
+                        }.getOrNull()
+                        if (removed == null) {
+                            plugin.logger.warning(
+                                "[KantanCommander] //move の移動元除去に失敗したため残りを中止します: placement=${plan.relative.placementKey}",
+                            )
+                            phaseFailed = true
+                            break@outer
+                        }
+                        plugin.placements.removeDisplay(world, removed.displayId)
+                        removedSources.add(removed)
+                        if (plan.action == MoveItemAction.ERASE) {
+                            erasedScriptIds.add(removed.scriptId to removed.key)
+                        }
                     }
-                    registerPlacement(world, target.first, target.second, target.third, relative.scriptId, relative.facing)
-                } else {
-                    val sourceScript = plugin.scripts.load(relative.scriptId)
-                    if (sourceScript == null) {
-                        plugin.logger.warning("移動元のスクリプトが無いため登録を見送りました: placement=${relative.placementKey}")
-                        continue
-                    }
-                    val copied = runCatching { plugin.scripts.copyForPlacement(sourceScript) }.getOrNull()
-                    if (copied == null) {
-                        plugin.logger.warning("移動用のスクリプト複製に失敗しました: placement=${relative.placementKey}")
-                        continue
-                    }
-                    registerPlacement(world, target.first, target.second, target.third, copied.id, relative.facing)
                 }
-                plugin.refreshRedstoneTopologyAround(world.getBlockAt(target.first, target.second, target.third))
-                plugin.refreshRedstoneTopologyAround(world.getBlockAt(source.first, source.second, source.third))
-            } else if (!sourceStillPlaced) {
-                // 移動元も移動先も実体でない場合は消去として扱い、残った台帳を掃除します。
-                findByKey(relative.placementKey)?.let { removePlacementFully(world, it) }
+                MoveItemAction.COPY_NEW, MoveItemAction.NOOP, MoveItemAction.SKIP -> Unit
             }
+            val overlapped = plan.overlappedExisting
+            if (overlapped != null) {
+                releaseRuntimeState(overlapped)
+                val removed = runCatching {
+                    plugin.placements.remove(world, overlapped.x, overlapped.y, overlapped.z)
+                }.getOrNull()
+                if (removed == null) {
+                    plugin.logger.warning(
+                        "[KantanCommander] //move の重なり既存除去に失敗したため残りを中止します: placement=${overlapped.key}",
+                    )
+                    phaseFailed = true
+                    break@outer
+                }
+                plugin.placements.removeDisplay(world, removed.displayId)
+                removedOverlapped.add(removed)
+            }
+        }
+        // 第2相：移動先登録。失敗時は第1相の除去を復元します。
+        val registeredKeys = mutableListOf<Triple<Int, Int, Int>>()
+        if (!phaseFailed) {
+            for (plan in plans) {
+                val ok = when (plan.action) {
+                    MoveItemAction.MOVE_SAME -> {
+                        val registered = registerPlacement(
+                            world, plan.target.first, plan.target.second, plan.target.third,
+                            plan.relative.scriptId, plan.relative.facing, rollbackOnFailure = false,
+                        )
+                        if (registered) registeredKeys.add(plan.target)
+                        registered
+                    }
+                    MoveItemAction.COPY_NEW -> {
+                        val sourceScript = plugin.scripts.load(plan.relative.scriptId)
+                        if (sourceScript == null) {
+                            plugin.logger.warning("移動元のスクリプトが無いため登録を見送りました: placement=${plan.relative.placementKey}")
+                            false
+                        } else {
+                            val copied = runCatching { plugin.scripts.copyForPlacement(sourceScript) }.getOrNull()
+                            if (copied == null) {
+                                plugin.logger.warning("移動用のスクリプト複製に失敗しました: placement=${plan.relative.placementKey}")
+                                false
+                            } else {
+                                val registered = registerPlacement(
+                                    world, plan.target.first, plan.target.second, plan.target.third,
+                                    copied.id, plan.relative.facing, rollbackOnFailure = false,
+                                )
+                                if (registered) registeredKeys.add(plan.target)
+                                // 複製後に登録できなかったスクリプトは孤児化させず削除します。
+                                if (!registered) {
+                                    runCatching { plugin.scripts.delete(copied.id) }
+                                }
+                                registered
+                            }
+                        }
+                    }
+                    MoveItemAction.ERASE, MoveItemAction.NOOP, MoveItemAction.SKIP -> true
+                }
+                if (!ok) {
+                    phaseFailed = true
+                    break
+                }
+                plugin.refreshRedstoneTopologyAround(world.getBlockAt(plan.target.first, plan.target.second, plan.target.third))
+                plugin.refreshRedstoneTopologyAround(world.getBlockAt(plan.source.first, plan.source.second, plan.source.third))
+            }
+        }
+        if (phaseFailed) {
+            // 復元：登録済み移動先の除去と、除去済み台帳の再登録を行います。
+            // バッチ参加スクリプトは削除していないため、配置の再登録で復旧します。
+            for (target in registeredKeys) {
+                runCatching { plugin.placements.remove(world, target.first, target.second, target.third) }
+            }
+            for (removed in removedSources + removedOverlapped) {
+                runCatching {
+                    plugin.placements.add(removed)
+                    plugin.placements.spawnDisplay(world, removed)
+                }.onFailure { failure ->
+                    plugin.logger.log(
+                        Level.WARNING,
+                        "[KantanCommander] //move の復元に失敗しました: placement=${removed.key}",
+                        failure,
+                    )
+                }
+            }
+            return
+        }
+        // 成功確定後に限り、自バッチ外の重なり既存スクリプトと消去確定した
+        // 項目のスクリプトを削除します。他に生存参照があるものは残します。
+        for (overlapped in removedOverlapped) {
+            deleteScriptIfOrphaned(overlapped.scriptId, overlapped.key)
+        }
+        for ((scriptId, placementKey) in erasedScriptIds) {
+            deleteScriptIfOrphaned(scriptId, placementKey)
         }
     }
 
@@ -633,19 +733,37 @@ class WorldEditControlBlockSyncListener(
             }
     }
 
-    private fun registerPlacement(world: World, x: Int, y: Int, z: Int, scriptId: UUID, facing: String) {
+    /**
+     * 配置を台帳・表示へ登録し、成否を返します。
+     *
+     * 失敗時は警告を残します。一括確定中（[rollbackOnFailure] = false）は
+     * 呼び出し側の一括ロールバックへ委ね、個別に重なり先を消しません。
+     */
+    private fun registerPlacement(
+        world: World,
+        x: Int,
+        y: Int,
+        z: Int,
+        scriptId: UUID,
+        facing: String,
+        rollbackOnFailure: Boolean = true,
+    ): Boolean {
         val placement = DiskPlacement(world.name, x, y, z, scriptId, facing, null)
-        runCatching {
+        val result = runCatching {
             plugin.placements.add(placement)
             plugin.placements.spawnDisplay(world, placement)
-        }.onFailure { failure ->
-            runCatching { plugin.placements.remove(world, x, y, z) }
+        }
+        result.onFailure { failure ->
+            if (rollbackOnFailure) {
+                runCatching { plugin.placements.remove(world, x, y, z) }
+            }
             plugin.logger.log(
                 Level.WARNING,
                 "同期した配置の登録に失敗しました: placement=${keyOf(world.name, x, y, z)}",
                 failure,
             )
         }
+        return result.isSuccess
     }
 
     /** テスト実行と編集中画面を解放し、削除済み配置への遅延到達を防ぎます。 */
