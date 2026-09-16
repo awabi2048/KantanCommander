@@ -1098,7 +1098,8 @@ class VanillaDatapackExporter(
      * 複合値の位置・対象に関するvanilla制約を検証します。
      *
      * TEMP_SET と変数操作コマンドの EXECUTION scope で共有します。MyWorld固有
-     * スポーンと固定エンティティ参照はバニラに同等概念がないため明示エラーにします。
+     * スポーンはバニラに同等概念がないため明示エラーにします。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
     private fun validateComplexValuePosition(
         node: CommandNode,
