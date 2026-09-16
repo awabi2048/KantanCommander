@@ -47,6 +47,14 @@ class WorldEditControlBlockSyncListener(
         val placements: List<RelativePlacement>,
         var sourceRemoved: Boolean = false,
         var sameIdPasteConsumed: Boolean = false,
+        /**
+         * issue #review P1-2: 切り取り確定済みの移動元台帳キー集合です。
+         *
+         * 失敗した切り取りでも原点一致だけで削除へ進むと、実ブロック残存なのに
+         * 台帳・表示・起動登録が解除されるため、項目別に実変化を確認してから
+         * 確定します。貼付け側は未確定項目の同一ID再利用を行いません。
+         */
+        val removedKeys: MutableSet<String> = mutableSetOf(),
     )
 
     private data class PendingMove(
@@ -171,7 +179,7 @@ class WorldEditControlBlockSyncListener(
             pendingClipboards.remove(player.uniqueId)
             return
         }
-        pendingClipboards[player.uniqueId] = PendingClipboard(
+        val pending = PendingClipboard(
             mode = mode,
             sourceWorldName = player.world.name,
             origin = capture.origin,
@@ -183,11 +191,45 @@ class WorldEditControlBlockSyncListener(
                 )
             },
         )
+        pendingClipboards[player.uniqueId] = pending
         if (mode == WorldEditClipboardOperation.CUT) {
-            // WorldEditのcutはBukkitのBlockBreakEventを通らないため、次のtickで移動元を消します。
-            Bukkit.getScheduler().runTask(plugin, Runnable {
-                removeCutSourcePlacements(player.uniqueId)
-            })
+            // WorldEditのcutはBukkitのBlockBreakEventを通らないため、移動元の
+            // 実変化を確認できるまで再確認し、成功した項目だけ台帳から消します。
+            // FAWEの低速編集に備えて移動確定と同じ試行上限を使います。
+            WorldEditReconciler.runUntilReady(
+                plugin = plugin,
+                isStillCurrent = { pendingClipboards[player.uniqueId] === pending },
+                isReady = { isCutCompleted(player.uniqueId, pending) },
+                onReady = {
+                    if (pendingClipboards[player.uniqueId] === pending) {
+                        removeCutSourcePlacements(player.uniqueId)
+                    }
+                },
+                onTimeout = { attempts ->
+                    plugin.logger.warning(
+                        "[KantanCommander] //cut の移動元確定を期限切れで見送りました: " +
+                            "player=${player.name} attempt=$attempts",
+                    )
+                },
+                maxAttempts = MOVE_MAX_ATTEMPTS,
+            )
+        }
+    }
+
+    /**
+     * issue #review P1-2: 切り取り完了条件です。
+     *
+     * 全項目の移動元台帳が消えているか、実ブロックが配置素材でなくなって
+     * いる場合に確定します。権限不足などで切り取りが失敗した場合は成立せず、
+     * 台帳・表示・起動登録を解除しません。
+     */
+    private fun isCutCompleted(playerUuid: UUID, pending: PendingClipboard): Boolean {
+        val player = Bukkit.getPlayer(playerUuid) ?: return false
+        val world = Bukkit.getWorld(pending.sourceWorldName) ?: return false
+        return pending.placements.all { relative ->
+            if (relative.placementKey in pending.removedKeys) return@all true
+            val placement = findByKey(relative.placementKey) ?: return@all true
+            !PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(placement.x, placement.y, placement.z).type)
         }
     }
 
@@ -196,6 +238,9 @@ class WorldEditControlBlockSyncListener(
      *
      * スクリプトは貼付け時の再登録に使うため削除しません。編集中の画面と
      * テスト実行だけを先に解放し、削除済み配置への遅延入力を防ぎます。
+     * issue #review P1-2: 項目別に実変化（移動元が配置素材でなくなること）を
+     * 確認してから確定し、失敗した切り取りで元の配置を解除しません。
+     * 全件確定でのみ [PendingClipboard.sourceRemoved] を立てます。
      */
     private fun removeCutSourcePlacements(playerUuid: UUID) {
         val pending = pendingClipboards[playerUuid] ?: return
@@ -203,13 +248,33 @@ class WorldEditControlBlockSyncListener(
         val player = Bukkit.getPlayer(playerUuid) ?: return
         if (!WorldEditSelectionSupport.isClipboardOriginMatching(player, pending.origin)) return
         val world = Bukkit.getWorld(pending.sourceWorldName) ?: return
+        var failedKeys = 0
         for (relative in pending.placements) {
-            val placement = findByKey(relative.placementKey) ?: continue
+            if (!pending.removedKeys.add(relative.placementKey)) continue
+            val placement = findByKey(relative.placementKey)
+            if (placement == null) continue
+            // 実ブロックが残っている場合は切り取り不成立のため台帳へ手を触れません。
+            if (PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(placement.x, placement.y, placement.z).type)) {
+                pending.removedKeys.remove(relative.placementKey)
+                failedKeys++
+                continue
+            }
             releaseRuntimeState(placement)
             val removed = runCatching {
                 plugin.placements.remove(world, placement.x, placement.y, placement.z)
-            }.getOrNull() ?: continue
+            }.getOrNull()
+            if (removed == null) {
+                pending.removedKeys.remove(relative.placementKey)
+                failedKeys++
+                continue
+            }
             plugin.placements.removeDisplay(world, removed.displayId)
+        }
+        if (failedKeys > 0) {
+            plugin.logger.warning(
+                "[KantanCommander] //cut の移動元確定を見送りました: player=${player.name} failed=$failedKeys",
+            )
+            return
         }
         pending.sourceRemoved = true
     }
