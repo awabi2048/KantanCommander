@@ -114,6 +114,19 @@ class WorldEditControlBlockSyncListener(
         val maxHeight: Int,
         val entries: List<UndoLedgerEntry>,
         var lastOutcome: UndoOutcome? = null,
+        /**
+         * 照合の実行回数です。
+         *
+         * デバッグ用に保持し、編集開始前の早期確定（FAWEの非同期適用前に
+         * 変化なしと判定する誤収束）の切り分けに使います。
+         */
+        var checks: Int = 0,
+        /** ログ済みの照合結果です。変化時のみ記録し毎tickの出力を抑えます。 */
+        var lastLoggedOutcome: UndoOutcome? = null,
+        /** ログ済みの消失キー一覧です。結果と合わせて変化検出に使います。 */
+        var lastLoggedLostKeys: List<String> = emptyList(),
+        /** ログ済みの出現セル数です。走査上限超過時は -1 とします。 */
+        var lastLoggedAppearedCount: Int = -2,
     )
 
     /** undo／redo 確定時の照合結果です。確定系だけ安定確認の対象にします。 */
@@ -125,6 +138,19 @@ class WorldEditControlBlockSyncListener(
         ) : UndoOutcome
         data object Ambiguous : UndoOutcome
     }
+
+    /**
+     * 照合評価の結果と診断情報です。
+     *
+     * 判定本体（[outcome]）と、デバッグ用の内訳（消失キー・出現セル数・
+     * 走査上限超過）をまとめて返し、ログの変化検出に使います。
+     */
+    private data class UndoEvaluation(
+        val outcome: UndoOutcome,
+        val lostKeys: List<String>,
+        val appearedCount: Int,
+        val scanSkipped: Boolean,
+    )
 
     private val pendingClipboards = ConcurrentHashMap<UUID, PendingClipboard>()
     private val pendingMoves = ConcurrentHashMap<UUID, PendingMove>()
@@ -270,7 +296,16 @@ class WorldEditControlBlockSyncListener(
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onWorldEditUndoRedoCommand(event: PlayerCommandPreprocessEvent) {
         if (!WorldEditCommands.isUndoCommand(event.message) && !WorldEditCommands.isRedoCommand(event.message)) return
-        if (!WorldEditAvailability.isAvailable()) return
+        if (!WorldEditAvailability.isAvailable()) {
+            plugin.logger.fine(
+                "[KantanCommander] undo/redo を見送りました（WorldEdit不在）: player=${event.player.name} " +
+                    "command=${event.message}",
+            )
+            return
+        }
+        plugin.logger.info(
+            "[KantanCommander] undo/redo を検出しました: player=${event.player.name} command=${event.message}",
+        )
         captureUndo(event.player, event.message)
     }
 
@@ -977,7 +1012,13 @@ class WorldEditControlBlockSyncListener(
         val entries = plugin.placements.all()
             .filter { it.world == world.name }
             .map { UndoLedgerEntry(it.key, it.x, it.y, it.z, it.scriptId, it.facing) }
-        if (entries.isEmpty()) return
+        if (entries.isEmpty()) {
+            plugin.logger.fine(
+                "[KantanCommander] undo/redo の追跡を見送りました（台帳なし）: player=${player.name} " +
+                    "command=$rawCommand",
+            )
+            return
+        }
         val pending = PendingUndo(
             worldName = world.name,
             rawCommand = rawCommand,
@@ -1013,33 +1054,72 @@ class WorldEditControlBlockSyncListener(
      *
      * 照合結果が確定系（変化なし・追従可能）で2回連続一致した場合だけ
      * 進めます。曖昧な間は低速編集中の可能性があるため待機し、期限切れで
-     * 猶予経路へ回します。
+     * 猶予経路へ回します。照合の内訳は初回と変化時のみ記録します。
      */
     private fun isUndoSettled(pending: PendingUndo): Boolean {
-        val outcome = computeUndoOutcome(pending)
+        pending.checks++
+        val evaluation = computeUndoOutcome(pending)
+        val outcome = evaluation.outcome
         val previous = pending.lastOutcome
         pending.lastOutcome = outcome
+        logUndoEvaluation(pending, evaluation)
         return (outcome is UndoOutcome.Noop || outcome is UndoOutcome.Accept) && outcome == previous
     }
 
+    /**
+     * 照合の内訳を診断ログへ記録します。
+     *
+     * 毎tickの出力にならないよう、初回と結果・消失・出現の変化時のみ
+     * 記録します。編集開始前の早期確定（FAWE適用前の変化なし判定）の
+     * 切り分けに、実行回数も含めます。
+     */
+    private fun logUndoEvaluation(pending: PendingUndo, evaluation: UndoEvaluation) {
+        val outcome = evaluation.outcome
+        val changed = outcome != pending.lastLoggedOutcome ||
+            evaluation.lostKeys != pending.lastLoggedLostKeys ||
+            evaluation.appearedCount != pending.lastLoggedAppearedCount
+        if (pending.checks > 1 && !changed) return
+        pending.lastLoggedOutcome = outcome
+        pending.lastLoggedLostKeys = evaluation.lostKeys
+        pending.lastLoggedAppearedCount = evaluation.appearedCount
+        val detail = when (outcome) {
+            is UndoOutcome.Noop -> "変化なし"
+            is UndoOutcome.Accept ->
+                "追従可能 translation=(${outcome.translation.x},${outcome.translation.y},${outcome.translation.z}) " +
+                    "pairs=${outcome.pairs.map { (entry, target) -> "${entry.placementKey}->${target.toKeyString()}" }}"
+            is UndoOutcome.Ambiguous ->
+                "未確定 lost=${evaluation.lostKeys} appeared=${evaluation.appearedCount}" +
+                    if (evaluation.scanSkipped) " 走査上限超過" else ""
+        }
+        plugin.logger.info(
+            "[KantanCommander] undo/redo の照合[${pending.checks}回目]: command=${pending.rawCommand} $detail",
+        )
+    }
+
     /** 実行前台帳と現在状態の差分から照合結果を求めます。 */
-    private fun computeUndoOutcome(pending: PendingUndo): UndoOutcome {
-        val world = Bukkit.getWorld(pending.worldName) ?: return UndoOutcome.Ambiguous
+    private fun computeUndoOutcome(pending: PendingUndo): UndoEvaluation {
+        val world = Bukkit.getWorld(pending.worldName)
+            ?: return UndoEvaluation(UndoOutcome.Ambiguous, emptyList(), -1, scanSkipped = true)
         val registered = plugin.placements.all()
             .filter { it.world == pending.worldName }
             .map { Triple(it.x, it.y, it.z) }
             .toSet()
         val lost = findUndoLost(world, pending)
-        if (lost.isEmpty()) return UndoOutcome.Noop
+        if (lost.isEmpty()) return UndoEvaluation(UndoOutcome.Noop, emptyList(), 0, scanSkipped = false)
         val lostCells = lost.map { Triple(it.x, it.y, it.z) }
         val appeared = scanUndoAppeared(world, pending, lostCells, registered)
-            ?: return UndoOutcome.Ambiguous
+            ?: return UndoEvaluation(UndoOutcome.Ambiguous, lost.map { it.placementKey }, -1, scanSkipped = true)
         val translation = WorldEditUndoRematch.matchTranslation(lostCells, appeared)
-            ?: return UndoOutcome.Ambiguous
+            ?: return UndoEvaluation(UndoOutcome.Ambiguous, lost.map { it.placementKey }, appeared.size, scanSkipped = false)
         // 照合器と同じ座標順で整列し、対応付けを一致させます。
         val orderedLost = lost.sortedWith(compareBy({ it.x }, { it.y }, { it.z }))
         val orderedAppeared = appeared.sortedWith(compareBy({ it.first }, { it.second }, { it.third }))
-        return UndoOutcome.Accept(translation, orderedLost.zip(orderedAppeared))
+        return UndoEvaluation(
+            UndoOutcome.Accept(translation, orderedLost.zip(orderedAppeared)),
+            lost.map { it.placementKey },
+            appeared.size,
+            scanSkipped = false,
+        )
     }
 
     /**
@@ -1097,7 +1177,16 @@ class WorldEditControlBlockSyncListener(
      * 失敗時は除去分を復元し、消失を防ぐため猶予へ回します。
      */
     private fun applyUndoRematch(pending: PendingUndo) {
-        val accept = pending.lastOutcome as? UndoOutcome.Accept ?: return
+        val accept = pending.lastOutcome as? UndoOutcome.Accept
+        if (accept == null) {
+            // 変化なし確定の到達を可視化します。編集開始前の早期確定の
+            // 疑いがある場合、この直前の照合ログと合わせて判定します。
+            plugin.logger.info(
+                "[KantanCommander] undo/redo の追跡を終了します（台帳不変・照合${pending.checks}回）: " +
+                    "command=${pending.rawCommand}",
+            )
+            return
+        }
         val world = Bukkit.getWorld(pending.worldName) ?: return
         undoGrace.keys.removeAll(accept.pairs.map { it.first.placementKey }.toSet())
         val registeredTargets = mutableListOf<Triple<Int, Int, Int>>()
@@ -1123,6 +1212,9 @@ class WorldEditControlBlockSyncListener(
             )
             if (registered) {
                 registeredTargets.add(target)
+                plugin.logger.fine(
+                    "[KantanCommander] undo/redo の追従項目: ${entry.placementKey}->${target.toKeyString()}",
+                )
                 plugin.refreshRedstoneTopologyAround(world.getBlockAt(target.first, target.second, target.third))
             } else {
                 failed = true
@@ -1209,6 +1301,13 @@ class WorldEditControlBlockSyncListener(
             if (PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(placement.x, placement.y, placement.z).type)) continue
             runCatching {
                 removePlacementFully(world, placement)
+            }.onSuccess {
+                // 掃除による破棄を可視化します。undo／redo 後の消失が
+                // この経路か追従失敗かを切り分ける診断に使います。
+                plugin.logger.info(
+                    "[KantanCommander] 消失した配置を掃除しました: placement=${placement.key} " +
+                        "script=${placement.scriptId}",
+                )
             }.onFailure { failure ->
                 plugin.logger.log(
                     Level.WARNING,
