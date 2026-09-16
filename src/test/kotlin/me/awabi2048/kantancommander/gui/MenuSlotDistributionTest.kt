@@ -10,8 +10,8 @@ class MenuSlotDistributionTest {
     fun `command picker keeps one empty row above and below a fixed fourteen-slot area`() {
         assertEquals(54, CommandPickerLayoutPolicy.SIZE)
         assertEquals((19..25).toList() + (28..34).toList(), CommandPickerLayoutPolicy.itemSlots)
-        // issue #13: 簡易分類4タブを下段中央へ対称配置します。
-        assertEquals(listOf(47, 48, 50, 51), CommandPickerLayoutPolicy.categorySlots)
+        // 簡易分類3タブ（エンティティ関連・ブロックの操作・演出）を下段中央へ対称配置します。
+        assertEquals(listOf(47, 49, 51), CommandPickerLayoutPolicy.categorySlots)
         assertEquals(45, CommandPickerLayoutPolicy.BACK_SLOT)
     }
 
