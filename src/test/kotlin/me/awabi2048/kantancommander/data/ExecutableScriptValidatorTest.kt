@@ -434,6 +434,41 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
+    fun `actionbar ignores leftover fade variable references`() {
+        // issue #review P2-7: 非表示項目の残存値は検証対象外です。
+        // 有効項目の定義は DisplayTextTimingPolicy で共有します。
+        val script = DiskScript(name = "actionbar-stale-fade", owner = UUID.randomUUID())
+        val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        actionbar.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        actionbar.params.putAll(
+            mapOf(
+                "mode" to "actionbar",
+                "fadeInSeconds" to "%{missing}%",
+                "staySeconds" to "3",
+                "fadeOutSeconds" to "1",
+            )
+        )
+
+        assertTrue(ExecutableScriptValidator.validate(script).isEmpty())
+    }
+
+    @Test
+    fun `temporary target skips detail filter validation`() {
+        // issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
+        // 残存条件の形式検査を行いません。変数名の定義検査だけ残します。
+        val script = DiskScript(name = "temporary-filters", owner = UUID.randomUUID())
+        val node = GraphEditor.append(script.graph, CommandType.ENTITY_DELETE)
+        node.targetSpec = TargetSpec(TargetKind.TEMPORARY, tempName = "foe", tag = "###", maximumDistance = -1.0)
+
+        val validationErrors = ExecutableScriptValidator.validate(script)
+        // 変数名自体の定義検査は残し、詳細条件の形式検査を行いません。
+        assertTrue(validationErrors.any { it.message.contains("一時変数が未定義") })
+        assertFalse(validationErrors.any { it.message.contains("タグ") || it.message.contains("対象距離") }) {
+            "unexpected errors: ${validationErrors.joinToString(" | ") { it.rendered() }}"
+        }
+    }
+
+    @Test
     fun `display and wait durations require whole tick values`() {
         val displayScript = DiskScript(name = "fractional-display", owner = UUID.randomUUID())
         val display = GraphEditor.append(displayScript.graph, CommandType.DISPLAY_TEXT)

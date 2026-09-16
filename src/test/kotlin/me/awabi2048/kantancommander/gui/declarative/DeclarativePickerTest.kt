@@ -97,6 +97,22 @@ class DeclarativePickerTest {
     }
 
     @Test
+    fun `card hover keeps description lines separate`() {
+        // issue #review P2-10: 説明の2行構成を空白結合で潰さないことを検証します。
+        val twoLines = data().copy(
+            cards = listOf(PickerCard("SAY", "Say", listOf("機能の説明", "バニラ対応"), -0.10, 0.29)),
+            cardBackgrounds = listOf(blockData()),
+        )
+        val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(twoLines), onAction = {})
+        assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")
+        val hover = compiled.elements.associateBy { it.elementId }.getValue("lower-type:SAY").hoverText
+        assertNotNull(hover)
+        val rendered = hover!!.text.toString()
+        assertTrue(rendered.contains("機能の説明"), rendered)
+        assertTrue(rendered.contains("バニラ対応"), rendered)
+    }
+
+    @Test
     fun `card hovers follow legacy row positions`() {
         val compiled = KantanLayoutBridge.compile(DeclarativePicker.document(data()), onAction = {})
         assertTrue(compiled.diagnostics.isEmpty(), "diagnostics: ${compiled.diagnostics}")

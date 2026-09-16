@@ -68,4 +68,21 @@ class DisplayTextTimingTest {
 
         assertEquals(DisplayTextTiming(1.0, 3.0, 1.0), timing)
     }
+
+    @Test
+    fun `effective time fields follow the display mode`() {
+        // issue #review P2-7: 有効時間項目の定義は検証・参照チェック・実行で共有します。
+        assertEquals(
+            setOf("staySeconds"),
+            DisplayTextTimingPolicy.effectiveTimeFields("actionbar"),
+        )
+        assertEquals(
+            setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds"),
+            DisplayTextTimingPolicy.effectiveTimeFields("title"),
+        )
+        assertEquals(
+            setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds"),
+            DisplayTextTimingPolicy.effectiveTimeFields("tellraw"),
+        )
+    }
 }
