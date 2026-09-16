@@ -55,6 +55,20 @@ class WorldEditControlBlockSyncListener(
          * 確定します。貼付け側は未確定項目の同一ID再利用を行いません。
          */
         val removedKeys: MutableSet<String> = mutableSetOf(),
+        /**
+         * issue #review P1-3/P2-4: 貼付け確定済みの貼付け先台帳キー集合です。
+         *
+         * 再貼付けの冪等性判定に使い、登録成功後にのみ追加します。
+         * 失敗した貼り付けで立てないことで、消失と重複登録を防ぎます。
+         */
+        val pastedKeys: MutableSet<String> = mutableSetOf(),
+        /**
+         * issue #review P1-3: 貼付けコマンド時点の貼付け先材質スナップショットです。
+         *
+         * 今回の貼り付けによる変更を確認できない既存配置は保持するため、
+         * 確定直前の比較基準として使います。キーは貼付け先の絶対座標です。
+         */
+        var pasteSnapshot: Map<Triple<Int, Int, Int>, Material>? = null,
     )
 
     private data class PendingMove(
@@ -106,9 +120,87 @@ class WorldEditControlBlockSyncListener(
     fun onWorldEditPasteCommand(event: PlayerCommandPreprocessEvent) {
         if (!WorldEditCommands.isPasteCommand(event.message)) return
         val playerUuid = event.player.uniqueId
-        Bukkit.getScheduler().runTask(plugin, Runnable {
-            pastePendingPlacements(playerUuid)
-        })
+        val pending = pendingClipboards[playerUuid] ?: return
+        // issue #review P2-4: 貼付けコマンド時点の材質を記録し、実編集が
+        // 完了するまで再確認します。FAWEの低速編集に備えて試行上限を延ばします。
+        snapshotPastePoints(event.player, pending)
+        WorldEditReconciler.runUntilReady(
+            plugin = plugin,
+            isStillCurrent = { pendingClipboards[playerUuid] === pending },
+            isReady = { isPasteCompleted(playerUuid, pending) },
+            onReady = {
+                if (pendingClipboards[playerUuid] === pending) {
+                    pastePendingPlacements(playerUuid)
+                }
+            },
+            onTimeout = { attempts ->
+                plugin.logger.warning(
+                    "[KantanCommander] //paste の確定を期限切れで見送りました: " +
+                        "player=${event.player.name} attempt=$attempts",
+                )
+                // 期限後も登録可能な項目だけは確定し、可能な保存を失いません。
+                // フラグは実際に登録した項目にだけ立てます。
+                if (pendingClipboards[playerUuid] === pending) {
+                    pastePendingPlacements(playerUuid)
+                }
+            },
+            maxAttempts = MOVE_MAX_ATTEMPTS,
+        )
+    }
+
+    /**
+     * issue #review P1-3/P2-4: 貼付けコマンド時点の材質スナップショットです。
+     *
+     * 確定時に今回の貼り付けによる変更か（非配置→配置への遷移か）を判定し、
+     * 変更を確認できない既存配置の置換を防ぎます。
+     */
+    private fun snapshotPastePoints(player: Player, pending: PendingClipboard) {
+        val world = player.world
+        val capture = WorldEditCapture(
+            origin = pending.origin,
+            entries = pending.placements.map {
+                WorldEditRelativeEntry(it, it.relativeX, it.relativeY, it.relativeZ)
+            },
+        )
+        val resolved = WorldEditSelectionSupport.resolvePastePoints(player, capture) ?: return
+        pending.pasteSnapshot = resolved
+            .filter { it.worldKey == world.key.toString() }
+            .associate { Triple(it.x, it.y, it.z) to world.getBlockAt(it.x, it.y, it.z).type }
+    }
+
+    /**
+     * issue #review P2-4: 貼付け完了条件です。
+     *
+     * 全貼付け先が「正しく登録済み」または「今回の変更で登録可能」の場合に
+     * 確定します。FAWEの低速編集中は成立せず、再確認を続けます。
+     */
+    private fun isPasteCompleted(playerUuid: UUID, pending: PendingClipboard): Boolean {
+        val player = Bukkit.getPlayer(playerUuid) ?: return false
+        val world = player.world
+        val capture = WorldEditCapture(
+            origin = pending.origin,
+            entries = pending.placements.map {
+                WorldEditRelativeEntry(it, it.relativeX, it.relativeY, it.relativeZ)
+            },
+        )
+        val resolved = WorldEditSelectionSupport.resolvePastePoints(player, capture) ?: return false
+        if (resolved.isEmpty()) return true
+        return resolved.all { pasted ->
+            if (pasted.worldKey != world.key.toString()) return@all true
+            val key = keyOf(world.name, pasted.x, pasted.y, pasted.z)
+            if (key in pending.pastedKeys) return@all true
+            val useSameId = pending.mode == WorldEditClipboardOperation.CUT &&
+                !pending.sameIdPasteConsumed &&
+                pasted.entry.placementKey in pending.removedKeys
+            if (useSameId) {
+                val existing = plugin.placements.find(world, pasted.x, pasted.y, pasted.z)
+                if (existing != null && existing.scriptId == pasted.entry.scriptId) return@all true
+            }
+            val before = pending.pasteSnapshot?.get(Triple(pasted.x, pasted.y, pasted.z))
+            val nowGlass = PlacedBlockMaterials.isPlacedBlock(world.getBlockAt(pasted.x, pasted.y, pasted.z).type)
+            // 今回の変更で配置素材になった項目、または既に正しく登録済みの項目だけ進めます。
+            nowGlass && (before == null || !PlacedBlockMaterials.isPlacedBlock(before))
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
@@ -279,6 +371,14 @@ class WorldEditControlBlockSyncListener(
         pending.sourceRemoved = true
     }
 
+    /**
+     * issue #review P1-3: 貼付け確定です。
+     *
+     * 冪等な単一パスであり、再確認・期限後の最善努力のいずれからも呼べます。
+     * 複製・登録を先に行い、既存配置の除去は新登録の成功後に行うため、
+     * 失敗した貼り付けで既存プログラムを置換しません。同一ID再利用は
+     * 切り取り確定済みの項目に限り、実際に登録した項目にだけ消費印を立てます。
+     */
     private fun pastePendingPlacements(playerUuid: UUID) {
         val pending = pendingClipboards[playerUuid] ?: return
         val player = Bukkit.getPlayer(playerUuid) ?: return
@@ -290,23 +390,31 @@ class WorldEditControlBlockSyncListener(
         )
         val resolved = WorldEditSelectionSupport.resolvePastePoints(player, capture) ?: return
         val world = player.world
-        val preserveFirstCutIds = pending.mode == WorldEditClipboardOperation.CUT && !pending.sameIdPasteConsumed
+        val keptOccupants = mutableListOf<String>()
         for (pasted in resolved) {
             val relative = pasted.entry
             // 貼付け先ワールドが変わった場合は登録しません。
             if (pasted.worldKey != world.key.toString()) continue
+            val targetKey = keyOf(world.name, pasted.x, pasted.y, pasted.z)
+            if (targetKey in pending.pastedKeys) continue
             val targetBlock = world.getBlockAt(pasted.x, pasted.y, pasted.z)
             // 実体が配置素材でない場合は貼付けが成立していないため、台帳を変更しません。
             if (!PlacedBlockMaterials.isPlacedBlock(targetBlock.type)) continue
             val existing = plugin.placements.find(world, pasted.x, pasted.y, pasted.z)
-            if (existing != null) {
-                // 同一スクリプトが既に登録済みの場合は何もしません。
-                if (existing.scriptId == relative.scriptId) continue
-                removePlacementFully(world, existing)
+            if (existing != null && existing.scriptId == relative.scriptId) continue
+            // CUT同一ID再利用は切り取り確定済みの項目に限ります。
+            // 未確定項目は複写経路へ迂回し、同一スクリプトの重複登録を防ぎます。
+            val useSameId = pending.mode == WorldEditClipboardOperation.CUT &&
+                !pending.sameIdPasteConsumed &&
+                relative.placementKey in pending.removedKeys
+            // issue #review P1-3: 既存配置は新登録の成功後に除去します。
+            // 今回の変更を確認できない既存（貼付け前からある占有）は保持します。
+            if (existing != null && !isPasteChangeConfirmed(pending, pasted.x, pasted.y, pasted.z)) {
+                keptOccupants.add(targetKey)
+                continue
             }
-            if (preserveFirstCutIds) {
-                // CUT初回は同一スクリプトを移し、facingは維持します。
-                registerPlacement(world, pasted.x, pasted.y, pasted.z, relative.scriptId, relative.facing)
+            val scriptId = if (useSameId) {
+                relative.scriptId
             } else {
                 val source = plugin.scripts.load(relative.scriptId)
                 if (source == null) {
@@ -318,13 +426,73 @@ class WorldEditControlBlockSyncListener(
                     plugin.logger.warning("貼付け用のスクリプト複製に失敗しました: placement=${relative.placementKey}")
                     continue
                 }
-                registerPlacement(world, pasted.x, pasted.y, pasted.z, copied.id, relative.facing)
+                copied.id
+            }
+            // 占有の台帳・表示を先に外し（スクリプトは保持）、新登録の失敗時は復元します。
+            // 登録後に除去すると新登録を消すため、順序を入れ替えません。
+            val occupantBackup = if (existing != null) {
+                releaseRuntimeState(existing)
+                val removed = runCatching {
+                    plugin.placements.remove(world, existing.x, existing.y, existing.z)
+                }.getOrNull()
+                if (removed == null) {
+                    plugin.logger.warning(
+                        "[KantanCommander] //paste の既存除去に失敗しました: placement=${existing.key}",
+                    )
+                    continue
+                }
+                plugin.placements.removeDisplay(world, removed.displayId)
+                removed
+            } else null
+            if (!registerPlacement(world, pasted.x, pasted.y, pasted.z, scriptId, relative.facing)) {
+                if (occupantBackup != null) {
+                    runCatching {
+                        plugin.placements.add(occupantBackup)
+                        plugin.placements.spawnDisplay(world, occupantBackup)
+                    }.onFailure { failure ->
+                        plugin.logger.log(
+                            Level.WARNING,
+                            "[KantanCommander] //paste の既存復元に失敗しました: placement=${occupantBackup.key}",
+                            failure,
+                        )
+                    }
+                }
+                continue
+            }
+            pending.pastedKeys.add(targetKey)
+            if (useSameId) pending.sameIdPasteConsumed = true
+            if (occupantBackup != null &&
+                plugin.placements.all().none { it.scriptId == occupantBackup.scriptId }
+            ) {
+                runCatching { plugin.scripts.delete(occupantBackup.scriptId) }
+                    .onFailure { failure ->
+                        plugin.logger.log(
+                            Level.WARNING,
+                            "[KantanCommander] //paste の既存スクリプト削除に失敗しました: script=${occupantBackup.scriptId}, placement=${occupantBackup.key}",
+                            failure,
+                        )
+                    }
             }
             plugin.refreshRedstoneTopologyAround(targetBlock)
         }
-        if (preserveFirstCutIds) {
-            pending.sameIdPasteConsumed = true
+        if (keptOccupants.isNotEmpty()) {
+            plugin.logger.warning(
+                "[KantanCommander] //paste の変更を確認できない既存配置を保持しました: " +
+                    "player=${player.name} points=${keptOccupants.joinToString(" ")}",
+            )
         }
+    }
+
+    /**
+     * issue #review P1-3: 今回の貼り付けによる変更かを確認します。
+     *
+     * 貼付けコマンド時点で非配置だったセルが配置素材になっていれば、
+     * 今回の編集による到達とみなします。スナップショットにないセル
+     * （解決のずれ等）は従来どおり登録へ進めます。
+     */
+    private fun isPasteChangeConfirmed(pending: PendingClipboard, x: Int, y: Int, z: Int): Boolean {
+        val before = pending.pasteSnapshot?.get(Triple(x, y, z)) ?: return true
+        return !PlacedBlockMaterials.isPlacedBlock(before)
     }
 
     private fun captureMove(player: Player, offset: WorldEditMoveOffset, rawCommand: String) {
@@ -763,10 +931,17 @@ class WorldEditControlBlockSyncListener(
      *
      * 低速な外部編集中に掃除が移動元配置を消すと、スクリプトが失われて
      * 確定時に追従できなくなるため、掃除対象から除外します。
+     * issue #review P2-5: 除外は未確定の項目に限定します。再貼付け用の
+     * clipboard保持（複数回貼付けの正規機能）と、編集中の掃除除外を分離し、
+     * COPY元や確定済みCUTは掃除対象に戻します。TTLは設けません。
+     * 正規の複数回貼付けを壊すためです。quit・上書き確保で破棄されます。
      */
     private fun isMoveInFlight(placementKey: String): Boolean =
         pendingMoves.values.any { pending -> pending.placements.any { it.placementKey == placementKey } } ||
-            pendingClipboards.values.any { pending -> pending.placements.any { it.placementKey == placementKey } }
+            pendingClipboards.values.any { pending ->
+                pending.mode == WorldEditClipboardOperation.CUT &&
+                    pending.placements.any { it.placementKey == placementKey && it.placementKey !in pending.removedKeys }
+            }
 
     /**
      * 配置を台帳・表示・スクリプトごと完全に除去します。
