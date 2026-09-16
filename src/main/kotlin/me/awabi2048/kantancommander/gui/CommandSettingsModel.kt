@@ -304,7 +304,6 @@ object CommandSettingsModel {
     private val ENTITY_KINDS = setOf(
         TargetKind.NEAREST_ENTITY,
         TargetKind.NEARBY_ENTITIES,
-        TargetKind.FIXED_ENTITY,
     )
 
     /** 実行時の細分類を、GUIで表示する対象大分類へ写像します。 */
@@ -335,7 +334,6 @@ object CommandSettingsModel {
         TargetCategory.NON_PLAYER_ENTITY -> listOf(
             TargetKind.NEAREST_ENTITY,
             TargetKind.NEARBY_ENTITIES,
-            TargetKind.FIXED_ENTITY,
         )
         TargetCategory.TEMPORARY -> listOf(TargetKind.TEMPORARY)
     }
@@ -670,24 +668,38 @@ object CommandSettingsModel {
                 field.key == "staySeconds" &&
                 DisplayTextTimingPolicy.supports(node)
             ) {
-                field.copy(
-                    value = { currentNode ->
-                        DisplayValue.Timing(
-                            fadeInSeconds = currentNode.string(
-                                "fadeInSeconds",
-                                currentNode.type.defaults["fadeInSeconds"].orEmpty(),
-                            ),
-                            staySeconds = currentNode.string(
-                                "staySeconds",
-                                currentNode.type.defaults["staySeconds"].orEmpty(),
-                            ),
-                            fadeOutSeconds = currentNode.string(
-                                "fadeOutSeconds",
-                                currentNode.type.defaults["fadeOutSeconds"].orEmpty(),
-                            ),
-                        )
-                    },
-                )
+                // issue #35-2: アクションバーは単独の表示時間だけを示します。
+                if (node.string("mode", "tellraw") == "actionbar") {
+                    field.copy(
+                        value = { currentNode ->
+                            DisplayValue.Duration(
+                                seconds = currentNode.string(
+                                    "staySeconds",
+                                    currentNode.type.defaults["staySeconds"].orEmpty(),
+                                ),
+                            )
+                        },
+                    )
+                } else {
+                    field.copy(
+                        value = { currentNode ->
+                            DisplayValue.Timing(
+                                fadeInSeconds = currentNode.string(
+                                    "fadeInSeconds",
+                                    currentNode.type.defaults["fadeInSeconds"].orEmpty(),
+                                ),
+                                staySeconds = currentNode.string(
+                                    "staySeconds",
+                                    currentNode.type.defaults["staySeconds"].orEmpty(),
+                                ),
+                                fadeOutSeconds = currentNode.string(
+                                    "fadeOutSeconds",
+                                    currentNode.type.defaults["fadeOutSeconds"].orEmpty(),
+                                ),
+                            )
+                        },
+                    )
+                }
             } else if (node.type == CommandType.PARTICLE && field.key == "particleParameters") {
                 field.copy(
                     value = { currentNode ->
@@ -1308,11 +1320,19 @@ object CommandSettingsModel {
             }
     }
 
+    /**
+     * issue #34-1: 通常対象の読込先です。
+     *
+     * 内包対象の役割（位置・向き仕様の内部対象）はここでは扱いません。
+     * 用途不適合の役割を通常対象へ流すと別フィールドの書き換えになるため、
+     * 内包役割・未知役割は明示的に拒否し、[embeddedTargetSpec] の利用を強制します。
+     */
     fun targetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? = when (role) {
+        null, CommandSettingRole.NODE_TARGET -> node.targetSpec
         CommandSettingRole.DESTINATION -> node.destinationTargetSpec
         CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec
         CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec
-        else -> node.targetSpec
+        else -> error("${node.type} の通常対象として不適合な役割です: $role")
     }
 
     /**
@@ -1347,20 +1367,33 @@ object CommandSettingsModel {
         node.markConfigured(key)
     }
 
+    /**
+     * issue #34-1: 通常対象の保存先です。
+     *
+     * 未知または用途不適合の役割を通常対象へ流さず明示的に拒否します。
+     * 内包対象の役割は [setEmbeddedTargetSpec] を利用してください。
+     *
+     * issue #34-4: 一時変数参照の詳細条件は保存時に除去します。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+     * 実行側が適用しない絞り込みを残さず、GUI・保存・実行の契約を一致させます。
+     */
     fun setTargetSpec(node: CommandNode, role: CommandSettingRole?, spec: TargetSpec) {
         // TEMP_SET ENTITYは対象を複数保持できないTemporaryValueへ変換するため、
         // 共通TargetSpecの詳細条件はそのまま利用しつつ、解決数だけ1体へ正規化します。
         val normalizedSpec = if (role == CommandSettingRole.TEMPORARY_ENTITY) {
-            spec.copy(limit = 1)
-        } else spec
+            pruneSingleReferenceFilters(spec.copy(limit = 1))
+        } else {
+            pruneSingleReferenceFilters(spec)
+        }
         when (role) {
+            null, CommandSettingRole.NODE_TARGET -> node.targetSpec = normalizedSpec
             CommandSettingRole.DESTINATION -> {
                 node.destinationTargetSpec = normalizedSpec
                 node.destinationSpec = null
             }
             CommandSettingRole.SECONDARY_TARGET -> node.secondaryTargetSpec = normalizedSpec
             CommandSettingRole.TEMPORARY_ENTITY -> node.temporaryEntityTargetSpec = normalizedSpec
-            else -> node.targetSpec = normalizedSpec
+            else -> error("${node.type} の通常対象として不適合な役割です: $role")
         }
         val configuredKey = configuredFieldKey("target", role)
         if (isTargetSpecConfigured(normalizedSpec)) {
@@ -1379,12 +1412,18 @@ object CommandSettingsModel {
      * 位置・向きの各役割は対象指定を内部に持ち、通常対象画面へ進む経路を
      * 持ちません。TARGET_FILTERS画面はこれらの役割では内包対象を編集します。
      * 移動先は旧来の対象移動経路のため除外します。
+     * issue #34-1: STRUCTURE_PLACE_POSITION（建造物設置位置）・GROUP_PIVOT
+     * （群pivot）も位置設定木の内部に対象を持ちます。旧来の対象移動経路では
+     * ないため内包対象として扱い、通常の targetSpec への読み書きを禁止します。
      */
     fun isEmbeddedTargetRole(role: CommandSettingRole?): Boolean = when (role) {
         CommandSettingRole.CONDITION_POSITION,
         CommandSettingRole.BLOCK_POSITION,
         CommandSettingRole.BLOCK_FROM,
         CommandSettingRole.BLOCK_TO,
+        // issue #34-1: 建造物設置位置・群pivotも内包対象です。
+        CommandSettingRole.STRUCTURE_PLACE_POSITION,
+        CommandSettingRole.GROUP_PIVOT,
         CommandSettingRole.SOUND_POSITION,
         CommandSettingRole.PARTICLE_POSITION,
         CommandSettingRole.PARTICLE_END,
@@ -1410,11 +1449,38 @@ object CommandSettingsModel {
     }
 
     /**
+     * issue #34-4: 単一参照の取得元に適用されない詳細条件を除去します。
+     *
+     * 一時変数参照は変数名だけで解決し、種類・距離・範囲・領域・タグ・名・
+     * 基準位置などの絞り込みは実行時に適用されません。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+     * 残したままにすると保持した条件を黙って無視することになるため、
+     * 保存の共通入口で除去します。上限数・並べ替え・来歴は触りません。
+     */
+    fun pruneSingleReferenceFilters(spec: TargetSpec): TargetSpec {
+        if (spec.kind != TargetKind.TEMPORARY) return spec
+        return spec.copy(
+            entityType = null,
+            minimumDistance = null,
+            maximumDistance = null,
+            gameMode = null,
+            tag = null,
+            name = null,
+            dx = null,
+            dy = null,
+            dz = null,
+            region = null,
+            searchOrigin = null,
+        )
+    }
+    /**
      * issue #29: 内包対象だけを書き換えます。
      *
      * 種別・座標等の他要素は維持し、保存形式（PositionSpec/FacingSpecの
      * target部）は変えません。検証・実行・出力への影響はありません。
      * 向きでは注視・複写の種別を保持し、単一体に正規化します。
+     *
+     * issue #34-4: 固定実体・一時変数参照の詳細条件は保存時に除去します。
      *
      * @param facingKind 向き役割で種別を明示する場合に指定します（TARGET／COPY_ORIENTATION）。
      */
@@ -1425,6 +1491,8 @@ object CommandSettingsModel {
         facingKind: FacingKind? = null,
     ) {
         check(isEmbeddedTargetRole(role)) { "${node.type} の内包対象の役割が不正です: $role" }
+        // issue #34-4: 内包対象も通常対象と同じ単一参照契約で除去します。
+        val pruned = pruneSingleReferenceFilters(spec)
         when (role) {
             CommandSettingRole.DESTINATION_FACING,
             CommandSettingRole.TEMPORARY_LOCATION_FACING,
@@ -1438,12 +1506,12 @@ object CommandSettingsModel {
                 }
                 val base = facingSpec(node, role)
                     ?.takeIf { it.kind == resolvedKind } ?: FacingSpec(resolvedKind)
-                setFacingSpec(node, base.copy(kind = resolvedKind, target = spec.copy(limit = 1)), role)
+                setFacingSpec(node, base.copy(kind = resolvedKind, target = pruned.copy(limit = 1)), role)
             }
             else -> {
                 val base = positionSpec(node, role)
                     ?.takeIf { it.kind == PositionKind.TARGET } ?: PositionSpec(PositionKind.TARGET)
-                setPositionSpec(node, role, base.copy(kind = PositionKind.TARGET, target = spec))
+                setPositionSpec(node, role, base.copy(kind = PositionKind.TARGET, target = pruned))
             }
         }
     }
@@ -1595,7 +1663,14 @@ object CommandSettingsModel {
         // InventoryとGestureで同じ値を表示していても選択状態だけがずれます。
         val effectiveRole = role ?: descriptor(node, fieldKey).role
         return when (fieldKey) {
-            "target" -> isTargetSpecConfigured(targetSpec(node, effectiveRole))
+            // issue #34-1: 内包役割の "target" は位置・向き仕様の内部対象を見ます。
+            // targetSpec へ流すと別フィールド（ノード本体の対象）を参照するため、
+            // 内包対象と通常対象をここで分岐します。
+            "target" -> if (isEmbeddedTargetRole(effectiveRole)) {
+                isTargetSpecConfigured(embeddedTargetSpec(node, effectiveRole))
+            } else {
+                isTargetSpecConfigured(targetSpec(node, effectiveRole))
+            }
             // "entity" は一時対象指定の専用キーです。召喚の種類は v17 で
             // "summonEntity" へ分離したため、ここでは扱いません（汎用分岐へ）。
             "entity" -> isTargetSpecConfigured(node.temporaryEntityTargetSpec)
@@ -1611,6 +1686,13 @@ object CommandSettingsModel {
                     isTargetSpecConfigured(node.destinationTargetSpec)
                 CommandSettingRole.CONDITION_POSITION -> isPositionSpecConfigured(node.conditionPositionSpec)
                 CommandSettingRole.BLOCK_POSITION -> isPositionSpecConfigured(node.blockPositionSpec)
+                CommandSettingRole.BLOCK_FROM -> isPositionSpecConfigured(node.blockFromSpec)
+                CommandSettingRole.BLOCK_TO -> isPositionSpecConfigured(node.blockToSpec)
+                // issue #34-1: 建造物設置位置・群pivotも位置仕様の完全性で判定します。
+                // 従来の else -> false では汎用 "position" キー経路の選択表示が
+                // 未完了に固定されるため、保存先と同じ仕様を参照します。
+                CommandSettingRole.STRUCTURE_PLACE_POSITION -> isPositionSpecConfigured(node.structurePlacePositionSpec)
+                CommandSettingRole.GROUP_PIVOT -> isPositionSpecConfigured(node.groupPivotPositionSpec)
                 CommandSettingRole.SOUND_POSITION -> isPositionSpecConfigured(node.soundPositionSpec)
                 CommandSettingRole.PARTICLE_POSITION -> isPositionSpecConfigured(node.particlePositionSpec)
                 CommandSettingRole.PARTICLE_END -> isPositionSpecConfigured(node.particleEndPositionSpec)
@@ -1798,9 +1880,8 @@ object CommandSettingsModel {
                     (value != node.type.defaults[key] || node.isExplicitlyConfigured(key))
             }
 
-    /** 固定エンティティだけは、種別を選んだだけでは実行対象が確定しません。 */
+    /** 一時変数参照だけは、変数名がなければ実行対象が確定しません。 */
     internal fun isTargetSpecConfigured(spec: TargetSpec?): Boolean = spec != null && when (spec.kind) {
-        TargetKind.FIXED_ENTITY -> spec.fixedEntityId != null
         TargetKind.TEMPORARY -> !spec.tempName.isNullOrBlank() &&
             CommandValueRules.isVariableName(TemporaryTemplate.normalized(spec.tempName))
         else -> true
@@ -1848,12 +1929,22 @@ object CommandSettingsModel {
      * 対象種別に対して詳細条件が意味を持つかを判定します。
      * 実行側の解決（matches）に合わせ、プレイヤー種別へentityType、
      * エンティティの種類へgameModeを指定しても解決しないため、GUIでは提示しません。
+     *
+     * issue #34-4: 一時変数参照は詳細条件を使いません。実行側はこの取得元に
+     * 絞り込みを適用しないため、GUIでも提示しません。保存時には残存条件を
+     * 除去し、保持した条件を黙って無視しないようにします。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
-    fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean = when (parameter) {
-        "kind" -> kind != null
-        "entityType" -> kind in ENTITY_KINDS
-        "gameMode" -> kind in PLAYER_KINDS
-        else -> true
+    fun targetFilterApplies(kind: TargetKind?, parameter: String): Boolean {
+        if (kind == TargetKind.TEMPORARY) {
+            return parameter == "kind"
+        }
+        return when (parameter) {
+            "kind" -> kind != null
+            "entityType" -> kind in ENTITY_KINDS
+            "gameMode" -> kind in PLAYER_KINDS
+            else -> true
+        }
     }
 
     /**
@@ -1880,9 +1971,13 @@ object CommandSettingsModel {
      * 対象種別と詳細条件の境界を共有します。
      * 親画面の種別選択後に詳細子画面へ進めるかを、描画側と入力状態遷移側で
      * 別々に持つと、表示された「詳細設定」が開けない対象が生まれるためです。
+     *
+     * issue #34-4: 一時変数参照は詳細条件を持たないため、詳細子画面へ進めません。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
     fun targetSupportsDetailedFilters(kind: TargetKind?): Boolean =
-        kind?.let { it in FILTERABLE_TARGET_KINDS } == true
+        kind != null && kind != TargetKind.TEMPORARY &&
+            kind in FILTERABLE_TARGET_KINDS
 
     /**
      * issue #4 の領域基準の表示名キーです。
@@ -2073,7 +2168,8 @@ object CommandSettingsModel {
      * 起動方法の変更は、読み込み・検証・保存・実行時登録更新・表示更新を
      * 一つの操作として扱います。明示の起動方法を保存し、従来欄（`timer`／
      * `activation`）も整合させるため、旧来の実行経路・表示・出力が
-     * 読み替えなしに追従します。間隔は小数秒（tick境界）で受け付け、下限は設けません。
+     * 読み替えなしに追従します。間隔は小数秒（tick境界）で受け付け、
+     * 0秒は受け付けません。上限は86400秒です。
      */
     fun updateTrigger(
         plugin: KantanCommanderPlugin,
@@ -2131,26 +2227,43 @@ object CommandSettingsModel {
 
     private fun text() = CommandSettingDescriptor(CommandSettingEditor.TEXT)
 
-    /** 構造化フィールドの明示設定キーを、保存先の役割ごとに名前空間化します。 */
-    private fun configuredFieldKey(fieldKey: String, role: CommandSettingRole?): String = when (role) {
-        CommandSettingRole.CONDITION_POSITION -> "condition.position"
-        CommandSettingRole.SOUND_POSITION -> "soundPosition"
-        CommandSettingRole.PARTICLE_POSITION -> "particlePosition"
-        CommandSettingRole.PARTICLE_END -> "particleEnd"
-        CommandSettingRole.SUMMON_POSITION -> "summonPosition"
-        CommandSettingRole.FIREWORK_POSITION -> "fireworkPosition"
-        CommandSettingRole.TEMPORARY_ENTITY -> "entity"
-        CommandSettingRole.TEMPORARY_LOCATION -> "location"
-        CommandSettingRole.TEMPORARY_LOCATION_POSITION -> "locationPosition"
-        CommandSettingRole.TEMPORARY_LOCATION_FACING -> "locationFacing"
-        CommandSettingRole.EXECUTION_POSITION -> "executionPosition"
-        CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
-            "destination.$fieldKey"
-        } else "destination"
-        CommandSettingRole.SECONDARY_TARGET -> if (fieldKey.startsWith("target.")) {
-            "other.$fieldKey"
-        } else "other"
-        else -> fieldKey
+    /**
+     * 構造化フィールドの明示設定キーを、保存先の役割ごとに名前空間化します。
+     *
+     * issue #34-1: 内包対象の詳細条件キー（target.xxx）は通常対象と名前空間を
+     * 分離します。分離しないと pivot／設置位置の対象条件と群・ノード本体の
+     * 対象条件が同じ明示設定フラグを共有し、設定済み表示が相互に汚染されます。
+     */
+    private fun configuredFieldKey(fieldKey: String, role: CommandSettingRole?): String {
+        fun namespaced(prefix: String): String =
+            if (fieldKey.startsWith("target.")) "$prefix.$fieldKey" else prefix
+        return when (role) {
+            CommandSettingRole.CONDITION_POSITION -> if (fieldKey.startsWith("target.")) {
+                "condition.$fieldKey"
+            } else "condition.position"
+            CommandSettingRole.SOUND_POSITION -> namespaced("soundPosition")
+            CommandSettingRole.PARTICLE_POSITION -> namespaced("particlePosition")
+            CommandSettingRole.PARTICLE_END -> namespaced("particleEnd")
+            CommandSettingRole.SUMMON_POSITION -> namespaced("summonPosition")
+            CommandSettingRole.FIREWORK_POSITION -> namespaced("fireworkPosition")
+            CommandSettingRole.TEMPORARY_ENTITY -> "entity"
+            CommandSettingRole.TEMPORARY_LOCATION -> "location"
+            CommandSettingRole.TEMPORARY_LOCATION_POSITION -> namespaced("locationPosition")
+            CommandSettingRole.TEMPORARY_LOCATION_FACING -> "locationFacing"
+            CommandSettingRole.EXECUTION_POSITION -> namespaced("executionPosition")
+            CommandSettingRole.DESTINATION -> if (fieldKey.startsWith("target.")) {
+                "destination.$fieldKey"
+            } else "destination"
+            CommandSettingRole.SECONDARY_TARGET -> if (fieldKey.startsWith("target.")) {
+                "other.$fieldKey"
+            } else "other"
+            CommandSettingRole.STRUCTURE_PLACE_POSITION -> namespaced("structurePlace")
+            CommandSettingRole.GROUP_PIVOT -> namespaced("pivot")
+            CommandSettingRole.BLOCK_POSITION -> namespaced("blockPosition")
+            CommandSettingRole.BLOCK_FROM -> namespaced("blockFrom")
+            CommandSettingRole.BLOCK_TO -> namespaced("blockTo")
+            else -> fieldKey
+        }
     }
 
     /** ITEM／BLOCKの主値に対する完了判定を共通化します。 */

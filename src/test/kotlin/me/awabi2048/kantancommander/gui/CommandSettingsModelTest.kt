@@ -78,9 +78,11 @@ class CommandSettingsModelTest {
     }
 
     @Test
-    fun `fixed target is incomplete until an entity is captured`() {
+    fun `temporary target is incomplete until a name is supplied`() {
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        // 単一参照の完了判定は一時変数参照で固定します。
         val node = CommandType.ENTITY_DELETE.newNode()
-        val incomplete = TargetSpec(TargetKind.FIXED_ENTITY)
+        val incomplete = TargetSpec(TargetKind.TEMPORARY)
 
         CommandSettingsModel.setTargetSpec(node, CommandSettingRole.NODE_TARGET, incomplete)
 
@@ -90,7 +92,7 @@ class CommandSettingsModelTest {
         CommandSettingsModel.setTargetSpec(
             node,
             CommandSettingRole.NODE_TARGET,
-            incomplete.copy(fixedEntityId = UUID.randomUUID()),
+            incomplete.copy(tempName = "foe"),
         )
 
         assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET))
@@ -522,7 +524,9 @@ class CommandSettingsModelTest {
 
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEARBY_ENTITIES))
         assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.NEAREST_PLAYER))
-        assertTrue(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.FIXED_ENTITY))
+        // issue #34-4: 一時変数参照は詳細条件を使いません。
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(TargetKind.TEMPORARY))
         assertFalse(CommandSettingsModel.targetSupportsDetailedFilters(null))
         assertEquals(
             listOf(
@@ -941,4 +945,213 @@ class CommandSettingsModelTest {
         assertEquals("minecraft:player", node.string("summonEntity"))
     }
 
+    @Test
+    fun `structure place and group pivot are embedded target roles`() {
+        // issue #34-1: 建造物設置位置・群pivotは位置設定木の内部に対象を持ちます。
+        // 内包対象として扱わないと、対象詳細の編集が通常対象へ流れます。
+        assertTrue(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.STRUCTURE_PLACE_POSITION))
+        assertTrue(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.GROUP_PIVOT))
+        // 通常対象の役割は内包扱いにしません。
+        assertFalse(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.NODE_TARGET))
+        assertFalse(CommandSettingsModel.isEmbeddedTargetRole(CommandSettingRole.DESTINATION))
+        assertFalse(CommandSettingsModel.isEmbeddedTargetRole(null))
+    }
+
+    @Test
+    fun `plain target access rejects embedded roles instead of falling back`() {
+        // issue #34-1: 未知または用途不適合の役割を通常対象へ流さず明示的に拒否します。
+        val node = CommandType.STRUCTURE_PLACE.newNode()
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.targetSpec(node, CommandSettingRole.STRUCTURE_PLACE_POSITION)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.setTargetSpec(
+                node,
+                CommandSettingRole.STRUCTURE_PLACE_POSITION,
+                TargetSpec(TargetKind.NEAREST_PLAYER),
+            )
+        }
+        val group = CommandType.ENTITY_GROUP.newNode()
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.targetSpec(group, CommandSettingRole.GROUP_PIVOT)
+        }
+        assertThrows(IllegalStateException::class.java) {
+            CommandSettingsModel.setTargetSpec(group, CommandSettingRole.GROUP_PIVOT, TargetSpec(TargetKind.NEAREST_PLAYER))
+        }
+        // 通常対象の役割は従来どおり読み書きできます。
+        CommandSettingsModel.setTargetSpec(group, CommandSettingRole.NODE_TARGET, TargetSpec(TargetKind.NEAREST_PLAYER))
+        assertEquals(TargetKind.NEAREST_PLAYER, CommandSettingsModel.targetSpec(group, CommandSettingRole.NODE_TARGET)?.kind)
+        assertEquals(TargetKind.NEAREST_PLAYER, CommandSettingsModel.targetSpec(group, null)?.kind)
+    }
+
+    @Test
+    fun `editing pivot target keeps the group target unchanged`() {
+        // issue #34-1: Pivotの対象詳細を編集しても、群の所属対象は変わりません。
+        // 編集したフィールド以外が変化しないことの回帰試験です。
+        val node = CommandType.ENTITY_GROUP.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            groupPivotPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_ENTITY),
+            )
+        }
+        val before = node.targetSpec
+
+        CommandSettingsModel.setEmbeddedTargetSpec(
+            node,
+            CommandSettingRole.GROUP_PIVOT,
+            TargetSpec(TargetKind.NEAREST_PLAYER),
+        )
+
+        assertEquals(before, node.targetSpec)
+        assertEquals(TargetKind.NEAREST_PLAYER, node.groupPivotPositionSpec?.target?.kind)
+        assertEquals(TargetKind.NEAREST_PLAYER, CommandSettingsModel.embeddedTargetSpec(node, CommandSettingRole.GROUP_PIVOT)?.kind)
+    }
+
+    @Test
+    fun `editing structure place target keeps the node target unchanged`() {
+        // issue #34-1: 設置位置の対象詳細を編集しても、通常の対象設定は変わりません。
+        val node = CommandType.STRUCTURE_PLACE.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            structurePlacePositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_ENTITY),
+            )
+        }
+        val before = node.targetSpec
+
+        CommandSettingsModel.setEmbeddedTargetSpec(
+            node,
+            CommandSettingRole.STRUCTURE_PLACE_POSITION,
+            TargetSpec(TargetKind.ALL_PLAYERS),
+        )
+
+        assertEquals(before, node.targetSpec)
+        assertEquals(TargetKind.ALL_PLAYERS, node.structurePlacePositionSpec?.target?.kind)
+    }
+
+    @Test
+    fun `embedded target configured state does not pollute the node target`() {
+        // issue #34-1: 内包対象と通常対象の明示設定フラグは名前空間を分離します。
+        val node = CommandType.ENTITY_GROUP.newNode().apply {
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+            groupPivotPositionSpec = PositionSpec(
+                PositionKind.TARGET,
+                target = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "pivot-tag"),
+            )
+        }
+
+        assertTrue(CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.GROUP_PIVOT))
+        assertTrue(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.GROUP_PIVOT, "tag"))
+        // 通常対象側にタグ条件はないため、内包側の設定が漏れません。
+        assertFalse(CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "tag"))
+    }
+
+    @Test
+    fun `read only model access never clears a temporary reference`() {
+        // issue #33-2: 画面を開く操作（表示・判定のための読込）では、永続値・
+        // 一時変数参照・明示設定が変化しません。参照解除は直接値の確定時だけです。
+        val node = CommandType.GIVE_ITEM.newNode().apply {
+            params["item"] = "minecraft:stone"
+            markConfigured("item")
+            itemTempRef = "gift"
+            markConfigured("itemTempRef")
+            targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
+        }
+        val paramsBefore = node.params.toMap()
+        val configuredBefore = node.configuredFields?.toSet().orEmpty()
+        val refBefore = node.itemTempRef
+        val targetBefore = node.targetSpec
+
+        CommandSettingsModel.visibleFields(node)
+        CommandSettingsModel.gestureVisibleFields(node)
+        CommandSettingsModel.descriptor(node, "item")
+        CommandSettingsModel.isFieldConfigured(node, "item")
+        CommandSettingsModel.isFieldConfigured(node, "target", CommandSettingRole.NODE_TARGET)
+        CommandSettingsModel.isTargetFilterConfigured(node, CommandSettingRole.NODE_TARGET, "kind")
+        CommandSettingsModel.temporaryValueSource(node, "item")
+        CommandSettingsModel.temporaryValueReference(node, "item")
+        CommandSettingsModel.supportsTemporaryValueReference(node, "item")
+        CommandSettingsModel.targetSpec(node, CommandSettingRole.NODE_TARGET)
+        CommandSettingsModel.incompleteWarningKey(node, "item")
+        CommandSettingsModel.visibleAttentionFieldKey(node, "item")
+
+        assertEquals(paramsBefore, node.params.toMap())
+        assertEquals(configuredBefore, node.configuredFields?.toSet().orEmpty())
+        assertEquals(refBefore, node.itemTempRef)
+        assertEquals(targetBefore, node.targetSpec)
+    }
+
+    @Test
+    fun `structure and group visible fields all have an edit path`() {
+        // issue #33-1: 表示される設定項目に操作・保存経路がない接続漏れを検出します。
+        // 新設定の追加時は、表示定義・編集経路・警告キーの三者を同時に更新しなければ
+        // この試験が失敗します。対象・位置は保存先の役割、テキストは入力仕様を要求します。
+        val groupOperations = listOf(
+            null, "create", "add", "remove", "delete", "set_pivot", "move", "rotate", "cleanup",
+        )
+        val cases = buildList {
+            add(CommandType.STRUCTURE_SAVE.newNode())
+            add(CommandType.STRUCTURE_PLACE.newNode())
+            groupOperations.forEach { operation ->
+                add(CommandType.ENTITY_GROUP.newNode().apply {
+                    if (operation != null) params["operation"] = operation
+                })
+            }
+        }
+        val roleEditors = setOf(CommandSettingEditor.TARGET, CommandSettingEditor.POSITION, CommandSettingEditor.FACING)
+        for (node in cases) {
+            for (field in CommandSettingsModel.visibleFields(node)) {
+                val descriptor = CommandSettingsModel.descriptor(node, field.key)
+                if (descriptor.editor in roleEditors) {
+                    assertTrue(
+                        descriptor.role != null,
+                        "${node.type}.${field.key} は保存先の役割を持たなければなりません",
+                    )
+                }
+                if (descriptor.editor == CommandSettingEditor.TEXT) {
+                    assertTrue(
+                        CommandDialogSpecs.field(node, field.key) != null,
+                        "${node.type}.${field.key} には汎用入力の仕様が必要です",
+                    )
+                }
+                // 警告キーの未定義は error で失敗し、表示と警告の対応漏れを示します。
+                CommandSettingsModel.incompleteWarningKey(node, field.key)
+            }
+        }
+    }
+
+    @Test
+    fun `temporary references expose no detail filters`() {
+        // issue #34-4: 一時変数参照は詳細条件を使いません。
+        // 実行側が適用しない条件をGUIで提示しないことを固定します。
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        assertEquals(emptyList<String>(), CommandSettingsModel.visibleTargetFilterIds(TargetKind.TEMPORARY))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "tag"))
+        assertFalse(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "distance"))
+        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.TEMPORARY, "kind"))
+        // 通常検索の契約は変えません。
+        assertTrue(CommandSettingsModel.targetFilterApplies(TargetKind.NEAREST_ENTITY, "tag"))
+        assertTrue(CommandSettingsModel.visibleTargetFilterIds(TargetKind.NEAREST_ENTITY).contains("tag"))
+    }
+
+    @Test
+    fun `saving temporary references prunes detail filters`() {
+        // issue #34-4: 保存時に残存条件を除去し、保持した条件を黙って無視しません。
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        val temporary = TargetSpec(TargetKind.TEMPORARY, tempName = "foe", tag = "mark", maximumDistance = 8.0)
+        val tempNode = CommandType.ENTITY_DELETE.newNode()
+        CommandSettingsModel.setTargetSpec(tempNode, CommandSettingRole.NODE_TARGET, temporary)
+        val savedTemporary = requireNotNull(tempNode.targetSpec)
+        assertEquals("foe", savedTemporary.tempName)
+        assertNull(savedTemporary.tag)
+        assertNull(savedTemporary.maximumDistance)
+
+        // 通常検索の条件は除去しません。
+        val normal = TargetSpec(TargetKind.NEAREST_ENTITY, tag = "mark", maximumDistance = 8.0)
+        val normalNode = CommandType.ENTITY_DELETE.newNode()
+        CommandSettingsModel.setTargetSpec(normalNode, CommandSettingRole.NODE_TARGET, normal)
+        assertEquals("mark", requireNotNull(normalNode.targetSpec).tag)
+        assertEquals(8.0, requireNotNull(normalNode.targetSpec).maximumDistance)
+    }
 }

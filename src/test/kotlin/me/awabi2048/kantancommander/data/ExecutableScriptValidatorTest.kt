@@ -319,16 +319,18 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `fixed targets and rotation orientations require complete values`() {
+    fun `temporary targets and rotation orientations require complete values`() {
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        // 未完了の単一参照は一時変数参照で固定します。
         val script = DiskScript(name = "target-shape", owner = UUID.randomUUID())
         val teleport = GraphEditor.append(script.graph, CommandType.TELEPORT)
-        teleport.targetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+        teleport.targetSpec = TargetSpec(TargetKind.TEMPORARY)
         teleport.destinationSpec = PositionSpec(PositionKind.CAPTURED, 1.0, 2.0, 3.0, null, null)
         teleport.destinationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = null, pitch = null)
 
         val errors = ExecutableScriptValidator.validate(script)
 
-        assertTrue(errors.any { it.message.contains("固定エンティティが未設定") })
+        assertTrue(errors.any { it.message.contains("一時変数") })
         assertTrue(errors.any { it.message.contains("向きが未設定") })
     }
 
@@ -401,7 +403,9 @@ class ExecutableScriptValidatorTest {
     }
 
     @Test
-    fun `actionbar durations are validated like title durations`() {
+    fun `actionbar validates only the single display duration`() {
+        // issue #35-2: アクションバーは単独の表示時間だけを使い、
+        // フェード値は検証対象にしません。
         val script = DiskScript(name = "actionbar-duration", owner = UUID.randomUUID())
         val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
         actionbar.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
@@ -414,11 +418,54 @@ class ExecutableScriptValidatorTest {
             )
         )
 
+        assertFalse(
+            ExecutableScriptValidator.validate(script).any {
+            it.message.contains("表示時間は0秒以上")
+            }
+        )
+
+        actionbar.params["staySeconds"] = "-2"
+
         assertTrue(
             ExecutableScriptValidator.validate(script).any {
             it.message.contains("表示時間は0秒以上")
             }
         )
+    }
+
+    @Test
+    fun `actionbar ignores leftover fade variable references`() {
+        // issue #review P2-7: 非表示項目の残存値は検証対象外です。
+        // 有効項目の定義は DisplayTextTimingPolicy で共有します。
+        val script = DiskScript(name = "actionbar-stale-fade", owner = UUID.randomUUID())
+        val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
+        actionbar.targetSpec = TargetSpec(TargetKind.ALL_PLAYERS)
+        actionbar.params.putAll(
+            mapOf(
+                "mode" to "actionbar",
+                "fadeInSeconds" to "%{missing}%",
+                "staySeconds" to "3",
+                "fadeOutSeconds" to "1",
+            )
+        )
+
+        assertTrue(ExecutableScriptValidator.validate(script).isEmpty())
+    }
+
+    @Test
+    fun `temporary target skips detail filter validation`() {
+        // issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
+        // 残存条件の形式検査を行いません。変数名の定義検査だけ残します。
+        val script = DiskScript(name = "temporary-filters", owner = UUID.randomUUID())
+        val node = GraphEditor.append(script.graph, CommandType.ENTITY_DELETE)
+        node.targetSpec = TargetSpec(TargetKind.TEMPORARY, tempName = "foe", tag = "###", maximumDistance = -1.0)
+
+        val validationErrors = ExecutableScriptValidator.validate(script)
+        // 変数名自体の定義検査は残し、詳細条件の形式検査を行いません。
+        assertTrue(validationErrors.any { it.message.contains("一時変数が未定義") })
+        assertFalse(validationErrors.any { it.message.contains("タグ") || it.message.contains("対象距離") }) {
+            "unexpected errors: ${validationErrors.joinToString(" | ") { it.rendered() }}"
+        }
     }
 
     @Test

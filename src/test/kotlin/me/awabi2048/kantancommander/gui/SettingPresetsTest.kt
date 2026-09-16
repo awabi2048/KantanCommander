@@ -247,7 +247,7 @@ class SettingPresetsTest {
     fun `static single targets allow zero or one entity`() {
         assertTrue(TargetSpec(TargetKind.NEAREST_PLAYER).isStaticallySingle())
         assertTrue(TargetSpec(TargetKind.NEAREST_ENTITY).isStaticallySingle())
-        assertTrue(TargetSpec(TargetKind.FIXED_ENTITY).isStaticallySingle())
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
         assertTrue(TargetSpec(TargetKind.TEMPORARY, tempName = "x").isStaticallySingle())
         assertFalse(TargetSpec(TargetKind.NEARBY_PLAYERS).isStaticallySingle())
         assertFalse(TargetSpec(TargetKind.NEARBY_ENTITIES).isStaticallySingle())

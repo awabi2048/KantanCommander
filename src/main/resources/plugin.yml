@@ -9,6 +9,8 @@ depend:
 softdepend:
   - MWMChanpon
   - CC-Content
+  - WorldEdit
+  - FastAsyncWorldEdit
   - Geyser-Spigot
   - EasyArmorStands
   - AxiomPaper

@@ -29,7 +29,13 @@ data class PickerCard(
     /** 要素 ID（lower-type:〜）に用いる種別名です。 */
     val key: String,
     val label: String,
-    val hoverText: String,
+    /**
+     * issue #review P2-10: ホバー説明の意味行です。
+     *
+     * コマンド説明の2行構成（機能説明・バニラ対応）を潰さないため、
+     * 空白結合の単一文字列ではなく行構造で保持します。
+     */
+    val hoverLines: List<String>,
     val hoverX: Double,
     val hoverY: Double,
 )
@@ -162,8 +168,13 @@ object DeclarativePicker {
                 actionId = "lower-type:${card.key}",
                 acceptedGestures = GestureGuiClickPolicy.CLICK,
                 // ホバーは旧行位置規則の解決値をそのまま用います。
+                // 複数行は Component.newline() で結合します（単一文字列化しません）。
                 hover = GestureGuiHover(
-                    text = Component.text(card.hoverText),
+                    text = card.hoverLines.filter(String::isNotBlank)
+                        .map(Component::text)
+                        .foldIndexed(Component.empty() as Component) { index, result, line ->
+                            if (index == 0) line else result.append(Component.newline()).append(line)
+                        },
                     size = GestureLowerPanel.DESCRIPTION_TEXT_SIZE,
                     lineWidth = 280,
                     position = GestureGuiHoverPosition.Fixed(card.hoverX, card.hoverY),

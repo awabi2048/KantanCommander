@@ -5327,12 +5327,18 @@ class GestureSequenceEditor(
         updateLower(player)
     }
 
-    /** DISPLAY_TEXTの3つの時間設定を、インベントリGUIと同じ仕様で編集します。 */
+    /**
+     * DISPLAY_TEXTの時間設定を、インベントリGUIと同じ仕様で編集します。
+     *
+     * issue #35-2: タイトル・サブタイトルは3項目、アクションバーは単独の
+     * 表示時間1項目です。
+     */
     private fun showDisplayTimingSettingDialog(
         player: Player,
         context: CommandSettingContext,
         node: me.awabi2048.kantancommander.model.CommandNode,
     ) {
+        val isActionbar = node.string("mode", "tellraw") == "actionbar"
         val fadeIn = node.string("fadeInSeconds", "1")
         val stay = node.string("staySeconds", "3")
         val fadeOut = node.string("fadeOutSeconds", "1")
@@ -5344,9 +5350,14 @@ class GestureSequenceEditor(
                 player,
                 node.string("mode", "tellraw"),
             ),
-            inputs = CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut),
+            inputs = if (isActionbar) {
+                CommandDialogSpecs.actionbarDurationInputs(player, stay)
+            } else {
+                CommandDialogSpecs.durationInputs(player, fadeIn, stay, fadeOut)
+            },
         ) { response ->
-            val rawValues = listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").associateWith { key ->
+            val keys = if (isActionbar) listOf("staySeconds") else listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds")
+            val rawValues = keys.associateWith { key ->
                 response.textValue(key).trim()
             }
             val validationError = rawValues.values
@@ -6288,7 +6299,15 @@ class GestureSequenceEditor(
             // エンティティ系はプリセットと詳細設定へ集約しました。
             if (runCatching { TargetCategory.valueOf(categoryValue) }.getOrNull() != TargetCategory.TEMPORARY) return
             val role = settingContext.role
-            val current = CommandSettingsModel.targetSpec(node, role)
+            // issue #34-1: 内包役割では位置・向き仕様の内部対象を読み書きします。
+            // 通常の targetSpec へ流すと別フィールド（ノード本体の対象）を
+            // 書き換えるため、ここで分岐します。
+            val embedded = CommandSettingsModel.isEmbeddedTargetRole(role)
+            val current = if (embedded) {
+                CommandSettingsModel.embeddedTargetSpec(node, role)
+            } else {
+                CommandSettingsModel.targetSpec(node, role)
+            }
             // 一時変数は通常の選択肢と同じく、1回目は方式の選択だけにします。
             // 値未入力のTargetSpecを設定済み扱いにしないため、明示的に
             // configuredFieldsを空集合へ指定します。
@@ -6302,16 +6321,28 @@ class GestureSequenceEditor(
                         settingContext.copy(role = role),
                         configuredFields = emptySet(),
                     ) {
-                        CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                        if (embedded) {
+                            CommandSettingsModel.setEmbeddedTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                        } else {
+                            CommandSettingsModel.setTargetSpec(it, role, TargetSpec(TargetKind.TEMPORARY))
+                        }
                     }
                 },
                 saveName = { name ->
                     updateSettingNode(player, settingContext.copy(role = role)) {
-                        CommandSettingsModel.setTargetSpec(
-                            it,
-                            role,
-                            TargetSpec(TargetKind.TEMPORARY, tempName = name),
-                        )
+                        if (embedded) {
+                            CommandSettingsModel.setEmbeddedTargetSpec(
+                                it,
+                                role,
+                                TargetSpec(TargetKind.TEMPORARY, tempName = name),
+                            )
+                        } else {
+                            CommandSettingsModel.setTargetSpec(
+                                it,
+                                role,
+                                TargetSpec(TargetKind.TEMPORARY, tempName = name),
+                            )
+                        }
                     }
                 },
             )
@@ -6436,18 +6467,14 @@ class GestureSequenceEditor(
                     val selectedKind = CommandSettingsModel.targetKinds(category)
                         .firstOrNull { it.name == value }
                         ?: return
-                    val fixedId = if (selectedKind == TargetKind.FIXED_ENTITY) {
-                        current.fixedEntityId ?: player.getTargetEntity(32)?.uniqueId ?: run {
-                            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_NO_ENTITY_IN_SIGHT))
-                            return
-                        }
-                    } else null
+                    // issue #35-3: 固定実体（旧FIXED_ENTITY）は撤去しました。
+                    // 視線取得の保存導線も持ちません。特定個体の参照は
+                    // 一時変数（TEMPORARY）で行います。
                     if (updateSettingNode(player, settingContext) {
                             writeFilterTarget(
                                 it,
                                 current.copy(
                                     kind = selectedKind,
-                                    fixedEntityId = fixedId,
                                     entityType = if (selectedKind in setOf(TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES)) current.entityType else null,
                                 ),
                             )

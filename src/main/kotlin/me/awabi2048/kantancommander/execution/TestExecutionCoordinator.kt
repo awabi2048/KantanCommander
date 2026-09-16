@@ -156,11 +156,16 @@ class TestExecutionCoordinator(
     /** 管理コマンドなどの明示的なロックバイパス後に、テスト操作者へ通知します。 */
     @Synchronized
     fun notifyBypassedMutation(scriptId: UUID, operation: ScriptMutationOperation) {
-        val action = if (operation == ScriptMutationOperation.DELETE) "削除" else "変更"
         activeTests.values
             .filter { it.scriptId == scriptId }
             .mapNotNull { onlinePlayer(it.ownerId) }
             .forEach { player ->
+                // issue #35-8: 操作種別の文言も直書きせず、カタログへ集約します。
+                val action = if (operation == ScriptMutationOperation.DELETE) {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ADMIN_MUTATION_ACTION_DELETE)
+                } else {
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_ADMIN_MUTATION_ACTION_CHANGE)
+                }
                 player.sendMessage(
                     KcI18n.text(
                         player,

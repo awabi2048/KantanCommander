@@ -1247,7 +1247,7 @@ class GraphEditorTest {
                     position = PositionSpec(PositionKind.COORDINATES, 4.0, 5.0, 6.0),
                 ),
             )
-            node.secondaryTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY, fixedEntityId = UUID.randomUUID())
+            node.secondaryTargetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
             node.destinationSpec = PositionSpec(PositionKind.TEMPORARY, tempName = "destination")
             node.destinationTargetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
             node.destinationFacingSpec = FacingSpec(FacingKind.ROTATION, yaw = 45f, pitch = 10f)

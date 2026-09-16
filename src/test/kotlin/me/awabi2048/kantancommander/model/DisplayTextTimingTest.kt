@@ -22,6 +22,8 @@ class DisplayTextTimingTest {
         assertEquals(120L, timing.stayTicks)
         assertEquals(60L, timing.fadeOutTicks)
         assertEquals(220L, timing.totalTicks)
+        // issue #35-2: アクションバーは単独の表示時間だけを使います。
+        assertEquals(120L, timing.actionBarTicks)
         assertTrue(DisplayTextTimingPolicy.supports(node))
         assertTrue(DisplayTextTimingPolicy.supports("title"))
         assertFalse(DisplayTextTimingPolicy.supports("tellraw"))
@@ -65,5 +67,22 @@ class DisplayTextTimingTest {
         val timing = DisplayTextTiming.from(node)
 
         assertEquals(DisplayTextTiming(1.0, 3.0, 1.0), timing)
+    }
+
+    @Test
+    fun `effective time fields follow the display mode`() {
+        // issue #review P2-7: 有効時間項目の定義は検証・参照チェック・実行で共有します。
+        assertEquals(
+            setOf("staySeconds"),
+            DisplayTextTimingPolicy.effectiveTimeFields("actionbar"),
+        )
+        assertEquals(
+            setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds"),
+            DisplayTextTimingPolicy.effectiveTimeFields("title"),
+        )
+        assertEquals(
+            setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds"),
+            DisplayTextTimingPolicy.effectiveTimeFields("tellraw"),
+        )
     }
 }

@@ -96,7 +96,6 @@ enum class ErrorCode(
     TARGET_EMPTY("target_empty", ErrorSeverity.INFO, ValidationPhase.RUNTIME, FailurePolicy.EMPTY_RESULT),
     TARGET_SPEC_INVALID("target_spec_invalid", ErrorSeverity.ERROR, ValidationPhase.RUNTIME, FailurePolicy.RETURN_ERROR),
     TEMPORARY_UNRESOLVED("temporary_unresolved", ErrorSeverity.WARNING, ValidationPhase.RUNTIME, FailurePolicy.SKIP_COMMAND),
-    FIXED_ENTITY_UNRESOLVED("fixed_entity_unresolved", ErrorSeverity.ERROR, ValidationPhase.RUNTIME, FailurePolicy.STOP_PROGRAM),
     VARIABLE_UNDEFINED("variable_undefined", ErrorSeverity.ERROR, ValidationPhase.RUNTIME, FailurePolicy.RETURN_ERROR),
     VARIABLE_SCOPE_MISSING("variable_scope_missing", ErrorSeverity.ERROR, ValidationPhase.RUNTIME, FailurePolicy.RETURN_ERROR),
     VARIABLE_OWNER_MISSING("variable_owner_missing", ErrorSeverity.ERROR, ValidationPhase.RUNTIME, FailurePolicy.RETURN_ERROR),
@@ -237,7 +236,7 @@ fun ErrorCode.displayKey(): LocalizationKey<String> = when (this) {
     ErrorCode.VARIABLE_UNDEFINED, ErrorCode.VARIABLE_SCOPE_MISSING,
     ErrorCode.VARIABLE_OWNER_MISSING, ErrorCode.VARIABLE_TYPE_MISMATCH ->
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_COMMAND_FAILED
-    ErrorCode.TEMPORARY_UNRESOLVED, ErrorCode.FIXED_ENTITY_UNRESOLVED,
+    ErrorCode.TEMPORARY_UNRESOLVED,
     ErrorCode.VARIABLE_UNSET, ErrorCode.CONDITION_UNRESOLVED,
     ErrorCode.TRIGGER_CONTEXT_MISSING, ErrorCode.UNKNOWN ->
         KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_REASON_NODE_FAILED

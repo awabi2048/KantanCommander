@@ -19,12 +19,20 @@ import java.util.UUID
 class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listener {
     private val selections = mutableMapOf<UUID, Selection>()
 
+    /**
+     * issue #34-2: 選択開始時の保存世代を編集セッションとして保持します。
+     *
+     * 確定クリック時に世代を検証し、選択中に別の編集が成功していた場合は
+     * 保存せず、他の編集者の変更を黙って上書きしません。
+     */
     fun begin(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
-        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.ITEM)
+        selections[player.uniqueId] =
+            Selection(scriptId, nodeId, returnRoute, SelectionKind.ITEM, openRevision = plugin.scripts.load(scriptId)?.revision)
     }
 
     fun beginDisk(player: Player, scriptId: UUID, nodeId: UUID, returnRoute: MenuRoute) {
-        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.DISK)
+        selections[player.uniqueId] =
+            Selection(scriptId, nodeId, returnRoute, SelectionKind.DISK, openRevision = plugin.scripts.load(scriptId)?.revision)
     }
 
     fun beginMaterial(
@@ -34,7 +42,14 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         returnRoute: MenuRoute,
         parameter: String,
     ) {
-        selections[player.uniqueId] = Selection(scriptId, nodeId, returnRoute, SelectionKind.MATERIAL, parameter)
+        selections[player.uniqueId] = Selection(
+            scriptId,
+            nodeId,
+            returnRoute,
+            SelectionKind.MATERIAL,
+            parameter,
+            openRevision = plugin.scripts.load(scriptId)?.revision,
+        )
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = false)
@@ -51,7 +66,12 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         } else null
         val context = CommandSettingContext(selection.scriptId, selection.nodeId)
         val savedNode = runCatching {
-            CommandSettingsModel.updateNode(plugin, context, editorId = player.uniqueId) { node ->
+            CommandSettingsModel.updateNode(
+                plugin,
+                context,
+                editorId = player.uniqueId,
+                expectedRevision = selection.openRevision,
+            ) { node ->
                 when (selection.kind) {
                     SelectionKind.ITEM -> {
                         // 付与・装備とも数量・Name/Lore等を含む実体をスナップショット保存します。
@@ -77,7 +97,14 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
                 failure,
             )
         }.getOrNull()
-        if (savedNode == null) return cancel(player)
+        if (savedNode == null) {
+            // 保存失敗（競合を含む）は選択を破棄し、最新状態へ戻します。
+            // 他の編集者の変更を上書きしないため、再選択を案内します。
+            selections.remove(player.uniqueId)
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+            CCSystem.getAPI().getMenuRuntimeService().open(player, selection.returnRoute)
+            return
+        }
         selections.remove(player.uniqueId)
         CCSystem.getAPI().getMenuRuntimeService().open(player, selection.returnRoute)
     }
@@ -104,5 +131,7 @@ class ItemSelectionListener(private val plugin: KantanCommanderPlugin) : Listene
         val returnRoute: MenuRoute,
         val kind: SelectionKind,
         val parameter: String? = null,
+        /** issue #34-2: 選択開始時の保存世代です。確定時に競合を検出します。 */
+        val openRevision: Long? = null,
     )
 }

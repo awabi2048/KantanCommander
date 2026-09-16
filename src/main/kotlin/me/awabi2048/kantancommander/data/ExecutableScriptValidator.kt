@@ -1401,7 +1401,10 @@ object ExecutableScriptValidator {
         validateTemplate(node.string("text"), node, path, "text", errors, variableDefinitions, temporaries = temporaryDefinitions)
         validateTemplate(node.string("subtitle"), node, path, "subtitle", errors, variableDefinitions, temporaries = temporaryDefinitions)
         if (DisplayTextTimingPolicy.supports(node)) {
-            listOf("fadeInSeconds", "staySeconds", "fadeOutSeconds").forEach { field ->
+            // issue #35-2: アクションバーは単独の表示時間だけを検証します。
+            // フェード値は表示時間に加算しないため、検証対象にしません。
+            // 有効項目の定義は DisplayTextTimingPolicy で共有します。
+            DisplayTextTimingPolicy.effectiveTimeFields(node).forEach { field ->
                 validateTickAlignedTime(
                     node = node,
                     path = path,
@@ -1640,11 +1643,16 @@ object ExecutableScriptValidator {
         insideForBody: Boolean,
         temporaryDefinitions: Map<String, ValueType>? = null,
     ) {
-        if (spec.kind == TargetKind.FIXED_ENTITY && spec.fixedEntityId == null) {
-            errors += nodeError(node, path, emptySet(), "固定エンティティが未設定です")
-        }
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        // 旧保存データは読込時の型検証で隔離するため、ここでの分岐は不要です。
         if (spec.kind == TargetKind.TEMPORARY) {
             checkTemporaryDefinition(spec.tempName, ValueType.ENTITY, temporaryDefinitions, node, path, emptySet(), errors)
+            // issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
+            // 残存条件の形式検査を行いません。保存時の除去・GUIの非提示・
+            // 実行の非適用と合わせ、同じ禁止規則を検証にも適用します。
+            // 探索基準位置だけは構造検査の対象に残します。
+            spec.searchOrigin?.let { validateSearchOrigin(it, path, node, errors, temporaryDefinitions) }
+            return
         }
         // 対象は各コマンドのTargetSpecだけで解決し、未設定の対象を
         // 前段ノードから暗黙に継承する経路は検証しません。

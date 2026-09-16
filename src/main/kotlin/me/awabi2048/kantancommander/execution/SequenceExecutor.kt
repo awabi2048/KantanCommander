@@ -6,6 +6,7 @@ import me.awabi2048.kantancommander.model.EntityGroupMath
 import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.KantanCommanderPlugin
 import me.awabi2048.kantancommander.error.ErrorCode
+import me.awabi2048.kantancommander.error.displayKey
 import me.awabi2048.kantancommander.model.CommandGraph
 import me.awabi2048.kantancommander.model.CommandNode
 import me.awabi2048.kantancommander.model.CommandType
@@ -65,6 +66,7 @@ import me.awabi2048.kantancommander.model.PlaceItemDestination
 import me.awabi2048.kantancommander.model.SoundOperation
 import me.awabi2048.kantancommander.model.SoundSettings
 import com.awabi2048.ccsystem.CCSystem
+import com.awabi2048.ccsystem.api.localization.LocalizationKey
 import com.awabi2048.ccsystem.api.localization.generated.KantanKantanCommanderCleanKeys as KcKeys
 import me.awabi2048.kantancommander.error.PartialApplicability
 import me.awabi2048.kantancommander.util.KcI18n
@@ -427,7 +429,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     ),
                 )
             }
-            session.lastDetail = "実行上限に達したため実行できなかった"
+            session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_COMMAND_LIMIT)
             return advanceNode(
                 script = script,
                 graph = graph,
@@ -533,7 +535,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         done,
                         "invalid_wait_seconds",
                     )
-                session.lastDetail = "WAIT: ${waitTicks} tick待機"
+                session.lastDetail = detailText(
+                    session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_WAIT,
+                    mapOf("ticks" to waitTicks),
+                )
                 // 待機時間は結果画面の内訳表示へ集計します。所要時間の内数です。
                 if (depth == 0) session.waitTicks += waitTicks
                 schedule(session, waitTicks) { next(node.next, NodeExecutionOutcome.SUCCESS) }
@@ -555,17 +561,21 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         val rawResult = evaluation == ConditionEvaluation.TRUE
                         val result = ExecutionSemantics.conditionResult(rawResult, node.boolean("inverted"))
                         session.previousContext = effectiveContext
-                        session.lastDetail = "分岐: ${if (result) "TRUE" else "FALSE"} に進んだ"
+                        session.lastDetail = if (result) {
+                            detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_BRANCH_TRUE)
+                        } else {
+                            detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_BRANCH_FALSE)
+                        }
                         next(if (result) node.trueNext else node.falseNext, NodeExecutionOutcome.SUCCESS)
                     }
                     ConditionEvaluation.UNRESOLVED -> {
-                        session.lastDetail = "条件値の解決に失敗した"
+                        session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_CONDITION_UNRESOLVED)
                         session.lastFailureReason = ErrorCode.CONDITION_UNRESOLVED.code
                         session.lastFailureCode = ErrorCode.CONDITION_UNRESOLVED
                         next(node.next, NodeExecutionOutcome.FAILED)
                     }
                     ConditionEvaluation.INVALID -> {
-                        session.lastDetail = "条件値の形式が不正"
+                        session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_CONDITION_INVALID)
                         session.lastFailureReason = ErrorCode.CONDITION_INVALID_TYPE.code
                         session.lastFailureCode = ErrorCode.CONDITION_INVALID_TYPE
                         next(node.next, NodeExecutionOutcome.FAILED)
@@ -578,7 +588,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 runDiskCall(node, session, depth) { success ->
                     session.context = callerContext
                     session.previousContext = callerPrevious
-                    session.lastDetail = if (success) "ディスク呼び出しに成功した" else "ディスク呼び出しに失敗した"
+                    session.lastDetail = if (success) {
+                        detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_DISK_CALL_SUCCESS)
+                    } else {
+                        detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_DISK_CALL_FAILURE)
+                    }
                     next(
                         node.next,
                         if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
@@ -590,7 +604,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             // 線形のため、done への直接完了で残りを実行しません。
             CommandType.RETURN_VALUE -> {
                 val value = resolveReturnValue(node, session) ?: run {
-                    session.lastDetail = "戻り値の解決に失敗した"
+                    session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_RETURN_UNRESOLVED)
                     session.lastFailureReason = ErrorCode.VARIABLE_UNSET.code
                     session.lastFailureCode = ErrorCode.VARIABLE_UNSET
                     next(node.next, NodeExecutionOutcome.FAILED)
@@ -600,12 +614,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 if (frame != null) frame.pendingReturn = value
                 session.returnValue = value
                 session.returnRequested = true
-                session.lastDetail = "値を返した"
+                session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_RETURN_VALUE)
                 done(true)
             }
             CommandType.TEMP_SET -> {
                 val success = executeTemporary(node, session)
-                session.lastDetail = if (success) "一時変数を設定した" else "一時変数の設定に失敗した"
+                session.lastDetail = if (success) {
+                    detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_TEMP_SET_SUCCESS)
+                } else {
+                    detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_TEMP_SET_FAILURE)
+                }
                 next(
                     node.next,
                     if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
@@ -617,14 +635,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                     session,
             )
                 if (success) session.previousContext = effectiveContext(session)
-                session.lastDetail = if (success) "ワールド内変数を更新した" else "ワールド内変数の更新に失敗した"
+                session.lastDetail = if (success) {
+                    detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_VARIABLE_SUCCESS)
+                } else {
+                    detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_VARIABLE_FAILURE)
+                }
                 next(
                     node.next,
                     if (success) NodeExecutionOutcome.SUCCESS else NodeExecutionOutcome.FAILED,
                 )
             }
             CommandType.MERGE -> {
-                session.lastDetail = "分岐を合流した"
+                session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_MERGE)
                 next(node.next, NodeExecutionOutcome.SUCCESS)
             }
             CommandType.FOR_START -> beginFor(script, graph, node, session, depth, done)
@@ -639,7 +661,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // 実処理の前にこの判定を行います。
                 val outcome = when {
                     hasUnavailableTemporaryReference(node, session) -> {
-                        session.lastDetail = "参照先が見つからないためスキップした"
+                        session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_TEMPORARY_SKIPPED)
                         session.lastFailureReason = ErrorCode.TEMPORARY_UNRESOLVED.code
                         session.lastFailureCode = ErrorCode.TEMPORARY_UNRESOLVED
                         NodeExecutionOutcome.SKIPPED
@@ -727,21 +749,36 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             .onFailure { failure -> plugin.logger.log(Level.WARNING, "[KantanCommander] node-finish observer failed", failure) }
     }
 
+    /**
+     * issue #35-8: 実行結果文の表示キー解決です。
+     *
+     * 利用者向け結果文は直書きせず、CC-Systemの型付き言語カタログへ集約します。
+     * コマンド種別だけでなく実際の操作内容（効果音の再生・停止等）に応じて
+     * 適切な文言を選択します。実行者のlocaleで解決します。
+     */
+    private fun detailText(session: ExecutionSession, key: LocalizationKey<String>, vars: Map<String, Any> = emptyMap()): String =
+        KcI18n.text(session.actor, key, vars)
+
     /** ログのホバーへ出す人間向けのコマンド種別説明です。 */
-    private fun immediateDetail(type: CommandType): String = when (type) {
-        CommandType.TELEPORT -> "対象を指定位置へテレポートした"
-        CommandType.GIVE_ITEM -> "対象へアイテムを付与した"
-        CommandType.PLACE_ITEM -> "対象へアイテムを配置した"
-        CommandType.ENTITY_ACTION -> "対象へエンティティ操作を行った"
-        CommandType.ENTITY_OPERATION -> "対象のエンティティデータを変更した"
-        CommandType.DISPLAY_TEXT -> "対象へテキストを表示した"
-        CommandType.SUMMON_ENTITY -> "エンティティを召喚した"
-        CommandType.PLAY_SOUND -> "サウンドを再生した"
-        CommandType.APPLY_EFFECT -> "対象へ効果を適用した"
-        CommandType.CAMERA_SHAKE -> "対象のカメラを揺らした"
-        CommandType.BLOCK_OPERATION -> "ブロックを変更した"
-        CommandType.ENTITY_DELETE -> "対象を削除した"
-        else -> "コマンドを実行した"
+    private fun immediateDetail(node: CommandNode, session: ExecutionSession): String = when (node.type) {
+        CommandType.TELEPORT -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_TELEPORT)
+        CommandType.GIVE_ITEM -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_GIVE_ITEM)
+        CommandType.PLACE_ITEM -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_PLACE_ITEM)
+        CommandType.ENTITY_ACTION -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_ENTITY_ACTION)
+        CommandType.ENTITY_OPERATION -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_ENTITY_OPERATION)
+        CommandType.DISPLAY_TEXT -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_DISPLAY_TEXT)
+        CommandType.SUMMON_ENTITY -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_SUMMON_ENTITY)
+        // issue #35-6: 再生・停止の実際の操作に応じて結果文を切り替えます。
+        CommandType.PLAY_SOUND -> if (SoundSettings.operation(node) == SoundOperation.STOP) {
+            detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_STOP_SOUND)
+        } else {
+            detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_PLAY_SOUND)
+        }
+        CommandType.APPLY_EFFECT -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_APPLY_EFFECT)
+        CommandType.CAMERA_SHAKE -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_CAMERA_SHAKE)
+        CommandType.BLOCK_OPERATION -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_BLOCK_OPERATION)
+        CommandType.ENTITY_DELETE -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_ENTITY_DELETE)
+        else -> detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_GENERIC_COMMAND)
     }
 
     private fun schedule(session: ExecutionSession, delayTicks: Long, action: () -> Unit) {
@@ -805,7 +842,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         session.loops += LoopFrame(node.id, endId, count.toLong(), 1, session.context)
         session.currentLoopCount = 1
-        session.lastDetail = "ループを開始した"
+        session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_LOOP_START)
         advanceNode(
             script, graph, node, session, depth, session.currentAttemptNumber, node.trueNext,
             NodeExecutionOutcome.SUCCESS, done, reason = null,
@@ -834,7 +871,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         if (ExecutionSemantics.shouldRunNextLoopIteration(frame.count, frame.limit)) {
             frame.count = requireNotNull(ExecutionSemantics.nextLoopCount(frame.count))
             session.currentLoopCount = frame.count
-            session.lastDetail = "ループを継続した"
+            session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_LOOP_CONTINUE)
             // 復帰後のS→body待機の表示期間にするため、デバッグ表示がある場合だけ
             // 追加待機します。通常実行とデバッグOFFでは現行動作のままです。
             val restartWait = if (depth == 0 && session.options.debugDelayTicks > 0L) {
@@ -850,7 +887,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         } else {
             session.loops.remove(frame)
             session.currentLoopCount = session.loops.lastOrNull()?.count
-            session.lastDetail = "ループを終了した"
+            session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_LOOP_END)
             advanceNode(
                 script, graph, node, session, depth, session.currentAttemptNumber, node.next,
                 NodeExecutionOutcome.SUCCESS, done, reason = null,
@@ -873,7 +910,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             )
         session.context = frame.startContext
         session.currentLoopCount = session.loops.lastOrNull()?.count
-        session.lastDetail = "ループを中断した"
+        session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_LOOP_INTERRUPT)
         advanceNode(
             script, graph, node, session, depth, session.currentAttemptNumber, graph.nodes[frame.endId]?.next,
             NodeExecutionOutcome.SUCCESS, done, reason = null,
@@ -894,7 +931,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 NodeExecutionOutcome.FAILED, done, "continue_outside_for",
             )
         session.context = frame.startContext
-        session.lastDetail = "ループの次の反復へ進んだ"
+        session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_LOOP_NEXT)
         advanceNode(
             script, graph, node, session, depth, session.currentAttemptNumber, frame.endId,
             NodeExecutionOutcome.SUCCESS, done, reason = null,
@@ -920,7 +957,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         // 循環呼出しは深さ上限の前に検出します。diskId のない旧ノードは深さ制限に委ねます。
         if (diskId != null && session.callFrames.any { it.diskId == diskId }) {
             plugin.logger.warning("[KantanCommander] disk-call-circular root=${session.rootId} node=${node.id} disk=$diskId")
-            session.lastDetail = "循環呼出しのため実行できなかった"
+            session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_CIRCULAR_CALL)
             session.lastFailureReason = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH.code
             session.lastFailureCode = ErrorCode.DISK_CALL_SIGNATURE_MISMATCH
             return done(false)
@@ -930,7 +967,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val arguments = linkedMapOf<String, TypedValue>()
         for (argument in declared) {
             val value = resolveCallArgument(node, argument, session) ?: run {
-                session.lastDetail = "引数 ${argument.name} の解決に失敗した"
+                session.lastDetail = detailText(
+                    session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_ARGUMENT_UNRESOLVED,
+                    mapOf("name" to argument.name),
+                )
                 session.lastFailureReason = ErrorCode.VARIABLE_UNSET.code
                 session.lastFailureCode = ErrorCode.VARIABLE_UNSET
                 return done(false)
@@ -989,7 +1030,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 }.getOrDefault(false)
                 session.returnRequested = false
                 session.returnValue = null
-                session.lastDetail = if (delivered) "値を返した" else session.lastDetail
+                session.lastDetail = if (delivered) {
+                    detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_RETURN_VALUE)
+                } else {
+                    session.lastDetail
+                }
                 done(delivered && success)
             } else {
                 done(success)
@@ -1071,15 +1116,18 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
     private fun executeImmediate(node: CommandNode, session: ExecutionSession): ImmediateExecutionResult = try {
         if (executeImmediateBoolean(node, session)) {
-            if (session.lastDetail.isNullOrBlank()) session.lastDetail = immediateDetail(node.type)
+            if (session.lastDetail.isNullOrBlank()) session.lastDetail = immediateDetail(node, session)
             ImmediateExecutionResult.SUCCESS
         } else {
             // 全件非適用・全件失敗時も件数と理由を残します。件数接尾辞は
             // 部分適用があるときだけ付き、全件適用時と同様の表示にはなりません。
             // lastPartialを設定する操作以外には影響しません。
             if (session.lastDetail.isNullOrBlank()) {
-                session.lastDetail = "${immediateDetail(node.type)}（実行に失敗）" +
-                    partialDetailSuffix(session.actor, session.lastPartial)
+                session.lastDetail = detailText(
+                    session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_FAILED,
+                    mapOf("detail" to immediateDetail(node, session)),
+                ) + partialDetailSuffix(session.actor, session.lastPartial)
             }
             session.lastFailureReason = session.lastFailureReason ?: ErrorCode.COMMAND_FAILED.code
             session.lastFailureCode = session.lastFailureCode ?: ErrorCode.COMMAND_FAILED
@@ -1088,7 +1136,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
     } catch (_: ParticleQuotaRejected) {
         // 上限超過は入力・実行失敗ではなく、このノードだけを送信せず後続へ進める
         // 制御結果です。通常の例外ログへ混ぜると、運用上の想定内の抑止が障害に見えます。
-        session.lastDetail = "Particle上限超過のためスキップした"
+        session.lastDetail = detailText(session, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_PARTICLE_QUOTA_SKIPPED)
         session.lastFailureReason = ErrorCode.PARTICLE_QUOTA_EXCEEDED.code
         session.lastFailureCode = ErrorCode.PARTICLE_QUOTA_EXCEEDED
         ImmediateExecutionResult.SKIPPED
@@ -1096,8 +1144,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         val reason = failure.message?.takeIf(String::isNotBlank) ?: failure::class.simpleName ?: "command_failed"
         session.lastFailureReason = reason
         session.lastFailureCode = ErrorCode.fromLegacyReason(reason)
-        session.lastDetail = "${immediateDetail(node.type)}（実行に失敗: $reason）" +
-            partialDetailSuffix(session.actor, session.lastPartial)
+        session.lastDetail = detailText(
+            session,
+            KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_FAILED_REASON,
+            mapOf("detail" to immediateDetail(node, session), "reason" to reason),
+        ) + partialDetailSuffix(session.actor, session.lastPartial)
         plugin.logger.log(Level.WARNING, "[KantanCommander] node failed root=${session.rootId} node=${node.id}", failure)
         ImmediateExecutionResult.FAILED
     }
@@ -1239,7 +1290,8 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                         ))
                     }
                     "actionbar" -> players.forEach { player ->
-                        timedActionBar.show(player, text, displayTiming(node, session))
+                        // issue #35-2: アクションバーは単独の表示時間で動作します。
+                        timedActionBar.show(player, text, displayTiming(node, session).actionBarTicks)
                     }
                     else -> players.forEach { player ->
                         timedActionBar.cancel(player, clear = true)
@@ -1339,7 +1391,11 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             session.lastPositionText = content.positionText
             // issue #29: 複数位置の一部失敗は件数で記録します。
             if (attempts.failed > 0) {
-                session.lastDetail = (session.lastDetail ?: "") + "（${attempts.failed}件の位置で失敗）"
+                session.lastDetail = (session.lastDetail ?: "") + detailText(
+                    session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_POSITIONS_FAILED,
+                    mapOf("count" to attempts.failed),
+                )
             }
         }
         success
@@ -1994,12 +2050,17 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         origin: Location,
         session: ExecutionSession,
     ): ExecutionContent {
+        val separator = KcI18n.text(session.actor, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_TARGETS_SEPARATOR)
         val head = buildString {
-            append(immediateDetail(node.type))
+            append(immediateDetail(node, session))
             if (targets.isNotEmpty()) {
-                append("（対象: ")
-                append(targets.joinToString("、") { entity -> entity.name })
-                append('）')
+                append(
+                    KcI18n.text(
+                        session.actor,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_TARGETS,
+                        mapOf("targets" to targets.joinToString(separator) { entity -> entity.name }),
+                    ),
+                )
             }
         }
         val expandedParams = node.params.entries
@@ -2787,12 +2848,14 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 // UNRESOLVEDにします。実行起点集合がある場合は既定値に使います。
                 val candidates = node.conditionPositionSpec?.let { spec ->
                     val resolved = resolvePositions(spec, session, context)
+                        ?: return ConditionEvaluation.UNRESOLVED
                     if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
                         return ConditionEvaluation.UNRESOLVED
                     }
                     resolved
                 } ?: executionOrigins ?: context?.position?.let { spec ->
                     val resolved = resolvePositions(spec, session, context)
+                        ?: return ConditionEvaluation.UNRESOLVED
                     if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) {
                         return ConditionEvaluation.UNRESOLVED
                     }
@@ -3407,25 +3470,166 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec? = session.context,
     ): Entity? = resolveTargetSpecs(spec, session, context).firstOrNull()
 
+    /**
+     * issue #34-5: 対象解決の型付き結果です。
+     *
+     * 成功（対象あり）・正常な0件・未解決・不正を区別し、#6の共通エラー体系へ
+     * 接続します。呼び出し側は空一覧へ潰さず、コード・原因・対象設定を
+     * ログとセッションへ保持します。正常な不一致を異常にせず、異常を
+     * 正常な0件へ変換しません。Target絞り込みの領域判定は Condition判定と
+     * 同じ [RegionResolution] の意味付け（基準未解決→未解決、world不一致・
+     * 不正指定→不正）を使います。
+     */
+    private sealed interface TargetResolution {
+        /** 解決成功です。条件に合う対象がない正常な0件を含みます。 */
+        data class Resolved(val entities: List<Entity>) : TargetResolution
+        /** 設定は正しいが実行時に解決できない状態です（変数未定義等）。 */
+        data class Unresolved(val code: ErrorCode, val detail: String) : TargetResolution
+        /** 設定自体が不正で解決できない状態です。 */
+        data class Invalid(val code: ErrorCode, val detail: String) : TargetResolution
+    }
+
+    /**
+     * issue #34-4: 対象の取得と絞り込み適用の契約です。
+     *
+     * 通常検索（プレイヤー系・付近系）は matches で種類・名・タグ・距離・
+     * 領域等を検査します。一方、一時変数参照は変数値だけで解決し、
+     * 詳細条件は適用しません。これは仕様であり、GUI（非提示）・保存（除去）・
+     * 実行（非適用）で一致させた契約です。既存保存データの残存条件も適用しません。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+     */
     private fun resolveTargetSpecs(
         spec: TargetSpec,
         session: ExecutionSession,
         context: ExecutionContextSpec? = session.context,
-    ): List<Entity> {
-        val resolvedSpec = resolveTargetFilter(spec, session) ?: return emptyList()
-        val selectionOrigin = selectionOrigin(context, session) ?: return emptyList()
-        val candidates: List<Entity> = when (resolvedSpec.kind) {
-            TargetKind.TEMPORARY -> listOfNotNull(
-                resolvedSpec.tempName
-                    ?.let { session.executionVariables.get(TemporaryTemplate.normalized(it)) }
-                    ?.takeIf { it.type == ValueType.ENTITY }
-                    ?.entityId?.let(session.origin.world::getEntity),
+    ): List<Entity> = when (val resolution = resolveTargetSpecsResult(spec, session, context)) {
+        is TargetResolution.Resolved -> resolution.entities
+        is TargetResolution.Unresolved -> {
+            // issue #34-5: 未解決は空一覧へ潰さず、コード・原因をログと
+            // セッションへ保持します。既存の失敗通知経路で利用者へ伝わります。
+            plugin.logger.warning(
+                "[KantanCommander] target unresolved: code=${resolution.code.code} " +
+                    "detail=${resolution.detail} kind=${spec.kind}",
             )
+            session.lastFailureReason = session.lastFailureReason ?: resolution.code.code
+            session.lastFailureCode = session.lastFailureCode ?: resolution.code
+            emptyList()
+        }
+        is TargetResolution.Invalid -> {
+            plugin.logger.warning(
+                "[KantanCommander] target invalid: code=${resolution.code.code} " +
+                    "detail=${resolution.detail} kind=${spec.kind}",
+            )
+            session.lastFailureReason = session.lastFailureReason ?: resolution.code.code
+            session.lastFailureCode = session.lastFailureCode ?: resolution.code
+            emptyList()
+        }
+    }
+
+    /**
+     * issue #34-5: 対象解決の型付き本体です。
+     *
+     * 呼び出し側の振る舞い（空一覧）は変えず、解決不能の原因だけを分類します。
+     * 分類は #34-4 の取得契約（固定・一時参照は単一解決、通常検索は絞り込み）と
+     * 一致させ、正常系の空結果と混同しません。
+     */
+    private fun resolveTargetSpecsResult(
+        spec: TargetSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec? = session.context,
+    ): TargetResolution {
+        val resolvedSpec = resolveTargetFilter(spec, session)
+            ?: return TargetResolution.Unresolved(
+                ErrorCode.TARGET_SPEC_INVALID,
+                "target.tag/target.nameの変数解決に失敗しました",
+            )
+        val selectionOrigin = selectionOrigin(context, session)
+            ?: return classifySelectionOriginFailure(context)
+        return when (resolvedSpec.kind) {
+            TargetKind.TEMPORARY -> resolveTemporaryTarget(resolvedSpec, session)
+            TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS,
+            TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES,
+            -> resolveMatchingTargets(resolvedSpec, session, context, selectionOrigin)
+        }
+    }
+
+    /** issue #34-5: 探索基準位置の解決失敗を原因別に分類します。 */
+    private fun classifySelectionOriginFailure(context: ExecutionContextSpec?): TargetResolution {
+        val failure = TargetFailureClassification.selectionOriginFailure(context?.position?.kind)
+        val detail = when (context?.position?.kind) {
+            PositionKind.TARGET -> "探索基準位置にTARGETは使えません"
+            PositionKind.TEMPORARY ->
+                "探索基準の一時変数位置を解決できません: ${context?.position?.tempName.orEmpty()}"
+            else -> "探索基準位置を解決できません: ${context?.position?.kind?.name ?: "未設定"}"
+        }
+        return if (failure.unresolved) {
+            TargetResolution.Unresolved(failure.code, detail)
+        } else {
+            TargetResolution.Invalid(failure.code, detail)
+        }
+    }
+
+    /** issue #34-5: 一時変数参照の単一解決です。変数未定義・型不一致・実体消失を区別します。 */
+    private fun resolveTemporaryTarget(spec: TargetSpec, session: ExecutionSession): TargetResolution {
+        val name = spec.tempName?.takeIf(String::isNotBlank)
+            ?: return TargetResolution.Invalid(ErrorCode.TARGET_SPEC_INVALID, "一時変数名が未設定です")
+        val value = session.executionVariables.get(TemporaryTemplate.normalized(name))
+            ?: return TargetResolution.Unresolved(ErrorCode.TEMPORARY_UNRESOLVED, "一時変数が未定義です: $name")
+        if (value.type != ValueType.ENTITY) {
+            return TargetResolution.Invalid(
+                ErrorCode.VARIABLE_TYPE_MISMATCH,
+                "一時変数がENTITYではありません: $name",
+            )
+        }
+        val entity = value.entityId?.let(session.origin.world::getEntity)
+            ?: return TargetResolution.Unresolved(ErrorCode.TEMPORARY_UNRESOLVED, "一時変数の実体が存在しません: $name")
+        if (entity.world != session.origin.world || systemEntityRegistry.isSystemEntity(entity)) return TargetResolution.Resolved(emptyList())
+        return TargetResolution.Resolved(listOf(entity))
+    }
+
+    /**
+     * issue #34-5: 通常検索の解決です。
+     *
+     * 領域指定時は基準解決を先に分類し、基準未解決・world不一致・不正指定を
+     * 条件判定と同じ意味付け（未解決・不正）で返します。探索基準が必要な
+     * 絞り込み（距離・範囲）を持つ場合も、基準未解決を分類します。
+     * 条件に合う対象がない場合は正常な0件として解決成功にします。
+     */
+    private fun resolveMatchingTargets(
+        spec: TargetSpec,
+        session: ExecutionSession,
+        context: ExecutionContextSpec?,
+        selectionOrigin: Location,
+    ): TargetResolution {
+        if (spec.region?.hasAnySetting() == true) {
+            // issue #34-5: 基準解決の分類は Condition判定と同じ意味付けを使います。
+            val region = resolveRegionResult(spec.region, session, context)
+            val failure = TargetFailureClassification.regionFailure(region, spec.region.anchor.kind)
+            if (failure != null) {
+                val detail = when (region) {
+                    is RegionResolution.Resolved -> error("領域解決の成功は分類対象外です")
+                    RegionResolution.UnresolvedAnchor -> "領域の基準を解決できません"
+                    RegionResolution.WorldMismatch -> "領域の基準が実行ワールドと異なります"
+                    RegionResolution.InvalidSpec -> "領域の指定が不正です"
+                }
+                return if (failure.unresolved) {
+                    TargetResolution.Unresolved(failure.code, detail)
+                } else {
+                    TargetResolution.Invalid(failure.code, detail)
+                }
+            }
+        }
+        // issue #34-5: 明示の探索基準が解決できない場合は、絞り込みの有無に
+        // かかわらず未解決とします。基準なしでは距離判定自体ができないため、
+        // 条件不一致の0件へ変換しません。未指定時は選択原点へ退行します。
+        if (spec.searchOrigin?.hasAnySetting() == true && searchOriginFor(spec, context, session) == null) {
+            return classifySearchOriginFailure(spec)
+        }
+        val candidates: List<Entity> = when (spec.kind) {
             TargetKind.NEAREST_PLAYER, TargetKind.NEARBY_PLAYERS, TargetKind.ALL_PLAYERS, TargetKind.RANDOM_PLAYER ->
-                session.origin.world.players.filter { matches(it, resolvedSpec, session, context) }
-            TargetKind.NEAREST_ENTITY, TargetKind.NEARBY_ENTITIES ->
-                session.origin.world.entities.filter { matches(it, resolvedSpec, session, context) }
-            TargetKind.FIXED_ENTITY -> listOfNotNull(resolvedSpec.fixedEntityId?.let(session.origin.world::getEntity))
+                session.origin.world.players.filter { matches(it, spec, session, context) }
+            else ->
+                session.origin.world.entities.filter { matches(it, spec, session, context) }
         }
         // 対象種別・固定UUID・一時変数の全経路をここで同じように検閲します。
         // 個別の操作実装で除外すると、新しいコマンド種別の追加時に抜け道になります。
@@ -3433,22 +3637,44 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             .filter { it.world == session.origin.world }
             .filterNot(systemEntityRegistry::isSystemEntity)
         val sorted = when {
-            resolvedSpec.kind == TargetKind.RANDOM_PLAYER || resolvedSpec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
+            spec.kind == TargetKind.RANDOM_PLAYER || spec.sort == me.awabi2048.kantancommander.model.TargetSort.RANDOM ->
                 inMyWorld.shuffled()
-            resolvedSpec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
+            spec.sort == me.awabi2048.kantancommander.model.TargetSort.FURTHEST ->
                 inMyWorld.sortedByDescending { it.location.distanceSquared(selectionOrigin) }
             else -> inMyWorld.sortedBy { it.location.distanceSquared(selectionOrigin) }
         }
-        val defaultLimit = when (resolvedSpec.kind) {
-            TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY,
-            TargetKind.FIXED_ENTITY, TargetKind.TEMPORARY -> 1
+        val defaultLimit = when (spec.kind) {
+            TargetKind.NEAREST_PLAYER, TargetKind.RANDOM_PLAYER, TargetKind.NEAREST_ENTITY -> 1
             else -> Int.MAX_VALUE
         }
-        return sorted.take((resolvedSpec.limit ?: defaultLimit).coerceAtLeast(1))
+        return TargetResolution.Resolved(sorted.take((spec.limit ?: defaultLimit).coerceAtLeast(1)))
     }
 
-    /** 対象名・タグだけを実行直前に補間し、Registry IDや構造化値は型を保ちます。 */
+    /** issue #34-5: 絞り込み用探索基準の解決失敗を原因別に分類します。 */
+    private fun classifySearchOriginFailure(spec: TargetSpec): TargetResolution {
+        val failure = TargetFailureClassification.searchOriginFailure(spec.searchOrigin)
+        val temp = spec.searchOrigin?.positionTemp?.takeIf(String::isNotBlank)
+        val detail = if (temp != null) {
+            "探索基準の一時変数位置を解決できません: $temp"
+        } else {
+            "探索基準位置を解決できません"
+        }
+        return if (failure.unresolved) {
+            TargetResolution.Unresolved(failure.code, detail)
+        } else {
+            TargetResolution.Invalid(failure.code, detail)
+        }
+    }
+
+    /**
+     * 対象名・タグだけを実行直前に補間し、Registry IDや構造化値は型を保ちます。
+     *
+     * issue #review P2-9: 一時変数参照は詳細条件を使わない契約のため、
+     * 名前・タグの補間を行いません。保存時の除去とGUIの非提示と合わせ、
+     * 残存条件の変数不足で失敗しないようにします。
+     */
     private fun resolveTargetFilter(spec: TargetSpec, session: ExecutionSession): TargetSpec? {
+        if (spec.kind == TargetKind.TEMPORARY) return spec
         fun resolve(value: String?): String? {
             if (value == null || value.isBlank()) return null
             return resolveText(value, session)
@@ -3490,8 +3716,10 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * issue #4 の明示領域による絞り込みです。
      *
      * 正常な不一致と解決失敗を区別します。基準未解決は不一致、world不一致・
-     * 不正指定は警告を残して不一致とします（Target絞り込みは真偽しか返せないため、
-     * 明示性はログで担保します。Condition判定では #5 の INVALID へ接続します）。
+     * 不正指定は不一致とします（Target絞り込みは真偽しか返せないため）。
+     * issue #34-5: 原因の分類と通知は解決単位で [resolveTargetSpecsResult] が
+     * 行うため、ここでは実体ごとのログを出しません。Condition判定では #5 の
+     * INVALID／UNRESOLVED へ接続し、同じ原因に矛盾した意味付けをしません。
      * 領域側の距離とTarget側の距離は独立に適用します（AND）。
      */
     private fun matchesRegion(
@@ -3521,14 +3749,9 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
             spec.gameMode == null || entity is Player && entity.gameMode.name.equals(spec.gameMode, true)
         }
         RegionResolution.UnresolvedAnchor -> false
-        RegionResolution.WorldMismatch -> {
-            plugin.logger.warning("[KantanCommander] region world mismatch: anchor is outside the execution world")
-            false
-        }
-        RegionResolution.InvalidSpec -> {
-            plugin.logger.warning("[KantanCommander] invalid region spec: rejected by validation contract")
-            false
-        }
+        // issue #34-5: 実体ごとの警告は出しません。原因は解決単位で分類・通知します。
+        RegionResolution.WorldMismatch -> false
+        RegionResolution.InvalidSpec -> false
     }
 
     private fun selectionOrigin(context: ExecutionContextSpec?, session: ExecutionSession): Location? =
@@ -3600,7 +3823,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
                 ?: session.origin
             return listOf(base)
         }
-        val resolved = resolvePositions(spec, session, ambient)
+        val resolved = resolvePositions(spec, session, ambient) ?: return null
         if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) return null
         return resolved
     }
@@ -3689,7 +3912,7 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
         context: ExecutionContextSpec?,
     ): List<Location>? {
         if (spec == null) return null
-        val resolved = resolvePositions(spec, session, context)
+        val resolved = resolvePositions(spec, session, context) ?: return null
         if (resolved.isEmpty() && spec.kind != PositionKind.TARGET) return null
         return resolved
     }
@@ -3699,17 +3922,28 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      *
      * 対象内包位置（TARGET）は選択エンティティそれぞれの位置へ0..N件解決し、
      * それ以外は単一解決の0..1件です。各コマンド側で重複実装しません。
+     * issue #review P2-6: TARGET内包の解決失敗（未解決・不正）はnullで返し、
+     * 正常な0件（空一覧）と区別します。呼び出し側はnullを失敗として扱い、
+     * 空集合は従来どおり対象なしの成功として扱います。
      */
     private fun resolvePositions(
         spec: PositionSpec,
         session: ExecutionSession,
         context: ExecutionContextSpec?,
-    ): List<Location> {
+    ): List<Location>? {
         if (spec.kind == PositionKind.TARGET) {
             val target = spec.target ?: return emptyList()
-            return resolveTargetSpecs(target, session, context).map { it.location.clone() }
+            return when (val resolution = resolveTargetSpecsResult(target, session, context)) {
+                is TargetResolution.Resolved -> resolution.entities.map { it.location.clone() }
+                is TargetResolution.Unresolved, is TargetResolution.Invalid -> {
+                    // 原因の記録と通知は resolveTargetSpecs 側へ一元化します。
+                    // 解決本体の再計算は失敗時のみであり、通常系の負荷は変えません。
+                    resolveTargetSpecs(target, session, context)
+                    null
+                }
+            }
         }
-        return resolvePosition(spec, session, context)?.let { listOf(it) } ?: emptyList()
+        return resolvePosition(spec, session, context)?.let { listOf(it) }
     }
 
     /**
@@ -3984,7 +4218,16 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
 
         // テキスト／数値欄に現れる `%{name}%` はスカラーだけを許可します。
         // POSITION等を空文字へ変換して実行を続けると、型エラーが成功に見えます。
-        if (node.params.values.any { !scalarReferencesAvailable(it) }) return true
+        // issue #review P2-7: 表示方式で使わない時間項目（アクションバーの
+        // フェード値等）は検査対象から外します。有効項目の定義は検証と共有し、
+        // 非表示項目の残存値でコマンド全体がスキップされないようにします。
+        val ignoredParams = if (node.type == CommandType.DISPLAY_TEXT) {
+            setOf("fadeInSeconds", "staySeconds", "fadeOutSeconds") -
+                me.awabi2048.kantancommander.model.DisplayTextTimingPolicy.effectiveTimeFields(node)
+        } else {
+            emptySet()
+        }
+        if (node.params.filterKeys { it !in ignoredParams }.values.any { !scalarReferencesAvailable(it) }) return true
 
         fun entityAvailable(name: String?): Boolean {
             val value = name?.takeIf(String::isNotBlank)
@@ -4130,12 +4373,31 @@ class SequenceExecutor(private val plugin: KantanCommanderPlugin) {
      * DISK_CALLの入れ子や非同期WAITから同じ失敗経路へ戻っても、作成者への通知が
      * 重複しないようセッション単位で抑制します。オフラインの場合は送信先がないため、
      * 実行ログだけを正本として通知を捨てます。
+     *
+     * issue #34-5: セッションに記録されたエラーコードがある場合は、原因の表示名も
+     * 伝えます。対象解決の未解決・不正など、修正すべき設定を判断できるようにします。
+     * issue #35-8: 通知文は直書きせず、型付き言語カタログへ集約します。
      */
     private fun notifyCreatorOfFailure(session: ExecutionSession) {
         if (session.failureNotified) return
         session.failureNotified = true
         val creator = plugin.server.getPlayer(session.creatorId) ?: return
-        creator.sendMessage("§cかんたんコマンダープログラム【${session.programName}】の実行に失敗しました。")
+        val causeCode = session.lastFailureCode ?: session.failureCode
+        val cause = causeCode
+            ?.let {
+                KcI18n.text(
+                    creator,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_EXECUTION_FAILED_CAUSE,
+                    mapOf("cause" to KcI18n.text(creator, it.displayKey())),
+                )
+            }.orEmpty()
+        creator.sendMessage(
+            "§c" + KcI18n.text(
+                creator,
+                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_TEST_DETAIL_EXECUTION_FAILED,
+                mapOf("program" to session.programName, "cause" to cause),
+            ),
+        )
         creator.playSound(
             creator.location,
             "minecraft:block.note_block.bit",

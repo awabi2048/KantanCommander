@@ -37,8 +37,11 @@ import me.awabi2048.kantancommander.model.EntityPropertyChoice
 import me.awabi2048.kantancommander.model.EntityPropertySupport
 import me.awabi2048.kantancommander.model.EntityPropertyValueKind
 import me.awabi2048.kantancommander.model.EntityTagEntries
+import me.awabi2048.kantancommander.model.EntityGroupOperation
 import me.awabi2048.kantancommander.model.FacingKind
 import me.awabi2048.kantancommander.model.FacingSpec
+import me.awabi2048.kantancommander.model.StructureMirror
+import me.awabi2048.kantancommander.model.StructureRotation
 import me.awabi2048.kantancommander.model.CoordinateSemantics
 import me.awabi2048.kantancommander.model.PositionKind
 import me.awabi2048.kantancommander.model.PositionSpec
@@ -181,7 +184,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ) {
                                 return@MenuActionHandler MenuActionResult.Ignored
                             }
-                            if (!updateNode(context.player, context.route) { node ->
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                     val base = CommandSettingsModel.positionSpec(node, embedRole)
                                         ?.takeIf { base -> base.kind == PositionKind.TARGET }
                                         ?: PositionSpec(PositionKind.TARGET)
@@ -204,14 +207,23 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         // プリセット選択は絞り込み条件を引き継がず、種別の既定値から
                         // 作り直します。簡易GUIでは隠れた条件を表示・編集できないため、
                         // 見えている選択と保存値がずれないことを優先します。
-                        if (!updateNode(context.player, context.route) { node ->
-                                CommandSettingsModel.setTargetSpec(
-                                    node,
-                                    routeRole,
-                                    SettingPresets.targetSpecFor(preset),
-                                )
+                        // issue #34-1: 内包役割へは内包対象として保存します。
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
+                                if (CommandSettingsModel.isEmbeddedTargetRole(routeRole)) {
+                                    CommandSettingsModel.setEmbeddedTargetSpec(
+                                        node,
+                                        routeRole,
+                                        SettingPresets.withoutPresetConversion(SettingPresets.targetSpecFor(preset)),
+                                    )
+                                } else {
+                                    CommandSettingsModel.setTargetSpec(
+                                        node,
+                                        routeRole,
+                                        SettingPresets.targetSpecFor(preset),
+                                    )
+                                }
                             }) {
-                            return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
+                                return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                         }
                         MenuActionResult.Success(MenuUpdate.Replace(context.route))
                     },
@@ -263,17 +275,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             // 表示と同じ共通フィールド集合を保存入口でも適用します。
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (CommandSettingsModel.supportsTemporaryValueReference(node, field)) {
-                            // 簡易GUIでは一時変数参照を扱いません。直接値へ切り替えて
-                            // 下の通常値入力へ進みます。既存の参照は解除されます。
-                            if (!updateNode(context.player, context.route, configuredFields = emptySet()) {
-                                    CommandSettingsModel.selectLiteralValueSource(it, field)
-                                }) {
-                                return@MenuActionHandler MenuActionResult.Rejected(
-                                    KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
-                                )
-                            }
-                        }
+                        // issue #33-2: 画面を開く操作では永続値を変更しません。
+                        // 一時変数参照の解除は直接値の確定時（setParameter）にのみ行い、
+                        // キャンセル・戻る・切断・入力失敗では元の参照と値を保ちます。
+                        // 直接値の保存入口（showFieldForm・選択確定・手持ち設定）は
+                        // いずれも setParameter 経由で参照解除を伴うため、ここでの
+                        // 事前保存は不要です。
                         if (field == "item" && (node.type == CommandType.GIVE_ITEM ||
                                 node.type == CommandType.PLACE_ITEM)) {
                             // 付与アイテムはインベントリ内の実物をクリックして選択する
@@ -296,7 +303,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             )
                         }
                         if (field == "action" && node.type == CommandType.ENTITY_ACTION) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "action",
@@ -335,7 +342,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             val definition = propertyId?.let { EntityDataSchema.definition(it) }
                             when (definition?.valueKind) {
                                 EntityPropertyValueKind.BOOLEAN -> {
-                                    if (!updateNode(context.player, context.route) {
+                                    if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         CommandSettingsModel.setParameter(
                                             it,
                                             EntityDataSchema.PARAM_VALUE,
@@ -381,13 +388,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
                         if (field == "overwrite" && (node.type == CommandType.ENTITY_ACTION || node.type == CommandType.PLACE_ITEM)) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
                             }) return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "soundScope" && node.type == CommandType.PLAY_SOUND) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "soundScope",
@@ -397,7 +404,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Refresh)
                         }
                         if (field == "soundOperation" && node.type == CommandType.PLAY_SOUND) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "soundOperation",
@@ -462,8 +469,26 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 MenuUpdate.Navigate(genericPositionRoute(context.route, "execution_position"))
                             )
                         }
+                        // issue #33-1: 建造物・群操作の設定項目へ操作・保存経路を接続します。
+                        // 表示されるのに操作が Ignored へ落ちる接続漏れを解消します。
+                        // 選択肢項目は専用子画面、名前・軸入力は汎用入力へ進めます。
+                        if (field == "rotation" && node.type == CommandType.STRUCTURE_PLACE) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, STRUCTURE_ROTATION_ID))
+                            )
+                        }
+                        if (field == "mirror" && node.type == CommandType.STRUCTURE_PLACE) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, STRUCTURE_MIRROR_ID))
+                            )
+                        }
+                        if (field == "operation" && node.type == CommandType.ENTITY_GROUP) {
+                            return@MenuActionHandler MenuActionResult.Success(
+                                MenuUpdate.Navigate(choiceRoute(context.route, ENTITY_GROUP_OPERATION_ID))
+                            )
+                        }
                         if (field == "shakeType" && node.type == CommandType.CAMERA_SHAKE) {
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(
                                     it,
                                     "shakeType",
@@ -476,17 +501,13 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             showParticleParametersForm(context.player, context.route, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
-                        if (field in setOf(
-                                "count", "seconds", "text", "subtitle", "customName", "itemData", "value",
-                                 "summonEntity", "tags", "sound",
-                                "soundParameters", "particle", "particleData", "particleDensity", "burstHeight",
-                                "effect", "level", "intensity", "volume", "pitch",
-                                "x", "y", "z", "entityId", "item",
-                                "motionX", "motionY", "motionZ",
-                                EntityTagEntries.PARAM_ENTRIES,
-                                EntityAttributeSupport.PARAM_VALUE,
-                                EntityDataSchema.PARAM_VALUE,
-                            )) {
+                        // issue #33-1: 汎用テキスト入力の受付は入力仕様の有無で判定します。
+                        // 項目名の手動列挙と入力仕様が別管理だと、新設定の追加時に
+                        // 表示だけ増えて操作が Ignored へ落ちる接続漏れが起きます。
+                        // 専用画面・直接操作を持つ項目は上流の分岐で処理済みのため、
+                        // ここへ届くのは汎用入力だけです。建造物名・群名・軸入力・
+                        // 表示時間などもこの経路で編集します。
+                        if (CommandDialogSpecs.field(node, field) != null) {
                             showFieldForm(context.player, context.route, field, node)
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.None)
                         }
@@ -510,6 +531,17 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "position" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) ->
                                 genericPositionRoute(context.route, "particle_position")
                             field == "summonPosition" -> genericPositionRoute(context.route, "summon_position")
+                            // issue #33-1: 建造物の範囲・設置位置、群pivotも汎用位置画面へ進みます。
+                            // 保存先の役割は汎用位置画面側で解決し、通常対象への取り違えは
+                            // #34-1 の役割厳密化で防ぎます。
+                            field == "from" && node.type == CommandType.STRUCTURE_SAVE ->
+                                genericPositionRoute(context.route, CommandSettingRole.BLOCK_FROM.routeValue)
+                            field == "to" && node.type == CommandType.STRUCTURE_SAVE ->
+                                genericPositionRoute(context.route, CommandSettingRole.BLOCK_TO.routeValue)
+                            field == "structurePlace" && node.type == CommandType.STRUCTURE_PLACE ->
+                                genericPositionRoute(context.route, CommandSettingRole.STRUCTURE_PLACE_POSITION.routeValue)
+                            field == "pivot" && node.type == CommandType.ENTITY_GROUP ->
+                                genericPositionRoute(context.route, CommandSettingRole.GROUP_PIVOT.routeValue)
                             else -> null
                         } ?: return@MenuActionHandler MenuActionResult.Ignored
                         MenuActionResult.Success(MenuUpdate.Navigate(target))
@@ -528,7 +560,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val mode = context.payload["mode"]
                             ?.takeIf { it in setOf("tellraw", "title", "subtitle", "actionbar") }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "mode", mode)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
@@ -549,8 +581,80 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val operation = context.payload["operation"]
                             ?.takeIf { it == "setblock" || it == "fill" }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "operation", operation)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        // issue #33-1: 建造物の回転・反転、群操作の選択子画面です。
+        // 表示される設定項目に操作・保存経路がない接続漏れを解消します。
+        // 保存規則はジェスチャーGUIと同一（定数IDのみ受付）です。
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                STRUCTURE_ROTATION_ID,
+                renderer = { renderStructureRotations(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val rotation = context.payload["rotation"]
+                            ?.let(StructureRotation::from)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
+                                CommandSettingsModel.setParameter(it, "rotation", rotation.value)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                STRUCTURE_MIRROR_ID,
+                renderer = { renderStructureMirrors(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val mirror = context.payload["mirror"]
+                            ?.let(StructureMirror::from)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
+                                CommandSettingsModel.setParameter(it, "mirror", mirror.value)
+                            }) {
+                            return@MenuActionHandler MenuActionResult.Rejected(
+                                KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
+                            )
+                        }
+                        MenuActionResult.Success(MenuUpdate.Back)
+                    },
+                ),
+            )
+        )
+        runtime.register(
+            InventoryMenuDefinition(
+                SequenceEditorMenu.OWNER,
+                ENTITY_GROUP_OPERATION_ID,
+                renderer = { renderEntityGroupOperations(it.player) },
+                actions = mapOf(
+                    "back" to back(),
+                    "select" to MenuActionHandler { context ->
+                        val operation = context.payload["operation"]
+                            ?.let(EntityGroupOperation::from)
+                            ?: return@MenuActionHandler MenuActionResult.Ignored
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
+                                CommandSettingsModel.setParameter(it, "operation", operation.value)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
                                 KcI18n.component(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED),
@@ -572,7 +676,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val slot = context.payload["slot"]
                             ?.takeIf { it in setOf("HAND", "OFF_HAND", "HEAD", "CHEST", "LEGS", "FEET") }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "slot", slot)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -598,7 +702,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val current = node(context.route) ?: return@MenuActionHandler MenuActionResult.Ignored
                         when {
                             selection == "tag" -> {
-                                if (!updateNode(context.player, context.route) {
+                                if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.TAG)
                                     }) {
                                     return@MenuActionHandler MenuActionResult.Rejected(
@@ -617,7 +721,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 val definition = EntityDataSchema.definition(propertyId)
                                     ?: return@MenuActionHandler MenuActionResult.Ignored
                                 val previous = EntityDataPath.propertyIdOf(current.string(EntityDataPath.PARAM_PATH))
-                                if (!updateNode(context.player, context.route) {
+                                if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.propertyPath(propertyId))
                                         // 項目切替時は値をクリアし、古い項目の値残存を防ぎます。
                                         if (previous != null && previous != propertyId) {
@@ -631,7 +735,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                                 when (definition.valueKind) {
                                     // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
                                     EntityPropertyValueKind.BOOLEAN -> {
-                                        if (!updateNode(context.player, context.route) {
+                                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                                 val toggled = if (previous == propertyId) {
                                                     (!(it.string(EntityDataSchema.PARAM_VALUE).toBooleanStrictOrNull() ?: false)).toString()
                                                 } else "true"
@@ -673,7 +777,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val attributeId = context.payload["attribute"]
                             ?.takeIf(EntityAttributeSupport::isAttributeId)
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityDataPath.PARAM_PATH, EntityDataPath.attributePath(attributeId))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -716,7 +820,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             val toggled = if (target.mode == EntityTagEntries.MODE_ADD) EntityTagEntries.MODE_REMOVE else EntityTagEntries.MODE_ADD
                             val updated = current.toMutableList().also { it[modeIndex] = target.copy(mode = toggled) }
                             if (!EntityTagEntries.isValid(updated)) return@MenuActionHandler MenuActionResult.Ignored
-                            if (!updateNode(context.player, context.route) {
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                     CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
                                 }) {
                                 return@MenuActionHandler MenuActionResult.Rejected(
@@ -736,7 +840,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?: return@MenuActionHandler MenuActionResult.Ignored
                         if (index !in current.indices) return@MenuActionHandler MenuActionResult.Ignored
                         val updated = current.toMutableList().also { it.removeAt(index) }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -770,7 +874,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (current.enumChoices.none { it.id == choice }) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityDataSchema.PARAM_VALUE, choice)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -809,7 +913,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         when (definition.valueKind) {
                             // 真偽値は選択→クリックで直接切り替えます。子画面を持ちません。
                             EntityPropertyValueKind.BOOLEAN -> {
-                                if (!updateNode(context.player, context.route) {
+                                if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                         val toggled = (!(it.string(key).toBooleanStrictOrNull() ?: false)).toString()
                                         CommandSettingsModel.setParameter(it, key, toggled)
                                     }) {
@@ -861,7 +965,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         if (definition.enumChoices.none { it.id == choice }) {
                             return@MenuActionHandler MenuActionResult.Ignored
                         }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, EntityDataSchema.summonDataKey(propertyId), choice)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -881,7 +985,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 actions = mapOf(
                     "back" to back(),
                     "toggleOverwrite" to MenuActionHandler { context ->
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, "overwrite", (!it.boolean("overwrite")).toString())
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -894,7 +998,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "select" to MenuActionHandler { context ->
                         val destination = PlaceItemDestination.from(context.payload["placeDestination"])
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 // 配置先の切替えで要求対象が変わるため、スロットは
                                 // 既定値へ戻して不正な組合せを残しません。
                                 CommandSettingsModel.setParameter(it, "placeDestination", destination.paramValue)
@@ -938,7 +1042,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         } else {
                             VariableScope.WORLD.name
                         }
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 it.params["returnScope"] = next
                                 it.markConfigured("returnScope")
                             }
@@ -991,7 +1095,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     "disk" to MenuActionHandler { context ->
                         val role = CommandSettingRole.fromRoute(context.route.payload[ROLE])
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(node, role, PositionSpec(PositionKind.DISK))
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -1065,7 +1169,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             } else {
                                 SettingPresets.TargetPreset.NEAREST_PLAYER
                             }
-                            if (!updateNode(context.player, context.route) { node ->
+                            if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                     CommandSettingsModel.setTargetSpec(
                                         node,
                                         role,
@@ -1078,7 +1182,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             }
                             return@MenuActionHandler MenuActionResult.Success(MenuUpdate.Back)
                         }
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(
                                     node,
                                     role,
@@ -1097,7 +1201,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val spawn = context.payload["spawn"]
                             ?.let { runCatching { MyworldSpawnKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(
                                     node,
                                     role,
@@ -1148,7 +1252,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         val spawn = context.payload["spawn"]
                             ?.let { runCatching { MyworldSpawnKind.valueOf(it) }.getOrNull() }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) { node ->
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) { node ->
                                 CommandSettingsModel.setPositionSpec(
                                     node,
                                     role,
@@ -1207,7 +1311,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             ?.let { runCatching { ParticleShape.valueOf(it) }.getOrNull() }
                             ?.takeIf { it != ParticleShape.POINT_SCATTER }
                             ?: return@MenuActionHandler MenuActionResult.Ignored
-                        if (!updateNode(context.player, context.route) {
+                        if (!updateNode(context.player, context.route, expectedRevision = script(context.route)?.revision) {
                                 CommandSettingsModel.setParameter(it, ParticleGeometry.PARAM_SHAPE, shape.name)
                             }) {
                             return@MenuActionHandler MenuActionResult.Rejected(
@@ -1546,7 +1650,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             return MenuActionResult.Ignored
         }
-        if (!updateNode(context.player, context.route, configuredFields = setOf("diskId")) {
+        if (!updateNode(
+                context.player,
+                context.route,
+                configuredFields = setOf("diskId"),
+                expectedRevision = script(context.route)?.revision,
+            ) {
                 it.applyCalledDisk(diskId, disk)
             }
         ) {
@@ -1598,7 +1707,7 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             return MenuActionResult.Success(MenuUpdate.None)
         }
-        if (!updateNode(player, route) {
+        if (!updateNode(player, route, expectedRevision = script(route)?.revision) {
                 CommandSettingsModel.setParameter(it, "block", blockId)
             }) {
             return MenuActionResult.Rejected(
@@ -1876,9 +1985,23 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
      * カードごとにモード切替行と削除行を並べ、2子ボタンの操作を
      * インベントリGUIでも等価に到達できるようにします。
      */
+    /**
+     * タグ一覧画面です。
+     *
+     * issue #33-3: 共通UI規則に従い、Nameへ対象識別（タグ名）または固定の
+     * 操作名だけを入れ、状態（追加／削除）・対象名の補足はLoreのデータ行へ
+     * 分離します。Nameへの状態混入は行いません。
+     */
     private fun renderEntityTagList(player: Player, route: MenuRoute): InventoryMenuView {
         val entries = node(route)?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }.orEmpty()
-        data class TagRow(val material: Material, val label: String, val action: String, val payload: Map<String, String>)
+        data class TagRow(
+            val material: Material,
+            val label: String,
+            val action: String,
+            val payload: Map<String, String>,
+            val dataLabel: String? = null,
+            val dataValue: String? = null,
+        )
         val allRows = buildList {
             add(TagRow(
                 Material.WRITABLE_BOOK,
@@ -1894,15 +2017,19 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 )
                 add(TagRow(
                     Material.NAME_TAG,
-                    "${entry.tag} : $modeLabel",
+                    entry.tag,
                     "select",
                     mapOf("mode" to index.toString()),
+                    dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG_OPERATION),
+                    dataValue = modeLabel,
                 ))
                 add(TagRow(
                     Material.BARRIER,
-                    "${KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE)} : ${entry.tag}",
+                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TAG_DELETE),
                     "delete",
                     mapOf("index" to index.toString()),
+                    dataLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_TAG),
+                    dataValue = entry.tag,
                 ))
             }
         }
@@ -1913,7 +2040,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val rows = allRows.drop(page * pageSize).take(pageSize)
         val layout = ChoiceMenuLayoutPolicy.layout((rows.size + if (pageCount > 1) 2 else 0).coerceAtLeast(1))
         val elements = rows.mapIndexed { index, row ->
-            choiceElement(player, layout.itemSlots[index], row.material, row.label, row.action, row.payload)
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                row.material,
+                row.label,
+                row.action,
+                row.payload,
+                dataLabel = row.dataLabel,
+                dataValue = row.dataValue,
+            )
         }.toMutableList()
         appendEntityPager(player, layout, elements, rows.size, page, pageCount, "tagPage")
         elements += backElement(player, layout.backSlot)
@@ -1928,6 +2064,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
      * タグ一覧への追加入力です。入力値をaddモードで追記します。
      *
      * 重複タグは検証エラーとし、保存済み一覧を壊しません。
+     * issue #34-2: 保存時には最新の一覧へ追記します。開始時のスナップショットへ
+     * 追記すると、入力中 cast に別の編集者が追加したタグを失います。競合時は
+     * 保存自体を拒否し、再読込を案内します。
      */
     private fun showTagEntryForm(player: Player, route: MenuRoute, currentNode: CommandNode) {
         val spec = CommandDialogSpecs.field(currentNode, EntityTagEntries.PARAM_ENTRIES) ?: return
@@ -1944,15 +2083,22 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val tag = values.getValue(EntityTagEntries.PARAM_ENTRIES).trim()
-                val entries = EntityTagEntries.parse(currentNode.string(EntityTagEntries.PARAM_ENTRIES))
-                    ?: return@showTextForm false
-                val updated = entries + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, tag)
-                if (!EntityTagEntries.isValid(updated)) return@showTextForm false
-                updateNode(player, route) {
+                // 最新一覧の事前検証です。保存時にも最新値で再検証します。
+                val preview = node(route)?.let { EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES)) }
+                val previewed = preview?.let { it + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, tag) }
+                if (previewed == null || !EntityTagEntries.isValid(previewed)) return@showTextForm false
+                var applied = false
+                val saved = updateNode(player, route, expectedRevision = openRevision) {
+                    val latest = EntityTagEntries.parse(it.string(EntityTagEntries.PARAM_ENTRIES))
+                        ?: return@updateNode
+                    val updated = latest + EntityTagEntries.Entry(EntityTagEntries.MODE_ADD, tag)
+                    if (!EntityTagEntries.isValid(updated)) return@updateNode
                     CommandSettingsModel.setParameter(it, EntityTagEntries.PARAM_ENTRIES, EntityTagEntries.encode(updated))
+                    applied = true
                 }
+                saved && applied
             },
         )
     }
@@ -2128,6 +2274,107 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     }
 
     /**
+     * issue #33-1: 建造物の回転選択子画面です（簡易GUI）。
+     *
+     * 選択肢・保存値（小文字文字列）はジェスチャーGUIと同一であり、
+     * 検証層が拒否する未知値は受け付けません。
+     */
+    private fun renderStructureRotations(player: Player): InventoryMenuView {
+        val options = StructureRotation.entries.map { rotation ->
+            Triple(rotation.value, Material.COMPASS, "${rotation.degrees}°")
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("rotation" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION)),
+            elements,
+        )
+    }
+
+    /**
+     * issue #33-1: 建造物の反転選択子画面です（簡易GUI）。
+     *
+     * 選択肢・保存値はジェスチャーGUIと同一です。
+     */
+    private fun renderStructureMirrors(player: Player): InventoryMenuView {
+        val options = StructureMirror.entries.map { mirror ->
+            val labelKey = when (mirror) {
+                StructureMirror.NONE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_NONE
+                StructureMirror.LEFT_RIGHT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_LEFT_RIGHT
+                StructureMirror.FRONT_BACK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_STRUCTURE_MIRROR_FRONT_BACK
+            }
+            Triple(mirror.value, Material.GLASS, KcI18n.text(player, labelKey))
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("mirror" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_OPERATION)),
+            elements,
+        )
+    }
+
+    /**
+     * issue #33-1: 群操作の選択子画面です（簡易GUI）。
+     *
+     * 8操作の選択肢・保存値はジェスチャーGUIと同一です。操作変更で
+     * 表示タブが切り替わるため、保存後は設定一覧へ戻します。
+     */
+    private fun renderEntityGroupOperations(player: Player): InventoryMenuView {
+        val options = EntityGroupOperation.entries.map { operation ->
+            val labelKey = when (operation) {
+                EntityGroupOperation.CREATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_CREATE
+                EntityGroupOperation.ADD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_ADD
+                EntityGroupOperation.REMOVE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_REMOVE
+                EntityGroupOperation.DELETE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_DELETE
+                EntityGroupOperation.SET_PIVOT -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_SET_PIVOT
+                EntityGroupOperation.MOVE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_MOVE
+                EntityGroupOperation.ROTATE -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_ROTATE
+                EntityGroupOperation.CLEANUP -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY_GROUP_CLEANUP
+            }
+            Triple(operation.value, Material.ARMOR_STAND, KcI18n.text(player, labelKey))
+        }
+        val layout = ChoiceMenuLayoutPolicy.layout(options.size)
+        val elements = options.mapIndexed { index, option ->
+            choiceElement(
+                player,
+                layout.itemSlots[index],
+                option.second,
+                option.third,
+                "select",
+                mapOf("operation" to option.first),
+            )
+        }.toMutableList()
+        elements += backElement(player, layout.backSlot)
+        return InventoryMenuView(
+            layout.size,
+            KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_OPERATION)),
+            elements,
+        )
+    }
+
+    /**
      * issue #8 の呼び出し設定子画面です（簡易GUI）。
      *
      * 引数の値（複合型は変数名、スカラー型はリテラル）と戻り値の受取先を編集します。
@@ -2238,10 +2485,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         spec = spec,
                     ),
                 ),
-                save = { values ->
+                save = { values, openRevision ->
                     val raw = values.getValue("value").trim()
                     if (raw.isEmpty() || !CommandValueRules.isVariableName(raw)) return@showTextForm false
-                    updateNode(player, route) {
+                    updateNode(player, route, expectedRevision = openRevision) {
                         it.params["argvar_${argument.name}"] = raw
                         it.params.remove("arg_${argument.name}")
                         it.clearConfigured("arg_${argument.name}")
@@ -2272,12 +2519,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val raw = values.getValue("value").trim()
                 if (raw.isEmpty() || !CommandSettingsModel.isCallArgumentLiteralValid(argument.type, raw)) {
                     return@showTextForm false
                 }
-                updateNode(player, route) {
+                updateNode(player, route, expectedRevision = openRevision) {
                     it.params["arg_${argument.name}"] = raw
                     it.params.remove("argvar_${argument.name}")
                     it.clearConfigured("argvar_${argument.name}")
@@ -2305,10 +2552,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val raw = values.getValue("value").trim()
                 if (raw.isNotEmpty() && !CommandValueRules.isVariableName(raw)) return@showTextForm false
-                updateNode(player, route) {
+                updateNode(player, route, expectedRevision = openRevision) {
                     if (raw.isEmpty()) {
                         it.params.remove("returnName")
                         it.params.remove("returnScope")
@@ -2351,6 +2598,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         val spec: CommandDialogSpecs.Spec,
     )
 
+    /**
+     * issue #34-2: 簡易GUI用のテキスト入力画面です。
+     *
+     * 入力開始時の保存世代を編集セッションとして保持し、確定時にはその世代を
+     * 保存入口へ渡します。入力中に別の編集が成功していた場合は保存せず、
+     * 他の編集者の変更を黙って上書きしません。保存失敗時は最新値を再読込して
+     * 表示し、古い入力の再送信を繰り返さないようにします。
+     * キャンセル時には編集中の値を破棄し、永続値は変更しません。
+     */
     private fun showTextForm(
         player: Player,
         route: MenuRoute,
@@ -2358,13 +2614,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         title: String,
         fields: List<FormTextField>,
         extraValidate: (Map<String, String>) -> LocalizationKey<String>? = { null },
-        save: (Map<String, String>) -> Boolean,
+        save: (values: Map<String, String>, openRevision: Long?) -> Boolean,
     ) {
         val forms = CCSystem.getAPI().getMenuFormService()
         if (!forms.isAvailable(player)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_FORM_UNAVAILABLE))
             return
         }
+        val openRevision = script(route)?.revision
         forms.show(
             player,
             MenuCustomFormRequest(
@@ -2382,12 +2639,16 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         field.spec.validateInput(values.getValue(field.id))
                     } ?: extraValidate(values)
                     if (validationError != null) {
-                        player.sendMessage(KcI18n.component(player, validationError))
-                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Refresh)
+                        // issue #34-3: 検証失敗はRejectedで返し、送信値を保持した
+                        // 再表示を共通契約（CC-System側）に委ねます。画面ごとに
+                        // 再実装せず、Gesture Dialogと同じ復旧方法にします。
+                        return@MenuFormHandler MenuActionResult.Rejected(
+                            KcI18n.component(player, validationError),
+                        )
                     }
-                    if (!save(values)) {
+                    if (!save(values, openRevision)) {
                         player.sendMessage(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Resume)
+                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Replace(route))
                     }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 },
@@ -2405,13 +2666,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         content: String,
         confirmLabel: String,
         cancelLabel: String,
-        onConfirm: () -> Boolean,
+        onConfirm: (openRevision: Long?) -> Boolean,
     ) {
         val forms = CCSystem.getAPI().getMenuFormService()
         if (!forms.isAvailable(player)) {
             player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_SIMPLE_FORM_UNAVAILABLE))
             return
         }
+        // issue #34-2: 確認画面の表示時点の保存世代を保持し、確定時に競合を検出します。
+        val openRevision = script(route)?.revision
         forms.show(
             player,
             MenuSimpleFormRequest(
@@ -2427,9 +2690,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     if (response.textValue("button") != "confirm") {
                         return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Resume)
                     }
-                    if (!onConfirm()) {
+                    if (!onConfirm(openRevision)) {
                         player.sendMessage(KcI18n.component(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
-                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Resume)
+                        return@MenuFormHandler MenuActionResult.Success(MenuUpdate.Replace(route))
                     }
                     MenuActionResult.Success(MenuUpdate.Replace(route))
                 },
@@ -2471,9 +2734,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_MINIMUM_ABOVE_MAXIMUM
                 } else null
             },
-            save = { values ->
+            save = { values, openRevision ->
                 if (embedRole != null) {
-                    updateNode(player, route) { node ->
+                    updateNode(player, route, expectedRevision = openRevision) { node ->
                         val base = CommandSettingsModel.positionSpec(node, embedRole)
                             ?.takeIf { base -> base.kind == PositionKind.TARGET }
                             ?: PositionSpec(PositionKind.TARGET)
@@ -2493,8 +2756,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                         )
                     }
                 } else {
-                    updateTargetSpec(player, route) { _ ->
-                        currentSpec.copy(
+                    // issue #34-2: 最新の対象指定へ距離差分だけを適用します。
+                    // 開始時のスナップショットで上書きしないため、入力中の
+                    // 他の絞り込み条件変更を失いません。
+                    updateTargetSpec(player, route, expectedRevision = openRevision) { latest ->
+                        latest.copy(
                             minimumDistance = values.getValue("minimum").trim().takeIf(String::isNotEmpty)
                                 ?.let(CommandDialogSpecs::finiteDouble),
                             maximumDistance = values.getValue("maximum").trim().takeIf(String::isNotEmpty)
@@ -2522,12 +2788,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = CommandDialogSpecs.variableName,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val raw = values.getValue("tempName").trim()
                 if (raw.isEmpty()) {
                     false
                 } else {
-                    updateNode(player, route) { node ->
+                    updateNode(player, route, expectedRevision = openRevision) { node ->
                         CommandSettingsModel.setPositionSpec(
                             node,
                             role,
@@ -2576,14 +2842,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = CommandDialogSpecs.coordinateSpec(axis),
                 )
             },
-            save = { values ->
+            save = { values, openRevision ->
                 val x = CommandDialogSpecs.parseCoordinateComponent(values.getValue("x"))
                 val y = CommandDialogSpecs.parseCoordinateComponent(values.getValue("y"))
                 val z = CommandDialogSpecs.parseCoordinateComponent(values.getValue("z"))
                 if (x == null || y == null || z == null) {
                     false
                 } else {
-                    updateNode(player, route) { command ->
+                    updateNode(player, route, expectedRevision = openRevision) { command ->
                         // Dialog記法の意味付けを保存します。向き成分は本欄で扱わないため保持します。
                         val kept = CommandSettingsModel.positionSpec(command, role)
                             ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
@@ -2625,10 +2891,10 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
+            save = { values, openRevision ->
                 val saved = PlaceItemDestination.fromDisplay(destination, values.getValue("slot"))
                     ?: return@showTextForm false
-                updateNode(player, route) {
+                updateNode(player, route, expectedRevision = openRevision) {
                     CommandSettingsModel.setParameter(it, "slot", saved)
                 }
             },
@@ -2676,9 +2942,15 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             EntityDataSchema.PARAM_VALUE -> ""
             EntityTagEntries.PARAM_ENTRIES -> return
             "entityId", "item", "block" -> ""
+            // issue #33-1: 建造物名・群名・群の軸入力の初期表示です。
+            // 検証仕様は入力仕様が担い、ここでは空欄または数値既定を示します。
+            "structure", "group" -> ""
+            "moveX", "moveY", "moveZ", "rotateX", "rotateY", "rotateZ" -> "0.0"
             // issue #10: 召喚時個別設定値は項目別の検証仕様で初期表示します。
             // ここでは空欄初期表示とし、範囲・書式は入力仕様が担います。
-            else -> if (field.startsWith(EntityDataSchema.SUMMON_DATA_PREFIX)) "" else return
+            // issue #33-1: 入力仕様を持つ新しい設定項目は保存値の初期表示へ
+            // 落とします。仕様のない項目は上流で除外済みのため到達しません。
+            else -> node.string(field, "")
         }
         val spec = CommandDialogSpecs.field(node, field) ?: return
         val currentValue = node.string(field, defaultValue)
@@ -2697,8 +2969,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = spec,
                 ),
             ),
-            save = { values ->
-                updateNode(player, route) {
+            save = { values, openRevision ->
+                updateNode(player, route, expectedRevision = openRevision) {
                     // issue #10: 召喚種類の変更時は非対応の個別設定を残しません。
                     if (field == "summonEntity" && it.type == CommandType.SUMMON_ENTITY) {
                         CommandSettingsModel.setSummonEntity(it, values.getValue(field))
@@ -2733,8 +3005,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = pitchSpec,
                 ),
             ),
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("soundParameters")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("soundParameters"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -2771,8 +3043,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = specs.getValue(key),
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("particleParameters")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("particleParameters"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -2795,8 +3067,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = input.spec,
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("soundSetting")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("soundSetting"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -2824,8 +3096,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = input.spec,
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("particle", "particleData")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("particle", "particleData"), expectedRevision = openRevision) { command ->
                     val composed = mutableMapOf<String, String>()
                     composed[ParticleSettings.PARAM_PARTICLE] =
                         values.getValue(ParticleSettings.PARAM_PARTICLE)
@@ -2859,8 +3131,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = input.spec,
                 )
             },
-            save = { values ->
-                updateNode(player, route, configuredFields = setOf("geometrySettings")) { command ->
+            save = { values, openRevision ->
+                updateNode(player, route, configuredFields = setOf("geometrySettings"), expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -2897,14 +3169,14 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     spec = CommandDialogSpecs.coordinateSpec(axis),
                 )
             },
-            save = { values ->
+            save = { values, openRevision ->
                 val x = CommandDialogSpecs.parseCoordinateComponent(values.getValue("x"))
                 val y = CommandDialogSpecs.parseCoordinateComponent(values.getValue("y"))
                 val z = CommandDialogSpecs.parseCoordinateComponent(values.getValue("z"))
                 if (x == null || y == null || z == null) {
                     false
                 } else {
-                    updateNode(player, route) { command ->
+                    updateNode(player, route, expectedRevision = openRevision) { command ->
                         val kept = CommandSettingsModel.positionSpec(command, role)
                             ?.takeIf { kept -> kept.kind == PositionKind.COORDINATES }
                             ?: PositionSpec(PositionKind.COORDINATES)
@@ -2948,11 +3220,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                 content = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_CONFIRM_ITEM_OVERWRITE_WARN),
                 confirmLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CONFIRM),
                 cancelLabel = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_CANCEL),
-                onConfirm = {
+                onConfirm = { openRevision ->
                     updateNode(
                         player,
                         route,
                         configuredFields = setOf("fireworkContents"),
+                        expectedRevision = openRevision,
                     ) { command ->
                         CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_ITEM, itemKey)
                         CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_DATA, itemData)
@@ -2961,7 +3234,12 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             )
             return MenuActionResult.Success(MenuUpdate.None)
         }
-        if (!updateNode(player, route, configuredFields = setOf("fireworkContents")) { command ->
+        if (!updateNode(
+                player,
+                route,
+                configuredFields = setOf("fireworkContents"),
+                expectedRevision = script(route)?.revision,
+            ) { command ->
                 CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_ITEM, itemKey)
                 CommandSettingsModel.setParameter(command, FireworkSettings.PARAM_DATA, itemData)
             }
@@ -3224,8 +3502,8 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                     KcKeys.KANTAN_COMMANDER_CLEAN_GUI_ERROR_MINIMUM_ABOVE_MAXIMUM
                 } else null
             },
-            save = { values ->
-                updateNode(player, route) { node ->
+            save = { values, openRevision ->
+                updateNode(player, route, expectedRevision = openRevision) { node ->
                     val base = CommandSettingsModel.positionSpec(node, role)
                         ?.takeIf { base -> base.kind == PositionKind.TARGET }
                         ?: PositionSpec(PositionKind.TARGET)
@@ -3383,35 +3661,54 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         )
     }
 
+    /**
+     * issue #35-2: 表示時間の入力画面です。
+     *
+     * タイトル・サブタイトルは3項目、アクションバーは単独の表示時間1項目です。
+     * アクションバーのフェード値は表示時間に加算しないため、入力欄を出しません。
+     */
     private fun showDisplayTimingForm(player: Player, route: MenuRoute, node: CommandNode) {
         val durationSpec = requireNotNull(CommandDialogSpecs.field(node, "staySeconds"))
-        showTextForm(
-            player = player,
-            route = route,
-            formId = "display-timing",
-            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
-            fields = listOf(
+        val stayField = FormTextField(
+            "staySeconds",
+            KcI18n.text(
+                player,
+                if (node.string("mode", "tellraw") == "actionbar") {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ACTIONBAR_DURATION
+                } else {
+                    KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY
+                },
+            ),
+            node.string("staySeconds", "3"),
+            spec = durationSpec,
+        )
+        val fields = if (node.string("mode", "tellraw") == "actionbar") {
+            listOf(stayField)
+        } else {
+            listOf(
                 FormTextField(
                     "fadeInSeconds",
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_IN),
                     node.string("fadeInSeconds", "1"),
                     spec = durationSpec,
                 ),
-                FormTextField(
-                    "staySeconds",
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_STAY),
-                    node.string("staySeconds", "3"),
-                    spec = durationSpec,
-                ),
+                stayField,
                 FormTextField(
                     "fadeOutSeconds",
                     KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_FADE_OUT),
                     node.string("fadeOutSeconds", "1"),
                     spec = durationSpec,
                 ),
-            ),
-            save = { values ->
-                updateNode(player, route) { command ->
+            )
+        }
+        showTextForm(
+            player = player,
+            route = route,
+            formId = "display-timing",
+            title = KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_DURATION_TITLE),
+            fields = fields,
+            save = { values, openRevision ->
+                updateNode(player, route, expectedRevision = openRevision) { command ->
                     CommandSettingsModel.setParameters(command, values)
                 }
             },
@@ -3423,12 +3720,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
     private fun backElement(player: Player, slot: Int = 36) =
         KcGui.elements.backEntry(player, slot)
 
+    /**
+     * issue #34-1: 対象選択画面の通常対象です。
+     *
+     * 内包役割が ROLE へ直接入った場合も通常対象へ流さず、位置・向き仕様の
+     * 内部対象を返します。保存先の取り違えを入口で防ぐための一元化です。
+     */
     private fun selectedTargetSpec(route: MenuRoute): TargetSpec? {
         val node = node(route) ?: return null
-        return CommandSettingsModel.targetSpec(
-            node,
-            CommandSettingRole.fromRoute(route.payload[ROLE]),
-        )
+        val role = CommandSettingRole.fromRoute(route.payload[ROLE])
+        return if (CommandSettingsModel.isEmbeddedTargetRole(role)) {
+            CommandSettingsModel.embeddedTargetSpec(node, role)
+        } else {
+            CommandSettingsModel.targetSpec(node, role)
+        }
     }
 
     /**
@@ -3455,15 +3760,30 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         SettingPresets.TargetPreset.NEARBY_ENTITIES -> TargetKind.NEARBY_ENTITIES
     }
 
-    private fun updateTargetSpec(player: Player, route: MenuRoute, change: (TargetSpec) -> TargetSpec): Boolean =
-        updateNode(player, route) { node ->
-            val current = selectedTargetSpec(route) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
-            val updated = change(current)
-            CommandSettingsModel.setTargetSpec(
-                node,
-                CommandSettingRole.fromRoute(route.payload[ROLE]),
-                updated,
-            )
+    /**
+     * issue #34-2: 対象選択画面の保存入口です。
+     *
+     * 開始時revisionを必須とし、最新の対象指定へ差分だけを適用します。
+     * 開始時のスナップショット全体で上書きしないため、入力中に別の編集者が
+     * 変更した絞り込み条件を失いません。
+     */
+    private fun updateTargetSpec(
+        player: Player,
+        route: MenuRoute,
+        expectedRevision: Long?,
+        change: (TargetSpec) -> TargetSpec,
+    ): Boolean =
+        updateNode(player, route, expectedRevision = expectedRevision) { node ->
+            val role = CommandSettingRole.fromRoute(route.payload[ROLE])
+            if (CommandSettingsModel.isEmbeddedTargetRole(role)) {
+                val current = CommandSettingsModel.embeddedTargetSpec(node, role)
+                    ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                CommandSettingsModel.setEmbeddedTargetSpec(node, role, change(current))
+            } else {
+                val current = CommandSettingsModel.targetSpec(node, role) ?: TargetSpec(TargetKind.NEAREST_ENTITY)
+                val updated = change(current)
+                CommandSettingsModel.setTargetSpec(node, role, updated)
+            }
         }
 
     private fun script(route: MenuRoute) = scriptId(route)?.let(plugin.scripts::load)
@@ -3474,11 +3794,20 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         return script.graph.nodes[id]
     }
 
+    /**
+     * issue #34-2: 簡易GUI用のノード保存入口です。
+     *
+     * 開始時revisionを必須とし、入力開始後に別の編集が成功していた場合は
+     * 保存せず false を返します。他の編集者の変更を黙って上書きしません。
+     * 即時確定の操作では呼び出し時点の世代を渡し、入力画面の確定時には
+     * 入力開始時に捕捉した世代を渡します。管理処理等の更新入口とは分離し、
+     * この入口からの保存は必ず操作者と開始時revisionを伴います。
+     */
     private fun updateNode(
         player: Player,
         route: MenuRoute,
         configuredFields: Set<String> = emptySet(),
-        expectedRevision: Long? = null,
+        expectedRevision: Long?,
         change: (CommandNode) -> Unit,
     ): Boolean {
         val context = CommandSettingContext.from(route) ?: return false
@@ -3522,6 +3851,11 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
         private const val PLACE_OVERWRITE_TOGGLE_SLOT = 40
         private const val DISPLAY_MODE_ID = "display_mode"
         private const val BLOCK_OPERATION_ID = "block_operation"
+        // issue #33-1: 建造物の回転・反転、群操作の選択子画面です。
+        // 表示される設定項目に操作・保存経路がない接続漏れを解消します。
+        private const val STRUCTURE_ROTATION_ID = "structure_rotation"
+        private const val STRUCTURE_MIRROR_ID = "structure_mirror"
+        private const val ENTITY_GROUP_OPERATION_ID = "entity_group_operation"
         private const val DELETE_ID = "delete_command"
         private const val TARGET_ID = "target_settings"
         private const val SOUND_TARGET_POSITION_ID = "sound_target_position"
@@ -3641,6 +3975,22 @@ sealed interface DisplayValue {
         )
     }
 
+    /**
+     * issue #35-2: アクションバーの単独表示時間を意味付きで表示します。
+     *
+     * フェード値は表示時間に加算しないため、行に出しません。
+     */
+    data class Duration(
+        val seconds: String,
+    ) : DisplayValue {
+        override fun rows(player: Player): List<TimingRow> = listOf(
+            TimingRow(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_DIALOG_ACTIONBAR_DURATION),
+                seconds,
+            ),
+        )
+    }
+
     /** パーティクルの範囲3軸・速度・個数を、設定画面の現在値にも意味付きで表示します。 */
     data class ParticleParameters(
         val deltaX: String,
@@ -3750,6 +4100,7 @@ sealed interface DisplayValue {
         is Localized -> KcI18n.text(player, key)
         is EntityTypeName -> rawId
         is Timing -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
+        is Duration -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is ParticleParameters -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is SoundTargetPosition -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
         is SoundSetting -> rows(player).joinToString(" / ") { "${it.label}=${it.value}" }
@@ -4762,7 +5113,6 @@ private fun displayTarget(kind: TargetKind) = DisplayValue.Localized(when (kind)
     TargetKind.RANDOM_PLAYER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RANDOM_PLAYER
     TargetKind.NEAREST_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY
     TargetKind.NEARBY_ENTITIES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES
-    TargetKind.FIXED_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
     TargetKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
 })
 
@@ -4796,7 +5146,8 @@ private fun displayValueTypeLabel(type: ValueType): LocalizationKey<String> = wh
     ValueType.VECTOR -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_TYPE_VECTOR
     ValueType.ITEM -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ITEM
     ValueType.BLOCK -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK
-    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    // issue #35-3: 固定実体の表示キーは撤去したため、汎用のエンティティ表示を使う。
+    ValueType.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY
 }
 
 private fun displayValueType(value: String) = runCatching { ValueType.valueOf(value) }.getOrNull()?.let {
@@ -4812,9 +5163,10 @@ private fun displayTemporaryType(value: String) =
 /** issue #2 の変数scopeを、既存の表示キーで解決します。 */
 private fun displayVariableScope(value: String) = VariableScope.parse(value)?.let {
     DisplayValue.Localized(when (it) {
-        VariableScope.EXECUTION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION
-        VariableScope.WORLD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD
-        VariableScope.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
+    VariableScope.EXECUTION -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_EXECUTION
+    VariableScope.WORLD -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_VARIABLE_SCOPE_WORLD
+    // issue #35-3: 固定実体の表示キーは撤去したため、汎用のエンティティ表示を使う。
+    VariableScope.ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_ENTITY
     })
 } ?: displayUnset()
 

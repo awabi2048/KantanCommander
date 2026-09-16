@@ -1477,6 +1477,7 @@ class GestureLowerPanel(
         val displayValue = field.value(node)
         val compositeRows = when (displayValue) {
             is DisplayValue.Timing -> displayValue.rows(player)
+            is DisplayValue.Duration -> displayValue.rows(player)
             is DisplayValue.ParticleParameters -> displayValue.rows(player)
             is DisplayValue.SoundTargetPosition -> displayValue.rows(player)
             is DisplayValue.SoundSetting -> displayValue.rows(player)
@@ -3164,6 +3165,42 @@ class GestureLowerPanel(
     }
 
     /**
+     * issue #review P2-10: 行構造を保つ複数行版です。
+     *
+     * 配置規則は [parallelButtonHover] と同一で、本文だけ複数行結合にします。
+     * PICKERのコマンド説明2行構成用であり、既存の単行呼び出し側は変えません。
+     */
+    internal fun parallelButtonHoverLines(
+        lines: List<String>,
+        x: Double,
+        y: Double,
+        row: Int,
+        rowCount: Int,
+        height: Double,
+        descriptionX: Double,
+        descriptionY: Double,
+        replacesDescription: Boolean,
+        parallel: Boolean,
+    ): GestureGuiHoverText = when {
+        parallel && row == 0 -> multiLineHover(
+            lines,
+            x = x,
+            y = y + height / 2.0 + HOVER_BUTTON_GAP,
+        )
+        parallel && rowCount > 1 && row == rowCount - 1 -> multiLineHover(
+            lines,
+            x = x,
+            y = y - height / 2.0 - HOVER_BUTTON_GAP,
+        )
+        else -> multiLineHover(
+            lines,
+            x = descriptionX,
+            y = descriptionY,
+            replacesVisualId = if (replacesDescription) SETTING_DESCRIPTION_HOVER_ID else null,
+        )
+    }
+
+    /**
      * 現在の設定経路における直下の木ノードを返します。
      *
      * `TARGET` の対象種別、`POSITION` の移動先種別、条件の
@@ -3437,8 +3474,16 @@ class GestureLowerPanel(
                 CommandSettingsModel.facingSpec(node, context.role)?.kind == FacingKind.COPY_ORIENTATION &&
                 CommandSettingsModel.isFacingSpecComplete(CommandSettingsModel.facingSpec(node, context.role))
             id.startsWith("myworld-spawn:") -> choice.selected
+            // issue #34-1: 内包役割では位置・向き仕様の内部対象を参照します。
+            // targetSpec へ流すと別フィールドを参照するため、ここで分岐します。
             id.startsWith("target:") -> choice.selected &&
-                CommandSettingsModel.targetCategory(CommandSettingsModel.targetSpec(node, context.role)?.kind) ==
+                CommandSettingsModel.targetCategory(
+                    (if (CommandSettingsModel.isEmbeddedTargetRole(context.role)) {
+                        CommandSettingsModel.embeddedTargetSpec(node, context.role)
+                    } else {
+                        CommandSettingsModel.targetSpec(node, context.role)
+                    })?.kind,
+                ) ==
                 targetCategoryFromChoice(id) &&
                 CommandSettingsModel.isFieldConfigured(node, "target", context.role)
             id.startsWith("kind:") -> choice.selected &&
@@ -4778,7 +4823,12 @@ class GestureLowerPanel(
         player: Player,
     ): String = when (screen) {
         // enum名を直接見せず、インベントリGUIと同じ日本語表示へ統一します。
-        GestureSettingScreen.TARGET -> CommandSettingsModel.targetSpec(node, context.role)?.kind
+        // issue #34-1: 内包役割では位置・向き仕様の内部対象を表示します。
+        GestureSettingScreen.TARGET -> (if (CommandSettingsModel.isEmbeddedTargetRole(context.role)) {
+            CommandSettingsModel.embeddedTargetSpec(node, context.role)
+        } else {
+            CommandSettingsModel.targetSpec(node, context.role)
+        })?.kind
             ?.let { targetKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
         GestureSettingScreen.POSITION -> CommandSettingsModel.positionKind(node, context.role)
             ?.let { positionKindLabel(player, it) } ?: KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_UNSET)
@@ -4804,7 +4854,6 @@ class GestureLowerPanel(
         TargetKind.RANDOM_PLAYER -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_RANDOM_PLAYER
         TargetKind.NEAREST_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEAREST_ENTITY
         TargetKind.NEARBY_ENTITIES -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_NEARBY_ENTITIES
-        TargetKind.FIXED_ENTITY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_FIXED_ENTITY
         TargetKind.TEMPORARY -> KcKeys.KANTAN_COMMANDER_CLEAN_GUI_OPTION_TEMPORARY_VARIABLE
     })
 
@@ -4950,11 +4999,12 @@ class GestureLowerPanel(
                 val row = index / GestureCommandPickerLayoutPolicy.COLUMNS
                 val cx = GestureCommandPickerLayoutPolicy.columnX(column)
                 val cy = GestureCommandPickerLayoutPolicy.rowY(row)
-                val hoverText = KcI18n.list(player, type.descriptionKey)
+                // issue #review P2-10: 説明の2行構成（機能説明・バニラ対応）を
+                // 空白結合で潰さず、行構造のままカードへ渡します。
+                val hoverLines = KcI18n.list(player, type.descriptionKey)
                     .filter(String::isNotBlank)
-                    .joinToString(" ")
-                val hover = parallelButtonHover(
-                    hoverText,
+                val hover = parallelButtonHoverLines(
+                    hoverLines,
                     cx,
                     cy,
                     row,
@@ -4965,7 +5015,7 @@ class GestureLowerPanel(
                     replacesDescription = false,
                     parallel = parallel,
                 )
-                PickerCard(type.name, KcI18n.text(player, type.key), hoverText, hover.x, hover.y)
+                PickerCard(type.name, KcI18n.text(player, type.key), hoverLines, hover.x, hover.y)
             },
             cardBackgrounds = pageTypes.map { Bukkit.createBlockData(Material.CYAN_TERRACOTTA) },
             pager = if (pageCount > 1) PickerPager(

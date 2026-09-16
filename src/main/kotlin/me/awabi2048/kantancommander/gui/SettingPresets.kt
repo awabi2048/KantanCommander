@@ -86,7 +86,7 @@ object SettingPresets {
             spec.limit == null && spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
-            spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null &&
+            spec.searchOrigin == null && spec.tempName == null &&
             spec.region?.hasAnySetting() != true
 
     /**
@@ -104,7 +104,7 @@ object SettingPresets {
             spec.sort == TargetSort.NEAREST &&
             spec.gameMode == null && spec.tag == null &&
             spec.name == null && spec.dx == null && spec.dy == null && spec.dz == null &&
-            spec.fixedEntityId == null && spec.searchOrigin == null && spec.tempName == null &&
+            spec.searchOrigin == null && spec.tempName == null &&
             spec.region?.hasAnySetting() != true
 
     /**

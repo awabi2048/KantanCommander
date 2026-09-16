@@ -144,13 +144,13 @@ object ReferenceSettingProviders {
     /**
      * 単一体参照の完全性を返します。向き注視・複写の完了判定が使います。
      *
-     * 固定実体はID必須、一時変数は変数名必須、それ以外は存在のみで完了とします。
+     * 一時変数は変数名必須、それ以外は存在のみで完了とします。
+     * issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
      */
     fun isSingleEntityConfigured(spec: TargetSpec?): Boolean {
         if (spec == null) return false
         if ((spec.limit ?: 1) != 1) return false
         return when (spec.kind) {
-            TargetKind.FIXED_ENTITY -> spec.fixedEntityId != null
             TargetKind.TEMPORARY -> false
             else -> true
         }
@@ -163,24 +163,24 @@ object ReferenceSettingProviders {
         spec.copy(limit = 1)
 
     /**
-     * 向き役割かを返します。向き参照先はFacingSpec.targetに保存します。
-     */
-    private fun isFacingRole(role: CommandSettingRole?): Boolean =
-        role == CommandSettingRole.DESTINATION_FACING ||
-            role == CommandSettingRole.TEMPORARY_LOCATION_FACING
-
-    /**
-     * 表示・選択用の参照先を返します。向き役割では向き参照先を見ます。
+     * 表示・選択用の参照先を返します。
+     *
+     * issue #34-1: 向き役割に限らず、位置・向き仕様へ内包された対象は
+     * embeddedTargetSpec から参照します。通常対象へ流すと別フィールドを
+     * 参照するため、内包役割の判定を一元化します。
      */
     private fun currentTargetSpec(node: CommandNode, role: CommandSettingRole?): TargetSpec? =
-        if (isFacingRole(role)) CommandSettingsModel.embeddedTargetSpec(node, role)
+        if (CommandSettingsModel.isEmbeddedTargetRole(role)) CommandSettingsModel.embeddedTargetSpec(node, role)
         else CommandSettingsModel.targetSpec(node, role)
 
     /**
-     * 対象分類の完了状態を返します。向き役割では向き参照先の完全性を見ます。
+     * 対象分類の完了状態を返します。
+     *
+     * issue #34-1: 内包役割では内包対象の完全性を見ます。[isFieldConfigured] の
+     * "target" 分岐も内包対応済みのため、ここでは単一体参照の完全性を返します。
      */
     private fun isTargetConfigured(node: CommandNode, role: CommandSettingRole?): Boolean =
-        if (isFacingRole(role)) isSingleEntityConfigured(CommandSettingsModel.embeddedTargetSpec(node, role))
+        if (CommandSettingsModel.isEmbeddedTargetRole(role)) isSingleEntityConfigured(CommandSettingsModel.embeddedTargetSpec(node, role))
         else CommandSettingsModel.isFieldConfigured(node, "target", role)
 
     private fun formatDistance(minimum: Double?, maximum: Double?): String? {

@@ -806,42 +806,44 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `fixed secondary entity fails preflight`() {
+    fun `nearest secondary entity passes preflight shape`() {
+        // issue #35-3: 固定実体（FIXED_ENTITY）は撤去しました。
+        // 副対象の出力可否は通常検索の種別で固定します。
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
-        val script = store.create(UUID.randomUUID(), "fixed-secondary")
+        val script = store.create(UUID.randomUUID(), "nearest-secondary")
         val node = GraphEditor.append(script.graph, CommandType.ENTITY_ACTION)
-        node.secondaryTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+        node.secondaryTargetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
         store.save(script)
         assertInstanceOf(
-            ExportResult.Failure::class.java,
+            ExportResult.Success::class.java,
             VanillaDatapackExporter(store, temp.resolve("exports")).exportConfigured(script),
         )
     }
 
     @Test
-    fun `all fixed entity references fail standalone preflight`() {
+    fun `nearest references compile standalone`() {
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val exporter = VanillaDatapackExporter(store, temp.resolve("exports"))
 
-        val fixedTarget = store.create(UUID.randomUUID(), "fixed-target")
-        GraphEditor.append(fixedTarget.graph, CommandType.DISPLAY_TEXT).targetSpec =
-            TargetSpec(TargetKind.FIXED_ENTITY)
+        val nearestTarget = store.create(UUID.randomUUID(), "nearest-target")
+        GraphEditor.append(nearestTarget.graph, CommandType.DISPLAY_TEXT).targetSpec =
+            TargetSpec(TargetKind.NEAREST_ENTITY)
 
-        val fixedSecondary = store.create(UUID.randomUUID(), "fixed-secondary")
-        GraphEditor.append(fixedSecondary.graph, CommandType.ENTITY_ACTION).apply {
+        val nearestSecondary = store.create(UUID.randomUUID(), "nearest-secondary")
+        GraphEditor.append(nearestSecondary.graph, CommandType.ENTITY_ACTION).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            secondaryTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+            secondaryTargetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
         }
 
-        val fixedDestination = store.create(UUID.randomUUID(), "fixed-destination")
-        GraphEditor.append(fixedDestination.graph, CommandType.TELEPORT).apply {
+        val nearestDestination = store.create(UUID.randomUUID(), "nearest-destination")
+        GraphEditor.append(nearestDestination.graph, CommandType.TELEPORT).apply {
             targetSpec = TargetSpec(TargetKind.NEAREST_PLAYER)
-            destinationTargetSpec = TargetSpec(TargetKind.FIXED_ENTITY)
+            destinationTargetSpec = TargetSpec(TargetKind.NEAREST_ENTITY)
         }
 
-        listOf(fixedTarget, fixedSecondary, fixedDestination).forEach { script ->
+        listOf(nearestTarget, nearestSecondary, nearestDestination).forEach { script ->
             assertInstanceOf(
-                StandaloneCompilation.Failure::class.java,
+                StandaloneCompilation.Success::class.java,
                 exporter.compileForStandalone(script),
             )
         }
@@ -1511,7 +1513,9 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `actionbar export preserves configured durations`() {
+    fun `actionbar export uses the single display duration`() {
+        // issue #35-2: アクションバーは単独の表示時間だけを使い、
+        // フェード値は加算しません。
         val store = ScriptStore(temp.resolve("scripts"), Logger.getAnonymousLogger())
         val script = store.create(UUID.randomUUID(), "actionbar")
         val actionbar = GraphEditor.append(script.graph, CommandType.DISPLAY_TEXT)
@@ -1526,10 +1530,10 @@ class VanillaDatapackExporterTest {
         val function = success.directory
             .resolve("data/kantan/function")
             .walkTopDown()
-            .first { it.isFile && it.readText().contains("title @a[distance=0..,limit=1,sort=nearest] times 40 120 60") }
+            .first { it.isFile && it.readText().contains("title @a[distance=0..,limit=1,sort=nearest] times 0 120 0") }
             .readText()
 
-        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] times 40 120 60"))
+        assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] times 0 120 0"))
         assertTrue(function.contains("title @a[distance=0..,limit=1,sort=nearest] actionbar"))
     }
 
