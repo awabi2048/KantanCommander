@@ -129,6 +129,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                             ?.let { runCatching { UUID.fromString(it) }.getOrNull() }
                             ?: return@handler MenuActionResult.Ignored
                         if (!overwritePlacement(context.player, placement, diskScriptId)) {
+                            // 書込失敗は操作者への異常系通知へ一本化し、コンソールへ出しません。
+                            context.player.sendMessage(KcI18n.text(context.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                             return@handler MenuActionResult.Ignored
                         }
                         MenuActionResult.Success(MenuUpdate.Close)
@@ -197,12 +199,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
     private fun navigate(context: MenuActionContext): MenuActionResult {
         val script = scriptId(context.route)?.let(plugin.scripts::load) ?: return MenuActionResult.Ignored
         val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "インベントリGUIの経路移動でレイアウトを生成できません: script=${script.id}",
-                failure,
-            )
-            // 移動操作の拒否理由をイベントログだけに残さず、操作者へ即時に返します。
+            // 移動操作の拒否は操作者へ即時に返すため、コンソールへ出しません。
             return MenuActionResult.Rejected(GraphLayoutFailureFeedback.renderMessage(context.player))
         }
         val origin = origin(context.route)
@@ -226,12 +223,8 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val script = scriptId(route)?.let(plugin.scripts::load)
             ?: return InventoryMenuView(45, KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)), emptyList())
         val origin = origin(route)
-        val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse { failure ->
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "インベントリGUIの経路描画でレイアウトを生成できません: script=${script.id}",
-                failure,
-            )
+        val layout = runCatching { GraphLayoutEngine.layout(script.graph) }.getOrElse {
+            // 描画失敗はGUI内のエラー表示へ一本化し、コンソールへ出しません。
             return InventoryMenuView(
                 45,
                 KcGui.title(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_EDITOR_TITLE)),
@@ -571,6 +564,7 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
         val diskScript = plugin.scripts.load(diskScriptId) ?: return false
         // 空判定からコピー保存までを同じプログラムロックへ束ね、Gesture GUIの
         // 同時編集が間に入っても、空ではない配置へ古いディスク内容を上書きしません。
+        // 書込失敗は呼出側が操作者へ通知するため、ここではコンソールへ出しません。
         val written = runCatching {
             plugin.scripts.update(placement.scriptId, player.uniqueId) { placementScript ->
                 if (placementScript.graph.nodes.isNotEmpty()) return@update null
@@ -586,26 +580,13 @@ class SequenceEditorMenu(private val plugin: KantanCommanderPlugin) {
                 true
             }
         }
-            .onFailure { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "空の配置へディスクを書き込めませんでした: placement=${placement.key}",
-                    failure,
-                )
-            }
             .getOrElse { return false } == true
         if (!written) return false
         plugin.resetActivationTiming(placement.scriptId)
         // issue #7: 起動方法が変わり得るため、イベント起動の登録を作り直します。
         plugin.refreshEventTriggerIndex()
         runCatching { plugin.placements.refreshDisplaysForScript(placement.scriptId) }
-            .onFailure { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "ディスク書き込み後の配置表示更新に失敗しました: placement=${placement.key}",
-                    failure,
-                )
-            }
+        // 補助表示の更新失敗は定常のためコンソールへ出しません。
         // インベントリ経路からの書き込みも、同じプログラムを開いているGesture画面へ
         // 即時配布します。これを省くと、表示は古いままでも次の保存時にCASだけが
         // 失敗し、利用者には競合理由が見えない状態になります。

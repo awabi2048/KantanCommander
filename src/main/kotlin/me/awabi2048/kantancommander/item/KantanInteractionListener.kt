@@ -44,12 +44,10 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         }
         val script = plugin.scripts.load(placement.scriptId) ?: return
         val item = runCatching { KantanItemService.createBlock(script, event.player) }
-            .getOrElse { error ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "制御ブロックのプログラム同梱アイテム生成に失敗: location=${event.block.location}, script=${script.id}",
-                    error,
-                )
+            .getOrElse {
+                // 生成失敗は操作者への異常系通知へ一本化し、コンソールへ出しません。
+                // バニラの既定付与へは漏らさず、何も渡さないまま終えます。
+                event.player.sendMessage(KcI18n.text(event.player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                 return
             }
         // Paperの既定PickBlockは元ブロックの素材だけを返すため、イベントを止めて
@@ -232,10 +230,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
             KantanItemService.embeddedProgram(event.itemInHand).also { program ->
                 if (program == null) {
                     event.isCancelled = true
-                    plugin.logger.warning(
-                        "制御ブロックアイテムの埋め込みプログラムを復元できないため設置を拒否: " +
-                            "player=${player.name}, location=${event.block.location}",
-                    )
+                    // 復元失敗の設置拒否は操作者への異常系通知へ一本化し、コンソールへ出しません。
+                    player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                 }
             }
         } else null
@@ -277,8 +273,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         embeddedProgram: me.awabi2048.kantancommander.model.DiskScript? = null,
     ): Boolean {
         val block = location.block
-        // 通常のブロックと同じ体験にするため、失敗時もメッセージを出さず何も起きない扱いにし、
-        // 定型のサーバーログも残さない。異常系（保存失敗等）はWARNINGで記録する。
+        // 通常のブロックと同じ体験にするため、位置・重なりの不適合は何も起きない扱いにし、
+        // 定型のサーバーログも残さない。異常系（保存失敗等）は操作者への通知へ一本化する。
         // バニラが配置位置を保証済みのため置換可能性は再判定せず、Kantan独自の重複チェックだけ行う。
         if (plugin.placements.find(block.location) != null) {
             return false
@@ -304,10 +300,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                 plugin.scripts.createPlacement(player.uniqueId, "${player.name}のプログラム")
             }
         }.getOrNull() ?: run {
-            plugin.logger.warning(
-                "配置用プログラムを用意できないため設置を拒否: " +
-                    "player=${player.name}, location=${block.location}",
-            )
+            // 配置準備の失敗は操作者への異常系通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
             return false
         }
         val material = PlacedBlockMaterials.forTimer(placedScript.timer.enabled)
@@ -325,7 +319,7 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         runCatching {
             plugin.placements.add(placement)
             plugin.placements.spawnDisplay(block.world, placement)
-        }.onFailure { error ->
+        }.onFailure {
             runCatching { plugin.placements.remove(block.world, block.x, block.y, block.z) }
                 .onFailure { cleanupError ->
                     plugin.logger.log(
@@ -342,11 +336,8 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
                         cleanupError,
                     )
                 }
-            plugin.logger.log(
-                java.util.logging.Level.INFO,
-                "配置データの保存または表示体スポーンに失敗したため設置を中止: location=${block.location}",
-                error,
-            )
+            // 保存失敗の設置中止は操作者への異常系通知へ一本化し、コンソールへ出しません。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
             return false
         }
         // 配置音はバニラが元イベントの成功時に再生する。設置時のパーティクルはバニラ同様に出さない。
@@ -404,25 +395,20 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         // ノードがなくても、名前またはタイマーを明示編集したスクリプトは出力します。
         // 内容がない場合のスキップは定型のため記録しません。
         if (source?.hasDiskContent() == true) {
-            val copiedScript = runCatching { plugin.scripts.copyForItem(source) }.getOrElse { error ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "破壊時のスクリプト複製に失敗したため、内容を出力せず破壊: location=${block.location}, script=${placement.scriptId}",
-                    error,
-                )
+            val copiedScript = runCatching { plugin.scripts.copyForItem(source) }.getOrElse {
+                // 複製失敗は内容なし破壊へ劣化するため、操作者へ異常系通知します。
+                // コンソールへは出しません。
+                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                 null
             }
             if (copiedScript != null) {
                 outputScript = copiedScript
                 // スポイト操作（onPickControlBlock）と同じ生成経路を使い、配置中の
                 // プログラム全体を同梱した制御ブロックアイテムとして出力する。
-                outputItem = runCatching { KantanItemService.createBlock(copiedScript, player) }.getOrElse { error ->
+                outputItem = runCatching { KantanItemService.createBlock(copiedScript, player) }.getOrElse {
                     runCatching { plugin.scripts.delete(copiedScript.id) }
-                    plugin.logger.log(
-                        java.util.logging.Level.WARNING,
-                        "破壊時のプログラム入り制御ブロック生成に失敗: location=${block.location}, script=${copiedScript.id}",
-                        error,
-                    )
+                    // 生成失敗は出力なし破壊へ劣化するため、操作者へ異常系通知します。
+                    player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
                     outputScript = null
                     null
                 }
@@ -432,17 +418,15 @@ class KantanInteractionListener(private val plugin: KantanCommanderPlugin) : Lis
         // ワールド上だけ消えた「幽霊配置」になり、再起動後の復元対象と一致しません。
         val removed = runCatching {
             plugin.placements.remove(world, placement.x, placement.y, placement.z)
-        }.getOrElse { failure ->
+        }.getOrElse {
             outputScript?.let { runCatching { plugin.scripts.delete(it.id) } }
-            plugin.logger.log(
-                java.util.logging.Level.WARNING,
-                "配置台帳の削除に失敗したため破壊を中止: location=${block.location}, placement=${placement.key}",
-                failure,
-            )
+            // 台帳削除の失敗は破壊中止のため、操作者へ異常系通知します。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
             return
         } ?: run {
             outputScript?.let { runCatching { plugin.scripts.delete(it.id) } }
-            plugin.logger.warning("配置台帳が既に削除されているため破壊を中止: location=${block.location}")
+            // 台帳が既にない場合も破壊は中止のため、操作者へ異常系通知します。
+            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_GUI_GESTURE_ERROR_SAVE_FAILED))
             return
         }
         plugin.placements.removeDisplay(world, removed.displayId)

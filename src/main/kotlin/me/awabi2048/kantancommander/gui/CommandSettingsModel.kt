@@ -2215,14 +2215,8 @@ object CommandSettingsModel {
 
     /** 保存成功後だけ配置表示を更新し、補助表示の失敗を設定保存へ波及させません。 */
     private fun refreshDisplays(plugin: KantanCommanderPlugin, scriptId: UUID) {
+        // 補助表示の失敗は定常のためコンソールへ出しません。
         runCatching { plugin.placements.refreshDisplaysForScript(scriptId) }
-            .onFailure { failure ->
-                plugin.logger.log(
-                    java.util.logging.Level.WARNING,
-                    "設定保存後の配置表示更新に失敗しました: script=$scriptId",
-                    failure,
-                )
-            }
     }
 
     private fun text() = CommandSettingDescriptor(CommandSettingEditor.TEXT)
