@@ -15,6 +15,8 @@ internal object KantanCommandPermissions {
     const val HELP = "kankoma.command.help"
     const val PLACED = "kankoma.command.placed"
     const val RELOAD = "kankoma.command.reload"
+    /** issue #14の操作ツールwand付与の権限です。判定と定義の所有者はKantan側です。 */
+    const val WAND = "kankoma.command.wand"
 
     fun forSubcommand(subcommand: String?): String? = when (subcommand?.lowercase()) {
         null -> ROOT
@@ -23,6 +25,7 @@ internal object KantanCommandPermissions {
         "help" -> HELP
         "placed" -> PLACED
         "reload" -> RELOAD
+        "wand" -> WAND
         else -> null
     }
 }

@@ -17,7 +17,7 @@ softdepend:
 commands:
   kankoma:
     description: Kantan Commander 管理コマンド
-    usage: /kankoma [history|library|placed|reload|help]
+    usage: /kankoma [history|library|placed|reload|wand|help]
 permissions:
   kankoma.admin:
     description: Kantan Commander の管理操作を許可する
@@ -29,6 +29,7 @@ permissions:
       kankoma.command.help: true
       kankoma.command.placed: true
       kankoma.command.reload: true
+      kankoma.command.wand: true
   kankoma.command.kankoma:
     description: /kankoma によるかんたんコマンダー制御ブロックの付与を許可する
     default: false
@@ -46,6 +47,9 @@ permissions:
     default: false
   kankoma.command.reload:
     description: /kankoma reload の実行を許可する
+    default: false
+  kankoma.command.wand:
+    description: /kankoma wand による操作ツールの付与を許可する
     default: false
   kankoma.extended_command_block:
     description: かんたんコマンダー制御ブロックの手動操作を許可する（MWM-Chanponがワールド単位で付与）

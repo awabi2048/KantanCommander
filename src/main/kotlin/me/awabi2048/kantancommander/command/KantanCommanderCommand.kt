@@ -25,6 +25,7 @@ class KantanCommanderCommand(
             "placed" -> listPlaced(sender, args.getOrNull(1)?.toIntOrNull() ?: 1)
             "reload" -> reload(sender)
             "help" -> help(sender)
+            "wand" -> grantWand(sender)
             else -> help(sender)
         }
         return true
@@ -55,6 +56,25 @@ class KantanCommanderCommand(
             "kantan:library",
             emptyMap(),
         )
+    }
+
+    /**
+     * issue #14の操作ツールwandを自分へ付与する唯一の直接コマンド入口です。
+     *
+     * かんたんコマンダーの使用権限と同期させるため、wand権限に加えて
+     * 配置アクセス判定（[me.awabi2048.kantancommander.security.PlacementAccessPolicy]）も
+     * 要求します。拒否理由はActionBarで通知します。
+     */
+    private fun grantWand(sender: CommandSender) {
+        val player = sender as? Player ?: return
+        if (!plugin.placementAccess.requireManage(player, player.world.name)) return
+        val result = itemGrantService.grantWand(player)
+        val messageKey = if (result.success) {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GRANT_SUCCESS
+        } else {
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GRANT_FAILED
+        }
+        player.sendMessage(KcI18n.text(player, messageKey))
     }
 
     private fun openHistory(sender: CommandSender) {
@@ -115,6 +135,9 @@ class KantanCommanderCommand(
             if (sender.hasPermission(KantanCommandPermissions.RELOAD)) {
                 add(KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_RELOAD)
             }
+            if (sender.hasPermission(KantanCommandPermissions.WAND)) {
+                add(KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_HELP_WAND)
+            }
         }.forEach { key ->
             sender.sendMessage(KcI18n.text(player, key))
         }
@@ -138,6 +161,7 @@ class KantanCommanderCommand(
                 if (sender.hasPermission(KantanCommandPermissions.LIBRARY)) add("library")
                 if (sender.hasPermission(KantanCommandPermissions.PLACED)) add("placed")
                 if (sender.hasPermission(KantanCommandPermissions.RELOAD)) add("reload")
+                if (sender.hasPermission(KantanCommandPermissions.WAND)) add("wand")
                 if (sender.hasPermission(KantanCommandPermissions.HELP)) add("help")
             }.filter { it.startsWith(args[0], true) }
             2 -> emptyList()

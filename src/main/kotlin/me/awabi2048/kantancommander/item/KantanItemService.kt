@@ -20,13 +20,16 @@ import java.util.UUID
 /**
  * Kantan Commanderのアイテム種別。
  * かんたんコマンダー制御ブロック（空またはプログラム同梱の設置用）と、
- * プログラムディスク（内容出力用・常に書き込み済み）の2種に分離する。
+ * プログラムディスク（内容出力用・常に書き込み済み）と、
+ * 操作ツールwand（issue #14のRegion/Entity選択用・設置不可）の3種に分離する。
  */
-enum class KantanItemKind { NONE, BLOCK, DISK }
+enum class KantanItemKind { NONE, BLOCK, DISK, WAND }
 
 object KantanItemService {
     const val BLOCK_ITEM_ID = "kantan.block"
     const val DISK_ITEM_ID = "kantan.disk"
+    /** issue #14の操作ツールwandの論理IDです。設置物ではなく選択操作専用です。 */
+    const val WAND_ITEM_ID = "kantan.wand"
     /** `/kankoma` と共通付与APIの両方で、1回に付与できる制御ブロック数を固定します。 */
     const val MAX_GRANT_AMOUNT = 1
     private val customItemIdKey = NamespacedKey("kantancommander", "custom_item_id")
@@ -43,6 +46,14 @@ object KantanItemService {
     private val lockedBlockMaterial = Material.POISONOUS_POTATO
     /** プログラムディスクはカスタムアイテムの慣習に合わせ、見た目用の毒じゃがいもを基底とする。 */
     private val diskMaterial = Material.POISONOUS_POTATO
+    /**
+     * issue #14の操作ツールwandの基底素材です。
+     * 熱帯魚は食品系のため、共有パックでCONSUMABLEを外して無機能化します。
+     * 素材ではなくPDC論理IDを正本とし、見た目はitem_modelで付与します。
+     */
+    private val wandMaterial = Material.TROPICAL_FISH
+    /** 操作ツールwandの見た目です。将来専用モデル化する際はここだけを差し替えます。 */
+    private val wandItemModel = NamespacedKey("minecraft", "tropical_fish")
 
     /**
      * 未設定のかんたんコマンダー制御ブロックを生成する。設置時に新しいスクリプトが作られる。
@@ -99,11 +110,43 @@ object KantanItemService {
     }
 
     /**
+     * issue #14の操作ツールwandを生成します。
+     *
+     * 設置物ではなく選択操作専用のため、BlockPlaceEvent等の設置経路では
+     * [KantanItemKind.WAND] として扱い制御ブロック・ディスクと誤認しません。
+     * 熱帯魚の摂食・使用を抑止するため、無機能アイテム成分を掛け直します。
+     */
+    fun createWand(player: Player): ItemStack {
+        val item = ItemStack(wandMaterial, 1)
+        item.editMeta { meta ->
+            meta.displayName(Component.text(
+                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_NAME_WAND),
+                NamedTextColor.AQUA,
+            ).decoration(TextDecoration.ITALIC, false))
+            meta.setItemModel(wandItemModel)
+            meta.setMaxStackSize(1)
+            meta.persistentDataContainer.set(customItemIdKey, PersistentDataType.STRING, WAND_ITEM_ID)
+            val lore = CCSystem.getAPI().getLoreService().render(
+                GuiLoreSpec.Rich(
+                    KcI18n.list(player, KcKeys.KANTAN_COMMANDER_CLEAN_ITEM_LORE_WAND)
+                        .map { GuiLoreLine.Text(it) },
+                    com.awabi2048.ccsystem.api.gui.GuiLoreFrame.NONE,
+                ),
+            )
+            meta.lore(lore)
+        }
+        // 熱帯魚は食品系のため、摂食・使用の成分を外して選択操作専用にします。
+        PoisonousPotatoComponentPack.applyNonConsumable(item)
+        return item
+    }
+
+    /**
      * 論理IDと物理素材から種別を判定します。Bukkit非依存のため単体テストで検証します。
      *
      * 制御ブロックは許可表示と権限制限表示で素材が変わるため、論理IDを正本とし
      * 両素材を受け付けます。プログラムディスクと同じ毒じゃがいもでも、論理IDが
-     * 異なれば誤認しません。想定外の素材は無関係アイテムとして扱います。
+     * 異なれば誤認しません。wandは熱帯魚基底の選択操作専用であり、設置物の
+     * 制御ブロック・ディスクとは論理IDで区別します。想定外の素材は無関係扱いです。
      */
     fun kindOfIdAndMaterial(itemId: String?, material: Material): KantanItemKind = when (itemId) {
         BLOCK_ITEM_ID ->
@@ -111,6 +154,8 @@ object KantanItemService {
             else KantanItemKind.NONE
         DISK_ITEM_ID ->
             if (material == diskMaterial) KantanItemKind.DISK else KantanItemKind.NONE
+        WAND_ITEM_ID ->
+            if (material == wandMaterial) KantanItemKind.WAND else KantanItemKind.NONE
         else -> KantanItemKind.NONE
     }
 

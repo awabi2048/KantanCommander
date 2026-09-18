@@ -22,6 +22,13 @@ class KantanCommandPermissionsTest {
     }
 
     @Test
+    fun `wand subcommand uses its own permission node`() {
+        assertEquals(KantanCommandPermissions.WAND, KantanCommandPermissions.forSubcommand("wand"))
+        assertEquals(KantanCommandPermissions.WAND, KantanCommandPermissions.forSubcommand("WAND"))
+        assertEquals("kankoma.command.wand", KantanCommandPermissions.WAND)
+    }
+
+    @Test
     fun `unknown subcommands do not inherit a valid command permission`() {
         assertEquals(null, KantanCommandPermissions.forSubcommand("unknown"))
         assertEquals(null, KantanCommandPermissions.forSubcommand("gesture"))

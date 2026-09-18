@@ -54,4 +54,30 @@ class KantanItemGrantService(private val plugin: KantanCommanderPlugin) {
         // 付与の成否は呼出側が操作者へ通知するため、ここではコンソールへ出しません。
         return result
     }
+
+    /**
+     * issue #14の操作ツールwandの付与処理です。
+     *
+     * 制御ブロック付与と同じく付与結果の形式を統一し、成否の通知は呼出側が行います。
+     * wandは選択操作専用のため、かんたんコマンダーの使用権限（[PlacementDecision.ALLOW]）
+     * を満たす利用者へのみ付与します。権限判定自体は呼出側のコマンド層で行います。
+     */
+    fun grantWand(target: Player): ItemGrantResult {
+        return runCatching {
+            var dropped = 0
+            val item = KantanItemService.createWand(target)
+            target.inventory.addItem(item).values.forEach { overflow ->
+                dropped += overflow.amount
+                target.world.dropItemNaturally(target.location, overflow)
+            }
+            ItemGrantResult(
+                success = true,
+                grantedAmount = (1 - dropped).coerceAtLeast(0),
+                droppedAmount = dropped,
+                message = null,
+            )
+        }.getOrElse { failure ->
+            ItemGrantResult(false, 0, 0, failure.message ?: "grant failed")
+        }
+    }
 }

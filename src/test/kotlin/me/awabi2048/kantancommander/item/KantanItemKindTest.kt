@@ -54,8 +54,7 @@ class KantanItemKindTest {
     }
 
     @Test
-    fun `locked view resolves only for locked control blocks`() {
-        assertEquals(
+    fun `locked view resolves only for locked control blocks`() {        assertEquals(
             true,
             KantanItemService.isLockedView(KantanItemService.BLOCK_ITEM_ID, Material.POISONOUS_POTATO),
         )
@@ -66,6 +65,38 @@ class KantanItemKindTest {
         assertEquals(
             false,
             KantanItemService.isLockedView(KantanItemService.DISK_ITEM_ID, Material.POISONOUS_POTATO),
+        )
+    }
+
+    @Test
+    fun `wand resolves only for tropical fish base material`() {
+        assertEquals(
+            KantanItemKind.WAND,
+            KantanItemService.kindOfIdAndMaterial(KantanItemService.WAND_ITEM_ID, Material.TROPICAL_FISH),
+        )
+        assertEquals(
+            KantanItemKind.NONE,
+            KantanItemService.kindOfIdAndMaterial(KantanItemService.WAND_ITEM_ID, Material.POISONOUS_POTATO),
+        )
+        assertEquals(
+            KantanItemKind.NONE,
+            KantanItemService.kindOfIdAndMaterial(KantanItemService.WAND_ITEM_ID, Material.STICK),
+        )
+    }
+
+    @Test
+    fun `wand never confuses with block or disk even on shared materials`() {
+        assertEquals(
+            KantanItemKind.NONE,
+            KantanItemService.kindOfIdAndMaterial(KantanItemService.BLOCK_ITEM_ID, Material.TROPICAL_FISH),
+        )
+        assertEquals(
+            KantanItemKind.NONE,
+            KantanItemService.kindOfIdAndMaterial(KantanItemService.DISK_ITEM_ID, Material.TROPICAL_FISH),
+        )
+        assertEquals(
+            false,
+            KantanItemService.isLockedView(KantanItemService.WAND_ITEM_ID, Material.TROPICAL_FISH),
         )
     }
 }
