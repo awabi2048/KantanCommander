@@ -56,7 +56,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "f9b5faa6b6e10e4fdd448cd5a3a0b2a1fc0a87102598b24db2c5d682ab487037"
+    "64f8307e82ca27d60083d793fb83ba41834eb138053c430c0df37519e9f4a220"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -115,6 +115,9 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     lateinit var itemGrantService: KantanItemGrantService
         private set
+    /** issue #14の操作ツールwandの入力処理です。選択状態・可視化を保持します。 */
+    lateinit var operationTool: me.awabi2048.kantancommander.operationtool.OperationToolListener
+        private set
     private lateinit var triggerListener: RedstoneTriggerListener
     private lateinit var eventTriggerListener: EventTriggerListener
     private var worldEditSync: WorldEditControlBlockSyncListener? = null
@@ -132,7 +135,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                     sourcePlugin = this,
                     resourcePath = "config.yml",
                     targetPath = dataFolder.resolve("config.yml").toPath(),
-                    currentVersion = 8,
+                    currentVersion = 9,
                     classification = ConfigClassification.MANAGED_CONFIG,
                     migrations = mapOf(
                         1 to ConfigMigration { config ->
@@ -179,6 +182,12 @@ class KantanCommanderPlugin : JavaPlugin() {
                             config.set("gaze.distance", 8.0)
                             config.set("gaze.interval-ticks", 10)
                         },
+                        8 to ConfigMigration { config ->
+                            // issue #14: 操作ツールwandの上限値を既定値で補完します。
+                            // EasyArmorStandsと初期値を揃え、既存環境の動作を変えません。
+                            config.set("operation-tool.max-entities", 64)
+                            config.set("operation-tool.max-box-edge", 128.0)
+                        },
                     ),
                     validator = com.awabi2048.ccsystem.api.config.ConfigValidator { config ->
                         require(config.getInt("execution.max-nodes-per-activation") >= 1)
@@ -195,6 +204,9 @@ class KantanCommanderPlugin : JavaPlugin() {
                         // issue #13: 注視表示の設定範囲です。距離・周期は正の有限値に限ります。
                         require(config.getDouble("gaze.distance", 8.0) in 1.0..32.0)
                         require(config.getLong("gaze.interval-ticks", 10L) >= 1L)
+                        // issue #14: 操作ツールwandの上限値範囲です。上限超過時は追加・確定しません。
+                        require(config.getInt("operation-tool.max-entities", 64) in 1..1024)
+                        require(config.getDouble("operation-tool.max-box-edge", 128.0) in 1.0..512.0)
                     },
                     reloadAction = {
                         reloadConfig()
@@ -281,6 +293,13 @@ class KantanCommanderPlugin : JavaPlugin() {
         placementAccess = PlacementAccessPolicy(this)
         feedback = PlayerFeedbackService()
         controlBlockSync = ControlBlockInventorySync(this)
+        operationTool = me.awabi2048.kantancommander.operationtool.OperationToolListener(
+            this,
+            me.awabi2048.kantancommander.operationtool.OperationToolSessions(
+                maxEntities = config.getInt("operation-tool.max-entities", 64),
+                maxBoxEdge = config.getDouble("operation-tool.max-box-edge", 128.0),
+            ),
+        )
         triggerListener = RedstoneTriggerListener(this)
         eventTriggerListener = EventTriggerListener(this)
 
@@ -301,6 +320,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         runCatching { worldEditSync?.stopSweep() }
         worldEditSync = null
         runCatching { if (::testExecution.isInitialized) testExecution.shutdown() }
+        runCatching { if (::operationTool.isInitialized) operationTool.stop() }
         runCatching { if (::gestureEditor.isInitialized) gestureEditor.closeAll() }
         runCatching { if (::gazeDisplay.isInitialized) gazeDisplay.stop() }
         standaloneExportContributor?.let(StandaloneExportContributors::unregister)
@@ -319,6 +339,7 @@ class KantanCommanderPlugin : JavaPlugin() {
         val pm = server.pluginManager
         pm.registerEvents(KantanInteractionListener(this), this)
         pm.registerEvents(PlacementProtectionListener(this), this)
+        pm.registerEvents(operationTool, this)
         pm.registerEvents(triggerListener, this)
         pm.registerEvents(eventTriggerListener, this)
         pm.registerEvents(itemSelection, this)

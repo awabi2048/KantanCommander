@@ -10,12 +10,17 @@ import java.util.concurrent.ConcurrentHashMap
  * プラグイン無効化で破棄され、選択状態は解除されます。ログアウト・ワールド移動
  * だけでは破棄しません。
  */
-class OperationToolSessions {
+class OperationToolSessions(
+    /** Entity最大選択数です。設定値として扱い、セッション作成時に適用します。 */
+    private val maxEntities: Int = OperationToolSession.DEFAULT_MAX_ENTITIES,
+    /** Box選択の最大一辺です。設定値として扱い、セッション作成時に適用します。 */
+    private val maxBoxEdge: Double = OperationToolSession.DEFAULT_MAX_BOX_EDGE,
+) {
     private val sessions = ConcurrentHashMap<UUID, OperationToolSession>()
 
     /** プレイヤーのセッションを取得または作成します。 */
     fun getOrCreate(playerId: UUID): OperationToolSession =
-        sessions.computeIfAbsent(playerId) { OperationToolSession() }
+        sessions.computeIfAbsent(playerId) { OperationToolSession(maxEntities, maxBoxEdge) }
 
     /** プレイヤーのセッションを取得します。存在しない場合はnullです。 */
     fun get(playerId: UUID): OperationToolSession? = sessions[playerId]
