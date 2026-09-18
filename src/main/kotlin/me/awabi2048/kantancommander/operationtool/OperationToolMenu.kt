@@ -26,6 +26,7 @@ import me.awabi2048.kantancommander.structure.StructureSaveResult
 import me.awabi2048.kantancommander.structure.StructureStore
 import me.awabi2048.kantancommander.util.KcI18n
 import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.Location
 import org.bukkit.Material
 import org.bukkit.entity.Entity
@@ -233,7 +234,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     private fun saveStructure(player: Player, name: String): MenuActionResult {
         if (!checkManage(player)) return MenuActionResult.Ignored
         if (!StructureStore.NAME_PATTERN.matches(name)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME))
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME, emptyMap(), NamedTextColor.RED)
             return MenuActionResult.Success(MenuUpdate.None)
         }
         val session = plugin.operationTool.sessions().get(player.uniqueId)
@@ -243,22 +244,22 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             return MenuActionResult.Success(MenuUpdate.Close)
         }
         val world = plugin.server.getWorld(first.worldName) ?: run {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED))
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED, emptyMap(), NamedTextColor.RED)
             return MenuActionResult.Success(MenuUpdate.Close)
         }
         val from = Location(world, bounds.minimum.x, bounds.minimum.y, bounds.minimum.z)
         val to = Location(world, bounds.minimum.x + bounds.dx, bounds.minimum.y + bounds.dy, bounds.minimum.z + bounds.dz)
         return when (plugin.structures.save(name, from, to)) {
             StructureSaveResult.Saved -> {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_SAVED, mapOf("name" to name)))
+                feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_SAVED, mapOf("name" to name), NamedTextColor.GREEN)
                 MenuActionResult.Success(MenuUpdate.Close)
             }
             StructureSaveResult.InvalidName -> {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME))
+                feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME, emptyMap(), NamedTextColor.RED)
                 MenuActionResult.Success(MenuUpdate.None)
             }
             StructureSaveResult.Failed -> {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED))
+                feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STRUCTURE_FAILED, emptyMap(), NamedTextColor.RED)
                 MenuActionResult.Success(MenuUpdate.Close)
             }
         }
@@ -310,7 +311,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     private fun applyTag(player: Player, tag: String, add: Boolean): MenuActionResult {
         if (!checkManage(player)) return MenuActionResult.Ignored
         if (!CommandValueRules.isTag(tag)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME))
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_TAG, emptyMap(), NamedTextColor.RED)
             return MenuActionResult.Success(MenuUpdate.None)
         }
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return MenuActionResult.Success(MenuUpdate.Close)
@@ -325,7 +326,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             if (runCatching { success }.getOrDefault(false)) applied++
         }
         val key = if (add) KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_TAG_ADDED else KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_TAG_REMOVED
-        player.sendMessage(KcI18n.text(player, key, mapOf("tag" to tag, "count" to applied)))
+        feedback(player, key, mapOf("tag" to tag, "count" to applied), NamedTextColor.GREEN)
         return MenuActionResult.Success(MenuUpdate.Replace(MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap())))
     }
 
@@ -374,7 +375,7 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             if (runCatching { entity.remove() }.isSuccess) removed++
         }
         pruneVanished(player, session)
-        player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_ENTITIES_DELETED, mapOf("count" to removed)))
+        feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_ENTITIES_DELETED, mapOf("count" to removed), NamedTextColor.YELLOW)
         return MenuActionResult.Success(MenuUpdate.Replace(MenuRoute(OWNER, ENTITY_MENU_ID, emptyMap())))
     }
 
@@ -425,11 +426,11 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
     private fun createGroup(player: Player, name: String): MenuActionResult {
         if (!checkManage(player)) return MenuActionResult.Ignored
         if (name.isBlank() || name.length > 64) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_NAME))
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_INVALID_GROUP_NAME, emptyMap(), NamedTextColor.RED)
             return MenuActionResult.Success(MenuUpdate.None)
         }
         if (plugin.entityGroups.exists(name)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_EXISTS))
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_EXISTS, emptyMap(), NamedTextColor.RED)
             return MenuActionResult.Success(MenuUpdate.None)
         }
         val session = plugin.operationTool.sessions().get(player.uniqueId) ?: return MenuActionResult.Success(MenuUpdate.Close)
@@ -455,10 +456,10 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
             updatedAt = System.currentTimeMillis(),
         )
         return if (runCatching { plugin.entityGroups.create(record) }.getOrDefault(false)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_CREATED, mapOf("name" to name)))
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_CREATED, mapOf("name" to name), NamedTextColor.GREEN)
             MenuActionResult.Success(MenuUpdate.Close)
         } else if (plugin.entityGroups.exists(name)) {
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_EXISTS))
+            feedback(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GROUP_EXISTS, emptyMap(), NamedTextColor.RED)
             MenuActionResult.Success(MenuUpdate.None)
         } else {
             MenuActionResult.Success(MenuUpdate.Close)
@@ -480,6 +481,21 @@ class OperationToolMenu(private val plugin: KantanCommanderPlugin) {
 
     private fun checkManage(player: Player): Boolean =
         plugin.placementAccess.requireManage(player, player.world.name)
+
+    /**
+     * 操作結果をActionBarへ色付きで出します。
+     *
+     * チャットではなく現在のモード・選択数へ併記し、結果の種別で色付けします。
+     */
+    private fun feedback(
+        player: Player,
+        key: com.awabi2048.ccsystem.api.localization.LocalizationKey<String>,
+        vars: Map<String, Any>,
+        color: NamedTextColor,
+    ) {
+        val session = plugin.operationTool.sessions().getOrCreate(player.uniqueId)
+        OperationToolFeedback.notifyKey(player, session, key, vars, color)
+    }
 
     private fun takeDialog(player: Player, dialogId: String): Boolean =
         pendingDialogs.remove(player.uniqueId) == dialogId && player.isOnline

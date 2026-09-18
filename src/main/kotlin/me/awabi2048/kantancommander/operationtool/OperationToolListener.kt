@@ -7,8 +7,7 @@ import me.awabi2048.kantancommander.item.KantanItemKind
 import me.awabi2048.kantancommander.item.KantanItemService
 import me.awabi2048.kantancommander.model.SpatialVector
 import me.awabi2048.kantancommander.model.toSpatialVector
-import me.awabi2048.kantancommander.util.KcI18n
-import net.kyori.adventure.text.Component
+import net.kyori.adventure.text.format.NamedTextColor
 import org.bukkit.entity.Entity
 import org.bukkit.entity.Player
 import org.bukkit.event.EventHandler
@@ -17,12 +16,15 @@ import org.bukkit.event.Listener
 import org.bukkit.event.block.Action
 import org.bukkit.event.block.BlockBreakEvent
 import org.bukkit.event.block.BlockDamageEvent
+import org.bukkit.event.entity.PlayerDeathEvent
+import org.bukkit.event.player.PlayerDropItemEvent
 import org.bukkit.event.player.PlayerInteractEntityEvent
 import org.bukkit.event.player.PlayerInteractEvent
 import org.bukkit.event.player.PlayerItemHeldEvent
 import org.bukkit.event.player.PlayerJoinEvent
 import org.bukkit.event.player.PlayerKickEvent
 import org.bukkit.event.player.PlayerQuitEvent
+import org.bukkit.event.player.PlayerSwapHandItemsEvent
 import org.bukkit.inventory.EquipmentSlot
 import org.bukkit.scheduler.BukkitTask
 import java.util.UUID
@@ -117,9 +119,14 @@ class OperationToolListener(
         if (session.mode == OperationToolMode.ENTITY_DIRECT && isOperable(player, event.rightClicked)) {
             val added = session.addEntities(listOf(event.rightClicked.uniqueId))
             if (added.isEmpty() && session.selected().size >= session.maxEntities) {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_FULL, mapOf("max" to session.maxEntities)))
+                OperationToolFeedback.notifyKey(
+                    player, session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_FULL,
+                    mapOf("max" to session.maxEntities),
+                    NamedTextColor.RED,
+                )
             } else if (added.isNotEmpty()) {
-                sendStatus(player, session)
+                OperationToolFeedback.showStatus(player, session)
             }
         }
         event.isCancelled = true
@@ -130,36 +137,98 @@ class OperationToolListener(
      *
      * 番号キー等による大きなスロット移動はスクロールとみなさず、持ち替えとして
      * 選択を保持します。切替時はスロットを維持するためイベントをキャンセルします。
+     * wandを手から離した場合は編集中Boxを解除します（確定済み選択は保持）。
      */
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     fun onItemHeld(event: PlayerItemHeldEvent) {
         val player = event.player
-        if (!player.isSneaking) return
-        if (KantanItemService.kind(player.inventory.itemInMainHand) != KantanItemKind.WAND) return
-        if (!isScrollStep(event.previousSlot, event.newSlot)) return
-        if (!requireManage(player)) {
+        if (player.isSneaking &&
+            KantanItemService.kind(player.inventory.itemInMainHand) == KantanItemKind.WAND &&
+            isScrollStep(event.previousSlot, event.newSlot)
+        ) {
+            if (!requireManage(player)) {
+                event.isCancelled = true
+                return
+            }
+            val session = sessions.getOrCreate(player.uniqueId)
+            session.setMode(session.mode.next())
+            displays.clear(player.uniqueId)
+            lastCandidateCounts.remove(player.uniqueId)
+            // モード切替のチャット通知は行わず、ActionBarの状態表示のみ残します。
+            OperationToolFeedback.showStatus(player, session)
             event.isCancelled = true
             return
         }
-        val session = sessions.getOrCreate(player.uniqueId)
-        val next = session.mode.next()
-        session.setMode(next)
-        displays.clear(player.uniqueId)
+        cancelEditingIfHandLeft(player, player.inventory.getItem(event.newSlot))
+    }
+
+    /**
+     * wandを投げ捨てた場合は編集中Boxを解除します。
+     *
+     * インベントリ確定がイベントより遅れる場合があるため、1tick後に
+     * メインハンドを再確認してから解除します。確定済み選択は保持します。
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onDrop(event: PlayerDropItemEvent) {
+        if (KantanItemService.kind(event.itemDrop.itemStack) != KantanItemKind.WAND) return
+        val playerId = event.player.uniqueId
+        plugin.server.scheduler.runTaskLater(plugin, Runnable {
+            val player = plugin.server.getPlayer(playerId) ?: return@Runnable
+            cancelEditingIfHandLeft(player, player.inventory.itemInMainHand)
+        }, 1L)
+    }
+
+    /**
+     * 死亡時はwandを手から離すため、編集中Boxを解除します。
+     *
+     * 確定済み選択・履歴は保持し、表示だけ破棄します。
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onDeath(event: PlayerDeathEvent) {
+        val session = sessions.get(event.entity.uniqueId) ?: return
+        if (session.editingBox == null) return
+        session.cancelBoxEdit()
+        displays.dropEditing(event.entity.uniqueId)
+        lastCandidateCounts.remove(event.entity.uniqueId)
+    }
+
+    /**
+     * Fキー入替でwandがメインハンドから外れた場合は編集中Boxを解除します。
+     *
+     * 入替後のメインハンド（現在のオフハンド）で判定します。
+     */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    fun onSwapHands(event: PlayerSwapHandItemsEvent) {
+        cancelEditingIfHandLeft(event.player, event.offHandItem)
+    }
+
+    /**
+     * wandを手から離した場合に編集中Boxを解除します。
+     *
+     * 範囲作成中だけを対象とし、確定済み選択・履歴・確定表示は保持します。
+     * handItemがnull（空欄）の場合も手離しとして扱います。
+     */
+    private fun cancelEditingIfHandLeft(player: Player, handItem: org.bukkit.inventory.ItemStack?) {
+        val session = sessions.get(player.uniqueId) ?: return
+        if (session.editingBox == null) return
+        if (KantanItemService.kind(handItem) == KantanItemKind.WAND) return
+        session.cancelBoxEdit()
+        displays.dropEditing(player.uniqueId)
         lastCandidateCounts.remove(player.uniqueId)
-        // モード切替のチャット通知は行わず、ActionBarの状態表示のみ残します。
-        sendStatus(player, session)
-        event.isCancelled = true
+        OperationToolFeedback.showStatus(player, session)
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onQuit(event: PlayerQuitEvent) {
-        // ログアウトだけでは選択を解除せず、表示だけ破棄してセッションを維持します。
+        // ログアウトだけでは選択を解除せず、編集中Boxの解除と表示破棄に留めます。
+        sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     fun onKick(event: PlayerKickEvent) {
+        sessions.get(event.player.uniqueId)?.cancelBoxEdit()
         displays.clear(event.player.uniqueId)
         lastCandidateCounts.remove(event.player.uniqueId)
     }
@@ -176,8 +245,12 @@ class OperationToolListener(
             session.clearAll()
             displays.clear(player.uniqueId)
             lastCandidateCounts.remove(player.uniqueId)
-            player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_CLEARED))
-            sendStatus(player, session)
+            OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_CLEARED,
+                emptyMap(),
+                NamedTextColor.YELLOW,
+            )
             return
         }
         when (session.mode) {
@@ -188,15 +261,13 @@ class OperationToolListener(
                 val block = event.clickedBlock ?: return
                 val point = RegionPoint(block.world.name, block.location.toSpatialVector())
                 session.setPos1(point)
-                player.sendMessage(
-                    KcI18n.text(
-                        player,
-                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS1_SET,
-                        mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
-                    ),
+                OperationToolFeedback.notifyKey(
+                    player, session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS1_SET,
+                    mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
+                    NamedTextColor.AQUA,
                 )
                 updateAreaDisplay(player, session)
-                sendStatus(player, session)
             }
             OperationToolMode.ENTITY_RANGE, OperationToolMode.ENTITY_DIRECT -> {
                 if (session.editingBox != null) {
@@ -204,14 +275,20 @@ class OperationToolListener(
                     session.cancelBoxEdit()
                     displays.dropEditing(player.uniqueId)
                     lastCandidateCounts.remove(player.uniqueId)
+                    OperationToolFeedback.showStatus(player, session)
                     return
                 }
                 // 左クリックで直前の確定済み選択操作をUndoします。
                 val removed = session.undoLast()
                 if (removed.isEmpty()) {
-                    player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_UNDO_EMPTY))
+                    OperationToolFeedback.notifyKey(
+                        player, session,
+                        KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_UNDO_EMPTY,
+                        emptyMap(),
+                        NamedTextColor.RED,
+                    )
                 } else {
-                    sendStatus(player, session)
+                    OperationToolFeedback.showStatus(player, session)
                 }
             }
         }
@@ -241,15 +318,13 @@ class OperationToolListener(
         val block = event.clickedBlock ?: return
         val point = RegionPoint(block.world.name, block.location.toSpatialVector())
         session.setPos2(point)
-        player.sendMessage(
-            KcI18n.text(
-                player,
-                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS2_SET,
-                mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
-            ),
+        OperationToolFeedback.notifyKey(
+            player, session,
+            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_POS2_SET,
+            mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
+            NamedTextColor.AQUA,
         )
         updateAreaDisplay(player, session)
-        sendStatus(player, session)
     }
 
     /**
@@ -305,8 +380,11 @@ class OperationToolListener(
         if (!OperationToolSession.isBoxEdgeWithinLimit(minimum, maximum, session.maxBoxEdge)) {
             session.cancelBoxEdit()
             displays.dropEditing(player.uniqueId)
-            player.sendMessage(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_BOX_TOO_LARGE, mapOf("max" to session.maxBoxEdge.toInt())),
+            OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_BOX_TOO_LARGE,
+                mapOf("max" to session.maxBoxEdge.toInt()),
+                NamedTextColor.RED,
             )
             return
         }
@@ -317,16 +395,25 @@ class OperationToolListener(
         lastCandidateCounts.remove(player.uniqueId)
         if (added.isNotEmpty()) {
             displays.replaceConfirmed(player.uniqueId, box.worldName, minimum, maximum)
-            player.sendMessage(
-                KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_ADDED, mapOf("count" to added.size)),
+            OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_ADDED,
+                mapOf("count" to added.size),
+                NamedTextColor.GREEN,
             )
         } else {
             displays.replaceConfirmed(player.uniqueId, null, null, null)
             if (session.selected().size >= session.maxEntities) {
-                player.sendMessage(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_FULL, mapOf("max" to session.maxEntities)))
+                OperationToolFeedback.notifyKey(
+                    player, session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_SELECTION_FULL,
+                    mapOf("max" to session.maxEntities),
+                    NamedTextColor.RED,
+                )
+            } else {
+                OperationToolFeedback.showStatus(player, session)
             }
         }
-        sendStatus(player, session)
     }
 
     /**
@@ -385,8 +472,11 @@ class OperationToolListener(
                 session.cancelBoxEdit()
                 displays.dropEditing(player.uniqueId)
                 lastCandidateCounts.remove(player.uniqueId)
-                player.sendMessage(
-                    KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_BOX_TOO_LARGE, mapOf("max" to session.maxBoxEdge.toInt())),
+                OperationToolFeedback.notifyKey(
+                    player, session,
+                    KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_BOX_TOO_LARGE,
+                    mapOf("max" to session.maxBoxEdge.toInt()),
+                    NamedTextColor.RED,
                 )
                 continue
             }
@@ -394,7 +484,7 @@ class OperationToolListener(
             val count = collectOverlapping(player, minimum, maximum).count { !session.selected().contains(it) }
             if (lastCandidateCounts[player.uniqueId] != count) {
                 lastCandidateCounts[player.uniqueId] = count
-                sendStatus(player, session)
+                OperationToolFeedback.showStatus(player, session)
             }
         }
         if (!active) {
@@ -405,14 +495,6 @@ class OperationToolListener(
 
     private fun requireManage(player: Player): Boolean =
         plugin.placementAccess.requireManage(player, player.world.name)
-
-    /** 現在のモード・選択数をActionBarで即時確認できるようにします。 */
-    private fun sendStatus(player: Player, session: OperationToolSession) {
-        val modeName = KcI18n.text(player, session.mode.displayNameKey())
-        player.sendActionBar(
-            Component.text(KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_STATUS, mapOf("mode" to modeName, "count" to session.selected().size))),
-        )
-    }
 
     companion object {
         /** 視点から視線方向へ進んだ点を返します。Box端点に使います。 */

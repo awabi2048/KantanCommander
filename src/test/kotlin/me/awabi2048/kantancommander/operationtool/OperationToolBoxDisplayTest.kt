@@ -44,6 +44,13 @@ class OperationToolBoxDisplayTest {
     }
 
     @Test
+    fun `box styles interpolate for one tick and area uses none`() {
+        assertEquals(1, OperationToolBoxDisplay.BoxStyle.EDITING.interpolationTicks)
+        assertEquals(1, OperationToolBoxDisplay.BoxStyle.CONFIRMED.interpolationTicks)
+        assertEquals(0, OperationToolBoxDisplay.BoxStyle.AREA.interpolationTicks)
+    }
+
+    @Test
     fun `area display bounds include the block extent`() {
         val bounds = RegionMath.cuboidFromCorners(
             SpatialVector(1.0, 2.0, 3.0),

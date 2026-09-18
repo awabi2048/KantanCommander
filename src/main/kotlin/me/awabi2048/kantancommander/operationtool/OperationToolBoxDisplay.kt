@@ -32,11 +32,16 @@ import java.util.concurrent.ConcurrentHashMap
 class OperationToolBoxDisplay(
     private val plugin: JavaPlugin,
 ) {
-    /** Box表示の様式です。編集中は黄色・確定後はグレー・エリアは水色です。 */
-    enum class BoxStyle(val material: Material) {
-        EDITING(Material.YELLOW_CONCRETE),
-        CONFIRMED(Material.GRAY_CONCRETE),
-        AREA(Material.LIGHT_BLUE_CONCRETE),
+    /**
+     * Box表示の様式です。編集中は黄色・確定後はグレー・エリアは水色です。
+     *
+     * 追従の補間tickは様式ごとに持ちます。Box追従は高応答を保ちつつ微振動を
+     * 抑えるため1tickとし、エリア選択は補間を使用しません。
+     */
+    enum class BoxStyle(val material: Material, val interpolationTicks: Int) {
+        EDITING(Material.YELLOW_CONCRETE, 1),
+        CONFIRMED(Material.GRAY_CONCRETE, 1),
+        AREA(Material.LIGHT_BLUE_CONCRETE, 0),
     }
 
     private data class EdgeDisplays(
@@ -225,8 +230,8 @@ class OperationToolBoxDisplay(
                     display.viewRange = 1.0f
                     display.displayWidth = diagonal
                     display.displayHeight = diagonal
-                    display.interpolationDuration = INTERPOLATION_TICKS
-                    display.teleportDuration = INTERPOLATION_TICKS
+                    display.interpolationDuration = style.interpolationTicks
+                    display.teleportDuration = style.interpolationTicks
                     display.isPersistent = false
                 }
             }.getOrNull()
@@ -253,9 +258,6 @@ class OperationToolBoxDisplay(
 
         /** 辺の太さです。Block単位へのsnapは行わないため細めに固定します。 */
         const val EDGE_THICKNESS = 0.06
-
-        /** 追従の補間tick数です。高応答を保ちつつ微振動を抑えるため2tickとします。 */
-        const val INTERPOLATION_TICKS = 2
 
         /** AABBの12辺の始点・終点です。Block単位へのsnapは行いません。 */
         fun boxEdges(minimum: SpatialVector, maximum: SpatialVector): List<Pair<SpatialVector, SpatialVector>> {

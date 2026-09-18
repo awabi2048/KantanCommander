@@ -69,12 +69,22 @@ class KantanCommanderCommand(
         val player = sender as? Player ?: return
         if (!plugin.placementAccess.requireManage(player, player.world.name)) return
         val result = itemGrantService.grantWand(player)
-        val messageKey = if (result.success) {
-            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GRANT_SUCCESS
+        val session = plugin.operationTool.sessions().getOrCreate(player.uniqueId)
+        if (result.success) {
+            me.awabi2048.kantancommander.operationtool.OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GRANT_SUCCESS,
+                emptyMap(),
+                net.kyori.adventure.text.format.NamedTextColor.GREEN,
+            )
         } else {
-            KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GRANT_FAILED
+            me.awabi2048.kantancommander.operationtool.OperationToolFeedback.notifyKey(
+                player, session,
+                KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_GRANT_FAILED,
+                emptyMap(),
+                net.kyori.adventure.text.format.NamedTextColor.RED,
+            )
         }
-        player.sendMessage(KcI18n.text(player, messageKey))
     }
 
     private fun openHistory(sender: CommandSender) {
