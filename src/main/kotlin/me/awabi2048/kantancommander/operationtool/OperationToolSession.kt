@@ -178,6 +178,22 @@ class OperationToolSession(
             )
             return edge.isFinite() && edge <= maxEdge
         }
+
+        /**
+         * エリア選択の表示用AABBを返します。
+         *
+         * [RegionMath.cuboidFromCorners] のblock含み（+1.0）を表示へ換算し、
+         * 選択範囲と表示範囲を一致させます。
+         */
+        fun areaDisplayBounds(bounds: RegionMath.CuboidBounds): Pair<SpatialVector, SpatialVector> {
+            val minimum = bounds.minimum
+            val maximum = SpatialVector(
+                minimum.x + bounds.dx + 1.0,
+                minimum.y + bounds.dy + 1.0,
+                minimum.z + bounds.dz + 1.0,
+            )
+            return minimum to maximum
+        }
     }
 }
 

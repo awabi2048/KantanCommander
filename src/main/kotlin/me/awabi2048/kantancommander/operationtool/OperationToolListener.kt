@@ -146,9 +146,7 @@ class OperationToolListener(
         session.setMode(next)
         displays.clear(player.uniqueId)
         lastCandidateCounts.remove(player.uniqueId)
-        player.sendMessage(
-            KcI18n.text(player, KcKeys.KANTAN_COMMANDER_CLEAN_MESSAGE_WAND_MODE_CHANGED, mapOf("mode" to KcI18n.text(player, next.displayNameKey()))),
-        )
+        // モード切替のチャット通知は行わず、ActionBarの状態表示のみ残します。
         sendStatus(player, session)
         event.isCancelled = true
     }
@@ -197,6 +195,7 @@ class OperationToolListener(
                         mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
                     ),
                 )
+                updateAreaDisplay(player, session)
                 sendStatus(player, session)
             }
             OperationToolMode.ENTITY_RANGE, OperationToolMode.ENTITY_DIRECT -> {
@@ -249,7 +248,25 @@ class OperationToolListener(
                 mapOf("world" to point.worldName, "x" to block.x, "y" to block.y, "z" to block.z),
             ),
         )
+        updateAreaDisplay(player, session)
         sendStatus(player, session)
+    }
+
+    /**
+     * エリア選択のディスプレイ表示を更新します。
+     *
+     * 両pos指定がある場合のみ水色の範囲表示を行い、未確定・別ワールドの場合は
+     * 古い表示を破棄します。表示範囲の換算は [OperationToolSession] へ委譲します。
+     */
+    private fun updateAreaDisplay(player: Player, session: OperationToolSession) {
+        val bounds = session.areaBounds()
+        val first = session.pos1
+        if (bounds == null || first == null) {
+            displays.dropArea(player.uniqueId)
+            return
+        }
+        val (minimum, maximum) = OperationToolSession.areaDisplayBounds(bounds)
+        displays.showArea(player.uniqueId, first.worldName, minimum, maximum)
     }
 
     private fun onRangeRightClick(player: Player, session: OperationToolSession) {
