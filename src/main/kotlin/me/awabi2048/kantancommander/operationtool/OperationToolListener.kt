@@ -224,9 +224,8 @@ class OperationToolListener(
             OperationToolMode.ENTITY_RANGE -> onRangeRightClick(player, session)
             OperationToolMode.ENTITY_DIRECT -> {
                 // 対象Entityを指していない状態での右クリックはEntity操作GUIを開きます。
-                // GUIは後続単位で接続し、ここでは選択状態の表示に留めます。
                 if (session.selected().isNotEmpty()) {
-                    sendStatus(player, session)
+                    plugin.operationMenu.openEntity(player)
                 }
             }
         }
@@ -235,9 +234,8 @@ class OperationToolListener(
     private fun onAreaRightClick(player: Player, session: OperationToolSession, event: PlayerInteractEvent) {
         if (event.action != Action.RIGHT_CLICK_BLOCK) {
             // 有効なエリア選択後の空中右クリックはエリア操作GUIを開きます。
-            // GUIは後続単位で接続し、ここでは選択状態の表示に留めます。
             if (session.hasValidArea()) {
-                sendStatus(player, session)
+                plugin.operationMenu.openArea(player)
             }
             return
         }
@@ -269,8 +267,7 @@ class OperationToolListener(
         }
         if (session.selected().isNotEmpty()) {
             // Box非編集中かつ選択済みの右クリックはEntity操作GUIを開きます。
-            // GUIは後続単位で接続し、ここでは選択状態の表示に留めます。
-            sendStatus(player, session)
+            plugin.operationMenu.openEntity(player)
         }
     }
 

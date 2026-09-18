@@ -195,7 +195,7 @@ class StructureStore(private val logger: java.util.logging.Logger, private val d
         }
     }
 
-    private companion object {
+    internal companion object {
         /** 構造物の拡張子です。バニラの構造物形式（`.nbt`）に固定します。 */
         const val EXTENSION = "nbt"
         /** 検証層と同じ形式を二重に持たず、片方だけ通過する事故を防ぎます。 */

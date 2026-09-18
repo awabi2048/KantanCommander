@@ -56,7 +56,7 @@ import org.bukkit.plugin.java.JavaPlugin
  * 起動直後に検出できるよう、依存テストとonEnableの両方から参照します。
  */
 internal const val KANTAN_COMMANDER_LOCALIZATION_CONTRACT_FINGERPRINT =
-    "64f8307e82ca27d60083d793fb83ba41834eb138053c430c0df37519e9f4a220"
+    "361deb83440e9708a8eb98d20ffe1555c6a27141513e3a17fb8b7f4b26432785"
 
 class KantanCommanderPlugin : JavaPlugin() {
     lateinit var scripts: ScriptStore
@@ -117,6 +117,9 @@ class KantanCommanderPlugin : JavaPlugin() {
         private set
     /** issue #14の操作ツールwandの入力処理です。選択状態・可視化を保持します。 */
     lateinit var operationTool: me.awabi2048.kantancommander.operationtool.OperationToolListener
+        private set
+    /** issue #14の操作ツールwandの操作用Inventory GUIです。導線のみ担当します。 */
+    lateinit var operationMenu: me.awabi2048.kantancommander.operationtool.OperationToolMenu
         private set
     private lateinit var triggerListener: RedstoneTriggerListener
     private lateinit var eventTriggerListener: EventTriggerListener
@@ -300,6 +303,7 @@ class KantanCommanderPlugin : JavaPlugin() {
                 maxBoxEdge = config.getDouble("operation-tool.max-box-edge", 128.0),
             ),
         )
+        operationMenu = me.awabi2048.kantancommander.operationtool.OperationToolMenu(this)
         triggerListener = RedstoneTriggerListener(this)
         eventTriggerListener = EventTriggerListener(this)
 
