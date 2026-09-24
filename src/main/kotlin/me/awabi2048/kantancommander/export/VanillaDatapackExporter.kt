@@ -232,9 +232,9 @@ class VanillaDatapackExporter(
                         null -> errors += "${script.id}/${node.id}: 不明な配置方式です"
                     }
                 }
-                // issue #11: 建造物はバニラのデータパック単体で同等の保存・設置を
-                // 表現できないため、PARTICLE_GEOMETRY と同じく検証層で拒否します。
-                CommandType.STRUCTURE_SAVE, CommandType.STRUCTURE_PLACE ->
+                // issue #11: 保存済み建造物の読み込みはバニラ単体では表現できないため、
+                // PARTICLE_GEOMETRY と同じく検証層で拒否します。
+                CommandType.STRUCTURE_PLACE ->
                     errors += "${script.id}/${node.id}: 建造物の操作は完全バニラ出力に未対応です"
                 // issue #24: 群管理はバニラのデータパック単体で同等概念を持たないため、
                 // 同じく検証層で拒否します。
@@ -1546,8 +1546,8 @@ class VanillaDatapackExporter(
                 effectAmplifier(node.string("level", "1"))
         CommandType.CAMERA_SHAKE -> null
         CommandType.BLOCK_OPERATION -> blockOperationCommand(node)
-        // issue #11: 建造物は検証層で拒否し、ここでは無出力とします。
-        CommandType.STRUCTURE_SAVE, CommandType.STRUCTURE_PLACE -> null
+        // issue #11: 建造物読み込みは検証層で拒否し、ここでは無出力とします。
+        CommandType.STRUCTURE_PLACE -> null
         // issue #24: 群操作は検証層で拒否し、ここでは無出力とします。
         CommandType.ENTITY_GROUP -> null
         CommandType.ENTITY_DELETE -> "kill ${effectiveTarget(node)}"

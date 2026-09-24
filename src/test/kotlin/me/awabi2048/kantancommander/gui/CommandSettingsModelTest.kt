@@ -1091,7 +1091,6 @@ class CommandSettingsModelTest {
             null, "create", "add", "remove", "delete", "set_pivot", "move", "rotate", "cleanup",
         )
         val cases = buildList {
-            add(CommandType.STRUCTURE_SAVE.newNode())
             add(CommandType.STRUCTURE_PLACE.newNode())
             groupOperations.forEach { operation ->
                 add(CommandType.ENTITY_GROUP.newNode().apply {

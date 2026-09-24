@@ -527,13 +527,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
                             field == "position" && (node.type == CommandType.PARTICLE || node.type == CommandType.PARTICLE_GEOMETRY) ->
                                 genericPositionRoute(context.route, "particle_position")
                             field == "summonPosition" -> genericPositionRoute(context.route, "summon_position")
-                            // issue #33-1: 建造物の範囲・設置位置、群pivotも汎用位置画面へ進みます。
+                            // issue #33-1: 建造物読み込み位置、群pivotも汎用位置画面へ進みます。
                             // 保存先の役割は汎用位置画面側で解決し、通常対象への取り違えは
                             // #34-1 の役割厳密化で防ぎます。
-                            field == "from" && node.type == CommandType.STRUCTURE_SAVE ->
-                                genericPositionRoute(context.route, CommandSettingRole.BLOCK_FROM.routeValue)
-                            field == "to" && node.type == CommandType.STRUCTURE_SAVE ->
-                                genericPositionRoute(context.route, CommandSettingRole.BLOCK_TO.routeValue)
                             field == "structurePlace" && node.type == CommandType.STRUCTURE_PLACE ->
                                 genericPositionRoute(context.route, CommandSettingRole.STRUCTURE_PLACE_POSITION.routeValue)
                             field == "pivot" && node.type == CommandType.ENTITY_GROUP ->
@@ -1391,7 +1387,9 @@ class CommandEditMenu(private val plugin: KantanCommanderPlugin) {
             ?.let { runCatching { CommandCategory.valueOf(it) }.getOrNull() }
             ?.takeIf { it.isSimple() }
             ?: CommandCategory.ENTITY
-        val types = CommandPresentationPolicy.SIMPLE_TYPES.filter { CommandPresentationPolicy.category(it) == selected }
+        val types = CommandPresentationPolicy.SIMPLE_TYPES.filter {
+            selected in CommandPresentationPolicy.categories(it)
+        }
         val elements = types.mapIndexed { index, type ->
             KcGui.menuEntry(
                 player = player,
@@ -4587,35 +4585,7 @@ object EditorMenuLayout {
                 it.blockToSpec?.kind?.let(::displayPosition) ?: displayUnset()
             },
         )
-        // issue #11: 保存は名前＋範囲、設置は名前＋回転・反転＋位置です。
-        // 範囲・位置は BLOCK_OPERATION と同じ位置設定木を流用します。
-        CommandType.STRUCTURE_SAVE -> listOf(
-            field(
-                "structure",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_STRUCTURE,
-                Material.STRUCTURE_BLOCK,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK,
-            ) { displayTypedValue(it, "structure") },
-            field(
-                "from",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_FROM,
-                Material.COMPASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_FROM,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_FROM,
-            ) {
-                it.blockFromSpec?.kind?.let(::displayPosition) ?: displayUnset()
-            },
-            field(
-                "to",
-                KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_BLOCK_TO,
-                Material.COMPASS,
-                descriptionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_DESCRIPTION_BLOCK_TO,
-                actionKey = KcKeys.KANTAN_COMMANDER_CLEAN_GUI_FIELD_ACTION_BLOCK_TO,
-            ) {
-                it.blockToSpec?.kind?.let(::displayPosition) ?: displayUnset()
-            },
-        )
+        // issue #11: 保存済み建造物は名前＋回転・反転＋読み込み位置で指定します。
         CommandType.STRUCTURE_PLACE -> listOf(
             field(
                 "structure",

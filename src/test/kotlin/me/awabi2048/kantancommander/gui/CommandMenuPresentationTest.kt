@@ -8,21 +8,27 @@ import org.junit.jupiter.api.Test
 
 class CommandMenuPresentationTest {
     @Test
-    fun `every command type has an explicit category`() {
-        assertEquals(CommandType.entries.toSet(), CommandType.entries.groupBy(CommandPresentationPolicy::category).values.flatten().toSet())
+    fun `every command type has one or more explicit categories`() {
+        val categoriesByType = CommandType.entries.associateWith(CommandPresentationPolicy::categories)
+        assertEquals(CommandType.entries.toSet(), categoriesByType.keys)
+        assertTrue(categoriesByType.values.all { it.isNotEmpty() })
         // 基礎タブ廃止後の5分類です。旧基礎コマンドは意味の近い分類へ移しました。
-        assertTrue(CommandType.TELEPORT.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
-        assertTrue(CommandType.GIVE_ITEM.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
-        assertTrue(CommandType.SUMMON_ENTITY.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
-        assertTrue(CommandType.DISPLAY_TEXT.let(CommandPresentationPolicy::category) == CommandCategory.EFFECT)
-        assertTrue(CommandType.APPLY_EFFECT.let(CommandPresentationPolicy::category) == CommandCategory.EFFECT)
-        assertTrue(CommandType.WAIT.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
-        assertTrue(CommandType.ENTITY_OPERATION.let(CommandPresentationPolicy::category) == CommandCategory.ENTITY)
-        assertTrue(CommandType.BLOCK_OPERATION.let(CommandPresentationPolicy::category) == CommandCategory.BUILD)
-        assertTrue(CommandType.PARTICLE.let(CommandPresentationPolicy::category) == CommandCategory.EFFECT)
-        assertTrue(CommandType.CONDITION.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
-        assertTrue(CommandType.DISK_CALL.let(CommandPresentationPolicy::category) == CommandCategory.CONTROL)
-        assertTrue(CommandType.VARIABLE.let(CommandPresentationPolicy::category) == CommandCategory.VARIABLE)
+        assertTrue(CommandCategory.ENTITY in CommandPresentationPolicy.categories(CommandType.TELEPORT))
+        assertTrue(CommandCategory.ENTITY in CommandPresentationPolicy.categories(CommandType.GIVE_ITEM))
+        assertTrue(CommandCategory.ENTITY in CommandPresentationPolicy.categories(CommandType.SUMMON_ENTITY))
+        assertTrue(CommandCategory.EFFECT in CommandPresentationPolicy.categories(CommandType.DISPLAY_TEXT))
+        assertTrue(CommandCategory.EFFECT in CommandPresentationPolicy.categories(CommandType.APPLY_EFFECT))
+        assertTrue(CommandCategory.CONTROL in CommandPresentationPolicy.categories(CommandType.WAIT))
+        assertTrue(CommandCategory.ENTITY in CommandPresentationPolicy.categories(CommandType.ENTITY_OPERATION))
+        assertTrue(CommandCategory.BUILD in CommandPresentationPolicy.categories(CommandType.BLOCK_OPERATION))
+        assertTrue(CommandCategory.EFFECT in CommandPresentationPolicy.categories(CommandType.PARTICLE))
+        assertTrue(CommandCategory.CONTROL in CommandPresentationPolicy.categories(CommandType.CONDITION))
+        assertTrue(CommandCategory.CONTROL in CommandPresentationPolicy.categories(CommandType.DISK_CALL))
+        assertTrue(CommandCategory.VARIABLE in CommandPresentationPolicy.categories(CommandType.VARIABLE))
+        assertEquals(
+            setOf(CommandCategory.ENTITY, CommandCategory.BUILD),
+            CommandPresentationPolicy.categories(CommandType.PLACE_ITEM),
+        )
     }
 
     @Test
@@ -39,6 +45,7 @@ class CommandMenuPresentationTest {
         )
 
         assertTrue(CommandType.TELEPORT in entityTypes)
+        assertTrue(CommandType.PLACE_ITEM in entityTypes)
         assertTrue(CommandType.CONDITION in controlTypes)
         assertTrue(CommandType.MERGE in controlTypes)
         assertTrue(CommandType.WAIT in controlTypes)
@@ -52,6 +59,13 @@ class CommandMenuPresentationTest {
             )
             assertTrue(types.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE, "$category")
         }
+        assertTrue(
+            CommandType.PLACE_ITEM in CommandPickerTypePolicy.types(
+                CommandCategory.BUILD,
+                mergeAvailable = true,
+                insideForBody = false,
+            ),
+        )
         assertEquals(1, GestureCommandPickerLayoutPolicy.pageCount(entityTypes.size))
         assertTrue(controlTypes.size <= GestureCommandPickerLayoutPolicy.PAGE_SIZE)
     }
@@ -66,14 +80,17 @@ class CommandMenuPresentationTest {
             simpleCategories,
         )
         simpleCategories.forEach { category ->
-            val types = CommandPresentationPolicy.SIMPLE_TYPES.filter { CommandPresentationPolicy.category(it) == category }
+            val types = CommandPresentationPolicy.SIMPLE_TYPES.filter {
+                category in CommandPresentationPolicy.categories(it)
+            }
             assertTrue(types.isNotEmpty(), "$category")
             assertTrue(types.size <= CommandPickerLayoutPolicy.itemSlots.size, "$category")
         }
         assertEquals(CommandPickerLayoutPolicy.categorySlots.size, simpleCategories.size)
-        // 簡易集合は待機を除く18件です。
-        assertEquals(18, CommandPresentationPolicy.SIMPLE_TYPES.size)
+        // 簡易集合は待機と建造物保存を除く17型です。重複所属は型数を増やしません。
+        assertEquals(17, CommandPresentationPolicy.SIMPLE_TYPES.size)
         assertTrue(CommandType.TELEPORT in CommandPresentationPolicy.SIMPLE_TYPES)
+        assertEquals(1, CommandPresentationPolicy.SIMPLE_TYPES.count { it == CommandType.PLACE_ITEM })
         assertFalse(CommandType.WAIT in CommandPresentationPolicy.SIMPLE_TYPES)
         assertFalse(CommandType.CONDITION in CommandPresentationPolicy.SIMPLE_TYPES)
         assertFalse(CommandType.VARIABLE in CommandPresentationPolicy.SIMPLE_TYPES)

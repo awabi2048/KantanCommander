@@ -36,7 +36,7 @@ internal object DisabledChoiceVisualPolicy {
  *
  * 基礎タブを廃止した5分類とし、対象・領域の意味で分けます。エンティティ関連・
  * ブロックの操作・演出は簡易GUIでも編集でき、制御系・変数の操作はフルGUIでのみ
- * 編集します。新CommandTypeの追加時は [CommandPresentationPolicy.category] の
+ * 編集します。新CommandTypeの追加時は [CommandPresentationPolicy.categories] の
  * 一箇所へ分類を足すだけで、両GUIのタブ・候補・簡易編集可否へ反映します。
  */
 internal enum class CommandCategory(
@@ -67,11 +67,12 @@ internal enum class CommandCategory(
 
 /**
  * コマンド型が増えた際に、分類・説明が暗黙の既定値へ流れないよう、
- * 全型の表示契約を網羅的なwhenで管理します。
+ * 全型の表示契約を網羅的なwhenで管理します。1つのコマンドを複数分類に
+ * 表示できるよう、各型は所属分類の集合を返します。
  */
 internal object CommandPresentationPolicy {
     /**
-     * コマンド型と分類の一元対応表です。
+     * コマンド型と分類の一元対応表です。複数分類への所属もここで明示します。
      *
      * 基礎タブ廃止後の5分類とし、旧基礎コマンドは意味の近い分類へ移しました。
      * 移動・召喚・付与はエンティティ関連、表示・効果付与は演出、待機は制御系です。
@@ -79,7 +80,10 @@ internal object CommandPresentationPolicy {
      * 候補・簡易編集可否へ反映します。分類ごとの候補は10件以内に収め、
      * ページングは将来の増加時の補助手段として残します。
      */
-    fun category(type: CommandType): CommandCategory = when (type) {
+    fun categories(type: CommandType): Set<CommandCategory> = when (type) {
+        // アイテム配置は対象（エンティティ）と操作領域（ブロック）の両方から選べます。
+        CommandType.PLACE_ITEM -> setOf(CommandCategory.ENTITY, CommandCategory.BUILD)
+
         CommandType.TELEPORT,
         CommandType.GIVE_ITEM,
         CommandType.SUMMON_ENTITY,
@@ -88,14 +92,12 @@ internal object CommandPresentationPolicy {
         CommandType.ENTITY_DELETE,
         // issue #24: 群操作はEntity分類です。簡易GUIでも編集できます。
         CommandType.ENTITY_GROUP,
-        -> CommandCategory.ENTITY
+        -> setOf(CommandCategory.ENTITY)
 
         CommandType.BLOCK_OPERATION,
-        CommandType.PLACE_ITEM,
         // issue #11: 建造物は建築分類です。簡易GUIでも編集できます。
-        CommandType.STRUCTURE_SAVE,
         CommandType.STRUCTURE_PLACE,
-        -> CommandCategory.BUILD
+        -> setOf(CommandCategory.BUILD)
 
         CommandType.DISPLAY_TEXT,
         CommandType.APPLY_EFFECT,
@@ -104,7 +106,7 @@ internal object CommandPresentationPolicy {
         CommandType.PARTICLE_GEOMETRY,
         CommandType.FIREWORK_LAUNCH,
         CommandType.CAMERA_SHAKE,
-        -> CommandCategory.EFFECT
+        -> setOf(CommandCategory.EFFECT)
 
         CommandType.WAIT,
         CommandType.CONDITION,
@@ -119,11 +121,11 @@ internal object CommandPresentationPolicy {
         // 折り畳みノードは折り畳み操作だけで生成するため、新規追加の候補に出しません。
         CommandType.FOLDED_FOR,
         CommandType.FOLDED_IF,
-        -> CommandCategory.CONTROL
+        -> setOf(CommandCategory.CONTROL)
 
         CommandType.VARIABLE,
         CommandType.TEMP_SET,
-        -> CommandCategory.VARIABLE
+        -> setOf(CommandCategory.VARIABLE)
     }
 
     /**
@@ -134,7 +136,7 @@ internal object CommandPresentationPolicy {
      * フル形式のまま保持し、ここでは表示・編集の入口だけを制限します。
      */
     val SIMPLE_TYPES: List<CommandType> =
-        CommandType.entries.filter { category(it).isSimple() }
+        CommandType.entries.filter { type -> categories(type).any { it.isSimple() } }
 
     /** 簡易GUIで設定変更できるノードかを返します。制御・変数系は表示のみです。 */
     fun isSimpleEditable(type: CommandType): Boolean = type in SIMPLE_TYPES
@@ -153,7 +155,7 @@ internal object CommandPickerTypePolicy {
         mergeAvailable: Boolean,
         insideForBody: Boolean,
     ): List<CommandType> = CommandType.entries.filter { type ->
-        if (CommandPresentationPolicy.category(type) != category) return@filter false
+        if (category !in CommandPresentationPolicy.categories(type)) return@filter false
         when (type) {
             CommandType.FOR_END -> false
             CommandType.MERGE -> mergeAvailable

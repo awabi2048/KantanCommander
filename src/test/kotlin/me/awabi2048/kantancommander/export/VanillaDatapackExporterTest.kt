@@ -340,17 +340,8 @@ class VanillaDatapackExporterTest {
     }
 
     @Test
-    fun `structure commands are rejected by the vanilla export validation`() {
+    fun `structure loading is rejected by the vanilla export validation`() {
         val store = ScriptStore(temp.resolve("structure-export"), Logger.getAnonymousLogger())
-        val saveScript = store.create(UUID.randomUUID(), "structure export save")
-        GraphEditor.append(saveScript.graph, CommandType.STRUCTURE_SAVE).apply {
-            params["structure"] = "my_house-01"
-        }
-        assertTrue(
-            VanillaDatapackExporter(store, temp.resolve("exports")).compileForStandalone(saveScript)
-                is StandaloneCompilation.Failure,
-        )
-
         val placeScript = store.create(UUID.randomUUID(), "structure export place")
         GraphEditor.append(placeScript.graph, CommandType.STRUCTURE_PLACE).apply {
             params["structure"] = "my_house-01"
