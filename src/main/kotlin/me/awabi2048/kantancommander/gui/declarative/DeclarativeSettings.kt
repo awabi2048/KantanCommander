@@ -427,6 +427,8 @@ object DeclarativeSettings {
         cards.forEach { card ->
             nodes += GestureGuiBlock(
                 blockData = card.background,
+                // 選択肢の切替時に旧カードの表示位置が残らないよう即時反映します。
+                interpolationTicks = 0,
                 width = GestureGuiSizeSpec.Fixed(card.w),
                 height = GestureGuiSizeSpec.Fixed(card.h),
                 outline = card.outline?.let { GestureGuiOutline(it) },
@@ -447,6 +449,7 @@ object DeclarativeSettings {
             )
             nodes += GestureGuiText(
                 text = card.label,
+                interpolationTicks = 0,
                 size = card.labelSize,
                 lineWidth = card.labelWidth,
                 alignment = GestureGuiTextAlignment.CENTER,
@@ -481,6 +484,7 @@ object DeclarativeSettings {
         cards.forEach { card ->
             nodes += GestureGuiBlock(
                 blockData = card.background,
+                interpolationTicks = 0,
                 width = GestureGuiSizeSpec.Fixed(card.w),
                 height = GestureGuiSizeSpec.Fixed(card.h),
                 outline = card.outline?.let { GestureGuiOutline(it) },
@@ -495,6 +499,7 @@ object DeclarativeSettings {
                 val iconSize = minOf(card.w, card.h) * 0.70
                 nodes += GestureGuiItem(
                     item = icon,
+                    interpolationTicks = 0,
                     scale = iconSize,
                     width = GestureGuiSizeSpec.Fixed(iconSize),
                     height = GestureGuiSizeSpec.Fixed(iconSize),
